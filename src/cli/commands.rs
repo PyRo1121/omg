@@ -3,10 +3,9 @@
 //! Uses direct libalpm access for 10-100x faster queries.
 
 use anyhow::Result;
-use colored::Colorize;
-use std::process::Stdio;
-use tokio::process::Command;
+use std::process::{Command, Stdio};
 
+use crate::cli::style;
 use crate::package_managers::get_system_status;
 
 // Re-export moved commands
@@ -98,7 +97,7 @@ pub async fn complete(_shell: &str, current: &str, last: &str, _full: Option<&st
 pub async fn status() -> Result<()> {
     let _start = std::time::Instant::now();
 
-    println!("{} System Status\n", "OMG".cyan().bold());
+    println!("{} System Status\n", style::header("OMG"));
 
     // ULTRA FAST: Use Daemon Cache if available (<1ms)
     let (total, explicit, orphans, updates, security_vulnerabilities) =
@@ -122,36 +121,40 @@ pub async fn status() -> Result<()> {
         };
 
     if updates > 0 {
-        println!("  {} {} updates available", "Updates:".yellow(), updates);
+        println!(
+            "  {} {} updates available",
+            style::warning("Updates:"),
+            updates
+        );
     } else {
-        println!("  {} System is up to date", "Updates:".green());
+        println!("  {} System is up to date", style::success("Updates:"));
     }
 
     println!(
         "  {} {} total ({} explicit)",
-        "Packages:".green(),
+        style::success("Packages:"),
         total,
         explicit
     );
 
     if orphans > 0 {
-        println!("  {} {} packages", "Orphans:".yellow(), orphans);
+        println!("  {} {} packages", style::warning("Orphans:"), orphans);
     }
 
     // Zero-Trust Security Status
     if security_vulnerabilities > 0 {
         println!(
             "  {} {} vulnerabilities found!",
-            "Security:".red().bold(),
+            style::error("Security:"),
             security_vulnerabilities
         );
         println!(
             "  {} Run '{}' for details",
-            "→".dimmed(),
-            "omg audit".yellow()
+            style::dim("→"),
+            style::warning("omg audit")
         );
     } else {
-        println!("  {} No known vulnerabilities", "Security:".green());
+        println!("  {} No known vulnerabilities", style::success("Security:"));
     }
 
     // Daemon status
@@ -159,13 +162,13 @@ pub async fn status() -> Result<()> {
         .map_or_else(|_| "/tmp/omg.sock".to_string(), |d| format!("{d}/omg.sock"));
 
     if std::path::Path::new(&socket).exists() {
-        println!("  {} Running", "Daemon:".green());
+        println!("  {} Running", style::success("Daemon:"));
     } else {
-        println!("  {} Not running", "Daemon:".dimmed());
+        println!("  {} Not running", style::dim("Daemon:"));
     }
 
     // Runtimes - ULTRA-FAST PROBING (<1ms)
-    println!("\n{} Runtimes:\n", "─".repeat(20).dimmed());
+    println!("\n{} Runtimes:\n", style::dim("────────────────────"));
 
     let (node, py, rust, go, bun, java, ruby) = tokio::join!(
         tokio::task::spawn_blocking(|| crate::runtimes::probe_version("node")),
@@ -178,25 +181,25 @@ pub async fn status() -> Result<()> {
     );
 
     if let Ok(Some(v)) = node {
-        println!("  {} Node.js {}", "●".green(), v);
+        println!("  {} Node.js {}", style::success("●"), v);
     }
     if let Ok(Some(v)) = py {
-        println!("  {} Python {}", "●".green(), v);
+        println!("  {} Python {}", style::success("●"), v);
     }
     if let Ok(Some(v)) = rust {
-        println!("  {} Rust {}", "●".green(), v);
+        println!("  {} Rust {}", style::success("●"), v);
     }
     if let Ok(Some(v)) = go {
-        println!("  {} Go {}", "●".green(), v);
+        println!("  {} Go {}", style::success("●"), v);
     }
     if let Ok(Some(v)) = bun {
-        println!("  {} Bun {}", "●".green(), v);
+        println!("  {} Bun {}", style::success("●"), v);
     }
     if let Ok(Some(v)) = java {
-        println!("  {} Java {}", "●".green(), v);
+        println!("  {} Java {}", style::success("●"), v);
     }
     if let Ok(Some(v)) = ruby {
-        println!("  {} Ruby {}", "●".green(), v);
+        println!("  {} Ruby {}", style::success("●"), v);
     }
 
     Ok(())
@@ -205,7 +208,7 @@ pub async fn status() -> Result<()> {
 /// Start the daemon
 pub async fn daemon(foreground: bool) -> Result<()> {
     if foreground {
-        println!("{} Run 'omgd' directly for daemon mode", "→".blue());
+        println!("{} Run 'omgd' directly for daemon mode", style::info("→"));
     } else {
         // Start daemon in background
         let status = Command::new("omgd")
@@ -214,8 +217,8 @@ pub async fn daemon(foreground: bool) -> Result<()> {
             .spawn();
 
         match status {
-            Ok(_) => println!("{} Daemon started", "✓".green()),
-            Err(e) => println!("{} Failed to start daemon: {}", "✗".red(), e),
+            Ok(_) => println!("{} Daemon started", style::success("✓")),
+            Err(e) => println!("{} Failed to start daemon: {}", style::error("✗"), e),
         }
     }
     Ok(())
@@ -227,27 +230,39 @@ pub async fn config(key: Option<&str>, value: Option<&str>) -> Result<()> {
         (Some(k), Some(v)) => {
             println!(
                 "{} Setting {} = {}",
-                "OMG".cyan().bold(),
-                k.green(),
-                v.yellow()
+                style::header("OMG"),
+                style::success(k),
+                style::warning(v)
             );
         }
         (Some(k), None) => {
-            println!("{} Config key '{}':", "OMG".cyan().bold(), k.green());
+            println!(
+                "{} Config key '{}':",
+                style::header("OMG"),
+                style::success(k)
+            );
             match k {
-                "shims.enabled" => println!("  {}", "false".yellow()),
-                "data_dir" => println!("  {}", "~/.omg".yellow()),
-                _ => println!("  {}", "(not set)".dimmed()),
+                "shims.enabled" => println!("  {}", style::warning("false")),
+                "data_dir" => println!("  {}", style::warning("~/.omg")),
+                _ => println!("  {}", style::dim("(not set)")),
             }
         }
         (None, _) => {
-            println!("{} Configuration:\n", "OMG".cyan().bold());
-            println!("  {} = {}", "shims.enabled".green(), "false".yellow());
-            println!("  {} = {}", "data_dir".green(), "~/.omg".yellow());
+            println!("{} Configuration:\n", style::header("OMG"));
             println!(
                 "  {} = {}",
-                "socket".green(),
-                "/run/user/1000/omg.sock".yellow()
+                style::success("shims.enabled"),
+                style::warning("false")
+            );
+            println!(
+                "  {} = {}",
+                style::success("data_dir"),
+                style::warning("~/.omg")
+            );
+            println!(
+                "  {} = {}",
+                style::success("socket"),
+                style::warning("/run/user/1000/omg.sock")
             );
         }
     }

@@ -433,7 +433,7 @@ impl AurClient {
                 missing.len()
             );
             // Use ArchPackageManager to install missing dependencies
-            let arch = crate::package_managers::ArchPackageManager::new();
+            let arch = crate::package_managers::OfficialPackageManager::new();
             arch.install(&missing).await?;
         }
 

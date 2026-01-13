@@ -34,6 +34,7 @@ thiserror = "1.0"
 # Async runtime
 tokio = { version = "1.35", features = ["full"] }
 async-trait = "0.1"
+futures = "0.3"
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
@@ -48,7 +49,7 @@ reqwest = { version = "0.12", features = ["json", "stream"] }
 num_cpus = "1.16"
 
 # Filesystem
-tokio-util = { version = "0.7", features = ["io"] }
+tokio-util = { version = "0.7", features = ["io", "codec"] }
 
 # Archives + compression (pure Rust - no subprocess)
 async-compression = { version = "0.4", features = ["tokio", "gzip", "xz", "zstd"] }
@@ -134,6 +135,7 @@ walkdir = "2.5.0"
 dirs = "6.0.0"
 libc = "0.2.180"
 tikv-jemallocator = "0.6.1"
+ahash = "0.8"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

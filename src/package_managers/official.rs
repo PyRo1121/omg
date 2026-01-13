@@ -5,23 +5,23 @@ use colored::Colorize;
 use super::PackageManager;
 use crate::core::{is_root, Package, PackageSource};
 
-/// Arch Linux package manager with enhanced UX
-pub struct ArchPackageManager;
+/// Official Arch Linux package manager with enhanced UX
+pub struct OfficialPackageManager;
 
-impl ArchPackageManager {
+impl OfficialPackageManager {
     pub fn new() -> Self {
-        ArchPackageManager
+        OfficialPackageManager
     }
 }
 
-impl Default for ArchPackageManager {
+impl Default for OfficialPackageManager {
     fn default() -> Self {
         Self::new()
     }
 }
 
 #[async_trait]
-impl PackageManager for ArchPackageManager {
+impl PackageManager for OfficialPackageManager {
     fn name(&self) -> &'static str {
         "pacman"
     }

@@ -1,10 +1,16 @@
 //! IPC Client for communicating with the daemon
+//!
+//! Uses LengthDelimitedCodec and Bincode for maximum IPC performance.
 
 use anyhow::{Context, Result};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
+use futures::sink::SinkExt;
+use futures::stream::StreamExt;
+use tokio_util::codec::{Framed, LengthDelimitedCodec};
+
+use crate::daemon::protocol::*;
 
 /// Get the default socket path
 pub fn default_socket_path() -> PathBuf {
@@ -15,31 +21,8 @@ pub fn default_socket_path() -> PathBuf {
 
 /// IPC Client for daemon communication
 pub struct DaemonClient {
-    reader: BufReader<tokio::net::unix::OwnedReadHalf>,
-    writer: tokio::net::unix::OwnedWriteHalf,
+    framed: Framed<UnixStream, LengthDelimitedCodec>,
     request_id: AtomicU64,
-}
-
-/// Request structure (matches daemon/protocol.rs)
-#[derive(serde::Serialize)]
-struct Request {
-    id: u64,
-    method: String,
-    params: serde_json::Value,
-}
-
-/// Response structure (matches daemon/protocol.rs)
-#[derive(serde::Deserialize, Debug)]
-pub struct Response {
-    pub id: u64,
-    pub result: Option<serde_json::Value>,
-    pub error: Option<RpcError>,
-}
-
-#[derive(serde::Deserialize, Debug)]
-pub struct RpcError {
-    pub code: i32,
-    pub message: String,
 }
 
 impl DaemonClient {
@@ -56,12 +39,10 @@ impl DaemonClient {
             .with_context(|| format!("Failed to connect to daemon at {:?}", socket_path))?;
 
         tracing::debug!("Connected to daemon");
-        let (reader, writer) = stream.into_split();
-        let reader = BufReader::new(reader);
+        let framed = Framed::new(stream, LengthDelimitedCodec::new());
 
         Ok(DaemonClient {
-            reader,
-            writer,
+            framed,
             request_id: AtomicU64::new(1),
         })
     }
@@ -72,133 +53,83 @@ impl DaemonClient {
     }
 
     /// Send a request and get response
-    pub async fn call<T: serde::de::DeserializeOwned>(
-        &mut self,
-        method: &str,
-        params: serde_json::Value,
-    ) -> Result<T> {
-        let id = self.request_id.fetch_add(1, Ordering::SeqCst);
+    pub async fn call(&mut self, request: Request) -> Result<ResponseResult> {
+        let id = request.id();
+        
+        // Encode and send
+        let request_bytes = bincode::serialize(&request)?;
+        self.framed.send(request_bytes.into()).await?;
 
-        let request = Request {
-            id,
-            method: method.to_string(),
-            params,
-        };
+        // Read and decode response
+        let response_bytes = self.framed.next().await
+            .ok_or_else(|| anyhow::anyhow!("Daemon disconnected"))??;
+            
+        let response: Response = bincode::deserialize(&response_bytes)?;
 
-        // Send request
-        let request_json = serde_json::to_string(&request)?;
-        self.writer.write_all(request_json.as_bytes()).await?;
-        self.writer.write_all(b"\n").await?;
-        self.writer.flush().await?;
-
-        // Read response
-        let mut line = String::new();
-        self.reader.read_line(&mut line).await?;
-
-        let response: Response = serde_json::from_str(&line)
-            .with_context(|| format!("Failed to parse response: {}", line))?;
-
-        // Check for error
-        if let Some(error) = response.error {
-            anyhow::bail!("Daemon error ({}): {}", error.code, error.message);
+        match response {
+            Response::Success { id: resp_id, result } => {
+                if resp_id != id {
+                    anyhow::bail!("Request ID mismatch: sent {}, got {}", id, resp_id);
+                }
+                Ok(result)
+            }
+            Response::Error { id: _, code, message } => {
+                anyhow::bail!("Daemon error ({}): {}", code, message);
+            }
         }
-
-        // Parse result
-        let result = response
-            .result
-            .ok_or_else(|| anyhow::anyhow!("Empty response"))?;
-        serde_json::from_value(result).context("Failed to parse result")
     }
 
     /// Ping the daemon
     pub async fn ping(&mut self) -> Result<String> {
-        self.call("ping", serde_json::Value::Null).await
+        let id = self.request_id.fetch_add(1, Ordering::SeqCst);
+        match self.call(Request::Ping { id }).await? {
+            ResponseResult::Ping(s) => Ok(s),
+            _ => anyhow::bail!("Invalid response type"),
+        }
     }
 
     /// Search for packages
     pub async fn search(&mut self, query: &str, limit: Option<usize>) -> Result<SearchResult> {
-        self.call(
-            "search",
-            serde_json::json!({
-                "query": query,
-                "limit": limit,
-            }),
-        )
-        .await
+        let id = self.request_id.fetch_add(1, Ordering::SeqCst);
+        match self.call(Request::Search { id, query: query.to_string(), limit }).await? {
+            ResponseResult::Search(res) => Ok(res),
+            _ => anyhow::bail!("Invalid response type"),
+        }
     }
 
     /// Get package info
     pub async fn info(&mut self, package: &str) -> Result<DetailedPackageInfo> {
-        self.call(
-            "info",
-            serde_json::json!({
-                "package": package,
-            }),
-        )
-        .await
+        let id = self.request_id.fetch_add(1, Ordering::SeqCst);
+        match self.call(Request::Info { id, package: package.to_string() }).await? {
+            ResponseResult::Info(res) => Ok(res),
+            _ => anyhow::bail!("Invalid response type"),
+        }
     }
 
     /// Get system status
-    pub async fn status(&mut self) -> Result<crate::daemon::protocol::StatusResult> {
-        self.call("status", serde_json::Value::Null).await
+    pub async fn status(&mut self) -> Result<StatusResult> {
+        let id = self.request_id.fetch_add(1, Ordering::SeqCst);
+        match self.call(Request::Status { id }).await? {
+            ResponseResult::Status(res) => Ok(res),
+            _ => anyhow::bail!("Invalid response type"),
+        }
     }
 
     /// Trigger a security audit
     pub async fn security_audit(&mut self) -> Result<SecurityAuditResult> {
-        self.call("security_audit", serde_json::Value::Null).await
+        let id = self.request_id.fetch_add(1, Ordering::SeqCst);
+        match self.call(Request::SecurityAudit { id }).await? {
+            ResponseResult::SecurityAudit(res) => Ok(res),
+            _ => anyhow::bail!("Invalid response type"),
+        }
     }
-}
 
-/// Search result from daemon
-#[derive(Debug, serde::Deserialize)]
-pub struct SearchResult {
-    pub packages: Vec<PackageInfo>,
-    pub total: usize,
-}
-
-/// Package info from daemon (minimal)
-#[derive(Debug, serde::Deserialize)]
-pub struct PackageInfo {
-    pub name: String,
-    pub version: String,
-    pub description: String,
-    pub source: String,
-}
-
-/// Detailed package info from daemon
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct DetailedPackageInfo {
-    pub name: String,
-    pub version: String,
-    pub description: String,
-    pub url: String,
-    pub size: u64,
-    pub download_size: u64,
-    pub repo: String,
-    pub depends: Vec<String>,
-    pub licenses: Vec<String>,
-    pub source: String,
-}
-
-/// Cache statistics
-#[derive(Debug, serde::Deserialize)]
-pub struct CacheStats {
-    pub size: usize,
-    pub max_size: usize,
-}
-
-/// Vulnerability info from daemon
-#[derive(Debug, serde::Deserialize)]
-pub struct Vulnerability {
-    pub id: String,
-    pub summary: String,
-    pub score: Option<String>,
-}
-
-/// Security audit result from daemon
-#[derive(Debug, serde::Deserialize)]
-pub struct SecurityAuditResult {
-    pub total_vulnerabilities: usize,
-    pub high_severity: usize,
-    pub vulnerabilities: Vec<(String, Vec<Vulnerability>)>,
+    /// List explicitly installed packages
+    pub async fn list_explicit(&mut self) -> Result<Vec<String>> {
+        let id = self.request_id.fetch_add(1, Ordering::SeqCst);
+        match self.call(Request::Explicit { id }).await? {
+            ResponseResult::Explicit(res) => Ok(res.packages),
+            _ => anyhow::bail!("Invalid response type"),
+        }
+    }
 }

@@ -203,7 +203,6 @@ pub enum Commands {
     Audit,
 
     /// Run project scripts (e.g., 'omg run build' runs npm/cargo/make)
-    #[command(visible_alias = "run")]
     Run {
         /// The task to run (e.g., build, test, start)
         #[arg(required = true)]

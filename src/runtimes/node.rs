@@ -86,9 +86,34 @@ impl NodeManager {
             .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
     }
 
+    /// Resolve version alias (latest, lts) to actual version number
+    pub async fn resolve_alias(&self, alias: &str) -> Result<String> {
+        let alias = normalize_version(alias);
+
+        if alias == "latest" {
+            let versions = self.list_available().await?;
+            if let Some(v) = versions.first() {
+                return Ok(v.version.trim_start_matches('v').to_string());
+            }
+            anyhow::bail!("No Node.js versions found upstream");
+        }
+
+        if alias == "lts" {
+            let versions = self.list_available().await?;
+            for v in versions {
+                if v.lts.is_string() {
+                    return Ok(v.version.trim_start_matches('v').to_string());
+                }
+            }
+            anyhow::bail!("No LTS version found");
+        }
+
+        Ok(alias)
+    }
+
     /// Install Node.js - PURE RUST, NO SUBPROCESS
     pub async fn install(&self, version: &str) -> Result<()> {
-        let version = normalize_version(version);
+        let version = self.resolve_alias(version).await?;
         let version_dir = self.versions_dir.join(&version);
 
         if version_dir.exists() {

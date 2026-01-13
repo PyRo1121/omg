@@ -3,7 +3,7 @@
 pub mod alpm_direct;
 pub mod alpm_ops;
 pub mod alpm_worker;
-mod arch;
+mod official;
 mod aur;
 pub mod parallel_sync;
 pub mod pkgbuild;
@@ -18,7 +18,7 @@ pub use alpm_ops::{
     clean_cache, display_pkg_info, execute_transaction, get_sync_pkg_info, get_system_status,
     get_update_list, list_orphans_direct, sync_dbs,
 };
-pub use arch::{is_installed, list_explicit, list_orphans, remove_orphans, ArchPackageManager};
+pub use official::{is_installed, list_explicit, list_orphans, remove_orphans, OfficialPackageManager};
 pub use aur::{search_detailed, AurClient, AurPackageDetail};
 pub use parallel_sync::sync_databases_parallel;
 pub use traits::PackageManager;

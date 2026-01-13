@@ -17,7 +17,7 @@ use crate::package_managers::{
     // Direct ALPM functions (10-100x faster)
     search_sync,
     sync_databases_parallel,
-    ArchPackageManager,
+    OfficialPackageManager,
     AurClient,
     PackageManager,
 };
@@ -26,27 +26,60 @@ use crate::package_managers::{
 pub async fn search(query: &str, detailed: bool, interactive: bool) -> Result<()> {
     let start = std::time::Instant::now();
 
-    // FAST: Direct libalpm query instead of spawning pacman
-    let official_packages = search_sync(query).unwrap_or_default();
+    let mut official_packages = Vec::new();
+    let mut aur_packages_detailed = None;
+    let mut aur_packages_basic = None;
+
+    // 1. Try Daemon (Ultra Fast, Cached, Pooled)
+    let mut daemon_used = false;
+    if let Ok(mut client) = DaemonClient::connect().await {
+        if let Ok(res) = client.search(query, Some(50)).await {
+            daemon_used = true;
+            let mut aur_basic = Vec::new();
+
+            for pkg in res.packages {
+                if pkg.source == "official" {
+                    official_packages.push(crate::package_managers::SyncPackage {
+                        name: pkg.name,
+                        version: pkg.version,
+                        description: pkg.description,
+                        repo: "official".to_string(), 
+                        download_size: 0,
+                        installed: false, 
+                    });
+                } else {
+                    aur_basic.push(crate::core::Package {
+                        name: pkg.name,
+                        version: pkg.version,
+                        description: pkg.description,
+                        source: crate::core::PackageSource::Aur,
+                        installed: false,
+                    });
+                }
+            }
+            if !aur_basic.is_empty() {
+                aur_packages_basic = Some(aur_basic);
+            }
+        }
+    }
+
+    if !daemon_used {
+        // 2. Fallback: Direct libalpm query + Network
+        official_packages = search_sync(query).unwrap_or_default();
+
+        // Search AUR
+        if detailed || interactive {
+            let pb = style::spinner("Searching AUR...");
+            let res = search_detailed(query).await.unwrap_or_default();
+            pb.finish_and_clear();
+            aur_packages_detailed = Some(res);
+        } else if !interactive {
+            let aur = AurClient::new();
+            aur_packages_basic = Some(aur.search(query).await.unwrap_or_default());
+        }
+    }
 
     let sync_time = start.elapsed();
-
-    // Search AUR (network call - still async)
-    let aur_packages_detailed = if detailed || interactive {
-        let pb = style::spinner("Searching AUR...");
-        let res = search_detailed(query).await.unwrap_or_default();
-        pb.finish_and_clear();
-        Some(res)
-    } else {
-        None
-    };
-
-    let aur_packages_basic = if !detailed && !interactive {
-        let aur = AurClient::new();
-        Some(aur.search(query).await.unwrap_or_default())
-    } else {
-        None
-    };
 
     if interactive {
         let mut items = Vec::new();
@@ -351,13 +384,13 @@ pub async fn install(packages: &[String], _yes: bool) -> Result<()> {
 
     // Install official packages
     if !official.is_empty() {
-        let pacman = ArchPackageManager::new();
+        let pacman = OfficialPackageManager::new();
         pacman.install(&official).await?;
     }
 
     // Install local packages
     if !local_pkgs.is_empty() {
-        let pacman = ArchPackageManager::new();
+        let pacman = OfficialPackageManager::new();
         pacman.install(&local_pkgs).await?;
     }
 
@@ -380,7 +413,7 @@ pub async fn remove(packages: &[String], recursive: bool) -> Result<()> {
         return Ok(());
     }
 
-    let pacman = ArchPackageManager::new();
+    let pacman = OfficialPackageManager::new();
 
     if recursive {
         println!("{}", style::info("Removing with unused dependencies..."));
@@ -434,7 +467,7 @@ pub async fn update(check_only: bool) -> Result<()> {
             println!("\n{}", style::dim("Run 'omg update' to install"));
         }
     } else {
-        let pacman = ArchPackageManager::new();
+        let pacman = OfficialPackageManager::new();
         pacman.update().await?;
     }
 
@@ -625,7 +658,16 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool) -> Result<(
 pub async fn explicit() -> Result<()> {
     println!("{} Explicitly installed packages:\n", style::header("OMG"));
 
-    let packages = list_explicit().await?;
+    // Try daemon first
+    let packages = if let Ok(mut client) = DaemonClient::connect().await {
+        if let Ok(pkgs) = client.list_explicit().await {
+            pkgs
+        } else {
+            list_explicit().await.unwrap_or_default()
+        }
+    } else {
+        list_explicit().await.unwrap_or_default()
+    };
 
     for pkg in &packages {
         println!("  {}", style::package(pkg));

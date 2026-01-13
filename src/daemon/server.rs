@@ -1,13 +1,17 @@
 //! Daemon server implementation with Unix socket IPC
+//!
+//! Uses LengthDelimitedCodec and Bincode for maximum IPC performance.
 
 use anyhow::Result;
 use std::sync::Arc;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
 use tokio::sync::broadcast;
+use futures::sink::SinkExt;
+use futures::stream::StreamExt;
+use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
 use super::handlers::{handle_request, DaemonState};
-use super::protocol::{Request, Response};
+use super::protocol::Request;
 
 /// Run the daemon server
 pub async fn run(listener: UnixListener) -> Result<()> {
@@ -31,9 +35,8 @@ pub async fn run(listener: UnixListener) -> Result<()> {
                             explicit_packages: explicit,
                             orphan_packages: orphans,
                             updates_available: updates,
-                            security_vulnerabilities: 0, // Updated by security worker
+                            security_vulnerabilities: 0,
                         };
-                        // Update both caches
                         let _ = state_worker.persistent.set_status(res.clone());
                         state_worker.cache.update_status(res);
                         tracing::debug!("Status cache refreshed");
@@ -47,11 +50,7 @@ pub async fn run(listener: UnixListener) -> Result<()> {
         }
     });
 
-    tracing::info!("Daemon ready, waiting for connections...");
-    tracing::info!(
-        "Cache initialized with {} max entries",
-        state.cache.stats().max_size
-    );
+    tracing::info!("Daemon ready, binary IPC enabled");
 
     loop {
         tokio::select! {
@@ -82,50 +81,28 @@ pub async fn run(listener: UnixListener) -> Result<()> {
         }
     }
 
-    tracing::info!("Daemon shutdown complete");
     Ok(())
 }
 
 /// Handle a single client connection
 async fn handle_client(stream: tokio::net::UnixStream, state: Arc<DaemonState>) -> Result<()> {
-    let (reader, mut writer) = stream.into_split();
-    let mut reader = BufReader::new(reader);
-    let mut line = String::new();
+    // Use length-delimited framing for binary messages
+    let mut framed = Framed::new(stream, LengthDelimitedCodec::new());
 
-    tracing::debug!("New client connected");
+    tracing::debug!("New binary client connected");
 
-    while reader.read_line(&mut line).await? > 0 {
-        let trimmed = line.trim();
-
-        // Skip empty lines
-        if trimmed.is_empty() {
-            line.clear();
-            continue;
-        }
-
-        // Parse request
-        let response = match serde_json::from_str::<Request>(trimmed) {
-            Ok(request) => {
-                let _id = request.id;
-                handle_request(Arc::clone(&state), request).await
-            }
-            Err(e) => {
-                tracing::warn!("Failed to parse request: {}", e);
-                Response::error(
-                    0,
-                    super::protocol::error_codes::PARSE_ERROR,
-                    format!("Parse error: {}", e),
-                )
-            }
-        };
-
-        // Send response
-        let response_json = serde_json::to_string(&response)?;
-        writer.write_all(response_json.as_bytes()).await?;
-        writer.write_all(b"\n").await?;
-        writer.flush().await?;
-
-        line.clear();
+    while let Some(request_bytes) = framed.next().await {
+        let bytes = request_bytes?;
+        
+        // Decode request
+        let request: Request = bincode::deserialize(&bytes)?;
+        
+        // Handle request
+        let response = handle_request(Arc::clone(&state), request).await;
+        
+        // Encode and send response
+        let response_bytes = bincode::serialize(&response)?;
+        framed.send(response_bytes.into()).await?;
     }
 
     tracing::debug!("Client disconnected");
