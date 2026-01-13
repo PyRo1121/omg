@@ -11,8 +11,9 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  test:
-    name: Test on Arch Linux
+  # Fast check for syntax errors
+  check:
+    name: Check
     runs-on: ubuntu-latest
     container:
       image: archlinux:latest
@@ -21,14 +22,77 @@ jobs:
         run: |
           pacman -Syu --noconfirm
           pacman -S --noconfirm base-devel git rust cargo pkgconf openssl libarchive clang nodejs
-      
+
       - uses: actions/checkout@v4
-      
       - name: Fix git ownership
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
-      - name: Build
-        run: cargo build --verbose
+      - uses: Swatinem/rust-cache@v2
 
-      - name: Run tests
+      - name: Cargo Check
+        run: cargo check --verbose
+
+  # Run Integration Tests
+  test:
+    name: Test Suite
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+    steps:
+      - name: Install System Dependencies
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm base-devel git rust cargo pkgconf openssl libarchive clang nodejs
+
+      - uses: actions/checkout@v4
+      - name: Fix git ownership
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      
+      - uses: Swatinem/rust-cache@v2
+      
+      - name: Run Tests
         run: cargo test --verbose
+
+  # Linting with Clippy
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+    steps:
+      - name: Install System Dependencies
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm base-devel git rust cargo pkgconf openssl libarchive clang nodejs
+
+      - uses: actions/checkout@v4
+      - name: Fix git ownership
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      
+      - uses: Swatinem/rust-cache@v2
+      
+      - name: Run Clippy
+        run: cargo clippy -- -D warnings
+
+  # Formatting (runs on Ubuntu, fast)
+  fmt:
+    name: Rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Check Formatting
+        run: cargo fmt --all -- --check
+
+  # Spell Check
+  typos:
+    name: Spell Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: crate-ci/typos@master
+        with:
+          config: ./_typos.toml

@@ -1,0 +1,21 @@
+version: 2
+updates:
+  # Maintain Cargo.toml dependencies
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    groups:
+      # Group all minor/patch updates into one PR to reduce noise
+      dependencies:
+        patterns:
+          - "*"
+    # Allow security updates to happen immediately
+    open-pull-requests-limit: 10
+    
+  # Maintain GitHub Actions versions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
