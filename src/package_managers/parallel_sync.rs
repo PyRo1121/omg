@@ -7,10 +7,11 @@ use anyhow::{Context, Result};
 use colored::Colorize;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use reqwest::Client;
-use std::fs::{self, File};
-use std::io::Write;
+use std::fs;
 use std::path::PathBuf;
 use std::time::Duration;
+use tokio::fs::File;
+use tokio::io::AsyncWriteExt;
 
 /// Standard Arch Linux repositories
 const REPOS: &[&str] = &["core", "extra", "multilib"];
@@ -51,7 +52,7 @@ async fn download_db(client: &Client, url: &str, dest: &PathBuf, pb: &ProgressBa
     let repo_name = dest.file_stem().unwrap().to_string_lossy().to_string();
     pb.set_message(format!("{}", repo_name));
 
-    let response = client
+    let mut response = client
         .get(url)
         .send()
         .await
@@ -76,14 +77,18 @@ async fn download_db(client: &Client, url: &str, dest: &PathBuf, pb: &ProgressBa
     // Download to temp file first
     let temp_path = dest.with_extension("db.part");
     let mut file = File::create(&temp_path)
+        .await
         .with_context(|| format!("Failed to create {}", temp_path.display()))?;
 
-    let bytes = response.bytes().await?;
-    pb.set_position(bytes.len() as u64);
-    file.write_all(&bytes)?;
+    while let Some(chunk) = response.chunk().await? {
+        file.write_all(&chunk).await?;
+        pb.inc(chunk.len() as u64);
+    }
+
+    file.flush().await?;
 
     // Atomically move to final location
-    fs::rename(&temp_path, dest)?;
+    tokio::fs::rename(&temp_path, dest).await?;
 
     pb.finish_with_message(format!("{} ✓", repo_name));
     Ok(())

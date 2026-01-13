@@ -9,6 +9,13 @@ use tokio::net::UnixListener;
 
 use omg_lib::daemon::server;
 
+#[cfg(not(target_env = "msvc"))]
+use tikv_jemallocator::Jemalloc;
+
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static GLOBAL: Jemalloc = Jemalloc;
+
 /// OMG Daemon - Background service for fast package operations
 #[derive(Parser, Debug)]
 #[command(name = "omgd")]

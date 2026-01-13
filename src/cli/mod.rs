@@ -4,9 +4,13 @@
 
 mod args;
 pub mod commands;
+pub mod doctor;
 pub mod env;
+pub mod new;
 pub mod packages;
 pub mod runtimes;
 pub mod security;
+pub mod style;
+pub mod tool;
 
-pub use args::{Cli, Commands, EnvCommands};
+pub use args::{Cli, Commands, EnvCommands, ToolCommands};

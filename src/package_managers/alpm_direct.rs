@@ -28,7 +28,7 @@ pub fn search_local(query: &str) -> Result<Vec<LocalPackage>> {
         .pkgs()
         .iter()
         .filter(|pkg| {
-            pkg.name().to_lowercase().contains(&query_lower)
+            pkg.name().contains(&query_lower)
                 || pkg
                     .desc()
                     .map(|d| d.to_lowercase().contains(&query_lower))
@@ -57,7 +57,7 @@ pub fn search_sync(query: &str) -> Result<Vec<SyncPackage>> {
 
     for db in handle.syncdbs() {
         for pkg in db.pkgs() {
-            if pkg.name().to_lowercase().contains(&query_lower)
+            if pkg.name().contains(&query_lower)
                 || pkg
                     .desc()
                     .map(|d| d.to_lowercase().contains(&query_lower))

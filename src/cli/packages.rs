@@ -2,6 +2,7 @@ use anyhow::Result;
 use colored::Colorize;
 use dialoguer::{theme::ColorfulTheme, Confirm, MultiSelect};
 
+use crate::cli::style;
 use crate::core::client::DaemonClient;
 use crate::core::security::SecurityPolicy;
 use crate::package_managers::{
@@ -32,7 +33,10 @@ pub async fn search(query: &str, detailed: bool, interactive: bool) -> Result<()
 
     // Search AUR (network call - still async)
     let aur_packages_detailed = if detailed || interactive {
-        Some(search_detailed(query).await.unwrap_or_default())
+        let pb = style::spinner("Searching AUR...");
+        let res = search_detailed(query).await.unwrap_or_default();
+        pb.finish_and_clear();
+        Some(res)
     } else {
         None
     };
@@ -53,11 +57,11 @@ pub async fn search(query: &str, detailed: bool, interactive: bool) -> Result<()
             let status = if pkg.installed { "[installed]" } else { "" };
             items.push(format!(
                 "{} {} {} ({}) - {}",
-                pkg.name.white().bold(),
-                pkg.version.dimmed(),
-                status.cyan(),
-                pkg.repo.blue(),
-                truncate(&pkg.description, 40).dimmed()
+                style::package(&pkg.name),
+                style::version(&pkg.version),
+                status,
+                style::info(&pkg.repo),
+                style::dim(&truncate(&pkg.description, 40))
             ));
             pkgs_to_install.push(pkg.name.clone());
         }
@@ -67,10 +71,10 @@ pub async fn search(query: &str, detailed: bool, interactive: bool) -> Result<()
             for pkg in aur {
                 items.push(format!(
                     "{} {} ({}) - {}",
-                    pkg.name.white().bold(),
-                    pkg.version.dimmed(),
-                    "AUR".yellow(),
-                    truncate(&pkg.description.clone().unwrap_or_default(), 40).dimmed()
+                    style::package(&pkg.name),
+                    style::version(&pkg.version),
+                    style::warning("AUR"),
+                    style::dim(&truncate(&pkg.description.clone().unwrap_or_default(), 40))
                 ));
                 pkgs_to_install.push(pkg.name.clone());
             }
@@ -78,28 +82,31 @@ pub async fn search(query: &str, detailed: bool, interactive: bool) -> Result<()
             for pkg in aur {
                 items.push(format!(
                     "{} {} ({}) - {}",
-                    pkg.name.white().bold(),
-                    pkg.version.dimmed(),
-                    "AUR".yellow(),
-                    truncate(&pkg.description, 40).dimmed()
+                    style::package(&pkg.name),
+                    style::version(&pkg.version),
+                    style::warning("AUR"),
+                    style::dim(&truncate(&pkg.description, 40))
                 ));
                 pkgs_to_install.push(pkg.name.clone());
             }
         }
 
         if items.is_empty() {
-            println!("{} No packages found for '{}'", "✗".red(), query);
+            println!(
+                "{}",
+                style::error(&format!("No packages found for '{}'", query))
+            );
             return Ok(());
         }
 
-        println!("{} Select packages to install:", "→".cyan().bold());
+        println!("{}", style::arrow("Select packages to install:"));
 
         let selections = MultiSelect::with_theme(&ColorfulTheme::default())
             .items(&items)
             .interact()?;
 
         if selections.is_empty() {
-            println!("{} No packages selected", "→".dimmed());
+            println!("{}", style::dim("No packages selected"));
             return Ok(());
         }
 
@@ -115,31 +122,34 @@ pub async fn search(query: &str, detailed: bool, interactive: bool) -> Result<()
     if !official_packages.is_empty() {
         println!(
             "{} {} results ({:.1}ms)\n",
-            "OMG".cyan().bold(),
+            style::header("OMG"),
             official_packages.len(),
             sync_time.as_secs_f64() * 1000.0
         );
 
-        println!("{}", "Official Repositories:".green().bold());
+        println!("{}", style::header("Official Repositories"));
         for pkg in official_packages.iter().take(20) {
             let installed = if pkg.installed {
-                " [installed]".dimmed()
+                style::dim(" [installed]")
             } else {
                 "".into()
             };
             println!(
                 "  {} {} ({}) - {}{}",
-                pkg.name.white().bold(),
-                pkg.version.dimmed(),
-                pkg.repo.cyan(),
-                truncate(&pkg.description, 50).dimmed(),
+                style::package(&pkg.name),
+                style::version(&pkg.version),
+                style::info(&pkg.repo),
+                style::dim(&truncate(&pkg.description, 50)),
                 installed
             );
         }
         if official_packages.len() > 20 {
             println!(
-                "  {} more packages...",
-                format!("(+{})", official_packages.len() - 20).dimmed()
+                "  {}",
+                style::dim(&format!(
+                    "(+{}) more packages...",
+                    official_packages.len() - 20
+                ))
             );
         }
         println!();
@@ -148,53 +158,57 @@ pub async fn search(query: &str, detailed: bool, interactive: bool) -> Result<()
     // Search AUR (cached result)
     if let Some(aur_packages) = aur_packages_detailed {
         if !aur_packages.is_empty() {
-            println!("{}", "AUR (Arch User Repository):".yellow().bold());
+            println!("{}", style::header("AUR (Arch User Repository)"));
             for pkg in aur_packages.iter().take(10) {
                 let out_of_date = if pkg.out_of_date.is_some() {
-                    " [OUT OF DATE]".red()
+                    style::error(" [OUT OF DATE]")
                 } else {
                     "".into()
                 };
                 println!(
                     "  {} {} - {} {} {}{}",
-                    pkg.name.white().bold(),
-                    pkg.version.dimmed(),
-                    format!("↑{}", pkg.num_votes).blue(),
-                    format!("{:.1}%", pkg.popularity).cyan(),
-                    truncate(&pkg.description.clone().unwrap_or_default(), 40).dimmed(),
+                    style::package(&pkg.name),
+                    style::version(&pkg.version),
+                    style::info(&format!("↑{}", pkg.num_votes)),
+                    style::info(&format!("{:.1}%", pkg.popularity)),
+                    style::dim(&truncate(&pkg.description.clone().unwrap_or_default(), 40)),
                     out_of_date
                 );
             }
             if aur_packages.len() > 10 {
                 println!(
-                    "  {} more packages...",
-                    format!("(+{})", aur_packages.len() - 10).dimmed()
+                    "  {}",
+                    style::dim(&format!("(+{}) more packages...", aur_packages.len() - 10))
                 );
             }
             println!();
         }
     } else if let Some(aur_packages) = aur_packages_basic {
         if !aur_packages.is_empty() {
-            println!("{}", "AUR (Arch User Repository):".yellow().bold());
+            println!("{}", style::header("AUR (Arch User Repository)"));
             for pkg in aur_packages.iter().take(10) {
                 println!(
                     "  {} {} - {}",
-                    pkg.name.white().bold(),
-                    pkg.version.dimmed(),
-                    truncate(&pkg.description, 55).dimmed()
+                    style::package(&pkg.name),
+                    style::version(&pkg.version),
+                    style::dim(&truncate(&pkg.description, 55))
                 );
             }
             if aur_packages.len() > 10 {
                 println!(
-                    "  {} more packages...",
-                    format!("(+{})", aur_packages.len() - 10).dimmed()
+                    "  {}",
+                    style::dim(&format!("(+{}) more packages...", aur_packages.len() - 10))
                 );
             }
             println!();
         }
     }
 
-    println!("{} Use 'omg info <package>' for details", "→".dimmed());
+    println!(
+        "{} {}",
+        style::arrow("Use"),
+        style::command("omg info <package> for details")
+    );
 
     Ok(())
 }
@@ -202,7 +216,7 @@ pub async fn search(query: &str, detailed: bool, interactive: bool) -> Result<()
 /// Install packages (auto-detects AUR) with Graded Security
 pub async fn install(packages: &[String], _yes: bool) -> Result<()> {
     if packages.is_empty() {
-        println!("{} No packages specified", "✗".red());
+        println!("{}", style::error("No packages specified"));
         return Ok(());
     }
 
@@ -210,9 +224,9 @@ pub async fn install(packages: &[String], _yes: bool) -> Result<()> {
 
     println!(
         "{} Analyzing {} package(s) with {} model...\n",
-        "OMG".cyan().bold(),
+        style::header("OMG"),
         packages.len(),
-        "Graded Security".green()
+        style::success("Graded Security")
     );
 
     let aur = AurClient::new();
@@ -248,7 +262,8 @@ pub async fn install(packages: &[String], _yes: bool) -> Result<()> {
                     if Confirm::with_theme(&ColorfulTheme::default())
                         .with_prompt(format!(
                             "Package '{}' not found. Did you mean '{}'?",
-                            target_pkg_name, best_match.name
+                            style::package(&target_pkg_name),
+                            style::package(&best_match.name)
                         ))
                         .default(true)
                         .interact()?
@@ -263,7 +278,8 @@ pub async fn install(packages: &[String], _yes: bool) -> Result<()> {
                             if Confirm::with_theme(&ColorfulTheme::default())
                                 .with_prompt(format!(
                                     "Package '{}' not found. Did you mean '{}' (AUR)?",
-                                    target_pkg_name, best_match.name
+                                    style::package(&target_pkg_name),
+                                    style::package(&best_match.name)
                                 ))
                                 .default(true)
                                 .interact()?
@@ -295,38 +311,41 @@ pub async fn install(packages: &[String], _yes: bool) -> Result<()> {
 
         // Check policy
         if let Err(e) = policy.check_package(&target_pkg_name, is_aur, license.as_deref(), grade) {
-            println!("{} Security Block: {}", "✗".red().bold(), e);
+            println!("{}", style::error(&format!("Security Block: {}", e)));
             anyhow::bail!("Installation aborted due to security policy");
         }
 
         let grade_colored = match grade {
-            crate::core::security::SecurityGrade::Locked => grade.to_string().green().bold(),
-            crate::core::security::SecurityGrade::Verified => grade.to_string().cyan(),
-            crate::core::security::SecurityGrade::Community => grade.to_string().yellow(),
-            crate::core::security::SecurityGrade::Risk => grade.to_string().red().blink(),
+            crate::core::security::SecurityGrade::Locked => style::success(&grade.to_string()),
+            crate::core::security::SecurityGrade::Verified => style::info(&grade.to_string()),
+            crate::core::security::SecurityGrade::Community => style::warning(&grade.to_string()),
+            crate::core::security::SecurityGrade::Risk => style::error(&grade.to_string()),
         };
 
         if is_official {
             official.push(target_pkg_name.clone());
             println!(
                 "{} Official: {} [{}]",
-                "→".blue(),
-                target_pkg_name.white().bold(),
+                style::arrow("→"),
+                style::package(&target_pkg_name),
                 grade_colored
             );
         } else if is_aur {
             aur_pkgs.push(target_pkg_name.clone());
             println!(
                 "{} AUR:      {} [{}]",
-                "→".yellow(),
-                target_pkg_name.white().bold(),
+                style::warning("→"),
+                style::package(&target_pkg_name),
                 grade_colored
             );
         }
     }
 
     if !not_found.is_empty() {
-        println!("{} Not found: {}", "✗".red(), not_found.join(", "));
+        println!(
+            "{}",
+            style::error(&format!("Not found: {}", not_found.join(", ")))
+        );
     }
     println!();
 
@@ -347,8 +366,8 @@ pub async fn install(packages: &[String], _yes: bool) -> Result<()> {
         aur.install(pkg).await?;
     }
 
-    if official.is_empty() && aur_pkgs.is_empty() {
-        println!("{} No packages to install", "→".dimmed());
+    if official.is_empty() && aur_pkgs.is_empty() && local_pkgs.is_empty() {
+        println!("{}", style::dim("No packages to install"));
     }
 
     Ok(())
@@ -357,18 +376,14 @@ pub async fn install(packages: &[String], _yes: bool) -> Result<()> {
 /// Remove packages
 pub async fn remove(packages: &[String], recursive: bool) -> Result<()> {
     if packages.is_empty() {
-        println!("{} No packages specified", "✗".red());
+        println!("{}", style::error("No packages specified"));
         return Ok(());
     }
 
     let pacman = ArchPackageManager::new();
 
     if recursive {
-        // Remove with dependencies: -Rs
-        println!(
-            "{} Removing with unused dependencies...\n",
-            "OMG".cyan().bold()
-        );
+        println!("{}", style::info("Removing with unused dependencies..."));
     }
 
     pacman.remove(packages).await?;
@@ -379,17 +394,19 @@ pub async fn remove(packages: &[String], recursive: bool) -> Result<()> {
 /// Update all packages
 pub async fn update(check_only: bool) -> Result<()> {
     if check_only {
-        println!("{} Checking for updates...\n", "OMG".cyan().bold());
-
-        // LIGHTNING FAST: Direct ALPM update check (no subprocess)
+        let pb = style::spinner("Checking for updates...");
         let update_list = get_update_list().unwrap_or_default();
+        pb.finish_and_clear();
 
         if update_list.is_empty() {
-            println!("{} System is up to date!", "✓".green());
+            println!("{}", style::success("System is up to date!"));
         } else {
-            println!("{} {} updates available:\n", "→".blue(), update_list.len());
+            println!(
+                "{} {} updates available:",
+                style::arrow("→"),
+                update_list.len()
+            );
             for (name, old_ver, new_ver) in &update_list {
-                // Determine update type (Major/Minor/Patch)
                 let update_label = match (
                     semver::Version::parse(old_ver.trim_start_matches(|c: char| !c.is_numeric())),
                     semver::Version::parse(new_ver.trim_start_matches(|c: char| !c.is_numeric())),
@@ -403,18 +420,18 @@ pub async fn update(check_only: bool) -> Result<()> {
                             "patch".green()
                         }
                     }
-                    _ => "update".dimmed(), // Fallback for non-semver
+                    _ => "update".dimmed(),
                 };
 
                 println!(
                     "  {:>8} {} {} → {}",
                     update_label,
-                    name.white().bold(),
-                    old_ver.dimmed(),
-                    new_ver.green()
+                    style::package(name),
+                    style::dim(old_ver),
+                    style::version(new_ver)
                 );
             }
-            println!("\n{} Run 'omg update' to install", "→".dimmed());
+            println!("\n{}", style::dim("Run 'omg update' to install"));
         }
     } else {
         let pacman = ArchPackageManager::new();
@@ -429,8 +446,8 @@ pub async fn info(package: &str) -> Result<()> {
     let start = std::time::Instant::now();
     println!(
         "{} Package info for '{}':\n",
-        "OMG".cyan().bold(),
-        package.yellow()
+        style::header("OMG"),
+        style::package(package)
     );
 
     // 1. Try daemon first (ULTRA FAST - <10ms)
@@ -438,35 +455,39 @@ pub async fn info(package: &str) -> Result<()> {
         if let Ok(info) = client.info(package).await {
             println!(
                 "{} {} ({:.1}ms)\n",
-                "OMG".cyan().bold(),
-                "Daemon result".dimmed(),
+                style::header("OMG"),
+                style::dim("Daemon result"),
                 start.elapsed().as_secs_f64() * 1000.0
             );
 
-            println!("{} {}", info.name.white().bold(), info.version.green());
-            println!("  {} {}", "Description:".dimmed(), info.description);
+            println!(
+                "{} {}",
+                style::package(&info.name),
+                style::version(&info.version)
+            );
+            println!("  {} {}", style::dim("Description:"), info.description);
             let source_label = if info.source == "official" {
-                format!("Official repository ({})", info.repo.cyan()).green()
+                format!("Official repository ({})", style::info(&info.repo))
             } else {
-                "AUR (Arch User Repository)".yellow()
+                style::warning("AUR (Arch User Repository)")
             };
-            println!("  {} {}", "Source:".dimmed(), source_label);
-            println!("  {} {}", "URL:".dimmed(), info.url);
+            println!("  {} {}", style::dim("Source:"), source_label);
+            println!("  {} {}", style::dim("URL:"), style::url(&info.url));
             println!(
                 "  {} {:.2} MB",
-                "Size:".dimmed(),
+                style::dim("Size:"),
                 info.size as f64 / 1024.0 / 1024.0
             );
             println!(
                 "  {} {:.2} MB",
-                "Download:".dimmed(),
+                style::dim("Download:"),
                 info.download_size as f64 / 1024.0 / 1024.0
             );
             if !info.licenses.is_empty() {
-                println!("  {} {}", "License:".dimmed(), info.licenses.join(", "));
+                println!("  {} {}", style::dim("License:"), info.licenses.join(", "));
             }
             if !info.depends.is_empty() {
-                println!("  {} {}", "Depends:".dimmed(), info.depends.join(", "));
+                println!("  {} {}", style::dim("Depends:"), info.depends.join(", "));
             }
             return Ok(());
         }
@@ -477,45 +498,63 @@ pub async fn info(package: &str) -> Result<()> {
         display_pkg_info(&info);
         println!(
             "\n  {} Official repository ({})",
-            "Source:".green(),
-            info.repo.cyan()
+            style::success("Source:"),
+            style::info(&info.repo)
         );
         return Ok(());
     }
 
     // 3. Try AUR directly as final fallback
+    let pb = style::spinner("Searching AUR...");
     let details = search_detailed(package).await.ok();
+    pb.finish_and_clear();
+
     if let Some(pkgs) = details {
         if let Some(pkg) = pkgs.into_iter().find(|p| p.name == package) {
-            println!("  {} {}", "Name:".yellow(), pkg.name.white().bold());
-            println!("  {} {}", "Version:".yellow(), pkg.version);
             println!(
                 "  {} {}",
-                "Description:".yellow(),
+                style::warning("Name:"),
+                style::package(&pkg.name)
+            );
+            println!(
+                "  {} {}",
+                style::warning("Version:"),
+                style::version(&pkg.version)
+            );
+            println!(
+                "  {} {}",
+                style::warning("Description:"),
                 pkg.description.unwrap_or_default()
             );
             println!(
                 "  {} {}",
-                "Maintainer:".yellow(),
+                style::warning("Maintainer:"),
                 pkg.maintainer.unwrap_or("orphan".to_string())
             );
-            println!("  {} {}", "Votes:".yellow(), pkg.num_votes);
-            println!("  {} {:.2}%", "Popularity:".yellow(), pkg.popularity);
+            println!("  {} {}", style::warning("Votes:"), pkg.num_votes);
+            println!("  {} {:.2}%", style::warning("Popularity:"), pkg.popularity);
             if pkg.out_of_date.is_some() {
-                println!("  {} {}", "Status:".red(), "OUT OF DATE".red().bold());
+                println!(
+                    "  {} {}",
+                    style::error("Status:"),
+                    style::error("OUT OF DATE")
+                );
             }
-            println!("\n  {} AUR (Arch User Repository)", "Source:".yellow());
+            println!("\n  {}", style::warning("AUR (Arch User Repository)"));
             return Ok(());
         }
     }
 
-    println!("{} Package '{}' not found", "✗".red(), package);
+    println!(
+        "{}",
+        style::error(&format!("Package '{}' not found", package))
+    );
     Ok(())
 }
 
 /// Clean up orphans and caches
 pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool) -> Result<()> {
-    println!("{} Cleaning up...\n", "OMG".cyan().bold());
+    println!("{} Cleaning up...\n", style::header("OMG"));
 
     let do_orphans = orphans || all;
     let do_cache = cache || all;
@@ -527,26 +566,26 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool) -> Result<(
         if !orphan_list.is_empty() {
             println!(
                 "{} {} orphan packages can be removed",
-                "→".blue(),
+                style::arrow("→"),
                 orphan_list.len()
             );
-            println!("  Run: {}", "omg clean --orphans".dimmed());
+            println!("  Run: {}", style::command("omg clean --orphans"));
         }
 
         println!(
             "{} To clear package cache: {}",
-            "→".blue(),
-            "omg clean --cache".dimmed()
+            style::arrow("→"),
+            style::command("omg clean --cache")
         );
         println!(
             "{} To clear AUR builds: {}",
-            "→".blue(),
-            "omg clean --aur".dimmed()
+            style::arrow("→"),
+            style::command("omg clean --aur")
         );
         println!(
             "{} To clean everything: {}",
-            "→".blue(),
-            "omg clean --all".dimmed()
+            style::arrow("→"),
+            style::command("omg clean --all")
         );
         return Ok(());
     }
@@ -556,19 +595,19 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool) -> Result<(
     }
 
     if do_cache {
-        println!("{} Clearing package cache...", "→".blue());
+        println!("{}", style::info("Clearing package cache..."));
         match clean_cache(1) {
             // Keep 1 version by default
             Ok((removed, freed)) => {
                 println!(
                     "{} Removed {} files, freed {:.2} MB",
-                    "✓".green(),
+                    style::success("✓"),
                     removed,
                     freed as f64 / 1024.0 / 1024.0
                 );
             }
             Err(e) => {
-                println!("{} Failed to clear cache: {}", "✗".red(), e);
+                println!("{}", style::error(&format!("Failed to clear cache: {}", e)));
             }
         }
     }
@@ -578,21 +617,21 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool) -> Result<(
         aur_client.clean_all()?;
     }
 
-    println!("\n{} Cleanup complete!", "✓".green());
+    println!("\n{}", style::success("Cleanup complete!"));
     Ok(())
 }
 
 /// List explicitly installed packages
 pub async fn explicit() -> Result<()> {
-    println!("{} Explicitly installed packages:\n", "OMG".cyan().bold());
+    println!("{} Explicitly installed packages:\n", style::header("OMG"));
 
     let packages = list_explicit().await?;
 
     for pkg in &packages {
-        println!("  {}", pkg);
+        println!("  {}", style::package(pkg));
     }
 
-    println!("\n{} {} packages", "Total:".green(), packages.len());
+    println!("\n{} {} packages", style::success("Total:"), packages.len());
     Ok(())
 }
 

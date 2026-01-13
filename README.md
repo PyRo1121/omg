@@ -32,6 +32,41 @@ OMG doesn't just install; it audits.
 - **Drift Protection**: `omg env check` alerts you the moment your local environment diverges from the project's `omg.lock`.
 - **Gist Integration**: Share your exact setup instantly with `omg env share` and `omg env sync <url>`.
 
+### 🏃 Unified Task Runner
+Stop guessing if it's `npm run`, `cargo run`, `make`, `maven`, or `gradle`.
+
+```bash
+# Automatically detects package.json, Cargo.toml, Makefile, pyproject.toml, etc.
+omg run build
+
+# Passes arguments through
+omg run test -- --watch
+```
+
+OMG automatically **activates the correct runtime version** (e.g., Python virtual env, Node version from `.nvmrc`) before running the task.
+
+### 🏗️ Instant Scaffolding
+Start new projects with best practices built-in.
+
+```bash
+# Create a React project (Vite + TypeScript) and lock Node version
+omg new react my-app
+
+# Create a Rust CLI and lock Rust version
+omg new rust my-cli
+```
+
+### 🧰 Cross-Ecosystem Tools
+Install dev tools (`ripgrep`, `jq`, `tldr`) without worrying about *how*.
+
+```bash
+# Installs from Pacman (system) if available, or Cargo/NPM (isolated) if not.
+omg tool install ripgrep
+
+# OMG manages the isolation and linking automatically.
+omg tool list
+```
+
 ### 🧠 Intelligent Completions
 - **Fuzzy Matching**: Powered by `nucleo-matcher`. Type `omg i frfx` and get `firefox`.
 - **Context Aware**: Tab-completions prioritize versions and tools based on your current project directory.
@@ -67,17 +102,26 @@ cp target/release/omg ~/.local/bin/
 
 ### 2. Basic Commands
 ```bash
+# Interactive Search (Select packages to install)
+omg search vim -i
+
+# Smart Install (Auto-corrects typos)
+omg install vscodium-bin
+
 # Install a system package (Official or AUR)
 omg install visual-studio-code-bin
 
 # Switch to a specific Node.js version
 omg use node 20.10.0
 
-# Automatically use the version defined in your project
-omg use python
+# Run project scripts (context-aware)
+omg run dev
 
-# Run a security audit
-omg audit
+# Check system health
+omg doctor
+
+# Install universal tools
+omg tool install ripgrep
 ```
 
 ### 3. Team Sync
@@ -118,10 +162,10 @@ Communication happens over a high-speed Unix Domain Socket with a JSON-RPC proto
 
 We are building the last dev tool you'll ever need.
 
-- [ ] **`omg run <task>`**: Unified task runner. Detects project type (`package.json`, `Cargo.toml`, `Makefile`) and runs scripts (e.g., `omg run test` runs `cargo test` or `npm test`) with the correct runtime version pre-loaded.
-- [ ] **`omg new <stack>`**: Instant project scaffolding. `omg new react`, `omg new rust-cli`, or `omg new python-flask` sets up a best-practice environment with locked runtime versions.
-- [ ] **`omg doctor`**: System health check. Verifies PATHs, mirrors, PGP keys, and runtime integrity to debug environment issues instantly.
-- [ ] **`omg tool`**: Cross-ecosystem binary manager. Install dev tools (`ripgrep`, `jq`, `tldr`) from any source (Pacman, NPM, Cargo, Pip) into a single managed path.
+- [x] **`omg run <task>`**: Unified task runner. Detects 10+ project types (`package.json`, `Cargo.toml`, `Makefile`, `pyproject.toml`, etc.) and runs scripts with the correct runtime version pre-loaded.
+- [x] **`omg new <stack>`**: Instant project scaffolding. `omg new react`, `omg new rust-cli`, or `omg new python-flask` sets up a best-practice environment with locked runtime versions.
+- [x] **`omg doctor`**: System health check. Verifies PATHs, mirrors, PGP keys, and runtime integrity to debug environment issues instantly.
+- [x] **`omg tool`**: Cross-ecosystem binary manager. Install dev tools (`ripgrep`, `jq`, `tldr`) from any source (Pacman, NPM, Cargo, Pip) into a single managed path.
 
 ---
 

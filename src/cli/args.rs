@@ -196,6 +196,9 @@ pub enum Commands {
     /// Show system status and statistics
     Status,
 
+    /// Check system health and environment configuration
+    Doctor,
+
     /// Perform a security audit for vulnerabilities
     Audit,
 
@@ -209,6 +212,24 @@ pub enum Commands {
         /// Arguments to pass to the task
         #[arg(last = true)]
         args: Vec<String>,
+    },
+
+    /// Create a new project from a template
+    #[command(visible_alias = "create")]
+    New {
+        /// Stack template (rust, react, node, python, go)
+        #[arg(required = true)]
+        stack: String,
+
+        /// Project name
+        #[arg(required = true)]
+        name: String,
+    },
+
+    /// Manage cross-ecosystem dev tools (e.g., ripgrep, jq, tldr)
+    Tool {
+        #[command(subcommand)]
+        command: ToolCommands,
     },
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -241,6 +262,19 @@ pub enum EnvCommands {
         /// Gist URL or ID
         url: String,
     },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ToolCommands {
+    /// Install a dev tool from any source (Pacman, Cargo, NPM, Pip, Go)
+    Install {
+        /// Tool name (e.g. ripgrep, jq, tldr)
+        name: String,
+    },
+    /// List installed tools
+    List,
+    /// Remove a tool
+    Remove { name: String },
 }
 
 #[cfg(test)]

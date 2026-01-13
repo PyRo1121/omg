@@ -5,13 +5,23 @@
 use anyhow::Result;
 use clap::Parser;
 
+use omg_lib::cli::doctor;
 use omg_lib::cli::env;
+use omg_lib::cli::new;
 use omg_lib::cli::packages;
 use omg_lib::cli::runtimes;
 use omg_lib::cli::security;
-use omg_lib::cli::{commands, Cli, Commands, EnvCommands};
+use omg_lib::cli::tool;
+use omg_lib::cli::{commands, Cli, Commands, EnvCommands, ToolCommands};
 use omg_lib::core::{elevate_if_needed, is_root, task_runner};
 use omg_lib::hooks;
+
+#[cfg(not(target_env = "msvc"))]
+use tikv_jemallocator::Jemalloc;
+
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static GLOBAL: Jemalloc = Jemalloc;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -118,12 +128,29 @@ async fn main() -> Result<()> {
         Commands::Status => {
             commands::status().await?;
         }
+        Commands::Doctor => {
+            doctor::run().await?;
+        }
         Commands::Audit => {
             security::audit().await?;
         }
         Commands::Run { task, args } => {
             task_runner::run_task(&task, &args)?;
         }
+        Commands::New { stack, name } => {
+            new::run(&stack, &name).await?;
+        }
+        Commands::Tool { command } => match command {
+            ToolCommands::Install { name } => {
+                tool::install(&name).await?;
+            }
+            ToolCommands::List => {
+                tool::list().await?;
+            }
+            ToolCommands::Remove { name } => {
+                tool::remove(&name).await?;
+            }
+        },
         Commands::Env { command } => match command {
             EnvCommands::Capture => {
                 env::capture().await?;
