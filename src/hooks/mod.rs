@@ -31,6 +31,17 @@ const VERSION_FILES: &[(&str, &str)] = &[
     (".tool-versions", "multi"),
 ];
 
+/// Normalize runtime name aliases to canonical names
+fn normalize_runtime_name(name: &str) -> String {
+    match name.to_lowercase().as_str() {
+        "nodejs" | "node" => "node".to_string(),
+        "python3" | "python" => "python".to_string(),
+        "golang" | "go" => "go".to_string(),
+        "rustlang" | "rust" => "rust".to_string(),
+        other => other.to_string(),
+    }
+}
+
 /// Print the shell hook script to be added to shell rc file
 ///
 /// Usage: eval "$(omg hook zsh)"
@@ -106,7 +117,7 @@ fn detect_versions(start: &Path) -> HashMap<String, String> {
                         for line in content.lines() {
                             let parts: Vec<&str> = line.split_whitespace().collect();
                             if parts.len() >= 2 {
-                                let rt = parts[0].to_lowercase();
+                                let rt = normalize_runtime_name(parts[0]);
                                 let ver = parts[1].to_string();
                                 if !versions.contains_key(&rt) {
                                     versions.insert(rt, ver);

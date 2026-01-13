@@ -2,13 +2,20 @@
 //!
 //! Uses libalpm directly for 10-100x faster queries compared to spawning pacman.
 
-use alpm::{Alpm, PackageReason};
+use alpm::{Alpm, PackageReason, SigLevel};
 use anyhow::{Context, Result};
 
-/// Create a fresh ALPM handle for queries
+/// Create a fresh ALPM handle for queries with sync DBs registered
 /// Creates per-call since libalpm isn't thread-safe by design
 fn create_handle() -> Result<Alpm> {
-    Alpm::new("/", "/var/lib/pacman").context("Failed to initialize ALPM handle")
+    let alpm = Alpm::new("/", "/var/lib/pacman").context("Failed to initialize ALPM handle")?;
+
+    // Register sync databases (core, extra, multilib, etc.)
+    for db_name in &["core", "extra", "multilib", "omarchy"] {
+        let _ = alpm.register_syncdb(*db_name, SigLevel::USE_DEFAULT);
+    }
+
+    Ok(alpm)
 }
 
 /// Search local database (installed packages) - INSTANT
