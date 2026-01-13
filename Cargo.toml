@@ -29,7 +29,7 @@ clap_complete = "4.5"
 
 # Error handling
 anyhow = "1.0"
-thiserror = "1.0"
+thiserror = "2.0"
 
 # Async runtime
 tokio = { version = "1.35", features = ["full"] }
@@ -38,11 +38,11 @@ async-trait = "0.1"
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-toml = "0.8"
-bincode = "1.3"
+toml = "0.9"
+bincode = "3.0"
 
 # HTTP client
-reqwest = { version = "0.12", features = ["json", "stream"] }
+reqwest = { version = "0.13", features = ["json", "stream"] }
 
 # System info
 num_cpus = "1.16"
@@ -54,16 +54,16 @@ tokio-util = { version = "0.7", features = ["io"] }
 async-compression = { version = "0.4", features = ["tokio", "gzip", "xz", "zstd"] }
 tar = "0.4"
 flate2 = "1.0"
-zip = "2.1"
+zip = "7.0"
 xz2 = "0.1"
 regex = "1.10"
 zstd = "0.13"
 
 # Git operations (no subprocess)
-git2 = "0.19"
+git2 = "0.20"
 
 # Parsing (zero-copy)
-winnow = "0.6"
+winnow = "0.7"
 rmp-serde = "1.1"
 
 # Memory management
@@ -77,17 +77,17 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Progress bars
-indicatif = "0.17"
+indicatif = "0.18"
 
 # Colors/TTY
-colored = "2.1"
-console = "0.15"
+colored = "3.0"
+console = "0.16"
 
 # Interactive prompts
-dialoguer = "0.11"
+dialoguer = "0.12"
 
 # Configuration
-directories = "5.0"
+directories = "6.0"
 home = "0.5"
 
 # Cryptography
@@ -99,16 +99,16 @@ hex = "0.4"
 chrono = { version = "0.4", features = ["serde"] }
 
 # Database (LMDB - Fastest for read-heavy caching)
-heed = "0.20"
+heed = "0.22"
 
 # Direct libalpm bindings (10-100x faster than spawning pacman)
 alpm = "5.0"
 
 # Process execution
-which = "6.0"
+which = "7.0"
 
 # System info
-sysinfo = "0.31"
+sysinfo = "0.37"
 
 # Semver handling
 semver = "1.0"
@@ -128,7 +128,7 @@ rayon = "1.10"
 # Security (Phase 4.2)
 sequoia-openpgp = { version = "2.0.0", features = ["crypto-nettle"] }
 sigstore-verification = "0.2"
-sigstore = "0.12"
+sigstore = "0.13"
 nucleo-matcher = "0.3.1"
 walkdir = "2.5.0"
 dirs = "6.0.0"
@@ -136,7 +136,7 @@ libc = "0.2.180"
 tikv-jemallocator = "0.6.1"
 
 [dev-dependencies]
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.8", features = ["html_reports"] }
 tempfile = "3.10"
 assert_cmd = "2.0"
 predicates = "3.1"
