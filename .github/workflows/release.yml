@@ -1,0 +1,48 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-release:
+    name: Build Release
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+    permissions:
+      contents: write
+    steps:
+      - name: Install System Dependencies
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm base-devel git rust cargo pkgconf openssl libarchive clang nodejs
+
+      - uses: actions/checkout@v4
+      
+      - name: Fix git ownership
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Build Release
+        run: cargo build --release --verbose
+
+      - name: Package Assets
+        run: |
+          mkdir -p dist
+          cp target/release/omg dist/
+          cp target/release/omgd dist/
+          cd dist
+          tar -czvf ../omg-x86_64-linux.tar.gz omg omgd
+          cd ..
+          sha256sum omg-x86_64-linux.tar.gz > omg-x86_64-linux.tar.gz.sha256
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            omg-x86_64-linux.tar.gz
+            omg-x86_64-linux.tar.gz.sha256
+          generate_release_notes: true
+          draft: false
+          prerelease: false

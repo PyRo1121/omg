@@ -46,7 +46,7 @@ impl PgpVerifier {
                     let mut relevant_cert = issuers.is_empty();
                     if !relevant_cert {
                         for issuer_id in &issuers {
-                            if cert.keys().any(|k| k.key_handle().aliases(issuer_id)) {
+                            if cert.keys().any(|k| k.key().key_handle().aliases(issuer_id)) {
                                 relevant_cert = true;
                                 break;
                             }
@@ -61,11 +61,13 @@ impl PgpVerifier {
                             .revoked(false)
                             .for_signing()
                         {
-                            // Correct hashing approach for Sequoia 1.x
+                            // Correct hashing approach for Sequoia 2.x
                             // We must re-hash for each key if we use verify_hash which consumes hasher,
                             // or find a way to clone the digest if possible.
                             // For now, re-hashing is safe and still fast enough for small files.
-                            let mut hasher_for_verify = algo.context()?;
+                            // Use for_signature() as we are verifying a signature
+                            let mut hasher_for_verify =
+                                algo.context()?.for_signature(sig.version().into());
                             let mut data_for_verify = std::fs::File::open(file_path)?;
                             std::io::copy(&mut data_for_verify, &mut hasher_for_verify)?;
 
