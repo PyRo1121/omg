@@ -98,7 +98,7 @@ pub fn hook_env(shell: &str) -> Result<()> {
 }
 
 /// Detect version files in directory and parents
-fn detect_versions(start: &Path) -> HashMap<String, String> {
+pub fn detect_versions(start: &Path) -> HashMap<String, String> {
     let mut versions = HashMap::new();
     let mut current = Some(start.to_path_buf());
 
@@ -156,7 +156,7 @@ fn detect_versions(start: &Path) -> HashMap<String, String> {
 }
 
 /// Build PATH additions for detected versions
-fn build_path_additions(versions: &HashMap<String, String>) -> Vec<String> {
+pub fn build_path_additions(versions: &HashMap<String, String>) -> Vec<String> {
     let mut paths = Vec::new();
 
     let data_dir = directories::ProjectDirs::from("com", "omg", "omg")

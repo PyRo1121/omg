@@ -114,5 +114,16 @@ Communication happens over a high-speed Unix Domain Socket with a JSON-RPC proto
 
 ---
 
+## 🔮 Roadmap (The "1-Stop Shop" Vision)
+
+We are building the last dev tool you'll ever need.
+
+- [ ] **`omg run <task>`**: Unified task runner. Detects project type (`package.json`, `Cargo.toml`, `Makefile`) and runs scripts (e.g., `omg run test` runs `cargo test` or `npm test`) with the correct runtime version pre-loaded.
+- [ ] **`omg new <stack>`**: Instant project scaffolding. `omg new react`, `omg new rust-cli`, or `omg new python-flask` sets up a best-practice environment with locked runtime versions.
+- [ ] **`omg doctor`**: System health check. Verifies PATHs, mirrors, PGP keys, and runtime integrity to debug environment issues instantly.
+- [ ] **`omg tool`**: Cross-ecosystem binary manager. Install dev tools (`ripgrep`, `jq`, `tldr`) from any source (Pacman, NPM, Cargo, Pip) into a single managed path.
+
+---
+
 ## 📜 License
 MIT © 2026 OMG Team

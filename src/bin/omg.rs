@@ -10,7 +10,7 @@ use omg_lib::cli::packages;
 use omg_lib::cli::runtimes;
 use omg_lib::cli::security;
 use omg_lib::cli::{commands, Cli, Commands, EnvCommands};
-use omg_lib::core::{elevate_if_needed, is_root};
+use omg_lib::core::{elevate_if_needed, is_root, task_runner};
 use omg_lib::hooks;
 
 #[tokio::main]
@@ -39,8 +39,12 @@ async fn main() -> Result<()> {
 
     // Handle commands
     match cli.command {
-        Commands::Search { query, detailed } => {
-            packages::search(&query, detailed).await?;
+        Commands::Search {
+            query,
+            detailed,
+            interactive,
+        } => {
+            packages::search(&query, detailed, interactive).await?;
         }
         Commands::Install { packages, yes } => {
             packages::install(&packages, yes).await?;
@@ -116,6 +120,9 @@ async fn main() -> Result<()> {
         }
         Commands::Audit => {
             security::audit().await?;
+        }
+        Commands::Run { task, args } => {
+            task_runner::run_task(&task, &args)?;
         }
         Commands::Env { command } => match command {
             EnvCommands::Capture => {

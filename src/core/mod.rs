@@ -8,6 +8,7 @@ pub mod env;
 mod error;
 pub mod privilege;
 pub mod security;
+pub mod task_runner;
 mod types;
 
 pub use archive::{

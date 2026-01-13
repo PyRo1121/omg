@@ -1,5 +1,6 @@
 use anyhow::Result;
 use colored::Colorize;
+use dialoguer::{theme::ColorfulTheme, Confirm, MultiSelect};
 
 use crate::core::client::DaemonClient;
 use crate::core::security::SecurityPolicy;
@@ -21,13 +22,94 @@ use crate::package_managers::{
 };
 
 /// Search for packages in official repos and AUR - LIGHTNING FAST
-pub async fn search(query: &str, detailed: bool) -> Result<()> {
+pub async fn search(query: &str, detailed: bool, interactive: bool) -> Result<()> {
     let start = std::time::Instant::now();
 
     // FAST: Direct libalpm query instead of spawning pacman
     let official_packages = search_sync(query).unwrap_or_default();
 
     let sync_time = start.elapsed();
+
+    // Search AUR (network call - still async)
+    let aur_packages_detailed = if detailed || interactive {
+        Some(search_detailed(query).await.unwrap_or_default())
+    } else {
+        None
+    };
+
+    let aur_packages_basic = if !detailed && !interactive {
+        let aur = AurClient::new();
+        Some(aur.search(query).await.unwrap_or_default())
+    } else {
+        None
+    };
+
+    if interactive {
+        let mut items = Vec::new();
+        let mut pkgs_to_install = Vec::new();
+
+        // Add official
+        for pkg in &official_packages {
+            let status = if pkg.installed { "[installed]" } else { "" };
+            items.push(format!(
+                "{} {} {} ({}) - {}",
+                pkg.name.white().bold(),
+                pkg.version.dimmed(),
+                status.cyan(),
+                pkg.repo.blue(),
+                truncate(&pkg.description, 40).dimmed()
+            ));
+            pkgs_to_install.push(pkg.name.clone());
+        }
+
+        // Add AUR
+        if let Some(aur) = &aur_packages_detailed {
+            for pkg in aur {
+                items.push(format!(
+                    "{} {} ({}) - {}",
+                    pkg.name.white().bold(),
+                    pkg.version.dimmed(),
+                    "AUR".yellow(),
+                    truncate(&pkg.description.clone().unwrap_or_default(), 40).dimmed()
+                ));
+                pkgs_to_install.push(pkg.name.clone());
+            }
+        } else if let Some(aur) = &aur_packages_basic {
+            for pkg in aur {
+                items.push(format!(
+                    "{} {} ({}) - {}",
+                    pkg.name.white().bold(),
+                    pkg.version.dimmed(),
+                    "AUR".yellow(),
+                    truncate(&pkg.description, 40).dimmed()
+                ));
+                pkgs_to_install.push(pkg.name.clone());
+            }
+        }
+
+        if items.is_empty() {
+            println!("{} No packages found for '{}'", "✗".red(), query);
+            return Ok(());
+        }
+
+        println!("{} Select packages to install:", "→".cyan().bold());
+
+        let selections = MultiSelect::with_theme(&ColorfulTheme::default())
+            .items(&items)
+            .interact()?;
+
+        if selections.is_empty() {
+            println!("{} No packages selected", "→".dimmed());
+            return Ok(());
+        }
+
+        let selected_names: Vec<String> = selections
+            .into_iter()
+            .map(|i| pkgs_to_install[i].clone())
+            .collect();
+
+        return install(&selected_names, false).await;
+    }
 
     // Display official packages first
     if !official_packages.is_empty() {
@@ -63,9 +145,8 @@ pub async fn search(query: &str, detailed: bool) -> Result<()> {
         println!();
     }
 
-    // Search AUR (network call - still async)
-    if detailed {
-        let aur_packages = search_detailed(query).await.unwrap_or_default();
+    // Search AUR (cached result)
+    if let Some(aur_packages) = aur_packages_detailed {
         if !aur_packages.is_empty() {
             println!("{}", "AUR (Arch User Repository):".yellow().bold());
             for pkg in aur_packages.iter().take(10) {
@@ -92,9 +173,7 @@ pub async fn search(query: &str, detailed: bool) -> Result<()> {
             }
             println!();
         }
-    } else {
-        let aur = AurClient::new();
-        let aur_packages = aur.search(query).await.unwrap_or_default();
+    } else if let Some(aur_packages) = aur_packages_basic {
         if !aur_packages.is_empty() {
             println!("{}", "AUR (Arch User Repository):".yellow().bold());
             for pkg in aur_packages.iter().take(10) {
@@ -149,25 +228,73 @@ pub async fn install(packages: &[String], _yes: bool) -> Result<()> {
             continue;
         }
 
-        let (grade, is_aur, is_official, license) =
-            if let Some(info) = get_sync_pkg_info(pkg_name).ok().flatten() {
-                let grade = policy
-                    .assign_grade(&info.name, &info.version, false, true)
-                    .await;
-                let license = info.licenses.first().cloned();
-                (grade, false, true, license)
-            } else if let Ok(Some(info)) = aur.info(pkg_name).await {
-                let grade = policy
-                    .assign_grade(&info.name, &info.version, true, false)
-                    .await;
-                (grade, true, false, None)
-            } else {
-                not_found.push(pkg_name.clone());
-                continue;
-            };
+        let mut target_pkg_name = pkg_name.clone();
+
+        // Try to find package info
+        let mut sync_info = get_sync_pkg_info(&target_pkg_name).ok().flatten();
+        let mut aur_info = if sync_info.is_none() {
+            aur.info(&target_pkg_name).await.ok().flatten()
+        } else {
+            None
+        };
+
+        // If not found, try to resolve typo
+        if sync_info.is_none() && aur_info.is_none() {
+            // Only if interactive
+            if console::user_attended() {
+                // Search official
+                let results = search_sync(&target_pkg_name).unwrap_or_default();
+                if let Some(best_match) = results.first() {
+                    if Confirm::with_theme(&ColorfulTheme::default())
+                        .with_prompt(format!(
+                            "Package '{}' not found. Did you mean '{}'?",
+                            target_pkg_name, best_match.name
+                        ))
+                        .default(true)
+                        .interact()?
+                    {
+                        target_pkg_name = best_match.name.clone();
+                        sync_info = get_sync_pkg_info(&target_pkg_name).ok().flatten();
+                    }
+                } else {
+                    // Try AUR search
+                    if let Ok(results) = aur.search(&target_pkg_name).await {
+                        if let Some(best_match) = results.first() {
+                            if Confirm::with_theme(&ColorfulTheme::default())
+                                .with_prompt(format!(
+                                    "Package '{}' not found. Did you mean '{}' (AUR)?",
+                                    target_pkg_name, best_match.name
+                                ))
+                                .default(true)
+                                .interact()?
+                            {
+                                target_pkg_name = best_match.name.clone();
+                                aur_info = Some(best_match.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let (grade, is_aur, is_official, license) = if let Some(info) = sync_info {
+            let grade = policy
+                .assign_grade(&info.name, &info.version, false, true)
+                .await;
+            let license = info.licenses.first().cloned();
+            (grade, false, true, license)
+        } else if let Some(info) = aur_info {
+            let grade = policy
+                .assign_grade(&info.name, &info.version, true, false)
+                .await;
+            (grade, true, false, None)
+        } else {
+            not_found.push(pkg_name.clone());
+            continue;
+        };
 
         // Check policy
-        if let Err(e) = policy.check_package(pkg_name, is_aur, license.as_deref(), grade) {
+        if let Err(e) = policy.check_package(&target_pkg_name, is_aur, license.as_deref(), grade) {
             println!("{} Security Block: {}", "✗".red().bold(), e);
             anyhow::bail!("Installation aborted due to security policy");
         }
@@ -180,19 +307,19 @@ pub async fn install(packages: &[String], _yes: bool) -> Result<()> {
         };
 
         if is_official {
-            official.push(pkg_name.clone());
+            official.push(target_pkg_name.clone());
             println!(
                 "{} Official: {} [{}]",
                 "→".blue(),
-                pkg_name.white().bold(),
+                target_pkg_name.white().bold(),
                 grade_colored
             );
         } else if is_aur {
-            aur_pkgs.push(pkg_name.clone());
+            aur_pkgs.push(target_pkg_name.clone());
             println!(
                 "{} AUR:      {} [{}]",
                 "→".yellow(),
-                pkg_name.white().bold(),
+                target_pkg_name.white().bold(),
                 grade_colored
             );
         }

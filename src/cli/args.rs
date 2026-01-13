@@ -38,6 +38,9 @@ pub enum Commands {
         /// Show detailed AUR info (votes, popularity)
         #[arg(short, long)]
         detailed: bool,
+        /// Interactive mode: select packages to install from results
+        #[arg(short, long)]
+        interactive: bool,
     },
 
     /// Install packages (auto-detects AUR packages)
@@ -195,6 +198,18 @@ pub enum Commands {
 
     /// Perform a security audit for vulnerabilities
     Audit,
+
+    /// Run project scripts (e.g., 'omg run build' runs npm/cargo/make)
+    #[command(visible_alias = "run")]
+    Run {
+        /// The task to run (e.g., build, test, start)
+        #[arg(required = true)]
+        task: String,
+
+        /// Arguments to pass to the task
+        #[arg(last = true)]
+        args: Vec<String>,
+    },
 
     // ═══════════════════════════════════════════════════════════════════════
     // TEAM & ENVIRONMENT
