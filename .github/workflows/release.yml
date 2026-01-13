@@ -38,7 +38,7 @@ jobs:
           sha256sum omg-x86_64-linux.tar.gz > omg-x86_64-linux.tar.gz.sha256
 
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: |
             omg-x86_64-linux.tar.gz
