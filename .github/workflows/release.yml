@@ -19,7 +19,7 @@ jobs:
           pacman -Syu --noconfirm
           pacman -S --noconfirm base-devel git rust cargo pkgconf openssl libarchive clang nodejs
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       
       - name: Fix git ownership
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
