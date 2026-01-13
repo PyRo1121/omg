@@ -657,17 +657,19 @@ mod completions {
 
     #[test]
     fn test_completions_bash() {
-        let (success, stdout, _) = run_omg(&["completions", "bash"]);
+        let (success, stdout, _) = run_omg(&["completions", "bash", "--stdout"]);
         assert!(success, "Bash completions should succeed");
         assert!(
-            stdout.contains("complete") || stdout.contains("_omg"),
+            stdout.contains("complete")
+                || stdout.contains("_omg")
+                || stdout.contains("_omg_completions"),
             "Should output bash completion script"
         );
     }
 
     #[test]
     fn test_completions_zsh() {
-        let (success, stdout, _) = run_omg(&["completions", "zsh"]);
+        let (success, stdout, _) = run_omg(&["completions", "zsh", "--stdout"]);
         assert!(success, "Zsh completions should succeed");
         assert!(
             stdout.contains("compdef") || stdout.contains("_omg"),
@@ -677,7 +679,7 @@ mod completions {
 
     #[test]
     fn test_completions_fish() {
-        let (success, stdout, _) = run_omg(&["completions", "fish"]);
+        let (success, stdout, _) = run_omg(&["completions", "fish", "--stdout"]);
         assert!(success, "Fish completions should succeed");
         assert!(
             stdout.contains("complete") || stdout.contains("omg"),
@@ -833,7 +835,8 @@ mod performance {
 
     #[test]
     fn test_completions_generation_performance() {
-        let ((success, _, _), duration) = measure_time(|| run_omg(&["completions", "zsh"]));
+        let ((success, _, _), duration) =
+            measure_time(|| run_omg(&["completions", "zsh", "--stdout"]));
         assert!(success, "Completions should succeed");
 
         // Completions generation should be fast

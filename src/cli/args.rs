@@ -95,6 +95,10 @@ pub enum Commands {
     /// List explicitly installed packages
     Explicit,
 
+    /// Sync package databases from mirrors (parallel, fast)
+    #[command(visible_alias = "sy")]
+    Sync,
+
     // ═══════════════════════════════════════════════════════════════════════
     // RUNTIME VERSION MANAGEMENT
     // ═══════════════════════════════════════════════════════════════════════
@@ -158,6 +162,9 @@ pub enum Commands {
     Completions {
         /// Shell type (bash, zsh, fish, powershell, elvish)
         shell: String,
+        /// Print to stdout instead of installing
+        #[arg(long)]
+        stdout: bool,
     },
 
     /// Show which version of a runtime would be used

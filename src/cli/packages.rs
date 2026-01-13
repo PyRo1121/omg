@@ -14,6 +14,7 @@ use crate::package_managers::{
     search_detailed,
     // Direct ALPM functions (10-100x faster)
     search_sync,
+    sync_databases_parallel,
     ArchPackageManager,
     AurClient,
     PackageManager,
@@ -138,9 +139,16 @@ pub async fn install(packages: &[String], _yes: bool) -> Result<()> {
     let aur = AurClient::new();
     let mut official = Vec::new();
     let mut aur_pkgs = Vec::new();
+    let mut local_pkgs = Vec::new();
     let mut not_found = Vec::new();
 
     for pkg_name in packages {
+        // Check if it's a local package file
+        if std::path::Path::new(pkg_name).exists() && pkg_name.contains(".pkg.tar.") {
+            local_pkgs.push(pkg_name.clone());
+            continue;
+        }
+
         let (grade, is_aur, is_official, license) =
             if let Some(info) = get_sync_pkg_info(pkg_name).ok().flatten() {
                 let grade = policy
@@ -199,6 +207,12 @@ pub async fn install(packages: &[String], _yes: bool) -> Result<()> {
     if !official.is_empty() {
         let pacman = ArchPackageManager::new();
         pacman.install(&official).await?;
+    }
+
+    // Install local packages
+    if !local_pkgs.is_empty() {
+        let pacman = ArchPackageManager::new();
+        pacman.install(&local_pkgs).await?;
     }
 
     // Install AUR packages
@@ -466,4 +480,9 @@ fn truncate(s: &str, max: usize) -> String {
         }
         format!("{}...", &s[..end])
     }
+}
+
+/// Sync package databases from mirrors (parallel, fast)
+pub async fn sync() -> Result<()> {
+    sync_databases_parallel().await
 }

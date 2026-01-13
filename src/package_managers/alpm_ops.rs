@@ -370,6 +370,24 @@ pub fn execute_transaction(packages: Vec<String>, remove: bool, sysupgrade: bool
                     })?;
                 }
             } else {
+                // Try to load as a local package file first
+                let path = std::path::Path::new(&pkg_name);
+                if path.exists() && (pkg_name.contains(".pkg.tar.") || path.is_absolute()) {
+                    let pkg = alpm
+                        .pkg_load(pkg_name.clone(), true, alpm::SigLevel::USE_DEFAULT)
+                        .map_err(|e| {
+                            anyhow::anyhow!("Failed to load local package {}: {:?}", pkg_name, e)
+                        })?;
+                    alpm.trans_add_pkg(pkg).map_err(|e| {
+                        anyhow::anyhow!(
+                            "Failed to add local package {} to transaction: {:?}",
+                            pkg_name,
+                            e
+                        )
+                    })?;
+                    continue;
+                }
+
                 // Find in sync DBs
                 let mut found = false;
                 for db in alpm.syncdbs() {
@@ -425,6 +443,14 @@ pub fn execute_transaction(packages: Vec<String>, remove: bool, sysupgrade: bool
                 }
             }
         }
+    }
+
+    // Check if there is actually anything to commit
+    if alpm.trans_add().is_empty() && alpm.trans_remove().is_empty() {
+        main_pb.finish_with_message("Nothing to do: system is already up to date.");
+        alpm.trans_release()
+            .context("Failed to release transaction")?;
+        return Ok(());
     }
 
     // Commit

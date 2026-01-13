@@ -6,6 +6,7 @@ pub mod completion;
 mod database;
 pub mod env;
 mod error;
+pub mod privilege;
 pub mod security;
 mod types;
 
@@ -15,4 +16,5 @@ pub use archive::{
 };
 pub use database::Database;
 pub use error::{OmgError, Result};
+pub use privilege::{elevate_if_needed, is_root};
 pub use types::*;

@@ -11,7 +11,7 @@ use crate::package_managers::get_system_status;
 
 // Re-export moved commands
 pub use super::env::{capture as env_capture, check as env_check, share as env_share};
-pub use super::packages::{clean, explicit, info, install, remove, search, update};
+pub use super::packages::{clean, explicit, info, install, remove, search, sync, update};
 pub use super::runtimes::{list_versions, use_version};
 pub use super::security::audit;
 

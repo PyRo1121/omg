@@ -42,12 +42,27 @@ OMG doesn't just install; it audits.
 ## 🚀 Quick Start
 
 ### 1. Installation
-```bash
-# Clone and build
-cargo install --path .
 
-# Initialize the daemon (optional but recommended for speed)
-omg daemon
+**Recommended: The One-Line Installer**
+Automatically installs dependencies, builds the project, and configures your shell.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/omg-rs/omg/main/install.sh | bash
+```
+
+**Alternative: Manual Build**
+If you prefer to build it yourself:
+
+```bash
+# Clone the repository
+git clone https://github.com/omg-rs/omg.git
+cd omg
+
+# Build release binary
+cargo build --release
+
+# Install to your path
+cp target/release/omg ~/.local/bin/
 ```
 
 ### 2. Basic Commands

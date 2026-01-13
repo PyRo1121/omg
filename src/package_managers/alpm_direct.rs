@@ -11,7 +11,7 @@ fn create_handle() -> Result<Alpm> {
     let alpm = Alpm::new("/", "/var/lib/pacman").context("Failed to initialize ALPM handle")?;
 
     // Register sync databases (core, extra, multilib, etc.)
-    for db_name in &["core", "extra", "multilib", "omarchy"] {
+    for db_name in &["core", "extra", "multilib"] {
         let _ = alpm.register_syncdb(*db_name, SigLevel::USE_DEFAULT);
     }
 

@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use colored::Colorize;
 
 use super::PackageManager;
-use crate::core::{Package, PackageSource};
+use crate::core::{is_root, Package, PackageSource};
 
 /// Arch Linux package manager with enhanced UX
 pub struct ArchPackageManager;
@@ -47,6 +47,23 @@ impl PackageManager for ArchPackageManager {
             return Ok(());
         }
 
+        if !is_root() {
+            println!("{} Elevating privileges to install packages...", "→".blue());
+            let exe = std::env::current_exe()?;
+            let status = tokio::process::Command::new("sudo")
+                .arg("--")
+                .arg(exe)
+                .arg("install")
+                .args(packages)
+                .status()
+                .await?;
+
+            if !status.success() {
+                anyhow::bail!("Installation failed");
+            }
+            return Ok(());
+        }
+
         println!(
             "{} Installing {} package(s)...",
             "OMG".cyan().bold(),
@@ -69,6 +86,23 @@ impl PackageManager for ArchPackageManager {
             return Ok(());
         }
 
+        if !is_root() {
+            println!("{} Elevating privileges to remove packages...", "→".blue());
+            let exe = std::env::current_exe()?;
+            let status = tokio::process::Command::new("sudo")
+                .arg("--")
+                .arg(exe)
+                .arg("remove")
+                .args(packages)
+                .status()
+                .await?;
+
+            if !status.success() {
+                anyhow::bail!("Removal failed");
+            }
+            return Ok(());
+        }
+
         println!(
             "{} Removing {} package(s)...",
             "OMG".cyan().bold(),
@@ -83,9 +117,28 @@ impl PackageManager for ArchPackageManager {
     }
 
     async fn update(&self) -> Result<()> {
+        if !is_root() {
+            println!("{} Elevating privileges to update system...", "→".blue());
+            let exe = std::env::current_exe()?;
+            let status = tokio::process::Command::new("sudo")
+                .arg("--")
+                .arg(exe)
+                .arg("update")
+                .status()
+                .await?;
+
+            if !status.success() {
+                anyhow::bail!("Update failed");
+            }
+            return Ok(());
+        }
+
         println!("{} Updating system...\n", "OMG".cyan().bold());
 
-        // LIGHTNING FAST: Direct libalpm sysupgrade
+        // STEP 1: Sync databases in PARALLEL (3-5x faster than pacman -Sy)
+        crate::package_managers::sync_databases_parallel().await?;
+
+        // STEP 2: Run sysupgrade transaction
         crate::package_managers::execute_transaction(Vec::new(), false, true)?;
 
         println!("\n{} System updated successfully!", "✓".green());

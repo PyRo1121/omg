@@ -442,6 +442,13 @@ impl AurClient {
 
     /// Execute build scripts in a minimal shell
     async fn execute_build(&self, pkg_dir: &PathBuf) -> Result<()> {
+        if crate::core::is_root() {
+            println!(
+                "{} WARNING: Running makepkg as root is not recommended.",
+                "⚠".yellow()
+            );
+        }
+
         let spinner = create_spinner("Executing PKGBUILD functions...");
 
         // We run a minimal sh to source the PKGBUILD and run functions
@@ -494,38 +501,26 @@ impl AurClient {
         Ok(pkg_path)
     }
 
-    /// Install the built package via libalpm
+    /// Install the built package via sudo omg install <path>
     async fn install_built_package(&self, _pkg: &PkgBuild, pkg_path: &PathBuf) -> Result<()> {
         println!(
-            "{} Installing via libalpm (100x faster than pacman -U)...",
+            "{} Installing built package (elevating with sudo)...",
             "→".blue()
         );
 
-        // Load the package and commit transaction
-        let mut alpm = alpm::Alpm::new("/", "/var/lib/pacman")
-            .context("Failed to initialize ALPM (are you root?)")?;
+        let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("omg"));
 
-        let pkg = alpm
-            .pkg_load(
-                pkg_path.to_string_lossy().to_string(),
-                true,
-                alpm::SigLevel::USE_DEFAULT,
-            )
-            .map_err(|e| anyhow::anyhow!("Failed to load built package: {:?}", e))?;
+        let status = Command::new("sudo")
+            .arg("--")
+            .arg(exe)
+            .arg("install")
+            .arg(pkg_path)
+            .status()
+            .await?;
 
-        alpm.trans_init(alpm::TransFlag::NEEDED)
-            .map_err(|e| anyhow::anyhow!("Failed to init transaction: {:?}", e))?;
-
-        alpm.trans_add_pkg(pkg)
-            .map_err(|e| anyhow::anyhow!("Failed to add package to transaction: {:?}", e))?;
-
-        // Prepare and commit
-        alpm.trans_prepare()
-            .map_err(|e| anyhow::anyhow!("Transaction preparation failed: {}", e))?;
-        alpm.trans_commit()
-            .map_err(|e| anyhow::anyhow!("Transaction commit failed: {}", e))?;
-        alpm.trans_release()
-            .context("Failed to release transaction")?;
+        if !status.success() {
+            anyhow::bail!("Installation failed");
+        }
 
         Ok(())
     }

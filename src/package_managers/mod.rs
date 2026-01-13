@@ -5,6 +5,7 @@ pub mod alpm_ops;
 pub mod alpm_worker;
 mod arch;
 mod aur;
+pub mod parallel_sync;
 pub mod pkgbuild;
 mod traits;
 
@@ -19,4 +20,5 @@ pub use alpm_ops::{
 };
 pub use arch::{is_installed, list_explicit, list_orphans, remove_orphans, ArchPackageManager};
 pub use aur::{search_detailed, AurClient, AurPackageDetail};
+pub use parallel_sync::sync_databases_parallel;
 pub use traits::PackageManager;

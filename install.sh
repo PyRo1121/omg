@@ -128,6 +128,21 @@ build_from_source() {
 install_binary() {
     info "Installing to $INSTALL_DIR..."
     
+    # Remove old binaries if they exist in other locations
+    local old_locs=("/usr/local/bin/omg" "/usr/bin/omg" "$HOME/.cargo/bin/omg")
+    for loc in "${old_locs[@]}"; do
+        if [[ -f "$loc" ]]; then
+            warn "Found old installation at $loc"
+            if [[ -w "$(dirname "$loc")" ]]; then
+                rm "$loc"
+                success "Removed old binary at $loc"
+            else
+                info "Requesting sudo to remove $loc..."
+                sudo rm "$loc" && success "Removed old binary at $loc" || warn "Failed to remove $loc"
+            fi
+        fi
+    done
+    
     # Create install directory
     mkdir -p "$INSTALL_DIR"
     
@@ -218,12 +233,19 @@ setup_shell() {
     
     # Add to rc file if not already present
     if [[ -f "$rc_file" ]]; then
+        # Ensure PATH includes install dir
+        if ! echo "$PATH" | grep -q "$INSTALL_DIR"; then
+            # Check if line already exists in file to avoid duplicates
+            if ! grep -q "export PATH=\"$INSTALL_DIR" "$rc_file"; then
+                 echo "" >> "$rc_file"
+                 echo "$path_line" >> "$rc_file"
+                 success "Added install dir to PATH in $rc_file"
+            fi
+        fi
+
         if ! grep -q "omg hook" "$rc_file" 2>/dev/null; then
             echo "" >> "$rc_file"
             echo "# OMG - Fast package manager" >> "$rc_file"
-            if ! echo "$PATH" | grep -q "$INSTALL_DIR"; then
-                echo "$path_line" >> "$rc_file"
-            fi
             echo "$hook_line" >> "$rc_file"
             success "Added shell hook to $rc_file"
         else
@@ -232,6 +254,10 @@ setup_shell() {
     else
         warn "Shell config not found: $rc_file"
     fi
+    
+    # Install shell completions
+    info "Installing shell completions..."
+    "$INSTALL_DIR/omg" completions "$shell_name" 2>/dev/null || warn "Could not install completions"
 }
 
 verify_installation() {

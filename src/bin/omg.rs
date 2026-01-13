@@ -10,6 +10,7 @@ use omg_lib::cli::packages;
 use omg_lib::cli::runtimes;
 use omg_lib::cli::security;
 use omg_lib::cli::{commands, Cli, Commands, EnvCommands};
+use omg_lib::core::{elevate_if_needed, is_root};
 use omg_lib::hooks;
 
 #[tokio::main]
@@ -24,6 +25,17 @@ async fn main() -> Result<()> {
         .init();
 
     let cli = Cli::parse();
+
+    // Commands that require root - auto-elevate with sudo
+    // Note: Install/Remove/Update handle elevation internally via subprocess
+    // to allow user-level operations (like AUR building) to persist.
+    let needs_root = matches!(&cli.command, Commands::Sync | Commands::Clean { .. });
+
+    if needs_root && !is_root() {
+        // Re-execute with sudo - this replaces the current process
+        elevate_if_needed()?;
+        // Never reaches here
+    }
 
     // Handle commands
     match cli.command {
@@ -56,6 +68,9 @@ async fn main() -> Result<()> {
         Commands::Explicit => {
             packages::explicit().await?;
         }
+        Commands::Sync => {
+            packages::sync().await?;
+        }
         Commands::Use { runtime, version } => {
             runtimes::use_version(&runtime, version.as_deref()).await?;
         }
@@ -74,8 +89,8 @@ async fn main() -> Result<()> {
         Commands::Config { key, value } => {
             commands::config(key.as_deref(), value.as_deref()).await?;
         }
-        Commands::Completions { shell } => {
-            hooks::completions::generate_completions(&shell)?;
+        Commands::Completions { shell, stdout } => {
+            hooks::completions::generate_completions(&shell, stdout)?;
         }
         Commands::Which { runtime } => {
             let versions = hooks::get_active_versions();
