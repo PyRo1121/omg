@@ -126,7 +126,7 @@ shell-words = "1.1"
 rayon = "1.10"
 
 # Security (Phase 4.2)
-sequoia-openpgp = "1.19"
+sequoia-openpgp = "2.1"
 sigstore-verification = "0.2"
 sigstore = "0.12"
 nucleo-matcher = "0.3.1"
