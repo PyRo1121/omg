@@ -4,10 +4,10 @@
 # The fastest unified package manager for Arch Linux
 #
 # Install script - run with:
-#   curl -fsSL https://raw.githubusercontent.com/USER/omg/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
 #
 # Or clone and run:
-#   git clone https://github.com/USER/omg && cd omg && ./install.sh
+#   git clone https://github.com/PyRo1121/omg && cd omg && ./install.sh
 #
 
 set -euo pipefail
@@ -114,7 +114,7 @@ build_from_source() {
         trap "rm -rf $tmp_dir" EXIT
         
         info "Cloning repository..."
-        git clone --depth 1 https://github.com/USER/omg.git "$tmp_dir"
+        git clone --depth 1 https://github.com/PyRo1121/omg.git "$tmp_dir"
         cd "$tmp_dir"
     fi
     
@@ -290,7 +290,7 @@ print_next_steps() {
     echo -e "     ${CYAN}omg list node --available${NC}  # List Node.js versions"
     echo -e "     ${CYAN}omg use node 22${NC}         # Install & use Node.js 22"
     echo ""
-    echo -e "  ${BOLD}Documentation:${NC} https://github.com/USER/omg"
+    echo -e "  ${BOLD}Documentation:${NC} https://github.com/PyRo1121/omg"
     echo ""
 }
 

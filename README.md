@@ -47,7 +47,7 @@ OMG doesn't just install; it audits.
 Automatically installs dependencies, builds the project, and configures your shell.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/omg-rs/omg/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
 ```
 
 **Alternative: Manual Build**
@@ -55,7 +55,7 @@ If you prefer to build it yourself:
 
 ```bash
 # Clone the repository
-git clone https://github.com/omg-rs/omg.git
+git clone https://github.com/PyRo1121/omg.git
 cd omg
 
 # Build release binary
