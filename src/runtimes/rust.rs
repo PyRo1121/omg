@@ -7,7 +7,7 @@ use colored::Colorize;
 use flate2::read::GzDecoder;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::fs::{self, File};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tar::Archive;
 
 const RUST_DIST_URL: &str = "https://static.rust-lang.org/dist";
@@ -28,21 +28,16 @@ pub struct RustManager {
 
 impl RustManager {
     pub fn new() -> Self {
-        let data_dir = directories::ProjectDirs::from("com", "omg", "omg")
-            .map(|d| d.data_dir().to_path_buf())
-            .unwrap_or_else(|| {
-                home::home_dir()
-                    .unwrap_or_else(|| PathBuf::from("."))
-                    .join(".omg")
-            });
+        let data_dir = super::DATA_DIR.clone();
 
-        RustManager {
+        Self {
             versions_dir: data_dir.join("versions").join("rust"),
             current_link: data_dir.join("versions").join("rust").join("current"),
             client: reqwest::Client::new(),
         }
     }
 
+    #[must_use]
     pub fn bin_dir(&self) -> PathBuf {
         self.current_link.join("bin")
     }
@@ -116,6 +111,7 @@ impl RustManager {
         Ok(versions)
     }
 
+    #[must_use]
     pub fn current_version(&self) -> Option<String> {
         fs::read_link(&self.current_link)
             .ok()
@@ -140,7 +136,7 @@ impl RustManager {
         let target = match std::env::consts::ARCH {
             "x86_64" => "x86_64-unknown-linux-gnu",
             "aarch64" => "aarch64-unknown-linux-gnu",
-            arch => anyhow::bail!("Unsupported architecture: {}", arch),
+            arch => anyhow::bail!("Unsupported architecture: {arch}"),
         };
 
         fs::create_dir_all(&self.versions_dir)?;
@@ -150,8 +146,8 @@ impl RustManager {
         let components = ["rust-std", "rustc", "cargo"];
 
         for component in components {
-            let filename = format!("{}-{}-{}.tar.gz", component, version, target);
-            let url = format!("{}/{}", RUST_DIST_URL, filename);
+            let filename = format!("{component}-{version}-{target}.tar.gz");
+            let url = format!("{RUST_DIST_URL}/{filename}");
 
             println!("{} Downloading {}...", "→".blue(), component);
             let download_path = self.versions_dir.join(&filename);
@@ -183,8 +179,8 @@ impl RustManager {
 
     fn extract_component(
         &self,
-        archive_path: &PathBuf,
-        dest_dir: &PathBuf,
+        archive_path: &Path,
+        dest_dir: &Path,
         component: &str,
         version: &str,
         target: &str,
@@ -193,7 +189,7 @@ impl RustManager {
         let decoder = GzDecoder::new(file);
         let mut archive = Archive::new(decoder);
 
-        let _prefix = format!("{}-{}-{}", component, version, target);
+        let _prefix = format!("{component}-{version}-{target}");
 
         for entry in archive.entries()? {
             let mut entry = entry?;
@@ -237,7 +233,7 @@ impl RustManager {
     async fn download_file(&self, url: &str, path: &PathBuf) -> Result<()> {
         let response =
             self.client.get(url).send().await.with_context(|| {
-                format!("Failed to download from {}. Check your connection.", url)
+                format!("Failed to download from {url}. Check your connection.")
             })?;
 
         if !response.status().is_success() {
@@ -273,7 +269,7 @@ impl RustManager {
         let version_dir = self.versions_dir.join(version);
 
         if !version_dir.exists() {
-            anyhow::bail!("Rust {} is not installed", version);
+            anyhow::bail!("Rust {version} is not installed");
         }
 
         if self.current_link.exists() {

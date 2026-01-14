@@ -10,12 +10,32 @@ use std::path::Path;
 /// PGP verification engine using Sequoia
 pub struct PgpVerifier {
     policy: StandardPolicy<'static>,
+    certs: Vec<Cert>,
+}
+
+impl Default for PgpVerifier {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl PgpVerifier {
+    #[must_use]
     pub fn new() -> Self {
+        let system_keyring = "/usr/share/pacman/keyrings/archlinux.gpg";
+        let certs = if std::path::Path::new(system_keyring).exists() {
+            let mut keyring_file = std::fs::File::open(system_keyring).unwrap();
+            openpgp::cert::CertParser::from_reader(&mut keyring_file)
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+
         Self {
             policy: StandardPolicy::new(),
+            certs,
         }
     }
 
@@ -24,13 +44,9 @@ impl PgpVerifier {
         &self,
         file_path: &Path,
         sig_path: &Path,
-        keyring_path: &Path,
+        _keyring_path: &Path,
     ) -> Result<()> {
-        let mut keyring_file = std::fs::File::open(keyring_path)?;
         let mut sig_file = std::fs::File::open(sig_path)?;
-
-        let certs: Vec<Cert> = openpgp::cert::CertParser::from_reader(&mut keyring_file)?
-            .collect::<Result<Vec<_>, _>>()?;
 
         // Parse the signature packets
         let mut valid_signature_found = false;
@@ -41,7 +57,12 @@ impl PgpVerifier {
                 let algo = sig.hash_algo();
                 let issuers = sig.get_issuers();
 
-                for cert in &certs {
+                // 1. Calculate the hash ONCE for this signature's algorithm
+                let mut hasher = algo.context()?.for_signature(sig.version());
+                let mut data_file = std::fs::File::open(file_path)?;
+                std::io::copy(&mut data_file, &mut hasher)?;
+
+                for cert in &self.certs {
                     // Check if this cert might be the issuer
                     let mut relevant_cert = issuers.is_empty();
                     if !relevant_cert {
@@ -61,17 +82,8 @@ impl PgpVerifier {
                             .revoked(false)
                             .for_signing()
                         {
-                            // Correct hashing approach for Sequoia 2.x
-                            // We must re-hash for each key if we use verify_hash which consumes hasher,
-                            // or find a way to clone the digest if possible.
-                            // For now, re-hashing is safe and still fast enough for small files.
-                            // Use for_signature() as we are verifying a signature
-                            let mut hasher_for_verify =
-                                algo.context()?.for_signature(sig.version().into());
-                            let mut data_for_verify = std::fs::File::open(file_path)?;
-                            std::io::copy(&mut data_for_verify, &mut hasher_for_verify)?;
-
-                            if sig.verify_hash(key.key(), hasher_for_verify).is_ok() {
+                            // 2. Verify against the pre-calculated hasher (cloned)
+                            if sig.verify_hash(key.key(), hasher.clone()).is_ok() {
                                 valid_signature_found = true;
                                 break;
                             }
@@ -99,7 +111,7 @@ impl PgpVerifier {
     pub fn verify_package<P: AsRef<Path>>(&self, pkg_path: P, sig_path: P) -> Result<()> {
         let system_keyring = "/usr/share/pacman/keyrings/archlinux.gpg";
         if !std::path::Path::new(system_keyring).exists() {
-            anyhow::bail!("System keyring not found at {}", system_keyring);
+            anyhow::bail!("System keyring not found at {system_keyring}");
         }
 
         self.verify_detached(

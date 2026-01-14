@@ -1,4 +1,14 @@
-//! Runtime version managers for all supported languages
+use std::path::PathBuf;
+
+pub static DATA_DIR: std::sync::LazyLock<PathBuf> = std::sync::LazyLock::new(|| {
+    directories::ProjectDirs::from("com", "omg", "omg")
+        .map(|d| d.data_dir().to_path_buf())
+        .unwrap_or_else(|| {
+            home::home_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join(".omg")
+        })
+});
 
 pub mod bun;
 pub mod go;
@@ -22,15 +32,7 @@ pub const SUPPORTED_RUNTIMES: &[&str] = &["node", "python", "go", "rust", "ruby"
 
 /// Fast, zero-allocation probing for active runtime versions
 pub fn probe_version(runtime: &str) -> Option<String> {
-    let data_dir = directories::ProjectDirs::from("com", "omg", "omg")
-        .map(|d| d.data_dir().to_path_buf())
-        .unwrap_or_else(|| {
-            home::home_dir()
-                .unwrap_or_else(|| std::path::PathBuf::from("."))
-                .join(".omg")
-        });
-
-    let current_link = data_dir.join("versions").join(runtime).join("current");
+    let current_link = DATA_DIR.join("versions").join(runtime).join("current");
 
     std::fs::read_link(&current_link)
         .ok()

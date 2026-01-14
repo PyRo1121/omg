@@ -39,8 +39,9 @@ pub struct PackageCache {
 
 impl PackageCache {
     /// Create a new cache with given size and TTL
+    #[must_use]
     pub fn new(max_size: usize, ttl_secs: u64) -> Self {
-        PackageCache {
+        Self {
             cache: DashMap::new(),
             detailed_cache: DashMap::new(),
             lru_order: RwLock::new(VecDeque::with_capacity(max_size)),

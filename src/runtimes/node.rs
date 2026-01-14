@@ -29,27 +29,22 @@ pub struct NodeManager {
 
 impl NodeManager {
     pub fn new() -> Self {
-        let data_dir = directories::ProjectDirs::from("com", "omg", "omg")
-            .map(|d| d.data_dir().to_path_buf())
-            .unwrap_or_else(|| {
-                home::home_dir()
-                    .unwrap_or_else(|| PathBuf::from("."))
-                    .join(".omg")
-            });
+        let data_dir = super::DATA_DIR.clone();
 
-        NodeManager {
+        Self {
             versions_dir: data_dir.join("versions").join("node"),
             current_link: data_dir.join("versions").join("node").join("current"),
             client: reqwest::Client::new(),
         }
     }
 
+    #[must_use]
     pub fn bin_dir(&self) -> PathBuf {
         self.current_link.join("bin")
     }
 
     pub async fn list_available(&self) -> Result<Vec<NodeVersion>> {
-        let url = format!("{}/index.json", NODE_DIST_URL);
+        let url = format!("{NODE_DIST_URL}/index.json");
 
         let versions: Vec<NodeVersion> = self
             .client
@@ -80,6 +75,7 @@ impl NodeManager {
         Ok(versions)
     }
 
+    #[must_use]
     pub fn current_version(&self) -> Option<String> {
         fs::read_link(&self.current_link)
             .ok()
@@ -130,11 +126,11 @@ impl NodeManager {
         let arch = match std::env::consts::ARCH {
             "x86_64" => "x64",
             "aarch64" => "arm64",
-            arch => anyhow::bail!("Unsupported architecture: {}", arch),
+            arch => anyhow::bail!("Unsupported architecture: {arch}"),
         };
 
-        let filename = format!("node-v{}-linux-{}.tar.xz", version, arch);
-        let url = format!("{}/v{}/{}", NODE_DIST_URL, version, filename);
+        let filename = format!("node-v{version}-linux-{arch}.tar.xz");
+        let url = format!("{NODE_DIST_URL}/v{version}/{filename}");
 
         fs::create_dir_all(&self.versions_dir)?;
 
@@ -187,7 +183,7 @@ impl NodeManager {
     async fn download_file(&self, url: &str, path: &PathBuf) -> Result<()> {
         let response =
             self.client.get(url).send().await.with_context(|| {
-                format!("Failed to download from {}. Check your connection.", url)
+                format!("Failed to download from {url}. Check your connection.")
             })?;
 
         let total_size = response.content_length().unwrap_or(0);
@@ -220,11 +216,7 @@ impl NodeManager {
         let version_dir = self.versions_dir.join(&version);
 
         if !version_dir.exists() {
-            anyhow::bail!(
-                "Node.js {} is not installed. Run: omg install node@{}",
-                version,
-                version
-            );
+            anyhow::bail!("Node.js {version} is not installed. Run: omg install node@{version}");
         }
 
         // Remove existing symlink
@@ -300,6 +292,7 @@ fn version_cmp(a: &str, b: &str) -> std::cmp::Ordering {
 }
 
 /// Get LTS version name if applicable
+#[must_use]
 pub fn get_lts_name(version: &NodeVersion) -> Option<String> {
     match &version.lts {
         serde_json::Value::String(s) => Some(s.clone()),

@@ -42,26 +42,21 @@ pub struct PythonManager {
 
 impl PythonManager {
     pub fn new() -> Self {
-        let data_dir = directories::ProjectDirs::from("com", "omg", "omg")
-            .map(|d| d.data_dir().to_path_buf())
-            .unwrap_or_else(|| {
-                home::home_dir()
-                    .unwrap_or_else(|| PathBuf::from("."))
-                    .join(".omg")
-            });
+        let data_dir = super::DATA_DIR.clone();
 
         let client = reqwest::Client::builder()
             .user_agent("omg-package-manager")
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
 
-        PythonManager {
+        Self {
             versions_dir: data_dir.join("versions").join("python"),
             current_link: data_dir.join("versions").join("python").join("current"),
             client,
         }
     }
 
+    #[must_use]
     pub fn bin_dir(&self) -> PathBuf {
         self.current_link.join("bin")
     }
@@ -133,6 +128,7 @@ impl PythonManager {
         Ok(versions)
     }
 
+    #[must_use]
     pub fn current_version(&self) -> Option<String> {
         fs::read_link(&self.current_link)
             .ok()
@@ -158,7 +154,7 @@ impl PythonManager {
         let arch = match std::env::consts::ARCH {
             "x86_64" => "x86_64",
             "aarch64" => "aarch64",
-            arch => anyhow::bail!("Unsupported architecture: {}", arch),
+            arch => anyhow::bail!("Unsupported architecture: {arch}"),
         };
 
         println!("{} Finding Python {} release...", "→".blue(), version);
@@ -178,7 +174,7 @@ impl PythonManager {
 
         for release in &releases {
             for asset in &release.assets {
-                if asset.name.contains(&format!("cpython-{}", version))
+                if asset.name.contains(&format!("cpython-{version}"))
                     && asset.name.contains(arch)
                     && asset.name.contains("linux-gnu")
                     && asset.name.contains("install_only")
@@ -195,10 +191,7 @@ impl PythonManager {
         }
 
         let url = download_url.ok_or_else(|| {
-            anyhow::anyhow!(
-                "Python {} not found in python-build-standalone releases",
-                version
-            )
+            anyhow::anyhow!("Python {version} not found in python-build-standalone releases")
         })?;
 
         fs::create_dir_all(&self.versions_dir)?;
@@ -248,7 +241,7 @@ impl PythonManager {
     async fn download_file(&self, url: &str, path: &PathBuf) -> Result<()> {
         let response =
             self.client.get(url).send().await.with_context(|| {
-                format!("Failed to download from {}. Check your connection.", url)
+                format!("Failed to download from {url}. Check your connection.")
             })?;
 
         let total = response.content_length().unwrap_or(0);
@@ -277,7 +270,7 @@ impl PythonManager {
         let version_dir = self.versions_dir.join(version);
 
         if !version_dir.exists() {
-            anyhow::bail!("Python {} is not installed", version);
+            anyhow::bail!("Python {version} is not installed");
         }
 
         if self.current_link.exists() {

@@ -5,6 +5,8 @@
 //!
 //! Run with: `cargo test --test integration_suite -- --test-threads=1`
 
+#![allow(unused_variables)]
+
 use std::env;
 use std::fs::{self, File};
 use std::io::Write;
@@ -606,7 +608,7 @@ mod security {
 
     #[test]
     fn test_audit_command() {
-        let (success, stdout, stderr) = run_omg(&["audit"]);
+        let (success, _stdout, stderr) = run_omg(&["audit"]);
         // May succeed or fail depending on daemon status
         // Should not crash
         assert!(

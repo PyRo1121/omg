@@ -10,27 +10,47 @@ pub type RequestId = u64;
 /// Unified Request Enum
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Request {
-    Search { id: RequestId, query: String, limit: Option<usize> },
-    Info { id: RequestId, package: String },
-    Status { id: RequestId },
-    Explicit { id: RequestId },
-    SecurityAudit { id: RequestId },
-    Ping { id: RequestId },
-    CacheStats { id: RequestId },
-    CacheClear { id: RequestId },
+    Search {
+        id: RequestId,
+        query: String,
+        limit: Option<usize>,
+    },
+    Info {
+        id: RequestId,
+        package: String,
+    },
+    Status {
+        id: RequestId,
+    },
+    Explicit {
+        id: RequestId,
+    },
+    SecurityAudit {
+        id: RequestId,
+    },
+    Ping {
+        id: RequestId,
+    },
+    CacheStats {
+        id: RequestId,
+    },
+    CacheClear {
+        id: RequestId,
+    },
 }
 
 impl Request {
-    pub fn id(&self) -> RequestId {
+    #[must_use]
+    pub const fn id(&self) -> RequestId {
         match self {
-            Request::Search { id, .. } => *id,
-            Request::Info { id, .. } => *id,
-            Request::Status { id } => *id,
-            Request::Explicit { id } => *id,
-            Request::SecurityAudit { id } => *id,
-            Request::Ping { id } => *id,
-            Request::CacheStats { id } => *id,
-            Request::CacheClear { id } => *id,
+            Self::Search { id, .. } => *id,
+            Self::Info { id, .. } => *id,
+            Self::Status { id } => *id,
+            Self::Explicit { id } => *id,
+            Self::SecurityAudit { id } => *id,
+            Self::Ping { id } => *id,
+            Self::CacheStats { id } => *id,
+            Self::CacheClear { id } => *id,
         }
     }
 }
@@ -38,8 +58,15 @@ impl Request {
 /// Unified Response Enum
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Response {
-    Success { id: RequestId, result: ResponseResult },
-    Error { id: RequestId, code: i32, message: String },
+    Success {
+        id: RequestId,
+        result: ResponseResult,
+    },
+    Error {
+        id: RequestId,
+        code: i32,
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -84,6 +111,7 @@ pub struct StatusResult {
     pub orphan_packages: usize,
     pub updates_available: usize,
     pub security_vulnerabilities: usize,
+    pub runtime_versions: Vec<(String, String)>,
 }
 
 /// Package info for IPC (minimal)

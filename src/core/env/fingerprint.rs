@@ -20,7 +20,7 @@ use crate::runtimes::{
 /// Represents the captured state of the environment
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
 pub struct EnvironmentState {
-    /// Runtime versions (runtime_name -> version)
+    /// Runtime versions (`runtime_name` -> version)
     pub runtimes: HashMap<String, String>,
     /// Explicitly installed system packages
     pub packages: Vec<String>,
@@ -74,7 +74,7 @@ impl EnvironmentState {
 
         let timestamp = chrono::Utc::now().timestamp();
 
-        let mut state = EnvironmentState {
+        let mut state = Self {
             runtimes,
             packages,
             timestamp,
@@ -88,6 +88,7 @@ impl EnvironmentState {
     }
 
     /// Calculate SHA256 hash of the state
+    #[must_use]
     pub fn calculate_hash(&self) -> String {
         let mut hasher = Sha256::new();
 
@@ -139,8 +140,9 @@ pub struct DriftReport {
 
 impl DriftReport {
     /// Compare two states and generate a drift report
+    #[must_use]
     pub fn compare(expected: &EnvironmentState, actual: &EnvironmentState) -> Self {
-        let mut report = DriftReport {
+        let mut report = Self {
             has_drift: false,
             missing_runtimes: Vec::new(),
             different_runtimes: Vec::new(),
@@ -151,21 +153,16 @@ impl DriftReport {
 
         // Check runtimes
         for (name, ver) in &expected.runtimes {
-            match actual.runtimes.get(name) {
-                Some(actual_ver) => {
-                    if ver != actual_ver {
-                        report.different_runtimes.push((
-                            name.clone(),
-                            ver.clone(),
-                            actual_ver.clone(),
-                        ));
-                        report.has_drift = true;
-                    }
-                }
-                None => {
-                    report.missing_runtimes.push(name.clone());
+            if let Some(actual_ver) = actual.runtimes.get(name) {
+                if ver != actual_ver {
+                    report
+                        .different_runtimes
+                        .push((name.clone(), ver.clone(), actual_ver.clone()));
                     report.has_drift = true;
                 }
+            } else {
+                report.missing_runtimes.push(name.clone());
+                report.has_drift = true;
             }
         }
 
@@ -209,7 +206,7 @@ impl DriftReport {
         if !self.missing_runtimes.is_empty() {
             println!("{}", "Missing Runtimes:".red());
             for r in &self.missing_runtimes {
-                println!("  - {}", r);
+                println!("  - {r}");
             }
         }
 
@@ -228,21 +225,21 @@ impl DriftReport {
         if !self.extra_runtimes.is_empty() {
             println!("{}", "Extra Runtimes (not in lockfile):".blue());
             for r in &self.extra_runtimes {
-                println!("  + {}", r);
+                println!("  + {r}");
             }
         }
 
         if !self.missing_packages.is_empty() {
             println!("\n{}", "Missing Packages:".red());
             for p in &self.missing_packages {
-                println!("  - {}", p);
+                println!("  - {p}");
             }
         }
 
         if !self.extra_packages.is_empty() {
             println!("\n{}", "Extra Packages (not in lockfile):".blue());
             for p in &self.extra_packages {
-                println!("  + {}", p);
+                println!("  + {p}");
             }
         }
     }

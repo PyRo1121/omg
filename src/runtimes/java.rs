@@ -53,26 +53,21 @@ pub struct JavaManager {
 
 impl JavaManager {
     pub fn new() -> Self {
-        let data_dir = directories::ProjectDirs::from("com", "omg", "omg")
-            .map(|d| d.data_dir().to_path_buf())
-            .unwrap_or_else(|| {
-                home::home_dir()
-                    .unwrap_or_else(|| PathBuf::from("."))
-                    .join(".omg")
-            });
+        let data_dir = super::DATA_DIR.clone();
 
         let client = reqwest::Client::builder()
             .user_agent("omg-package-manager")
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
 
-        JavaManager {
+        Self {
             versions_dir: data_dir.join("versions").join("java"),
             current_link: data_dir.join("versions").join("java").join("current"),
             client,
         }
     }
 
+    #[must_use]
     pub fn bin_dir(&self) -> PathBuf {
         self.current_link.join("bin")
     }
@@ -80,7 +75,7 @@ impl JavaManager {
     /// List available Java versions from Adoptium
     pub async fn list_available(&self) -> Result<Vec<JavaVersion>> {
         // Get available feature versions (major versions)
-        let available_url = format!("{}/info/available_releases", ADOPTIUM_API);
+        let available_url = format!("{ADOPTIUM_API}/info/available_releases");
 
         #[derive(Deserialize)]
         struct AvailableReleases {
@@ -138,6 +133,7 @@ impl JavaManager {
         Ok(versions)
     }
 
+    #[must_use]
     pub fn current_version(&self) -> Option<String> {
         fs::read_link(&self.current_link)
             .ok()
@@ -162,13 +158,12 @@ impl JavaManager {
         let arch = match std::env::consts::ARCH {
             "x86_64" => "x64",
             "aarch64" => "aarch64",
-            arch => anyhow::bail!("Unsupported architecture: {}", arch),
+            arch => anyhow::bail!("Unsupported architecture: {arch}"),
         };
 
         // Query Adoptium API
         let api_url = format!(
-            "{}/assets/latest/{}/hotspot?architecture={}&image_type=jdk&os=linux&vendor=eclipse",
-            ADOPTIUM_API, version, arch
+            "{ADOPTIUM_API}/assets/latest/{version}/hotspot?architecture={arch}&image_type=jdk&os=linux&vendor=eclipse"
         );
 
         println!("{} Querying Adoptium API...", "→".blue());
@@ -185,7 +180,7 @@ impl JavaManager {
 
         let binary = binaries
             .first()
-            .ok_or_else(|| anyhow::anyhow!("No JDK {} found for {}", version, arch))?;
+            .ok_or_else(|| anyhow::anyhow!("No JDK {version} found for {arch}"))?;
 
         fs::create_dir_all(&self.versions_dir)?;
 
@@ -235,7 +230,7 @@ impl JavaManager {
     async fn download_file(&self, url: &str, path: &PathBuf) -> Result<()> {
         let response =
             self.client.get(url).send().await.with_context(|| {
-                format!("Failed to download from {}. Check your connection.", url)
+                format!("Failed to download from {url}. Check your connection.")
             })?;
 
         let total = response.content_length().unwrap_or(0);
@@ -263,7 +258,7 @@ impl JavaManager {
         let version_dir = self.versions_dir.join(version);
 
         if !version_dir.exists() {
-            anyhow::bail!("Java {} is not installed", version);
+            anyhow::bail!("Java {version} is not installed");
         }
 
         if self.current_link.exists() {

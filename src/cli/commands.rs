@@ -10,7 +10,9 @@ use crate::package_managers::get_system_status;
 
 // Re-export moved commands
 pub use super::env::{capture as env_capture, check as env_check, share as env_share};
-pub use super::packages::{clean, explicit, info, install, remove, search, sync, update};
+pub use super::packages::{
+    clean, explicit, explicit_sync, info, info_sync, install, remove, search, sync, update,
+};
 pub use super::runtimes::{list_versions, use_version};
 pub use super::security::audit;
 
@@ -94,119 +96,146 @@ pub async fn complete(_shell: &str, current: &str, last: &str, _full: Option<&st
     Ok(())
 }
 
-pub async fn status() -> Result<()> {
+pub fn status_sync() -> Result<()> {
     let _start = std::time::Instant::now();
+    let mut stdout = std::io::BufWriter::new(std::io::stdout());
+    use std::io::Write;
 
-    println!("{} System Status\n", style::header("OMG"));
+    writeln!(stdout, "{} System Status\n", style::header("OMG"))?;
 
     // ULTRA FAST: Use Daemon Cache if available (<1ms)
-    let (total, explicit, orphans, updates, security_vulnerabilities) =
-        if let Ok(mut client) = crate::core::client::DaemonClient::connect().await {
-            if let Ok(res) = client.status().await {
+    let (total, explicit, orphans, updates, security_vulnerabilities, cached_runtimes) =
+        if let Ok(mut client) = crate::core::client::DaemonClient::connect_sync() {
+            // Fixed ID for zero-overhead
+            if let Ok(crate::daemon::protocol::ResponseResult::Status(res)) =
+                client.call_sync(crate::daemon::protocol::Request::Status { id: 0 })
+            {
                 (
                     res.total_packages,
                     res.explicit_packages,
                     res.orphan_packages,
                     res.updates_available,
                     res.security_vulnerabilities,
+                    Some(res.runtime_versions),
                 )
             } else {
                 let s = get_system_status().unwrap_or((0, 0, 0, 0));
-                (s.0, s.1, s.2, s.3, 0)
+                (s.0, s.1, s.2, s.3, 0, None)
             }
         } else {
             // Fallback to local optimized ALPM query
             let s = get_system_status().unwrap_or((0, 0, 0, 0));
-            (s.0, s.1, s.2, s.3, 0)
+            (s.0, s.1, s.2, s.3, 0, None)
         };
 
     if updates > 0 {
-        println!(
+        writeln!(
+            stdout,
             "  {} {} updates available",
             style::warning("Updates:"),
             updates
-        );
+        )?;
     } else {
-        println!("  {} System is up to date", style::success("Updates:"));
+        writeln!(
+            stdout,
+            "  {} System is up to date",
+            style::success("Updates:")
+        )?;
     }
 
-    println!(
+    writeln!(
+        stdout,
         "  {} {} total ({} explicit)",
         style::success("Packages:"),
         total,
         explicit
-    );
+    )?;
 
     if orphans > 0 {
-        println!("  {} {} packages", style::warning("Orphans:"), orphans);
+        writeln!(
+            stdout,
+            "  {} {} packages",
+            style::warning("Orphans:"),
+            orphans
+        )?;
     }
 
     // Zero-Trust Security Status
     if security_vulnerabilities > 0 {
-        println!(
+        writeln!(
+            stdout,
             "  {} {} vulnerabilities found!",
             style::error("Security:"),
             security_vulnerabilities
-        );
-        println!(
+        )?;
+        writeln!(
+            stdout,
             "  {} Run '{}' for details",
             style::dim("→"),
             style::warning("omg audit")
-        );
+        )?;
     } else {
-        println!("  {} No known vulnerabilities", style::success("Security:"));
+        writeln!(
+            stdout,
+            "  {} No known vulnerabilities",
+            style::success("Security:")
+        )?;
     }
 
     // Daemon status
-    let socket = std::env::var("XDG_RUNTIME_DIR")
-        .map_or_else(|_| "/tmp/omg.sock".to_string(), |d| format!("{d}/omg.sock"));
-
-    if std::path::Path::new(&socket).exists() {
-        println!("  {} Running", style::success("Daemon:"));
+    let socket = crate::core::client::default_socket_path();
+    if socket.exists() {
+        writeln!(stdout, "  {} Running", style::success("Daemon:"))?;
     } else {
-        println!("  {} Not running", style::dim("Daemon:"));
+        writeln!(stdout, "  {} Not running", style::dim("Daemon:"))?;
     }
 
-    // Runtimes - ULTRA-FAST PROBING (<1ms)
-    println!("\n{} Runtimes:\n", style::dim("────────────────────"));
+    // Runtimes - INSTANT FROM CACHE
+    writeln!(
+        stdout,
+        "\n{} Runtimes:\n",
+        style::dim("────────────────────")
+    )?;
 
-    let (node, py, rust, go, bun, java, ruby) = tokio::join!(
-        tokio::task::spawn_blocking(|| crate::runtimes::probe_version("node")),
-        tokio::task::spawn_blocking(|| crate::runtimes::probe_version("python")),
-        tokio::task::spawn_blocking(|| crate::runtimes::probe_version("rust")),
-        tokio::task::spawn_blocking(|| crate::runtimes::probe_version("go")),
-        tokio::task::spawn_blocking(|| crate::runtimes::probe_version("bun")),
-        tokio::task::spawn_blocking(|| crate::runtimes::probe_version("java")),
-        tokio::task::spawn_blocking(|| crate::runtimes::probe_version("ruby")),
-    );
+    if let Some(versions) = cached_runtimes {
+        for (rt_name, v) in versions {
+            let label = match rt_name.as_str() {
+                "node" => "Node.js",
+                "python" => "Python",
+                "rust" => "Rust",
+                "go" => "Go",
+                "bun" => "Bun",
+                "java" => "Java",
+                "ruby" => "Ruby",
+                _ => &rt_name,
+            };
+            writeln!(stdout, "  {} {} {}", style::success("●"), label, v)?;
+        }
+    } else {
+        // Fallback to local probing if daemon is down
+        for rt_name in &["node", "python", "rust", "go", "bun", "java", "ruby"] {
+            if let Some(v) = crate::runtimes::probe_version(rt_name) {
+                let label = match *rt_name {
+                    "node" => "Node.js",
+                    "python" => "Python",
+                    "rust" => "Rust",
+                    "go" => "Go",
+                    "bun" => "Bun",
+                    "java" => "Java",
+                    "ruby" => "Ruby",
+                    _ => rt_name,
+                };
+                writeln!(stdout, "  {} {} {}", style::success("●"), label, v)?;
+            }
+        }
+    }
 
-    if let Ok(Some(v)) = node {
-        println!("  {} Node.js {}", style::success("●"), v);
-    }
-    if let Ok(Some(v)) = py {
-        println!("  {} Python {}", style::success("●"), v);
-    }
-    if let Ok(Some(v)) = rust {
-        println!("  {} Rust {}", style::success("●"), v);
-    }
-    if let Ok(Some(v)) = go {
-        println!("  {} Go {}", style::success("●"), v);
-    }
-    if let Ok(Some(v)) = bun {
-        println!("  {} Bun {}", style::success("●"), v);
-    }
-    if let Ok(Some(v)) = java {
-        println!("  {} Java {}", style::success("●"), v);
-    }
-    if let Ok(Some(v)) = ruby {
-        println!("  {} Ruby {}", style::success("●"), v);
-    }
-
+    stdout.flush()?;
     Ok(())
 }
 
 /// Start the daemon
-pub async fn daemon(foreground: bool) -> Result<()> {
+pub fn daemon(foreground: bool) -> Result<()> {
     if foreground {
         println!("{} Run 'omgd' directly for daemon mode", style::info("→"));
     } else {
@@ -225,7 +254,7 @@ pub async fn daemon(foreground: bool) -> Result<()> {
 }
 
 /// Get or set configuration
-pub async fn config(key: Option<&str>, value: Option<&str>) -> Result<()> {
+pub fn config(key: Option<&str>, value: Option<&str>) -> Result<()> {
     match (key, value) {
         (Some(k), Some(v)) => {
             println!(

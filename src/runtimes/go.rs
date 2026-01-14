@@ -29,21 +29,16 @@ pub struct GoManager {
 
 impl GoManager {
     pub fn new() -> Self {
-        let data_dir = directories::ProjectDirs::from("com", "omg", "omg")
-            .map(|d| d.data_dir().to_path_buf())
-            .unwrap_or_else(|| {
-                home::home_dir()
-                    .unwrap_or_else(|| PathBuf::from("."))
-                    .join(".omg")
-            });
+        let data_dir = super::DATA_DIR.clone();
 
-        GoManager {
+        Self {
             versions_dir: data_dir.join("versions").join("go"),
             current_link: data_dir.join("versions").join("go").join("current"),
             client: reqwest::Client::new(),
         }
     }
 
+    #[must_use]
     pub fn bin_dir(&self) -> PathBuf {
         self.current_link.join("bin")
     }
@@ -89,6 +84,7 @@ impl GoManager {
         Ok(versions)
     }
 
+    #[must_use]
     pub fn current_version(&self) -> Option<String> {
         fs::read_link(&self.current_link)
             .ok()
@@ -114,11 +110,11 @@ impl GoManager {
         let arch = match std::env::consts::ARCH {
             "x86_64" => "amd64",
             "aarch64" => "arm64",
-            arch => anyhow::bail!("Unsupported architecture: {}", arch),
+            arch => anyhow::bail!("Unsupported architecture: {arch}"),
         };
 
-        let filename = format!("go{}.linux-{}.tar.gz", version, arch);
-        let url = format!("{}/{}", GO_DOWNLOAD_URL, filename);
+        let filename = format!("go{version}.linux-{arch}.tar.gz");
+        let url = format!("{GO_DOWNLOAD_URL}/{filename}");
 
         fs::create_dir_all(&self.versions_dir)?;
 
@@ -167,7 +163,7 @@ impl GoManager {
     async fn download_file(&self, url: &str, path: &PathBuf) -> Result<()> {
         let response =
             self.client.get(url).send().await.with_context(|| {
-                format!("Failed to download from {}. Check your connection.", url)
+                format!("Failed to download from {url}. Check your connection.")
             })?;
 
         if !response.status().is_success() {
@@ -204,7 +200,7 @@ impl GoManager {
         let version_dir = self.versions_dir.join(version);
 
         if !version_dir.exists() {
-            anyhow::bail!("Go {} is not installed", version);
+            anyhow::bail!("Go {version} is not installed");
         }
 
         if self.current_link.exists() {

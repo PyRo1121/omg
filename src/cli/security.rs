@@ -9,15 +9,14 @@ pub async fn audit() -> Result<()> {
         "OMG".cyan().bold()
     );
 
-    let mut client = match DaemonClient::connect().await {
-        Ok(c) => c,
-        Err(_) => {
-            println!(
-                "{} Daemon not running. Security audit requires the daemon.",
-                "✗".red()
-            );
-            return Ok(());
-        }
+    let mut client = if let Ok(c) = DaemonClient::connect().await {
+        c
+    } else {
+        println!(
+            "{} Daemon not running. Security audit requires the daemon.",
+            "✗".red()
+        );
+        return Ok(());
     };
 
     match client.security_audit().await {
@@ -38,7 +37,7 @@ pub async fn audit() -> Result<()> {
                     for vuln in vulns {
                         let score = vuln
                             .score
-                            .map(|s| format!(" [Score: {}]", s))
+                            .map(|s| format!(" [Score: {s}]"))
                             .unwrap_or_default();
                         println!(
                             "    {} {} - {}{}",

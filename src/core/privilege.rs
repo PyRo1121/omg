@@ -8,6 +8,7 @@ use std::os::unix::process::CommandExt;
 use std::process::Command;
 
 /// Check if we're running as root
+#[must_use]
 pub fn is_root() -> bool {
     unsafe { libc::geteuid() == 0 }
 }
@@ -41,7 +42,7 @@ where
 {
     if !is_root() {
         // Re-exec with sudo - this replaces the process
-        elevate_if_needed().map_err(|e| anyhow::anyhow!("Failed to elevate privileges: {}", e))?;
+        elevate_if_needed().map_err(|e| anyhow::anyhow!("Failed to elevate privileges: {e}"))?;
         // This line is never reached
         unreachable!()
     }

@@ -1,50 +1,62 @@
-use colored::*;
+use colored::Colorize;
 use indicatif::{ProgressBar, ProgressStyle};
 
+#[must_use]
 pub fn header(msg: &str) -> String {
     format!("{} {}", "==>".magenta().bold(), msg.bold())
 }
 
+#[must_use]
 pub fn success(msg: &str) -> String {
     format!("{} {}", "✓".green().bold(), msg)
 }
 
+#[must_use]
 pub fn error(msg: &str) -> String {
     format!("{} {}", "✗".red().bold(), msg)
 }
 
+#[must_use]
 pub fn info(msg: &str) -> String {
     format!("{} {}", "ℹ".blue().bold(), msg)
 }
 
+#[must_use]
 pub fn warning(msg: &str) -> String {
     format!("{} {}", "⚠".yellow().bold(), msg)
 }
 
+#[must_use]
 pub fn arrow(msg: &str) -> String {
     format!("{} {}", "→".cyan().bold(), msg)
 }
 
+#[must_use]
 pub fn dim(msg: &str) -> String {
     msg.dimmed().to_string()
 }
 
+#[must_use]
 pub fn command(cmd: &str) -> String {
     format!("`{}`", cmd.cyan())
 }
 
+#[must_use]
 pub fn url(link: &str) -> String {
     link.underline().blue().to_string()
 }
 
+#[must_use]
 pub fn package(name: &str) -> String {
     name.white().bold().to_string()
 }
 
+#[must_use]
 pub fn version(ver: &str) -> String {
     ver.green().to_string()
 }
 
+#[must_use]
 pub fn spinner(msg: &str) -> ProgressBar {
     let pb = ProgressBar::new_spinner();
     pb.set_style(

@@ -1,13 +1,13 @@
 //! Daemon server implementation with Unix socket IPC
 //!
-//! Uses LengthDelimitedCodec and Bincode for maximum IPC performance.
+//! Uses `LengthDelimitedCodec` and Bincode for maximum IPC performance.
 
 use anyhow::Result;
+use futures::sink::SinkExt;
+use futures::stream::StreamExt;
 use std::sync::Arc;
 use tokio::net::UnixListener;
 use tokio::sync::broadcast;
-use futures::sink::SinkExt;
-use futures::stream::StreamExt;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
 use super::handlers::{handle_request, DaemonState};
@@ -24,11 +24,49 @@ pub async fn run(listener: UnixListener) -> Result<()> {
 
     tokio::spawn(async move {
         tracing::info!("Background status worker started");
+
+        // Initial refresh
+        {
+            use crate::package_managers::get_system_status;
+            use crate::runtimes::{probe_version, SUPPORTED_RUNTIMES};
+            let mut versions = Vec::new();
+            for runtime in SUPPORTED_RUNTIMES {
+                if let Some(v) = probe_version(runtime) {
+                    versions.push((runtime.to_string(), v));
+                }
+            }
+            *state_worker.runtime_versions.write() = versions.clone();
+            if let Ok((total, explicit, orphans, updates)) = get_system_status() {
+                let res = super::protocol::StatusResult {
+                    total_packages: total,
+                    explicit_packages: explicit,
+                    orphan_packages: orphans,
+                    updates_available: updates,
+                    security_vulnerabilities: 0,
+                    runtime_versions: versions,
+                };
+                let _ = state_worker.persistent.set_status(res.clone());
+                state_worker.cache.update_status(res);
+            }
+        }
+
         loop {
             tokio::select! {
-                _ = tokio::time::sleep(std::time::Duration::from_secs(300)) => {
+                () = tokio::time::sleep(std::time::Duration::from_secs(300)) => {
                     tracing::debug!("Refreshing system status cache...");
                     use crate::package_managers::get_system_status;
+                    use crate::runtimes::{SUPPORTED_RUNTIMES, probe_version};
+
+                    // 1. Probe Runtimes (Fast)
+                    let mut versions = Vec::new();
+                    for runtime in SUPPORTED_RUNTIMES {
+                        if let Some(v) = probe_version(runtime) {
+                            versions.push((runtime.to_string(), v));
+                        }
+                    }
+                    *state_worker.runtime_versions.write() = versions.clone();
+
+                    // 2. Refresh Package Status (ALPM)
                     if let Ok((total, explicit, orphans, updates)) = get_system_status() {
                         let res = super::protocol::StatusResult {
                             total_packages: total,
@@ -36,6 +74,7 @@ pub async fn run(listener: UnixListener) -> Result<()> {
                             orphan_packages: orphans,
                             updates_available: updates,
                             security_vulnerabilities: 0,
+                            runtime_versions: versions,
                         };
                         let _ = state_worker.persistent.set_status(res.clone());
                         state_worker.cache.update_status(res);
@@ -93,13 +132,13 @@ async fn handle_client(stream: tokio::net::UnixStream, state: Arc<DaemonState>) 
 
     while let Some(request_bytes) = framed.next().await {
         let bytes = request_bytes?;
-        
+
         // Decode request
         let request: Request = bincode::deserialize(&bytes)?;
-        
+
         // Handle request
         let response = handle_request(Arc::clone(&state), request).await;
-        
+
         // Encode and send response
         let response_bytes = bincode::serialize(&response)?;
         framed.send(response_bytes.into()).await?;

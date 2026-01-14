@@ -36,11 +36,10 @@ impl Default for Settings {
 
         // Socket in XDG_RUNTIME_DIR or /tmp
         let socket_path = std::env::var("XDG_RUNTIME_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("/tmp"))
+            .map_or_else(|_| PathBuf::from("/tmp"), PathBuf::from)
             .join("omg.sock");
 
-        Settings {
+        Self {
             shims_enabled: false, // PATH modification is default (faster)
             data_dir,
             socket_path,
@@ -59,7 +58,7 @@ impl Settings {
             let content = std::fs::read_to_string(&config_path)?;
             Ok(toml::from_str(&content)?)
         } else {
-            Ok(Settings::default())
+            Ok(Self::default())
         }
     }
 
@@ -87,11 +86,13 @@ impl Settings {
     }
 
     /// Get the versions directory
+    #[must_use]
     pub fn versions_dir(&self) -> PathBuf {
         self.data_dir.join("versions")
     }
 
     /// Get the shims directory
+    #[must_use]
     pub fn shims_dir(&self) -> PathBuf {
         self.data_dir.join("shims")
     }

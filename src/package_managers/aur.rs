@@ -5,17 +5,19 @@ use colored::Colorize;
 use git2::Repository;
 use indicatif::{ProgressBar, ProgressStyle};
 use serde::Deserialize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::pkgbuild::PkgBuild;
 use crate::core::security::pgp::PgpVerifier;
 use crate::core::{archive, Package, PackageSource};
 use crate::package_managers::traits::PackageManager;
+use crate::package_managers::{get_potential_aur_packages, pacman_db};
+use futures::StreamExt;
 use sha2::{Digest, Sha256};
 use std::process::Stdio;
 use tokio::process::Command;
 
-const AUR_RPC_URL: &str = "https://aur.archlinux.org/rpc/v5";
+const AUR_RPC_URL: &str = "https://aur.archlinux.org/rpc";
 const AUR_GIT_URL: &str = "https://aur.archlinux.org";
 
 /// AUR API client with build support
@@ -59,7 +61,7 @@ impl AurClient {
             .join("omg")
             .join("aur");
 
-        AurClient {
+        Self {
             client: reqwest::Client::new(),
             build_dir,
         }
@@ -67,7 +69,7 @@ impl AurClient {
 
     /// Search AUR packages
     pub async fn search(&self, query: &str) -> Result<Vec<Package>> {
-        let url = format!("{}?v=5&type=search&arg={}", AUR_RPC_URL, query);
+        let url = format!("{AUR_RPC_URL}?v=5&type=search&arg={query}");
 
         let response: AurResponse = self.client.get(&url).send().await?.json().await?;
 
@@ -91,7 +93,7 @@ impl AurClient {
 
     /// Get info for a specific AUR package
     pub async fn info(&self, package: &str) -> Result<Option<Package>> {
-        let url = format!("{}?v=5&type=info&arg={}", AUR_RPC_URL, package);
+        let url = format!("{AUR_RPC_URL}?v=5&type=info&arg={package}");
 
         let response: AurResponse = self.client.get(&url).send().await?.json().await?;
 
@@ -102,6 +104,55 @@ impl AurClient {
             source: PackageSource::Aur,
             installed: false,
         }))
+    }
+
+    /// Get list of upgradable AUR packages
+    /// Uses pure Rust cache (<1ms) to identify local AUR packages,
+    /// and parallel RPC calls to check for updates.
+    pub async fn get_update_list(&self) -> Result<Vec<(String, String, String)>> {
+        // 1. Identify potential AUR packages using pure Rust cache (Fast-path)
+        let potential_aur_names = get_potential_aur_packages()?;
+
+        if potential_aur_names.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // 2. Query AUR for these packages in parallel (batch query)
+        let mut updates = Vec::new();
+        let chunked_names: Vec<Vec<String>> = potential_aur_names
+            .chunks(50)
+            .map(<[std::string::String]>::to_vec)
+            .collect();
+
+        let mut stream = futures::stream::iter(chunked_names)
+            .map(|chunk| {
+                let client = &self.client;
+                async move {
+                    let mut url = format!("{AUR_RPC_URL}?v=5&type=info");
+                    for name in chunk {
+                        url.push_str("&arg[]=");
+                        url.push_str(&name);
+                    }
+                    client.get(&url).send().await?.json::<AurResponse>().await
+                }
+            })
+            .buffer_unordered(4); // Query 4 chunks in parallel
+
+        while let Some(res) = stream.next().await {
+            let response = res?;
+            for p in response.results {
+                // Version comparison using pure Rust pacman_db version logic
+                if let Some(local_pkg) = pacman_db::get_local_package(&p.name)? {
+                    if pacman_db::compare_versions(&p.version, &local_pkg.version)
+                        == std::cmp::Ordering::Greater
+                    {
+                        updates.push((p.name, local_pkg.version, p.version));
+                    }
+                }
+            }
+        }
+
+        Ok(updates)
     }
 
     /// Install AUR package by building it
@@ -130,17 +181,13 @@ impl AurClient {
         let pkgbuild_path = pkg_dir.join("PKGBUILD");
         if !pkgbuild_path.exists() {
             anyhow::bail!(
-                "✗ Build Error: PKGBUILD not found for package '{}'.\n  Verify the package exists on AUR or check your internet connection.",
-                package
+                "✗ Build Error: PKGBUILD not found for package '{package}'.\n  Verify the package exists on AUR or check your internet connection."
             );
         }
 
         // Parse PKGBUILD
         let pkgbuild = PkgBuild::parse(&pkgbuild_path).with_context(|| {
-            format!(
-                "Failed to parse PKGBUILD for '{}'. The file may be malformed.",
-                package
-            )
+            format!("Failed to parse PKGBUILD for '{package}'. The file may be malformed.")
         })?;
         println!(
             "{} Parsed PKGBUILD: {} v{}",
@@ -165,7 +212,7 @@ impl AurClient {
                     .next()
                     .unwrap_or(source)
                     .split('/')
-                    .last()
+                    .next_back()
                 {
                     if sig_file.ends_with(".sig") || sig_file.ends_with(".asc") {
                         let data_file = sig_file.trim_end_matches(".sig").trim_end_matches(".asc");
@@ -180,7 +227,7 @@ impl AurClient {
                             if let Err(e) = verifier.verify_detached(
                                 &data_path,
                                 &sig_path,
-                                &std::path::Path::new("/usr/share/pacman/keyrings/archlinux.gpg"),
+                                std::path::Path::new("/usr/share/pacman/keyrings/archlinux.gpg"),
                             ) {
                                 println!(
                                     "  {} PGP check failed for {}: {}",
@@ -227,9 +274,83 @@ impl AurClient {
         Ok(())
     }
 
+    /// Build an AUR package and return the path to the built package (no install)
+    /// This is used for batch updates where we want to install all packages at once
+    /// Uses makepkg for reliable builds that match yay/paru behavior
+    pub async fn build_only(&self, package: &str) -> Result<PathBuf> {
+        // Ensure build directory exists
+        std::fs::create_dir_all(&self.build_dir)?;
+
+        let pkg_dir = self.build_dir.join(package);
+        let pkgbuild_path = pkg_dir.join("PKGBUILD");
+
+        // Clone or update the package - detect incomplete clones
+        if pkg_dir.exists() && pkgbuild_path.exists() {
+            // Valid existing clone - just update
+            self.git_pull(&pkg_dir).await.with_context(|| {
+                format!(
+                    "Failed to update AUR package '{package}'. Try removing ~/.cache/omg/aur/{package}"
+                )
+            })?;
+        } else {
+            // Clean up any incomplete clone and start fresh
+            if pkg_dir.exists() {
+                std::fs::remove_dir_all(&pkg_dir).ok();
+            }
+            self.git_clone(package).await.with_context(|| {
+                format!("Failed to clone AUR package '{package}'. Check if it exists on AUR.")
+            })?;
+        }
+
+        // Verify PKGBUILD exists after clone
+        if !pkgbuild_path.exists() {
+            anyhow::bail!(
+                "PKGBUILD not found for '{package}'. The AUR package may not exist or clone failed."
+            );
+        }
+
+        // Use makepkg for the full build - this is the reliable approach
+        // makepkg handles: source fetching, checksum verification, extraction,
+        // dependency resolution, build(), package(), and archive creation
+        let status = Command::new("makepkg")
+            .args([
+                "-s",          // Sync dependencies before building
+                "--noconfirm", // Don't ask for confirmation
+                "-f",          // Force rebuild even if package exists
+                "--needed",    // Skip if already installed (for deps)
+            ])
+            .current_dir(&pkg_dir)
+            .stdout(Stdio::inherit()) // Show build output
+            .stderr(Stdio::inherit())
+            .status()
+            .await
+            .with_context(|| format!("Failed to run makepkg for '{package}'"))?;
+
+        if !status.success() {
+            anyhow::bail!("makepkg failed for '{package}'. Check build output above for details.");
+        }
+
+        // Find the created package archive
+        let mut pkg_path = None;
+        for entry in std::fs::read_dir(&pkg_dir)? {
+            let entry = entry?;
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.ends_with(".pkg.tar.zst") || name.ends_with(".pkg.tar.xz") {
+                pkg_path = Some(entry.path());
+                break;
+            }
+        }
+
+        pkg_path.ok_or_else(|| {
+            anyhow::anyhow!(
+                "No package archive found after building '{package}'. Check makepkg output."
+            )
+        })
+    }
+
     /// Clone package from AUR
     async fn git_clone(&self, package: &str) -> Result<()> {
-        let url = format!("{}/{}.git", AUR_GIT_URL, package);
+        let url = format!("{AUR_GIT_URL}/{package}.git");
         let dest = self.build_dir.join(package);
 
         let spinner = create_spinner("Cloning repository (native)...");
@@ -289,7 +410,7 @@ impl AurClient {
     }
 
     /// Fetch sources defined in PKGBUILD
-    async fn fetch_sources(&self, pkg: &PkgBuild, pkg_dir: &PathBuf) -> Result<()> {
+    async fn fetch_sources(&self, pkg: &PkgBuild, pkg_dir: &Path) -> Result<()> {
         for source in &pkg.sources {
             // Very basic source parsing - just handle URLs for now
             if source.contains("://") {
@@ -299,7 +420,7 @@ impl AurClient {
                     .next()
                     .unwrap_or(url)
                     .split('/')
-                    .last()
+                    .next_back()
                     .unwrap_or("source");
                 let dest = pkg_dir.join(filename);
 
@@ -318,7 +439,7 @@ impl AurClient {
     }
 
     /// Verify checksums
-    fn verify_checksums(&self, pkg: &PkgBuild, pkg_dir: &PathBuf) -> Result<()> {
+    fn verify_checksums(&self, pkg: &PkgBuild, pkg_dir: &Path) -> Result<()> {
         if pkg.sha256sums.is_empty() {
             println!(
                 "{} No sha256sums found, skipping verification",
@@ -333,7 +454,7 @@ impl AurClient {
                 .next()
                 .unwrap_or(source)
                 .split('/')
-                .last()
+                .next_back()
                 .unwrap_or("");
             if filename.is_empty() {
                 continue;
@@ -356,10 +477,7 @@ impl AurClient {
 
                 if &actual_sum != expected_sum {
                     anyhow::bail!(
-                        "✗ Security Error: Checksum verification failed for {}.\n  Expected: {}\n  Actual: {}\n  The source file may have been modified or corrupted.",
-                        filename,
-                        expected_sum,
-                        actual_sum
+                        "✗ Security Error: Checksum verification failed for {filename}.\n  Expected: {expected_sum}\n  Actual: {actual_sum}\n  The source file may have been modified or corrupted."
                     );
                 }
                 println!("{} {} verified", "✓".green(), filename);
@@ -368,15 +486,18 @@ impl AurClient {
         Ok(())
     }
 
-    /// Extract fetched sources
-    fn extract_sources(&self, pkg: &PkgBuild, pkg_dir: &PathBuf) -> Result<()> {
+    /// Extract fetched sources into the src subdirectory
+    fn extract_sources(&self, pkg: &PkgBuild, pkg_dir: &Path) -> Result<()> {
+        let srcdir = pkg_dir.join("src");
+        std::fs::create_dir_all(&srcdir)?;
+
         for source in &pkg.sources {
             let filename = source
                 .split("::")
                 .next()
                 .unwrap_or(source)
                 .split('/')
-                .last()
+                .next_back()
                 .unwrap_or("");
             if filename.is_empty() {
                 continue;
@@ -387,14 +508,24 @@ impl AurClient {
                 continue;
             }
 
-            // Only extract supported formats
+            // Extract supported formats into srcdir
             if filename.ends_with(".tar.gz")
                 || filename.ends_with(".tgz")
                 || filename.ends_with(".tar.xz")
+                || filename.ends_with(".tar.zst")
                 || filename.ends_with(".zip")
             {
-                archive::extract_auto(&path, pkg_dir)?;
-                println!("{} Extracted {}", "✓".green(), filename);
+                archive::extract_auto(&path, &srcdir)?;
+                println!("{} Extracted {} to src/", "✓".green(), filename);
+            } else if filename.ends_with(".deb") {
+                // .deb files are ar archives containing data.tar.* - extract to pkg_dir (not srcdir)
+                // The PKGBUILD's prepare() function handles extraction via tar command
+                // Just copy the .deb to srcdir so prepare() can find it
+                let dest = srcdir.join(filename);
+                if !dest.exists() {
+                    std::fs::copy(&path, &dest)?;
+                }
+                println!("{} Copied {} to src/", "✓".green(), filename);
             }
         }
         Ok(())
@@ -417,10 +548,7 @@ impl AurClient {
 
         for dep in all_deps {
             // Very simple check - doesn't handle versions in depends yet
-            let dep_name = dep
-                .split(|c| c == '>' || c == '<' || c == '=')
-                .next()
-                .unwrap_or(&dep);
+            let dep_name = dep.split(['>', '<', '=']).next().unwrap_or(&dep);
             if local_db.pkg(dep_name).is_err() {
                 missing.push(dep);
             }
@@ -451,11 +579,34 @@ impl AurClient {
 
         let spinner = create_spinner("Executing PKGBUILD functions...");
 
-        // We run a minimal sh to source the PKGBUILD and run functions
-        // This is the only acceptable subprocess as PKGBUILDs are Bash.
-        let status = Command::new("sh")
+        // Setup build environment directories
+        let startdir = pkg_dir.canonicalize().unwrap_or_else(|_| pkg_dir.clone());
+        let srcdir = startdir.join("src");
+        let pkgdir = startdir.join("pkg");
+
+        // Create required directories
+        std::fs::create_dir_all(&srcdir)?;
+        std::fs::create_dir_all(&pkgdir)?;
+
+        // We run a minimal sh to source the PKGBUILD and run functions.
+        // CRITICAL: We must set pkgname, pkgver, srcdir, pkgdir as shell variables
+        // BEFORE sourcing PKGBUILD so that functions like build() and package()
+        // can use relative paths correctly.
+        let build_script = format!(
+            r#"export startdir="{startdir}" srcdir="{srcdir}" pkgdir="{pkgdir}"
+cd "$srcdir"
+source ../PKGBUILD
+(type prepare >/dev/null 2>&1 && prepare)
+(type build >/dev/null 2>&1 && build)
+(type package >/dev/null 2>&1 && package)"#,
+            startdir = startdir.display(),
+            srcdir = srcdir.display(),
+            pkgdir = pkgdir.display()
+        );
+
+        let status = Command::new("bash")
             .arg("-c")
-            .arg("source ./PKGBUILD && (type build >/dev/null 2>&1 && build); (type package >/dev/null 2>&1 && package)")
+            .arg(&build_script)
             .current_dir(pkg_dir)
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
@@ -471,34 +622,45 @@ impl AurClient {
         Ok(())
     }
 
-    /// Create .pkg.tar.zst archive (Pure Rust)
-    async fn create_package_archive(&self, pkg: &PkgBuild, pkg_dir: &PathBuf) -> Result<PathBuf> {
-        let pkg_filename = format!(
-            "{}-{}-{}-{}.pkg.tar.zst",
-            pkg.name,
-            pkg.version,
-            pkg.release,
-            std::env::consts::ARCH
-        );
-        let pkg_path = pkg_dir.join(&pkg_filename);
-
-        let pkg_root = pkg_dir.join("pkg").join(&pkg.name);
-        if !pkg_root.exists() {
-            anyhow::bail!("Package root not found at {:?}", pkg_root);
+    /// Create .pkg.tar.zst archive using makepkg
+    async fn create_package_archive(&self, _pkg: &PkgBuild, pkg_dir: &PathBuf) -> Result<PathBuf> {
+        let pkg_root = pkg_dir.join("pkg");
+        if !pkg_root.exists() || pkg_root.read_dir()?.next().is_none() {
+            anyhow::bail!("Package root not found or empty at {pkg_root:?}");
         }
 
-        let spinner = create_spinner("Archiving package (native)...");
+        let spinner = create_spinner("Creating package archive...");
 
-        // Use tar + zstd in pure Rust
-        let file = std::fs::File::create(&pkg_path)?;
-        let encoder = zstd::stream::Encoder::new(file, 3)?;
-        let mut archive = tar::Builder::new(encoder);
-
-        archive.append_dir_all(".", &pkg_root)?;
-        archive.finish()?;
+        // Use makepkg --repackage to create a valid package with proper metadata
+        // This is the ONLY reliable way to create pacman-compatible packages
+        let status = Command::new("makepkg")
+            .arg("--repackage")
+            .arg("--force")
+            .arg("--noconfirm")
+            .current_dir(pkg_dir)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .await?;
 
         spinner.finish_and_clear();
-        Ok(pkg_path)
+
+        if !status.success() {
+            anyhow::bail!("makepkg --repackage failed");
+        }
+
+        // Find the created package
+        let mut pkg_path = None;
+        for entry in std::fs::read_dir(pkg_dir)? {
+            let entry = entry?;
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.ends_with(".pkg.tar.zst") || name.ends_with(".pkg.tar.xz") {
+                pkg_path = Some(entry.path());
+                break;
+            }
+        }
+
+        pkg_path.ok_or_else(|| anyhow::anyhow!("No package archive found after makepkg"))
     }
 
     /// Install the built package via sudo omg install <path>
@@ -571,7 +733,7 @@ pub async fn search_detailed(query: &str) -> Result<Vec<AurPackageDetail>> {
         .user_agent("omg-package-manager")
         .build()
         .unwrap_or_else(|_| reqwest::Client::new());
-    let url = format!("{}?v=5&type=search&arg={}", AUR_RPC_URL, query);
+    let url = format!("{AUR_RPC_URL}?v=5&type=search&arg={query}");
 
     let response: AurDetailedResponse = client
         .get(&url)

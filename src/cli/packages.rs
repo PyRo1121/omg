@@ -4,26 +4,98 @@ use dialoguer::{theme::ColorfulTheme, Confirm, MultiSelect};
 
 use crate::cli::style;
 use crate::core::client::DaemonClient;
+use crate::core::completion::CompletionEngine;
 use crate::core::security::SecurityPolicy;
+use crate::core::Database;
+use crate::daemon::protocol::{Request, ResponseResult};
 use crate::package_managers::{
+    check_updates_cached,
     clean_cache,
     display_pkg_info,
     get_sync_pkg_info,
-    get_update_list,
-    list_explicit,
     list_orphans_direct,
     remove_orphans,
     search_detailed,
     // Direct ALPM functions (10-100x faster)
     search_sync,
     sync_databases_parallel,
-    OfficialPackageManager,
     AurClient,
+    OfficialPackageManager,
     PackageManager,
 };
 
+/// Search for packages in official repos and AUR (Synchronous fast-path)
+pub fn search_sync_cli(query: &str, detailed: bool, interactive: bool) -> Result<bool> {
+    if detailed || interactive {
+        // Fallback to async for these modes as they require spin-up or complex interaction
+        return Ok(false);
+    }
+
+    let start = std::time::Instant::now();
+
+    // 1. Try Daemon first (ULTRA FAST - <1ms)
+    if let Ok(mut client) = DaemonClient::connect_sync() {
+        if let Ok(ResponseResult::Search(res)) = client.call_sync(Request::Search {
+            id: 0,
+            query: query.to_string(),
+            limit: Some(50),
+        }) {
+            let sync_time = start.elapsed();
+
+            if res.packages.is_empty() {
+                return Ok(false);
+            }
+
+            let mut stdout = std::io::BufWriter::new(std::io::stdout());
+            use std::io::Write;
+
+            writeln!(
+                stdout,
+                "{} {} results ({:.1}ms)\n",
+                style::header("OMG"),
+                res.packages.len(),
+                sync_time.as_secs_f64() * 1000.0
+            )?;
+
+            writeln!(stdout, "{}", style::header("Official Repositories"))?;
+            for pkg in res.packages.iter().take(20) {
+                writeln!(
+                    stdout,
+                    "  {} {} ({}) - {}",
+                    style::package(&pkg.name),
+                    style::version(&pkg.version),
+                    style::info(&pkg.source), // Source might be 'official' or 'aur' in search result
+                    style::dim(&truncate(&pkg.description, 50))
+                )?;
+            }
+            if res.packages.len() > 20 {
+                let more = res.packages.len() - 20;
+                write!(stdout, "  {}", style::dim("(+"))?;
+                write!(stdout, "{more}")?;
+                writeln!(stdout, "{})", style::dim(" more packages..."))?;
+            }
+            writeln!(
+                stdout,
+                "\n{} {}",
+                style::arrow("Use"),
+                style::command("omg info <package> for details")
+            )?;
+            stdout.flush()?;
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
 /// Search for packages in official repos and AUR - LIGHTNING FAST
 pub async fn search(query: &str, detailed: bool, interactive: bool) -> Result<()> {
+    // Try sync path first
+    if search_sync_cli(query, detailed, interactive)? {
+        return Ok(());
+    }
+
+    // ... rest of async search
     let start = std::time::Instant::now();
 
     let mut official_packages = Vec::new();
@@ -43,9 +115,9 @@ pub async fn search(query: &str, detailed: bool, interactive: bool) -> Result<()
                         name: pkg.name,
                         version: pkg.version,
                         description: pkg.description,
-                        repo: "official".to_string(), 
+                        repo: "official".to_string(),
                         download_size: 0,
-                        installed: false, 
+                        installed: false,
                     });
                 } else {
                     aur_basic.push(crate::core::Package {
@@ -127,7 +199,7 @@ pub async fn search(query: &str, detailed: bool, interactive: bool) -> Result<()
         if items.is_empty() {
             println!(
                 "{}",
-                style::error(&format!("No packages found for '{}'", query))
+                style::error(&format!("No packages found for '{query}'"))
             );
             return Ok(());
         }
@@ -165,7 +237,7 @@ pub async fn search(query: &str, detailed: bool, interactive: bool) -> Result<()
             let installed = if pkg.installed {
                 style::dim(" [installed]")
             } else {
-                "".into()
+                String::new()
             };
             println!(
                 "  {} {} ({}) - {}{}",
@@ -196,7 +268,7 @@ pub async fn search(query: &str, detailed: bool, interactive: bool) -> Result<()
                 let out_of_date = if pkg.out_of_date.is_some() {
                     style::error(" [OUT OF DATE]")
                 } else {
-                    "".into()
+                    String::new()
                 };
                 println!(
                     "  {} {} - {} {} {}{}",
@@ -289,36 +361,61 @@ pub async fn install(packages: &[String], _yes: bool) -> Result<()> {
         if sync_info.is_none() && aur_info.is_none() {
             // Only if interactive
             if console::user_attended() {
-                // Search official
-                let results = search_sync(&target_pkg_name).unwrap_or_default();
-                if let Some(best_match) = results.first() {
+                // 1. Try Fuzzy Matching (Best for typos like 'frfx' -> 'firefox')
+                let suggestion = fuzzy_suggest(&target_pkg_name);
+
+                if let Some(best_match) = suggestion {
                     if Confirm::with_theme(&ColorfulTheme::default())
                         .with_prompt(format!(
                             "Package '{}' not found. Did you mean '{}'?",
                             style::package(&target_pkg_name),
-                            style::package(&best_match.name)
+                            style::package(&best_match)
                         ))
                         .default(true)
                         .interact()?
                     {
-                        target_pkg_name = best_match.name.clone();
+                        target_pkg_name = best_match;
+                        // Retry finding info
                         sync_info = get_sync_pkg_info(&target_pkg_name).ok().flatten();
+                        aur_info = if sync_info.is_none() {
+                            aur.info(&target_pkg_name).await.ok().flatten()
+                        } else {
+                            None
+                        };
                     }
                 } else {
-                    // Try AUR search
-                    if let Ok(results) = aur.search(&target_pkg_name).await {
-                        if let Some(best_match) = results.first() {
-                            if Confirm::with_theme(&ColorfulTheme::default())
-                                .with_prompt(format!(
-                                    "Package '{}' not found. Did you mean '{}' (AUR)?",
-                                    style::package(&target_pkg_name),
-                                    style::package(&best_match.name)
-                                ))
-                                .default(true)
-                                .interact()?
-                            {
-                                target_pkg_name = best_match.name.clone();
-                                aur_info = Some(best_match.clone());
+                    // 2. Try Substring Search (Fallback)
+                    // Search official
+                    let results = search_sync(&target_pkg_name).unwrap_or_default();
+                    if let Some(best_match) = results.first() {
+                        if Confirm::with_theme(&ColorfulTheme::default())
+                            .with_prompt(format!(
+                                "Package '{}' not found. Did you mean '{}'?",
+                                style::package(&target_pkg_name),
+                                style::package(&best_match.name)
+                            ))
+                            .default(true)
+                            .interact()?
+                        {
+                            target_pkg_name = best_match.name.clone();
+                            sync_info = get_sync_pkg_info(&target_pkg_name).ok().flatten();
+                        }
+                    } else {
+                        // Try AUR search
+                        if let Ok(results) = aur.search(&target_pkg_name).await {
+                            if let Some(best_match) = results.first() {
+                                if Confirm::with_theme(&ColorfulTheme::default())
+                                    .with_prompt(format!(
+                                        "Package '{}' not found. Did you mean '{}' (AUR)?",
+                                        style::package(&target_pkg_name),
+                                        style::package(&best_match.name)
+                                    ))
+                                    .default(true)
+                                    .interact()?
+                                {
+                                    target_pkg_name = best_match.name.clone();
+                                    aur_info = Some(best_match.clone());
+                                }
                             }
                         }
                     }
@@ -344,7 +441,7 @@ pub async fn install(packages: &[String], _yes: bool) -> Result<()> {
 
         // Check policy
         if let Err(e) = policy.check_package(&target_pkg_name, is_aur, license.as_deref(), grade) {
-            println!("{}", style::error(&format!("Security Block: {}", e)));
+            println!("{}", style::error(&format!("Security Block: {e}")));
             anyhow::bail!("Installation aborted due to security policy");
         }
 
@@ -426,107 +523,284 @@ pub async fn remove(packages: &[String], recursive: bool) -> Result<()> {
 
 /// Update all packages
 pub async fn update(check_only: bool) -> Result<()> {
-    if check_only {
-        let pb = style::spinner("Checking for updates...");
-        let update_list = get_update_list().unwrap_or_default();
-        pb.finish_and_clear();
+    let aur = AurClient::new();
+    let pacman = OfficialPackageManager::new();
 
-        if update_list.is_empty() {
-            println!("{}", style::success("System is up to date!"));
-        } else {
+    // STEP 1: Sync databases first to get latest info
+    if !crate::core::is_root() {
+        println!(
+            "{} Synchronizing databases (elevation might be required)...",
+            style::arrow("→")
+        );
+    }
+    pacman.sync_databases().await?;
+
+    let pb = style::spinner("Checking for updates...");
+
+    // STEP 2: Get both official and AUR updates
+    let official_updates_raw = check_updates_cached().unwrap_or_default();
+    let aur_updates = aur.get_update_list().await.unwrap_or_default();
+
+    pb.finish_and_clear();
+
+    if official_updates_raw.is_empty() && aur_updates.is_empty() {
+        println!("{}", style::success("System is up to date!"));
+        return Ok(());
+    }
+
+    // STEP 3: Display combined updates
+    println!(
+        "{} Found {} official and {} AUR update(s):",
+        style::header("OMG"),
+        style::info(&official_updates_raw.len().to_string()),
+        style::warning(&aur_updates.len().to_string())
+    );
+
+    let display_list = |updates: &[(String, String, String)], source: &str| {
+        for (name, old_ver, new_ver) in updates {
+            let update_label = match (
+                semver::Version::parse(old_ver.trim_start_matches(|c: char| !c.is_numeric())),
+                semver::Version::parse(new_ver.trim_start_matches(|c: char| !c.is_numeric())),
+            ) {
+                (Ok(old), Ok(new)) => {
+                    if new.major > old.major {
+                        "MAJOR".red().bold()
+                    } else if new.minor > old.minor {
+                        "minor".yellow().bold()
+                    } else {
+                        "patch".green()
+                    }
+                }
+                _ => "update".dimmed(),
+            };
+
             println!(
-                "{} {} updates available:",
-                style::arrow("→"),
-                update_list.len()
+                "  {:>8} {} {} {} → {}",
+                update_label,
+                style::package(name),
+                style::dim(&format!("({source})")),
+                style::dim(old_ver),
+                style::version(new_ver)
             );
-            for (name, old_ver, new_ver) in &update_list {
-                let update_label = match (
-                    semver::Version::parse(old_ver.trim_start_matches(|c: char| !c.is_numeric())),
-                    semver::Version::parse(new_ver.trim_start_matches(|c: char| !c.is_numeric())),
-                ) {
-                    (Ok(old), Ok(new)) => {
-                        if new.major > old.major {
-                            "MAJOR".red().bold()
-                        } else if new.minor > old.minor {
-                            "minor".yellow().bold()
-                        } else {
-                            "patch".green()
+        }
+    };
+
+    // Convert raw official updates to common format for display
+    let official_display: Vec<(String, String, String)> = official_updates_raw
+        .iter()
+        .map(|(n, o, n2, _, _, _)| (n.clone(), o.clone(), n2.clone()))
+        .collect();
+
+    display_list(&official_display, "repo");
+    display_list(&aur_updates, "aur");
+
+    if check_only {
+        println!("\n{}", style::dim("Run 'omg update' to install"));
+        return Ok(());
+    }
+
+    // STEP 4: Interactive confirmation
+    if !Confirm::with_theme(&ColorfulTheme::default())
+        .with_prompt("\nProceed with system upgrade?")
+        .default(true)
+        .interact()?
+    {
+        println!("{}", style::dim("Upgrade cancelled."));
+        return Ok(());
+    }
+
+    // STEP 5: Execute upgrades
+    // Always do official first
+    if !official_updates_raw.is_empty() {
+        println!("\n{} Downloading official packages...", style::arrow("→"));
+
+        // Prepare download jobs
+        let jobs: Vec<crate::package_managers::DownloadJob> = official_updates_raw
+            .iter()
+            .map(|(name, _, new_ver, repo, filename, size)| {
+                crate::package_managers::DownloadJob::new(name, new_ver, repo, filename, *size)
+            })
+            .collect();
+
+        // Download in parallel (8 threads)
+        let pkg_paths = crate::package_managers::download_packages_parallel(jobs, 8).await?;
+
+        println!("\n{} Installing official packages...", style::arrow("→"));
+
+        // Convert PathBufs to Strings for the install method
+        let pkg_paths_str: Vec<String> = pkg_paths
+            .into_iter()
+            .map(|p| p.to_string_lossy().to_string())
+            .collect();
+
+        if !pkg_paths_str.is_empty() {
+            pacman.install(&pkg_paths_str).await?;
+        }
+    }
+
+    if !aur_updates.is_empty() {
+        use indicatif::{ProgressBar, ProgressStyle};
+
+        let total = aur_updates.len();
+        println!(
+            "\n{} Building {} AUR package{}...\n",
+            style::arrow("→"),
+            total,
+            if total == 1 { "" } else { "s" }
+        );
+
+        // Phase 1: Build all packages with per-package spinners
+        let mut built_packages: Vec<(String, String, std::path::PathBuf)> = Vec::new();
+        let mut failed_builds: Vec<(String, String)> = Vec::new();
+
+        for (i, (name, _old_ver, new_ver)) in aur_updates.into_iter().enumerate() {
+            let spinner = ProgressBar::new_spinner();
+            spinner.set_style(
+                ProgressStyle::default_spinner()
+                    .template(&format!(
+                        "  {{spinner}} [{}/{}] Building {}...",
+                        i + 1,
+                        total,
+                        name
+                    ))
+                    .unwrap(),
+            );
+            spinner.enable_steady_tick(std::time::Duration::from_millis(80));
+
+            match aur.build_only(&name).await {
+                Ok(pkg_path) => {
+                    spinner.finish_and_clear();
+                    println!(
+                        "  {} [{}/{}] {} v{}",
+                        style::success("✓"),
+                        i + 1,
+                        total,
+                        style::package(&name),
+                        style::version(&new_ver)
+                    );
+                    built_packages.push((name, new_ver, pkg_path));
+                }
+                Err(e) => {
+                    spinner.finish_and_clear();
+                    println!(
+                        "  {} [{}/{}] {} - {}",
+                        style::error("✗"),
+                        i + 1,
+                        total,
+                        style::package(&name),
+                        e
+                    );
+                    failed_builds.push((name, e.to_string()));
+                }
+            }
+        }
+
+        // Phase 2: Install all built packages in a single transaction
+        if !built_packages.is_empty() {
+            let spinner = ProgressBar::new_spinner();
+            spinner.set_style(
+                ProgressStyle::default_spinner()
+                    .template(&format!(
+                        "\n  {{spinner}} Installing {} packages...",
+                        built_packages.len()
+                    ))
+                    .unwrap(),
+            );
+            spinner.enable_steady_tick(std::time::Duration::from_millis(80));
+
+            let pkg_paths: Vec<_> = built_packages.iter().map(|(_, _, p)| p.clone()).collect();
+
+            let exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("omg"));
+            let mut cmd = tokio::process::Command::new("sudo");
+            cmd.arg("--").arg(&exe).arg("install");
+            for path in &pkg_paths {
+                cmd.arg(path);
+            }
+            // Suppress install output for clean UI
+            cmd.stdout(std::process::Stdio::null());
+            cmd.stderr(std::process::Stdio::null());
+
+            match cmd.status().await {
+                Ok(status) if status.success() => {
+                    spinner.finish_and_clear();
+                    println!(
+                        "\n  {} Installed {} packages",
+                        style::success("✓"),
+                        built_packages.len()
+                    );
+                }
+                Ok(_) | Err(_) => {
+                    spinner.finish_and_clear();
+                    println!(
+                        "\n  {} Batch install failed, trying individually...",
+                        style::warning("⚠")
+                    );
+                    // Fallback to individual installs (quiet)
+                    for (name, _ver, path) in &built_packages {
+                        let mut cmd = tokio::process::Command::new("sudo");
+                        cmd.arg("--").arg(&exe).arg("install").arg(path);
+                        cmd.stdout(std::process::Stdio::null());
+                        cmd.stderr(std::process::Stdio::null());
+                        if let Ok(status) = cmd.status().await {
+                            if status.success() {
+                                // Silent success in fallback
+                            } else {
+                                println!(
+                                    "    {} Failed: {}",
+                                    style::error("✗"),
+                                    style::package(name)
+                                );
+                            }
                         }
                     }
-                    _ => "update".dimmed(),
-                };
-
-                println!(
-                    "  {:>8} {} {} → {}",
-                    update_label,
-                    style::package(name),
-                    style::dim(old_ver),
-                    style::version(new_ver)
-                );
+                }
             }
-            println!("\n{}", style::dim("Run 'omg update' to install"));
         }
-    } else {
-        let pacman = OfficialPackageManager::new();
-        pacman.update().await?;
+
+        // Summary
+        let success_count = built_packages.len();
+        let fail_count = failed_builds.len();
+        println!(
+            "\n{} AUR: {} built, {} failed",
+            if fail_count == 0 {
+                style::success("✓")
+            } else {
+                style::warning("⚠")
+            },
+            success_count,
+            fail_count
+        );
     }
 
     Ok(())
 }
 
 /// Show package information
-pub async fn info(package: &str) -> Result<()> {
+/// Show package information (Synchronous fast-path)
+pub fn info_sync(package: &str) -> Result<bool> {
     let start = std::time::Instant::now();
-    println!(
-        "{} Package info for '{}':\n",
-        style::header("OMG"),
-        style::package(package)
-    );
 
-    // 1. Try daemon first (ULTRA FAST - <10ms)
-    if let Ok(mut client) = DaemonClient::connect().await {
-        if let Ok(info) = client.info(package).await {
-            println!(
+    // 1. Try daemon first (ULTRA FAST - <1ms)
+    if let Ok(mut client) = DaemonClient::connect_sync() {
+        if let Ok(info) = client.info_sync(package) {
+            let mut stdout = std::io::BufWriter::new(std::io::stdout());
+            use std::io::Write;
+
+            writeln!(
+                stdout,
                 "{} {} ({:.1}ms)\n",
                 style::header("OMG"),
-                style::dim("Daemon result"),
+                style::dim("Daemon result (Sync Bridge)"),
                 start.elapsed().as_secs_f64() * 1000.0
-            );
+            )?;
 
-            println!(
-                "{} {}",
-                style::package(&info.name),
-                style::version(&info.version)
-            );
-            println!("  {} {}", style::dim("Description:"), info.description);
-            let source_label = if info.source == "official" {
-                format!("Official repository ({})", style::info(&info.repo))
-            } else {
-                style::warning("AUR (Arch User Repository)")
-            };
-            println!("  {} {}", style::dim("Source:"), source_label);
-            println!("  {} {}", style::dim("URL:"), style::url(&info.url));
-            println!(
-                "  {} {:.2} MB",
-                style::dim("Size:"),
-                info.size as f64 / 1024.0 / 1024.0
-            );
-            println!(
-                "  {} {:.2} MB",
-                style::dim("Download:"),
-                info.download_size as f64 / 1024.0 / 1024.0
-            );
-            if !info.licenses.is_empty() {
-                println!("  {} {}", style::dim("License:"), info.licenses.join(", "));
-            }
-            if !info.depends.is_empty() {
-                println!("  {} {}", style::dim("Depends:"), info.depends.join(", "));
-            }
-            return Ok(());
+            display_detailed_info_buffered(&mut stdout, &info)?;
+            stdout.flush()?;
+            return Ok(true);
         }
     }
 
-    // 2. Fallback to local ALPM if daemon unreachable (slow)
+    // 2. Fallback to local ALPM (Sync, fast)
     if let Some(info) = get_sync_pkg_info(package).ok().flatten() {
         display_pkg_info(&info);
         println!(
@@ -534,10 +808,132 @@ pub async fn info(package: &str) -> Result<()> {
             style::success("Source:"),
             style::info(&info.repo)
         );
+        return Ok(true);
+    }
+
+    Ok(false)
+}
+
+/// Show AUR package information (Async fallback)
+pub async fn info_aur(package: &str) -> Result<()> {
+    let aur = AurClient::new();
+    if let Some(info) = aur.info(package).await? {
+        // Display beautified info
+        println!(
+            "{} {} {}",
+            style::package(&info.name),
+            style::version(&info.version),
+            style::warning("(AUR)")
+        );
+        println!("  {} {}", style::dim("Description:"), info.description);
+
+        // Query detailed info for better UX
+        if let Ok(detailed) = search_detailed(package).await {
+            if let Some(d) = detailed.into_iter().find(|p| p.name == info.name) {
+                println!(
+                    "  {} {}",
+                    style::dim("URL:"),
+                    style::url(&d.url.unwrap_or_default())
+                );
+                println!("  {} {:.2} MB", style::dim("Popularity:"), d.popularity);
+                if let Some(license) = d.license {
+                    if !license.is_empty() {
+                        println!("  {} {}", style::dim("License:"), license.join(", "));
+                    }
+                }
+            }
+        }
+
+        println!(
+            "\n  {} {}",
+            style::success("Source:"),
+            style::warning("Arch User Repository (AUR)")
+        );
+        return Ok(());
+    }
+
+    println!(
+        "{} Package '{}' not found in official repos or AUR.",
+        style::error("Error:"),
+        style::package(package)
+    );
+    Ok(())
+}
+
+/// Helper to display detailed info from daemon (Buffered)
+fn display_detailed_info_buffered<W: std::io::Write>(
+    out: &mut W,
+    info: &crate::daemon::protocol::DetailedPackageInfo,
+) -> Result<()> {
+    writeln!(
+        out,
+        "{} {}",
+        style::package(&info.name),
+        style::version(&info.version)
+    )?;
+    writeln!(out, "  {} {}", style::dim("Description:"), info.description)?;
+    let source_label = if info.source == "official" {
+        format!("Official repository ({})", style::info(&info.repo))
+    } else {
+        style::warning("AUR (Arch User Repository)")
+    };
+    writeln!(out, "  {} {}", style::dim("Source:"), source_label)?;
+    writeln!(out, "  {} {}", style::dim("URL:"), style::url(&info.url))?;
+    writeln!(
+        out,
+        "  {} {:.2} MB",
+        style::dim("Size:"),
+        info.size as f64 / 1024.0 / 1024.0
+    )?;
+    writeln!(
+        out,
+        "  {} {:.2} MB",
+        style::dim("Download:"),
+        info.download_size as f64 / 1024.0 / 1024.0
+    )?;
+    if !info.licenses.is_empty() {
+        write!(out, "  {} ", style::dim("License:"))?;
+        for (i, license) in info.licenses.iter().enumerate() {
+            if i > 0 {
+                write!(out, ", ")?;
+            }
+            write!(out, "{license}")?;
+        }
+        writeln!(out)?;
+    }
+    if !info.depends.is_empty() {
+        write!(out, "  {} ", style::dim("Depends:"))?;
+        for (i, dep) in info.depends.iter().enumerate() {
+            if i > 0 {
+                write!(out, ", ")?;
+            }
+            write!(out, "{dep}")?;
+        }
+        writeln!(out)?;
+    }
+    if !info.depends.is_empty() {
+        writeln!(
+            out,
+            "  {} {}",
+            style::dim("Depends:"),
+            info.depends.join(", ")
+        )?;
+    }
+    Ok(())
+}
+
+pub async fn info(package: &str) -> Result<()> {
+    // Try sync path first
+    if info_sync(package)? {
         return Ok(());
     }
 
     // 3. Try AUR directly as final fallback
+    println!(
+        "{} Package info for '{}':\n",
+        style::header("OMG"),
+        style::package(package)
+    );
     let pb = style::spinner("Searching AUR...");
     let details = search_detailed(package).await.ok();
     pb.finish_and_clear();
@@ -580,7 +976,7 @@ pub async fn info(package: &str) -> Result<()> {
 
     println!(
         "{}",
-        style::error(&format!("Package '{}' not found", package))
+        style::error(&format!("Package '{package}' not found"))
     );
     Ok(())
 }
@@ -640,7 +1036,7 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool) -> Result<(
                 );
             }
             Err(e) => {
-                println!("{}", style::error(&format!("Failed to clear cache: {}", e)));
+                println!("{}", style::error(&format!("Failed to clear cache: {e}")));
             }
         }
     }
@@ -654,27 +1050,47 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool) -> Result<(
     Ok(())
 }
 
-/// List explicitly installed packages
-pub async fn explicit() -> Result<()> {
-    println!("{} Explicitly installed packages:\n", style::header("OMG"));
-
+/// List explicitly installed packages (Synchronous)
+pub fn explicit_sync() -> Result<()> {
     // Try daemon first
-    let packages = if let Ok(mut client) = DaemonClient::connect().await {
-        if let Ok(pkgs) = client.list_explicit().await {
-            pkgs
+    let packages = if let Ok(mut client) = DaemonClient::connect_sync() {
+        if let Ok(ResponseResult::Explicit(res)) = client.call_sync(Request::Explicit { id: 0 }) {
+            res.packages
         } else {
-            list_explicit().await.unwrap_or_default()
+            // Sequential fallback to local ALPM
+            crate::package_managers::list_explicit_fast().unwrap_or_default()
         }
     } else {
-        list_explicit().await.unwrap_or_default()
+        crate::package_managers::list_explicit_fast().unwrap_or_default()
     };
 
+    use std::io::Write;
+    let mut stdout = std::io::BufWriter::new(std::io::stdout());
+
+    writeln!(
+        stdout,
+        "{} Explicitly installed packages:\n",
+        style::header("OMG")
+    )?;
+
     for pkg in &packages {
-        println!("  {}", style::package(pkg));
+        writeln!(stdout, "  {}", style::package(pkg))?;
     }
 
-    println!("\n{} {} packages", style::success("Total:"), packages.len());
+    writeln!(
+        stdout,
+        "\n{} {} packages",
+        style::success("Total:"),
+        packages.len()
+    )?;
+    stdout.flush()?;
     Ok(())
+}
+
+/// List explicitly installed packages (Async fallback)
+pub async fn explicit() -> Result<()> {
+    // Just call sync version for now as it's already fast and safe
+    explicit_sync()
 }
 
 fn truncate(s: &str, max: usize) -> String {
@@ -693,4 +1109,20 @@ fn truncate(s: &str, max: usize) -> String {
 /// Sync package databases from mirrors (parallel, fast)
 pub async fn sync() -> Result<()> {
     sync_databases_parallel().await
+}
+
+/// Fuzzy match candidate for "Did you mean?"
+fn fuzzy_suggest(query: &str) -> Option<String> {
+    // 1. Get all names (Fast from local ALPM)
+    let names = crate::package_managers::alpm_direct::list_all_package_names().ok()?;
+
+    // 2. Open DB for engine (Dummy open just to satisfy constructor)
+    let db_path = Database::default_path().ok()?;
+    let db = Database::open(&db_path).ok()?;
+    let engine = CompletionEngine::new(db);
+
+    // 3. Fuzzy Match
+    let matches = engine.fuzzy_match(query, names);
+
+    matches.first().cloned()
 }

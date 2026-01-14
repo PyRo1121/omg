@@ -7,7 +7,7 @@ use std::path::Path;
 pub struct SlsaVerifier;
 
 impl SlsaVerifier {
-    pub fn new() -> Result<Self> {
+    pub const fn new() -> Result<Self> {
         Ok(Self)
     }
 

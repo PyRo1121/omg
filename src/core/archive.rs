@@ -158,7 +158,7 @@ pub fn extract_auto(archive_path: &Path, dest_dir: &Path) -> Result<()> {
     } else if filename.ends_with(".zip") {
         extract_zip(archive_path, dest_dir)
     } else {
-        anyhow::bail!("Unknown archive format: {}", filename)
+        anyhow::bail!("Unknown archive format: {filename}")
     }
 }
 

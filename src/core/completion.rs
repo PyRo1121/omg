@@ -13,11 +13,13 @@ pub struct CompletionEngine {
 }
 
 impl CompletionEngine {
-    pub fn new(db: Database) -> Self {
+    #[must_use]
+    pub const fn new(db: Database) -> Self {
         Self { db }
     }
 
     /// Perform fuzzy matching on a list of candidates
+    #[must_use]
     pub fn fuzzy_match(&self, pattern: &str, candidates: Vec<String>) -> Vec<String> {
         let mut matcher = Matcher::new(nucleo_matcher::Config::DEFAULT);
         let mut pattern_buf = Vec::new();
@@ -41,6 +43,7 @@ impl CompletionEngine {
     }
 
     /// Probe context (package.json, .nvmrc, etc.) to prioritize versions
+    #[must_use]
     pub fn probe_context(&self, runtime: &str) -> Vec<String> {
         let mut suggestions = Vec::new();
         let current_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
@@ -126,7 +129,10 @@ impl CompletionEngine {
                 if let Ok(last) = DateTime::parse_from_rfc3339(last_refresh) {
                     if Utc::now().signed_duration_since(last).num_hours() < 24 {
                         if let Some(data) = db.get(&rtxn, "aur_packages")? {
-                            return Ok(data.split(',').map(|s| s.to_string()).collect());
+                            return Ok(data
+                                .split(',')
+                                .map(std::string::ToString::to_string)
+                                .collect());
                         }
                     }
                 }
@@ -156,6 +162,6 @@ impl CompletionEngine {
         let mut s = String::new();
         gz.read_to_string(&mut s)?;
 
-        Ok(s.lines().map(|l| l.to_string()).collect())
+        Ok(s.lines().map(std::string::ToString::to_string).collect())
     }
 }

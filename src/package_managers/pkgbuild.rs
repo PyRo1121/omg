@@ -31,14 +31,14 @@ impl PkgBuild {
     /// Parse a PKGBUILD file
     pub fn parse(path: &Path) -> Result<Self> {
         let content = fs::read_to_string(path)
-            .with_context(|| format!("Failed to read PKGBUILD at {:?}", path))?;
+            .with_context(|| format!("Failed to read PKGBUILD at {path:?}"))?;
 
         Self::parse_content(&content)
     }
 
     /// Parse PKGBUILD content
     pub fn parse_content(content: &str) -> Result<Self> {
-        let mut pkg = PkgBuild::default();
+        let mut pkg = Self::default();
         let mut vars = HashMap::new();
 
         for cap in RE_VAR.captures_iter(content) {
@@ -57,40 +57,57 @@ impl PkgBuild {
             vars.insert(key, val);
         }
 
+        // Second pass: Perform variable substitution
+        let substitute = |val: &str, vars: &HashMap<String, String>| -> String {
+            let mut result = val.to_string();
+            // Sort keys by length descending to avoid partial matches (e.g., $pkgname vs $pkgname_ext)
+            let mut keys: Vec<_> = vars.keys().collect();
+            keys.sort_by_key(|k| std::cmp::Reverse(k.len()));
+
+            for k in keys {
+                let v = vars.get(k).unwrap();
+                let pattern1 = format!("${k}");
+                let pattern2 = format!("${{{k}}}");
+                result = result.replace(&pattern1, v);
+                result = result.replace(&pattern2, v);
+            }
+            result
+        };
+
         if let Some(v) = vars.get("pkgname") {
-            pkg.name = v.to_string();
+            pkg.name = substitute(v, &vars);
         }
         if let Some(v) = vars.get("pkgver") {
-            pkg.version = v.to_string();
+            pkg.version = substitute(v, &vars);
         }
         if let Some(v) = vars.get("pkgrel") {
-            pkg.release = v.to_string();
+            pkg.release = substitute(v, &vars);
         }
         if let Some(v) = vars.get("pkgdesc") {
-            pkg.description = v.to_string();
+            pkg.description = substitute(v, &vars);
         }
         if let Some(v) = vars.get("url") {
-            pkg.url = v.to_string();
+            pkg.url = substitute(v, &vars);
         }
 
-        // Process arrays
+        // Process arrays with substitution
         if let Some(v) = vars.get("depends") {
-            pkg.depends = parse_array(v);
+            pkg.depends = parse_array(&substitute(v, &vars));
         }
         if let Some(v) = vars.get("makedepends") {
-            pkg.makedepends = parse_array(v);
+            pkg.makedepends = parse_array(&substitute(v, &vars));
         }
         if let Some(v) = vars.get("source") {
-            pkg.sources = parse_array(v);
+            pkg.sources = parse_array(&substitute(v, &vars));
         }
         if let Some(v) = vars.get("sha256sums") {
-            pkg.sha256sums = parse_array(v);
+            pkg.sha256sums = parse_array(&substitute(v, &vars));
         }
         if let Some(v) = vars.get("license") {
-            pkg.license = parse_array(v);
+            pkg.license = parse_array(&substitute(v, &vars));
         }
         if let Some(v) = vars.get("validpgpkeys") {
-            pkg.validpgpkeys = parse_array(v);
+            pkg.validpgpkeys = parse_array(&substitute(v, &vars));
         }
 
         Ok(pkg)

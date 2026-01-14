@@ -8,7 +8,7 @@ use crate::cli::style;
 pub async fn run(stack: &str, name: &str) -> Result<()> {
     let target_dir = std::env::current_dir()?.join(name);
     if target_dir.exists() {
-        anyhow::bail!("Directory '{}' already exists", name);
+        anyhow::bail!("Directory '{name}' already exists");
     }
 
     println!(
@@ -19,16 +19,13 @@ pub async fn run(stack: &str, name: &str) -> Result<()> {
     );
 
     match stack.to_lowercase().as_str() {
-        "rust" | "rs" => scaffold_rust(name).await?,
-        "react" | "react-ts" => scaffold_react(name).await?,
-        "node" | "ts" | "typescript" => scaffold_node(name).await?,
-        "python" | "py" => scaffold_python(name).await?,
-        "go" | "golang" => scaffold_go(name).await?,
+        "rust" | "rs" => scaffold_rust(name)?,
+        "react" | "react-ts" => scaffold_react(name)?,
+        "node" | "ts" | "typescript" => scaffold_node(name)?,
+        "python" | "py" => scaffold_python(name)?,
+        "go" | "golang" => scaffold_go(name)?,
         _ => {
-            anyhow::bail!(
-                "Unknown stack: {}. Supported: rust, react, node, python, go",
-                stack
-            );
+            anyhow::bail!("Unknown stack: {stack}. Supported: rust, react, node, python, go");
         }
     }
 
@@ -53,15 +50,15 @@ pub async fn run(stack: &str, name: &str) -> Result<()> {
 
     println!("\n{}", style::success("Project created successfully! 🚀"));
     println!("\nTo get started:");
-    println!("  cd {}", name);
+    println!("  cd {name}");
     println!("  omg run dev  (or build/start)");
 
     Ok(())
 }
 
-async fn scaffold_rust(name: &str) -> Result<()> {
+fn scaffold_rust(name: &str) -> Result<()> {
     let pb = style::spinner("Running cargo new...");
-    let status = Command::new("cargo").args(&["new", name]).status()?;
+    let status = Command::new("cargo").args(["new", name]).status()?;
     pb.finish_and_clear();
 
     if !status.success() {
@@ -72,11 +69,11 @@ async fn scaffold_rust(name: &str) -> Result<()> {
     Ok(())
 }
 
-async fn scaffold_react(name: &str) -> Result<()> {
+fn scaffold_react(name: &str) -> Result<()> {
     let pb = style::spinner("Running npm create vite...");
     // npm create vite@latest my-app -- --template react-ts
     let status = Command::new("npm")
-        .args(&[
+        .args([
             "create",
             "vite@latest",
             name,
@@ -107,7 +104,7 @@ async fn scaffold_react(name: &str) -> Result<()> {
     Ok(())
 }
 
-async fn scaffold_node(name: &str) -> Result<()> {
+fn scaffold_node(name: &str) -> Result<()> {
     // Minimal Node+TS setup
     std::fs::create_dir_all(name)?;
     let root = Path::new(name);
@@ -115,7 +112,7 @@ async fn scaffold_node(name: &str) -> Result<()> {
     // package.json
     let pkg_json = format!(
         r#"{{
-  "name": "{}",
+  "name": "{name}",
   "version": "0.1.0",
   "scripts": {{
     "start": "ts-node src/index.ts",
@@ -129,8 +126,7 @@ async fn scaffold_node(name: &str) -> Result<()> {
     "ts-node-dev": "latest",
     "@types/node": "latest"
   }}
-}}"#,
-        name
+}}"#
     );
     std::fs::write(root.join("package.json"), pkg_json)?;
 
@@ -171,9 +167,9 @@ async fn scaffold_node(name: &str) -> Result<()> {
     Ok(())
 }
 
-async fn scaffold_python(name: &str) -> Result<()> {
+fn scaffold_python(name: &str) -> Result<()> {
     let pb = style::spinner("Running poetry new...");
-    let status = Command::new("poetry").args(&["new", name]).status();
+    let status = Command::new("poetry").args(["new", name]).status();
 
     pb.finish_and_clear();
 
@@ -185,7 +181,7 @@ async fn scaffold_python(name: &str) -> Result<()> {
         );
         std::fs::create_dir_all(name)?;
         Command::new("python")
-            .args(&["-m", "venv", ".venv"])
+            .args(["-m", "venv", ".venv"])
             .current_dir(name)
             .status()?;
         std::fs::write(Path::new(name).join("requirements.txt"), "")?;
@@ -197,13 +193,13 @@ async fn scaffold_python(name: &str) -> Result<()> {
     Ok(())
 }
 
-async fn scaffold_go(name: &str) -> Result<()> {
+fn scaffold_go(name: &str) -> Result<()> {
     std::fs::create_dir_all(name)?;
     let root = Path::new(name);
 
     // go mod init
     Command::new("go")
-        .args(&["mod", "init", name])
+        .args(["mod", "init", name])
         .current_dir(root)
         .status()?;
 
@@ -223,7 +219,7 @@ func main() {
     // Taskfile.yml
     std::fs::write(
         root.join("Taskfile.yml"),
-        r#"version: '3'
+        r"version: '3'
 
 tasks:
   build:
@@ -232,7 +228,7 @@ tasks:
   run:
     cmds:
       - go run main.go
-"#,
+",
     )?;
 
     println!("  {} Created Go project", style::success("✓"));
@@ -279,25 +275,25 @@ fn lock_runtimes(target_dir: &Path, stack: &str) -> Result<()> {
     match stack.to_lowercase().as_str() {
         "react" | "node" | "ts" => {
             if let Some(v) = get_ver("node", &["--version"]) {
-                content.push_str(&format!("node {}\n", v));
+                content.push_str(&format!("node {v}\n"));
                 println!("  {} Locked node to {}", style::success("✓"), v);
             }
         }
         "python" => {
             if let Some(v) = get_ver("python", &["--version"]) {
-                content.push_str(&format!("python {}\n", v));
+                content.push_str(&format!("python {v}\n"));
                 println!("  {} Locked python to {}", style::success("✓"), v);
             }
         }
         "go" => {
             if let Some(v) = get_ver("go", &["version"]) {
-                content.push_str(&format!("go {}\n", v));
+                content.push_str(&format!("go {v}\n"));
                 println!("  {} Locked go to {}", style::success("✓"), v);
             }
         }
         "rust" => {
             if let Some(v) = get_ver("rustc", &["--version"]) {
-                content.push_str(&format!("rust {}\n", v));
+                content.push_str(&format!("rust {v}\n"));
                 println!("  {} Locked rust to {}", style::success("✓"), v);
             }
         }

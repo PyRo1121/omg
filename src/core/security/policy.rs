@@ -14,10 +14,10 @@ pub enum SecurityGrade {
 impl std::fmt::Display for SecurityGrade {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SecurityGrade::Locked => write!(f, "LOCKED (SLSA + PGP)"),
-            SecurityGrade::Verified => write!(f, "VERIFIED (PGP/Checksum)"),
-            SecurityGrade::Community => write!(f, "COMMUNITY (AUR/Unsigned)"),
-            SecurityGrade::Risk => write!(f, "RISK (Vulnerabilities)"),
+            Self::Locked => write!(f, "LOCKED (SLSA + PGP)"),
+            Self::Verified => write!(f, "VERIFIED (PGP/Checksum)"),
+            Self::Community => write!(f, "COMMUNITY (AUR/Unsigned)"),
+            Self::Risk => write!(f, "RISK (Vulnerabilities)"),
         }
     }
 }
@@ -36,11 +36,11 @@ pub struct SecurityPolicy {
     pub banned_packages: Vec<String>,
 }
 
-fn default_minimum_grade() -> SecurityGrade {
+const fn default_minimum_grade() -> SecurityGrade {
     SecurityGrade::Community
 }
 
-fn default_true() -> bool {
+const fn default_true() -> bool {
     true
 }
 
@@ -65,6 +65,7 @@ impl SecurityPolicy {
     }
 
     /// Load from default location (~/.config/omg/policy.toml)
+    #[must_use]
     pub fn load_default() -> Option<Self> {
         let config_dir = directories::ProjectDirs::from("com", "omg", "omg")
             .map(|d| d.config_dir().to_path_buf())
@@ -138,15 +139,12 @@ impl SecurityPolicy {
 
         // Check if banned
         if self.banned_packages.contains(&name.to_string()) {
-            anyhow::bail!("Package '{}' is banned by security policy", name);
+            anyhow::bail!("Package '{name}' is banned by security policy");
         }
 
         // Check AUR
         if is_aur && !self.allow_aur {
-            anyhow::bail!(
-                "Package '{}' is from AUR, which is disabled by security policy",
-                name
-            );
+            anyhow::bail!("Package '{name}' is from AUR, which is disabled by security policy");
         }
 
         // Check License (if allowed list is not empty)
@@ -161,19 +159,14 @@ impl SecurityPolicy {
 
                 if !allowed {
                     anyhow::bail!(
-                        "Package '{}' has license '{}' which is not in allowed list",
-                        name,
-                        lic
+                        "Package '{name}' has license '{lic}' which is not in allowed list"
                     );
                 }
             } else {
                 // No license info => fail if strict?
                 // For now, warn but allow? or fail?
                 // Let's strictly enforce if list is present
-                anyhow::bail!(
-                    "Package '{}' has unknown license, but allowed list is enforced",
-                    name
-                );
+                anyhow::bail!("Package '{name}' has unknown license, but allowed list is enforced");
             }
         }
 

@@ -44,11 +44,10 @@ fn print_completions(shell: &str) -> Result<()> {
         }
         _ => {
             anyhow::bail!(
-                "Unsupported shell: {}. Supported: bash, zsh, fish, powershell, elvish",
-                shell
+                "Unsupported shell: {shell}. Supported: bash, zsh, fish, powershell, elvish"
             );
         }
-    };
+    }
     Ok(())
 }
 
@@ -164,11 +163,10 @@ fn install_completions(shell: &str) -> Result<()> {
         }
         _ => {
             anyhow::bail!(
-                "Unsupported shell: {}. Supported: bash, zsh, fish, powershell, elvish",
-                shell
+                "Unsupported shell: {shell}. Supported: bash, zsh, fish, powershell, elvish"
             );
         }
-    };
+    }
 
     Ok(())
 }

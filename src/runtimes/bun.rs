@@ -33,26 +33,21 @@ pub struct BunManager {
 
 impl BunManager {
     pub fn new() -> Self {
-        let data_dir = directories::ProjectDirs::from("com", "omg", "omg")
-            .map(|d| d.data_dir().to_path_buf())
-            .unwrap_or_else(|| {
-                home::home_dir()
-                    .unwrap_or_else(|| PathBuf::from("."))
-                    .join(".omg")
-            });
+        let data_dir = super::DATA_DIR.clone();
 
         let client = reqwest::Client::builder()
             .user_agent("omg-package-manager")
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
 
-        BunManager {
+        Self {
             versions_dir: data_dir.join("versions").join("bun"),
             current_link: data_dir.join("versions").join("bun").join("current"),
             client,
         }
     }
 
+    #[must_use]
     pub fn bin_dir(&self) -> PathBuf {
         self.current_link.clone()
     }
@@ -111,6 +106,7 @@ impl BunManager {
         Ok(versions)
     }
 
+    #[must_use]
     pub fn current_version(&self) -> Option<String> {
         fs::read_link(&self.current_link)
             .ok()
@@ -136,11 +132,11 @@ impl BunManager {
         let arch = match std::env::consts::ARCH {
             "x86_64" => "linux-x64",
             "aarch64" => "linux-aarch64",
-            arch => anyhow::bail!("Unsupported architecture: {}", arch),
+            arch => anyhow::bail!("Unsupported architecture: {arch}"),
         };
 
-        let filename = format!("bun-{}.zip", arch);
-        let url = format!("{}/bun-v{}/{}", BUN_RELEASES_URL, version, filename);
+        let filename = format!("bun-{arch}.zip");
+        let url = format!("{BUN_RELEASES_URL}/bun-v{version}/{filename}");
 
         fs::create_dir_all(&self.versions_dir)?;
 
@@ -203,7 +199,7 @@ impl BunManager {
     async fn download_file(&self, url: &str, path: &PathBuf) -> Result<()> {
         let response =
             self.client.get(url).send().await.with_context(|| {
-                format!("Failed to download from {}. Check your connection.", url)
+                format!("Failed to download from {url}. Check your connection.")
             })?;
 
         if !response.status().is_success() {
@@ -240,7 +236,7 @@ impl BunManager {
         let version_dir = self.versions_dir.join(version);
 
         if !version_dir.exists() {
-            anyhow::bail!("Bun {} is not installed", version);
+            anyhow::bail!("Bun {version} is not installed");
         }
 
         if self.current_link.exists() {

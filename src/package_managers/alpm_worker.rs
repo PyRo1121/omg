@@ -14,7 +14,14 @@ pub struct AlpmWorker {
     tx: mpsc::Sender<AlpmRequest>,
 }
 
+impl Default for AlpmWorker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AlpmWorker {
+    #[must_use]
     pub fn new() -> Self {
         let (tx, rx) = mpsc::channel();
 
@@ -45,7 +52,7 @@ impl AlpmWorker {
             }
         });
 
-        AlpmWorker { tx }
+        Self { tx }
     }
 
     pub async fn get_info(&self, name: String) -> Result<Option<PackageInfo>> {

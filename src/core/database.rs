@@ -25,7 +25,7 @@ impl Database {
                 .open(path)?
         };
 
-        Ok(Database { env })
+        Ok(Self { env })
     }
 
     /// Get the completion database
@@ -39,7 +39,8 @@ impl Database {
     }
 
     /// Get the underlying heed environment
-    pub fn env(&self) -> &Env {
+    #[must_use]
+    pub const fn env(&self) -> &Env {
         &self.env
     }
 

@@ -4,7 +4,7 @@
 
 use super::protocol::StatusResult;
 use anyhow::{Context, Result};
-use heed::types::*;
+use heed::types::{SerdeJson, Str};
 use heed::{Database, Env, EnvOpenOptions};
 use std::path::Path;
 
@@ -29,7 +29,7 @@ impl PersistentCache {
         let status_db = env.create_database(&mut wtxn, Some("status"))?;
         wtxn.commit()?;
 
-        Ok(PersistentCache { env, status_db })
+        Ok(Self { env, status_db })
     }
 
     pub fn get_status(&self) -> Result<Option<StatusResult>> {

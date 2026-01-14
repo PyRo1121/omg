@@ -71,7 +71,7 @@ pub async fn install(name: &str) -> Result<()> {
         "Go (Isolated)",
     ];
     let selection = Select::with_theme(&ColorfulTheme::default())
-        .with_prompt(format!("Tool '{}' not in registry. Source?", name))
+        .with_prompt(format!("Tool '{name}' not in registry. Source?"))
         .default(0)
         .items(&choices)
         .interact()?;
@@ -100,7 +100,7 @@ async fn install_managed(
     }
     fs::create_dir_all(&install_dir)?;
 
-    let pb = style::spinner(&format!("Installing {} via {}...", pkg, manager));
+    let pb = style::spinner(&format!("Installing {pkg} via {manager}..."));
 
     match manager {
         "pacman" => {
@@ -112,7 +112,7 @@ async fn install_managed(
         "npm" => {
             // npm install --prefix <dir> <pkg>
             let status = Command::new("npm")
-                .args(&["install", "--prefix", install_dir.to_str().unwrap(), pkg])
+                .args(["install", "--prefix", install_dir.to_str().unwrap(), pkg])
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null()) // Silence noisy npm
                 .status()?;
@@ -125,7 +125,7 @@ async fn install_managed(
         "cargo" => {
             // cargo install --root <dir> <pkg>
             let status = Command::new("cargo")
-                .args(&["install", "--root", install_dir.to_str().unwrap(), pkg])
+                .args(["install", "--root", install_dir.to_str().unwrap(), pkg])
                 .stdout(std::process::Stdio::null()) // Cargo is noisy
                 .status()?;
 
@@ -137,7 +137,7 @@ async fn install_managed(
         "pip" => {
             // 1. Create venv
             let status_venv = Command::new("python")
-                .args(&["-m", "venv", install_dir.to_str().unwrap()])
+                .args(["-m", "venv", install_dir.to_str().unwrap()])
                 .status()?;
 
             if !status_venv.success() {
@@ -148,7 +148,7 @@ async fn install_managed(
             // 2. Install into venv
             let pip_path = install_dir.join("bin").join("pip");
             let status_install = Command::new(pip_path)
-                .args(&["install", pkg])
+                .args(["install", pkg])
                 .stdout(std::process::Stdio::null())
                 .status()?;
 
@@ -159,10 +159,10 @@ async fn install_managed(
         }
         "go" => {
             // GOBIN=<dir>/bin go install <pkg>@latest
-            let target = if !pkg.contains('@') {
-                format!("{}@latest", pkg)
-            } else {
+            let target = if pkg.contains('@') {
                 pkg.to_string()
+            } else {
+                format!("{pkg}@latest")
             };
 
             // Go installs to $GOBIN
@@ -262,7 +262,7 @@ fn link_binaries(install_dir: &Path, bin_dir: &Path, _tool_name: &str) -> Result
     Ok(())
 }
 
-pub async fn list() -> Result<()> {
+pub fn list() -> Result<()> {
     let (_, bin_dir) = get_dirs();
     if !bin_dir.exists() {
         println!("{}", style::dim("No tools installed via omg tool."));
@@ -286,7 +286,7 @@ pub async fn list() -> Result<()> {
     Ok(())
 }
 
-pub async fn remove(name: &str) -> Result<()> {
+pub fn remove(name: &str) -> Result<()> {
     let (tools_dir, bin_dir) = get_dirs();
 
     // We need to find which manager installed it.
@@ -312,7 +312,7 @@ pub async fn remove(name: &str) -> Result<()> {
     if !found {
         println!(
             "{}",
-            style::error(&format!("Tool '{}' not found in managed storage", name))
+            style::error(&format!("Tool '{name}' not found in managed storage"))
         );
         return Ok(());
     }

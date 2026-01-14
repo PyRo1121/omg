@@ -3,11 +3,16 @@
 use std::sync::Arc;
 
 use super::cache::PackageCache;
-use super::protocol::*;
-use crate::package_managers::{
-    alpm_worker::AlpmWorker, list_installed_fast, search_detailed, OfficialPackageManager, AurClient,
-};
 use super::index::PackageIndex;
+use super::protocol::{
+    error_codes, DetailedPackageInfo, ExplicitResult, PackageInfo, Request, RequestId, Response,
+    ResponseResult, SearchResult, SecurityAuditResult, StatusResult, Vulnerability,
+};
+use crate::package_managers::{
+    alpm_worker::AlpmWorker, list_installed_fast, search_detailed, AurClient,
+    OfficialPackageManager,
+};
+use parking_lot::RwLock;
 
 /// Daemon state shared across handlers
 pub struct DaemonState {
@@ -17,23 +22,27 @@ pub struct DaemonState {
     pub aur: AurClient,
     pub alpm_worker: AlpmWorker,
     pub index: Arc<PackageIndex>,
+    pub runtime_versions: Arc<RwLock<Vec<(String, String)>>>,
 }
 
 impl DaemonState {
+    #[must_use]
     pub fn new() -> Self {
-        let data_dir = directories::ProjectDirs::from("com", "omg", "omg")
-            .map(|d| d.data_dir().to_path_buf())
-            .unwrap_or_else(|| std::path::PathBuf::from("/var/lib/omg"));
+        let data_dir = directories::ProjectDirs::from("com", "omg", "omg").map_or_else(
+            || std::path::PathBuf::from("/var/lib/omg"),
+            |d| d.data_dir().to_path_buf(),
+        );
 
         let db_path = data_dir.join("cache.mdb");
 
-        DaemonState {
+        Self {
             cache: PackageCache::default(),
             persistent: super::db::PersistentCache::new(&db_path).expect("Failed to init LMDB"),
             pacman: OfficialPackageManager::new(),
             aur: AurClient::new(),
             alpm_worker: AlpmWorker::new(),
             index: Arc::new(PackageIndex::new().expect("Failed to init Index")),
+            runtime_versions: Arc::new(RwLock::new(Vec::new())),
         }
     }
 }
@@ -49,91 +58,105 @@ pub async fn handle_request(state: Arc<DaemonState>, request: Request) -> Respon
     match request {
         Request::Search { id, query, limit } => handle_search(state, id, query, limit).await,
         Request::Info { id, package } => handle_info(state, id, package).await,
-        Request::Ping { id } => Response::Success { id, result: ResponseResult::Ping("pong".to_string()) },
+        Request::Ping { id } => Response::Success {
+            id,
+            result: ResponseResult::Ping("pong".to_string()),
+        },
         Request::Status { id } => handle_status(state, id).await,
         Request::Explicit { id } => handle_list_explicit(state, id).await,
         Request::SecurityAudit { id } => handle_security_audit(state, id).await,
         Request::CacheStats { id } => {
             let stats = state.cache.stats();
-            Response::Success { id, result: ResponseResult::CacheStats { size: stats.size, max_size: stats.max_size } }
-        },
+            Response::Success {
+                id,
+                result: ResponseResult::CacheStats {
+                    size: stats.size,
+                    max_size: stats.max_size,
+                },
+            }
+        }
         Request::CacheClear { id } => {
             state.cache.clear();
-            Response::Success { id, result: ResponseResult::Message("cleared".to_string()) }
+            Response::Success {
+                id,
+                result: ResponseResult::Message("cleared".to_string()),
+            }
         }
     }
 }
 
 /// Handle search request
-async fn handle_search(state: Arc<DaemonState>, id: RequestId, query: String, limit: Option<usize>) -> Response {
+async fn handle_search(
+    state: Arc<DaemonState>,
+    id: RequestId,
+    query: String,
+    limit: Option<usize>,
+) -> Response {
     let limit = limit.unwrap_or(50);
 
     // Check cache first
     if let Some(cached) = state.cache.get(&query) {
         let packages: Vec<_> = cached.into_iter().take(limit).collect();
         let total = packages.len();
-        return Response::Success { id, result: ResponseResult::Search(SearchResult { packages, total }) };
+        return Response::Success {
+            id,
+            result: ResponseResult::Search(SearchResult { packages, total }),
+        };
     }
 
-    // 1. Absolute Parallelism: Search official index and AUR concurrently
-    let (official, aur) = tokio::join!(
-        async { state.index.search(&query, limit) },
-        state.aur.search(&query)
-    );
-    
-    let aur = aur.unwrap_or_default();
+    // 1. Instant Official Search (Sub-millisecond)
+    let official = state.index.search(&query, limit);
+
+    // 2. Conditional AUR Search (Network Bound)
+    // Only search AUR if official results are low, to keep speed for common packages
+    let mut aur = Vec::new();
+    if official.len() < 5 {
+        if let Ok(aur_pkgs) = state.aur.search(&query).await {
+            for pkg in aur_pkgs {
+                aur.push(PackageInfo {
+                    name: pkg.name,
+                    version: pkg.version,
+                    description: pkg.description,
+                    source: "aur".to_string(),
+                });
+            }
+        }
+    }
 
     // Combined results
     let mut packages: Vec<PackageInfo> = Vec::with_capacity(official.len() + aur.len());
     packages.extend(official);
-
-    for pkg in aur {
-        packages.push(PackageInfo {
-            name: pkg.name,
-            version: pkg.version,
-            description: pkg.description,
-            source: "aur".to_string(),
-        });
-    }
+    packages.extend(aur);
 
     // Cache the results
-    state.cache.insert(query.clone(), packages.clone());
+    state.cache.insert(query, packages.clone());
 
     let total = packages.len();
     let packages: Vec<_> = packages.into_iter().take(limit).collect();
 
-    Response::Success { id, result: ResponseResult::Search(SearchResult { packages, total }) }
+    Response::Success {
+        id,
+        result: ResponseResult::Search(SearchResult { packages, total }),
+    }
 }
 
 /// Handle info request
 async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) -> Response {
     // 1. Check cache first
     if let Some(cached) = state.cache.get_info(&package) {
-        return Response::Success { id, result: ResponseResult::Info(cached) };
+        return Response::Success {
+            id,
+            result: ResponseResult::Info(cached),
+        };
     }
 
-    // 2. Try official index first (Instant)
-    if state.index.get(&package).is_some() {
-        let pkg_name = package.clone();
-        let info = state.alpm_worker.get_info(pkg_name).await;
-
-        if let Ok(Some(pkg)) = info {
-            let detailed = DetailedPackageInfo {
-                name: pkg.name,
-                version: pkg.version,
-                description: pkg.description,
-                url: pkg.url,
-                size: pkg.size,
-                download_size: pkg.download_size,
-                repo: pkg.repo,
-                depends: pkg.depends,
-                licenses: pkg.licenses,
-                source: "official".to_string(),
-            };
-
-            state.cache.insert_info(detailed.clone());
-            return Response::Success { id, result: ResponseResult::Info(detailed) };
-        }
+    // 2. Try official index (Instant hash lookup)
+    if let Some(pkg) = state.index.get(&package) {
+        state.cache.insert_info(pkg.clone());
+        return Response::Success {
+            id,
+            result: ResponseResult::Info(pkg),
+        };
     }
 
     // 3. Try AUR
@@ -153,14 +176,17 @@ async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) ->
             };
 
             state.cache.insert_info(detailed.clone());
-            return Response::Success { id, result: ResponseResult::Info(detailed) };
+            return Response::Success {
+                id,
+                result: ResponseResult::Info(detailed),
+            };
         }
     }
 
     Response::Error {
         id,
         code: error_codes::PACKAGE_NOT_FOUND,
-        message: format!("Package not found: {}", package),
+        message: format!("Package not found: {package}"),
     }
 }
 
@@ -169,11 +195,17 @@ async fn handle_status(state: Arc<DaemonState>, id: RequestId) -> Response {
     use crate::package_managers::get_system_status;
 
     if let Ok(Some(cached)) = state.persistent.get_status() {
-        return Response::Success { id, result: ResponseResult::Status(cached) };
+        return Response::Success {
+            id,
+            result: ResponseResult::Status(cached),
+        };
     }
 
     if let Some(cached) = state.cache.get_status() {
-        return Response::Success { id, result: ResponseResult::Status(cached) };
+        return Response::Success {
+            id,
+            result: ResponseResult::Status(cached),
+        };
     }
 
     match get_system_status() {
@@ -184,17 +216,21 @@ async fn handle_status(state: Arc<DaemonState>, id: RequestId) -> Response {
                 orphan_packages: orphans,
                 updates_available: updates,
                 security_vulnerabilities: 0,
+                runtime_versions: state.runtime_versions.read().clone(),
             };
 
             let _ = state.persistent.set_status(res.clone());
             state.cache.update_status(res.clone());
 
-            Response::Success { id, result: ResponseResult::Status(res) }
+            Response::Success {
+                id,
+                result: ResponseResult::Status(res),
+            }
         }
         Err(e) => Response::Error {
             id,
             code: error_codes::INTERNAL_ERROR,
-            message: format!("Failed to get system status: {}", e),
+            message: format!("Failed to get system status: {e}"),
         },
     }
 }
@@ -210,7 +246,7 @@ async fn handle_security_audit(_state: Arc<DaemonState>, id: RequestId) -> Respo
             return Response::Error {
                 id,
                 code: error_codes::INTERNAL_ERROR,
-                message: format!("Failed to list packages: {}", e),
+                message: format!("Failed to list packages: {e}"),
             }
         }
     };
@@ -264,18 +300,24 @@ async fn handle_security_audit(_state: Arc<DaemonState>, id: RequestId) -> Respo
         vulnerabilities,
     };
 
-    Response::Success { id, result: ResponseResult::SecurityAudit(result) }
+    Response::Success {
+        id,
+        result: ResponseResult::SecurityAudit(result),
+    }
 }
 
 /// Handle list explicit request
 async fn handle_list_explicit(_state: Arc<DaemonState>, id: RequestId) -> Response {
     use crate::package_managers::list_explicit_fast;
     match list_explicit_fast() {
-        Ok(packages) => Response::Success { id, result: ResponseResult::Explicit(ExplicitResult { packages }) },
+        Ok(packages) => Response::Success {
+            id,
+            result: ResponseResult::Explicit(ExplicitResult { packages }),
+        },
         Err(e) => Response::Error {
             id,
             code: error_codes::INTERNAL_ERROR,
-            message: format!("Failed to list explicit packages: {}", e),
+            message: format!("Failed to list explicit packages: {e}"),
         },
     }
 }

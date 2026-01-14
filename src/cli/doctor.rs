@@ -125,7 +125,7 @@ fn check_path() -> bool {
     false
 }
 
-fn check_shell_hook() -> bool {
+const fn check_shell_hook() -> bool {
     // Hard to check if hook is active effectively.
     // But hook usually modifies PATH.
     // If we rely on check_path, that covers part of it.

@@ -5,219 +5,266 @@
 use alpm::{Alpm, PackageReason, SigLevel};
 use anyhow::{Context, Result};
 
-/// Create a fresh ALPM handle for queries with sync DBs registered
-/// Creates per-call since libalpm isn't thread-safe by design
-fn create_handle() -> Result<Alpm> {
-    let alpm = Alpm::new("/", "/var/lib/pacman").context("Failed to initialize ALPM handle")?;
+use std::cell::RefCell;
 
-    // Register sync databases (core, extra, multilib, etc.)
-    for db_name in &["core", "extra", "multilib"] {
-        let _ = alpm.register_syncdb(*db_name, SigLevel::USE_DEFAULT);
-    }
+thread_local! {
+    static ALPM_HANDLE: RefCell<Option<Alpm>> = const { RefCell::new(None) };
+}
 
-    Ok(alpm)
+/// Get a cached ALPM handle or create a new one for this thread
+pub fn with_handle<F, R>(f: F) -> Result<R>
+where
+    F: FnOnce(&Alpm) -> Result<R>,
+{
+    ALPM_HANDLE.with(|cell| {
+        let mut maybe_handle = cell.borrow_mut();
+        if maybe_handle.is_none() {
+            let alpm =
+                Alpm::new("/", "/var/lib/pacman").context("Failed to initialize ALPM handle")?;
+
+            // Register sync databases
+            for db_name in &["core", "extra", "multilib"] {
+                let _ = alpm.register_syncdb(*db_name, SigLevel::USE_DEFAULT);
+            }
+            *maybe_handle = Some(alpm);
+        }
+
+        f(maybe_handle.as_ref().unwrap())
+    })
+}
+
+/// Get a mutable cached ALPM handle
+pub fn with_handle_mut<F, R>(f: F) -> Result<R>
+where
+    F: FnOnce(&mut Alpm) -> Result<R>,
+{
+    ALPM_HANDLE.with(|cell| {
+        let mut maybe_handle = cell.borrow_mut();
+        if maybe_handle.is_none() {
+            let alpm =
+                Alpm::new("/", "/var/lib/pacman").context("Failed to initialize ALPM handle")?;
+
+            // Register sync databases
+            for db_name in &["core", "extra", "multilib"] {
+                let _ = alpm.register_syncdb(*db_name, SigLevel::USE_DEFAULT);
+            }
+            *maybe_handle = Some(alpm);
+        }
+
+        f(maybe_handle.as_mut().unwrap())
+    })
 }
 
 /// Search local database (installed packages) - INSTANT
 pub fn search_local(query: &str) -> Result<Vec<LocalPackage>> {
-    let handle = create_handle()?;
-    let localdb = handle.localdb();
-    let query_lower = query.to_lowercase();
+    with_handle(|handle| {
+        let localdb = handle.localdb();
+        let query_lower = query.to_lowercase();
 
-    let results = localdb
-        .pkgs()
-        .iter()
-        .filter(|pkg| {
-            pkg.name().contains(&query_lower)
-                || pkg
-                    .desc()
-                    .map(|d| d.to_lowercase().contains(&query_lower))
-                    .unwrap_or(false)
-        })
-        .map(|pkg| LocalPackage {
-            name: pkg.name().to_string(),
-            version: pkg.version().to_string(),
-            description: pkg.desc().unwrap_or("").to_string(),
-            install_size: pkg.isize(),
-            reason: match pkg.reason() {
-                PackageReason::Explicit => "explicit",
-                PackageReason::Depend => "dependency",
-            },
-        })
-        .collect();
+        let results = localdb
+            .pkgs()
+            .iter()
+            .filter(|pkg| {
+                pkg.name().contains(&query_lower)
+                    || pkg
+                        .desc()
+                        .is_some_and(|d| d.to_lowercase().contains(&query_lower))
+            })
+            .map(|pkg| LocalPackage {
+                name: pkg.name().to_string(),
+                version: pkg.version().to_string(),
+                description: pkg.desc().unwrap_or("").to_string(),
+                install_size: pkg.isize(),
+                reason: match pkg.reason() {
+                    PackageReason::Explicit => "explicit",
+                    PackageReason::Depend => "dependency",
+                },
+            })
+            .collect();
 
-    Ok(results)
+        Ok(results)
+    })
 }
 
 /// Search sync databases (available packages) - FAST (<10ms)
 pub fn search_sync(query: &str) -> Result<Vec<SyncPackage>> {
-    let handle = create_handle()?;
-    let query_lower = query.to_lowercase();
-    let mut results = Vec::new();
+    with_handle(|handle| {
+        let query_lower = query.to_lowercase();
+        let mut results = Vec::new();
 
-    for db in handle.syncdbs() {
-        for pkg in db.pkgs() {
-            if pkg.name().contains(&query_lower)
-                || pkg
-                    .desc()
-                    .map(|d| d.to_lowercase().contains(&query_lower))
-                    .unwrap_or(false)
-            {
-                let installed = handle.localdb().pkg(pkg.name()).is_ok();
+        for db in handle.syncdbs() {
+            for pkg in db.pkgs() {
+                if pkg.name().contains(&query_lower)
+                    || pkg
+                        .desc()
+                        .is_some_and(|d| d.to_lowercase().contains(&query_lower))
+                {
+                    let installed = handle.localdb().pkg(pkg.name()).is_ok();
 
-                results.push(SyncPackage {
-                    name: pkg.name().to_string(),
-                    version: pkg.version().to_string(),
-                    description: pkg.desc().unwrap_or("").to_string(),
-                    repo: db.name().to_string(),
-                    download_size: pkg.download_size(),
-                    installed,
-                });
+                    results.push(SyncPackage {
+                        name: pkg.name().to_string(),
+                        version: pkg.version().to_string(),
+                        description: pkg.desc().unwrap_or("").to_string(),
+                        repo: db.name().to_string(),
+                        download_size: pkg.download_size(),
+                        installed,
+                    });
+                }
             }
         }
-    }
 
-    Ok(results)
+        Ok(results)
+    })
 }
 
 /// Get package info - INSTANT (<1ms)
 pub fn get_package_info(name: &str) -> Result<Option<PackageInfo>> {
-    let handle = create_handle()?;
-
-    // Try local first
-    if let Ok(pkg) = handle.localdb().pkg(name) {
-        return Ok(Some(PackageInfo {
-            name: pkg.name().to_string(),
-            version: pkg.version().to_string(),
-            description: pkg.desc().unwrap_or("").to_string(),
-            url: pkg.url().map(|u| u.to_string()),
-            licenses: pkg.licenses().iter().map(|l| l.to_string()).collect(),
-            depends: pkg.depends().iter().map(|d| d.name().to_string()).collect(),
-            installed: true,
-            install_size: Some(pkg.isize()),
-            download_size: None,
-            repo: Some("local".to_string()),
-        }));
-    }
-
-    // Try sync databases
-    for db in handle.syncdbs() {
-        if let Ok(pkg) = db.pkg(name) {
+    with_handle(|handle| {
+        // Try local first
+        if let Ok(pkg) = handle.localdb().pkg(name) {
             return Ok(Some(PackageInfo {
                 name: pkg.name().to_string(),
                 version: pkg.version().to_string(),
                 description: pkg.desc().unwrap_or("").to_string(),
-                url: pkg.url().map(|u| u.to_string()),
-                licenses: pkg.licenses().iter().map(|l| l.to_string()).collect(),
+                url: pkg.url().map(std::string::ToString::to_string),
+                licenses: pkg
+                    .licenses()
+                    .iter()
+                    .map(std::string::ToString::to_string)
+                    .collect(),
                 depends: pkg.depends().iter().map(|d| d.name().to_string()).collect(),
-                installed: false,
+                installed: true,
                 install_size: Some(pkg.isize()),
-                download_size: Some(pkg.download_size()),
-                repo: Some(db.name().to_string()),
+                download_size: None,
+                repo: Some("local".to_string()),
             }));
         }
-    }
 
-    Ok(None)
+        // Try sync databases
+        for db in handle.syncdbs() {
+            if let Ok(pkg) = db.pkg(name) {
+                return Ok(Some(PackageInfo {
+                    name: pkg.name().to_string(),
+                    version: pkg.version().to_string(),
+                    description: pkg.desc().unwrap_or("").to_string(),
+                    url: pkg.url().map(std::string::ToString::to_string),
+                    licenses: pkg
+                        .licenses()
+                        .iter()
+                        .map(std::string::ToString::to_string)
+                        .collect(),
+                    depends: pkg.depends().iter().map(|d| d.name().to_string()).collect(),
+                    installed: false,
+                    install_size: Some(pkg.isize()),
+                    download_size: Some(pkg.download_size()),
+                    repo: Some(db.name().to_string()),
+                }));
+            }
+        }
+
+        Ok(None)
+    })
 }
 
 /// List all installed packages - INSTANT
 pub fn list_installed_fast() -> Result<Vec<LocalPackage>> {
-    let handle = create_handle()?;
-    let localdb = handle.localdb();
+    with_handle(|handle| {
+        let localdb = handle.localdb();
 
-    let results = localdb
-        .pkgs()
-        .iter()
-        .map(|pkg| LocalPackage {
-            name: pkg.name().to_string(),
-            version: pkg.version().to_string(),
-            description: pkg.desc().unwrap_or("").to_string(),
-            install_size: pkg.isize(),
-            reason: match pkg.reason() {
-                PackageReason::Explicit => "explicit",
-                PackageReason::Depend => "dependency",
-            },
-        })
-        .collect();
+        let results = localdb
+            .pkgs()
+            .iter()
+            .map(|pkg| LocalPackage {
+                name: pkg.name().to_string(),
+                version: pkg.version().to_string(),
+                description: pkg.desc().unwrap_or("").to_string(),
+                install_size: pkg.isize(),
+                reason: match pkg.reason() {
+                    PackageReason::Explicit => "explicit",
+                    PackageReason::Depend => "dependency",
+                },
+            })
+            .collect();
 
-    Ok(results)
+        Ok(results)
+    })
 }
 
 /// List explicitly installed packages - INSTANT
 pub fn list_explicit_fast() -> Result<Vec<String>> {
-    let handle = create_handle()?;
+    with_handle(|handle| {
+        let results = handle
+            .localdb()
+            .pkgs()
+            .iter()
+            .filter(|pkg| pkg.reason() == PackageReason::Explicit)
+            .map(|pkg| pkg.name().to_string())
+            .collect();
 
-    let results = handle
-        .localdb()
-        .pkgs()
-        .iter()
-        .filter(|pkg| pkg.reason() == PackageReason::Explicit)
-        .map(|pkg| pkg.name().to_string())
-        .collect();
-
-    Ok(results)
+        Ok(results)
+    })
 }
 
 /// List orphan packages - INSTANT
 pub fn list_orphans_fast() -> Result<Vec<String>> {
-    let handle = create_handle()?;
+    with_handle(|handle| {
+        let results = handle
+            .localdb()
+            .pkgs()
+            .iter()
+            .filter(|pkg| pkg.reason() == PackageReason::Depend && pkg.required_by().is_empty())
+            .map(|pkg| pkg.name().to_string())
+            .collect();
 
-    let results = handle
-        .localdb()
-        .pkgs()
-        .iter()
-        .filter(|pkg| pkg.reason() == PackageReason::Depend && pkg.required_by().is_empty())
-        .map(|pkg| pkg.name().to_string())
-        .collect();
-
-    Ok(results)
+        Ok(results)
+    })
 }
 
 /// Check if package is installed - INSTANT
 pub fn is_installed_fast(name: &str) -> Result<bool> {
-    let handle = create_handle()?;
-    Ok(handle.localdb().pkg(name).is_ok())
+    with_handle(|handle| Ok(handle.localdb().pkg(name).is_ok()))
 }
 
 /// Get counts - INSTANT
 pub fn get_counts() -> Result<(usize, usize, usize)> {
-    let handle = create_handle()?;
-    let pkgs = handle.localdb().pkgs();
+    with_handle(|handle| {
+        let pkgs = handle.localdb().pkgs();
 
-    let total = pkgs.len();
-    let explicit = pkgs
-        .iter()
-        .filter(|p| p.reason() == PackageReason::Explicit)
-        .count();
-    let orphans = pkgs
-        .iter()
-        .filter(|p| p.reason() == PackageReason::Depend && p.required_by().is_empty())
-        .count();
+        let total = pkgs.len();
+        let explicit = pkgs
+            .iter()
+            .filter(|p| p.reason() == PackageReason::Explicit)
+            .count();
+        let orphans = pkgs
+            .iter()
+            .filter(|p| p.reason() == PackageReason::Depend && p.required_by().is_empty())
+            .count();
 
-    Ok((total, explicit, orphans))
+        Ok((total, explicit, orphans))
+    })
 }
 
 /// List all known package names (local + sync) for completion - FAST
 pub fn list_all_package_names() -> Result<Vec<String>> {
-    let handle = create_handle()?;
-    let mut names = std::collections::HashSet::new();
+    with_handle(|handle| {
+        let mut names = std::collections::HashSet::new();
 
-    // Add local packages
-    for pkg in handle.localdb().pkgs() {
-        names.insert(pkg.name().to_string());
-    }
-
-    // Add sync packages
-    for db in handle.syncdbs() {
-        for pkg in db.pkgs() {
+        // Add local packages
+        for pkg in handle.localdb().pkgs() {
             names.insert(pkg.name().to_string());
         }
-    }
 
-    let mut result: Vec<String> = names.into_iter().collect();
-    result.sort();
-    Ok(result)
+        // Add sync packages
+        for db in handle.syncdbs() {
+            for pkg in db.pkgs() {
+                names.insert(pkg.name().to_string());
+            }
+        }
+
+        let mut result: Vec<String> = names.into_iter().collect();
+        result.sort();
+        Ok(result)
+    })
 }
 
 #[derive(Debug, Clone)]

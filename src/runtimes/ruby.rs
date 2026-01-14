@@ -34,26 +34,21 @@ pub struct RubyManager {
 
 impl RubyManager {
     pub fn new() -> Self {
-        let data_dir = directories::ProjectDirs::from("com", "omg", "omg")
-            .map(|d| d.data_dir().to_path_buf())
-            .unwrap_or_else(|| {
-                home::home_dir()
-                    .unwrap_or_else(|| PathBuf::from("."))
-                    .join(".omg")
-            });
+        let data_dir = super::DATA_DIR.clone();
 
         let client = reqwest::Client::builder()
             .user_agent("omg-package-manager")
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
 
-        RubyManager {
+        Self {
             versions_dir: data_dir.join("versions").join("ruby"),
             current_link: data_dir.join("versions").join("ruby").join("current"),
             client,
         }
     }
 
+    #[must_use]
     pub fn bin_dir(&self) -> PathBuf {
         self.current_link.join("bin")
     }
@@ -121,6 +116,7 @@ impl RubyManager {
         Ok(versions)
     }
 
+    #[must_use]
     pub fn current_version(&self) -> Option<String> {
         fs::read_link(&self.current_link)
             .ok()
@@ -145,8 +141,8 @@ impl RubyManager {
 
         // Use pre-built Ruby from GitHub ruby-builder
         let os = "ubuntu-22.04"; // Most compatible glibc version
-        let filename = format!("ruby-{}.tar.gz", version);
-        let url = format!("{}/toolcache/{}-{}", RUBY_PREBUILT_URL, os, filename);
+        let filename = format!("ruby-{version}.tar.gz");
+        let url = format!("{RUBY_PREBUILT_URL}/toolcache/{os}-{filename}");
 
         fs::create_dir_all(&self.versions_dir)?;
 
@@ -208,7 +204,7 @@ impl RubyManager {
     async fn download_file(&self, url: &str, path: &PathBuf) -> Result<()> {
         let response =
             self.client.get(url).send().await.with_context(|| {
-                format!("Failed to download from {}. Check your connection.", url)
+                format!("Failed to download from {url}. Check your connection.")
             })?;
 
         if !response.status().is_success() {
@@ -245,7 +241,7 @@ impl RubyManager {
         let version_dir = self.versions_dir.join(version);
 
         if !version_dir.exists() {
-            anyhow::bail!("Ruby {} is not installed", version);
+            anyhow::bail!("Ruby {version} is not installed");
         }
 
         if self.current_link.exists() {

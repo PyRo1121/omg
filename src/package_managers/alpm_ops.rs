@@ -10,92 +10,118 @@ use colored::Colorize;
 /// Check available updates using direct DB comparison - INSTANT
 /// Get comprehensive system status (counts + updates) in a single pass - FAST
 pub fn get_system_status() -> Result<(usize, usize, usize, usize)> {
-    let alpm = alpm::Alpm::new("/", "/var/lib/pacman").context("Failed to initialize ALPM")?;
+    crate::package_managers::alpm_direct::with_handle(|alpm| {
+        let mut total = 0;
+        let mut explicit = 0;
+        let mut orphans = 0;
+        let mut updates = 0;
 
-    // Register sync DBs
-    for db_name in ["core", "extra", "multilib"] {
-        let _ = alpm.register_syncdb(db_name, alpm::SigLevel::USE_DEFAULT);
-    }
+        let localdb = alpm.localdb();
+        let syncdbs = alpm.syncdbs();
 
-    let mut total = 0;
-    let mut explicit = 0;
-    let mut orphans = 0;
-    let mut updates = 0;
+        for pkg in localdb.pkgs() {
+            total += 1;
 
-    let syncdbs = alpm.syncdbs();
+            if pkg.reason() == alpm::PackageReason::Explicit {
+                explicit += 1;
+            } else if pkg.required_by().is_empty() && pkg.optional_for().is_empty() {
+                orphans += 1;
+            }
 
-    for pkg in alpm.localdb().pkgs() {
-        total += 1;
-
-        if pkg.reason() == alpm::PackageReason::Explicit {
-            explicit += 1;
-        } else if pkg.required_by().is_empty() && pkg.optional_for().is_empty() {
-            orphans += 1;
-        }
-
-        let name = pkg.name();
-        let local_ver = pkg.version().as_str();
-
-        // Find if any sync DB has a newer version
-        for db in syncdbs.iter() {
-            if let Ok(sync_pkg) = db.pkg(name) {
-                if alpm::vercmp(sync_pkg.version().as_str(), local_ver)
-                    == std::cmp::Ordering::Greater
-                {
-                    updates += 1;
-                    break;
+            // Check for updates - use sync_newversion for performance if possible
+            // but db.pkg() is generally fine if the handle is reused.
+            let name = pkg.name();
+            for db in syncdbs {
+                if let Ok(sync_pkg) = db.pkg(name) {
+                    if alpm::vercmp(sync_pkg.version().as_str(), pkg.version().as_str())
+                        == std::cmp::Ordering::Greater
+                    {
+                        updates += 1;
+                        break;
+                    }
                 }
             }
         }
-    }
 
-    Ok((total, explicit, orphans, updates))
+        Ok((total, explicit, orphans, updates))
+    })
 }
 
-/// Get detailed list of updates (name, old_version, new_version) - FAST
+/// Get detailed list of updates (name, `old_version`, `new_version`) - FAST
 pub fn get_update_list() -> Result<Vec<(String, String, String)>> {
-    let alpm = alpm::Alpm::new("/", "/var/lib/pacman").context("Failed to initialize ALPM")?;
+    crate::package_managers::alpm_direct::with_handle(|alpm| {
+        let mut updates = Vec::new();
+        let localdb = alpm.localdb();
+        let syncdbs = alpm.syncdbs();
 
-    // Register sync DBs
-    for db_name in ["core", "extra", "multilib"] {
-        let _ = alpm.register_syncdb(db_name, alpm::SigLevel::USE_DEFAULT);
-    }
+        for pkg in localdb.pkgs() {
+            let name = pkg.name();
+            let local_ver = pkg.version().as_str();
 
-    let mut updates = Vec::new();
-    let syncdbs = alpm.syncdbs();
-
-    for pkg in alpm.localdb().pkgs() {
-        let name = pkg.name();
-        let local_ver = pkg.version().as_str();
-
-        for db in syncdbs.iter() {
-            if let Ok(sync_pkg) = db.pkg(name) {
-                let sync_ver = sync_pkg.version().as_str();
-                if alpm::vercmp(sync_ver, local_ver) == std::cmp::Ordering::Greater {
-                    updates.push((
-                        name.to_string(),
-                        local_ver.to_string(),
-                        sync_ver.to_string(),
-                    ));
-                    break;
+            for db in syncdbs {
+                if let Ok(sync_pkg) = db.pkg(name) {
+                    let sync_ver = sync_pkg.version().as_str();
+                    if alpm::vercmp(sync_ver, local_ver) == std::cmp::Ordering::Greater {
+                        updates.push((
+                            name.to_string(),
+                            local_ver.to_string(),
+                            sync_ver.to_string(),
+                        ));
+                        break;
+                    }
                 }
             }
         }
-    }
 
-    Ok(updates)
+        Ok(updates)
+    })
+}
+
+/// Information needed for downloading a package
+#[derive(Debug, Clone)]
+pub struct DownloadInfo {
+    pub name: String,
+    pub version: String,
+    pub repo: String,
+    pub filename: String,
+    pub size: u64,
+}
+
+/// Get download information for all available updates - for parallel downloads
+pub fn get_update_download_list() -> Result<Vec<DownloadInfo>> {
+    crate::package_managers::alpm_direct::with_handle(|alpm| {
+        let mut downloads = Vec::new();
+        let localdb = alpm.localdb();
+        let syncdbs = alpm.syncdbs();
+
+        for pkg in localdb.pkgs() {
+            let name = pkg.name();
+            let local_ver = pkg.version().as_str();
+
+            for db in syncdbs {
+                if let Ok(sync_pkg) = db.pkg(name) {
+                    let sync_ver = sync_pkg.version().as_str();
+                    if alpm::vercmp(sync_ver, local_ver) == std::cmp::Ordering::Greater {
+                        downloads.push(DownloadInfo {
+                            name: name.to_string(),
+                            version: sync_ver.to_string(),
+                            repo: db.name().to_string(),
+                            filename: sync_pkg.filename().unwrap_or_default().to_string(),
+                            size: sync_pkg.download_size() as u64,
+                        });
+                        break;
+                    }
+                }
+            }
+        }
+
+        Ok(downloads)
+    })
 }
 
 /// Get package info from sync DBs - INSTANT (<1ms)
 pub fn get_sync_pkg_info(name: &str) -> Result<Option<PackageInfo>> {
-    let alpm = alpm::Alpm::new("/", "/var/lib/pacman").context("Failed to initialize ALPM")?;
-
-    // Register sync DBs
-    for db_name in ["core", "extra", "multilib"] {
-        let _ = alpm.register_syncdb(db_name, alpm::SigLevel::USE_DEFAULT);
-    }
-
-    get_pkg_info_from_db(&alpm, name)
+    crate::package_managers::alpm_direct::with_handle(|alpm| get_pkg_info_from_db(alpm, name))
 }
 
 /// Get package info using an existing ALPM handle - ULTRA FAST
@@ -111,8 +137,16 @@ pub fn get_pkg_info_from_db(alpm: &alpm::Alpm, name: &str) -> Result<Option<Pack
                 size: pkg.isize() as u64,
                 download_size: pkg.size() as u64,
                 repo: db.name().to_string(),
-                depends: pkg.depends().iter().map(|d| d.to_string()).collect(),
-                licenses: pkg.licenses().iter().map(|l| l.to_string()).collect(),
+                depends: pkg
+                    .depends()
+                    .iter()
+                    .map(std::string::ToString::to_string)
+                    .collect(),
+                licenses: pkg
+                    .licenses()
+                    .iter()
+                    .map(std::string::ToString::to_string)
+                    .collect(),
             }));
         }
     }
@@ -187,45 +221,38 @@ pub fn clean_cache(keep_versions: usize) -> Result<(usize, u64)> {
 
 /// List orphaned packages - INSTANT
 pub fn list_orphans_direct() -> Result<Vec<String>> {
-    let alpm = alpm::Alpm::new("/", "/var/lib/pacman").context("Failed to initialize ALPM")?;
+    crate::package_managers::alpm_direct::with_handle(|alpm| {
+        let mut orphans = Vec::new();
 
-    let mut orphans = Vec::new();
-
-    for pkg in alpm.localdb().pkgs() {
-        // Package is orphan if:
-        // 1. Not explicitly installed
-        // 2. Nothing depends on it
-        if pkg.reason() != alpm::PackageReason::Explicit {
-            if pkg.required_by().is_empty() && pkg.optional_for().is_empty() {
+        for pkg in alpm.localdb().pkgs() {
+            if pkg.reason() != alpm::PackageReason::Explicit
+                && pkg.required_by().is_empty()
+                && pkg.optional_for().is_empty()
+            {
                 orphans.push(pkg.name().to_string());
             }
         }
-    }
 
-    Ok(orphans)
+        Ok(orphans)
+    })
 }
 
 /// Synchronize package databases from mirrors - FAST
 pub fn sync_dbs() -> Result<()> {
-    let mut alpm = alpm::Alpm::new("/", "/var/lib/pacman")
-        .context("Failed to initialize ALPM (are you root?)")?;
+    crate::package_managers::alpm_direct::with_handle_mut(|alpm| {
+        // Update all registered sync DBs
+        // Note: this may require root, which with_handle handles via the shared handle
+        // but the actual update operation is what's privileged.
+        alpm.syncdbs_mut()
+            .update(false)
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "✗ Sync Error: Failed to update package databases: {e}.\n  Check your internet connection or run 'omg sync' with sudo."
+                )
+            })?;
 
-    // Register sync DBs if they aren't already
-    for db_name in ["core", "extra", "multilib"] {
-        let _ = alpm.register_syncdb(db_name, alpm::SigLevel::USE_DEFAULT);
-    }
-
-    // Update all registered sync DBs
-    alpm.syncdbs_mut()
-        .update(false)
-        .map_err(|e| {
-            anyhow::anyhow!(
-                "✗ Sync Error: Failed to update package databases: {}.\n  Check your internet connection or run 'omg sync' with sudo.",
-                e
-            )
-        })?;
-
-    Ok(())
+        Ok(())
+    })
 }
 
 /// Display package info beautifully
@@ -265,6 +292,9 @@ pub fn execute_transaction(packages: Vec<String>, remove: bool, sysupgrade: bool
         let _ = alpm.register_syncdb(db_name, SigLevel::USE_DEFAULT);
     }
 
+    // Configure mirrors so downloads work
+    configure_mirrors(&mut alpm)?;
+
     // Set up progress bars
     let mp = indicatif::MultiProgress::new();
     let main_pb = mp.add(ProgressBar::new_spinner());
@@ -277,7 +307,7 @@ pub fn execute_transaction(packages: Vec<String>, remove: bool, sysupgrade: bool
 
     // Progress callback
     let main_pb_clone = main_pb.clone();
-    alpm.set_progress_cb((), move |op, name, percent, _n, _max, _| {
+    alpm.set_progress_cb((), move |op, name, percent, _n, _max, ()| {
         let msg = match op {
             alpm::Progress::AddStart => "Installing",
             alpm::Progress::UpgradeStart => "Upgrading",
@@ -290,7 +320,7 @@ pub fn execute_transaction(packages: Vec<String>, remove: bool, sysupgrade: bool
             alpm::Progress::LoadStart => "Loading",
             alpm::Progress::KeyringStart => "Checking keyring",
         };
-        main_pb_clone.set_message(format!("{}: {} {}%", msg, name, percent));
+        main_pb_clone.set_message(format!("{msg}: {name} {percent}%"));
     });
 
     // Download callback
@@ -298,7 +328,7 @@ pub fn execute_transaction(packages: Vec<String>, remove: bool, sysupgrade: bool
         String,
         ProgressBar,
     >::new()));
-    let mp_clone = mp.clone();
+    let mp_clone = mp;
 
     alpm.set_dl_cb(dl_pb_map, move |filename, event, map| {
         let mut map = map.lock().unwrap();
@@ -366,7 +396,7 @@ pub fn execute_transaction(packages: Vec<String>, remove: bool, sysupgrade: bool
             if remove {
                 if let Ok(pkg) = alpm.localdb().pkg(pkg_name.clone()) {
                     alpm.trans_remove_pkg(pkg).map_err(|e| {
-                        anyhow::anyhow!("Failed to add {} to removal list: {:?}", pkg_name, e)
+                        anyhow::anyhow!("Failed to add {pkg_name} to removal list: {e:?}")
                     })?;
                 }
             } else {
@@ -376,13 +406,11 @@ pub fn execute_transaction(packages: Vec<String>, remove: bool, sysupgrade: bool
                     let pkg = alpm
                         .pkg_load(pkg_name.clone(), true, alpm::SigLevel::USE_DEFAULT)
                         .map_err(|e| {
-                            anyhow::anyhow!("Failed to load local package {}: {:?}", pkg_name, e)
+                            anyhow::anyhow!("Failed to load local package {pkg_name}: {e:?}")
                         })?;
                     alpm.trans_add_pkg(pkg).map_err(|e| {
                         anyhow::anyhow!(
-                            "Failed to add local package {} to transaction: {:?}",
-                            pkg_name,
-                            e
+                            "Failed to add local package {pkg_name} to transaction: {e:?}"
                         )
                     })?;
                     continue;
@@ -393,18 +421,14 @@ pub fn execute_transaction(packages: Vec<String>, remove: bool, sysupgrade: bool
                 for db in alpm.syncdbs() {
                     if let Ok(pkg) = db.pkg(pkg_name.clone()) {
                         alpm.trans_add_pkg(pkg).map_err(|e| {
-                            anyhow::anyhow!(
-                                "Failed to add {} to installation list: {:?}",
-                                pkg_name,
-                                e
-                            )
+                            anyhow::anyhow!("Failed to add {pkg_name} to installation list: {e:?}")
                         })?;
                         found = true;
                         break;
                     }
                 }
                 if !found {
-                    anyhow::bail!("Package {} not found in any repository", pkg_name);
+                    anyhow::bail!("Package {pkg_name} not found in any repository");
                 }
             }
         }
@@ -414,8 +438,7 @@ pub fn execute_transaction(packages: Vec<String>, remove: bool, sysupgrade: bool
     alpm.trans_prepare()
         .map_err(|e| {
             anyhow::anyhow!(
-                "✗ Preparation Error: Transaction failed to prepare: {}.\n  This may be due to conflicting packages or missing dependencies.",
-                e
+                "✗ Preparation Error: Transaction failed to prepare: {e}.\n  This may be due to conflicting packages or missing dependencies."
             )
         })?;
 
@@ -435,9 +458,7 @@ pub fn execute_transaction(packages: Vec<String>, remove: bool, sysupgrade: bool
                 if cache_path.exists() && sig_path.exists() {
                     if let Err(e) = verifier.verify_package(&cache_path, &sig_path) {
                         anyhow::bail!(
-                            "✗ SECURITY ALERT: PGP verification failed for {}.\n  Error: {}\n  The package may be corrupted or tampered with.",
-                            pkg_name,
-                            e
+                            "✗ SECURITY ALERT: PGP verification failed for {pkg_name}.\n  Error: {e}\n  The package may be corrupted or tampered with."
                         );
                     }
                 }
@@ -457,13 +478,44 @@ pub fn execute_transaction(packages: Vec<String>, remove: bool, sysupgrade: bool
     alpm.trans_commit()
         .map_err(|e| {
             anyhow::anyhow!(
-                "✗ Commit Error: Transaction failed to commit: {}.\n  Run 'omg cleanup' or check system logs for details.",
-                e
+                "✗ Commit Error: Transaction failed to commit: {e}.\n  Run 'omg cleanup' or check system logs for details."
             )
         })?;
 
     alpm.trans_release()
         .context("Failed to release transaction")?;
 
+    Ok(())
+}
+
+/// Parse /etc/pacman.d/mirrorlist and configure ALPM servers
+fn configure_mirrors(alpm: &mut alpm::Alpm) -> Result<()> {
+    let mirrorlist = "/etc/pacman.d/mirrorlist";
+    if !std::path::Path::new(mirrorlist).exists() {
+        return Ok(());
+    }
+
+    let content = std::fs::read_to_string(mirrorlist)?;
+    let mut servers = Vec::new();
+
+    for line in content.lines() {
+        let line = line.trim();
+        // Match active lines: Server = ...
+        if !line.starts_with('#') && line.starts_with("Server") {
+            if let Some(url) = line.split('=').nth(1) {
+                servers.push(url.trim().to_string());
+            }
+        }
+    }
+
+    for db in alpm.syncdbs_mut() {
+        let db_name = db.name().to_string();
+        for server in &servers {
+            let url = server
+                .replace("$repo", &db_name)
+                .replace("$arch", std::env::consts::ARCH);
+            let _ = db.add_server(url);
+        }
+    }
     Ok(())
 }

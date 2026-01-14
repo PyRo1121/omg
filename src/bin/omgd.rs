@@ -10,11 +10,11 @@ use tokio::net::UnixListener;
 use omg_lib::daemon::server;
 
 #[cfg(not(target_env = "msvc"))]
-use tikv_jemallocator::Jemalloc;
+use mimalloc::MiMalloc;
 
 #[cfg(not(target_env = "msvc"))]
 #[global_allocator]
-static GLOBAL: Jemalloc = Jemalloc;
+static GLOBAL: MiMalloc = MiMalloc;
 
 /// OMG Daemon - Background service for fast package operations
 #[derive(Parser, Debug)]
@@ -27,7 +27,7 @@ struct Args {
     #[arg(short, long)]
     foreground: bool,
 
-    /// Socket path (default: $XDG_RUNTIME_DIR/omg.sock)
+    /// Socket path (default: $`XDG_RUNTIME_DIR/omg.sock`)
     #[arg(short, long)]
     socket: Option<PathBuf>,
 }
@@ -47,9 +47,10 @@ async fn main() -> Result<()> {
 
     // Determine socket path
     let socket_path = args.socket.unwrap_or_else(|| {
-        std::env::var("XDG_RUNTIME_DIR")
-            .map(|d| PathBuf::from(d).join("omg.sock"))
-            .unwrap_or_else(|_| PathBuf::from("/tmp/omg.sock"))
+        std::env::var("XDG_RUNTIME_DIR").map_or_else(
+            |_| PathBuf::from("/tmp/omg.sock"),
+            |d| PathBuf::from(d).join("omg.sock"),
+        )
     });
 
     tracing::info!("Starting OMG daemon (omgd) v{}", env!("CARGO_PKG_VERSION"));

@@ -333,7 +333,7 @@ pub fn run_task(task_name: &str, extra_args: &[String]) -> Result<()> {
             );
         }
 
-        anyhow::bail!("Task '{}' not found in this project.", task_name);
+        anyhow::bail!("Task '{task_name}' not found in this project.");
     }
 
     let task = matches[0];
@@ -392,7 +392,7 @@ fn execute_process(cmd: &str, args: &[String], extra_args: &[String]) -> Result<
 
     let status = command
         .status()
-        .with_context(|| format!("Failed to execute '{}'", cmd))?;
+        .with_context(|| format!("Failed to execute '{cmd}'"))?;
 
     if !status.success() {
         anyhow::bail!("Task failed with exit code: {:?}", status.code());

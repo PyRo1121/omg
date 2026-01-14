@@ -41,8 +41,7 @@ fn generate_shim(shims_dir: &Path, binary: &str) -> Result<()> {
 # This shim delegates to the correct version based on configuration
 
 exec omg exec {binary} "$@"
-"#,
-        binary = binary
+"#
     );
 
     std::fs::write(&shim_path, shim_content)?;

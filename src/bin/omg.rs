@@ -17,14 +17,13 @@ use omg_lib::core::{elevate_if_needed, is_root, task_runner};
 use omg_lib::hooks;
 
 #[cfg(not(target_env = "msvc"))]
-use tikv_jemallocator::Jemalloc;
+use mimalloc::MiMalloc;
 
 #[cfg(not(target_env = "msvc"))]
 #[global_allocator]
-static GLOBAL: Jemalloc = Jemalloc;
+static GLOBAL: MiMalloc = MiMalloc;
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     // Initialize tracing
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -54,22 +53,45 @@ async fn main() -> Result<()> {
             detailed,
             interactive,
         } => {
-            packages::search(&query, detailed, interactive).await?;
+            // PURE SYNC PATH (Sub-10ms)
+            if !packages::search_sync_cli(&query, detailed, interactive)? {
+                // Fallback to async if needed
+                let rt = tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .build()?;
+                rt.block_on(packages::search(&query, detailed, interactive))?;
+            }
         }
         Commands::Install { packages, yes } => {
-            packages::install(&packages, yes).await?;
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()?;
+            rt.block_on(packages::install(&packages, yes))?;
         }
         Commands::Remove {
             packages: pkgs,
             recursive,
         } => {
-            packages::remove(&pkgs, recursive).await?;
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()?;
+            rt.block_on(packages::remove(&pkgs, recursive))?;
         }
         Commands::Update { check } => {
-            packages::update(check).await?;
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()?;
+            rt.block_on(packages::update(check))?;
         }
         Commands::Info { package } => {
-            packages::info(&package).await?;
+            // 1. Try SYNC PATH (Official + Local)
+            if !packages::info_sync(&package)? {
+                // 2. Fallback to ASYNC PATH (AUR)
+                let rt = tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .build()?;
+                rt.block_on(packages::info_aur(&package))?;
+            }
         }
         Commands::Clean {
             orphans,
@@ -77,19 +99,32 @@ async fn main() -> Result<()> {
             aur,
             all,
         } => {
-            packages::clean(orphans, cache, aur, all).await?;
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()?;
+            rt.block_on(packages::clean(orphans, cache, aur, all))?;
         }
         Commands::Explicit => {
-            packages::explicit().await?;
+            // PURE SYNC PATH (Sub-10ms)
+            packages::explicit_sync()?;
         }
         Commands::Sync => {
-            packages::sync().await?;
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()?;
+            rt.block_on(packages::sync())?;
         }
         Commands::Use { runtime, version } => {
-            runtimes::use_version(&runtime, version.as_deref()).await?;
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()?;
+            rt.block_on(runtimes::use_version(&runtime, version.as_deref()))?;
         }
         Commands::List { runtime, available } => {
-            runtimes::list_versions(runtime.as_deref(), available).await?;
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()?;
+            rt.block_on(runtimes::list_versions(runtime.as_deref(), available))?;
         }
         Commands::Hook { shell } => {
             hooks::print_hook(&shell)?;
@@ -98,10 +133,10 @@ async fn main() -> Result<()> {
             hooks::hook_env(&shell)?;
         }
         Commands::Daemon { foreground } => {
-            commands::daemon(foreground).await?;
+            commands::daemon(foreground)?;
         }
         Commands::Config { key, value } => {
-            commands::config(key.as_deref(), value.as_deref()).await?;
+            commands::config(key.as_deref(), value.as_deref())?;
         }
         Commands::Completions { shell, stdout } => {
             hooks::completions::generate_completions(&shell, stdout)?;
@@ -109,12 +144,9 @@ async fn main() -> Result<()> {
         Commands::Which { runtime } => {
             let versions = hooks::get_active_versions();
             if let Some(version) = versions.get(&runtime.to_lowercase()) {
-                println!("{} {}", runtime, version);
+                println!("{runtime} {version}");
             } else {
-                println!(
-                    "{}: no version set (check .tool-versions, .nvmrc, etc.)",
-                    runtime
-                );
+                println!("{runtime}: no version set (check .tool-versions, .nvmrc, etc.)");
             }
         }
         Commands::Complete {
@@ -123,49 +155,77 @@ async fn main() -> Result<()> {
             last,
             full,
         } => {
-            commands::complete(&shell, &current, &last, full.as_deref()).await?;
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()?;
+            rt.block_on(commands::complete(&shell, &current, &last, full.as_deref()))?;
         }
         Commands::Status => {
-            commands::status().await?;
+            // PURE SYNC PATH (Sub-10ms)
+            commands::status_sync()?;
         }
         Commands::Doctor => {
-            doctor::run().await?;
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()?;
+            rt.block_on(doctor::run())?;
         }
         Commands::Audit => {
-            security::audit().await?;
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()?;
+            rt.block_on(security::audit())?;
         }
         Commands::Run { task, args } => {
             task_runner::run_task(&task, &args)?;
         }
         Commands::New { stack, name } => {
-            new::run(&stack, &name).await?;
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()?;
+            rt.block_on(new::run(&stack, &name))?;
         }
         Commands::Tool { command } => match command {
             ToolCommands::Install { name } => {
-                tool::install(&name).await?;
+                let rt = tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .build()?;
+                rt.block_on(tool::install(&name))?;
             }
             ToolCommands::List => {
-                tool::list().await?;
+                tool::list()?;
             }
             ToolCommands::Remove { name } => {
-                tool::remove(&name).await?;
+                tool::remove(&name)?;
             }
         },
         Commands::Env { command } => match command {
             EnvCommands::Capture => {
-                env::capture().await?;
+                let rt = tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .build()?;
+                rt.block_on(env::capture())?;
             }
             EnvCommands::Check => {
-                env::check().await?;
+                let rt = tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .build()?;
+                rt.block_on(env::check())?;
             }
             EnvCommands::Share {
                 description,
                 public,
             } => {
-                env::share(description, public).await?;
+                let rt = tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .build()?;
+                rt.block_on(env::share(description, public))?;
             }
             EnvCommands::Sync { url } => {
-                env::sync(url).await?;
+                let rt = tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .build()?;
+                rt.block_on(env::sync(url))?;
             }
         },
     }

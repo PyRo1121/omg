@@ -9,8 +9,28 @@ use crate::core::{is_root, Package, PackageSource};
 pub struct OfficialPackageManager;
 
 impl OfficialPackageManager {
-    pub fn new() -> Self {
-        OfficialPackageManager
+    #[must_use]
+    pub const fn new() -> Self {
+        Self
+    }
+
+    pub async fn sync_databases(&self) -> Result<()> {
+        if !is_root() {
+            let exe = std::env::current_exe()?;
+            let status = tokio::process::Command::new("sudo")
+                .arg("--")
+                .arg(exe)
+                .arg("sync")
+                .status()
+                .await?;
+
+            if !status.success() {
+                anyhow::bail!("Database synchronization failed");
+            }
+            return Ok(());
+        }
+
+        crate::package_managers::sync_databases_parallel().await
     }
 }
 

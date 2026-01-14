@@ -51,11 +51,11 @@ pub fn print_hook(shell: &str) -> Result<()> {
         "bash" => BASH_HOOK,
         "fish" => FISH_HOOK,
         _ => {
-            anyhow::bail!("Unsupported shell: {}. Supported: zsh, bash, fish", shell);
+            anyhow::bail!("Unsupported shell: {shell}. Supported: zsh, bash, fish");
         }
     };
 
-    println!("{}", script);
+    println!("{script}");
     Ok(())
 }
 
@@ -84,11 +84,11 @@ pub fn hook_env(shell: &str) -> Result<()> {
     match shell.to_lowercase().as_str() {
         "zsh" | "bash" => {
             let additions = path_additions.join(":");
-            println!("export PATH=\"{}:$PATH\"", additions);
+            println!("export PATH=\"{additions}:$PATH\"");
         }
         "fish" => {
             for path in &path_additions {
-                println!("fish_add_path -g {}", path);
+                println!("fish_add_path -g {path}");
             }
         }
         _ => {}
@@ -98,6 +98,7 @@ pub fn hook_env(shell: &str) -> Result<()> {
 }
 
 /// Detect version files in directory and parents
+#[must_use]
 pub fn detect_versions(start: &Path) -> HashMap<String, String> {
     let mut versions = HashMap::new();
     let mut current = Some(start.to_path_buf());
@@ -119,9 +120,7 @@ pub fn detect_versions(start: &Path) -> HashMap<String, String> {
                             if parts.len() >= 2 {
                                 let rt = normalize_runtime_name(parts[0]);
                                 let ver = parts[1].to_string();
-                                if !versions.contains_key(&rt) {
-                                    versions.insert(rt, ver);
-                                }
+                                versions.entry(rt).or_insert(ver);
                             }
                         }
                     }
@@ -149,13 +148,14 @@ pub fn detect_versions(start: &Path) -> HashMap<String, String> {
             }
         }
 
-        current = dir.parent().map(|p| p.to_path_buf());
+        current = dir.parent().map(std::path::Path::to_path_buf);
     }
 
     versions
 }
 
 /// Build PATH additions for detected versions
+#[must_use]
 pub fn build_path_additions(versions: &HashMap<String, String>) -> Vec<String> {
     let mut paths = Vec::new();
 
@@ -191,6 +191,7 @@ pub fn build_path_additions(versions: &HashMap<String, String>) -> Vec<String> {
 }
 
 /// Get active versions for display
+#[must_use]
 pub fn get_active_versions() -> HashMap<String, String> {
     let cwd = std::env::current_dir().unwrap_or_default();
     detect_versions(&cwd)

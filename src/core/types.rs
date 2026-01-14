@@ -17,41 +17,44 @@ pub enum Runtime {
 
 impl Runtime {
     /// Get all supported runtimes
-    pub fn all() -> &'static [Runtime] {
+    #[must_use]
+    pub const fn all() -> &'static [Self] {
         &[
-            Runtime::Node,
-            Runtime::Bun,
-            Runtime::Python,
-            Runtime::Go,
-            Runtime::Rust,
-            Runtime::Ruby,
-            Runtime::Java,
+            Self::Node,
+            Self::Bun,
+            Self::Python,
+            Self::Go,
+            Self::Rust,
+            Self::Ruby,
+            Self::Java,
         ]
     }
 
     /// Get the version file name for this runtime
-    pub fn version_file(&self) -> &'static str {
+    #[must_use]
+    pub const fn version_file(&self) -> &'static str {
         match self {
-            Runtime::Node => ".nvmrc",
-            Runtime::Bun => ".bun-version",
-            Runtime::Python => ".python-version",
-            Runtime::Go => ".go-version",
-            Runtime::Rust => ".rust-version",
-            Runtime::Ruby => ".ruby-version",
-            Runtime::Java => ".java-version",
+            Self::Node => ".nvmrc",
+            Self::Bun => ".bun-version",
+            Self::Python => ".python-version",
+            Self::Go => ".go-version",
+            Self::Rust => ".rust-version",
+            Self::Ruby => ".ruby-version",
+            Self::Java => ".java-version",
         }
     }
 
     /// Get the binary names managed by this runtime
-    pub fn binaries(&self) -> &'static [&'static str] {
+    #[must_use]
+    pub const fn binaries(&self) -> &'static [&'static str] {
         match self {
-            Runtime::Node => &["node", "npm", "npx"],
-            Runtime::Bun => &["bun", "bunx"],
-            Runtime::Python => &["python", "python3", "pip", "pip3"],
-            Runtime::Go => &["go", "gofmt"],
-            Runtime::Rust => &["rustc", "cargo", "rustup"],
-            Runtime::Ruby => &["ruby", "gem", "irb", "bundle"],
-            Runtime::Java => &["java", "javac", "jar"],
+            Self::Node => &["node", "npm", "npx"],
+            Self::Bun => &["bun", "bunx"],
+            Self::Python => &["python", "python3", "pip", "pip3"],
+            Self::Go => &["go", "gofmt"],
+            Self::Rust => &["rustc", "cargo", "rustup"],
+            Self::Ruby => &["ruby", "gem", "irb", "bundle"],
+            Self::Java => &["java", "javac", "jar"],
         }
     }
 }
@@ -59,13 +62,13 @@ impl Runtime {
 impl std::fmt::Display for Runtime {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Runtime::Node => write!(f, "node"),
-            Runtime::Bun => write!(f, "bun"),
-            Runtime::Python => write!(f, "python"),
-            Runtime::Go => write!(f, "go"),
-            Runtime::Rust => write!(f, "rust"),
-            Runtime::Ruby => write!(f, "ruby"),
-            Runtime::Java => write!(f, "java"),
+            Self::Node => write!(f, "node"),
+            Self::Bun => write!(f, "bun"),
+            Self::Python => write!(f, "python"),
+            Self::Go => write!(f, "go"),
+            Self::Rust => write!(f, "rust"),
+            Self::Ruby => write!(f, "ruby"),
+            Self::Java => write!(f, "java"),
         }
     }
 }
@@ -75,14 +78,14 @@ impl std::str::FromStr for Runtime {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "node" | "nodejs" => Ok(Runtime::Node),
-            "bun" => Ok(Runtime::Bun),
-            "python" | "python3" => Ok(Runtime::Python),
-            "go" | "golang" => Ok(Runtime::Go),
-            "rust" | "rustc" => Ok(Runtime::Rust),
-            "ruby" => Ok(Runtime::Ruby),
-            "java" => Ok(Runtime::Java),
-            _ => Err(format!("Unknown runtime: {}", s)),
+            "node" | "nodejs" => Ok(Self::Node),
+            "bun" => Ok(Self::Bun),
+            "python" | "python3" => Ok(Self::Python),
+            "go" | "golang" => Ok(Self::Go),
+            "rust" | "rustc" => Ok(Self::Rust),
+            "ruby" => Ok(Self::Ruby),
+            "java" => Ok(Self::Java),
+            _ => Err(format!("Unknown runtime: {s}")),
         }
     }
 }
