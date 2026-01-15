@@ -4,6 +4,11 @@
 //! including edge cases, error handling, and performance validation.
 //!
 //! Run with: `cargo test --test integration_suite -- --test-threads=1`
+//!
+//! Optional full-system coverage:
+//!   - OMG_RUN_SYSTEM_TESTS=1  (requires system pacman DBs)
+//!   - OMG_RUN_NETWORK_TESTS=1 (hits external registries/APIs)
+//!   - OMG_RUN_PERF_TESTS=1    (enables timing assertions)
 
 #![allow(unused_variables)]
 
@@ -82,6 +87,18 @@ fn measure_time<F: FnOnce() -> T, T>(f: F) -> (T, Duration) {
 /// Guard for destructive integration tests (real installs/updates)
 fn destructive_tests_enabled() -> bool {
     matches!(env::var("OMG_RUN_DESTRUCTIVE_TESTS"), Ok(value) if value == "1")
+}
+
+fn system_tests_enabled() -> bool {
+    matches!(env::var("OMG_RUN_SYSTEM_TESTS"), Ok(value) if value == "1")
+}
+
+fn network_tests_enabled() -> bool {
+    matches!(env::var("OMG_RUN_NETWORK_TESTS"), Ok(value) if value == "1")
+}
+
+fn perf_tests_enabled() -> bool {
+    matches!(env::var("OMG_RUN_PERF_TESTS"), Ok(value) if value == "1")
 }
 
 /// Create a temporary project directory with common config files
@@ -227,6 +244,10 @@ mod package_management {
 
     #[test]
     fn test_search_official_package() {
+        if !system_tests_enabled() {
+            eprintln!("Skipping system test (set OMG_RUN_SYSTEM_TESTS=1)");
+            return;
+        }
         let (success, stdout, _) = run_omg(&["search", "firefox"]);
         assert!(success, "Search should succeed");
         assert!(stdout.contains("firefox"), "Should find firefox");
@@ -238,6 +259,10 @@ mod package_management {
 
     #[test]
     fn test_search_with_detailed_flag() {
+        if !network_tests_enabled() {
+            eprintln!("Skipping network test (set OMG_RUN_NETWORK_TESTS=1)");
+            return;
+        }
         let (success, stdout, _) = run_omg(&["search", "firefox", "--detailed"]);
         assert!(success, "Detailed search should succeed");
         // Detailed output should include votes/popularity for AUR
@@ -273,6 +298,10 @@ mod package_management {
 
     #[test]
     fn test_info_official_package() {
+        if !system_tests_enabled() {
+            eprintln!("Skipping system test (set OMG_RUN_SYSTEM_TESTS=1)");
+            return;
+        }
         let (success, stdout, _) = run_omg(&["info", "pacman"]);
         assert!(success, "Info for official package should succeed");
         assert!(stdout.contains("pacman"), "Should show package name");
@@ -342,6 +371,10 @@ mod package_management {
 
     #[test]
     fn test_explicit_packages() {
+        if !system_tests_enabled() {
+            eprintln!("Skipping system test (set OMG_RUN_SYSTEM_TESTS=1)");
+            return;
+        }
         let (success, stdout, _) = run_omg(&["explicit"]);
         assert!(success, "Explicit should succeed");
         // Should list some packages on a real Arch system
@@ -378,6 +411,10 @@ mod runtime_management {
 
     #[test]
     fn test_list_available_node() {
+        if !network_tests_enabled() {
+            eprintln!("Skipping network test (set OMG_RUN_NETWORK_TESTS=1)");
+            return;
+        }
         let (success, stdout, _) = run_omg(&["list", "node", "--available"]);
         assert!(success, "List available node should succeed");
         // Should show versions from nodejs.org
@@ -385,30 +422,50 @@ mod runtime_management {
 
     #[test]
     fn test_list_available_python() {
+        if !network_tests_enabled() {
+            eprintln!("Skipping network test (set OMG_RUN_NETWORK_TESTS=1)");
+            return;
+        }
         let (success, stdout, _) = run_omg(&["list", "python", "--available"]);
         assert!(success, "List available python should succeed");
     }
 
     #[test]
     fn test_list_available_go() {
+        if !network_tests_enabled() {
+            eprintln!("Skipping network test (set OMG_RUN_NETWORK_TESTS=1)");
+            return;
+        }
         let (success, stdout, _) = run_omg(&["list", "go", "--available"]);
         assert!(success, "List available go should succeed");
     }
 
     #[test]
     fn test_list_available_rust() {
+        if !network_tests_enabled() {
+            eprintln!("Skipping network test (set OMG_RUN_NETWORK_TESTS=1)");
+            return;
+        }
         let (success, stdout, _) = run_omg(&["list", "rust", "--available"]);
         assert!(success, "List available rust should succeed");
     }
 
     #[test]
     fn test_list_available_ruby() {
+        if !network_tests_enabled() {
+            eprintln!("Skipping network test (set OMG_RUN_NETWORK_TESTS=1)");
+            return;
+        }
         let (success, stdout, _) = run_omg(&["list", "ruby", "--available"]);
         assert!(success, "List available ruby should succeed");
     }
 
     #[test]
     fn test_list_available_java() {
+        if !network_tests_enabled() {
+            eprintln!("Skipping network test (set OMG_RUN_NETWORK_TESTS=1)");
+            return;
+        }
         let (success, stdout, _) = run_omg(&["list", "java", "--available"]);
         assert!(success, "List available java should succeed");
         // Should show LTS markers
@@ -416,6 +473,10 @@ mod runtime_management {
 
     #[test]
     fn test_list_available_bun() {
+        if !network_tests_enabled() {
+            eprintln!("Skipping network test (set OMG_RUN_NETWORK_TESTS=1)");
+            return;
+        }
         let (success, stdout, _) = run_omg(&["list", "bun", "--available"]);
         assert!(success, "List available bun should succeed");
     }
@@ -824,6 +885,10 @@ mod performance {
 
     #[test]
     fn test_status_performance() {
+        if !perf_tests_enabled() {
+            eprintln!("Skipping perf test (set OMG_RUN_PERF_TESTS=1)");
+            return;
+        }
         let ((success, _, _), duration) = measure_time(|| run_omg(&["status"]));
         assert!(success, "Status should succeed");
 
@@ -836,6 +901,10 @@ mod performance {
 
     #[test]
     fn test_list_performance() {
+        if !perf_tests_enabled() {
+            eprintln!("Skipping perf test (set OMG_RUN_PERF_TESTS=1)");
+            return;
+        }
         let ((success, _, _), duration) = measure_time(|| run_omg(&["list"]));
         assert!(success, "List should succeed");
 
@@ -848,6 +917,10 @@ mod performance {
 
     #[test]
     fn test_which_performance() {
+        if !perf_tests_enabled() {
+            eprintln!("Skipping perf test (set OMG_RUN_PERF_TESTS=1)");
+            return;
+        }
         let ((success, _, _), duration) = measure_time(|| run_omg(&["which", "node"]));
         assert!(success, "Which should succeed");
 
@@ -860,6 +933,10 @@ mod performance {
 
     #[test]
     fn test_help_performance() {
+        if !perf_tests_enabled() {
+            eprintln!("Skipping perf test (set OMG_RUN_PERF_TESTS=1)");
+            return;
+        }
         let ((success, _, _), duration) = measure_time(|| run_omg(&["--help"]));
         assert!(success, "Help should succeed");
 
@@ -872,6 +949,10 @@ mod performance {
 
     #[test]
     fn test_completions_generation_performance() {
+        if !perf_tests_enabled() {
+            eprintln!("Skipping perf test (set OMG_RUN_PERF_TESTS=1)");
+            return;
+        }
         let ((success, _, _), duration) =
             measure_time(|| run_omg(&["completions", "zsh", "--stdout"]));
         assert!(success, "Completions should succeed");
