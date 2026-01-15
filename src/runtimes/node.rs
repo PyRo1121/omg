@@ -10,6 +10,7 @@ use std::fs::{self, File};
 use std::path::PathBuf;
 use tar::Archive;
 
+use crate::core::http::download_client;
 const NODE_DIST_URL: &str = "https://nodejs.org/dist";
 
 /// Node.js version info from nodejs.org
@@ -34,7 +35,7 @@ impl NodeManager {
         Self {
             versions_dir: data_dir.join("versions").join("node"),
             current_link: data_dir.join("versions").join("node").join("current"),
-            client: reqwest::Client::new(),
+            client: download_client().clone(),
         }
     }
 

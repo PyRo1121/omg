@@ -28,6 +28,8 @@ INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
 DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/omg"
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/omg"
 REPO_URL="https://github.com/PyRo1121/omg.git"
+REPO_OWNER="PyRo1121"
+REPO_NAME="omg"
 
 # Detect directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -46,6 +48,106 @@ cleanup() {
         kill "$spinner_pid" >/dev/null 2>&1 || true
     fi
     tput cnorm # Show cursor
+}
+
+check_runtime_dependencies() {
+    local missing=()
+    local deps=("curl" "tar")
+
+    for dep in "${deps[@]}"; do
+        if ! command -v "$dep" >/dev/null 2>&1; then
+            missing+=("$dep")
+        fi
+    done
+
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        warn "Missing runtime dependencies for prebuilt install: ${missing[*]}"
+        return 1
+    fi
+
+    return 0
+}
+
+fetch_release_json() {
+    local api_base="https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases"
+
+    if [[ "$OMG_VERSION" == "latest" ]]; then
+        curl -fsSL "${api_base}/latest"
+    else
+        curl -fsSL "${api_base}/tags/${OMG_VERSION}"
+    fi
+}
+
+install_from_release() {
+    if ! check_runtime_dependencies; then
+        return 1
+    fi
+
+    local arch
+    case "$(uname -m)" in
+        x86_64) arch="x86_64-unknown-linux-gnu" ;;
+        aarch64) arch="aarch64-unknown-linux-gnu" ;;
+        *) warn "No prebuilt binaries for architecture: $(uname -m)"; return 1 ;;
+    esac
+
+    local release_json
+    if ! release_json=$(fetch_release_json 2>/dev/null); then
+        warn "Unable to fetch GitHub release metadata"
+        return 1
+    fi
+
+    local asset_url
+    asset_url=$(printf "%s" "$release_json" \
+        | grep -Eo '"browser_download_url"\s*:\s*"[^"]+"' \
+        | cut -d '"' -f4 \
+        | grep -E "omg.*${arch}.*\\.tar\\.gz$" \
+        | head -n1)
+
+    if [[ -z "$asset_url" ]]; then
+        warn "No prebuilt binary found for ${arch} (falling back to source build)"
+        return 1
+    fi
+
+    header "Installing Prebuilt OMG"
+    local tmp_dir
+    tmp_dir=$(mktemp -d)
+    trap 'rm -rf "$tmp_dir"' EXIT
+
+    start_spinner "Downloading prebuilt binary"
+    if curl -fsSL "$asset_url" -o "$tmp_dir/omg.tar.gz" >/dev/null 2>&1; then
+        stop_spinner "Download complete"
+    else
+        fail_spinner "Download failed"
+        return 1
+    fi
+
+    start_spinner "Extracting binaries"
+    if tar -xzf "$tmp_dir/omg.tar.gz" -C "$tmp_dir" >/dev/null 2>&1; then
+        stop_spinner "Extraction complete"
+    else
+        fail_spinner "Extraction failed"
+        return 1
+    fi
+
+    local omg_path
+    local omgd_path
+    omg_path=$(find "$tmp_dir" -maxdepth 3 -type f -name omg | head -n1)
+    omgd_path=$(find "$tmp_dir" -maxdepth 3 -type f -name omgd | head -n1)
+
+    if [[ -z "$omg_path" ]]; then
+        warn "Prebuilt archive missing omg binary"
+        return 1
+    fi
+
+    mkdir -p "$INSTALL_DIR"
+    cp "$omg_path" "$INSTALL_DIR/omg"
+    if [[ -n "$omgd_path" ]]; then
+        cp "$omgd_path" "$INSTALL_DIR/omgd"
+    fi
+    chmod +x "$INSTALL_DIR/omg" "$INSTALL_DIR/omgd" 2>/dev/null || true
+
+    success "Installed prebuilt binaries to $INSTALL_DIR"
+    return 0
 }
 trap cleanup EXIT
 
@@ -299,8 +401,10 @@ finish() {
 main() {
     print_banner
     check_arch
-    check_dependencies
-    build_omg
+    if ! install_from_release; then
+        check_dependencies
+        build_omg
+    fi
     setup_config
     setup_shell
     finish

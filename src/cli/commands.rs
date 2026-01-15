@@ -18,12 +18,33 @@ pub use super::packages::{
 pub use super::runtimes::{list_versions, use_version};
 pub use super::security::audit;
 
-pub async fn complete(_shell: &str, current: &str, last: &str, _full: Option<&str>) -> Result<()> {
+pub async fn complete(_shell: &str, current: &str, last: &str, full: Option<&str>) -> Result<()> {
     let db = crate::core::Database::open(crate::core::Database::default_path()?)?;
     let engine = crate::core::completion::CompletionEngine::new(db);
 
+    let full_tokens: Vec<&str> = full
+        .unwrap_or_default()
+        .split_whitespace()
+        .collect();
+    let in_tool = full_tokens.iter().any(|token| *token == "tool");
+    let in_env = full_tokens.iter().any(|token| *token == "env");
+
     let suggestions = match last {
         "install" | "i" | "remove" | "r" | "info" => {
+            if in_tool && last == "install" {
+                return Ok(output_suggestions(
+                    &engine,
+                    current,
+                    crate::cli::tool::registry_tool_names(),
+                ));
+            }
+            if in_tool && last == "remove" {
+                return Ok(output_suggestions(
+                    &engine,
+                    current,
+                    crate::cli::tool::installed_tool_names(),
+                ));
+            }
             // Try daemon for package list
             let mut names = if let Ok(mut client) =
                 crate::core::client::DaemonClient::connect().await
@@ -54,6 +75,37 @@ pub async fn complete(_shell: &str, current: &str, last: &str, _full: Option<&st
                 .collect();
             engine.fuzzy_match(current, runtimes)
         }
+        "tool" => vec!["install".to_string(), "list".to_string(), "remove".to_string()],
+        "env" => vec![
+            "capture".to_string(),
+            "check".to_string(),
+            "share".to_string(),
+            "sync".to_string(),
+        ],
+        "run" => {
+            let tasks = crate::core::task_runner::detect_tasks().unwrap_or_default();
+            let names = tasks.into_iter().map(|task| task.name).collect();
+            engine.fuzzy_match(current, names)
+        }
+        "new" => vec![
+            "rust".to_string(),
+            "react".to_string(),
+            "react-ts".to_string(),
+            "node".to_string(),
+            "ts".to_string(),
+            "typescript".to_string(),
+            "python".to_string(),
+            "py".to_string(),
+            "go".to_string(),
+            "golang".to_string(),
+        ],
+        "completions" => vec![
+            "bash".to_string(),
+            "zsh".to_string(),
+            "fish".to_string(),
+            "powershell".to_string(),
+            "elvish".to_string(),
+        ],
         _ => {
             // Check if last word is a runtime (for 'omg use <runtime> <TAB>')
             if crate::runtimes::SUPPORTED_RUNTIMES.contains(&last) {
@@ -85,17 +137,44 @@ pub async fn complete(_shell: &str, current: &str, last: &str, _full: Option<&st
                 suggestions.extend(fuzzy_installed);
                 suggestions.dedup();
                 suggestions
+            } else if in_env {
+                let options = vec![
+                    "capture".to_string(),
+                    "check".to_string(),
+                    "share".to_string(),
+                    "sync".to_string(),
+                ];
+                engine.fuzzy_match(current, options)
+            } else if in_tool {
+                let options = vec![
+                    "install".to_string(),
+                    "list".to_string(),
+                    "remove".to_string(),
+                ];
+                engine.fuzzy_match(current, options)
             } else {
                 Vec::new()
             }
         }
     };
 
-    for suggestion in suggestions {
+    Ok(output_suggestions(&engine, current, suggestions))
+}
+
+fn output_suggestions(
+    engine: &crate::core::completion::CompletionEngine,
+    current: &str,
+    suggestions: Vec<String>,
+) {
+    let filtered = if current.is_empty() {
+        suggestions
+    } else {
+        engine.fuzzy_match(current, suggestions)
+    };
+
+    for suggestion in filtered {
         println!("{suggestion}");
     }
-
-    Ok(())
 }
 
 pub fn status_sync() -> Result<()> {

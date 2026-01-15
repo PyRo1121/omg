@@ -9,6 +9,7 @@
 use anyhow::{Context, Result};
 use flate2::read::GzDecoder;
 use parking_lot::RwLock;
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::{self, File};
@@ -29,6 +30,50 @@ static LOCAL_DB_CACHE: std::sync::LazyLock<RwLock<LocalDbCache>> =
 struct DbCache {
     packages: HashMap<String, SyncDbPackage>,
     last_modified: Option<SystemTime>,
+}
+
+fn load_sync_packages(sync_dir: &Path) -> Result<HashMap<String, SyncDbPackage>> {
+    let db_paths = collect_sync_db_paths(sync_dir);
+
+    let parsed: Vec<HashMap<String, SyncDbPackage>> = db_paths
+        .par_iter()
+        .map(|(path, name)| parse_sync_db(path, name))
+        .collect::<Result<Vec<_>>>()?;
+
+    let mut packages = HashMap::with_capacity(20000);
+    for pkgs in parsed {
+        packages.extend(pkgs);
+    }
+
+    Ok(packages)
+}
+
+fn collect_sync_db_paths(sync_dir: &Path) -> Vec<(PathBuf, String)> {
+    let mut dbs = Vec::new();
+
+    for db_name in &["core", "extra", "multilib"] {
+        let db_path = sync_dir.join(format!("{db_name}.db"));
+        if db_path.exists() {
+            dbs.push((db_path, db_name.to_string()));
+        }
+    }
+
+    if let Ok(entries) = std::fs::read_dir(sync_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = path
+                .file_stem()
+                .and_then(|n| n.to_str())
+                .map(str::to_string);
+            if let Some(name) = name {
+                if !["core", "extra", "multilib"].contains(&name.as_str()) && path.is_file() {
+                    dbs.push((path, name));
+                }
+            }
+        }
+    }
+
+    dbs
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -326,29 +371,7 @@ fn ensure_sync_cache_loaded(sync_dir: &Path) -> Result<()> {
     }
 
     // Cache miss or stale - need to reload/parse
-    let mut packages = HashMap::with_capacity(20000);
-
-    for db_name in &["core", "extra", "multilib"] {
-        let db_path = sync_dir.join(format!("{db_name}.db"));
-        if db_path.exists() {
-            let pkgs = parse_sync_db(&db_path, db_name)?;
-            packages.extend(pkgs);
-        }
-    }
-
-    // Check for custom repos
-    if let Ok(entries) = std::fs::read_dir(sync_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if let Some(name) = path.file_stem().and_then(|n| n.to_str()) {
-                if !["core", "extra", "multilib"].contains(&name) && path.is_file() {
-                    if let Ok(pkgs) = parse_sync_db(&path, name) {
-                        packages.extend(pkgs);
-                    }
-                }
-            }
-        }
-    }
+    let packages = load_sync_packages(sync_dir)?;
 
     // Update memory cache
     let mut cache = SYNC_DB_CACHE.write();
@@ -410,29 +433,7 @@ fn get_sync_cache() -> Result<HashMap<String, SyncDbPackage>> {
     }
 
     // Cache miss - need to reload
-    let mut packages = HashMap::with_capacity(20000);
-
-    for db_name in &["core", "extra", "multilib"] {
-        let db_path = sync_dir.join(format!("{db_name}.db"));
-        if db_path.exists() {
-            let pkgs = parse_sync_db(&db_path, db_name)?;
-            packages.extend(pkgs);
-        }
-    }
-
-    // Check for custom repos
-    if let Ok(entries) = std::fs::read_dir(sync_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if let Some(name) = path.file_stem().and_then(|n| n.to_str()) {
-                if !["core", "extra", "multilib"].contains(&name) && path.is_file() {
-                    if let Ok(pkgs) = parse_sync_db(&path, name) {
-                        packages.extend(pkgs);
-                    }
-                }
-            }
-        }
-    }
+    let packages = load_sync_packages(sync_dir)?;
 
     // Update cache
     {

@@ -1,166 +1,103 @@
 //! In-memory package cache with LRU eviction
 
-use dashmap::DashMap;
-use parking_lot::RwLock;
-use std::collections::VecDeque;
-use std::time::{Duration, Instant};
+use moka::sync::Cache;
+use std::time::Duration;
 
 use super::protocol::{DetailedPackageInfo, PackageInfo, StatusResult};
-
-/// Cache entry with timestamp
-#[derive(Clone)]
-struct CacheEntry {
-    packages: Vec<PackageInfo>,
-    timestamp: Instant,
-}
-
-/// Detailed info cache entry
-#[derive(Clone)]
-struct DetailedEntry {
-    info: DetailedPackageInfo,
-    timestamp: Instant,
-}
 
 /// LRU cache for package search results
 pub struct PackageCache {
     /// Search results cache: query -> packages
-    cache: DashMap<String, CacheEntry>,
+    cache: Cache<String, Vec<PackageInfo>>,
     /// Detailed info cache: pkgname -> info
-    detailed_cache: DashMap<String, DetailedEntry>,
-    /// LRU order tracking
-    lru_order: RwLock<VecDeque<String>>,
+    detailed_cache: Cache<String, DetailedPackageInfo>,
     /// Maximum cache size
     max_size: usize,
-    /// Cache TTL
-    ttl: Duration,
     /// System status cache
-    system_status: RwLock<Option<(StatusResult, Instant)>>,
+    system_status: Cache<String, StatusResult>,
+    /// Explicit package list cache
+    explicit_packages: Cache<String, Vec<String>>,
 }
 
 impl PackageCache {
     /// Create a new cache with given size and TTL
     #[must_use]
     pub fn new(max_size: usize, ttl_secs: u64) -> Self {
+        let ttl = Duration::from_secs(ttl_secs);
+        let cache = Cache::builder()
+            .max_capacity(max_size as u64)
+            .time_to_live(ttl)
+            .build();
+        let detailed_cache = Cache::builder()
+            .max_capacity(max_size as u64)
+            .time_to_live(ttl)
+            .build();
+        let system_status = Cache::builder().max_capacity(1).time_to_live(ttl).build();
+        let explicit_packages = Cache::builder().max_capacity(1).time_to_live(ttl).build();
         Self {
-            cache: DashMap::new(),
-            detailed_cache: DashMap::new(),
-            lru_order: RwLock::new(VecDeque::with_capacity(max_size)),
+            cache,
+            detailed_cache,
             max_size,
-            ttl: Duration::from_secs(ttl_secs),
-            system_status: RwLock::new(None),
+            system_status,
+            explicit_packages,
         }
     }
 
     /// Get cached system status
     pub fn get_status(&self) -> Option<StatusResult> {
-        let status = self.system_status.read();
-        if let Some((res, timestamp)) = status.as_ref() {
-            if timestamp.elapsed() < self.ttl {
-                return Some(res.clone());
-            }
-        }
-        None
+        self.system_status.get("status")
     }
 
     /// Update system status cache
     pub fn update_status(&self, result: StatusResult) {
-        let mut status = self.system_status.write();
-        *status = Some((result, Instant::now()));
+        self.system_status.insert("status".to_string(), result);
+    }
+
+    /// Get cached explicit packages
+    pub fn get_explicit(&self) -> Option<Vec<String>> {
+        self.explicit_packages.get("explicit")
+    }
+
+    /// Update explicit package cache
+    pub fn update_explicit(&self, packages: Vec<String>) {
+        self.explicit_packages
+            .insert("explicit".to_string(), packages);
     }
 
     /// Get cached results for a query
     pub fn get(&self, query: &str) -> Option<Vec<PackageInfo>> {
-        let entry = self.cache.get(query)?;
-
-        // Check if expired
-        if entry.timestamp.elapsed() > self.ttl {
-            drop(entry);
-            self.cache.remove(query);
-            return None;
-        }
-
-        // Update LRU order
-        self.touch(query);
-
-        Some(entry.packages.clone())
+        self.cache.get(query)
     }
 
     /// Store results in cache
     pub fn insert(&self, query: String, packages: Vec<PackageInfo>) {
-        // Evict if at capacity
-        while self.cache.len() >= self.max_size {
-            self.evict_oldest();
-        }
-
-        self.cache.insert(
-            query.clone(),
-            CacheEntry {
-                packages,
-                timestamp: Instant::now(),
-            },
-        );
-
-        // Add to LRU
-        let mut lru = self.lru_order.write();
-        lru.push_back(query);
-    }
-
-    /// Touch an entry to mark it as recently used
-    fn touch(&self, query: &str) {
-        let mut lru = self.lru_order.write();
-
-        // Remove from current position
-        if let Some(pos) = lru.iter().position(|k| k == query) {
-            lru.remove(pos);
-        }
-
-        // Add to back (most recent)
-        lru.push_back(query.to_string());
-    }
-
-    /// Evict the oldest entry
-    fn evict_oldest(&self) {
-        let mut lru = self.lru_order.write();
-        if let Some(oldest) = lru.pop_front() {
-            self.cache.remove(&oldest);
-        }
+        self.cache.insert(query, packages);
     }
 
     /// Get cache statistics
     pub fn stats(&self) -> CacheStats {
         CacheStats {
-            size: self.cache.len(),
+            size: self.cache.entry_count() as usize,
             max_size: self.max_size,
         }
     }
 
     /// Clear the entire cache
     pub fn clear(&self) {
-        self.cache.clear();
-        self.detailed_cache.clear();
-        self.lru_order.write().clear();
+        self.cache.invalidate_all();
+        self.detailed_cache.invalidate_all();
+        self.system_status.invalidate_all();
+        self.explicit_packages.invalidate_all();
     }
 
     /// Get detailed info from cache
     pub fn get_info(&self, name: &str) -> Option<DetailedPackageInfo> {
-        let entry = self.detailed_cache.get(name)?;
-        if entry.timestamp.elapsed() > self.ttl {
-            drop(entry);
-            self.detailed_cache.remove(name);
-            return None;
-        }
-        Some(entry.info.clone())
+        self.detailed_cache.get(name)
     }
 
     /// Store detailed info in cache
     pub fn insert_info(&self, info: DetailedPackageInfo) {
-        self.detailed_cache.insert(
-            info.name.clone(),
-            DetailedEntry {
-                info,
-                timestamp: Instant::now(),
-            },
-        );
+        self.detailed_cache.insert(info.name.clone(), info);
     }
 }
 

@@ -96,7 +96,11 @@ pub enum Commands {
     },
 
     /// List explicitly installed packages
-    Explicit,
+    Explicit {
+        /// Only print the count of explicit packages
+        #[arg(short, long)]
+        count: bool,
+    },
 
     /// Sync package databases from mirrors (parallel, fast)
     #[command(visible_alias = "sy")]

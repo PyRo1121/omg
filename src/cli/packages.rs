@@ -1137,7 +1137,7 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool) -> Result<(
 }
 
 /// List explicitly installed packages (Synchronous)
-pub fn explicit_sync() -> Result<()> {
+pub fn explicit_sync(count: bool) -> Result<()> {
     // Try daemon first
     let packages = if let Ok(mut client) = DaemonClient::connect_sync() {
         if let Ok(ResponseResult::Explicit(res)) = client.call_sync(Request::Explicit { id: 0 }) {
@@ -1152,6 +1152,17 @@ pub fn explicit_sync() -> Result<()> {
 
     use std::io::Write;
     let mut stdout = std::io::BufWriter::new(std::io::stdout());
+
+    if count {
+        writeln!(
+            stdout,
+            "{} {} packages",
+            style::success("Total:"),
+            packages.len()
+        )?;
+        stdout.flush()?;
+        return Ok(());
+    }
 
     writeln!(
         stdout,
@@ -1174,9 +1185,9 @@ pub fn explicit_sync() -> Result<()> {
 }
 
 /// List explicitly installed packages (Async fallback)
-pub async fn explicit() -> Result<()> {
+pub async fn explicit(count: bool) -> Result<()> {
     // Just call sync version for now as it's already fast and safe
-    explicit_sync()
+    explicit_sync(count)
 }
 
 fn truncate(s: &str, max: usize) -> String {

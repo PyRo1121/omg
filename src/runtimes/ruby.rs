@@ -11,6 +11,7 @@ use std::fs::{self, File};
 use std::path::PathBuf;
 use tar::Archive;
 
+use crate::core::http::download_client;
 const RUBY_PREBUILT_URL: &str = "https://github.com/ruby/ruby-builder/releases/download";
 const RUBY_VERSIONS_URL: &str = "https://api.github.com/repos/ruby/ruby-builder/releases";
 
@@ -36,10 +37,7 @@ impl RubyManager {
     pub fn new() -> Self {
         let data_dir = super::DATA_DIR.clone();
 
-        let client = reqwest::Client::builder()
-            .user_agent("omg-package-manager")
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
+        let client = download_client().clone();
 
         Self {
             versions_dir: data_dir.join("versions").join("ruby"),

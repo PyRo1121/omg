@@ -3,6 +3,7 @@
 pub mod archive;
 pub mod client;
 pub mod completion;
+pub mod http;
 mod database;
 pub mod env;
 mod error;

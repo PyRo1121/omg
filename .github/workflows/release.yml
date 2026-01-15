@@ -24,25 +24,25 @@ jobs:
       - name: Fix git ownership
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
-      - name: Build Release
-        run: cargo build --release --verbose
-
-      - name: Package Assets
+      - name: Build Release Artifacts
         run: |
-          mkdir -p dist
-          cp target/release/omg dist/
-          cp target/release/omgd dist/
-          cd dist
-          tar -czvf ../omg-x86_64-linux.tar.gz omg omgd
-          cd ..
-          sha256sum omg-x86_64-linux.tar.gz > omg-x86_64-linux.tar.gz.sha256
+          chmod +x ./release.sh
+          ./release.sh
+
+      - name: Locate Artifacts
+        id: artifacts
+        run: |
+          VERSION=$(awk -F'"' '/^version =/ {print $2; exit}' Cargo.toml)
+          ARCHIVE=$(ls dist/omg-v${VERSION}-*.tar.gz | head -n1)
+          echo "archive=${ARCHIVE}" >> $GITHUB_OUTPUT
+          echo "checksum=${ARCHIVE}.sha256" >> $GITHUB_OUTPUT
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            omg-x86_64-linux.tar.gz
-            omg-x86_64-linux.tar.gz.sha256
+            ${{ steps.artifacts.outputs.archive }}
+            ${{ steps.artifacts.outputs.checksum }}
           generate_release_notes: true
           draft: false
           prerelease: false

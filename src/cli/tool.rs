@@ -30,6 +30,40 @@ const TOOL_REGISTRY: &[(&str, &str)] = &[
     ("dive", "go:github.com/wagoodman/dive"),
 ];
 
+#[must_use]
+pub fn registry_tool_names() -> Vec<String> {
+    TOOL_REGISTRY
+        .iter()
+        .map(|(name, _)| (*name).to_string())
+        .collect()
+}
+
+#[must_use]
+pub fn installed_tool_names() -> Vec<String> {
+    let (tools_dir, _bin_dir) = get_dirs();
+    let mut names = Vec::new();
+
+    if let Ok(entries) = fs::read_dir(&tools_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            if let Ok(manager_entries) = fs::read_dir(&path) {
+                for tool in manager_entries.flatten() {
+                    if let Some(name) = tool.file_name().to_str() {
+                        names.push(name.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    names.sort();
+    names.dedup();
+    names
+}
+
 /// Base directories
 fn get_dirs() -> (PathBuf, PathBuf) {
     let data_dir = dirs::data_dir()

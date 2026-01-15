@@ -10,6 +10,7 @@ use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use tar::Archive;
 
+use crate::core::http::download_client;
 const RUST_DIST_URL: &str = "https://static.rust-lang.org/dist";
 const RUST_MANIFEST_URL: &str = "https://static.rust-lang.org/dist/channel-rust-stable.toml";
 
@@ -33,7 +34,7 @@ impl RustManager {
         Self {
             versions_dir: data_dir.join("versions").join("rust"),
             current_link: data_dir.join("versions").join("rust").join("current"),
-            client: reqwest::Client::new(),
+            client: download_client().clone(),
         }
     }
 

@@ -11,6 +11,7 @@ use std::fs::{self, File};
 use std::path::PathBuf;
 use tar::Archive;
 
+use crate::core::http::download_client;
 const GO_DOWNLOAD_URL: &str = "https://go.dev/dl";
 const GO_VERSIONS_URL: &str = "https://go.dev/dl/?mode=json";
 
@@ -34,7 +35,7 @@ impl GoManager {
         Self {
             versions_dir: data_dir.join("versions").join("go"),
             current_link: data_dir.join("versions").join("go").join("current"),
-            client: reqwest::Client::new(),
+            client: download_client().clone(),
         }
     }
 
