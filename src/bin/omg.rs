@@ -12,7 +12,7 @@ use omg_lib::cli::packages;
 use omg_lib::cli::runtimes;
 use omg_lib::cli::security;
 use omg_lib::cli::tool;
-use omg_lib::cli::{commands, Cli, Commands, EnvCommands, ToolCommands};
+use omg_lib::cli::{Cli, Commands, EnvCommands, ToolCommands, commands};
 use omg_lib::core::{elevate_if_needed, is_root, task_runner};
 use omg_lib::hooks;
 

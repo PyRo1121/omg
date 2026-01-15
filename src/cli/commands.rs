@@ -462,7 +462,7 @@ pub async fn rollback(id: Option<String>) -> Result<()> {
             })
             .collect();
 
-        use dialoguer::{theme::ColorfulTheme, Select};
+        use dialoguer::{Select, theme::ColorfulTheme};
         let selection = Select::with_theme(&ColorfulTheme::default())
             .items(&options)
             .default(0)
@@ -483,10 +483,12 @@ pub async fn rollback(id: Option<String>) -> Result<()> {
 
     println!(
         "{}\n",
-        style::dim("Note: Full rollback logic is coming in Phase 16.2. Currently, only official packages are supported via downgrade.")
+        style::dim(
+            "Note: Full rollback logic is coming in Phase 16.2. Currently, only official packages are supported via downgrade."
+        )
     );
 
-    use dialoguer::{theme::ColorfulTheme, Confirm};
+    use dialoguer::{Confirm, theme::ColorfulTheme};
     if !Confirm::with_theme(&ColorfulTheme::default())
         .with_prompt("Proceed with rollback?")
         .default(false)

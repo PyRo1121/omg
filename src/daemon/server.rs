@@ -10,7 +10,7 @@ use tokio::net::UnixListener;
 use tokio::sync::broadcast;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
-use super::handlers::{handle_request, DaemonState};
+use super::handlers::{DaemonState, handle_request};
 use super::protocol::Request;
 
 /// Run the daemon server
@@ -28,17 +28,14 @@ pub async fn run(listener: UnixListener) -> Result<()> {
         // Initial refresh
         {
             use crate::package_managers::get_system_status;
-            use crate::runtimes::{probe_version, SUPPORTED_RUNTIMES};
+            use crate::runtimes::{SUPPORTED_RUNTIMES, probe_version};
             let mut versions = Vec::new();
             for runtime in SUPPORTED_RUNTIMES {
                 if let Some(v) = probe_version(runtime) {
                     versions.push(((*runtime).to_string(), v));
                 }
             }
-            state_worker
-                .runtime_versions
-                .write()
-                .clone_from(&versions);
+            state_worker.runtime_versions.write().clone_from(&versions);
             if let Ok((total, explicit, orphans, updates)) = get_system_status() {
                 let scanner = crate::core::security::VulnerabilityScanner::new();
                 let vuln_count = scanner.scan_system().await.unwrap_or(0);

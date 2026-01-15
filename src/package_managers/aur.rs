@@ -25,7 +25,7 @@ use which::which;
 use super::pkgbuild::PkgBuild;
 use crate::config::{AurBuildMethod, Settings};
 use crate::core::http::shared_client;
-use crate::core::{paths, Package, PackageSource};
+use crate::core::{Package, PackageSource, paths};
 use crate::package_managers::{get_potential_aur_packages, pacman_db};
 
 const AUR_RPC_URL: &str = "https://aur.archlinux.org/rpc";
@@ -363,27 +363,27 @@ impl AurClient {
             Self::review_pkgbuild(&pkgbuild_path)?;
         }
 
-        let pkg_file =
-            if let Some(cached) = self.cached_package(package, &env.pkgdest, &cache_key) {
-                println!("{} Using cached build...", "→".blue());
-                cached
-            } else {
-                // Build with makepkg (sandboxed if bubblewrap is available)
-                let status = self
-                    .run_build(&pkg_dir, &env)
-                    .await
-                    .with_context(|| format!("Failed to run makepkg for '{package}'"))?;
+        let pkg_file = if let Some(cached) = self.cached_package(package, &env.pkgdest, &cache_key)
+        {
+            println!("{} Using cached build...", "→".blue());
+            cached
+        } else {
+            // Build with makepkg (sandboxed if bubblewrap is available)
+            let status = self
+                .run_build(&pkg_dir, &env)
+                .await
+                .with_context(|| format!("Failed to run makepkg for '{package}'"))?;
 
-                if !status.success() {
-                    anyhow::bail!(
-                        "makepkg failed for '{package}'. Check build output above for details."
-                    );
-                }
+            if !status.success() {
+                anyhow::bail!(
+                    "makepkg failed for '{package}'. Check build output above for details."
+                );
+            }
 
-                let pkg_file = Self::find_built_package(&pkg_dir, &env.pkgdest)?;
-                self.write_cache_key(package, &cache_key)?;
-                pkg_file
-            };
+            let pkg_file = Self::find_built_package(&pkg_dir, &env.pkgdest)?;
+            self.write_cache_key(package, &cache_key)?;
+            pkg_file
+        };
 
         // Install the built package
         println!("{} Installing built package...", "→".blue());
@@ -996,12 +996,7 @@ impl AurClient {
             .join(format!("{package}.hash"))
     }
 
-    fn cached_package(
-        &self,
-        package: &str,
-        pkgdest: &Path,
-        cache_key: &str,
-    ) -> Option<PathBuf> {
+    fn cached_package(&self, package: &str, pkgdest: &Path, cache_key: &str) -> Option<PathBuf> {
         if !self.settings.aur.cache_builds {
             return None;
         }
