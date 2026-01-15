@@ -297,9 +297,7 @@ mod package_management {
         let args = vec!["install", "-y", &pkg];
         let (success, stdout, stderr) = run_omg(&args);
         assert!(
-            success
-                || stdout.contains("already installed")
-                || stderr.contains("already installed"),
+            success || stdout.contains("already installed") || stderr.contains("already installed"),
             "Install should succeed or report already installed"
         );
     }

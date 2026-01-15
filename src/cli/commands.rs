@@ -22,28 +22,19 @@ pub async fn complete(_shell: &str, current: &str, last: &str, full: Option<&str
     let db = crate::core::Database::open(crate::core::Database::default_path()?)?;
     let engine = crate::core::completion::CompletionEngine::new(db);
 
-    let full_tokens: Vec<&str> = full
-        .unwrap_or_default()
-        .split_whitespace()
-        .collect();
-    let in_tool = full_tokens.iter().any(|token| *token == "tool");
-    let in_env = full_tokens.iter().any(|token| *token == "env");
+    let full_tokens: Vec<&str> = full.unwrap_or_default().split_whitespace().collect();
+    let in_tool = full_tokens.contains(&"tool");
+    let in_env = full_tokens.contains(&"env");
 
     let suggestions = match last {
         "install" | "i" | "remove" | "r" | "info" => {
             if in_tool && last == "install" {
-                return Ok(output_suggestions(
-                    &engine,
-                    current,
-                    crate::cli::tool::registry_tool_names(),
-                ));
+                output_suggestions(&engine, current, crate::cli::tool::registry_tool_names());
+                return Ok(());
             }
             if in_tool && last == "remove" {
-                return Ok(output_suggestions(
-                    &engine,
-                    current,
-                    crate::cli::tool::installed_tool_names(),
-                ));
+                output_suggestions(&engine, current, crate::cli::tool::installed_tool_names());
+                return Ok(());
             }
             // Try daemon for package list
             let mut names = if let Ok(mut client) =
@@ -75,7 +66,11 @@ pub async fn complete(_shell: &str, current: &str, last: &str, full: Option<&str
                 .collect();
             engine.fuzzy_match(current, runtimes)
         }
-        "tool" => vec!["install".to_string(), "list".to_string(), "remove".to_string()],
+        "tool" => vec![
+            "install".to_string(),
+            "list".to_string(),
+            "remove".to_string(),
+        ],
         "env" => vec![
             "capture".to_string(),
             "check".to_string(),
@@ -158,7 +153,8 @@ pub async fn complete(_shell: &str, current: &str, last: &str, full: Option<&str
         }
     };
 
-    Ok(output_suggestions(&engine, current, suggestions))
+    output_suggestions(&engine, current, suggestions);
+    Ok(())
 }
 
 fn output_suggestions(

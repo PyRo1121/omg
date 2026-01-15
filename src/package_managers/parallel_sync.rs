@@ -55,7 +55,8 @@ fn get_mirrors() -> Result<Vec<String>> {
 }
 
 fn mirror_cache_path() -> PathBuf {
-    home_dir().unwrap_or_else(|| PathBuf::from("/tmp"))
+    home_dir()
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
         .join(".cache/omg/mirrors.json")
 }
 

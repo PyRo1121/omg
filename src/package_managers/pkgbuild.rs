@@ -117,7 +117,7 @@ impl PkgBuild {
 fn parse_array(val: &str) -> Vec<String> {
     let cleaned = val
         .lines()
-        .map(|line| line.split('#').next().unwrap_or("") )
+        .map(|line| line.split('#').next().unwrap_or(""))
         .collect::<Vec<_>>()
         .join(" ");
     let trimmed = cleaned.trim_matches('(').trim_matches(')');

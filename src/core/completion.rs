@@ -27,7 +27,7 @@ impl CompletionEngine {
         }
 
         let pattern_lower = pattern.to_lowercase();
-        let pattern_len = pattern_lower.len() as i64;
+        let pattern_len = len_to_i64(pattern_lower.len());
         let matcher = SkimMatcherV2::default();
         let (gap_weight, start_weight, len_weight) = if pattern_len <= 3 {
             (50, 12, 6)
@@ -43,11 +43,13 @@ impl CompletionEngine {
                 let candidate_lower = cand.to_lowercase();
                 let (score, indices) = matcher.fuzzy_indices(&candidate_lower, &pattern_lower)?;
                 let (start, end) = match (indices.first(), indices.last()) {
-                    (Some(start), Some(end)) => (*start as i64, *end as i64),
+                    (Some(start), Some(end)) => (*start, *end),
                     _ => return None,
                 };
-                let span = end - start + 1;
-                let gap = (span - pattern_len).max(0);
+                let start_i64 = len_to_i64(start);
+                let end_i64 = len_to_i64(end);
+                let span = end_i64.saturating_sub(start_i64).saturating_add(1);
+                let gap = span.saturating_sub(pattern_len);
                 let prefix_bonus = if candidate_lower.starts_with(&pattern_lower) {
                     700
                 } else if candidate_lower.contains(&pattern_lower) {
@@ -55,19 +57,20 @@ impl CompletionEngine {
                 } else {
                     0
                 };
-                let exact_bonus = if candidate_lower == pattern_lower { 1200 } else { 0 };
-                let boundary_bonus = if is_boundary_match(&candidate_lower, start as usize) {
+                let exact_bonus = if candidate_lower == pattern_lower {
+                    1200
+                } else {
+                    0
+                };
+                let boundary_bonus = if is_boundary_match(&candidate_lower, start) {
                     120
                 } else {
                     0
                 };
-                let candidate_len = candidate_lower.len() as i64;
-                let total_score = score as i64
-                    + prefix_bonus
-                    + exact_bonus
-                    + boundary_bonus
+                let candidate_len = len_to_i64(candidate_lower.len());
+                let total_score = score + prefix_bonus + exact_bonus + boundary_bonus
                     - (gap * gap_weight)
-                    - (start * start_weight)
+                    - (start_i64 * start_weight)
                     - (candidate_len * len_weight);
                 Some((cand, total_score))
             })
@@ -218,7 +221,11 @@ fn is_boundary_match(candidate: &str, start: usize) -> bool {
     candidate
         .get(..start)
         .and_then(|prefix| prefix.chars().last())
-        .map_or(false, |prev| !prev.is_alphanumeric())
+        .is_some_and(|prev| !prev.is_alphanumeric())
+}
+
+fn len_to_i64(len: usize) -> i64 {
+    i64::try_from(len).unwrap_or(i64::MAX)
 }
 
 #[cfg(test)]
@@ -232,10 +239,7 @@ mod tests {
         let db = Database::open(temp_dir.path()).unwrap();
         let engine = CompletionEngine::new(db);
 
-        let candidates = vec![
-            "sigrok-firmware-fx2lafw".to_string(),
-            "firefox".to_string(),
-        ];
+        let candidates = vec!["sigrok-firmware-fx2lafw".to_string(), "firefox".to_string()];
 
         let results = engine.fuzzy_match("frfx", candidates);
         assert_eq!(results.first().map(String::as_str), Some("firefox"));

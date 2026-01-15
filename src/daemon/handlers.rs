@@ -307,10 +307,10 @@ async fn handle_security_audit(_state: Arc<DaemonState>, id: RequestId) -> Respo
 }
 
 /// Handle list explicit request
-async fn handle_list_explicit(_state: Arc<DaemonState>, id: RequestId) -> Response {
+async fn handle_list_explicit(state: Arc<DaemonState>, id: RequestId) -> Response {
     use crate::package_managers::list_explicit_fast;
 
-    if let Some(cached) = _state.cache.get_explicit() {
+    if let Some(cached) = state.cache.get_explicit() {
         return Response::Success {
             id,
             result: ResponseResult::Explicit(ExplicitResult { packages: cached }),
@@ -319,10 +319,10 @@ async fn handle_list_explicit(_state: Arc<DaemonState>, id: RequestId) -> Respon
 
     match list_explicit_fast() {
         Ok(packages) => {
-            _state.cache.update_explicit(packages.clone());
+            state.cache.update_explicit(packages.clone());
             Response::Success {
                 id,
-                result: ResponseResult::Explicit(ExplicitResult { packages: packages.clone() }),
+                result: ResponseResult::Explicit(ExplicitResult { packages }),
             }
         }
         Err(e) => Response::Error {
