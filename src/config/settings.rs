@@ -33,8 +33,20 @@ pub struct Settings {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AurBuildSettings {
+    /// Build method for AUR packages
+    pub build_method: AurBuildMethod,
     /// Maximum concurrent AUR builds
     pub build_concurrency: usize,
+    /// Require interactive PKGBUILD review before building
+    pub review_pkgbuild: bool,
+    /// Use stricter makepkg flags (cleanbuild/verifysource)
+    pub secure_makepkg: bool,
+    /// Allow native builds without sandboxing
+    pub allow_unsafe_builds: bool,
+    /// Use AUR metadata archive for bulk update checks
+    pub use_metadata_archive: bool,
+    /// Metadata archive cache TTL (seconds)
+    pub metadata_cache_ttl_secs: u64,
     /// Custom MAKEFLAGS (overrides auto -jN)
     pub makeflags: Option<String>,
     /// Custom PKGDEST (shared package cache)
@@ -51,6 +63,15 @@ pub struct AurBuildSettings {
     pub enable_sccache: bool,
     /// Optional sccache directory
     pub sccache_dir: Option<PathBuf>,
+}
+
+/// AUR build method options
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AurBuildMethod {
+    Bubblewrap,
+    Chroot,
+    Native,
 }
 
 impl Default for Settings {
@@ -77,7 +98,13 @@ impl Default for AurBuildSettings {
             .map(|v| v.get())
             .unwrap_or(1);
         Self {
+            build_method: AurBuildMethod::Bubblewrap,
             build_concurrency: jobs.max(1),
+            review_pkgbuild: false,
+            secure_makepkg: true,
+            allow_unsafe_builds: false,
+            use_metadata_archive: false,
+            metadata_cache_ttl_secs: 300,
             makeflags: None,
             pkgdest: None,
             srcdest: None,

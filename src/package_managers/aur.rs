@@ -1,27 +1,36 @@
 //! AUR (Arch User Repository) client with build support
 
+use std::collections::HashSet;
 use std::fs::File;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use colored::Colorize;
+use dialoguer::Confirm;
 use futures::StreamExt;
+use flate2::read::GzDecoder;
 use git2::Repository;
 use indicatif::{ProgressBar, ProgressStyle};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use tokio::process::Command;
+use tokio::fs as tokio_fs;
 use tracing::instrument;
+use which::which;
 
 use super::pkgbuild::PkgBuild;
-use crate::config::Settings;
+use crate::config::{AurBuildMethod, Settings};
 use crate::core::http::shared_client;
 use crate::core::{paths, Package, PackageSource};
 use crate::package_managers::{get_potential_aur_packages, pacman_db};
 
 const AUR_RPC_URL: &str = "https://aur.archlinux.org/rpc";
 const AUR_GIT_URL: &str = "https://aur.archlinux.org";
+const AUR_RPC_MAX_URI: usize = 4400;
+const AUR_META_URL: &str = "https://aur.archlinux.org/packages-meta-ext-v1.json.gz";
 
 /// AUR API client with build support
 #[derive(Clone)]
@@ -124,12 +133,27 @@ impl AurClient {
             return Ok(Vec::new());
         }
 
+        if let Some(archive) = self.load_metadata_archive().await? {
+            let mut updates = Vec::new();
+            let names: HashSet<&str> = potential_aur_names.iter().map(String::as_str).collect();
+            for p in archive.results {
+                if !names.contains(p.name.as_str()) {
+                    continue;
+                }
+                if let Some(local_pkg) = pacman_db::get_local_package(&p.name)? {
+                    if pacman_db::compare_versions(&p.version, &local_pkg.version)
+                        == std::cmp::Ordering::Greater
+                    {
+                        updates.push((p.name, local_pkg.version, p.version));
+                    }
+                }
+            }
+            return Ok(updates);
+        }
+
         // 2. Query AUR for these packages in parallel (batch query)
         let mut updates = Vec::new();
-        let chunked_names: Vec<Vec<String>> = potential_aur_names
-            .chunks(50)
-            .map(<[std::string::String]>::to_vec)
-            .collect();
+        let chunked_names = Self::chunk_aur_names(&potential_aur_names);
 
         let concurrency = self.settings.aur.build_concurrency.clamp(1, 8);
         let mut stream = futures::stream::iter(chunked_names)
@@ -137,9 +161,9 @@ impl AurClient {
                 let client = &self.client;
                 async move {
                     let mut url = format!("{AUR_RPC_URL}?v=5&type=info");
-                    for name in chunk {
+                    for name in &chunk {
                         url.push_str("&arg[]=");
-                        url.push_str(&name);
+                        url.push_str(name);
                     }
                     client.get(&url).send().await?.json::<AurResponse>().await
                 }
@@ -161,6 +185,80 @@ impl AurClient {
         }
 
         Ok(updates)
+    }
+
+    async fn load_metadata_archive(&self) -> Result<Option<AurResponse>> {
+        if !self.settings.aur.use_metadata_archive {
+            return Ok(None);
+        }
+
+        let cache_path = self.metadata_cache_path();
+        let ttl = self.settings.aur.metadata_cache_ttl_secs;
+
+        if cache_path.exists() {
+            if let Ok(meta) = std::fs::metadata(&cache_path) {
+                if let Ok(modified) = meta.modified() {
+                    if modified.elapsed().unwrap_or_default() < Duration::from_secs(ttl) {
+                        return Self::read_metadata_archive(&cache_path).map(Some);
+                    }
+                }
+            }
+        }
+
+        if let Some(parent) = cache_path.parent() {
+            tokio_fs::create_dir_all(parent).await?;
+        }
+
+        let bytes = self
+            .client
+            .get(AUR_META_URL)
+            .send()
+            .await?
+            .error_for_status()?
+            .bytes()
+            .await?;
+        let tmp_path = cache_path.with_extension("tmp");
+        tokio_fs::write(&tmp_path, &bytes).await?;
+        tokio_fs::rename(&tmp_path, &cache_path).await?;
+
+        Self::read_metadata_archive(&cache_path).map(Some)
+    }
+
+    fn read_metadata_archive(path: &Path) -> Result<AurResponse> {
+        let mut file = File::open(path)?;
+        let mut buf = Vec::new();
+        file.read_to_end(&mut buf)?;
+        let decoder = GzDecoder::new(&buf[..]);
+        let response: AurResponse = serde_json::from_reader(decoder)?;
+        Ok(response)
+    }
+
+    fn metadata_cache_path(&self) -> PathBuf {
+        self.build_dir.join("_meta").join("packages-meta-ext-v1.json.gz")
+    }
+
+    fn chunk_aur_names(names: &[String]) -> Vec<Vec<String>> {
+        let base_len = format!("{AUR_RPC_URL}?v=5&type=info").len();
+        let mut chunks: Vec<Vec<String>> = Vec::new();
+        let mut current: Vec<String> = Vec::new();
+        let mut current_len = base_len;
+
+        for name in names {
+            let arg_len = "&arg[]=".len() + name.len();
+            if !current.is_empty() && current_len + arg_len > AUR_RPC_MAX_URI {
+                chunks.push(current);
+                current = Vec::new();
+                current_len = base_len;
+            }
+            current_len += arg_len;
+            current.push(name.clone());
+        }
+
+        if !current.is_empty() {
+            chunks.push(current);
+        }
+
+        chunks
     }
 
     /// Install AUR package by building it
@@ -207,6 +305,11 @@ impl AurClient {
         let env = self.makepkg_env(&pkg_dir)?;
         let cache_key = self.cache_key(&pkg_dir, &env.makeflags)?;
 
+        if self.settings.aur.review_pkgbuild {
+            self.review_pkgbuild(&pkgbuild_path)?;
+        }
+
+
         let pkg_file =
             if let Some(cached) = self.cached_package(package, &env.pkgdest, &cache_key)? {
                 println!("{} Using cached build...", "→".blue());
@@ -214,7 +317,7 @@ impl AurClient {
             } else {
                 // Build with makepkg (sandboxed if bubblewrap is available)
                 let status = self
-                    .run_sandboxed_makepkg(&pkg_dir, &env)
+                    .run_build(&pkg_dir, &env)
                     .await
                     .with_context(|| format!("Failed to run makepkg for '{package}'"))?;
 
@@ -276,14 +379,16 @@ impl AurClient {
 
         let env = self.makepkg_env(&pkg_dir)?;
         let cache_key = self.cache_key(&pkg_dir, &env.makeflags)?;
-
+        if self.settings.aur.review_pkgbuild {
+            self.review_pkgbuild(&pkgbuild_path)?;
+        }
         if let Some(cached) = self.cached_package(package, &env.pkgdest, &cache_key)? {
             return Ok(cached);
         }
 
         // Use sandboxed build with bubblewrap if available, fallback to regular makepkg
         let status = self
-            .run_sandboxed_makepkg(&pkg_dir, &env)
+            .run_build(&pkg_dir, &env)
             .await
             .with_context(|| format!("Failed to run makepkg for '{package}'"))?;
 
@@ -319,9 +424,29 @@ impl AurClient {
         let url = format!("{AUR_GIT_URL}/{package}.git");
         let dest = self.build_dir.join(package);
 
-        let spinner = create_spinner("Cloning repository (native)...");
+        if let Ok(git_path) = which("git") {
+            let spinner = create_spinner("Cloning repository (git)...");
+            let status = Command::new(git_path)
+                .args([
+                    "clone",
+                    "--depth",
+                    "1",
+                    "--filter=blob:none",
+                    "--single-branch",
+                    &url,
+                    &dest.to_string_lossy(),
+                ])
+                .status()
+                .await
+                .context("Failed to run git clone")?;
+            spinner.finish_and_clear();
+            if status.success() {
+                return Ok(());
+            }
+            tracing::warn!("git clone failed, falling back to libgit2");
+        }
 
-        // Use git2 for native cloning
+        let spinner = create_spinner("Cloning repository (native)...");
         tokio::task::spawn_blocking(move || {
             git2::build::RepoBuilder::new()
                 .clone(&url, &dest)
@@ -335,6 +460,25 @@ impl AurClient {
 
     /// Update existing clone
     async fn git_pull(&self, pkg_dir: &PathBuf) -> Result<()> {
+        if let Ok(git_path) = which("git") {
+            let spinner = create_spinner("Pulling latest changes (git)...");
+            let status = Command::new(git_path)
+                .args([
+                    "-C",
+                    &pkg_dir.to_string_lossy(),
+                    "pull",
+                    "--ff-only",
+                ])
+                .status()
+                .await
+                .context("Failed to run git pull")?;
+            spinner.finish_and_clear();
+            if status.success() {
+                return Ok(());
+            }
+            tracing::warn!("git pull failed, falling back to libgit2");
+        }
+
         let spinner = create_spinner("Pulling latest changes (native)...");
 
         let pkg_dir = pkg_dir.clone();
@@ -375,8 +519,23 @@ impl AurClient {
         Ok(())
     }
 
+    async fn run_build(&self, pkg_dir: &Path, env: &MakepkgEnv) -> Result<std::process::ExitStatus> {
+        match self.settings.aur.build_method {
+            AurBuildMethod::Bubblewrap => self.run_sandboxed_makepkg(pkg_dir, env).await,
+            AurBuildMethod::Chroot => self.run_chroot_build(pkg_dir, env).await,
+            AurBuildMethod::Native => {
+                if !self.settings.aur.allow_unsafe_builds {
+                    anyhow::bail!(
+                        "Native AUR builds are disabled. Enable 'aur.allow_unsafe_builds' or use bubblewrap/chroot."
+                    );
+                }
+                self.run_native_makepkg(pkg_dir, env).await
+            }
+        }
+    }
+
     /// Run makepkg with bubblewrap sandboxing if available
-    /// Falls back to regular makepkg if bwrap is not installed
+    /// Falls back to regular makepkg if bwrap is not installed and unsafe builds are allowed
     async fn run_sandboxed_makepkg(
         &self,
         pkg_dir: &Path,
@@ -483,14 +642,12 @@ impl AurClient {
                 args.push(value.clone());
             }
 
+            let makepkg_args = self.makepkg_args();
             args.extend([
                 "--".to_string(),
                 "makepkg".to_string(),
-                "-s".to_string(),
-                "--noconfirm".to_string(),
-                "-f".to_string(),
-                "--needed".to_string(),
             ]);
+            args.extend(makepkg_args);
 
             let status = Command::new("bwrap")
                 .args(args)
@@ -506,36 +663,169 @@ impl AurClient {
             }
             Ok(status)
         } else {
+            if !self.settings.aur.allow_unsafe_builds {
+                spinner.finish_and_clear();
+                anyhow::bail!(
+                    "bubblewrap is not installed. Install it or enable 'aur.allow_unsafe_builds' for native builds."
+                );
+            }
+
             tracing::debug!("bubblewrap not found, using regular makepkg");
             println!(
-                "{} Building (install 'bubblewrap' for sandboxed builds)...",
+                "{} Building without sandbox (install 'bubblewrap' for isolation)...",
                 "→".dimmed()
             );
-
-            let mut cmd = Command::new("makepkg");
-            cmd.args(["-s", "--noconfirm", "-f", "--needed"])
-                .env("MAKEFLAGS", &env.makeflags)
-                .env("PKGDEST", &env.pkgdest)
-                .env("SRCDEST", &env.srcdest);
-
-            for (key, value) in &env.extra_env {
-                cmd.env(key, value);
-            }
-
-            let status = cmd
-                .current_dir(pkg_dir)
-                .stdout(Stdio::from(log_file))
-                .stderr(Stdio::from(log_file_err))
-                .status()
+            self
+                .run_native_makepkg_with_logs(pkg_dir, env, log_file, log_file_err, spinner)
                 .await
-                .context("Failed to run makepkg")?;
-
-            spinner.finish_and_clear();
-            if !status.success() {
-                println!("  {} Build failed. Log: {}", "✗".red(), log_path.display());
-            }
-            Ok(status)
         }
+    }
+
+    async fn run_native_makepkg(&self, pkg_dir: &Path, env: &MakepkgEnv) -> Result<std::process::ExitStatus> {
+        let package_name = pkg_dir
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("package");
+        let log_dir = self.build_dir.join("_logs");
+        std::fs::create_dir_all(&log_dir)?;
+        let log_path = log_dir.join(format!("{package_name}.log"));
+        let log_file = File::create(&log_path)?;
+        let log_file_err = log_file.try_clone()?;
+        let spinner = create_spinner(&format!("Building {package_name}..."));
+
+        let status = self
+            .run_native_makepkg_with_logs(pkg_dir, env, log_file, log_file_err, spinner)
+            .await?;
+
+        if !status.success() {
+            println!("  {} Build failed. Log: {}", "✗".red(), log_path.display());
+        }
+        Ok(status)
+    }
+
+    async fn run_native_makepkg_with_logs(
+        &self,
+        pkg_dir: &Path,
+        env: &MakepkgEnv,
+        log_file: File,
+        log_file_err: File,
+        spinner: ProgressBar,
+    ) -> Result<std::process::ExitStatus> {
+        let mut cmd = Command::new("makepkg");
+        cmd.args(self.makepkg_args())
+            .env("MAKEFLAGS", &env.makeflags)
+            .env("PKGDEST", &env.pkgdest)
+            .env("SRCDEST", &env.srcdest);
+
+        for (key, value) in &env.extra_env {
+            cmd.env(key, value);
+        }
+
+        let status = cmd
+            .current_dir(pkg_dir)
+            .stdout(Stdio::from(log_file))
+            .stderr(Stdio::from(log_file_err))
+            .status()
+            .await
+            .context("Failed to run makepkg")?;
+
+        spinner.finish_and_clear();
+        Ok(status)
+    }
+
+    async fn run_chroot_build(
+        &self,
+        pkg_dir: &Path,
+        env: &MakepkgEnv,
+    ) -> Result<std::process::ExitStatus> {
+        let package_name = pkg_dir
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("package");
+        let log_dir = self.build_dir.join("_logs");
+        std::fs::create_dir_all(&log_dir)?;
+        let log_path = log_dir.join(format!("{package_name}.log"));
+        let log_file = File::create(&log_path)?;
+        let log_file_err = log_file.try_clone()?;
+        let spinner = create_spinner(&format!("Building {package_name} (chroot)..."));
+
+        let mut cmd = if Command::new("which")
+            .arg("pkgctl")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .await
+            .map(|s| s.success())
+            .unwrap_or(false)
+        {
+            let mut cmd = Command::new("pkgctl");
+            cmd.arg("build");
+            if self.settings.aur.secure_makepkg {
+                cmd.arg("--clean");
+            }
+            cmd
+        } else if Command::new("which")
+            .arg("makechrootpkg")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .await
+            .map(|s| s.success())
+            .unwrap_or(false)
+        {
+            let mut cmd = Command::new("makechrootpkg");
+            cmd.args(["-r", "/var/lib/archbuild"]).arg("--");
+            cmd
+        } else {
+            spinner.finish_and_clear();
+            anyhow::bail!(
+                "Chroot build requires devtools (pkgctl/makechrootpkg). Install devtools or choose bubblewrap/native."
+            );
+        };
+
+        cmd.current_dir(pkg_dir)
+            .env("MAKEFLAGS", &env.makeflags)
+            .env("PKGDEST", &env.pkgdest)
+            .env("SRCDEST", &env.srcdest)
+            .stdout(Stdio::from(log_file))
+            .stderr(Stdio::from(log_file_err));
+
+        let status = cmd.status().await.context("Failed to run chroot build")?;
+        spinner.finish_and_clear();
+        if !status.success() {
+            println!("  {} Build failed. Log: {}", "✗".red(), log_path.display());
+        }
+        Ok(status)
+    }
+
+    fn makepkg_args(&self) -> Vec<String> {
+        let mut args = vec![
+            "-s".to_string(),
+            "--noconfirm".to_string(),
+            "-f".to_string(),
+            "--needed".to_string(),
+        ];
+        if self.settings.aur.secure_makepkg {
+            args.push("--cleanbuild".to_string());
+            args.push("--verifysource".to_string());
+        }
+        args
+    }
+
+    fn review_pkgbuild(&self, pkgbuild_path: &Path) -> Result<()> {
+        println!(
+            "{} Review PKGBUILD before building: {}",
+            "→".blue(),
+            pkgbuild_path.display()
+        );
+        let proceed = Confirm::new()
+            .with_prompt("Proceed with build?")
+            .default(false)
+            .interact()?;
+        if !proceed {
+            anyhow::bail!("Build aborted by user after PKGBUILD review.");
+        }
+        Ok(())
     }
 
     fn makepkg_env(&self, pkg_dir: &Path) -> Result<MakepkgEnv> {
@@ -618,10 +908,15 @@ impl AurClient {
     fn cache_key(&self, pkg_dir: &Path, makeflags: &str) -> Result<String> {
         let pkgbuild = std::fs::read(pkg_dir.join("PKGBUILD"))?;
         let srcinfo = std::fs::read(pkg_dir.join(".SRCINFO")).unwrap_or_default();
+        let makepkg_args = self.makepkg_args().join(" ");
+        let build_method = format!("{:?}", self.settings.aur.build_method);
         let mut hasher = Sha256::new();
         hasher.update(pkgbuild);
         hasher.update(srcinfo);
         hasher.update(makeflags.as_bytes());
+        hasher.update(makepkg_args.as_bytes());
+        hasher.update(build_method.as_bytes());
+        hasher.update(self.settings.aur.secure_makepkg.to_string().as_bytes());
         Ok(format!("{:x}", hasher.finalize()))
     }
 
