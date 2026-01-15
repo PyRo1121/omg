@@ -9,14 +9,13 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use colored::Colorize;
-use home::home_dir;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 
-use crate::core::http::{download_client, shared_client};
+use crate::core::{http::{download_client, shared_client}, paths};
 
 /// Standard Arch Linux repositories
 const REPOS: &[&str] = &["core", "extra", "multilib"];
@@ -30,8 +29,9 @@ struct MirrorCache {
 
 /// Parse all mirrors from mirrorlist
 fn get_mirrors() -> Result<Vec<String>> {
-    let mirrorlist = fs::read_to_string("/etc/pacman.d/mirrorlist")
-        .context("Failed to read /etc/pacman.d/mirrorlist")?;
+    let mirrorlist_path = paths::pacman_mirrorlist_path();
+    let mirrorlist = fs::read_to_string(&mirrorlist_path)
+        .with_context(|| format!("Failed to read {}", mirrorlist_path.display()))?;
 
     let mut mirrors = Vec::new();
     for line in mirrorlist.lines() {
@@ -48,16 +48,14 @@ fn get_mirrors() -> Result<Vec<String>> {
     }
 
     if mirrors.is_empty() {
-        anyhow::bail!("No mirrors found in /etc/pacman.d/mirrorlist");
+        anyhow::bail!("No mirrors found in {}", mirrorlist_path.display());
     }
 
     Ok(mirrors)
 }
 
 fn mirror_cache_path() -> PathBuf {
-    home_dir()
-        .unwrap_or_else(|| PathBuf::from("/tmp"))
-        .join(".cache/omg/mirrors.json")
+    paths::cache_dir().join("mirrors.json")
 }
 
 fn load_cached_mirrors() -> Option<Vec<String>> {
@@ -194,7 +192,7 @@ pub async fn sync_databases_parallel() -> Result<()> {
     );
 
     // Sync directory (we should already be root at this point)
-    let sync_dir = PathBuf::from("/var/lib/pacman/sync");
+    let sync_dir = paths::pacman_sync_dir();
     if !sync_dir.exists() {
         fs::create_dir_all(&sync_dir)?;
     }
@@ -479,8 +477,7 @@ pub async fn download_packages_parallel(
     }
 
     // Set up cache directory
-    let cache_dir = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/tmp".into()))
-        .join(".cache/omg/packages");
+    let cache_dir = paths::cache_dir().join("packages");
     std::fs::create_dir_all(&cache_dir)?;
 
     // Get fastest mirrors

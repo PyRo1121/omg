@@ -4,6 +4,8 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+use crate::core::paths;
+
 /// OMG configuration settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -53,19 +55,10 @@ pub struct AurBuildSettings {
 
 impl Default for Settings {
     fn default() -> Self {
-        let data_dir = directories::ProjectDirs::from("com", "omg", "omg").map_or_else(
-            || {
-                home::home_dir()
-                    .unwrap_or_else(|| PathBuf::from("."))
-                    .join(".omg")
-            },
-            |d| d.data_dir().to_path_buf(),
-        );
+        let data_dir = paths::data_dir();
 
         // Socket in XDG_RUNTIME_DIR or /tmp
-        let socket_path = std::env::var("XDG_RUNTIME_DIR")
-            .map_or_else(|_| PathBuf::from("/tmp"), PathBuf::from)
-            .join("omg.sock");
+        let socket_path = paths::socket_path();
 
         Self {
             shims_enabled: false, // PATH modification is default (faster)
@@ -126,9 +119,7 @@ impl Settings {
 
     /// Get the config file path
     pub fn config_path() -> Result<PathBuf> {
-        let config_dir = directories::ProjectDirs::from("com", "omg", "omg")
-            .map(|d| d.config_dir().to_path_buf())
-            .ok_or_else(|| anyhow::anyhow!("Could not determine config directory"))?;
+        let config_dir = paths::config_dir();
 
         Ok(config_dir.join("config.toml"))
     }

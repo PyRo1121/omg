@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::core::paths;
+
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum SecurityGrade {
     Risk = 0,      // Known vulnerabilities
@@ -67,16 +69,7 @@ impl SecurityPolicy {
     /// Load from default location (~/.config/omg/policy.toml)
     #[must_use]
     pub fn load_default() -> Option<Self> {
-        let config_dir = directories::ProjectDirs::from("com", "omg", "omg").map_or_else(
-            || {
-                home::home_dir()
-                    .unwrap_or_else(|| PathBuf::from("."))
-                    .join(".config/omg")
-            },
-            |d| d.config_dir().to_path_buf(),
-        );
-
-        let policy_path = config_dir.join("policy.toml");
+        let policy_path = paths::config_dir().join("policy.toml");
         if policy_path.exists() {
             Self::load(policy_path).ok()
         } else {

@@ -9,6 +9,7 @@ use nucleo_matcher::{Config, Matcher, Utf32String};
 use parking_lot::RwLock;
 use rayon::prelude::*;
 
+use crate::core::paths;
 use crate::daemon::protocol::{DetailedPackageInfo, PackageInfo};
 
 pub struct PackageIndex {
@@ -26,7 +27,9 @@ impl PackageIndex {
         let mut search_items = Vec::new();
 
         // Initialize ALPM and read all databases
-        let alpm = alpm::Alpm::new("/", "/var/lib/pacman")
+        let root = paths::pacman_root();
+        let db_path = paths::pacman_db_dir();
+        let alpm = alpm::Alpm::new(root, db_path)
             .context("Failed to initialize ALPM for indexing")?;
 
         for db_name in ["core", "extra", "multilib"] {

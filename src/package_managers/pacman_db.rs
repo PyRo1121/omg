@@ -18,6 +18,8 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 use tracing::instrument;
 
+use crate::core::paths;
+
 /// Global cache for sync databases - parsed once, used forever until invalidated
 static SYNC_DB_CACHE: std::sync::LazyLock<RwLock<DbCache>> =
     std::sync::LazyLock::new(|| RwLock::new(DbCache::default()));
@@ -289,12 +291,12 @@ fn parse_local_desc(path: &Path) -> Result<LocalDbPackage> {
 /// Returns Vec of (name, `old_version`, `new_version`, repo, filename, `download_size`)
 #[instrument]
 pub fn check_updates_cached() -> Result<Vec<(String, String, String, String, String, u64)>> {
-    let sync_dir = Path::new("/var/lib/pacman/sync");
-    let local_dir = Path::new("/var/lib/pacman/local");
+    let sync_dir = paths::pacman_sync_dir();
+    let local_dir = paths::pacman_local_dir();
 
     // Ensure caches are loaded (will be fast if already loaded)
-    ensure_sync_cache_loaded(sync_dir)?;
-    ensure_local_cache_loaded(local_dir)?;
+    ensure_sync_cache_loaded(&sync_dir)?;
+    ensure_local_cache_loaded(&local_dir)?;
 
     // Hold both cache locks simultaneously - no cloning!
     let sync_cache = SYNC_DB_CACHE.read();
@@ -323,9 +325,7 @@ pub fn check_updates_cached() -> Result<Vec<(String, String, String, String, Str
 
 /// Get the cache directory for OMG
 fn get_cache_dir() -> PathBuf {
-    home::home_dir()
-        .unwrap_or_else(|| PathBuf::from("/tmp"))
-        .join(".cache/omg")
+    paths::cache_dir()
 }
 
 /// Save cache to disk in binary format
@@ -371,7 +371,7 @@ fn ensure_sync_cache_loaded(sync_dir: &Path) -> Result<()> {
     }
 
     // Cache miss or stale - need to reload/parse
-    let packages = load_sync_packages(sync_dir)?;
+    let packages = load_sync_packages(&sync_dir)?;
 
     // Update memory cache
     let mut cache = SYNC_DB_CACHE.write();
@@ -405,7 +405,7 @@ fn ensure_local_cache_loaded(local_dir: &Path) -> Result<()> {
     }
 
     // Cache miss - reload
-    let packages = parse_local_db(local_dir)?;
+    let packages = parse_local_db(&local_dir)?;
 
     // Update memory cache
     let mut cache = LOCAL_DB_CACHE.write();
@@ -420,10 +420,10 @@ fn ensure_local_cache_loaded(local_dir: &Path) -> Result<()> {
 
 /// Get sync database from cache (loads if empty or stale)
 fn get_sync_cache() -> Result<HashMap<String, SyncDbPackage>> {
-    let sync_dir = Path::new("/var/lib/pacman/sync");
+    let sync_dir = paths::pacman_sync_dir();
 
     // Check if cache is valid
-    let current_mtime = get_newest_db_mtime(sync_dir)?;
+    let current_mtime = get_newest_db_mtime(&sync_dir)?;
 
     {
         let cache = SYNC_DB_CACHE.read();
@@ -433,7 +433,7 @@ fn get_sync_cache() -> Result<HashMap<String, SyncDbPackage>> {
     }
 
     // Cache miss - need to reload
-    let packages = load_sync_packages(sync_dir)?;
+    let packages = load_sync_packages(&sync_dir)?;
 
     // Update cache
     {
@@ -447,10 +447,10 @@ fn get_sync_cache() -> Result<HashMap<String, SyncDbPackage>> {
 
 /// Get local database from cache (loads if empty or stale)
 fn get_local_cache() -> Result<HashMap<String, LocalDbPackage>> {
-    let local_dir = Path::new("/var/lib/pacman/local");
+    let local_dir = paths::pacman_local_dir();
 
     // Check newest modification time in local db
-    let current_mtime = get_local_db_mtime(local_dir)?;
+    let current_mtime = get_local_db_mtime(&local_dir)?;
 
     {
         let cache = LOCAL_DB_CACHE.read();
@@ -460,7 +460,7 @@ fn get_local_cache() -> Result<HashMap<String, LocalDbPackage>> {
     }
 
     // Cache miss - reload
-    let packages = parse_local_db(local_dir)?;
+    let packages = parse_local_db(&local_dir)?;
 
     // Update cache
     {
@@ -633,8 +633,8 @@ fn collect_segment(iter: &mut std::iter::Peekable<std::str::Chars>) -> String {
 
 /// Get a specific local package - FAST (<1ms)
 pub fn get_local_package(name: &str) -> Result<Option<LocalDbPackage>> {
-    let local_dir = Path::new("/var/lib/pacman/local");
-    ensure_local_cache_loaded(local_dir)?;
+    let local_dir = paths::pacman_local_dir();
+    ensure_local_cache_loaded(&local_dir)?;
 
     let cache = LOCAL_DB_CACHE.read();
     Ok(cache.packages.get(name).cloned())
@@ -642,7 +642,7 @@ pub fn get_local_package(name: &str) -> Result<Option<LocalDbPackage>> {
 
 /// Fast package search - search sync databases WITHOUT ALPM
 pub fn search_sync_fast(query: &str) -> Result<Vec<SyncDbPackage>> {
-    let sync_dir = Path::new("/var/lib/pacman/sync");
+    let sync_dir = paths::pacman_sync_dir();
     let query_lower = query.to_lowercase();
 
     let mut results = Vec::new();
@@ -667,11 +667,11 @@ pub fn search_sync_fast(query: &str) -> Result<Vec<SyncDbPackage>> {
 /// Identify potential AUR packages (installed but not in any sync DB)
 /// Uses pure Rust cache for extreme speed (<1ms)
 pub fn get_potential_aur_packages() -> Result<Vec<String>> {
-    let sync_dir = Path::new("/var/lib/pacman/sync");
-    let local_dir = Path::new("/var/lib/pacman/local");
+    let sync_dir = paths::pacman_sync_dir();
+    let local_dir = paths::pacman_local_dir();
 
-    ensure_sync_cache_loaded(sync_dir)?;
-    ensure_local_cache_loaded(local_dir)?;
+    ensure_sync_cache_loaded(&sync_dir)?;
+    ensure_local_cache_loaded(&local_dir)?;
 
     let sync_cache = SYNC_DB_CACHE.read();
     let local_cache = LOCAL_DB_CACHE.read();
@@ -688,13 +688,13 @@ pub fn get_potential_aur_packages() -> Result<Vec<String>> {
 
 /// Get total package counts - INSTANT
 pub fn get_counts_fast() -> Result<(usize, usize, usize)> {
-    let local_dir = Path::new("/var/lib/pacman/local");
+    let local_dir = paths::pacman_local_dir();
 
     let mut total = 0;
     let mut explicit = 0;
 
     if local_dir.exists() {
-        for entry in std::fs::read_dir(local_dir)? {
+        for entry in std::fs::read_dir(&local_dir)? {
             let entry = entry?;
             let pkg_path = entry.path();
 
@@ -800,7 +800,10 @@ mod tests {
     #[test]
     fn test_check_updates() {
         // Only run if we have a real system
-        if Path::new("/var/lib/pacman/sync/core.db").exists() {
+        if crate::core::paths::pacman_sync_dir()
+            .join("core.db")
+            .exists()
+        {
             let updates = check_updates_fast().expect("Failed to check updates");
             println!("Found {} updates", updates.len());
         }
@@ -809,7 +812,7 @@ mod tests {
     #[test]
     fn test_get_local_package() {
         // Only run if we have a real system
-        if Path::new("/var/lib/pacman/local").exists() {
+        if crate::core::paths::pacman_local_dir().exists() {
             // pacman should always be installed
             if let Ok(Some(pkg)) = get_local_package("pacman") {
                 assert!(!pkg.version.is_empty());
@@ -819,7 +822,7 @@ mod tests {
 
     #[test]
     fn test_get_package_counts() {
-        if Path::new("/var/lib/pacman/local").exists() {
+        if crate::core::paths::pacman_local_dir().exists() {
             let (total, explicit, deps) = get_counts_fast().expect("Failed to get counts");
             assert!(total > 0);
             // On some test systems, explicit might be 0 if only deps are present
