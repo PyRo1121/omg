@@ -47,6 +47,21 @@ resolve_version() {
   fi
 }
 
+last_release_tag() {
+  git describe --tags --abbrev=0 --match "v*" 2>/dev/null || echo ""
+}
+
+release_notes() {
+  local last_tag
+  last_tag=$(last_release_tag)
+
+  if [[ -n "$last_tag" ]]; then
+    git log "${last_tag}..HEAD" --pretty="- %s (%h)"
+  else
+    git log --pretty="- %s (%h)"
+  fi
+}
+
 run_checks() {
   echo "Running local checks..."
   cargo fmt --all -- --check
@@ -73,6 +88,8 @@ VERSION=$(resolve_version)
 if [[ "$(current_version)" != "$VERSION" ]]; then
   write_version "$VERSION"
 fi
+
+RELEASE_NOTES=$(release_notes)
 
 ARCH="$(uname -m)"
 case "$ARCH" in
@@ -126,9 +143,10 @@ git push origin main "v${VERSION}"
 
 # Create or update GitHub Release with assets
 if gh release view "v${VERSION}" >/dev/null 2>&1; then
+  gh release edit "v${VERSION}" -n "$RELEASE_NOTES"
   gh release upload "v${VERSION}" $ARCHIVE $CHECKSUM --clobber
 else
-  gh release create "v${VERSION}" $ARCHIVE $CHECKSUM -t "Release v${VERSION}" -n ""
+  gh release create "v${VERSION}" $ARCHIVE $CHECKSUM -t "Release v${VERSION}" -n "$RELEASE_NOTES"
 fi
 
 echo "Published release v${VERSION}"
