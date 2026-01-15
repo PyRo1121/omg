@@ -54,8 +54,7 @@ impl BunManager {
     pub async fn list_available(&self) -> Result<Vec<BunVersion>> {
         let releases: Vec<GithubRelease> = self
             .client
-            .get(BUN_API_URL)
-            .query(&[("per_page", "20")])
+            .get(format!("{BUN_API_URL}?per_page=20"))
             .send()
             .await
             .context("Failed to fetch Bun releases from GitHub")?
