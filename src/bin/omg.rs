@@ -23,6 +23,7 @@ use mimalloc::MiMalloc;
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
+#[allow(clippy::too_many_lines)]
 fn main() -> Result<()> {
     // Initialize tracing
     tracing_subscriber::fmt()
@@ -228,6 +229,21 @@ fn main() -> Result<()> {
                 rt.block_on(env::sync(url))?;
             }
         },
+        Commands::History { limit } => {
+            commands::history(limit)?;
+        }
+        Commands::Rollback { id } => {
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()?;
+            rt.block_on(commands::rollback(id))?;
+        }
+        Commands::Dash => {
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()?;
+            rt.block_on(omg_lib::cli::tui::run())?;
+        }
     }
 
     Ok(())

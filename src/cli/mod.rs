@@ -12,5 +12,6 @@ pub mod runtimes;
 pub mod security;
 pub mod style;
 pub mod tool;
+pub mod tui;
 
 pub use args::{Cli, Commands, EnvCommands, ToolCommands};

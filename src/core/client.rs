@@ -44,7 +44,7 @@ impl DaemonClient {
         tracing::debug!("Connecting to daemon at {:?}", socket_path);
         let stream = UnixStream::connect(&socket_path)
             .await
-            .with_context(|| format!("Failed to connect to daemon at {socket_path:?}"))?;
+            .with_context(|| format!("Failed to connect to daemon at {}", socket_path.display()))?;
 
         tracing::debug!("Connected to daemon");
         let framed = Framed::new(stream, LengthDelimitedCodec::new());
@@ -60,7 +60,7 @@ impl DaemonClient {
     pub fn connect_sync() -> Result<Self> {
         let socket_path = default_socket_path();
         let stream = SyncUnixStream::connect(&socket_path)
-            .with_context(|| format!("Failed to connect to daemon at {socket_path:?}"))?;
+            .with_context(|| format!("Failed to connect to daemon at {}", socket_path.display()))?;
 
         Ok(Self {
             framed: None,

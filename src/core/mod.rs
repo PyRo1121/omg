@@ -6,6 +6,7 @@ pub mod completion;
 mod database;
 pub mod env;
 mod error;
+pub mod history;
 pub mod privilege;
 pub mod security;
 pub mod task_runner;

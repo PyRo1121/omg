@@ -57,6 +57,7 @@ pub fn version(ver: &str) -> String {
 }
 
 #[must_use]
+#[allow(clippy::literal_string_with_formatting_args)]
 pub fn spinner(msg: &str) -> ProgressBar {
     let pb = ProgressBar::new_spinner();
     pb.set_style(

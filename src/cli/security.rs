@@ -9,9 +9,7 @@ pub async fn audit() -> Result<()> {
         "OMG".cyan().bold()
     );
 
-    let mut client = if let Ok(c) = DaemonClient::connect().await {
-        c
-    } else {
+    let Ok(mut client) = DaemonClient::connect().await else {
         println!(
             "{} Daemon not running. Security audit requires the daemon.",
             "✗".red()

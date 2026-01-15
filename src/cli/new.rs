@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use std::fmt::Write as _;
 use std::path::Path;
 use std::process::Command;
 
@@ -275,25 +276,25 @@ fn lock_runtimes(target_dir: &Path, stack: &str) -> Result<()> {
     match stack.to_lowercase().as_str() {
         "react" | "node" | "ts" => {
             if let Some(v) = get_ver("node", &["--version"]) {
-                content.push_str(&format!("node {v}\n"));
+                let _ = writeln!(content, "node {v}");
                 println!("  {} Locked node to {}", style::success("✓"), v);
             }
         }
         "python" => {
             if let Some(v) = get_ver("python", &["--version"]) {
-                content.push_str(&format!("python {v}\n"));
+                let _ = writeln!(content, "python {v}");
                 println!("  {} Locked python to {}", style::success("✓"), v);
             }
         }
         "go" => {
             if let Some(v) = get_ver("go", &["version"]) {
-                content.push_str(&format!("go {v}\n"));
+                let _ = writeln!(content, "go {v}");
                 println!("  {} Locked go to {}", style::success("✓"), v);
             }
         }
         "rust" => {
             if let Some(v) = get_ver("rustc", &["--version"]) {
-                content.push_str(&format!("rust {v}\n"));
+                let _ = writeln!(content, "rust {v}");
                 println!("  {} Locked rust to {}", style::success("✓"), v);
             }
         }

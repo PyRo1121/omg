@@ -31,7 +31,7 @@ impl PkgBuild {
     /// Parse a PKGBUILD file
     pub fn parse(path: &Path) -> Result<Self> {
         let content = fs::read_to_string(path)
-            .with_context(|| format!("Failed to read PKGBUILD at {path:?}"))?;
+            .with_context(|| format!("Failed to read PKGBUILD at {}", path.display()))?;
 
         Self::parse_content(&content)
     }
@@ -115,9 +115,21 @@ impl PkgBuild {
 }
 
 fn parse_array(val: &str) -> Vec<String> {
-    let trimmed = val.trim_matches('(').trim_matches(')');
+    let cleaned = val
+        .lines()
+        .map(|line| line.split('#').next().unwrap_or("") )
+        .collect::<Vec<_>>()
+        .join(" ");
+    let trimmed = cleaned.trim_matches('(').trim_matches(')');
     trimmed
         .split_whitespace()
-        .map(|s| s.trim_matches('"').trim_matches('\'').to_string())
+        .filter_map(|s| {
+            let token = s.trim_matches('"').trim_matches('\'');
+            if token.is_empty() {
+                None
+            } else {
+                Some(token.to_string())
+            }
+        })
         .collect()
 }

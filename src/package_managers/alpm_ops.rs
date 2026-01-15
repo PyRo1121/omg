@@ -280,6 +280,7 @@ pub fn display_pkg_info(info: &PackageInfo) {
 }
 
 /// Execute a libalpm transaction (install/remove/sysupgrade)
+#[allow(clippy::literal_string_with_formatting_args)]
 pub fn execute_transaction(packages: Vec<String>, remove: bool, sysupgrade: bool) -> Result<()> {
     use alpm::{SigLevel, TransFlag};
     use indicatif::{ProgressBar, ProgressStyle};

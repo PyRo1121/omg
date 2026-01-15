@@ -25,7 +25,8 @@ pub use official::{
     is_installed, list_explicit, list_orphans, remove_orphans, OfficialPackageManager,
 };
 pub use pacman_db::{
-    check_updates_cached, get_potential_aur_packages, invalidate_caches, preload_caches,
+    check_updates_cached, get_local_package, get_potential_aur_packages, invalidate_caches,
+    preload_caches,
 };
 pub use parallel_sync::{
     download_packages_parallel, select_fastest_mirrors, sync_databases_parallel, DownloadJob,

@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use console::user_attended;
 use dialoguer::{theme::ColorfulTheme, Select};
 use std::fs;
 use std::os::unix::fs::symlink;
@@ -63,6 +64,11 @@ pub async fn install(name: &str) -> Result<()> {
     }
 
     // 2. Interactive Fallback
+    if !user_attended() {
+        anyhow::bail!(
+            "Tool '{name}' not in registry. Re-run in an interactive shell to choose a source."
+        );
+    }
     let choices = vec![
         "Pacman (System)",
         "Cargo (Isolated)",

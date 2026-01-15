@@ -2,8 +2,10 @@
 //!
 //! Uses direct libalpm access for 10-100x faster queries.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::process::{Command, Stdio};
+
+use crate::package_managers::PackageManager;
 
 use crate::cli::style;
 use crate::package_managers::get_system_status;
@@ -295,5 +297,148 @@ pub fn config(key: Option<&str>, value: Option<&str>) -> Result<()> {
             );
         }
     }
+    Ok(())
+}
+
+pub fn history(limit: usize) -> Result<()> {
+    let history_mgr = crate::core::history::HistoryManager::new()?;
+    let entries = history_mgr.load()?;
+
+    println!(
+        "{} Transaction History (last {})\n",
+        style::header("OMG"),
+        limit
+    );
+
+    if entries.is_empty() {
+        println!("  {}", style::dim("No transactions recorded yet"));
+        return Ok(());
+    }
+
+    for entry in entries.iter().rev().take(limit) {
+        let timestamp = entry.timestamp.with_timezone(&chrono::Local);
+        let status = if entry.success {
+            style::success("✓")
+        } else {
+            style::error("✗")
+        };
+
+        println!(
+            "{} {} [{}] - {} {}",
+            status,
+            style::dim(&timestamp.format("%Y-%m-%d %H:%M:%S").to_string()),
+            style::info(&entry.id[..8]),
+            style::warning(&format!("{:?}", entry.transaction_type)),
+            style::dim(&format!("({} changes)", entry.changes.len()))
+        );
+
+        for change in &entry.changes {
+            println!(
+                "    {} {} {} → {}",
+                style::arrow("→"),
+                style::package(&change.name),
+                style::dim(change.old_version.as_deref().unwrap_or("None")),
+                style::version(change.new_version.as_deref().unwrap_or("None"))
+            );
+        }
+        println!();
+    }
+
+    Ok(())
+}
+
+pub async fn rollback(id: Option<String>) -> Result<()> {
+    let history_mgr = crate::core::history::HistoryManager::new()?;
+    let entries = history_mgr.load()?;
+
+    let target = if let Some(target_id) = id {
+        entries
+            .iter()
+            .find(|e| e.id.starts_with(&target_id))
+            .context("Transaction ID not found")?
+    } else {
+        // Interactive selection
+        if entries.is_empty() {
+            anyhow::bail!("No history entries available for rollback");
+        }
+
+        println!(
+            "{} Select a transaction to roll back to:\n",
+            style::header("OMG")
+        );
+        let options: Vec<String> = entries
+            .iter()
+            .rev()
+            .take(10)
+            .map(|e| {
+                format!(
+                    "{} [{}] - {:?} ({} changes)",
+                    e.timestamp
+                        .with_timezone(&chrono::Local)
+                        .format("%Y-%m-%d %H:%M"),
+                    &e.id[..8],
+                    e.transaction_type,
+                    e.changes.len()
+                )
+            })
+            .collect();
+
+        use dialoguer::{theme::ColorfulTheme, Select};
+        let selection = Select::with_theme(&ColorfulTheme::default())
+            .items(&options)
+            .default(0)
+            .interact()?;
+
+        &entries[entries.len() - 1 - selection]
+    };
+
+    println!(
+        "\n{} Rolling back to state from {} [{}]",
+        style::warning("⚠"),
+        target
+            .timestamp
+            .with_timezone(&chrono::Local)
+            .format("%Y-%m-%d %H:%M:%S"),
+        style::info(&target.id[..8])
+    );
+
+    println!(
+        "{}\n",
+        style::dim("Note: Full rollback logic is coming in Phase 16.2. Currently, only official packages are supported via downgrade.")
+    );
+
+    use dialoguer::{theme::ColorfulTheme, Confirm};
+    if !Confirm::with_theme(&ColorfulTheme::default())
+        .with_prompt("Proceed with rollback?")
+        .default(false)
+        .interact()?
+    {
+        return Ok(());
+    }
+
+    // Skeleton for rollback logic
+    // 1. Identify packages that were changed
+    // 2. For each package, try to install the 'old_version'
+    let mut to_install = Vec::new();
+    for change in &target.changes {
+        if let Some(old_ver) = &change.old_version {
+            if change.source == "official" {
+                to_install.push(format!("{}={}", change.name, old_ver));
+            }
+        }
+    }
+
+    if to_install.is_empty() {
+        println!(
+            "{}",
+            style::success(
+                "Nothing to roll back (already at target state or no versions recorded)"
+            )
+        );
+    } else {
+        let pacman = crate::package_managers::OfficialPackageManager::new();
+        pacman.install(&to_install).await?;
+    }
+
     Ok(())
 }

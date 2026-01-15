@@ -1,29 +1,40 @@
 //! AUR (Arch User Repository) client with build support
 
+use std::fs::File;
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
+
 use anyhow::{Context, Result};
 use colored::Colorize;
+use futures::StreamExt;
 use git2::Repository;
 use indicatif::{ProgressBar, ProgressStyle};
 use serde::Deserialize;
-use std::path::{Path, PathBuf};
+use sha2::{Digest, Sha256};
+use tokio::process::Command;
+use tracing::instrument;
 
 use super::pkgbuild::PkgBuild;
-use crate::core::security::pgp::PgpVerifier;
-use crate::core::{archive, Package, PackageSource};
-use crate::package_managers::traits::PackageManager;
+use crate::config::Settings;
+use crate::core::{Package, PackageSource};
 use crate::package_managers::{get_potential_aur_packages, pacman_db};
-use futures::StreamExt;
-use sha2::{Digest, Sha256};
-use std::process::Stdio;
-use tokio::process::Command;
 
 const AUR_RPC_URL: &str = "https://aur.archlinux.org/rpc";
 const AUR_GIT_URL: &str = "https://aur.archlinux.org";
 
 /// AUR API client with build support
+#[derive(Clone)]
 pub struct AurClient {
     client: reqwest::Client,
     build_dir: PathBuf,
+    settings: Settings,
+}
+
+struct MakepkgEnv {
+    makeflags: String,
+    pkgdest: PathBuf,
+    srcdest: PathBuf,
+    extra_env: Vec<(String, String)>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -51,19 +62,22 @@ struct AurPackage {
 
 impl AurClient {
     pub fn new() -> Self {
-        let build_dir = std::env::var("XDG_CACHE_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| {
+        let settings = Settings::load().unwrap_or_default();
+        let build_dir = std::env::var("XDG_CACHE_HOME").map_or_else(
+            |_| {
                 home::home_dir()
                     .unwrap_or_else(|| PathBuf::from("."))
                     .join(".cache")
-            })
+            },
+            PathBuf::from,
+        )
             .join("omg")
             .join("aur");
 
         Self {
             client: reqwest::Client::new(),
             build_dir,
+            settings,
         }
     }
 
@@ -109,6 +123,7 @@ impl AurClient {
     /// Get list of upgradable AUR packages
     /// Uses pure Rust cache (<1ms) to identify local AUR packages,
     /// and parallel RPC calls to check for updates.
+    #[instrument(skip(self))]
     pub async fn get_update_list(&self) -> Result<Vec<(String, String, String)>> {
         // 1. Identify potential AUR packages using pure Rust cache (Fast-path)
         let potential_aur_names = get_potential_aur_packages()?;
@@ -196,78 +211,35 @@ impl AurClient {
             pkgbuild.version
         );
 
-        // Fetch sources
-        println!("{} Fetching sources...", "→".blue());
-        self.fetch_sources(&pkgbuild, &pkg_dir).await?;
+        let env = self.makepkg_env(&pkg_dir)?;
+        let cache_key = self.cache_key(&pkg_dir, &env.makeflags)?;
 
-        // ZERO-TRUST: PGP Source Verification
-        if !pkgbuild.validpgpkeys.is_empty() {
-            println!("{} Verifying PGP source signatures...", "→".blue());
-            let verifier = PgpVerifier::new();
-            // In a real AUR helper, we'd import keys from keyservers if missing
-            // For now, we check against local keys if available
-            for source in &pkgbuild.sources {
-                if let Some(sig_file) = source
-                    .split("::")
-                    .next()
-                    .unwrap_or(source)
-                    .split('/')
-                    .next_back()
-                {
-                    if sig_file.ends_with(".sig") || sig_file.ends_with(".asc") {
-                        let data_file = sig_file.trim_end_matches(".sig").trim_end_matches(".asc");
-                        let data_path = pkg_dir.join(data_file);
-                        let sig_path = pkg_dir.join(sig_file);
+        let pkg_file = if let Some(cached) =
+            self.cached_package(package, &env.pkgdest, &cache_key)?
+        {
+            println!("{} Using cached build...", "→".blue());
+            cached
+        } else {
+            // Build with makepkg (sandboxed if bubblewrap is available)
+            let status = self
+                .run_sandboxed_makepkg(&pkg_dir, &env)
+                .await
+                .with_context(|| format!("Failed to run makepkg for '{package}'"))?;
 
-                        if data_path.exists() && sig_path.exists() {
-                            println!("  {} Verifying {}...", "→".dimmed(), data_file);
-                            // Note: verify_package default to arch keyring.
-                            // For AUR, we'd need a more flexible way to specify the keyring.
-                            // I'll add a verify_aur method or similar.
-                            if let Err(e) = verifier.verify_detached(
-                                &data_path,
-                                &sig_path,
-                                std::path::Path::new("/usr/share/pacman/keyrings/archlinux.gpg"),
-                            ) {
-                                println!(
-                                    "  {} PGP check failed for {}: {}",
-                                    "✗".red(),
-                                    data_file,
-                                    e
-                                );
-                                // Optional breakdown if strict mode is on
-                            } else {
-                                println!("  {} {} verified", "✓".green(), data_file);
-                            }
-                        }
-                    }
-                }
+            if !status.success() {
+                anyhow::bail!(
+                    "makepkg failed for '{package}'. Check build output above for details."
+                );
             }
-        }
 
-        // Verify checksums
-        println!("{} Verifying checksums...", "→".blue());
-        self.verify_checksums(&pkgbuild, &pkg_dir)?;
-
-        // Extract sources
-        println!("{} Extracting sources (native)...", "→".blue());
-        self.extract_sources(&pkgbuild, &pkg_dir)?;
-
-        // Check/Install dependencies
-        println!("{} Checking dependencies...", "→".blue());
-        self.check_dependencies(&pkgbuild).await?;
-
-        // Build the package
-        println!("{} Executing build scripts (minimal sh)...", "→".blue());
-        self.execute_build(&pkg_dir).await?;
-
-        // Finalize package archive (Pure Rust)
-        println!("{} Creating package archive (native)...", "→".blue());
-        let pkg_file = self.create_package_archive(&pkgbuild, &pkg_dir).await?;
+            let pkg_file = self.find_built_package(&pkg_dir, &env.pkgdest)?;
+            self.write_cache_key(package, &cache_key)?;
+            pkg_file
+        };
 
         // Install the built package
         println!("{} Installing built package...", "→".blue());
-        self.install_built_package(&pkgbuild, &pkg_file).await?;
+        self.install_built_package(&pkg_file).await?;
 
         println!("\n{} {} installed successfully!", "✓".green(), package);
 
@@ -277,6 +249,7 @@ impl AurClient {
     /// Build an AUR package and return the path to the built package (no install)
     /// This is used for batch updates where we want to install all packages at once
     /// Uses makepkg for reliable builds that match yay/paru behavior
+    #[instrument(skip(self))]
     pub async fn build_only(&self, package: &str) -> Result<PathBuf> {
         // Ensure build directory exists
         std::fs::create_dir_all(&self.build_dir)?;
@@ -309,20 +282,16 @@ impl AurClient {
             );
         }
 
-        // Use makepkg for the full build - this is the reliable approach
-        // makepkg handles: source fetching, checksum verification, extraction,
-        // dependency resolution, build(), package(), and archive creation
-        let status = Command::new("makepkg")
-            .args([
-                "-s",          // Sync dependencies before building
-                "--noconfirm", // Don't ask for confirmation
-                "-f",          // Force rebuild even if package exists
-                "--needed",    // Skip if already installed (for deps)
-            ])
-            .current_dir(&pkg_dir)
-            .stdout(Stdio::inherit()) // Show build output
-            .stderr(Stdio::inherit())
-            .status()
+        let env = self.makepkg_env(&pkg_dir)?;
+        let cache_key = self.cache_key(&pkg_dir, &env.makeflags)?;
+
+        if let Some(cached) = self.cached_package(package, &env.pkgdest, &cache_key)? {
+            return Ok(cached);
+        }
+
+        // Use sandboxed build with bubblewrap if available, fallback to regular makepkg
+        let status = self
+            .run_sandboxed_makepkg(&pkg_dir, &env)
             .await
             .with_context(|| format!("Failed to run makepkg for '{package}'"))?;
 
@@ -330,22 +299,27 @@ impl AurClient {
             anyhow::bail!("makepkg failed for '{package}'. Check build output above for details.");
         }
 
-        // Find the created package archive
-        let mut pkg_path = None;
-        for entry in std::fs::read_dir(&pkg_dir)? {
-            let entry = entry?;
+        let pkg_file = self.find_built_package(&pkg_dir, &env.pkgdest)?;
+        self.write_cache_key(package, &cache_key)?;
+        Ok(pkg_file)
+    }
+
+    fn find_built_package(&self, pkg_dir: &Path, pkgdest: &Path) -> Result<PathBuf> {
+        let pkg_path = Self::find_package_in_dir(pkgdest)
+            .or_else(|| Self::find_package_in_dir(pkg_dir));
+
+        pkg_path.ok_or_else(|| anyhow::anyhow!("No package archive found after makepkg"))
+    }
+
+    fn find_package_in_dir(path: &Path) -> Option<PathBuf> {
+        let entries = std::fs::read_dir(path).ok()?;
+        for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
             if name.ends_with(".pkg.tar.zst") || name.ends_with(".pkg.tar.xz") {
-                pkg_path = Some(entry.path());
-                break;
+                return Some(entry.path());
             }
         }
-
-        pkg_path.ok_or_else(|| {
-            anyhow::anyhow!(
-                "No package archive found after building '{package}'. Check makepkg output."
-            )
-        })
+        None
     }
 
     /// Clone package from AUR
@@ -409,262 +383,300 @@ impl AurClient {
         Ok(())
     }
 
-    /// Fetch sources defined in PKGBUILD
-    async fn fetch_sources(&self, pkg: &PkgBuild, pkg_dir: &Path) -> Result<()> {
-        for source in &pkg.sources {
-            // Very basic source parsing - just handle URLs for now
-            if source.contains("://") {
-                let url = source.split("::").last().unwrap_or(source);
-                let filename = source
-                    .split("::")
-                    .next()
-                    .unwrap_or(url)
-                    .split('/')
-                    .next_back()
-                    .unwrap_or("source");
-                let dest = pkg_dir.join(filename);
+    /// Run makepkg with bubblewrap sandboxing if available
+    /// Falls back to regular makepkg if bwrap is not installed
+    async fn run_sandboxed_makepkg(
+        &self,
+        pkg_dir: &Path,
+        env: &MakepkgEnv,
+    ) -> Result<std::process::ExitStatus> {
+        let package_name = pkg_dir
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("package");
+        let log_dir = self.build_dir.join("_logs");
+        std::fs::create_dir_all(&log_dir)?;
+        let log_path = log_dir.join(format!("{package_name}.log"));
+        let log_file = File::create(&log_path)?;
+        let log_file_err = log_file.try_clone()?;
 
-                if dest.exists() {
-                    println!("{} Source already exists: {}", "→".dimmed(), filename);
-                    continue;
-                }
+        let spinner = create_spinner(&format!("Building {package_name}..."));
 
-                println!("{} Downloading {}...", "→".blue(), filename);
-                let response = self.client.get(url).send().await?;
-                let content = response.bytes().await?;
-                std::fs::write(&dest, content)?;
-            }
-        }
-        Ok(())
-    }
-
-    /// Verify checksums
-    fn verify_checksums(&self, pkg: &PkgBuild, pkg_dir: &Path) -> Result<()> {
-        if pkg.sha256sums.is_empty() {
-            println!(
-                "{} No sha256sums found, skipping verification",
-                "⚠".yellow()
-            );
-            return Ok(());
-        }
-
-        for (i, source) in pkg.sources.iter().enumerate() {
-            let filename = source
-                .split("::")
-                .next()
-                .unwrap_or(source)
-                .split('/')
-                .next_back()
-                .unwrap_or("");
-            if filename.is_empty() {
-                continue;
-            }
-
-            let path = pkg_dir.join(filename);
-            if !path.exists() {
-                continue;
-            }
-
-            if let Some(expected_sum) = pkg.sha256sums.get(i) {
-                if expected_sum == "SKIP" {
-                    continue;
-                }
-
-                let mut hasher = Sha256::new();
-                let content = std::fs::read(&path)?;
-                hasher.update(content);
-                let actual_sum = format!("{:x}", hasher.finalize());
-
-                if &actual_sum != expected_sum {
-                    anyhow::bail!(
-                        "✗ Security Error: Checksum verification failed for {filename}.\n  Expected: {expected_sum}\n  Actual: {actual_sum}\n  The source file may have been modified or corrupted."
-                    );
-                }
-                println!("{} {} verified", "✓".green(), filename);
-            }
-        }
-        Ok(())
-    }
-
-    /// Extract fetched sources into the src subdirectory
-    fn extract_sources(&self, pkg: &PkgBuild, pkg_dir: &Path) -> Result<()> {
-        let srcdir = pkg_dir.join("src");
-        std::fs::create_dir_all(&srcdir)?;
-
-        for source in &pkg.sources {
-            let filename = source
-                .split("::")
-                .next()
-                .unwrap_or(source)
-                .split('/')
-                .next_back()
-                .unwrap_or("");
-            if filename.is_empty() {
-                continue;
-            }
-
-            let path = pkg_dir.join(filename);
-            if !path.exists() {
-                continue;
-            }
-
-            // Extract supported formats into srcdir
-            if filename.ends_with(".tar.gz")
-                || filename.ends_with(".tgz")
-                || filename.ends_with(".tar.xz")
-                || filename.ends_with(".tar.zst")
-                || filename.ends_with(".zip")
-            {
-                archive::extract_auto(&path, &srcdir)?;
-                println!("{} Extracted {} to src/", "✓".green(), filename);
-            } else if filename.ends_with(".deb") {
-                // .deb files are ar archives containing data.tar.* - extract to pkg_dir (not srcdir)
-                // The PKGBUILD's prepare() function handles extraction via tar command
-                // Just copy the .deb to srcdir so prepare() can find it
-                let dest = srcdir.join(filename);
-                if !dest.exists() {
-                    std::fs::copy(&path, &dest)?;
-                }
-                println!("{} Copied {} to src/", "✓".green(), filename);
-            }
-        }
-        Ok(())
-    }
-
-    /// Check and install dependencies via libalpm
-    async fn check_dependencies(&self, pkg: &PkgBuild) -> Result<()> {
-        let mut missing = Vec::new();
-
-        // Combine depends and makedepends
-        let mut all_deps = pkg.depends.clone();
-        all_deps.extend(pkg.makedepends.clone());
-
-        if all_deps.is_empty() {
-            return Ok(());
-        }
-
-        let alpm = alpm::Alpm::new("/", "/var/lib/pacman")?;
-        let local_db = alpm.localdb();
-
-        for dep in all_deps {
-            // Very simple check - doesn't handle versions in depends yet
-            let dep_name = dep.split(['>', '<', '=']).next().unwrap_or(&dep);
-            if local_db.pkg(dep_name).is_err() {
-                missing.push(dep);
-            }
-        }
-
-        if !missing.is_empty() {
-            println!(
-                "{} Installing {} missing dependencies...",
-                "→".blue(),
-                missing.len()
-            );
-            // Use ArchPackageManager to install missing dependencies
-            let arch = crate::package_managers::OfficialPackageManager::new();
-            arch.install(&missing).await?;
-        }
-
-        Ok(())
-    }
-
-    /// Execute build scripts in a minimal shell
-    async fn execute_build(&self, pkg_dir: &PathBuf) -> Result<()> {
-        if crate::core::is_root() {
-            println!(
-                "{} WARNING: Running makepkg as root is not recommended.",
-                "⚠".yellow()
-            );
-        }
-
-        let spinner = create_spinner("Executing PKGBUILD functions...");
-
-        // Setup build environment directories
-        let startdir = pkg_dir.canonicalize().unwrap_or_else(|_| pkg_dir.clone());
-        let srcdir = startdir.join("src");
-        let pkgdir = startdir.join("pkg");
-
-        // Create required directories
-        std::fs::create_dir_all(&srcdir)?;
-        std::fs::create_dir_all(&pkgdir)?;
-
-        // We run a minimal sh to source the PKGBUILD and run functions.
-        // CRITICAL: We must set pkgname, pkgver, srcdir, pkgdir as shell variables
-        // BEFORE sourcing PKGBUILD so that functions like build() and package()
-        // can use relative paths correctly.
-        let build_script = format!(
-            r#"export startdir="{startdir}" srcdir="{srcdir}" pkgdir="{pkgdir}"
-cd "$srcdir"
-source ../PKGBUILD
-(type prepare >/dev/null 2>&1 && prepare)
-(type build >/dev/null 2>&1 && build)
-(type package >/dev/null 2>&1 && package)"#,
-            startdir = startdir.display(),
-            srcdir = srcdir.display(),
-            pkgdir = pkgdir.display()
-        );
-
-        let status = Command::new("bash")
-            .arg("-c")
-            .arg(&build_script)
-            .current_dir(pkg_dir)
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .status()
-            .await?;
-
-        spinner.finish_and_clear();
-
-        if !status.success() {
-            anyhow::bail!("Build script execution failed");
-        }
-
-        Ok(())
-    }
-
-    /// Create .pkg.tar.zst archive using makepkg
-    async fn create_package_archive(&self, _pkg: &PkgBuild, pkg_dir: &PathBuf) -> Result<PathBuf> {
-        let pkg_root = pkg_dir.join("pkg");
-        if !pkg_root.exists() || pkg_root.read_dir()?.next().is_none() {
-            anyhow::bail!("Package root not found or empty at {pkg_root:?}");
-        }
-
-        let spinner = create_spinner("Creating package archive...");
-
-        // Use makepkg --repackage to create a valid package with proper metadata
-        // This is the ONLY reliable way to create pacman-compatible packages
-        let status = Command::new("makepkg")
-            .arg("--repackage")
-            .arg("--force")
-            .arg("--noconfirm")
-            .current_dir(pkg_dir)
+        // Check if bubblewrap is available
+        let bwrap_available = Command::new("which")
+            .arg("bwrap")
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status()
-            .await?;
+            .await
+            .map(|s| s.success())
+            .unwrap_or(false);
 
-        spinner.finish_and_clear();
+        if bwrap_available {
+            tracing::info!("Using bubblewrap sandbox for secure AUR build");
+            println!("{} Building in sandbox (bubblewrap)...", "🔒".green());
 
-        if !status.success() {
-            anyhow::bail!("makepkg --repackage failed");
-        }
+            // Sandboxed build with bubblewrap
+            // - Read-only bind: /usr, /etc, /lib, /lib64
+            // - Writable: Build directory, /tmp
+            // - Minimal device access
+            let pkg_dir_str = pkg_dir.to_str().unwrap();
+            let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
 
-        // Find the created package
-        let mut pkg_path = None;
-        for entry in std::fs::read_dir(pkg_dir)? {
-            let entry = entry?;
-            let name = entry.file_name().to_string_lossy().to_string();
-            if name.ends_with(".pkg.tar.zst") || name.ends_with(".pkg.tar.xz") {
-                pkg_path = Some(entry.path());
-                break;
+            let pkgdest_str = env.pkgdest.to_string_lossy().to_string();
+            let srcdest_str = env.srcdest.to_string_lossy().to_string();
+
+            let mut args = vec![
+                "--ro-bind".to_string(),
+                "/usr".to_string(),
+                "/usr".to_string(),
+                "--ro-bind".to_string(),
+                "/etc".to_string(),
+                "/etc".to_string(),
+                "--ro-bind".to_string(),
+                "/lib".to_string(),
+                "/lib".to_string(),
+                "--ro-bind".to_string(),
+                "/lib64".to_string(),
+                "/lib64".to_string(),
+                "--symlink".to_string(),
+                "/usr/bin".to_string(),
+                "/bin".to_string(),
+                "--symlink".to_string(),
+                "/usr/sbin".to_string(),
+                "/sbin".to_string(),
+                "--bind".to_string(),
+                pkg_dir_str.to_string(),
+                pkg_dir_str.to_string(),
+                "--bind".to_string(),
+                pkgdest_str.clone(),
+                pkgdest_str.clone(),
+                "--bind".to_string(),
+                srcdest_str.clone(),
+                srcdest_str.clone(),
+                "--tmpfs".to_string(),
+                "/tmp".to_string(),
+                "--dev".to_string(),
+                "/dev".to_string(),
+                "--proc".to_string(),
+                "/proc".to_string(),
+                "--ro-bind".to_string(),
+                home.clone(),
+                home,
+                "--ro-bind".to_string(),
+                "/var/lib/pacman".to_string(),
+                "/var/lib/pacman".to_string(),
+                "--ro-bind".to_string(),
+                "/var/cache/pacman".to_string(),
+                "/var/cache/pacman".to_string(),
+                "--die-with-parent".to_string(),
+                "--chdir".to_string(),
+                pkg_dir_str.to_string(),
+                "--setenv".to_string(),
+                "MAKEFLAGS".to_string(),
+                env.makeflags.clone(),
+                "--setenv".to_string(),
+                "PKGDEST".to_string(),
+                pkgdest_str,
+                "--setenv".to_string(),
+                "SRCDEST".to_string(),
+                srcdest_str,
+            ];
+
+            for (key, value) in &env.extra_env {
+                args.push("--setenv".to_string());
+                args.push(key.clone());
+                args.push(value.clone());
             }
+
+            args.extend([
+                "--".to_string(),
+                "makepkg".to_string(),
+                "-s".to_string(),
+                "--noconfirm".to_string(),
+                "-f".to_string(),
+                "--needed".to_string(),
+            ]);
+
+            let status = Command::new("bwrap")
+                .args(args)
+                .stdout(Stdio::from(log_file))
+                .stderr(Stdio::from(log_file_err))
+                .status()
+                .await
+                .context("Failed to run sandboxed makepkg")?;
+
+            spinner.finish_and_clear();
+            if !status.success() {
+                println!(
+                    "  {} Build failed. Log: {}",
+                    "✗".red(),
+                    log_path.display()
+                );
+            }
+            Ok(status)
+        } else {
+            tracing::debug!("bubblewrap not found, using regular makepkg");
+            println!(
+                "{} Building (install 'bubblewrap' for sandboxed builds)...",
+                "→".dimmed()
+            );
+
+            let mut cmd = Command::new("makepkg");
+            cmd.args(["-s", "--noconfirm", "-f", "--needed"])
+                .env("MAKEFLAGS", &env.makeflags)
+                .env("PKGDEST", &env.pkgdest)
+                .env("SRCDEST", &env.srcdest);
+
+            for (key, value) in &env.extra_env {
+                cmd.env(key, value);
+            }
+
+            let status = cmd
+                .current_dir(pkg_dir)
+                .stdout(Stdio::from(log_file))
+                .stderr(Stdio::from(log_file_err))
+                .status()
+                .await
+                .context("Failed to run makepkg")?;
+
+            spinner.finish_and_clear();
+            if !status.success() {
+                println!(
+                    "  {} Build failed. Log: {}",
+                    "✗".red(),
+                    log_path.display()
+                );
+            }
+            Ok(status)
+        }
+    }
+
+    fn makepkg_env(&self, pkg_dir: &Path) -> Result<MakepkgEnv> {
+        let jobs = std::thread::available_parallelism()
+            .map(|v| v.get())
+            .unwrap_or(1);
+        let makeflags = self
+            .settings
+            .aur
+            .makeflags
+            .clone()
+            .or_else(|| std::env::var("MAKEFLAGS").ok())
+            .unwrap_or_else(|| if jobs > 1 { format!("-j{jobs}") } else { String::new() });
+
+        let pkgdest = self
+            .settings
+            .aur
+            .pkgdest
+            .clone()
+            .unwrap_or_else(|| self.build_dir.join("_pkgdest"));
+        let srcdest = self
+            .settings
+            .aur
+            .srcdest
+            .clone()
+            .unwrap_or_else(|| self.build_dir.join("_srcdest"));
+
+        std::fs::create_dir_all(&pkgdest)?;
+        std::fs::create_dir_all(&srcdest)?;
+
+        let mut extra_env = Vec::new();
+
+        if self.settings.aur.enable_ccache {
+            let ccache_dir = self
+                .settings
+                .aur
+                .ccache_dir
+                .clone()
+                .unwrap_or_else(|| self.build_dir.join("_ccache"));
+            std::fs::create_dir_all(&ccache_dir)?;
+            extra_env.push((
+                "CCACHE_DIR".to_string(),
+                ccache_dir.to_string_lossy().to_string(),
+            ));
+            extra_env.push((
+                "CCACHE_BASEDIR".to_string(),
+                pkg_dir.to_string_lossy().to_string(),
+            ));
         }
 
-        pkg_path.ok_or_else(|| anyhow::anyhow!("No package archive found after makepkg"))
+        if self.settings.aur.enable_sccache {
+            let sccache_dir = self
+                .settings
+                .aur
+                .sccache_dir
+                .clone()
+                .unwrap_or_else(|| self.build_dir.join("_sccache"));
+            std::fs::create_dir_all(&sccache_dir)?;
+            extra_env.push(("RUSTC_WRAPPER".to_string(), "sccache".to_string()));
+            extra_env.push((
+                "SCCACHE_DIR".to_string(),
+                sccache_dir.to_string_lossy().to_string(),
+            ));
+        }
+
+        Ok(MakepkgEnv {
+            makeflags,
+            pkgdest,
+            srcdest,
+            extra_env,
+        })
+    }
+
+    fn cache_key(&self, pkg_dir: &Path, makeflags: &str) -> Result<String> {
+        let pkgbuild = std::fs::read(pkg_dir.join("PKGBUILD"))?;
+        let srcinfo = std::fs::read(pkg_dir.join(".SRCINFO")).unwrap_or_default();
+        let mut hasher = Sha256::new();
+        hasher.update(pkgbuild);
+        hasher.update(srcinfo);
+        hasher.update(makeflags.as_bytes());
+        Ok(format!("{:x}", hasher.finalize()))
+    }
+
+    fn cache_path(&self, package: &str) -> PathBuf {
+        self.build_dir
+            .join("_buildcache")
+            .join(format!("{package}.hash"))
+    }
+
+    fn cached_package(
+        &self,
+        package: &str,
+        pkgdest: &Path,
+        cache_key: &str,
+    ) -> Result<Option<PathBuf>> {
+        if !self.settings.aur.cache_builds {
+            return Ok(None);
+        }
+
+        let cache_path = self.cache_path(package);
+        if !cache_path.exists() {
+            return Ok(None);
+        }
+
+        let cached = std::fs::read_to_string(&cache_path).unwrap_or_default();
+        if cached.trim() != cache_key {
+            return Ok(None);
+        }
+
+        Ok(Self::find_package_in_dir(pkgdest))
+    }
+
+    fn write_cache_key(&self, package: &str, cache_key: &str) -> Result<()> {
+        if !self.settings.aur.cache_builds {
+            return Ok(());
+        }
+
+        let cache_path = self.cache_path(package);
+        if let Some(parent) = cache_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(cache_path, cache_key)?;
+        Ok(())
     }
 
     /// Install the built package via sudo omg install <path>
-    async fn install_built_package(&self, _pkg: &PkgBuild, pkg_path: &PathBuf) -> Result<()> {
+    async fn install_built_package(&self, pkg_path: &PathBuf) -> Result<()> {
         println!(
             "{} Installing built package (elevating with sudo)...",
             "→".blue()
@@ -715,6 +727,7 @@ impl Default for AurClient {
 }
 
 /// Create a spinner
+#[allow(clippy::literal_string_with_formatting_args)]
 fn create_spinner(msg: &str) -> ProgressBar {
     let pb = ProgressBar::new_spinner();
     pb.set_style(

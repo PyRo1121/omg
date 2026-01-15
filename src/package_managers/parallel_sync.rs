@@ -53,6 +53,7 @@ fn build_db_url(mirror_template: &str, repo: &str) -> String {
 }
 
 /// Download a single database file with progress and failover
+#[allow(clippy::literal_string_with_formatting_args)]
 async fn download_db(
     client: &Client,
     urls: Vec<String>,
@@ -104,7 +105,6 @@ async fn download_db(
 
         while let Some(chunk) = response.chunk().await? {
             file.write_all(&chunk).await?;
-            pb.inc(chunk.len() as u64);
         }
 
         file.flush().await?;
@@ -126,6 +126,7 @@ async fn download_db(
 /// 1. Downloads all databases simultaneously (parallel I/O)
 /// 2. Uses HTTP/2 connection pooling
 /// 3. Shows real-time progress for each database
+#[allow(clippy::literal_string_with_formatting_args)]
 pub async fn sync_databases_parallel() -> Result<()> {
     let mirrors = get_mirrors()?;
 
@@ -351,22 +352,13 @@ async fn download_package(
 ) -> Result<PathBuf> {
     pb.set_message(job.name.clone());
 
-    if job.size > 0 {
-        pb.set_length(job.size);
-    }
-
     let dest = cache_dir.join(&job.filename);
 
     // Skip if already cached
     if dest.exists() {
         if let Ok(meta) = std::fs::metadata(&dest) {
             if meta.len() == job.size || job.size == 0 {
-                pb.set_style(
-                    ProgressStyle::default_bar()
-                        .template("  {msg:30} [cached]")
-                        .unwrap(),
-                );
-                pb.finish_with_message(format!("{} ✓", job.name));
+                pb.set_message(format!("{} (cached)", job.name));
                 return Ok(dest);
             }
         }
@@ -395,16 +387,7 @@ async fn download_package(
         }
 
         // Got successful response
-        let total_size = response.content_length().unwrap_or(job.size);
-        if total_size > 0 {
-            pb.set_length(total_size);
-            pb.set_style(
-                ProgressStyle::default_bar()
-                    .template("  {msg:30} [{bar:20.cyan/blue}] {bytes:>10}/{total_bytes:<10}")
-                    .unwrap()
-                    .progress_chars("█▓▒░"),
-            );
-        }
+        let _total_size = response.content_length().unwrap_or(job.size);
 
         // Download to temp file
         let temp_path = dest.with_extension("part");
@@ -414,7 +397,6 @@ async fn download_package(
 
         while let Some(chunk) = response.chunk().await? {
             file.write_all(&chunk).await?;
-            pb.inc(chunk.len() as u64);
         }
 
         file.flush().await?;
@@ -422,11 +404,8 @@ async fn download_package(
         // Atomically move to final location
         tokio::fs::rename(&temp_path, &dest).await?;
 
-        pb.finish_with_message(format!("{} ✓", job.name));
         return Ok(dest);
     }
-
-    pb.finish_with_message(format!("{} ✗", job.name));
     Err(last_error.unwrap_or_else(|| anyhow::anyhow!("No mirrors available")))
 }
 
@@ -460,47 +439,26 @@ pub async fn download_packages_parallel(
         .connect_timeout(Duration::from_secs(10))
         .build()?;
 
-    let mp = MultiProgress::new();
-
-    // Calculate total size for main progress bar
-    let total_size: u64 = jobs.iter().map(|j| j.size).sum();
     let total_count = jobs.len();
 
-    let main_pb = mp.add(ProgressBar::new(total_size));
+    let main_pb = ProgressBar::new(total_count as u64);
     main_pb.set_style(
-        ProgressStyle::default_bar()
-            .template("\n  {spinner:.green} Downloading {pos}/{len} packages [{bar:30.cyan/blue}] {bytes}/{total_bytes}")
+        ProgressStyle::default_spinner()
+            .template("\n  {spinner:.green} Downloading {pos}/{len} packages {msg}")
             .unwrap()
-            .progress_chars("█▓▒░"),
+            .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"),
     );
-    main_pb.set_length(total_count as u64);
-
-    // Create progress bars for each package
-    let progress_bars: Vec<ProgressBar> = jobs
-        .iter()
-        .map(|job| {
-            let pb = mp.add(ProgressBar::new(job.size));
-            pb.set_style(
-                ProgressStyle::default_bar()
-                    .template("  {msg:30} [waiting...]")
-                    .unwrap(),
-            );
-            pb.set_message(job.name.clone());
-            pb
-        })
-        .collect();
 
     // Download in parallel with limited concurrency
     let results: Vec<Result<PathBuf>> = stream::iter(jobs.into_iter().enumerate())
-        .map(|(i, job)| {
+        .map(|(_i, job)| {
             let client = client.clone();
             let mirrors = mirrors.clone();
             let cache_dir = cache_dir.clone();
-            let pb = progress_bars[i].clone();
             let main_pb = main_pb.clone();
 
             async move {
-                let result = download_package(&client, job, &mirrors, &cache_dir, &pb).await;
+                let result = download_package(&client, job, &mirrors, &cache_dir, &main_pb).await;
                 main_pb.inc(1);
                 result
             }

@@ -37,12 +37,15 @@ pub async fn run(listener: UnixListener) -> Result<()> {
             }
             *state_worker.runtime_versions.write() = versions.clone();
             if let Ok((total, explicit, orphans, updates)) = get_system_status() {
+                let scanner = crate::core::security::VulnerabilityScanner::new();
+                let vuln_count = scanner.scan_system().await.unwrap_or(0);
+
                 let res = super::protocol::StatusResult {
                     total_packages: total,
                     explicit_packages: explicit,
                     orphan_packages: orphans,
                     updates_available: updates,
-                    security_vulnerabilities: 0,
+                    security_vulnerabilities: vuln_count,
                     runtime_versions: versions,
                 };
                 let _ = state_worker.persistent.set_status(res.clone());
@@ -67,18 +70,24 @@ pub async fn run(listener: UnixListener) -> Result<()> {
                     *state_worker.runtime_versions.write() = versions.clone();
 
                     // 2. Refresh Package Status (ALPM)
-                    if let Ok((total, explicit, orphans, updates)) = get_system_status() {
+                    let status = get_system_status();
+
+                    // 3. Scan for Vulnerabilities (New!)
+                    let scanner = crate::core::security::VulnerabilityScanner::new();
+                    let vuln_count = scanner.scan_system().await.unwrap_or(0);
+
+                    if let Ok((total, explicit, orphans, updates)) = status {
                         let res = super::protocol::StatusResult {
                             total_packages: total,
                             explicit_packages: explicit,
                             orphan_packages: orphans,
                             updates_available: updates,
-                            security_vulnerabilities: 0,
+                            security_vulnerabilities: vuln_count,
                             runtime_versions: versions,
                         };
                         let _ = state_worker.persistent.set_status(res.clone());
                         state_worker.cache.update_status(res);
-                        tracing::debug!("Status cache refreshed");
+                        tracing::debug!("Status cache refreshed (CVEs: {})", vuln_count);
                     }
                 }
                 _ = shutdown_worker.recv() => {

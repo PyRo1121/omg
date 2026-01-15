@@ -15,6 +15,7 @@ use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
+use tracing::instrument;
 
 /// Global cache for sync databases - parsed once, used forever until invalidated
 static SYNC_DB_CACHE: std::sync::LazyLock<RwLock<DbCache>> =
@@ -132,8 +133,10 @@ pub fn parse_sync_db(path: &Path, repo_name: &str) -> Result<HashMap<String, Syn
 
 /// Parse the desc file content into a `SyncDbPackage`
 fn parse_desc_content(content: &str, repo: &str) -> SyncDbPackage {
-    let mut pkg = SyncDbPackage::default();
-    pkg.repo = repo.to_string();
+    let mut pkg = SyncDbPackage {
+        repo: repo.to_string(),
+        ..SyncDbPackage::default()
+    };
 
     let mut current_field: Option<&str> = None;
 
@@ -239,6 +242,7 @@ fn parse_local_desc(path: &Path) -> Result<LocalDbPackage> {
 
 /// ULTRA FAST update check - uses global cache (<5ms after first load!)
 /// Returns Vec of (name, `old_version`, `new_version`, repo, filename, `download_size`)
+#[instrument]
 pub fn check_updates_cached() -> Result<Vec<(String, String, String, String, String, u64)>> {
     let sync_dir = Path::new("/var/lib/pacman/sync");
     let local_dir = Path::new("/var/lib/pacman/local");
@@ -592,18 +596,16 @@ fn compare_version_parts(v1: &str, v2: &str) -> std::cmp::Ordering {
                 // Numeric comparison
                 let n1: u64 = seg1.parse().unwrap_or(0);
                 let n2: u64 = seg2.parse().unwrap_or(0);
-                match n1.cmp(&n2) {
-                    std::cmp::Ordering::Equal => continue,
-                    other => return other,
+                if n1 != n2 {
+                    return n1.cmp(&n2);
                 }
             }
             (true, false) => return std::cmp::Ordering::Greater,
             (false, true) => return std::cmp::Ordering::Less,
             (false, false) => {
                 // String comparison
-                match seg1.cmp(&seg2) {
-                    std::cmp::Ordering::Equal => continue,
-                    other => return other,
+                if seg1 != seg2 {
+                    return seg1.cmp(&seg2);
                 }
             }
         }
@@ -721,15 +723,77 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_version_compare() {
+    fn test_version_compare_basic() {
         assert_eq!(compare_versions("1.0", "1.0"), std::cmp::Ordering::Equal);
         assert_eq!(compare_versions("1.0", "2.0"), std::cmp::Ordering::Less);
         assert_eq!(compare_versions("2.0", "1.0"), std::cmp::Ordering::Greater);
+    }
+
+    #[test]
+    fn test_version_compare_release() {
         assert_eq!(compare_versions("1.0-1", "1.0-2"), std::cmp::Ordering::Less);
+        assert_eq!(
+            compare_versions("1.0-10", "1.0-9"),
+            std::cmp::Ordering::Greater
+        );
+        assert_eq!(
+            compare_versions("1.0-1", "1.0-1"),
+            std::cmp::Ordering::Equal
+        );
+    }
+
+    #[test]
+    fn test_version_compare_epoch() {
         assert_eq!(
             compare_versions("1:1.0", "1.0"),
             std::cmp::Ordering::Greater
         );
+        assert_eq!(compare_versions("1.0", "1:1.0"), std::cmp::Ordering::Less);
+        assert_eq!(
+            compare_versions("2:1.0", "1:2.0"),
+            std::cmp::Ordering::Greater
+        );
+    }
+
+    #[test]
+    fn test_version_compare_complex() {
+        // Real-world examples
+        assert_eq!(
+            compare_versions("2.35.0-1", "2.36.0-1"),
+            std::cmp::Ordering::Less
+        );
+        assert_eq!(
+            compare_versions("125.0.3-1", "126.0-1"),
+            std::cmp::Ordering::Less
+        );
+        assert_eq!(
+            compare_versions("6.12.12.arch1-1", "6.12.13.arch1-1"),
+            std::cmp::Ordering::Less
+        );
+    }
+
+    #[test]
+    fn test_version_compare_alpha_numeric() {
+        assert_eq!(compare_versions("1.0a", "1.0b"), std::cmp::Ordering::Less);
+        assert_eq!(
+            compare_versions("1.0rc1", "1.0rc2"),
+            std::cmp::Ordering::Less
+        );
+        assert_eq!(compare_versions("1.0", "1.0rc1"), std::cmp::Ordering::Less);
+    }
+
+    #[test]
+    fn test_split_epoch() {
+        assert_eq!(split_epoch("1.0"), (0, "1.0"));
+        assert_eq!(split_epoch("1:1.0"), (1, "1.0"));
+        assert_eq!(split_epoch("2:3.0-1"), (2, "3.0-1"));
+    }
+
+    #[test]
+    fn test_split_release() {
+        assert_eq!(split_release("1.0"), ("1.0", ""));
+        assert_eq!(split_release("1.0-1"), ("1.0", "1"));
+        assert_eq!(split_release("1.0-1-2"), ("1.0-1", "2"));
     }
 
     #[test]
@@ -738,6 +802,28 @@ mod tests {
         if Path::new("/var/lib/pacman/sync/core.db").exists() {
             let updates = check_updates_fast().expect("Failed to check updates");
             println!("Found {} updates", updates.len());
+        }
+    }
+
+    #[test]
+    fn test_get_local_package() {
+        // Only run if we have a real system
+        if Path::new("/var/lib/pacman/local").exists() {
+            // pacman should always be installed
+            if let Ok(Some(pkg)) = get_local_package("pacman") {
+                assert!(!pkg.version.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn test_get_package_counts() {
+        if Path::new("/var/lib/pacman/local").exists() {
+            let (total, explicit, deps) = get_counts_fast().expect("Failed to get counts");
+            assert!(total > 0);
+            // On some test systems, explicit might be 0 if only deps are present
+            // but usually at least some are explicit. We change to total >= explicit + deps
+            assert_eq!(total, explicit + deps);
         }
     }
 }

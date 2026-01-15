@@ -4,3 +4,4 @@ pub mod slsa;
 pub mod vulnerability;
 
 pub use policy::{SecurityGrade, SecurityPolicy};
+pub use vulnerability::VulnerabilityScanner;

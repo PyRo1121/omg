@@ -4,6 +4,7 @@ use colored::Colorize;
 
 use super::PackageManager;
 use crate::core::{is_root, Package, PackageSource};
+use crate::package_managers::invalidate_caches;
 
 /// Official Arch Linux package manager with enhanced UX
 pub struct OfficialPackageManager;
@@ -27,10 +28,13 @@ impl OfficialPackageManager {
             if !status.success() {
                 anyhow::bail!("Database synchronization failed");
             }
+            invalidate_caches();
             return Ok(());
         }
 
-        crate::package_managers::sync_databases_parallel().await
+        crate::package_managers::sync_databases_parallel().await?;
+        invalidate_caches();
+        Ok(())
     }
 }
 
@@ -81,6 +85,7 @@ impl PackageManager for OfficialPackageManager {
             if !status.success() {
                 anyhow::bail!("Installation failed");
             }
+            invalidate_caches();
             return Ok(());
         }
 
@@ -98,6 +103,7 @@ impl PackageManager for OfficialPackageManager {
         crate::package_managers::execute_transaction(packages.to_vec(), false, false)?;
 
         println!("{} All packages processed successfully!", "✓".green());
+        invalidate_caches();
         Ok(())
     }
 
@@ -120,6 +126,7 @@ impl PackageManager for OfficialPackageManager {
             if !status.success() {
                 anyhow::bail!("Removal failed");
             }
+            invalidate_caches();
             return Ok(());
         }
 
@@ -133,6 +140,7 @@ impl PackageManager for OfficialPackageManager {
         crate::package_managers::execute_transaction(packages.to_vec(), true, false)?;
 
         println!("{} Packages removed successfully!", "✓".green());
+        invalidate_caches();
         Ok(())
     }
 
@@ -150,6 +158,7 @@ impl PackageManager for OfficialPackageManager {
             if !status.success() {
                 anyhow::bail!("Update failed");
             }
+            invalidate_caches();
             return Ok(());
         }
 
@@ -162,6 +171,7 @@ impl PackageManager for OfficialPackageManager {
         crate::package_managers::execute_transaction(Vec::new(), false, true)?;
 
         println!("\n{} System updated successfully!", "✓".green());
+        invalidate_caches();
         Ok(())
     }
 

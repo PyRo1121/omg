@@ -1,10 +1,13 @@
 use anyhow::Result;
 use colored::Colorize;
 use dialoguer::{theme::ColorfulTheme, Confirm, MultiSelect};
+use futures::StreamExt;
 
 use crate::cli::style;
+use crate::config::Settings;
 use crate::core::client::DaemonClient;
 use crate::core::completion::CompletionEngine;
+use crate::core::history::{HistoryManager, PackageChange, TransactionType};
 use crate::core::security::SecurityPolicy;
 use crate::core::Database;
 use crate::daemon::protocol::{Request, ResponseResult};
@@ -319,10 +322,9 @@ pub async fn search(query: &str, detailed: bool, interactive: bool) -> Result<()
 }
 
 /// Install packages (auto-detects AUR) with Graded Security
-pub async fn install(packages: &[String], _yes: bool) -> Result<()> {
+pub async fn install(packages: &[String], yes: bool) -> Result<()> {
     if packages.is_empty() {
-        println!("{}", style::error("No packages specified"));
-        return Ok(());
+        anyhow::bail!("No packages specified");
     }
 
     let policy = SecurityPolicy::load_default().unwrap_or_default();
@@ -339,6 +341,7 @@ pub async fn install(packages: &[String], _yes: bool) -> Result<()> {
     let mut aur_pkgs = Vec::new();
     let mut local_pkgs = Vec::new();
     let mut not_found = Vec::new();
+    let mut changes = Vec::new();
 
     for pkg_name in packages {
         // Check if it's a local package file
@@ -359,8 +362,8 @@ pub async fn install(packages: &[String], _yes: bool) -> Result<()> {
 
         // If not found, try to resolve typo
         if sync_info.is_none() && aur_info.is_none() {
-            // Only if interactive
-            if console::user_attended() {
+            // Only if interactive and not auto-confirming
+            if console::user_attended() && !yes {
                 // 1. Try Fuzzy Matching (Best for typos like 'frfx' -> 'firefox')
                 let suggestion = fuzzy_suggest(&target_pkg_name);
 
@@ -390,7 +393,7 @@ pub async fn install(packages: &[String], _yes: bool) -> Result<()> {
                     if let Some(best_match) = results.first() {
                         if Confirm::with_theme(&ColorfulTheme::default())
                             .with_prompt(format!(
-                                "Package '{}' not found. Did you mean '{}'?",
+                                "Package '{}' not found. Did you mean '{}' ?",
                                 style::package(&target_pkg_name),
                                 style::package(&best_match.name)
                             ))
@@ -423,17 +426,29 @@ pub async fn install(packages: &[String], _yes: bool) -> Result<()> {
             }
         }
 
-        let (grade, is_aur, is_official, license) = if let Some(info) = sync_info {
+        let (grade, is_aur, is_official, license, change) = if let Some(info) = sync_info {
             let grade = policy
                 .assign_grade(&info.name, &info.version, false, true)
                 .await;
             let license = info.licenses.first().cloned();
-            (grade, false, true, license)
+            let change = PackageChange {
+                name: info.name.clone(),
+                old_version: None, // Simplified for now
+                new_version: Some(info.version.clone()),
+                source: "official".to_string(),
+            };
+            (grade, false, true, license, change)
         } else if let Some(info) = aur_info {
             let grade = policy
                 .assign_grade(&info.name, &info.version, true, false)
                 .await;
-            (grade, true, false, None)
+            let change = PackageChange {
+                name: info.name.clone(),
+                old_version: None,
+                new_version: Some(info.version.clone()),
+                source: "aur".to_string(),
+            };
+            (grade, true, false, None, change)
         } else {
             not_found.push(pkg_name.clone());
             continue;
@@ -469,6 +484,7 @@ pub async fn install(packages: &[String], _yes: bool) -> Result<()> {
                 grade_colored
             );
         }
+        changes.push(change);
     }
 
     if !not_found.is_empty() {
@@ -482,22 +498,43 @@ pub async fn install(packages: &[String], _yes: bool) -> Result<()> {
     // Install official packages
     if !official.is_empty() {
         let pacman = OfficialPackageManager::new();
-        pacman.install(&official).await?;
+        if let Err(e) = pacman.install(&official).await {
+            if let Ok(history) = HistoryManager::new() {
+                let _ = history.add_transaction(TransactionType::Install, changes, false);
+            }
+            return Err(e);
+        }
     }
 
     // Install local packages
     if !local_pkgs.is_empty() {
         let pacman = OfficialPackageManager::new();
-        pacman.install(&local_pkgs).await?;
+        if let Err(e) = pacman.install(&local_pkgs).await {
+            if let Ok(history) = HistoryManager::new() {
+                let _ = history.add_transaction(TransactionType::Install, changes, false);
+            }
+            return Err(e);
+        }
     }
 
     // Install AUR packages
     for pkg in &aur_pkgs {
-        aur.install(pkg).await?;
+        if let Err(e) = aur.install(pkg).await {
+            if let Ok(history) = HistoryManager::new() {
+                let _ = history.add_transaction(TransactionType::Install, changes, false);
+            }
+            return Err(e);
+        }
     }
 
     if official.is_empty() && aur_pkgs.is_empty() && local_pkgs.is_empty() {
         println!("{}", style::dim("No packages to install"));
+        return Ok(());
+    }
+
+    // Log transaction
+    if let Ok(history) = HistoryManager::new() {
+        let _ = history.add_transaction(TransactionType::Install, changes, true);
     }
 
     Ok(())
@@ -506,8 +543,19 @@ pub async fn install(packages: &[String], _yes: bool) -> Result<()> {
 /// Remove packages
 pub async fn remove(packages: &[String], recursive: bool) -> Result<()> {
     if packages.is_empty() {
-        println!("{}", style::error("No packages specified"));
-        return Ok(());
+        anyhow::bail!("No packages specified");
+    }
+
+    let mut changes = Vec::new();
+    for pkg in packages {
+        if let Ok(Some(info)) = crate::package_managers::get_local_package(pkg) {
+            changes.push(PackageChange {
+                name: pkg.clone(),
+                old_version: Some(info.version),
+                new_version: None,
+                source: "official".to_string(), // Defaulting to official for now
+            });
+        }
     }
 
     let pacman = OfficialPackageManager::new();
@@ -516,9 +564,17 @@ pub async fn remove(packages: &[String], recursive: bool) -> Result<()> {
         println!("{}", style::info("Removing with unused dependencies..."));
     }
 
-    pacman.remove(packages).await?;
+    let result = pacman.remove(packages).await;
+    let success = result.is_ok();
 
-    Ok(())
+    // Log transaction
+    if !changes.is_empty() {
+        if let Ok(history) = HistoryManager::new() {
+            let _ = history.add_transaction(TransactionType::Remove, changes, success);
+        }
+    }
+
+    result
 }
 
 /// Update all packages
@@ -594,19 +650,41 @@ pub async fn update(check_only: bool) -> Result<()> {
     display_list(&official_display, "repo");
     display_list(&aur_updates, "aur");
 
+    let mut changes = Vec::new();
+    for (name, old_ver, new_ver, _, _, _) in &official_updates_raw {
+        changes.push(PackageChange {
+            name: name.clone(),
+            old_version: Some(old_ver.clone()),
+            new_version: Some(new_ver.clone()),
+            source: "official".to_string(),
+        });
+    }
+    for (name, old_ver, new_ver) in &aur_updates {
+        changes.push(PackageChange {
+            name: name.clone(),
+            old_version: Some(old_ver.clone()),
+            new_version: Some(new_ver.clone()),
+            source: "aur".to_string(),
+        });
+    }
+
     if check_only {
         println!("\n{}", style::dim("Run 'omg update' to install"));
         return Ok(());
     }
 
     // STEP 4: Interactive confirmation
-    if !Confirm::with_theme(&ColorfulTheme::default())
-        .with_prompt("\nProceed with system upgrade?")
-        .default(true)
-        .interact()?
-    {
-        println!("{}", style::dim("Upgrade cancelled."));
-        return Ok(());
+    if console::user_attended() {
+        if !Confirm::with_theme(&ColorfulTheme::default())
+            .with_prompt("\nProceed with system upgrade?")
+            .default(true)
+            .interact()?
+        {
+            println!("{}", style::dim("Upgrade cancelled."));
+            return Ok(());
+        }
+    } else {
+        println!("{}", style::dim("Proceeding without prompt (no TTY detected)."));
     }
 
     // STEP 5: Execute upgrades
@@ -641,6 +719,8 @@ pub async fn update(check_only: bool) -> Result<()> {
     if !aur_updates.is_empty() {
         use indicatif::{ProgressBar, ProgressStyle};
 
+        let settings = Settings::load().unwrap_or_default();
+        let concurrency = settings.aur.build_concurrency.max(1);
         let total = aur_updates.len();
         println!(
             "\n{} Building {} AUR package{}...\n",
@@ -648,62 +728,57 @@ pub async fn update(check_only: bool) -> Result<()> {
             total,
             if total == 1 { "" } else { "s" }
         );
+        println!(
+            "{} Using build concurrency: {}",
+            style::dim("→"),
+            style::info(&concurrency.to_string())
+        );
 
-        // Phase 1: Build all packages with per-package spinners
+        let progress = ProgressBar::new(total as u64);
+        progress.set_style(
+            ProgressStyle::default_bar()
+                .template("  [{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} {msg}")
+                .unwrap(),
+        );
+
         let mut built_packages: Vec<(String, String, std::path::PathBuf)> = Vec::new();
         let mut failed_builds: Vec<(String, String)> = Vec::new();
 
-        for (i, (name, _old_ver, new_ver)) in aur_updates.into_iter().enumerate() {
-            let spinner = ProgressBar::new_spinner();
-            spinner.set_style(
-                ProgressStyle::default_spinner()
-                    .template(&format!(
-                        "  {{spinner}} [{}/{}] Building {}...",
-                        i + 1,
-                        total,
-                        name
-                    ))
-                    .unwrap(),
-            );
-            spinner.enable_steady_tick(std::time::Duration::from_millis(80));
+        let mut stream = futures::stream::iter(aur_updates.into_iter())
+            .map(|(name, _old_ver, new_ver)| {
+                let aur = aur.clone();
+                async move {
+                    let result = aur.build_only(&name).await;
+                    (name, new_ver, result)
+                }
+            })
+            .buffer_unordered(concurrency);
 
-            match aur.build_only(&name).await {
+        while let Some((name, new_ver, result)) = stream.next().await {
+            progress.inc(1);
+            match result {
                 Ok(pkg_path) => {
-                    spinner.finish_and_clear();
-                    println!(
-                        "  {} [{}/{}] {} v{}",
-                        style::success("✓"),
-                        i + 1,
-                        total,
-                        style::package(&name),
-                        style::version(&new_ver)
-                    );
+                    progress.set_message(format!("Built {name}"));
                     built_packages.push((name, new_ver, pkg_path));
                 }
                 Err(e) => {
-                    spinner.finish_and_clear();
-                    println!(
-                        "  {} [{}/{}] {} - {}",
-                        style::error("✗"),
-                        i + 1,
-                        total,
-                        style::package(&name),
-                        e
-                    );
+                    progress.set_message(format!("Failed {name}"));
                     failed_builds.push((name, e.to_string()));
                 }
             }
         }
 
+        progress.finish_and_clear();
+
         // Phase 2: Install all built packages in a single transaction
         if !built_packages.is_empty() {
             let spinner = ProgressBar::new_spinner();
+            #[allow(clippy::literal_string_with_formatting_args)]
+            let install_template =
+                format!("\n  {{spinner}} Installing {} packages...", built_packages.len());
             spinner.set_style(
                 ProgressStyle::default_spinner()
-                    .template(&format!(
-                        "\n  {{spinner}} Installing {} packages...",
-                        built_packages.len()
-                    ))
+                    .template(&install_template)
                     .unwrap(),
             );
             spinner.enable_steady_tick(std::time::Duration::from_millis(80));
@@ -757,9 +832,7 @@ pub async fn update(check_only: bool) -> Result<()> {
             }
         }
 
-        // Summary
-        let success_count = built_packages.len();
-        let fail_count = failed_builds.len();
+        let (success_count, fail_count) = (built_packages.len(), failed_builds.len());
         println!(
             "\n{} AUR: {} built, {} failed",
             if fail_count == 0 {
@@ -770,6 +843,18 @@ pub async fn update(check_only: bool) -> Result<()> {
             success_count,
             fail_count
         );
+        if !failed_builds.is_empty() {
+            println!("  {} Failed builds:", style::error("✗"));
+            for (name, err) in &failed_builds {
+                println!("    {} - {}", style::package(name), err);
+            }
+        }
+    }
+
+    // Log transaction
+    if let Ok(history) = HistoryManager::new() {
+        let _ = history.add_transaction(TransactionType::Update, changes, true);
+        // Assuming overall progress if reached here
     }
 
     Ok(())
@@ -982,6 +1067,7 @@ pub async fn info(package: &str) -> Result<()> {
 }
 
 /// Clean up orphans and caches
+#[allow(clippy::fn_params_excessive_bools)]
 pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool) -> Result<()> {
     println!("{} Cleaning up...\n", style::header("OMG"));
 

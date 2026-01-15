@@ -71,6 +71,11 @@ fn measure_time<F: FnOnce() -> T, T>(f: F) -> (T, Duration) {
     (result, start.elapsed())
 }
 
+/// Guard for destructive integration tests (real installs/updates)
+fn destructive_tests_enabled() -> bool {
+    matches!(env::var("OMG_RUN_DESTRUCTIVE_TESTS"), Ok(value) if value == "1")
+}
+
 /// Create a temporary project directory with common config files
 fn create_test_project(dir: &Path, config_type: &str) {
     fs::create_dir_all(dir).unwrap();
@@ -279,6 +284,35 @@ mod package_management {
             !success || stdout.contains("not found"),
             "Should indicate package not found"
         );
+    }
+
+    #[test]
+    fn test_install_real_package() {
+        if !destructive_tests_enabled() {
+            eprintln!("Skipping destructive test (set OMG_RUN_DESTRUCTIVE_TESTS=1)");
+            return;
+        }
+
+        let pkg = env::var("OMG_TEST_PACKAGE").unwrap_or_else(|_| "ripgrep".to_string());
+        let args = vec!["install", "-y", &pkg];
+        let (success, stdout, stderr) = run_omg(&args);
+        assert!(
+            success
+                || stdout.contains("already installed")
+                || stderr.contains("already installed"),
+            "Install should succeed or report already installed"
+        );
+    }
+
+    #[test]
+    fn test_update_check_only() {
+        if !destructive_tests_enabled() {
+            eprintln!("Skipping destructive test (set OMG_RUN_DESTRUCTIVE_TESTS=1)");
+            return;
+        }
+
+        let (success, _stdout, _stderr) = run_omg(&["update", "--check"]);
+        assert!(success, "Update check should succeed");
     }
 
     #[test]

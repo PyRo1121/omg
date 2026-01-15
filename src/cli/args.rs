@@ -239,6 +239,22 @@ pub enum Commands {
         #[command(subcommand)]
         command: EnvCommands,
     },
+
+    /// View package transaction history
+    History {
+        /// Number of entries to show
+        #[arg(short, long, default_value = "20")]
+        limit: usize,
+    },
+
+    /// Roll back to a previous system state
+    Rollback {
+        /// Transaction ID to roll back to (omitted for interactive selection)
+        id: Option<String>,
+    },
+
+    /// Interactive TUI Dashboard
+    Dash,
 }
 
 #[derive(Subcommand, Debug)]

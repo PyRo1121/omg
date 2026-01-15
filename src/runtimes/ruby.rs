@@ -294,9 +294,8 @@ fn version_cmp(a: &str, b: &str) -> std::cmp::Ordering {
     for i in 0..3 {
         let a_part = a_parts.get(i).unwrap_or(&0);
         let b_part = b_parts.get(i).unwrap_or(&0);
-        match a_part.cmp(b_part) {
-            std::cmp::Ordering::Equal => continue,
-            other => return other,
+        if a_part != b_part {
+            return a_part.cmp(b_part);
         }
     }
     std::cmp::Ordering::Equal

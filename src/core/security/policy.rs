@@ -67,13 +67,14 @@ impl SecurityPolicy {
     /// Load from default location (~/.config/omg/policy.toml)
     #[must_use]
     pub fn load_default() -> Option<Self> {
-        let config_dir = directories::ProjectDirs::from("com", "omg", "omg")
-            .map(|d| d.config_dir().to_path_buf())
-            .unwrap_or_else(|| {
+        let config_dir = directories::ProjectDirs::from("com", "omg", "omg").map_or_else(
+            || {
                 home::home_dir()
                     .unwrap_or_else(|| PathBuf::from("."))
                     .join(".config/omg")
-            });
+            },
+            |d| d.config_dir().to_path_buf(),
+        );
 
         let policy_path = config_dir.join("policy.toml");
         if policy_path.exists() {

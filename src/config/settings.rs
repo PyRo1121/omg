@@ -22,17 +22,45 @@ pub struct Settings {
 
     /// Auto-update runtime versions on install
     pub auto_update: bool,
+
+    /// AUR build configuration
+    pub aur: AurBuildSettings,
+}
+
+/// AUR build configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AurBuildSettings {
+    /// Maximum concurrent AUR builds
+    pub build_concurrency: usize,
+    /// Custom MAKEFLAGS (overrides auto -jN)
+    pub makeflags: Option<String>,
+    /// Custom PKGDEST (shared package cache)
+    pub pkgdest: Option<PathBuf>,
+    /// Custom SRCDEST (shared source cache)
+    pub srcdest: Option<PathBuf>,
+    /// Enable build cache re-use based on PKGBUILD hash
+    pub cache_builds: bool,
+    /// Enable ccache integration
+    pub enable_ccache: bool,
+    /// Optional ccache directory
+    pub ccache_dir: Option<PathBuf>,
+    /// Enable sccache integration
+    pub enable_sccache: bool,
+    /// Optional sccache directory
+    pub sccache_dir: Option<PathBuf>,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        let data_dir = directories::ProjectDirs::from("com", "omg", "omg")
-            .map(|d| d.data_dir().to_path_buf())
-            .unwrap_or_else(|| {
+        let data_dir = directories::ProjectDirs::from("com", "omg", "omg").map_or_else(
+            || {
                 home::home_dir()
                     .unwrap_or_else(|| PathBuf::from("."))
                     .join(".omg")
-            });
+            },
+            |d| d.data_dir().to_path_buf(),
+        );
 
         // Socket in XDG_RUNTIME_DIR or /tmp
         let socket_path = std::env::var("XDG_RUNTIME_DIR")
@@ -45,6 +73,26 @@ impl Default for Settings {
             socket_path,
             default_shell: "zsh".to_string(),
             auto_update: false,
+            aur: AurBuildSettings::default(),
+        }
+    }
+}
+
+impl Default for AurBuildSettings {
+    fn default() -> Self {
+        let jobs = std::thread::available_parallelism()
+            .map(|v| v.get())
+            .unwrap_or(1);
+        Self {
+            build_concurrency: jobs.max(1),
+            makeflags: None,
+            pkgdest: None,
+            srcdest: None,
+            cache_builds: true,
+            enable_ccache: false,
+            ccache_dir: None,
+            enable_sccache: false,
+            sccache_dir: None,
         }
     }
 }
