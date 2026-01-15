@@ -8,6 +8,7 @@ pub mod env;
 mod error;
 pub mod history;
 pub mod http;
+pub mod paths;
 pub mod privilege;
 pub mod security;
 pub mod task_runner;

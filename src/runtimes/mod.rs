@@ -1,15 +1,9 @@
 use std::path::PathBuf;
 
-pub static DATA_DIR: std::sync::LazyLock<PathBuf> = std::sync::LazyLock::new(|| {
-    directories::ProjectDirs::from("com", "omg", "omg").map_or_else(
-        || {
-            home::home_dir()
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join(".omg")
-        },
-        |d| d.data_dir().to_path_buf(),
-    )
-});
+use crate::core::paths;
+
+pub static DATA_DIR: std::sync::LazyLock<PathBuf> =
+    std::sync::LazyLock::new(paths::data_dir);
 
 pub mod bun;
 pub mod go;

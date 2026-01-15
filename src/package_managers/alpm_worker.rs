@@ -3,6 +3,7 @@ use std::sync::mpsc;
 use std::thread;
 
 use super::alpm_ops::{get_pkg_info_from_db, PackageInfo};
+use crate::core::paths;
 
 /// Request type for the ALPM worker
 enum AlpmRequest {
@@ -27,7 +28,9 @@ impl AlpmWorker {
 
         thread::spawn(move || {
             // Initialize ALPM once and keep it alive in this thread
-            let alpm = match alpm::Alpm::new("/", "/var/lib/pacman") {
+            let root = paths::pacman_root();
+            let db_path = paths::pacman_db_dir();
+            let alpm = match alpm::Alpm::new(root, db_path) {
                 Ok(a) => a,
                 Err(e) => {
                     tracing::error!("Failed to initialize ALPM worker: {}", e);

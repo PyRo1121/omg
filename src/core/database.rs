@@ -4,6 +4,8 @@ use anyhow::Result;
 use heed::{Database as HeedDatabase, Env, EnvOpenOptions};
 use std::path::Path;
 
+use crate::core::paths;
+
 /// Main database wrapper using LMDB via heed
 pub struct Database {
     env: Env,
@@ -46,10 +48,7 @@ impl Database {
 
     /// Get the default database path
     pub fn default_path() -> Result<std::path::PathBuf> {
-        let data_dir = directories::ProjectDirs::from("com", "omg", "omg")
-            .ok_or_else(|| anyhow::anyhow!("Could not determine data directory"))?;
-
-        Ok(data_dir.data_dir().join("db"))
+        Ok(paths::data_dir().join("db"))
     }
 }
 

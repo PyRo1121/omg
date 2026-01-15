@@ -7,6 +7,7 @@ use clap::Parser;
 use std::path::PathBuf;
 use tokio::net::UnixListener;
 
+use omg_lib::core::paths;
 use omg_lib::daemon::server;
 
 #[cfg(not(target_env = "msvc"))]
@@ -46,12 +47,7 @@ async fn main() -> Result<()> {
         .init();
 
     // Determine socket path
-    let socket_path = args.socket.unwrap_or_else(|| {
-        std::env::var("XDG_RUNTIME_DIR").map_or_else(
-            |_| PathBuf::from("/tmp/omg.sock"),
-            |d| PathBuf::from(d).join("omg.sock"),
-        )
-    });
+    let socket_path = args.socket.unwrap_or_else(paths::socket_path);
 
     tracing::info!("Starting OMG daemon (omgd) v{}", env!("CARGO_PKG_VERSION"));
 

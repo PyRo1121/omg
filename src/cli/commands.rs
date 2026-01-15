@@ -5,6 +5,7 @@
 use anyhow::{Context, Result};
 use std::process::{Command, Stdio};
 
+use crate::core::paths;
 use crate::package_managers::PackageManager;
 
 use crate::cli::style;
@@ -349,7 +350,7 @@ pub fn config(key: Option<&str>, value: Option<&str>) -> Result<()> {
             );
             match k {
                 "shims.enabled" => println!("  {}", style::warning("false")),
-                "data_dir" => println!("  {}", style::warning("~/.omg")),
+                "data_dir" => println!("  {}", style::warning(paths::data_dir().display())),
                 _ => println!("  {}", style::dim("(not set)")),
             }
         }
@@ -363,12 +364,12 @@ pub fn config(key: Option<&str>, value: Option<&str>) -> Result<()> {
             println!(
                 "  {} = {}",
                 style::success("data_dir"),
-                style::warning("~/.omg")
+                style::warning(paths::data_dir().display())
             );
             println!(
                 "  {} = {}",
                 style::success("socket"),
-                style::warning("/run/user/1000/omg.sock")
+                style::warning(paths::socket_path().display())
             );
         }
     }

@@ -28,10 +28,7 @@ pub struct DaemonState {
 impl DaemonState {
     #[must_use]
     pub fn new() -> Self {
-        let data_dir = directories::ProjectDirs::from("com", "omg", "omg").map_or_else(
-            || std::path::PathBuf::from("/var/lib/omg"),
-            |d| d.data_dir().to_path_buf(),
-        );
+        let data_dir = crate::core::paths::daemon_data_dir();
 
         let db_path = data_dir.join("cache.mdb");
 

@@ -3,9 +3,11 @@
 //! Pure libalpm transactions - no pacman subprocess.
 //! Install/remove/update operations at native C library speed.
 
-use crate::core::security::pgp::PgpVerifier;
 use anyhow::{Context, Result};
 use colored::Colorize;
+
+use crate::core::{paths, security::pgp::PgpVerifier};
+use crate::package_managers::pacman_db;
 
 /// Check available updates using direct DB comparison - INSTANT
 /// Get comprehensive system status (counts + updates) in a single pass - FAST
@@ -89,6 +91,24 @@ pub fn get_update_download_list() -> Result<Vec<DownloadInfo>> {
 
 /// Get package info from sync DBs - INSTANT (<1ms)
 pub fn get_sync_pkg_info(name: &str) -> Result<Option<PackageInfo>> {
+    if paths::test_mode() {
+        let packages = pacman_db::search_sync_fast(name)?;
+        if let Some(pkg) = packages.into_iter().find(|pkg| pkg.name == name) {
+            return Ok(Some(PackageInfo {
+                name: pkg.name,
+                version: pkg.version,
+                description: pkg.desc,
+                url: pkg.url,
+                size: pkg.isize,
+                download_size: pkg.csize,
+                repo: pkg.repo,
+                depends: pkg.depends,
+                licenses: Vec::new(),
+            }));
+        }
+        return Ok(None);
+    }
+
     crate::package_managers::alpm_direct::with_handle(|alpm| get_pkg_info_from_db(alpm, name))
 }
 
@@ -137,7 +157,7 @@ pub struct PackageInfo {
 
 /// Clean package cache using direct file system operations - FAST
 pub fn clean_cache(keep_versions: usize) -> Result<(usize, u64)> {
-    let cache_dir = std::path::Path::new("/var/cache/pacman/pkg");
+    let cache_dir = paths::pacman_cache_dir();
 
     if !cache_dir.exists() {
         return Ok((0, 0));
@@ -147,7 +167,7 @@ pub fn clean_cache(keep_versions: usize) -> Result<(usize, u64)> {
         std::collections::HashMap::new();
 
     // Group package files by base name
-    for entry in std::fs::read_dir(cache_dir)? {
+    for entry in std::fs::read_dir(&cache_dir)? {
         let entry = entry?;
         let path = entry.path();
 
@@ -253,7 +273,9 @@ pub fn execute_transaction(packages: Vec<String>, remove: bool, sysupgrade: bool
     use alpm::{SigLevel, TransFlag};
     use indicatif::{ProgressBar, ProgressStyle};
 
-    let mut alpm = alpm::Alpm::new("/", "/var/lib/pacman")
+    let root = paths::pacman_root();
+    let db_path = paths::pacman_db_dir();
+    let mut alpm = alpm::Alpm::new(root, db_path)
         .context("Failed to initialize ALPM (are you root?)")?;
 
     // Register sync DBs
@@ -420,9 +442,8 @@ pub fn execute_transaction(packages: Vec<String>, remove: bool, sysupgrade: bool
         for pkg in pkgs_to_add {
             let pkg_name: &str = pkg.name();
             if let Some(pkg_filename) = pkg.filename() {
-                let cache_path = std::path::Path::new("/var/cache/pacman/pkg").join(pkg_filename);
-                let sig_path =
-                    std::path::Path::new(&format!("{}.sig", cache_path.display())).to_path_buf();
+                let cache_path = paths::pacman_cache_dir().join(pkg_filename);
+                let sig_path = std::path::PathBuf::from(format!("{}.sig", cache_path.display()));
 
                 if cache_path.exists() && sig_path.exists() {
                     if let Err(e) = verifier.verify_package(&cache_path, &sig_path) {
@@ -459,8 +480,8 @@ pub fn execute_transaction(packages: Vec<String>, remove: bool, sysupgrade: bool
 
 /// Parse /etc/pacman.d/mirrorlist and configure ALPM servers
 fn configure_mirrors(alpm: &mut alpm::Alpm) -> Result<()> {
-    let mirrorlist = "/etc/pacman.d/mirrorlist";
-    if !std::path::Path::new(mirrorlist).exists() {
+    let mirrorlist = paths::pacman_mirrorlist_path();
+    if !mirrorlist.exists() {
         return Ok(());
     }
 

@@ -17,7 +17,7 @@ use tracing::instrument;
 use super::pkgbuild::PkgBuild;
 use crate::config::Settings;
 use crate::core::http::shared_client;
-use crate::core::{Package, PackageSource};
+use crate::core::{paths, Package, PackageSource};
 use crate::package_managers::{get_potential_aur_packages, pacman_db};
 
 const AUR_RPC_URL: &str = "https://aur.archlinux.org/rpc";
@@ -64,17 +64,7 @@ struct AurPackage {
 impl AurClient {
     pub fn new() -> Self {
         let settings = Settings::load().unwrap_or_default();
-        let build_dir = std::env::var("XDG_CACHE_HOME")
-            .map_or_else(
-                |_| {
-                    home::home_dir()
-                        .unwrap_or_else(|| PathBuf::from("."))
-                        .join(".cache")
-                },
-                PathBuf::from,
-            )
-            .join("omg")
-            .join("aur");
+        let build_dir = paths::cache_dir().join("aur");
 
         Self {
             client: shared_client().clone(),
@@ -427,6 +417,10 @@ impl AurClient {
 
             let pkgdest_str = env.pkgdest.to_string_lossy().to_string();
             let srcdest_str = env.srcdest.to_string_lossy().to_string();
+            let pacman_db_dir = paths::pacman_db_dir().to_string_lossy().to_string();
+            let pacman_cache_root = paths::pacman_cache_root_dir()
+                .to_string_lossy()
+                .to_string();
 
             let mut args = vec![
                 "--ro-bind".to_string(),
@@ -466,11 +460,11 @@ impl AurClient {
                 home.clone(),
                 home,
                 "--ro-bind".to_string(),
-                "/var/lib/pacman".to_string(),
-                "/var/lib/pacman".to_string(),
+                pacman_db_dir.clone(),
+                pacman_db_dir,
                 "--ro-bind".to_string(),
-                "/var/cache/pacman".to_string(),
-                "/var/cache/pacman".to_string(),
+                pacman_cache_root.clone(),
+                pacman_cache_root,
                 "--die-with-parent".to_string(),
                 "--chdir".to_string(),
                 pkg_dir_str.to_string(),

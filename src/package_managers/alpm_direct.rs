@@ -7,6 +7,9 @@ use anyhow::{Context, Result};
 
 use std::cell::RefCell;
 
+use crate::core::paths;
+use crate::package_managers::pacman_db;
+
 thread_local! {
     static ALPM_HANDLE: RefCell<Option<Alpm>> = const { RefCell::new(None) };
 }
@@ -19,8 +22,9 @@ where
     ALPM_HANDLE.with(|cell| {
         let mut maybe_handle = cell.borrow_mut();
         if maybe_handle.is_none() {
-            let alpm =
-                Alpm::new("/", "/var/lib/pacman").context("Failed to initialize ALPM handle")?;
+            let root = paths::pacman_root();
+            let db_path = paths::pacman_db_dir();
+            let alpm = Alpm::new(root, db_path).context("Failed to initialize ALPM handle")?;
 
             // Register sync databases
             for db_name in &["core", "extra", "multilib"] {
@@ -41,8 +45,9 @@ where
     ALPM_HANDLE.with(|cell| {
         let mut maybe_handle = cell.borrow_mut();
         if maybe_handle.is_none() {
-            let alpm =
-                Alpm::new("/", "/var/lib/pacman").context("Failed to initialize ALPM handle")?;
+            let root = paths::pacman_root();
+            let db_path = paths::pacman_db_dir();
+            let alpm = Alpm::new(root, db_path).context("Failed to initialize ALPM handle")?;
 
             // Register sync databases
             for db_name in &["core", "extra", "multilib"] {
@@ -57,6 +62,27 @@ where
 
 /// Search local database (installed packages) - INSTANT
 pub fn search_local(query: &str) -> Result<Vec<LocalPackage>> {
+    if paths::test_mode() {
+        let local_dir = paths::pacman_local_dir();
+        let query_lower = query.to_lowercase();
+        let packages = pacman_db::parse_local_db(&local_dir)?;
+        let results = packages
+            .into_values()
+            .filter(|pkg| {
+                pkg.name.to_lowercase().contains(&query_lower)
+                    || pkg.desc.to_lowercase().contains(&query_lower)
+            })
+            .map(|pkg| LocalPackage {
+                name: pkg.name,
+                version: pkg.version,
+                description: pkg.desc,
+                install_size: 0,
+                reason: if pkg.explicit { "explicit" } else { "dependency" },
+            })
+            .collect();
+        return Ok(results);
+    }
+
     with_handle(|handle| {
         let localdb = handle.localdb();
         let query_lower = query.to_lowercase();
@@ -88,6 +114,32 @@ pub fn search_local(query: &str) -> Result<Vec<LocalPackage>> {
 
 /// Search sync databases (available packages) - FAST (<10ms)
 pub fn search_sync(query: &str) -> Result<Vec<SyncPackage>> {
+    if paths::test_mode() {
+        let query_lower = query.to_lowercase();
+        let packages = pacman_db::search_sync_fast(query)?;
+        let local_dir = paths::pacman_local_dir();
+        let local_packages = pacman_db::parse_local_db(&local_dir)?;
+        let results = packages
+            .into_iter()
+            .filter(|pkg| {
+                pkg.name.to_lowercase().contains(&query_lower)
+                    || pkg.desc.to_lowercase().contains(&query_lower)
+            })
+            .map(|pkg| {
+                let installed = local_packages.contains_key(&pkg.name);
+                SyncPackage {
+                    name: pkg.name,
+                    version: pkg.version,
+                    description: pkg.desc,
+                    repo: pkg.repo,
+                    download_size: pkg.csize as i64,
+                    installed,
+                }
+            })
+            .collect();
+        return Ok(results);
+    }
+
     with_handle(|handle| {
         let query_lower = query.to_lowercase();
         let mut results = Vec::new();
@@ -119,6 +171,43 @@ pub fn search_sync(query: &str) -> Result<Vec<SyncPackage>> {
 
 /// Get package info - INSTANT (<1ms)
 pub fn get_package_info(name: &str) -> Result<Option<PackageInfo>> {
+    if paths::test_mode() {
+        let local_dir = paths::pacman_local_dir();
+        let local_packages = pacman_db::parse_local_db(&local_dir)?;
+        if let Some(pkg) = local_packages.get(name) {
+            return Ok(Some(PackageInfo {
+                name: pkg.name.clone(),
+                version: pkg.version.clone(),
+                description: pkg.desc.clone(),
+                url: None,
+                licenses: Vec::new(),
+                depends: Vec::new(),
+                installed: true,
+                install_size: None,
+                download_size: None,
+                repo: Some("local".to_string()),
+            }));
+        }
+
+        let sync_packages = pacman_db::search_sync_fast(name)?;
+        if let Some(pkg) = sync_packages.into_iter().find(|pkg| pkg.name == name) {
+            return Ok(Some(PackageInfo {
+                name: pkg.name,
+                version: pkg.version,
+                description: pkg.desc,
+                url: Some(pkg.url),
+                licenses: Vec::new(),
+                depends: pkg.depends,
+                installed: false,
+                install_size: Some(pkg.isize as i64),
+                download_size: Some(pkg.csize as i64),
+                repo: Some(pkg.repo),
+            }));
+        }
+
+        return Ok(None);
+    }
+
     with_handle(|handle| {
         // Try local first
         if let Ok(pkg) = handle.localdb().pkg(name) {
@@ -168,6 +257,22 @@ pub fn get_package_info(name: &str) -> Result<Option<PackageInfo>> {
 
 /// List all installed packages - INSTANT
 pub fn list_installed_fast() -> Result<Vec<LocalPackage>> {
+    if paths::test_mode() {
+        let local_dir = paths::pacman_local_dir();
+        let packages = pacman_db::parse_local_db(&local_dir)?;
+        let results = packages
+            .into_values()
+            .map(|pkg| LocalPackage {
+                name: pkg.name,
+                version: pkg.version,
+                description: pkg.desc,
+                install_size: 0,
+                reason: if pkg.explicit { "explicit" } else { "dependency" },
+            })
+            .collect();
+        return Ok(results);
+    }
+
     with_handle(|handle| {
         let localdb = handle.localdb();
 
@@ -192,6 +297,17 @@ pub fn list_installed_fast() -> Result<Vec<LocalPackage>> {
 
 /// List explicitly installed packages - INSTANT
 pub fn list_explicit_fast() -> Result<Vec<String>> {
+    if paths::test_mode() {
+        let local_dir = paths::pacman_local_dir();
+        let packages = pacman_db::parse_local_db(&local_dir)?;
+        let results = packages
+            .into_values()
+            .filter(|pkg| pkg.explicit)
+            .map(|pkg| pkg.name)
+            .collect();
+        return Ok(results);
+    }
+
     with_handle(|handle| {
         let results = handle
             .localdb()
@@ -207,6 +323,10 @@ pub fn list_explicit_fast() -> Result<Vec<String>> {
 
 /// List orphan packages - INSTANT
 pub fn list_orphans_fast() -> Result<Vec<String>> {
+    if paths::test_mode() {
+        return Ok(Vec::new());
+    }
+
     with_handle(|handle| {
         let results = handle
             .localdb()
@@ -222,11 +342,22 @@ pub fn list_orphans_fast() -> Result<Vec<String>> {
 
 /// Check if package is installed - INSTANT
 pub fn is_installed_fast(name: &str) -> Result<bool> {
+    if paths::test_mode() {
+        let local_dir = paths::pacman_local_dir();
+        let packages = pacman_db::parse_local_db(&local_dir)?;
+        return Ok(packages.contains_key(name));
+    }
+
     with_handle(|handle| Ok(handle.localdb().pkg(name).is_ok()))
 }
 
 /// Get counts - INSTANT
 pub fn get_counts() -> Result<(usize, usize, usize)> {
+    if paths::test_mode() {
+        let (total, explicit, deps) = pacman_db::get_counts_fast()?;
+        return Ok((total, explicit, deps));
+    }
+
     with_handle(|handle| {
         let pkgs = handle.localdb().pkgs();
 
@@ -246,6 +377,24 @@ pub fn get_counts() -> Result<(usize, usize, usize)> {
 
 /// List all known package names (local + sync) for completion - FAST
 pub fn list_all_package_names() -> Result<Vec<String>> {
+    if paths::test_mode() {
+        let mut names = std::collections::HashSet::new();
+        let local_dir = paths::pacman_local_dir();
+        let local_packages = pacman_db::parse_local_db(&local_dir)?;
+        for pkg in local_packages.values() {
+            names.insert(pkg.name.clone());
+        }
+
+        let sync_packages = pacman_db::search_sync_fast("")?;
+        for pkg in sync_packages {
+            names.insert(pkg.name);
+        }
+
+        let mut result: Vec<String> = names.into_iter().collect();
+        result.sort();
+        return Ok(result);
+    }
+
     with_handle(|handle| {
         let mut names = std::collections::HashSet::new();
 

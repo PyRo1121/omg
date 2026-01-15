@@ -9,6 +9,8 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use crate::core::paths;
+
 /// Known version files and their corresponding runtime
 const VERSION_FILES: &[(&str, &str)] = &[
     // Node.js
@@ -161,14 +163,7 @@ pub fn build_path_additions<S: std::hash::BuildHasher>(
 ) -> Vec<String> {
     let mut paths = Vec::new();
 
-    let data_dir = directories::ProjectDirs::from("com", "omg", "omg").map_or_else(
-        || {
-            home::home_dir()
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join(".omg")
-        },
-        |d| d.data_dir().to_path_buf(),
-    );
+    let data_dir = paths::data_dir();
 
     for (runtime, version) in versions {
         let bin_path = match runtime.as_str() {

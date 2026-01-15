@@ -20,10 +20,7 @@ use std::os::unix::net::UnixStream as SyncUnixStream;
 /// Get the default socket path
 #[must_use]
 pub fn default_socket_path() -> PathBuf {
-    std::env::var("XDG_RUNTIME_DIR").map_or_else(
-        |_| PathBuf::from("/tmp/omg.sock"),
-        |d| PathBuf::from(d).join("omg.sock"),
-    )
+    crate::core::paths::socket_path()
 }
 
 /// IPC Client for daemon communication
