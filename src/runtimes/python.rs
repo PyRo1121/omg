@@ -73,13 +73,11 @@ impl PythonManager {
             .context("Failed to parse Python release data")?;
 
         let arch = match std::env::consts::ARCH {
-            "x86_64" => "x86_64",
             "aarch64" => "aarch64",
             _ => "x86_64",
         };
 
         let mut versions = std::collections::HashSet::new();
-        let re = regex::Regex::new(r"cpython-(\d+\.\d+\.\d+)")?;
 
         for release in &releases {
             for asset in &release.assets {
@@ -88,10 +86,8 @@ impl PythonManager {
                     && asset.name.contains("linux-gnu")
                     && asset.name.contains("install_only")
                 {
-                    if let Some(caps) = re.captures(&asset.name) {
-                        if let Some(version) = caps.get(1) {
-                            versions.insert(version.as_str().to_string());
-                        }
+                    if let Some(version) = Self::extract_cpython_version(&asset.name) {
+                        versions.insert(version);
                     }
                 }
             }
@@ -107,6 +103,38 @@ impl PythonManager {
 
         result.sort_by(|a, b| version_cmp(&b.version, &a.version));
         Ok(result)
+    }
+
+    fn extract_cpython_version(name: &str) -> Option<String> {
+        let (_, tail) = name.split_once("cpython-")?;
+        let version = tail
+            .chars()
+            .take_while(|c| c.is_ascii_digit() || *c == '.')
+            .collect::<String>();
+        if Self::is_semver_like(&version) {
+            Some(version)
+        } else {
+            None
+        }
+    }
+
+    fn is_semver_like(value: &str) -> bool {
+        let mut parts = value.split('.');
+        let Some(major) = parts.next() else {
+            return false;
+        };
+        let Some(minor) = parts.next() else {
+            return false;
+        };
+        let Some(patch) = parts.next() else {
+            return false;
+        };
+        if parts.next().is_some() {
+            return false;
+        }
+        [major, minor, patch]
+            .iter()
+            .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
     }
 
     pub fn list_installed(&self) -> Result<Vec<String>> {
@@ -179,7 +207,7 @@ impl PythonManager {
                     && asset.name.ends_with(".tar.gz")
                 {
                     download_url = Some(asset.browser_download_url.clone());
-                    asset_name = asset.name.clone();
+                    asset_name.clone_from(&asset.name);
                     break;
                 }
             }

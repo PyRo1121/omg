@@ -45,6 +45,7 @@ struct MakepkgEnv {
     makeflags: String,
     pkgdest: PathBuf,
     srcdest: PathBuf,
+    builddir: PathBuf,
     extra_env: Vec<(String, String)>,
 }
 
@@ -359,11 +360,11 @@ impl AurClient {
         let cache_key = self.cache_key(&pkg_dir, &env.makeflags)?;
 
         if self.settings.aur.review_pkgbuild {
-            self.review_pkgbuild(&pkgbuild_path)?;
+            Self::review_pkgbuild(&pkgbuild_path)?;
         }
 
         let pkg_file =
-            if let Some(cached) = self.cached_package(package, &env.pkgdest, &cache_key)? {
+            if let Some(cached) = self.cached_package(package, &env.pkgdest, &cache_key) {
                 println!("{} Using cached build...", "→".blue());
                 cached
             } else {
@@ -379,14 +380,14 @@ impl AurClient {
                     );
                 }
 
-                let pkg_file = self.find_built_package(&pkg_dir, &env.pkgdest)?;
+                let pkg_file = Self::find_built_package(&pkg_dir, &env.pkgdest)?;
                 self.write_cache_key(package, &cache_key)?;
                 pkg_file
             };
 
         // Install the built package
         println!("{} Installing built package...", "→".blue());
-        self.install_built_package(&pkg_file).await?;
+        Self::install_built_package(&pkg_file).await?;
 
         println!("\n{} {} installed successfully!", "✓".green(), package);
 
@@ -432,9 +433,9 @@ impl AurClient {
         let env = self.makepkg_env(&pkg_dir)?;
         let cache_key = self.cache_key(&pkg_dir, &env.makeflags)?;
         if self.settings.aur.review_pkgbuild {
-            self.review_pkgbuild(&pkgbuild_path)?;
+            Self::review_pkgbuild(&pkgbuild_path)?;
         }
-        if let Some(cached) = self.cached_package(package, &env.pkgdest, &cache_key)? {
+        if let Some(cached) = self.cached_package(package, &env.pkgdest, &cache_key) {
             return Ok(cached);
         }
 
@@ -448,12 +449,12 @@ impl AurClient {
             anyhow::bail!("makepkg failed for '{package}'. Check build output above for details.");
         }
 
-        let pkg_file = self.find_built_package(&pkg_dir, &env.pkgdest)?;
+        let pkg_file = Self::find_built_package(&pkg_dir, &env.pkgdest)?;
         self.write_cache_key(package, &cache_key)?;
         Ok(pkg_file)
     }
 
-    fn find_built_package(&self, pkg_dir: &Path, pkgdest: &Path) -> Result<PathBuf> {
+    fn find_built_package(pkg_dir: &Path, pkgdest: &Path) -> Result<PathBuf> {
         let pkg_path =
             Self::find_package_in_dir(pkgdest).or_else(|| Self::find_package_in_dir(pkg_dir));
 
@@ -511,7 +512,7 @@ impl AurClient {
     }
 
     /// Update existing clone
-    async fn git_pull(&self, pkg_dir: &PathBuf) -> Result<()> {
+    async fn git_pull(&self, pkg_dir: &Path) -> Result<()> {
         if let Ok(git_path) = which("git") {
             let spinner = create_spinner("Pulling latest changes (git)...");
             let status = Command::new(git_path)
@@ -528,7 +529,7 @@ impl AurClient {
 
         let spinner = create_spinner("Pulling latest changes (native)...");
 
-        let pkg_dir = pkg_dir.clone();
+        let pkg_dir = pkg_dir.to_path_buf();
         tokio::task::spawn_blocking(move || {
             let repo = Repository::open(&pkg_dir).context("Failed to open local repository")?;
 
@@ -627,6 +628,7 @@ impl AurClient {
 
             let pkgdest_str = env.pkgdest.to_string_lossy().to_string();
             let srcdest_str = env.srcdest.to_string_lossy().to_string();
+            let builddir_str = env.builddir.to_string_lossy().to_string();
             let pacman_db_dir = paths::pacman_db_dir().to_string_lossy().to_string();
             let pacman_cache_root = paths::pacman_cache_root_dir().to_string_lossy().to_string();
 
@@ -649,6 +651,9 @@ impl AurClient {
                 "--symlink".to_string(),
                 "/usr/sbin".to_string(),
                 "/sbin".to_string(),
+                "--ro-bind".to_string(),
+                home.clone(),
+                home,
                 "--bind".to_string(),
                 pkg_dir_str.to_string(),
                 pkg_dir_str.to_string(),
@@ -658,15 +663,15 @@ impl AurClient {
                 "--bind".to_string(),
                 srcdest_str.clone(),
                 srcdest_str.clone(),
+                "--bind".to_string(),
+                builddir_str.clone(),
+                builddir_str.clone(),
                 "--tmpfs".to_string(),
                 "/tmp".to_string(),
                 "--dev".to_string(),
                 "/dev".to_string(),
                 "--proc".to_string(),
                 "/proc".to_string(),
-                "--ro-bind".to_string(),
-                home.clone(),
-                home,
                 "--ro-bind".to_string(),
                 pacman_db_dir.clone(),
                 pacman_db_dir,
@@ -685,6 +690,9 @@ impl AurClient {
                 "--setenv".to_string(),
                 "SRCDEST".to_string(),
                 srcdest_str,
+                "--setenv".to_string(),
+                "BUILDDIR".to_string(),
+                builddir_str,
             ];
 
             for (key, value) in &env.extra_env {
@@ -766,7 +774,8 @@ impl AurClient {
         cmd.args(self.makepkg_args())
             .env("MAKEFLAGS", &env.makeflags)
             .env("PKGDEST", &env.pkgdest)
-            .env("SRCDEST", &env.srcdest);
+            .env("SRCDEST", &env.srcdest)
+            .env("BUILDDIR", &env.builddir);
 
         for (key, value) in &env.extra_env {
             cmd.env(key, value);
@@ -838,6 +847,7 @@ impl AurClient {
             .env("MAKEFLAGS", &env.makeflags)
             .env("PKGDEST", &env.pkgdest)
             .env("SRCDEST", &env.srcdest)
+            .env("BUILDDIR", &env.builddir)
             .stdout(Stdio::from(log_file))
             .stderr(Stdio::from(log_file_err));
 
@@ -863,7 +873,7 @@ impl AurClient {
         args
     }
 
-    fn review_pkgbuild(&self, pkgbuild_path: &Path) -> Result<()> {
+    fn review_pkgbuild(pkgbuild_path: &Path) -> Result<()> {
         println!(
             "{} Review PKGBUILD before building: {}",
             "→".blue(),
@@ -881,7 +891,7 @@ impl AurClient {
 
     fn makepkg_env(&self, pkg_dir: &Path) -> Result<MakepkgEnv> {
         let jobs = std::thread::available_parallelism()
-            .map(|v| v.get())
+            .map(std::num::NonZero::get)
             .unwrap_or(1);
         let makeflags = self
             .settings
@@ -910,8 +920,16 @@ impl AurClient {
             .clone()
             .unwrap_or_else(|| self.build_dir.join("_srcdest"));
 
+        let builddir = std::env::temp_dir().join("omg-build").join(
+            pkg_dir
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("pkg"),
+        );
+
         std::fs::create_dir_all(&pkgdest)?;
         std::fs::create_dir_all(&srcdest)?;
+        std::fs::create_dir_all(&builddir)?;
 
         let mut extra_env = Vec::new();
 
@@ -952,6 +970,7 @@ impl AurClient {
             makeflags,
             pkgdest,
             srcdest,
+            builddir,
             extra_env,
         })
     }
@@ -982,22 +1001,22 @@ impl AurClient {
         package: &str,
         pkgdest: &Path,
         cache_key: &str,
-    ) -> Result<Option<PathBuf>> {
+    ) -> Option<PathBuf> {
         if !self.settings.aur.cache_builds {
-            return Ok(None);
+            return None;
         }
 
         let cache_path = self.cache_path(package);
         if !cache_path.exists() {
-            return Ok(None);
+            return None;
         }
 
         let cached = std::fs::read_to_string(&cache_path).unwrap_or_default();
         if cached.trim() != cache_key {
-            return Ok(None);
+            return None;
         }
 
-        Ok(Self::find_package_in_dir(pkgdest))
+        Self::find_package_in_dir(pkgdest)
     }
 
     fn write_cache_key(&self, package: &str, cache_key: &str) -> Result<()> {
@@ -1014,7 +1033,7 @@ impl AurClient {
     }
 
     /// Install the built package via sudo omg install <path>
-    async fn install_built_package(&self, pkg_path: &PathBuf) -> Result<()> {
+    async fn install_built_package(pkg_path: &PathBuf) -> Result<()> {
         println!(
             "{} Installing built package (elevating with sudo)...",
             "→".blue()

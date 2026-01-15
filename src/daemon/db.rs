@@ -37,9 +37,9 @@ impl PersistentCache {
         Ok(self.status_db.get(&rtxn, "current")?)
     }
 
-    pub fn set_status(&self, status: StatusResult) -> Result<()> {
+    pub fn set_status(&self, status: &StatusResult) -> Result<()> {
         let mut wtxn = self.env.write_txn()?;
-        self.status_db.put(&mut wtxn, "current", &status)?;
+        self.status_db.put(&mut wtxn, "current", status)?;
         wtxn.commit()?;
         Ok(())
     }

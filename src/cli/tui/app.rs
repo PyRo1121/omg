@@ -48,7 +48,7 @@ impl App {
         Ok(())
     }
 
-    pub const fn handle_key(&self, _key: crossterm::event::KeyCode) {
+    pub const fn handle_key(_key: crossterm::event::KeyCode) {
         // Handle navigation etc.
     }
 }

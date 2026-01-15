@@ -160,11 +160,10 @@ mod cli_foundation {
 
         for cmd in subcommands {
             let (success, stdout, _) = run_omg(&[cmd, "--help"]);
-            assert!(success, "omg {} --help should succeed", cmd);
+            assert!(success, "omg {cmd} --help should succeed");
             assert!(
                 stdout.contains("Usage"),
-                "Help for {} should contain 'Usage'",
-                cmd
+                "Help for {cmd} should contain 'Usage'"
             );
         }
     }
@@ -427,7 +426,7 @@ mod runtime_management {
     fn test_which_command() {
         for runtime in RUNTIMES {
             let (success, _, _) = run_omg(&["which", runtime]);
-            assert!(success, "which {} should succeed", runtime);
+            assert!(success, "which {runtime} should succeed");
         }
     }
 
@@ -823,8 +822,7 @@ mod performance {
         // Status should complete in under 500ms (generous for CI)
         assert!(
             duration < Duration::from_millis(500),
-            "Status took too long: {:?}",
-            duration
+            "Status took too long: {duration:?}"
         );
     }
 
@@ -836,8 +834,7 @@ mod performance {
         // List installed should be very fast
         assert!(
             duration < Duration::from_millis(200),
-            "List took too long: {:?}",
-            duration
+            "List took too long: {duration:?}"
         );
     }
 
@@ -849,8 +846,7 @@ mod performance {
         // Which should be extremely fast (< 50ms)
         assert!(
             duration < Duration::from_millis(100),
-            "Which took too long: {:?}",
-            duration
+            "Which took too long: {duration:?}"
         );
     }
 
@@ -862,8 +858,7 @@ mod performance {
         // Help should be instant
         assert!(
             duration < Duration::from_millis(50),
-            "Help took too long: {:?}",
-            duration
+            "Help took too long: {duration:?}"
         );
     }
 
@@ -876,8 +871,7 @@ mod performance {
         // Completions generation should be fast
         assert!(
             duration < Duration::from_millis(100),
-            "Completions generation took too long: {:?}",
-            duration
+            "Completions generation took too long: {duration:?}"
         );
     }
 }

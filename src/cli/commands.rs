@@ -186,7 +186,7 @@ pub fn status_sync() -> Result<()> {
         if let Ok(mut client) = crate::core::client::DaemonClient::connect_sync() {
             // Fixed ID for zero-overhead
             if let Ok(crate::daemon::protocol::ResponseResult::Status(res)) =
-                client.call_sync(crate::daemon::protocol::Request::Status { id: 0 })
+                client.call_sync(&crate::daemon::protocol::Request::Status { id: 0 })
             {
                 (
                     res.total_packages,

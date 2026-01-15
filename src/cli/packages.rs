@@ -38,7 +38,7 @@ pub fn search_sync_cli(query: &str, detailed: bool, interactive: bool) -> Result
 
     // 1. Try Daemon first (ULTRA FAST - <1ms)
     if let Ok(mut client) = DaemonClient::connect_sync() {
-        if let Ok(ResponseResult::Search(res)) = client.call_sync(Request::Search {
+        if let Ok(ResponseResult::Search(res)) = client.call_sync(&Request::Search {
             id: 0,
             query: query.to_string(),
             limit: Some(50),
@@ -400,7 +400,7 @@ pub async fn install(packages: &[String], yes: bool) -> Result<()> {
                             .default(true)
                             .interact()?
                         {
-                            target_pkg_name = best_match.name.clone();
+                            target_pkg_name.clone_from(&best_match.name);
                             sync_info = get_sync_pkg_info(&target_pkg_name).ok().flatten();
                         }
                     } else {
@@ -416,7 +416,7 @@ pub async fn install(packages: &[String], yes: bool) -> Result<()> {
                                     .default(true)
                                     .interact()?
                                 {
-                                    target_pkg_name = best_match.name.clone();
+                                    target_pkg_name.clone_from(&best_match.name);
                                     aur_info = Some(best_match.clone());
                                 }
                             }
@@ -1145,7 +1145,9 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool) -> Result<(
 pub fn explicit_sync(count: bool) -> Result<()> {
     // Try daemon first
     let packages = if let Ok(mut client) = DaemonClient::connect_sync() {
-        if let Ok(ResponseResult::Explicit(res)) = client.call_sync(Request::Explicit { id: 0 }) {
+        if let Ok(ResponseResult::Explicit(res)) =
+            client.call_sync(&Request::Explicit { id: 0 })
+        {
             res.packages
         } else {
             // Sequential fallback to local ALPM

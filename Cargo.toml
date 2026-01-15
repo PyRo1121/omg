@@ -1,11 +1,12 @@
 [package]
 name = "omg"
 version = "0.1.14"
-edition = "2021"
+edition = "2024"
+rust-version = "1.88"
 description = "The Fastest Unified Package Manager for Arch Linux + All Language Runtimes"
 authors = ["OMG Team"]
 license = "MIT"
-repository = "https://github.com/yourusername/omg"
+repository = "https://github.com/PyRo1121/omg/"
 readme = "README.md"
 keywords = ["package-manager", "arch-linux", "version-manager", "runtime"]
 categories = ["command-line-utilities", "development-tools"]

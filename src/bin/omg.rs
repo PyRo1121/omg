@@ -181,10 +181,7 @@ fn main() -> Result<()> {
             task_runner::run_task(&task, &args)?;
         }
         Commands::New { stack, name } => {
-            let rt = tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build()?;
-            rt.block_on(new::run(&stack, &name))?;
+            new::run(&stack, &name)?;
         }
         Commands::Tool { command } => match command {
             ToolCommands::Install { name } => {

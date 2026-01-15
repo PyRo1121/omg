@@ -6,7 +6,7 @@ use std::process::Command;
 use crate::cli::style;
 
 /// Create a new project
-pub async fn run(stack: &str, name: &str) -> Result<()> {
+pub fn run(stack: &str, name: &str) -> Result<()> {
     let target_dir = std::env::current_dir()?.join(name);
     if target_dir.exists() {
         anyhow::bail!("Directory '{name}' already exists");

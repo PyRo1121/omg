@@ -156,7 +156,7 @@ impl RustManager {
             match self.download_file(&url, &download_path).await {
                 Ok(()) => {
                     println!("{} Extracting {}...", "→".blue(), component);
-                    self.extract_component(
+                    Self::extract_component(
                         &download_path,
                         &version_dir,
                         component,
@@ -179,7 +179,6 @@ impl RustManager {
     }
 
     fn extract_component(
-        &self,
         archive_path: &Path,
         dest_dir: &Path,
         component: &str,

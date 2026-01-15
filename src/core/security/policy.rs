@@ -181,8 +181,10 @@ mod tests {
 
     #[test]
     fn test_policy_check_grade() {
-        let mut policy = SecurityPolicy::default();
-        policy.minimum_grade = SecurityGrade::Verified;
+        let policy = SecurityPolicy {
+            minimum_grade: SecurityGrade::Verified,
+            ..SecurityPolicy::default()
+        };
 
         // Verified is allowed
         assert!(policy

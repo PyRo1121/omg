@@ -43,14 +43,14 @@ impl Request {
     #[must_use]
     pub const fn id(&self) -> RequestId {
         match self {
-            Self::Search { id, .. } => *id,
-            Self::Info { id, .. } => *id,
-            Self::Status { id } => *id,
-            Self::Explicit { id } => *id,
-            Self::SecurityAudit { id } => *id,
-            Self::Ping { id } => *id,
-            Self::CacheStats { id } => *id,
-            Self::CacheClear { id } => *id,
+            Self::Search { id, .. }
+            | Self::Info { id, .. }
+            | Self::Status { id }
+            | Self::Explicit { id }
+            | Self::SecurityAudit { id }
+            | Self::Ping { id }
+            | Self::CacheStats { id }
+            | Self::CacheClear { id } => *id,
         }
     }
 }

@@ -59,8 +59,8 @@ pub async fn handle_request(state: Arc<DaemonState>, request: Request) -> Respon
             id,
             result: ResponseResult::Ping("pong".to_string()),
         },
-        Request::Status { id } => handle_status(state, id).await,
-        Request::Explicit { id } => handle_list_explicit(state, id).await,
+        Request::Status { id } => handle_status(&state, id),
+        Request::Explicit { id } => handle_list_explicit(&state, id),
         Request::SecurityAudit { id } => handle_security_audit(state, id).await,
         Request::CacheStats { id } => {
             let stats = state.cache.stats();
@@ -198,7 +198,7 @@ async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) ->
 }
 
 /// Handle status request
-async fn handle_status(state: Arc<DaemonState>, id: RequestId) -> Response {
+fn handle_status(state: &Arc<DaemonState>, id: RequestId) -> Response {
     use crate::package_managers::get_system_status;
 
     if let Ok(Some(cached)) = state.persistent.get_status() {
@@ -226,7 +226,7 @@ async fn handle_status(state: Arc<DaemonState>, id: RequestId) -> Response {
                 runtime_versions: state.runtime_versions.read().clone(),
             };
 
-            let _ = state.persistent.set_status(res.clone());
+            let _ = state.persistent.set_status(&res);
             state.cache.update_status(res.clone());
 
             Response::Success {
@@ -314,7 +314,7 @@ async fn handle_security_audit(_state: Arc<DaemonState>, id: RequestId) -> Respo
 }
 
 /// Handle list explicit request
-async fn handle_list_explicit(state: Arc<DaemonState>, id: RequestId) -> Response {
+fn handle_list_explicit(state: &Arc<DaemonState>, id: RequestId) -> Response {
     use crate::package_managers::list_explicit_fast;
 
     if let Some(cached) = state.cache.get_explicit() {
