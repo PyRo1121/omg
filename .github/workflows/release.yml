@@ -27,7 +27,7 @@ jobs:
       - name: Build Release Artifacts
         run: |
           chmod +x ./release.sh
-          ./release.sh
+          AUTO_BUMP_VERSION=0 ./release.sh
 
       - name: Locate Artifacts
         id: artifacts
