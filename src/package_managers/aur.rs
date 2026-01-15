@@ -64,14 +64,15 @@ struct AurPackage {
 impl AurClient {
     pub fn new() -> Self {
         let settings = Settings::load().unwrap_or_default();
-        let build_dir = std::env::var("XDG_CACHE_HOME").map_or_else(
-            |_| {
-                home::home_dir()
-                    .unwrap_or_else(|| PathBuf::from("."))
-                    .join(".cache")
-            },
-            PathBuf::from,
-        )
+        let build_dir = std::env::var("XDG_CACHE_HOME")
+            .map_or_else(
+                |_| {
+                    home::home_dir()
+                        .unwrap_or_else(|| PathBuf::from("."))
+                        .join(".cache")
+                },
+                PathBuf::from,
+            )
             .join("omg")
             .join("aur");
 
@@ -140,7 +141,7 @@ impl AurClient {
             .map(<[std::string::String]>::to_vec)
             .collect();
 
-        let concurrency = self.settings.aur.build_concurrency.max(1).min(8);
+        let concurrency = self.settings.aur.build_concurrency.clamp(1, 8);
         let mut stream = futures::stream::iter(chunked_names)
             .map(|chunk| {
                 let client = &self.client;
@@ -216,28 +217,27 @@ impl AurClient {
         let env = self.makepkg_env(&pkg_dir)?;
         let cache_key = self.cache_key(&pkg_dir, &env.makeflags)?;
 
-        let pkg_file = if let Some(cached) =
-            self.cached_package(package, &env.pkgdest, &cache_key)?
-        {
-            println!("{} Using cached build...", "→".blue());
-            cached
-        } else {
-            // Build with makepkg (sandboxed if bubblewrap is available)
-            let status = self
-                .run_sandboxed_makepkg(&pkg_dir, &env)
-                .await
-                .with_context(|| format!("Failed to run makepkg for '{package}'"))?;
+        let pkg_file =
+            if let Some(cached) = self.cached_package(package, &env.pkgdest, &cache_key)? {
+                println!("{} Using cached build...", "→".blue());
+                cached
+            } else {
+                // Build with makepkg (sandboxed if bubblewrap is available)
+                let status = self
+                    .run_sandboxed_makepkg(&pkg_dir, &env)
+                    .await
+                    .with_context(|| format!("Failed to run makepkg for '{package}'"))?;
 
-            if !status.success() {
-                anyhow::bail!(
-                    "makepkg failed for '{package}'. Check build output above for details."
-                );
-            }
+                if !status.success() {
+                    anyhow::bail!(
+                        "makepkg failed for '{package}'. Check build output above for details."
+                    );
+                }
 
-            let pkg_file = self.find_built_package(&pkg_dir, &env.pkgdest)?;
-            self.write_cache_key(package, &cache_key)?;
-            pkg_file
-        };
+                let pkg_file = self.find_built_package(&pkg_dir, &env.pkgdest)?;
+                self.write_cache_key(package, &cache_key)?;
+                pkg_file
+            };
 
         // Install the built package
         println!("{} Installing built package...", "→".blue());
@@ -307,8 +307,8 @@ impl AurClient {
     }
 
     fn find_built_package(&self, pkg_dir: &Path, pkgdest: &Path) -> Result<PathBuf> {
-        let pkg_path = Self::find_package_in_dir(pkgdest)
-            .or_else(|| Self::find_package_in_dir(pkg_dir));
+        let pkg_path =
+            Self::find_package_in_dir(pkgdest).or_else(|| Self::find_package_in_dir(pkg_dir));
 
         pkg_path.ok_or_else(|| anyhow::anyhow!("No package archive found after makepkg"))
     }
@@ -510,11 +510,7 @@ impl AurClient {
 
             spinner.finish_and_clear();
             if !status.success() {
-                println!(
-                    "  {} Build failed. Log: {}",
-                    "✗".red(),
-                    log_path.display()
-                );
+                println!("  {} Build failed. Log: {}", "✗".red(), log_path.display());
             }
             Ok(status)
         } else {
@@ -544,11 +540,7 @@ impl AurClient {
 
             spinner.finish_and_clear();
             if !status.success() {
-                println!(
-                    "  {} Build failed. Log: {}",
-                    "✗".red(),
-                    log_path.display()
-                );
+                println!("  {} Build failed. Log: {}", "✗".red(), log_path.display());
             }
             Ok(status)
         }
@@ -564,7 +556,13 @@ impl AurClient {
             .makeflags
             .clone()
             .or_else(|| std::env::var("MAKEFLAGS").ok())
-            .unwrap_or_else(|| if jobs > 1 { format!("-j{jobs}") } else { String::new() });
+            .unwrap_or_else(|| {
+                if jobs > 1 {
+                    format!("-j{jobs}")
+                } else {
+                    String::new()
+                }
+            });
 
         let pkgdest = self
             .settings

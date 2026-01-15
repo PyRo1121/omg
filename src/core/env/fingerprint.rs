@@ -48,30 +48,37 @@ impl EnvironmentState {
         );
 
         if let Ok(Some(v)) = node {
-            runtimes.insert("node".to_string(), v);
+            runtimes.insert("node".to_string(), v.trim().to_string());
         }
         if let Ok(Some(v)) = python {
-            runtimes.insert("python".to_string(), v);
+            runtimes.insert("python".to_string(), v.trim().to_string());
         }
         if let Ok(Some(v)) = rust {
-            runtimes.insert("rust".to_string(), v);
+            runtimes.insert("rust".to_string(), v.trim().to_string());
         }
         if let Ok(Some(v)) = go {
-            runtimes.insert("go".to_string(), v);
+            runtimes.insert("go".to_string(), v.trim().to_string());
         }
         if let Ok(Some(v)) = ruby {
-            runtimes.insert("ruby".to_string(), v);
+            runtimes.insert("ruby".to_string(), v.trim().to_string());
         }
         if let Ok(Some(v)) = java {
-            runtimes.insert("java".to_string(), v);
+            runtimes.insert("java".to_string(), v.trim().to_string());
         }
         if let Ok(Some(v)) = bun {
-            runtimes.insert("bun".to_string(), v);
+            runtimes.insert("bun".to_string(), v.trim().to_string());
         }
 
         // Capture system packages
-        let mut packages = list_explicit().await.unwrap_or_default();
-        packages.sort(); // Ensure deterministic order
+        let mut packages: Vec<String> = list_explicit()
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|pkg| pkg.trim().to_string())
+            .filter(|pkg| !pkg.is_empty())
+            .collect();
+        packages.sort_unstable();
+        packages.dedup();
 
         let timestamp = chrono::Utc::now().timestamp();
 
@@ -81,6 +88,8 @@ impl EnvironmentState {
             timestamp,
             hash: String::new(),
         };
+
+        state.normalize();
 
         // Calculate hash
         state.hash = state.calculate_hash();
@@ -93,19 +102,16 @@ impl EnvironmentState {
     pub fn calculate_hash(&self) -> String {
         let mut hasher = Sha256::new();
 
-        // Hash runtimes
-        let mut sorted_runtimes: Vec<_> = self.runtimes.iter().collect();
-        sorted_runtimes.sort_by_key(|(k, _)| *k);
+        let (runtimes, packages) = self.normalized_parts();
 
-        for (k, v) in sorted_runtimes {
-            hasher.update(k.as_bytes());
+        for (key, value) in runtimes {
+            hasher.update(key.as_bytes());
             hasher.update(b":");
-            hasher.update(v.as_bytes());
+            hasher.update(value.as_bytes());
             hasher.update(b";");
         }
 
-        // Hash packages
-        for pkg in &self.packages {
+        for pkg in packages {
             hasher.update(pkg.as_bytes());
             hasher.update(b";");
         }
@@ -115,7 +121,9 @@ impl EnvironmentState {
 
     /// Save state to omg.lock file
     pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<()> {
-        let content = toml::to_string_pretty(self)?;
+        let mut normalized = self.clone();
+        normalized.normalize();
+        let content = toml::to_string_pretty(&normalized)?;
         fs::write(path, content)?;
         Ok(())
     }
@@ -123,8 +131,35 @@ impl EnvironmentState {
     /// Load state from omg.lock file
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self> {
         let content = fs::read_to_string(path)?;
-        let state: Self = toml::from_str(&content)?;
+        let mut state: Self = toml::from_str(&content)?;
+        state.normalize();
         Ok(state)
+    }
+
+    fn normalize(&mut self) {
+        let (runtimes, packages) = self.normalized_parts();
+        self.runtimes = runtimes.into_iter().collect();
+        self.packages = packages;
+    }
+
+    fn normalized_parts(&self) -> (Vec<(String, String)>, Vec<String>) {
+        let mut runtimes: Vec<(String, String)> = self
+            .runtimes
+            .iter()
+            .map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
+            .collect();
+        runtimes.sort_by(|(lhs, _), (rhs, _)| lhs.cmp(rhs));
+
+        let mut packages: Vec<String> = self
+            .packages
+            .iter()
+            .map(|pkg| pkg.trim().to_string())
+            .filter(|pkg| !pkg.is_empty())
+            .collect();
+        packages.sort_unstable();
+        packages.dedup();
+
+        (runtimes, packages)
     }
 }
 

@@ -161,15 +161,14 @@ pub fn build_path_additions<S: std::hash::BuildHasher>(
 ) -> Vec<String> {
     let mut paths = Vec::new();
 
-    let data_dir = directories::ProjectDirs::from("com", "omg", "omg")
-        .map_or_else(
-            || {
-                home::home_dir()
-                    .unwrap_or_else(|| PathBuf::from("."))
-                    .join(".omg")
-            },
-            |d| d.data_dir().to_path_buf(),
-        );
+    let data_dir = directories::ProjectDirs::from("com", "omg", "omg").map_or_else(
+        || {
+            home::home_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join(".omg")
+        },
+        |d| d.data_dir().to_path_buf(),
+    );
 
     for (runtime, version) in versions {
         let bin_path = match runtime.as_str() {

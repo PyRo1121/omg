@@ -13,7 +13,8 @@ const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(300);
 const DOWNLOAD_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
-static SHARED_CLIENT: LazyLock<Client> = LazyLock::new(|| build_client(DEFAULT_TIMEOUT, DEFAULT_CONNECT_TIMEOUT));
+static SHARED_CLIENT: LazyLock<Client> =
+    LazyLock::new(|| build_client(DEFAULT_TIMEOUT, DEFAULT_CONNECT_TIMEOUT));
 static DOWNLOAD_CLIENT: LazyLock<Client> =
     LazyLock::new(|| build_client(DOWNLOAD_TIMEOUT, DOWNLOAD_CONNECT_TIMEOUT));
 

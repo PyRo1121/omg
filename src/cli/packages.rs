@@ -684,7 +684,10 @@ pub async fn update(check_only: bool) -> Result<()> {
             return Ok(());
         }
     } else {
-        println!("{}", style::dim("Proceeding without prompt (no TTY detected)."));
+        println!(
+            "{}",
+            style::dim("Proceeding without prompt (no TTY detected).")
+        );
     }
 
     // STEP 5: Execute upgrades
@@ -774,8 +777,10 @@ pub async fn update(check_only: bool) -> Result<()> {
         if !built_packages.is_empty() {
             let spinner = ProgressBar::new_spinner();
             #[allow(clippy::literal_string_with_formatting_args)]
-            let install_template =
-                format!("\n  {{spinner}} Installing {} packages...", built_packages.len());
+            let install_template = format!(
+                "\n  {{spinner}} Installing {} packages...",
+                built_packages.len()
+            );
             spinner.set_style(
                 ProgressStyle::default_spinner()
                     .template(&install_template)
