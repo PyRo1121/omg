@@ -364,8 +364,15 @@ async fn benchmark_mirror(client: &Client, mirror: &str) -> Option<(String, Dura
         Ok(resp) if resp.status().is_success() => Some((mirror.to_string(), start.elapsed())),
         _ => {
             let start = std::time::Instant::now();
-            match client.get(&test_url).header(RANGE, "bytes=0-0").send().await {
-                Ok(resp) if resp.status().is_success() => Some((mirror.to_string(), start.elapsed())),
+            match client
+                .get(&test_url)
+                .header(RANGE, "bytes=0-0")
+                .send()
+                .await
+            {
+                Ok(resp) if resp.status().is_success() => {
+                    Some((mirror.to_string(), start.elapsed()))
+                }
                 _ => None,
             }
         }

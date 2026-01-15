@@ -11,6 +11,8 @@ pub struct PackageCache {
     cache: Cache<String, Vec<PackageInfo>>,
     /// Detailed info cache: pkgname -> info
     detailed_cache: Cache<String, DetailedPackageInfo>,
+    /// Negative cache for missing package info
+    info_miss_cache: Cache<String, bool>,
     /// Maximum cache size
     max_size: usize,
     /// System status cache
@@ -39,6 +41,10 @@ impl PackageCache {
             .max_capacity(max_size as u64)
             .time_to_live(ttl)
             .build();
+        let info_miss_cache = Cache::builder()
+            .max_capacity(max_size as u64)
+            .time_to_live(ttl)
+            .build();
         let system_status = Cache::builder()
             .max_capacity(1)
             .time_to_live(status_ttl)
@@ -50,6 +56,7 @@ impl PackageCache {
         Self {
             cache,
             detailed_cache,
+            info_miss_cache,
             max_size,
             system_status,
             explicit_packages,
@@ -99,6 +106,7 @@ impl PackageCache {
     pub fn clear(&self) {
         self.cache.invalidate_all();
         self.detailed_cache.invalidate_all();
+        self.info_miss_cache.invalidate_all();
         self.system_status.invalidate_all();
         self.explicit_packages.invalidate_all();
     }
@@ -108,9 +116,21 @@ impl PackageCache {
         self.detailed_cache.get(name)
     }
 
+    /// Check if package info is known to be missing
+    pub fn is_info_miss(&self, name: &str) -> bool {
+        self.info_miss_cache.get(name).unwrap_or(false)
+    }
+
     /// Store detailed info in cache
     pub fn insert_info(&self, info: DetailedPackageInfo) {
-        self.detailed_cache.insert(info.name.clone(), info);
+        let name = info.name.clone();
+        self.detailed_cache.insert(name.clone(), info);
+        self.info_miss_cache.invalidate(&name);
+    }
+
+    /// Record a missing package info lookup
+    pub fn insert_info_miss(&self, name: &str) {
+        self.info_miss_cache.insert(name.to_string(), true);
     }
 }
 

@@ -30,6 +30,7 @@ pub struct Settings {
 }
 
 /// AUR build configuration
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AurBuildSettings {

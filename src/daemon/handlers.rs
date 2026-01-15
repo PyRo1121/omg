@@ -147,6 +147,14 @@ async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) ->
         };
     }
 
+    if state.cache.is_info_miss(&package) {
+        return Response::Error {
+            id,
+            code: error_codes::PACKAGE_NOT_FOUND,
+            message: format!("Package not found: {package}"),
+        };
+    }
+
     // 2. Try official index (Instant hash lookup)
     if let Some(pkg) = state.index.get(&package) {
         state.cache.insert_info(pkg.clone());
@@ -179,6 +187,8 @@ async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) ->
             };
         }
     }
+
+    state.cache.insert_info_miss(&package);
 
     Response::Error {
         id,

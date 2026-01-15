@@ -10,14 +10,15 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use colored::Colorize;
 use dialoguer::Confirm;
-use futures::StreamExt;
 use flate2::read::GzDecoder;
+use futures::StreamExt;
 use git2::Repository;
 use indicatif::{ProgressBar, ProgressStyle};
+use reqwest::header::{ETAG, IF_MODIFIED_SINCE, IF_NONE_MATCH, LAST_MODIFIED};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use tokio::process::Command;
 use tokio::fs as tokio_fs;
+use tokio::process::Command;
 use tracing::instrument;
 use which::which;
 
@@ -50,6 +51,12 @@ struct MakepkgEnv {
 #[derive(Debug, Deserialize)]
 struct AurResponse {
     results: Vec<AurPackage>,
+}
+
+#[derive(Debug, Deserialize, serde::Serialize)]
+struct AurMetaCache {
+    etag: Option<String>,
+    last_modified: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -193,6 +200,7 @@ impl AurClient {
         }
 
         let cache_path = self.metadata_cache_path();
+        let meta_path = self.metadata_meta_path();
         let ttl = self.settings.aur.metadata_cache_ttl_secs;
 
         if cache_path.exists() {
@@ -205,21 +213,58 @@ impl AurClient {
             }
         }
 
+        let mut meta_cache: AurMetaCache = AurMetaCache {
+            etag: None,
+            last_modified: None,
+        };
+
+        if meta_path.exists() {
+            if let Ok(bytes) = tokio_fs::read(&meta_path).await {
+                if let Ok(parsed) = serde_json::from_slice::<AurMetaCache>(&bytes) {
+                    meta_cache = parsed;
+                }
+            }
+        }
+
         if let Some(parent) = cache_path.parent() {
             tokio_fs::create_dir_all(parent).await?;
         }
 
-        let bytes = self
-            .client
-            .get(AUR_META_URL)
-            .send()
-            .await?
-            .error_for_status()?
-            .bytes()
-            .await?;
+        let mut req = self.client.get(AUR_META_URL);
+        if let Some(etag) = &meta_cache.etag {
+            req = req.header(IF_NONE_MATCH, etag);
+        }
+        if let Some(last_modified) = &meta_cache.last_modified {
+            req = req.header(IF_MODIFIED_SINCE, last_modified);
+        }
+
+        let response = req.send().await?;
+        if response.status() == reqwest::StatusCode::NOT_MODIFIED && cache_path.exists() {
+            return Self::read_metadata_archive(&cache_path).map(Some);
+        }
+
+        let response = response.error_for_status()?;
+        let etag = response
+            .headers()
+            .get(ETAG)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string);
+        let last_modified = response
+            .headers()
+            .get(LAST_MODIFIED)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string);
+        let bytes = response.bytes().await?;
         let tmp_path = cache_path.with_extension("tmp");
         tokio_fs::write(&tmp_path, &bytes).await?;
         tokio_fs::rename(&tmp_path, &cache_path).await?;
+        let meta_cache = AurMetaCache {
+            etag,
+            last_modified,
+        };
+        if let Ok(meta_bytes) = serde_json::to_vec(&meta_cache) {
+            let _ = tokio_fs::write(&meta_path, meta_bytes).await;
+        }
 
         Self::read_metadata_archive(&cache_path).map(Some)
     }
@@ -234,7 +279,15 @@ impl AurClient {
     }
 
     fn metadata_cache_path(&self) -> PathBuf {
-        self.build_dir.join("_meta").join("packages-meta-ext-v1.json.gz")
+        self.build_dir
+            .join("_meta")
+            .join("packages-meta-ext-v1.json.gz")
+    }
+
+    fn metadata_meta_path(&self) -> PathBuf {
+        self.build_dir
+            .join("_meta")
+            .join("packages-meta-ext-v1.json.gz.meta")
     }
 
     fn chunk_aur_names(names: &[String]) -> Vec<Vec<String>> {
@@ -308,7 +361,6 @@ impl AurClient {
         if self.settings.aur.review_pkgbuild {
             self.review_pkgbuild(&pkgbuild_path)?;
         }
-
 
         let pkg_file =
             if let Some(cached) = self.cached_package(package, &env.pkgdest, &cache_key)? {
@@ -463,12 +515,7 @@ impl AurClient {
         if let Ok(git_path) = which("git") {
             let spinner = create_spinner("Pulling latest changes (git)...");
             let status = Command::new(git_path)
-                .args([
-                    "-C",
-                    &pkg_dir.to_string_lossy(),
-                    "pull",
-                    "--ff-only",
-                ])
+                .args(["-C", &pkg_dir.to_string_lossy(), "pull", "--ff-only"])
                 .status()
                 .await
                 .context("Failed to run git pull")?;
@@ -519,7 +566,11 @@ impl AurClient {
         Ok(())
     }
 
-    async fn run_build(&self, pkg_dir: &Path, env: &MakepkgEnv) -> Result<std::process::ExitStatus> {
+    async fn run_build(
+        &self,
+        pkg_dir: &Path,
+        env: &MakepkgEnv,
+    ) -> Result<std::process::ExitStatus> {
         match self.settings.aur.build_method {
             AurBuildMethod::Bubblewrap => self.run_sandboxed_makepkg(pkg_dir, env).await,
             AurBuildMethod::Chroot => self.run_chroot_build(pkg_dir, env).await,
@@ -643,10 +694,7 @@ impl AurClient {
             }
 
             let makepkg_args = self.makepkg_args();
-            args.extend([
-                "--".to_string(),
-                "makepkg".to_string(),
-            ]);
+            args.extend(["--".to_string(), "makepkg".to_string()]);
             args.extend(makepkg_args);
 
             let status = Command::new("bwrap")
@@ -675,13 +723,16 @@ impl AurClient {
                 "{} Building without sandbox (install 'bubblewrap' for isolation)...",
                 "→".dimmed()
             );
-            self
-                .run_native_makepkg_with_logs(pkg_dir, env, log_file, log_file_err, spinner)
+            self.run_native_makepkg_with_logs(pkg_dir, env, log_file, log_file_err, spinner)
                 .await
         }
     }
 
-    async fn run_native_makepkg(&self, pkg_dir: &Path, env: &MakepkgEnv) -> Result<std::process::ExitStatus> {
+    async fn run_native_makepkg(
+        &self,
+        pkg_dir: &Path,
+        env: &MakepkgEnv,
+    ) -> Result<std::process::ExitStatus> {
         let package_name = pkg_dir
             .file_name()
             .and_then(|name| name.to_str())
