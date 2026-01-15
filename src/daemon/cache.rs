@@ -23,7 +23,14 @@ impl PackageCache {
     /// Create a new cache with given size and TTL
     #[must_use]
     pub fn new(max_size: usize, ttl_secs: u64) -> Self {
+        Self::new_with_ttls(max_size, ttl_secs, ttl_secs)
+    }
+
+    /// Create a new cache with separate TTLs for search and status
+    #[must_use]
+    pub fn new_with_ttls(max_size: usize, ttl_secs: u64, status_ttl_secs: u64) -> Self {
         let ttl = Duration::from_secs(ttl_secs);
+        let status_ttl = Duration::from_secs(status_ttl_secs);
         let cache = Cache::builder()
             .max_capacity(max_size as u64)
             .time_to_live(ttl)
@@ -32,8 +39,14 @@ impl PackageCache {
             .max_capacity(max_size as u64)
             .time_to_live(ttl)
             .build();
-        let system_status = Cache::builder().max_capacity(1).time_to_live(ttl).build();
-        let explicit_packages = Cache::builder().max_capacity(1).time_to_live(ttl).build();
+        let system_status = Cache::builder()
+            .max_capacity(1)
+            .time_to_live(status_ttl)
+            .build();
+        let explicit_packages = Cache::builder()
+            .max_capacity(1)
+            .time_to_live(status_ttl)
+            .build();
         Self {
             cache,
             detailed_cache,
@@ -110,7 +123,7 @@ pub struct CacheStats {
 
 impl Default for PackageCache {
     fn default() -> Self {
-        // 1000 entries, 5 minute TTL
-        Self::new(1000, 300)
+        // 1000 entries, 5 minute TTL; status cache 30s
+        Self::new_with_ttls(1000, 300, 30)
     }
 }

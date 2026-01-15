@@ -10,6 +10,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result};
 use colored::Colorize;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use reqwest::header::RANGE;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use tokio::fs::File;
@@ -361,7 +362,13 @@ async fn benchmark_mirror(client: &Client, mirror: &str) -> Option<(String, Dura
     // Use HEAD request for faster benchmarking
     match client.head(&test_url).send().await {
         Ok(resp) if resp.status().is_success() => Some((mirror.to_string(), start.elapsed())),
-        _ => None,
+        _ => {
+            let start = std::time::Instant::now();
+            match client.get(&test_url).header(RANGE, "bytes=0-0").send().await {
+                Ok(resp) if resp.status().is_success() => Some((mirror.to_string(), start.elapsed())),
+                _ => None,
+            }
+        }
     }
 }
 

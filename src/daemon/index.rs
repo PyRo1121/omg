@@ -17,6 +17,10 @@ pub struct PackageIndex {
     packages: AHashMap<String, DetailedPackageInfo>,
     /// Search items for Nucleo
     search_items: Vec<(String, Utf32String)>,
+    /// Lowercased search strings for case-insensitive match
+    search_items_lower: Vec<Utf32String>,
+    /// Prefix index for 1-2 char fast path
+    prefix_index: AHashMap<String, Vec<usize>>,
     /// Reader-writer lock for package lookups
     lock: RwLock<()>,
 }
@@ -25,6 +29,8 @@ impl PackageIndex {
     pub fn new() -> Result<Self> {
         let mut packages = AHashMap::default();
         let mut search_items = Vec::new();
+        let mut search_items_lower = Vec::new();
+        let mut prefix_index: AHashMap<String, Vec<usize>> = AHashMap::new();
 
         // Initialize ALPM and read all databases
         let root = paths::pacman_root().to_string_lossy().into_owned();
@@ -57,7 +63,17 @@ impl PackageIndex {
                 };
 
                 let search_str = format!("{} {}", info.name, info.description);
+                let search_lower = search_str.to_lowercase();
+                let idx = search_items.len();
                 search_items.push((info.name.clone(), Utf32String::from(search_str.as_str())));
+                search_items_lower.push(Utf32String::from(search_lower.as_str()));
+                let name_lower = info.name.to_lowercase();
+                for len in 1..=2 {
+                    if name_lower.len() >= len {
+                        let prefix = name_lower[..len].to_string();
+                        prefix_index.entry(prefix).or_default().push(idx);
+                    }
+                }
                 packages.insert(info.name.clone(), info);
             }
         }
@@ -67,6 +83,8 @@ impl PackageIndex {
         Ok(Self {
             packages,
             search_items,
+            search_items_lower,
+            prefix_index,
             lock: RwLock::new(()),
         })
     }
@@ -76,16 +94,19 @@ impl PackageIndex {
         if query.is_empty() {
             return Vec::new();
         }
+        let query_lower = query.to_lowercase();
 
         // FAST PASS: Prefix match for short queries (1-2 chars)
         // Users typing 'f' or 'fi' usually want things starting with those letters.
-        if query.len() < 3 {
+        if query_lower.len() < 3 {
             let matches: Vec<_> = self
-                .search_items
-                .iter()
-                .filter(|(name, _)| name.starts_with(query))
+                .prefix_index
+                .get(&query_lower)
+                .into_iter()
+                .flatten()
                 .take(limit)
-                .filter_map(|(name, _)| {
+                .filter_map(|idx| {
+                    let name = &self.search_items[*idx].0;
                     self.packages.get(name).map(|p| PackageInfo {
                         name: p.name.clone(),
                         version: p.version.clone(),
@@ -100,17 +121,17 @@ impl PackageIndex {
             }
         }
 
-        let query_utf32 = Utf32String::from(query);
+        let query_utf32 = Utf32String::from(query_lower.as_str());
         let query_slice = query_utf32.slice(..);
 
         // 1. Parallel search using rayon (one matcher per thread)
         let mut matches: Vec<(u16, usize)> = self
-            .search_items
+            .search_items_lower
             .par_iter()
             .enumerate()
             .map_init(
                 || Matcher::new(Config::DEFAULT),
-                |matcher, (idx, (_, search_str))| {
+                |matcher, (idx, search_str)| {
                     matcher
                         .fuzzy_match(query_slice, search_str.slice(..))
                         .map(|score| (score, idx))

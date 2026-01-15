@@ -1,6 +1,6 @@
 [package]
 name = "omg"
-version = "0.1.11"
+version = "0.1.13"
 edition = "2021"
 description = "The Fastest Unified Package Manager for Arch Linux + All Language Runtimes"
 authors = ["OMG Team"]
@@ -32,7 +32,17 @@ anyhow = "1.0.100"
 thiserror = "2.0.17"
 
 # Async runtime
-tokio = { version = "1.48", features = ["full"] }
+tokio = { version = "1.48", features = [
+    "rt",
+    "rt-multi-thread",
+    "macros",
+    "net",
+    "process",
+    "fs",
+    "io-util",
+    "sync",
+    "time",
+] }
 async-trait = "0.1.86"
 futures = "0.3.31"
 
