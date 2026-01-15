@@ -273,10 +273,10 @@ pub fn execute_transaction(packages: Vec<String>, remove: bool, sysupgrade: bool
     use alpm::{SigLevel, TransFlag};
     use indicatif::{ProgressBar, ProgressStyle};
 
-    let root = paths::pacman_root();
-    let db_path = paths::pacman_db_dir();
-    let mut alpm = alpm::Alpm::new(root, db_path)
-        .context("Failed to initialize ALPM (are you root?)")?;
+    let root = paths::pacman_root().to_string_lossy().into_owned();
+    let db_path = paths::pacman_db_dir().to_string_lossy().into_owned();
+    let mut alpm =
+        alpm::Alpm::new(root, db_path).context("Failed to initialize ALPM (are you root?)")?;
 
     // Register sync DBs
     for db_name in ["core", "extra", "multilib"] {

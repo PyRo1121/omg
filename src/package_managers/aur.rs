@@ -418,9 +418,7 @@ impl AurClient {
             let pkgdest_str = env.pkgdest.to_string_lossy().to_string();
             let srcdest_str = env.srcdest.to_string_lossy().to_string();
             let pacman_db_dir = paths::pacman_db_dir().to_string_lossy().to_string();
-            let pacman_cache_root = paths::pacman_cache_root_dir()
-                .to_string_lossy()
-                .to_string();
+            let pacman_cache_root = paths::pacman_cache_root_dir().to_string_lossy().to_string();
 
             let mut args = vec![
                 "--ro-bind".to_string(),

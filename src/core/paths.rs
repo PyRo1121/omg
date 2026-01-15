@@ -18,9 +18,10 @@ fn fallback_home_dir() -> PathBuf {
 #[must_use]
 pub fn data_dir() -> PathBuf {
     env_path("OMG_DATA_DIR").unwrap_or_else(|| {
-        project_dirs()
-            .map(|d| d.data_dir().to_path_buf())
-            .unwrap_or_else(|| fallback_home_dir().join(".omg"))
+        project_dirs().map_or_else(
+            || fallback_home_dir().join(".omg"),
+            |d| d.data_dir().to_path_buf(),
+        )
     })
 }
 
@@ -28,9 +29,10 @@ pub fn data_dir() -> PathBuf {
 #[must_use]
 pub fn daemon_data_dir() -> PathBuf {
     env_path("OMG_DAEMON_DATA_DIR").unwrap_or_else(|| {
-        project_dirs()
-            .map(|d| d.data_dir().to_path_buf())
-            .unwrap_or_else(|| PathBuf::from("/var/lib/omg"))
+        project_dirs().map_or_else(
+            || PathBuf::from("/var/lib/omg"),
+            |d| d.data_dir().to_path_buf(),
+        )
     })
 }
 
@@ -38,9 +40,10 @@ pub fn daemon_data_dir() -> PathBuf {
 #[must_use]
 pub fn config_dir() -> PathBuf {
     env_path("OMG_CONFIG_DIR").unwrap_or_else(|| {
-        project_dirs()
-            .map(|d| d.config_dir().to_path_buf())
-            .unwrap_or_else(|| fallback_home_dir().join(".config/omg"))
+        project_dirs().map_or_else(
+            || fallback_home_dir().join(".config/omg"),
+            |d| d.config_dir().to_path_buf(),
+        )
     })
 }
 
@@ -48,9 +51,10 @@ pub fn config_dir() -> PathBuf {
 #[must_use]
 pub fn cache_dir() -> PathBuf {
     env_path("OMG_CACHE_DIR").unwrap_or_else(|| {
-        project_dirs()
-            .map(|d| d.cache_dir().to_path_buf())
-            .unwrap_or_else(|| fallback_home_dir().join(".cache/omg"))
+        project_dirs().map_or_else(
+            || fallback_home_dir().join(".cache/omg"),
+            |d| d.cache_dir().to_path_buf(),
+        )
     })
 }
 
@@ -87,8 +91,7 @@ pub fn pacman_cache_dir() -> PathBuf {
 /// Pacman cache root directory (default: /var/cache/pacman).
 #[must_use]
 pub fn pacman_cache_root_dir() -> PathBuf {
-    env_path("OMG_PACMAN_CACHE_ROOT_DIR")
-        .unwrap_or_else(|| pacman_root().join("var/cache/pacman"))
+    env_path("OMG_PACMAN_CACHE_ROOT_DIR").unwrap_or_else(|| pacman_root().join("var/cache/pacman"))
 }
 
 /// Pacman mirrorlist path (default: /etc/pacman.d/mirrorlist).
@@ -97,12 +100,14 @@ pub fn pacman_mirrorlist_path() -> PathBuf {
     env_path("OMG_PACMAN_MIRRORLIST").unwrap_or_else(|| PathBuf::from("/etc/pacman.d/mirrorlist"))
 }
 
-/// Daemon socket path (default: $XDG_RUNTIME_DIR/omg.sock or /tmp/omg.sock).
+/// Daemon socket path (default: $`XDG_RUNTIME_DIR/omg.sock` or /tmp/omg.sock).
 #[must_use]
 pub fn socket_path() -> PathBuf {
     env_path("OMG_SOCKET_PATH").unwrap_or_else(|| {
-        std::env::var("XDG_RUNTIME_DIR")
-            .map_or_else(|_| PathBuf::from("/tmp/omg.sock"), |d| PathBuf::from(d).join("omg.sock"))
+        std::env::var("XDG_RUNTIME_DIR").map_or_else(
+            |_| PathBuf::from("/tmp/omg.sock"),
+            |d| PathBuf::from(d).join("omg.sock"),
+        )
     })
 }
 
@@ -111,6 +116,6 @@ pub fn socket_path() -> PathBuf {
 pub fn test_mode() -> bool {
     matches!(
         std::env::var("OMG_TEST_MODE").as_deref(),
-        Ok("1") | Ok("true") | Ok("TRUE")
+        Ok("1" | "true" | "TRUE")
     )
 }
