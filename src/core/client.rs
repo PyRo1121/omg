@@ -10,11 +10,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::net::UnixStream;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
+use crate::core::paths;
 use crate::daemon::protocol::{
     DetailedPackageInfo, Request, Response, ResponseResult, SearchResult, SecurityAuditResult,
     StatusResult,
 };
-use crate::core::paths;
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream as SyncUnixStream;
 
