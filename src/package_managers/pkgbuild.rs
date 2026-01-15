@@ -4,13 +4,9 @@
 //! Uses optimized string scanning and regex for high performance.
 
 use anyhow::{Context, Result};
-use regex::Regex;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-use std::sync::LazyLock;
-
-static RE_VAR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^([a-z0-9_]+)=(.+)$").unwrap());
 
 #[derive(Debug, Clone, Default)]
 pub struct PkgBuild {
@@ -39,22 +35,34 @@ impl PkgBuild {
     /// Parse PKGBUILD content
     pub fn parse_content(content: &str) -> Result<Self> {
         let mut pkg = Self::default();
-        let mut vars = HashMap::new();
+        let mut vars: HashMap<String, String> = HashMap::new();
 
-        for cap in RE_VAR.captures_iter(content) {
-            let key = cap[1].to_string();
-            let val = cap[2]
-                .trim()
-                .trim_matches('"')
-                .trim_matches('\'')
-                .to_string();
+        for line in content.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+
+            let (key, val) = match line.split_once('=') {
+                Some((k, v)) => (k.trim(), v.trim()),
+                None => continue,
+            };
+
+            if !key
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+            {
+                continue;
+            }
+
+            let val = val.trim_matches('"').trim_matches('\'').to_string();
 
             // Handle basic arrays
             if val.starts_with('(') && val.ends_with(')') {
                 // Keep as is for now, will process later
             }
 
-            vars.insert(key, val);
+            vars.insert(key.to_string(), val);
         }
 
         // Second pass: Perform variable substitution
