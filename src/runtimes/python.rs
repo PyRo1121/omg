@@ -63,8 +63,7 @@ impl PythonManager {
     pub async fn list_available(&self) -> Result<Vec<PythonVersion>> {
         let releases: Vec<GithubRelease> = self
             .client
-            .get(PBS_RELEASES_URL)
-            .query(&[("per_page", "10")])
+            .get(format!("{PBS_RELEASES_URL}?per_page=10"))
             .send()
             .await
             .context("Failed to fetch Python releases from GitHub")?

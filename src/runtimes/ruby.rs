@@ -55,8 +55,7 @@ impl RubyManager {
     pub async fn list_available(&self) -> Result<Vec<RubyVersion>> {
         let releases: Vec<GithubRelease> = self
             .client
-            .get(RUBY_VERSIONS_URL)
-            .query(&[("per_page", "20")])
+            .get(format!("{RUBY_VERSIONS_URL}?per_page=20"))
             .send()
             .await
             .context("Failed to fetch Ruby releases from GitHub")?
