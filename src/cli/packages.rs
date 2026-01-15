@@ -1,17 +1,20 @@
 use anyhow::Result;
 use colored::Colorize;
-use dialoguer::{theme::ColorfulTheme, Confirm, MultiSelect};
+use dialoguer::{Confirm, MultiSelect, theme::ColorfulTheme};
 use futures::StreamExt;
 
 use crate::cli::style;
 use crate::config::Settings;
+use crate::core::Database;
 use crate::core::client::DaemonClient;
 use crate::core::completion::CompletionEngine;
 use crate::core::history::{HistoryManager, PackageChange, TransactionType};
 use crate::core::security::SecurityPolicy;
-use crate::core::Database;
 use crate::daemon::protocol::{Request, ResponseResult};
 use crate::package_managers::{
+    AurClient,
+    OfficialPackageManager,
+    PackageManager,
     check_updates_cached,
     clean_cache,
     display_pkg_info,
@@ -22,9 +25,6 @@ use crate::package_managers::{
     // Direct ALPM functions (10-100x faster)
     search_sync,
     sync_databases_parallel,
-    AurClient,
-    OfficialPackageManager,
-    PackageManager,
 };
 
 /// Search for packages in official repos and AUR (Synchronous fast-path)
@@ -1145,9 +1145,7 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool) -> Result<(
 pub fn explicit_sync(count: bool) -> Result<()> {
     // Try daemon first
     let packages = if let Ok(mut client) = DaemonClient::connect_sync() {
-        if let Ok(ResponseResult::Explicit(res)) =
-            client.call_sync(&Request::Explicit { id: 0 })
-        {
+        if let Ok(ResponseResult::Explicit(res)) = client.call_sync(&Request::Explicit { id: 0 }) {
             res.packages
         } else {
             // Sequential fallback to local ALPM

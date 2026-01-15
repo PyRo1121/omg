@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use console::user_attended;
-use dialoguer::{theme::ColorfulTheme, Select};
+use dialoguer::{Select, theme::ColorfulTheme};
 use std::fs;
 use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};

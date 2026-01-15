@@ -24,6 +24,8 @@ use tempfile::TempDir;
 fn run_omg(args: &[&str]) -> (bool, String, String) {
     let output = Command::new(env!("CARGO_BIN_EXE_omg"))
         .args(args)
+        .env("OMG_TEST_MODE", "1")
+        .env("OMG_DISABLE_DAEMON", "1")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()
@@ -39,6 +41,8 @@ fn run_omg_in_dir(args: &[&str], dir: &Path) -> (bool, String, String) {
     let output = Command::new(env!("CARGO_BIN_EXE_omg"))
         .args(args)
         .current_dir(dir)
+        .env("OMG_TEST_MODE", "1")
+        .env("OMG_DISABLE_DAEMON", "1")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()
@@ -52,7 +56,11 @@ fn run_omg_in_dir(args: &[&str], dir: &Path) -> (bool, String, String) {
 /// Helper to run omg commands with environment variables
 fn run_omg_with_env(args: &[&str], env_vars: &[(&str, &str)]) -> (bool, String, String) {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_omg"));
-    cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
+    cmd.args(args)
+        .env("OMG_TEST_MODE", "1")
+        .env("OMG_DISABLE_DAEMON", "1")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
 
     for (key, value) in env_vars {
         cmd.env(key, value);

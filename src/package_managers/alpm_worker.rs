@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use std::sync::mpsc;
 use std::thread;
 
-use super::alpm_ops::{get_pkg_info_from_db, PackageInfo};
+use super::alpm_ops::{PackageInfo, get_pkg_info_from_db};
 use crate::core::paths;
 
 /// Request type for the ALPM worker

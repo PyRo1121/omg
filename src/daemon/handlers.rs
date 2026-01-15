@@ -5,12 +5,12 @@ use std::sync::Arc;
 use super::cache::PackageCache;
 use super::index::PackageIndex;
 use super::protocol::{
-    error_codes, DetailedPackageInfo, ExplicitResult, PackageInfo, Request, RequestId, Response,
-    ResponseResult, SearchResult, SecurityAuditResult, StatusResult, Vulnerability,
+    DetailedPackageInfo, ExplicitResult, PackageInfo, Request, RequestId, Response, ResponseResult,
+    SearchResult, SecurityAuditResult, StatusResult, Vulnerability, error_codes,
 };
 use crate::package_managers::{
-    alpm_worker::AlpmWorker, list_installed_fast, search_detailed, AurClient,
-    OfficialPackageManager,
+    AurClient, OfficialPackageManager, alpm_worker::AlpmWorker, list_installed_fast,
+    search_detailed,
 };
 use parking_lot::RwLock;
 
@@ -254,7 +254,7 @@ async fn handle_security_audit(_state: Arc<DaemonState>, id: RequestId) -> Respo
                 id,
                 code: error_codes::INTERNAL_ERROR,
                 message: format!("Failed to list packages: {e}"),
-            }
+            };
         }
     };
 

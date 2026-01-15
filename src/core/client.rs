@@ -14,6 +14,7 @@ use crate::daemon::protocol::{
     DetailedPackageInfo, Request, Response, ResponseResult, SearchResult, SecurityAuditResult,
     StatusResult,
 };
+use crate::core::paths;
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream as SyncUnixStream;
 
@@ -31,13 +32,26 @@ pub struct DaemonClient {
 }
 
 impl DaemonClient {
+    fn daemon_disabled() -> bool {
+        matches!(
+            std::env::var("OMG_DISABLE_DAEMON").as_deref(),
+            Ok("1" | "true" | "TRUE")
+        ) || paths::test_mode()
+    }
+
     /// Connect to the daemon
     pub async fn connect() -> Result<Self> {
+        if Self::daemon_disabled() {
+            anyhow::bail!("Daemon disabled by environment");
+        }
         Self::connect_to(default_socket_path()).await
     }
 
     /// Connect to daemon at specific socket path
     pub async fn connect_to(socket_path: PathBuf) -> Result<Self> {
+        if Self::daemon_disabled() {
+            anyhow::bail!("Daemon disabled by environment");
+        }
         tracing::debug!("Connecting to daemon at {:?}", socket_path);
         let stream = UnixStream::connect(&socket_path)
             .await
@@ -55,6 +69,9 @@ impl DaemonClient {
 
     /// Connect to the daemon synchronously (sub-millisecond)
     pub fn connect_sync() -> Result<Self> {
+        if Self::daemon_disabled() {
+            anyhow::bail!("Daemon disabled by environment");
+        }
         let socket_path = default_socket_path();
         let stream = SyncUnixStream::connect(&socket_path)
             .with_context(|| format!("Failed to connect to daemon at {}", socket_path.display()))?;

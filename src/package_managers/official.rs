@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use colored::Colorize;
 
 use super::PackageManager;
-use crate::core::{is_root, Package, PackageSource};
+use crate::core::{Package, PackageSource, is_root};
 use crate::package_managers::invalidate_caches;
 
 /// Official Arch Linux package manager with enhanced UX

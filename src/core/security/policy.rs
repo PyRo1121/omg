@@ -187,18 +187,24 @@ mod tests {
         };
 
         // Verified is allowed
-        assert!(policy
-            .check_package("test", false, None, SecurityGrade::Verified)
-            .is_ok());
+        assert!(
+            policy
+                .check_package("test", false, None, SecurityGrade::Verified)
+                .is_ok()
+        );
 
         // Locked is allowed
-        assert!(policy
-            .check_package("test", false, None, SecurityGrade::Locked)
-            .is_ok());
+        assert!(
+            policy
+                .check_package("test", false, None, SecurityGrade::Locked)
+                .is_ok()
+        );
 
         // Community is blocked
-        assert!(policy
-            .check_package("test", true, None, SecurityGrade::Community)
-            .is_err());
+        assert!(
+            policy
+                .check_package("test", true, None, SecurityGrade::Community)
+                .is_err()
+        );
     }
 }
