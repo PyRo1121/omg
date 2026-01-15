@@ -27,10 +27,10 @@ impl PackageIndex {
         let mut search_items = Vec::new();
 
         // Initialize ALPM and read all databases
-        let root = paths::pacman_root();
-        let db_path = paths::pacman_db_dir();
-        let alpm = alpm::Alpm::new(root, db_path)
-            .context("Failed to initialize ALPM for indexing")?;
+        let root = paths::pacman_root().to_string_lossy().into_owned();
+        let db_path = paths::pacman_db_dir().to_string_lossy().into_owned();
+        let alpm =
+            alpm::Alpm::new(root, db_path).context("Failed to initialize ALPM for indexing")?;
 
         for db_name in ["core", "extra", "multilib"] {
             let db = alpm.register_syncdb(db_name, alpm::SigLevel::USE_DEFAULT)?;

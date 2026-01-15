@@ -15,7 +15,10 @@ use serde::{Deserialize, Serialize};
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 
-use crate::core::{http::{download_client, shared_client}, paths};
+use crate::core::{
+    http::{download_client, shared_client},
+    paths,
+};
 
 /// Standard Arch Linux repositories
 const REPOS: &[&str] = &["core", "extra", "multilib"];

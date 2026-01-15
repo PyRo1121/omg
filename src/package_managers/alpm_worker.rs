@@ -28,8 +28,8 @@ impl AlpmWorker {
 
         thread::spawn(move || {
             // Initialize ALPM once and keep it alive in this thread
-            let root = paths::pacman_root();
-            let db_path = paths::pacman_db_dir();
+            let root = paths::pacman_root().to_string_lossy().into_owned();
+            let db_path = paths::pacman_db_dir().to_string_lossy().into_owned();
             let alpm = match alpm::Alpm::new(root, db_path) {
                 Ok(a) => a,
                 Err(e) => {

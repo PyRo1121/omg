@@ -42,11 +42,20 @@ fi
 
 # 🔄 UI Functions
 spinner_pid=""
+tmp_dir=""
+
+cleanup_tmp_dir() {
+    if [[ -n "$tmp_dir" && -d "$tmp_dir" ]]; then
+        rm -rf "$tmp_dir"
+        tmp_dir=""
+    fi
+}
 
 cleanup() {
     if [[ -n "$spinner_pid" ]]; then
         kill "$spinner_pid" >/dev/null 2>&1 || true
     fi
+    cleanup_tmp_dir
     tput cnorm # Show cursor
 }
 
@@ -109,9 +118,8 @@ install_from_release() {
     fi
 
     header "Installing Prebuilt OMG"
-    local tmp_dir
     tmp_dir=$(mktemp -d)
-    trap 'rm -rf "$tmp_dir"' EXIT
+    trap 'cleanup_tmp_dir' RETURN
 
     start_spinner "Downloading prebuilt binary"
     if curl -fsSL "$asset_url" -o "$tmp_dir/omg.tar.gz" >/dev/null 2>&1; then

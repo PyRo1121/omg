@@ -371,7 +371,7 @@ fn ensure_sync_cache_loaded(sync_dir: &Path) -> Result<()> {
     }
 
     // Cache miss or stale - need to reload/parse
-    let packages = load_sync_packages(&sync_dir)?;
+    let packages = load_sync_packages(sync_dir)?;
 
     // Update memory cache
     let mut cache = SYNC_DB_CACHE.write();
@@ -405,7 +405,7 @@ fn ensure_local_cache_loaded(local_dir: &Path) -> Result<()> {
     }
 
     // Cache miss - reload
-    let packages = parse_local_db(&local_dir)?;
+    let packages = parse_local_db(local_dir)?;
 
     // Update memory cache
     let mut cache = LOCAL_DB_CACHE.write();

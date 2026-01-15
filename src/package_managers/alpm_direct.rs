@@ -22,8 +22,8 @@ where
     ALPM_HANDLE.with(|cell| {
         let mut maybe_handle = cell.borrow_mut();
         if maybe_handle.is_none() {
-            let root = paths::pacman_root();
-            let db_path = paths::pacman_db_dir();
+            let root = paths::pacman_root().to_string_lossy().into_owned();
+            let db_path = paths::pacman_db_dir().to_string_lossy().into_owned();
             let alpm = Alpm::new(root, db_path).context("Failed to initialize ALPM handle")?;
 
             // Register sync databases
@@ -45,8 +45,8 @@ where
     ALPM_HANDLE.with(|cell| {
         let mut maybe_handle = cell.borrow_mut();
         if maybe_handle.is_none() {
-            let root = paths::pacman_root();
-            let db_path = paths::pacman_db_dir();
+            let root = paths::pacman_root().to_string_lossy().into_owned();
+            let db_path = paths::pacman_db_dir().to_string_lossy().into_owned();
             let alpm = Alpm::new(root, db_path).context("Failed to initialize ALPM handle")?;
 
             // Register sync databases
@@ -77,7 +77,11 @@ pub fn search_local(query: &str) -> Result<Vec<LocalPackage>> {
                 version: pkg.version,
                 description: pkg.desc,
                 install_size: 0,
-                reason: if pkg.explicit { "explicit" } else { "dependency" },
+                reason: if pkg.explicit {
+                    "explicit"
+                } else {
+                    "dependency"
+                },
             })
             .collect();
         return Ok(results);
@@ -132,7 +136,7 @@ pub fn search_sync(query: &str) -> Result<Vec<SyncPackage>> {
                     version: pkg.version,
                     description: pkg.desc,
                     repo: pkg.repo,
-                    download_size: pkg.csize as i64,
+                    download_size: i64::try_from(pkg.csize).unwrap_or(i64::MAX),
                     installed,
                 }
             })
@@ -199,8 +203,8 @@ pub fn get_package_info(name: &str) -> Result<Option<PackageInfo>> {
                 licenses: Vec::new(),
                 depends: pkg.depends,
                 installed: false,
-                install_size: Some(pkg.isize as i64),
-                download_size: Some(pkg.csize as i64),
+                install_size: Some(i64::try_from(pkg.isize).unwrap_or(i64::MAX)),
+                download_size: Some(i64::try_from(pkg.csize).unwrap_or(i64::MAX)),
                 repo: Some(pkg.repo),
             }));
         }
@@ -267,7 +271,11 @@ pub fn list_installed_fast() -> Result<Vec<LocalPackage>> {
                 version: pkg.version,
                 description: pkg.desc,
                 install_size: 0,
-                reason: if pkg.explicit { "explicit" } else { "dependency" },
+                reason: if pkg.explicit {
+                    "explicit"
+                } else {
+                    "dependency"
+                },
             })
             .collect();
         return Ok(results);

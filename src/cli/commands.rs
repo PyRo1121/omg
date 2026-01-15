@@ -350,7 +350,10 @@ pub fn config(key: Option<&str>, value: Option<&str>) -> Result<()> {
             );
             match k {
                 "shims.enabled" => println!("  {}", style::warning("false")),
-                "data_dir" => println!("  {}", style::warning(paths::data_dir().display())),
+                "data_dir" => println!(
+                    "  {}",
+                    style::warning(&paths::data_dir().display().to_string())
+                ),
                 _ => println!("  {}", style::dim("(not set)")),
             }
         }
@@ -364,12 +367,12 @@ pub fn config(key: Option<&str>, value: Option<&str>) -> Result<()> {
             println!(
                 "  {} = {}",
                 style::success("data_dir"),
-                style::warning(paths::data_dir().display())
+                style::warning(&paths::data_dir().display().to_string())
             );
             println!(
                 "  {} = {}",
                 style::success("socket"),
-                style::warning(paths::socket_path().display())
+                style::warning(&paths::socket_path().display().to_string())
             );
         }
     }
