@@ -133,7 +133,7 @@ pub fn detect_versions(start: &Path) -> HashMap<String, String> {
                             if line.contains("channel") {
                                 if let Some(version) = line.split('=').nth(1) {
                                     let v = version.trim().trim_matches('"').trim_matches('\'');
-                                    versions.insert(runtime.to_string(), v.to_string());
+                                    versions.insert((*runtime).to_string(), v.to_string());
                                 }
                             }
                         }
@@ -143,7 +143,7 @@ pub fn detect_versions(start: &Path) -> HashMap<String, String> {
                     if let Ok(content) = std::fs::read_to_string(&file_path) {
                         let version = content.trim().trim_start_matches('v').to_string();
                         if !version.is_empty() {
-                            versions.insert(runtime.to_string(), version);
+                            versions.insert((*runtime).to_string(), version);
                         }
                     }
                 }

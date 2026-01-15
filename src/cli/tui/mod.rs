@@ -50,7 +50,7 @@ async fn run_app<B: ratatui::backend::Backend>(
                 match key.code {
                     KeyCode::Char('q') => return Ok(()),
                     KeyCode::Char('r') => app.refresh().await?,
-                    _ => app.handle_key(key.code),
+                    _ => app::App::handle_key(key.code),
                 }
             }
         }

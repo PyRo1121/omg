@@ -32,10 +32,13 @@ pub async fn run(listener: UnixListener) -> Result<()> {
             let mut versions = Vec::new();
             for runtime in SUPPORTED_RUNTIMES {
                 if let Some(v) = probe_version(runtime) {
-                    versions.push((runtime.to_string(), v));
+                    versions.push(((*runtime).to_string(), v));
                 }
             }
-            *state_worker.runtime_versions.write() = versions.clone();
+            state_worker
+                .runtime_versions
+                .write()
+                .clone_from(&versions);
             if let Ok((total, explicit, orphans, updates)) = get_system_status() {
                 let scanner = crate::core::security::VulnerabilityScanner::new();
                 let vuln_count = scanner.scan_system().await.unwrap_or(0);
@@ -48,7 +51,7 @@ pub async fn run(listener: UnixListener) -> Result<()> {
                     security_vulnerabilities: vuln_count,
                     runtime_versions: versions,
                 };
-                let _ = state_worker.persistent.set_status(res.clone());
+                let _ = state_worker.persistent.set_status(&res);
                 state_worker.cache.update_status(res);
             }
         }
@@ -64,10 +67,13 @@ pub async fn run(listener: UnixListener) -> Result<()> {
                     let mut versions = Vec::new();
                     for runtime in SUPPORTED_RUNTIMES {
                         if let Some(v) = probe_version(runtime) {
-                            versions.push((runtime.to_string(), v));
+                            versions.push(((*runtime).to_string(), v));
                         }
                     }
-                    *state_worker.runtime_versions.write() = versions.clone();
+                    state_worker
+                        .runtime_versions
+                        .write()
+                        .clone_from(&versions);
 
                     // 2. Refresh Package Status (ALPM)
                     let status = get_system_status();
@@ -85,7 +91,7 @@ pub async fn run(listener: UnixListener) -> Result<()> {
                             security_vulnerabilities: vuln_count,
                             runtime_versions: versions,
                         };
-                        let _ = state_worker.persistent.set_status(res.clone());
+                        let _ = state_worker.persistent.set_status(&res);
                         state_worker.cache.update_status(res);
                         tracing::debug!("Status cache refreshed (CVEs: {})", vuln_count);
                     }

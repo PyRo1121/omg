@@ -109,7 +109,7 @@ impl DaemonClient {
     }
 
     /// Send a request and get response synchronously (ultra fast)
-    pub fn call_sync(&mut self, request: Request) -> Result<ResponseResult> {
+    pub fn call_sync(&mut self, request: &Request) -> Result<ResponseResult> {
         let id = request.id();
         let stream = self
             .sync_stream
@@ -117,7 +117,7 @@ impl DaemonClient {
             .context("Client is in async mode")?;
 
         // 1. Encode
-        let request_bytes = bincode::serialize(&request)?;
+        let request_bytes = bincode::serialize(request)?;
         let len = request_bytes.len() as u32;
 
         // 2. Send length-delimited (Big Endian) combined to save a syscall
@@ -161,7 +161,7 @@ impl DaemonClient {
     /// Get package info synchronously
     pub fn info_sync(&mut self, package: &str) -> Result<DetailedPackageInfo> {
         let id = self.request_id.fetch_add(1, Ordering::SeqCst);
-        match self.call_sync(Request::Info {
+        match self.call_sync(&Request::Info {
             id,
             package: package.to_string(),
         })? {

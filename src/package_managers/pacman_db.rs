@@ -56,7 +56,7 @@ fn collect_sync_db_paths(sync_dir: &Path) -> Vec<(PathBuf, String)> {
     for db_name in &["core", "extra", "multilib"] {
         let db_path = sync_dir.join(format!("{db_name}.db"));
         if db_path.exists() {
-            dbs.push((db_path, db_name.to_string()));
+            dbs.push((db_path, (*db_name).to_string()));
         }
     }
 
@@ -352,7 +352,7 @@ fn load_cache_from_disk<T: for<'de> Deserialize<'de>>(name: &str) -> Result<T> {
 
 /// Ensure sync cache is loaded (fast if already loaded)
 fn ensure_sync_cache_loaded(sync_dir: &Path) -> Result<()> {
-    let current_mtime = get_newest_db_mtime(sync_dir)?;
+    let current_mtime = get_newest_db_mtime(sync_dir);
 
     {
         let cache = SYNC_DB_CACHE.read();
@@ -423,7 +423,7 @@ fn get_sync_cache() -> Result<HashMap<String, SyncDbPackage>> {
     let sync_dir = paths::pacman_sync_dir();
 
     // Check if cache is valid
-    let current_mtime = get_newest_db_mtime(&sync_dir)?;
+    let current_mtime = get_newest_db_mtime(&sync_dir);
 
     {
         let cache = SYNC_DB_CACHE.read();
@@ -438,7 +438,7 @@ fn get_sync_cache() -> Result<HashMap<String, SyncDbPackage>> {
     // Update cache
     {
         let mut cache = SYNC_DB_CACHE.write();
-        cache.packages = packages.clone();
+        cache.packages.clone_from(&packages);
         cache.last_modified = Some(current_mtime);
     }
 
@@ -465,7 +465,7 @@ fn get_local_cache() -> Result<HashMap<String, LocalDbPackage>> {
     // Update cache
     {
         let mut cache = LOCAL_DB_CACHE.write();
-        cache.packages = packages.clone();
+        cache.packages.clone_from(&packages);
         cache.last_modified = Some(current_mtime);
     }
 
@@ -473,7 +473,7 @@ fn get_local_cache() -> Result<HashMap<String, LocalDbPackage>> {
 }
 
 /// Get newest modification time of sync DBs
-fn get_newest_db_mtime(sync_dir: &Path) -> Result<SystemTime> {
+fn get_newest_db_mtime(sync_dir: &Path) -> SystemTime {
     let mut newest = SystemTime::UNIX_EPOCH;
 
     if let Ok(entries) = std::fs::read_dir(sync_dir) {
@@ -488,7 +488,7 @@ fn get_newest_db_mtime(sync_dir: &Path) -> Result<SystemTime> {
         }
     }
 
-    Ok(newest)
+    newest
 }
 
 /// Get modification time of local db directory

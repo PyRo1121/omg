@@ -4,7 +4,7 @@
 //! with progress bars and smart mirror selection.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
@@ -216,7 +216,7 @@ pub async fn sync_databases_parallel() -> Result<()> {
             .take(5) // Only try top 5 mirrors for sanity
             .collect();
         let dest = sync_dir.join(format!("{repo}.db"));
-        repos_to_sync.push((repo.to_string(), repo_urls, dest));
+        repos_to_sync.push(((*repo).to_string(), repo_urls, dest));
     }
 
     // Custom repos from pacman.conf
@@ -420,7 +420,7 @@ async fn download_package(
     client: &Client,
     job: DownloadJob,
     mirrors: &[String],
-    cache_dir: &PathBuf,
+    cache_dir: &Path,
     pb: &ProgressBar,
 ) -> Result<PathBuf> {
     pb.set_message(job.name.clone());

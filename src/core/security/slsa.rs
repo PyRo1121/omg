@@ -12,7 +12,7 @@ impl SlsaVerifier {
     }
 
     /// Verify SLSA provenance for a package
-    pub async fn verify_provenance<P: AsRef<Path>>(
+    pub fn verify_provenance<P: AsRef<Path>>(
         &self,
         _blob_path: P,
         _signature_path: P,

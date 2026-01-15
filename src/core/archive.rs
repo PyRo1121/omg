@@ -151,11 +151,22 @@ pub fn extract_auto(archive_path: &Path, dest_dir: &Path) -> Result<()> {
         .and_then(|n| n.to_str())
         .unwrap_or("");
 
-    if filename.ends_with(".tar.gz") || filename.ends_with(".tgz") {
+    if filename.ends_with(".tar.gz")
+        || Path::new(filename)
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("tgz"))
+    {
         extract_tar_gz(archive_path, dest_dir)
-    } else if filename.ends_with(".tar.xz") || filename.ends_with(".txz") {
+    } else if filename.ends_with(".tar.xz")
+        || Path::new(filename)
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("txz"))
+    {
         extract_tar_xz(archive_path, dest_dir)
-    } else if filename.ends_with(".zip") {
+    } else if Path::new(filename)
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("zip"))
+    {
         extract_zip(archive_path, dest_dir)
     } else {
         anyhow::bail!("Unknown archive format: {filename}")
@@ -169,9 +180,16 @@ pub fn extract_auto_strip(archive_path: &Path, dest_dir: &Path, strip: usize) ->
         .and_then(|n| n.to_str())
         .unwrap_or("");
 
-    if filename.ends_with(".tar.gz") || filename.ends_with(".tgz") {
+    if filename.ends_with(".tar.gz")
+        || Path::new(filename)
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("tgz"))
+    {
         extract_tar_gz_strip(archive_path, dest_dir, strip)
-    } else if filename.ends_with(".zip") {
+    } else if Path::new(filename)
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("zip"))
+    {
         extract_zip_strip(archive_path, dest_dir, strip)
     } else {
         // Fall back to regular extraction for other types

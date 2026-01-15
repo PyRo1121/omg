@@ -10,20 +10,20 @@ fn bench_pure_rust_update_check() {
     let start = Instant::now();
     let updates = pacman_db::check_updates_fast().unwrap();
     let first_load = start.elapsed();
-    println!("First load (cold): {:?}", first_load);
+    println!("First load (cold): {first_load:?}");
     println!("Updates found: {}", updates.len());
 
     // Second call (cached)
     let start = Instant::now();
     let _ = pacman_db::check_updates_fast().unwrap();
     let cached = start.elapsed();
-    println!("Cached call: {:?}", cached);
+    println!("Cached call: {cached:?}");
 
     // Third call (cached)
     let start = Instant::now();
     let _ = pacman_db::check_updates_fast().unwrap();
     let cached2 = start.elapsed();
-    println!("Cached call 2: {:?}", cached2);
+    println!("Cached call 2: {cached2:?}");
 
     assert!(
         cached.as_millis() < 20,

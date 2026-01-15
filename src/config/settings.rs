@@ -96,7 +96,7 @@ impl Default for Settings {
 impl Default for AurBuildSettings {
     fn default() -> Self {
         let jobs = std::thread::available_parallelism()
-            .map(|v| v.get())
+            .map(std::num::NonZero::get)
             .unwrap_or(1);
         Self {
             build_method: AurBuildMethod::Bubblewrap,
