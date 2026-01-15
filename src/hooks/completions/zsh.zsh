@@ -34,6 +34,7 @@ _omg() {
                 'info:Show package information'
                 'clean:Clean up orphan packages'
                 'explicit:List explicitly installed packages'
+                'sync:Sync package databases'
                 'use:Switch runtime version'
                 'list:List installed versions'
                 'hook:Print shell hook'
@@ -42,8 +43,16 @@ _omg() {
                 'completions:Generate shell completions'
                 'which:Show which version of a runtime would be used'
                 'status:Show system status'
+                'doctor:Check system health'
                 'audit:Perform a security audit'
+                'run:Run project scripts'
+                'new:Create a new project'
+                'tool:Manage dev tools'
                 'env:Environment management'
+                'history:View package transaction history'
+                'rollback:Roll back to a previous system state'
+                'dash:Interactive TUI dashboard'
+                'help:Show help'
             )
             _describe -t commands 'omg commands' commands
             ;;

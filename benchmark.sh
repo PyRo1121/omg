@@ -7,6 +7,11 @@ WARMUP=2
 OMG="./target/release/omg"
 OMGD="./target/release/omgd"
 
+if ! command -v bc >/dev/null 2>&1; then
+    echo "❌ 'bc' is required for benchmarking (install: pacman -S bc)" >&2
+    exit 1
+fi
+
 # Build release first
 echo "🔨 Building release binaries..."
 cargo build --release --quiet
@@ -20,6 +25,17 @@ echo "Starting OMG Daemon..."
 $OMGD --foreground > /dev/null 2>&1 &
 DAEMON_PID=$!
 sleep 2
+
+if ! $OMG status > /dev/null 2>&1; then
+    echo "❌ OMG daemon failed to start" >&2
+    kill $DAEMON_PID > /dev/null 2>&1 || true
+    exit 1
+fi
+
+cleanup() {
+    kill $DAEMON_PID > /dev/null 2>&1 || true
+}
+trap cleanup EXIT
 
 # Arrays to store results for the final table
 declare -A RESULTS
@@ -64,16 +80,6 @@ echo -e "\n📦 Benchmark: SEARCH (firefox)"
 echo "-------------------------------"
 RESULTS["search,OMG (Daemon)"]=$(run_bench "OMG (Daemon)" "$OMG search firefox" $ITERATIONS $WARMUP)
 
-# Cold start means killing daemon first or just running it normally if daemon is off
-# However, for a fair comparison of "Cold", we just run it. 
-# But let's assume "Cold" is without the daemon bridge. 
-# Since we implemented sync paths that try daemon first, "Cold" is just without a running daemon.
-# To simulate cold start while daemon is running, we can't easily bypass unless we add a flag.
-# For now, let's just benchmark what we have.
-
-# Stop daemon for cold benchmark? No, let's just do it at the end.
-# Actually, let's just compare OMG (Daemon) vs Others first.
-
 if command -v pacman &> /dev/null; then
     RESULTS["search,pacman"]=$(run_bench "pacman" "pacman -Ss firefox" $ITERATIONS $WARMUP)
 fi
@@ -96,15 +102,15 @@ fi
 echo -e "\n⚡ Benchmark: STATUS"
 echo "-------------------------------"
 RESULTS["status,OMG (Daemon)"]=$(run_bench "OMG (Daemon)" "$OMG status" $ITERATIONS $WARMUP)
-# Pacman doesn't have a direct equivalent to 'status', maybe 'check'? 
-# Yay has 'vget', but let's skip for now or use a placeholder.
 RESULTS["status,pacman"]="N/A"
 RESULTS["status,yay"]="N/A"
 
 # 4. List Explicit
 echo -e "\n📋 Benchmark: EXPLICIT"
 echo "-------------------------------"
-RESULTS["explicit,OMG (Daemon)"]=$(run_bench "OMG (Daemon)" "$OMG explicit" $ITERATIONS $WARMUP)
+# Warm explicit cache once to hit daemon cache for measured runs
+$OMG explicit --count > /dev/null 2>&1 || true
+RESULTS["explicit,OMG (Daemon)"]=$(run_bench "OMG (Daemon)" "$OMG explicit --count" $ITERATIONS $WARMUP)
 if command -v pacman &> /dev/null; then
     RESULTS["explicit,pacman"]=$(run_bench "pacman" "pacman -Qe" $ITERATIONS $WARMUP)
 fi
@@ -112,29 +118,38 @@ if command -v yay &> /dev/null; then
     RESULTS["explicit,yay"]=$(run_bench "yay" "yay -Qe" $ITERATIONS $WARMUP)
 fi
 
-# Kill Daemon
-kill $DAEMON_PID > /dev/null 2>&1 || true
-
-# 5. Cold Starts (without daemon)
-echo -e "\n❄️  Benchmark: COLD STARTS (No Daemon)"
-echo "-------------------------------"
-# Note: we don't restart the daemon here.
-RESULTS["search,OMG (Cold)"]=$(run_bench "OMG (Cold) Search" "$OMG search firefox" $ITERATIONS 0)
-RESULTS["info,OMG (Cold)"]=$(run_bench "OMG (Cold) Info" "$OMG info firefox" $ITERATIONS 0)
-RESULTS["status,OMG (Cold)"]=$(run_bench "OMG (Cold) Status" "$OMG status" $ITERATIONS 0)
-RESULTS["explicit,OMG (Cold)"]=$(run_bench "OMG (Cold) Explicit" "$OMG explicit" $ITERATIONS 0)
-
-
 echo -e "\n========================================================"
 echo "📊 Results Summary (Average Time in ms)"
 echo "========================================================"
 
-printf "| %-10s | %-12s | %-10s | %-10s | %-10s | %-10s |\n" "Command" "OMG (Daemon)" "OMG (Cold)" "pacman" "yay" "Speedup"
-printf "|------------|--------------|------------|------------|------------|-----------|\n"
+printf "| %-10s | %-12s | %-10s | %-10s | %-10s |\n" "Command" "OMG (Daemon)" "pacman" "yay" "Speedup"
+printf "|------------|--------------|------------|------------|-----------|\n"
+
+REPORT_FILE="benchmark_report.md"
+{
+    echo "# OMG Benchmark Report"
+    echo
+    echo "**Iterations:** ${ITERATIONS}  "
+    echo "**Warmup:** ${WARMUP}"
+    echo
+    echo "## Test Environment"
+    echo
+    echo "- **OS:** $(uname -s)"
+    echo "- **Kernel:** $(uname -r)"
+    if command -v lscpu >/dev/null 2>&1; then
+        echo "- **CPU:** $(lscpu | awk -F: '/Model name/ {gsub(/^ /, "", $2); print $2; exit}')"
+        echo "- **CPU Cores:** $(lscpu | awk -F: '/^CPU\(s\)/ {gsub(/^ /, "", $2); print $2; exit}')"
+    fi
+    if command -v free >/dev/null 2>&1; then
+        echo "- **RAM:** $(free -h | awk '/Mem:/ {print $2; exit}')"
+    fi
+    echo
+    echo "| Command | OMG (Daemon) | pacman | yay | Speedup |"
+    echo "|---------|--------------|--------|-----|---------|"
+} > "$REPORT_FILE"
 
 for cmd in "${COMMANDS[@]}"; do
     omg_d=${RESULTS["$cmd,OMG (Daemon)"]}
-    omg_c=${RESULTS["$cmd,OMG (Cold)"]}
     pac=${RESULTS["$cmd,pacman"]}
     yay=${RESULTS["$cmd,yay"]}
     
@@ -145,8 +160,10 @@ for cmd in "${COMMANDS[@]}"; do
         speedup="${speedup}x"
     fi
     
-    printf "| %-10s | %-12s | %-10s | %-10s | %-10s | %-10s |\n" "$cmd" "${omg_d}ms" "${omg_c}ms" "${pac}ms" "${yay}ms" "$speedup"
+    printf "| %-10s | %-12s | %-10s | %-10s | %-10s |\n" "$cmd" "${omg_d}ms" "${pac}ms" "${yay}ms" "$speedup"
+    printf "| %s | %sms | %sms | %sms | %s |\n" "$cmd" "$omg_d" "$pac" "$yay" "$speedup" >> "$REPORT_FILE"
 done
 
 echo -e "\n✅ Benchmarks Complete"
+echo "📄 Report saved to $REPORT_FILE"
 

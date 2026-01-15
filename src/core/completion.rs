@@ -1,9 +1,10 @@
 //! Intelligent completions with fuzzy matching and context awareness.
 
+use std::path::PathBuf;
+
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use nucleo_matcher::{Matcher, Utf32Str};
-use std::path::PathBuf;
+use fuzzy_matcher::{skim::SkimMatcherV2, FuzzyMatcher};
 
 use crate::core::Database;
 
@@ -21,23 +22,62 @@ impl CompletionEngine {
     /// Perform fuzzy matching on a list of candidates
     #[must_use]
     pub fn fuzzy_match(&self, pattern: &str, candidates: Vec<String>) -> Vec<String> {
-        let mut matcher = Matcher::new(nucleo_matcher::Config::DEFAULT);
-        let mut pattern_buf = Vec::new();
-        let pattern_utf32 = Utf32Str::new(pattern, &mut pattern_buf);
+        if pattern.is_empty() {
+            return candidates;
+        }
 
-        let mut matches: Vec<(String, u16)> = candidates
+        let pattern_lower = pattern.to_lowercase();
+        let pattern_len = pattern_lower.len() as i64;
+        let matcher = SkimMatcherV2::default();
+        let (gap_weight, start_weight, len_weight) = if pattern_len <= 3 {
+            (50, 12, 6)
+        } else if pattern_len <= 6 {
+            (35, 8, 3)
+        } else {
+            (25, 5, 2)
+        };
+
+        let mut matches: Vec<(String, i64)> = candidates
             .into_iter()
             .filter_map(|cand| {
-                let mut cand_buf = Vec::new();
-                let cand_utf32 = Utf32Str::new(&cand, &mut cand_buf);
-                matcher
-                    .fuzzy_match(cand_utf32, pattern_utf32)
-                    .map(|score| (cand, score))
+                let candidate_lower = cand.to_lowercase();
+                let (score, indices) = matcher.fuzzy_indices(&candidate_lower, &pattern_lower)?;
+                let (start, end) = match (indices.first(), indices.last()) {
+                    (Some(start), Some(end)) => (*start as i64, *end as i64),
+                    _ => return None,
+                };
+                let span = end - start + 1;
+                let gap = (span - pattern_len).max(0);
+                let prefix_bonus = if candidate_lower.starts_with(&pattern_lower) {
+                    700
+                } else if candidate_lower.contains(&pattern_lower) {
+                    250
+                } else {
+                    0
+                };
+                let exact_bonus = if candidate_lower == pattern_lower { 1200 } else { 0 };
+                let boundary_bonus = if is_boundary_match(&candidate_lower, start as usize) {
+                    120
+                } else {
+                    0
+                };
+                let candidate_len = candidate_lower.len() as i64;
+                let total_score = score as i64
+                    + prefix_bonus
+                    + exact_bonus
+                    + boundary_bonus
+                    - (gap * gap_weight)
+                    - (start * start_weight)
+                    - (candidate_len * len_weight);
+                Some((cand, total_score))
             })
             .collect();
 
-        // Sort by score descending
-        matches.sort_by(|a, b| b.1.cmp(&a.1));
+        matches.sort_by(|a, b| {
+            b.1.cmp(&a.1)
+                .then_with(|| a.0.len().cmp(&b.0.len()))
+                .then_with(|| a.0.cmp(&b.0))
+        });
 
         matches.into_iter().map(|(s, _)| s).collect()
     }
@@ -163,5 +203,41 @@ impl CompletionEngine {
         gz.read_to_string(&mut s)?;
 
         Ok(s.lines().map(std::string::ToString::to_string).collect())
+    }
+}
+
+fn is_boundary_match(candidate: &str, start: usize) -> bool {
+    if start == 0 {
+        return true;
+    }
+
+    if !candidate.is_char_boundary(start) {
+        return false;
+    }
+
+    candidate
+        .get(..start)
+        .and_then(|prefix| prefix.chars().last())
+        .map_or(false, |prev| !prev.is_alphanumeric())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn fuzzy_match_prefers_compact_subsequence() {
+        let temp_dir = TempDir::new().unwrap();
+        let db = Database::open(temp_dir.path()).unwrap();
+        let engine = CompletionEngine::new(db);
+
+        let candidates = vec![
+            "sigrok-firmware-fx2lafw".to_string(),
+            "firefox".to_string(),
+        ];
+
+        let results = engine.fuzzy_match("frfx", candidates);
+        assert_eq!(results.first().map(String::as_str), Some("firefox"));
     }
 }

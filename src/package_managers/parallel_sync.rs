@@ -3,18 +3,30 @@
 //! Downloads all repository databases in parallel using async I/O,
 //! with progress bars and smart mirror selection.
 
-use anyhow::{Context, Result};
-use colored::Colorize;
-use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
-use reqwest::Client;
 use std::fs;
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use anyhow::{Context, Result};
+use colored::Colorize;
+use home::home_dir;
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use reqwest::Client;
+use serde::{Deserialize, Serialize};
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 
+use crate::core::http::{download_client, shared_client};
+
 /// Standard Arch Linux repositories
 const REPOS: &[&str] = &["core", "extra", "multilib"];
+const MIRROR_CACHE_TTL_SECS: u64 = 6 * 60 * 60;
+
+#[derive(Debug, Serialize, Deserialize)]
+struct MirrorCache {
+    cached_at: u64,
+    mirrors: Vec<String>,
+}
 
 /// Parse all mirrors from mirrorlist
 fn get_mirrors() -> Result<Vec<String>> {
@@ -40,6 +52,51 @@ fn get_mirrors() -> Result<Vec<String>> {
     }
 
     Ok(mirrors)
+}
+
+fn mirror_cache_path() -> PathBuf {
+    home_dir().unwrap_or_else(|| PathBuf::from("/tmp"))
+        .join(".cache/omg/mirrors.json")
+}
+
+fn load_cached_mirrors() -> Option<Vec<String>> {
+    let path = mirror_cache_path();
+    let content = std::fs::read_to_string(&path).ok()?;
+    let cache: MirrorCache = serde_json::from_str(&content).ok()?;
+
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs();
+    if now.saturating_sub(cache.cached_at) > MIRROR_CACHE_TTL_SECS {
+        return None;
+    }
+
+    if cache.mirrors.is_empty() {
+        None
+    } else {
+        Some(cache.mirrors)
+    }
+}
+
+fn save_cached_mirrors(mirrors: &[String]) {
+    if mirrors.is_empty() {
+        return;
+    }
+
+    let path = mirror_cache_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+    let cache = MirrorCache {
+        cached_at: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+        mirrors: mirrors.to_vec(),
+    };
+
+    if let Ok(content) = serde_json::to_string(&cache) {
+        let _ = std::fs::write(&path, content);
+    }
 }
 
 /// Build the URL for a database file
@@ -143,10 +200,7 @@ pub async fn sync_databases_parallel() -> Result<()> {
 
     // Set up progress bars
     let mp = MultiProgress::new();
-    let client = Client::builder()
-        .timeout(Duration::from_secs(30))
-        .connect_timeout(Duration::from_secs(10))
-        .build()?;
+    let client = download_client().clone();
 
     // Collect all repos to sync (standard + custom)
     let mut repos_to_sync: Vec<(String, Vec<String>, PathBuf)> = Vec::new();
@@ -311,11 +365,12 @@ async fn benchmark_mirror(client: &Client, mirror: &str) -> Option<(String, Dura
 
 /// Select the fastest N mirrors by benchmarking latency
 pub async fn select_fastest_mirrors(count: usize) -> Result<Vec<String>> {
+    if let Some(cached) = load_cached_mirrors() {
+        return Ok(cached.into_iter().take(count).collect());
+    }
+
     let all_mirrors = get_mirrors()?;
-    let client = Client::builder()
-        .timeout(Duration::from_secs(5))
-        .connect_timeout(Duration::from_secs(3))
-        .build()?;
+    let client = shared_client().clone();
 
     // Benchmark all mirrors in parallel
     let handles: Vec<_> = all_mirrors
@@ -339,7 +394,9 @@ pub async fn select_fastest_mirrors(count: usize) -> Result<Vec<String>> {
     results.sort_by_key(|(_, latency)| *latency);
 
     // Return the fastest N mirrors
-    Ok(results.into_iter().take(count).map(|(m, _)| m).collect())
+    let mirrors: Vec<String> = results.into_iter().map(|(m, _)| m).collect();
+    save_cached_mirrors(&mirrors);
+    Ok(mirrors.into_iter().take(count).collect())
 }
 
 /// Download a single package file with progress and failover
@@ -434,10 +491,7 @@ pub async fn download_packages_parallel(
         anyhow::bail!("No mirrors available");
     }
 
-    let client = Client::builder()
-        .timeout(Duration::from_secs(300))
-        .connect_timeout(Duration::from_secs(10))
-        .build()?;
+    let client = download_client().clone();
 
     let total_count = jobs.len();
 

@@ -31,8 +31,7 @@ fn print_completions(shell: &str) -> Result<()> {
             println!("{}", include_str!("completions/zsh.zsh"));
         }
         "fish" => {
-            let mut cmd = Cli::command();
-            generate(Shell::Fish, &mut cmd, "omg", &mut io::stdout());
+            println!("{}", include_str!("completions/fish.fish"));
         }
         "powershell" | "pwsh" => {
             let mut cmd = Cli::command();
@@ -107,9 +106,8 @@ fn install_completions(shell: &str) -> Result<()> {
             fs::create_dir_all(&dir)?;
             let path = dir.join("omg.fish");
 
-            let mut file = fs::File::create(&path)?;
-            let mut cmd = Cli::command();
-            generate(Shell::Fish, &mut cmd, "omg", &mut file);
+            let content = include_str!("completions/fish.fish");
+            fs::write(&path, content)?;
 
             println!(
                 "{} Installed fish completions to {}",

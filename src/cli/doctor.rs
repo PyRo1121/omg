@@ -3,6 +3,7 @@ use tokio::time::Duration;
 
 use crate::cli::style;
 use crate::core::client::DaemonClient;
+use crate::core::http::shared_client;
 
 /// Run all health checks
 pub async fn run() -> Result<()> {
@@ -94,13 +95,13 @@ fn check_os() -> bool {
 }
 
 async fn check_internet() -> bool {
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(2))
-        .build()
-        .unwrap_or_default();
-
-    // Check Arch Linux mirror or google
-    client.get("https://archlinux.org").send().await.is_ok()
+    let client = shared_client();
+    let request = client.get("https://archlinux.org").send();
+    tokio::time::timeout(Duration::from_secs(2), request)
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .is_some()
 }
 
 fn check_command(cmd: &str) -> bool {

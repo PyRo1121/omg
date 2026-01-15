@@ -16,6 +16,7 @@ use tracing::instrument;
 
 use super::pkgbuild::PkgBuild;
 use crate::config::Settings;
+use crate::core::http::shared_client;
 use crate::core::{Package, PackageSource};
 use crate::package_managers::{get_potential_aur_packages, pacman_db};
 
@@ -75,7 +76,7 @@ impl AurClient {
             .join("aur");
 
         Self {
-            client: reqwest::Client::new(),
+            client: shared_client().clone(),
             build_dir,
             settings,
         }
@@ -139,6 +140,7 @@ impl AurClient {
             .map(<[std::string::String]>::to_vec)
             .collect();
 
+        let concurrency = self.settings.aur.build_concurrency.max(1).min(8);
         let mut stream = futures::stream::iter(chunked_names)
             .map(|chunk| {
                 let client = &self.client;
@@ -151,7 +153,7 @@ impl AurClient {
                     client.get(&url).send().await?.json::<AurResponse>().await
                 }
             })
-            .buffer_unordered(4); // Query 4 chunks in parallel
+            .buffer_unordered(concurrency); // Query chunks in parallel
 
         while let Some(res) = stream.next().await {
             let response = res?;
@@ -742,10 +744,7 @@ fn create_spinner(msg: &str) -> ProgressBar {
 
 /// Search AUR with detailed info
 pub async fn search_detailed(query: &str) -> Result<Vec<AurPackageDetail>> {
-    let client = reqwest::Client::builder()
-        .user_agent("omg-package-manager")
-        .build()
-        .unwrap_or_else(|_| reqwest::Client::new());
+    let client = shared_client().clone();
     let url = format!("{AUR_RPC_URL}?v=5&type=search&arg={query}");
 
     let response: AurDetailedResponse = client

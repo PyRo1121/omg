@@ -1,4 +1,5 @@
 use crate::core::env::fingerprint::{DriftReport, EnvironmentState};
+use crate::core::http::shared_client;
 use anyhow::{Context, Result};
 use colored::Colorize;
 use serde::{Deserialize, Serialize};
@@ -82,9 +83,7 @@ pub async fn share(description: String, public: bool) -> Result<()> {
 
     println!("{} Uploading to GitHub Gist...", "OMG".cyan().bold());
 
-    let client = reqwest::Client::builder()
-        .user_agent("omg-package-manager")
-        .build()?;
+    let client = shared_client();
 
     let response = client
         .post("https://api.github.com/gists")
@@ -110,9 +109,7 @@ pub async fn share(description: String, public: bool) -> Result<()> {
 pub async fn sync(url_or_id: String) -> Result<()> {
     println!("{} Syncing environment...", "OMG".cyan().bold());
 
-    let client = reqwest::Client::builder()
-        .user_agent("omg-package-manager")
-        .build()?;
+    let client = shared_client();
 
     // Determine if it's a URL or ID
     let gist_id = if url_or_id.starts_with("https://gist.github.com/") {

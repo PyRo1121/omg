@@ -10,41 +10,9 @@ use colored::Colorize;
 /// Check available updates using direct DB comparison - INSTANT
 /// Get comprehensive system status (counts + updates) in a single pass - FAST
 pub fn get_system_status() -> Result<(usize, usize, usize, usize)> {
-    crate::package_managers::alpm_direct::with_handle(|alpm| {
-        let mut total = 0;
-        let mut explicit = 0;
-        let mut orphans = 0;
-        let mut updates = 0;
-
-        let localdb = alpm.localdb();
-        let syncdbs = alpm.syncdbs();
-
-        for pkg in localdb.pkgs() {
-            total += 1;
-
-            if pkg.reason() == alpm::PackageReason::Explicit {
-                explicit += 1;
-            } else if pkg.required_by().is_empty() && pkg.optional_for().is_empty() {
-                orphans += 1;
-            }
-
-            // Check for updates - use sync_newversion for performance if possible
-            // but db.pkg() is generally fine if the handle is reused.
-            let name = pkg.name();
-            for db in syncdbs {
-                if let Ok(sync_pkg) = db.pkg(name) {
-                    if alpm::vercmp(sync_pkg.version().as_str(), pkg.version().as_str())
-                        == std::cmp::Ordering::Greater
-                    {
-                        updates += 1;
-                        break;
-                    }
-                }
-            }
-        }
-
-        Ok((total, explicit, orphans, updates))
-    })
+    let (total, explicit, orphans) = crate::package_managers::get_counts()?;
+    let updates = crate::package_managers::check_updates_cached()?.len();
+    Ok((total, explicit, orphans, updates))
 }
 
 /// Get detailed list of updates (name, `old_version`, `new_version`) - FAST

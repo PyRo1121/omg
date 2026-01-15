@@ -9,6 +9,7 @@ use serde::Deserialize;
 use std::fs::{self, File};
 use std::path::PathBuf;
 
+use crate::core::http::download_client;
 const BUN_RELEASES_URL: &str = "https://github.com/oven-sh/bun/releases/download";
 const BUN_API_URL: &str = "https://api.github.com/repos/oven-sh/bun/releases";
 
@@ -35,10 +36,7 @@ impl BunManager {
     pub fn new() -> Self {
         let data_dir = super::DATA_DIR.clone();
 
-        let client = reqwest::Client::builder()
-            .user_agent("omg-package-manager")
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
+        let client = download_client().clone();
 
         Self {
             versions_dir: data_dir.join("versions").join("bun"),

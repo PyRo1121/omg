@@ -105,9 +105,9 @@ fn main() -> Result<()> {
                 .build()?;
             rt.block_on(packages::clean(orphans, cache, aur, all))?;
         }
-        Commands::Explicit => {
+        Commands::Explicit { count } => {
             // PURE SYNC PATH (Sub-10ms)
-            packages::explicit_sync()?;
+            packages::explicit_sync(count)?;
         }
         Commands::Sync => {
             let rt = tokio::runtime::Builder::new_multi_thread()
