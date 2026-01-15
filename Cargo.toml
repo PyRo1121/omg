@@ -1,6 +1,6 @@
 [package]
 name = "omg"
-version = "0.1.9"
+version = "0.1.10"
 edition = "2021"
 description = "The Fastest Unified Package Manager for Arch Linux + All Language Runtimes"
 authors = ["OMG Team"]
