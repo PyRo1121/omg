@@ -135,11 +135,6 @@ omg tool list
 - **Context Aware**: Tab-completions prioritize versions and tools based on your current project directory.
 - **80k+ AUR Cache**: Smooth, lag-free completion for the entire Arch User Repository.
 
-### 🐧 Debian/Ubuntu Support (Experimental)
-- **Backend**: Native `rust-apt` bindings (no `apt` subprocess).
-- **Feature flag**: build with `--features debian` (requires `libapt-pkg-dev`).
-- **Scope**: Official repo operations (search/info/install/remove/update). AUR features remain Arch-only.
-
 ---
 
 ## 🚀 Quick Start
@@ -540,47 +535,6 @@ cargo clippy
 ```
 
 Use `cargo run -- <command>` to exercise CLI paths during development.
-
-### Debian Docker Smoke Test
-
-Build the Debian container with automated smoke tests:
-
-```bash
-docker build -f Dockerfile.debian -t omg-debian-smoke .
-```
-
-Run the automated smoke test suite:
-
-```bash
-docker run --rm omg-debian-smoke
-```
-
-The smoke test automatically runs 20+ tests covering:
-- OMG version and help commands
-- System health checks (`omg doctor`)
-- Database synchronization (`omg sync`)
-- Package search and info queries
-- Package installation and removal
-- Update checks and status commands
-- Error handling for invalid packages
-
-All tests run as root to properly test apt operations.
-
-For interactive manual testing:
-
-```bash
-docker run --rm -it omg-debian-smoke bash
-```
-
-Inside the container you can run any omg command:
-
-```bash
-omg search curl
-omg info vim
-omg install hello
-omg remove hello
-omg status
-```
 
 ---
 

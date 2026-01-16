@@ -23,8 +23,8 @@ Source: `src/daemon/server.rs`.
 
 ## Daemon State
 `DaemonState` owns the data that is shared across all handlers.
-- `cache`: in-memory LRU cache for search, info, status, and explicit list.
-- `persistent`: LMDB-backed status cache.
+- `cache`: in-memory moka cache for search, info, status, and explicit list.
+- `persistent`: redb-backed status cache.
 - `pacman`: official package manager interface.
 - `aur`: AUR client.
 - `alpm_worker`: worker for libalpm operations.
@@ -38,15 +38,15 @@ The daemon spawns a background worker that refreshes system status and runtime p
 - Initial refresh happens immediately.
 - Periodic refresh runs every **300 seconds**.
 - Probes active runtimes by checking the `current` symlink for each supported runtime.
-- Updates system status and vulnerability count in both LMDB and in-memory cache.
+- Updates system status and vulnerability count in both redb and in-memory cache.
 
 Source: `src/daemon/server.rs`, `src/runtimes/mod.rs`.
 
-## Data Directory & LMDB
+## Data Directory & redb
 The daemon uses an XDG data directory when available, falling back to `/var/lib/omg`.
-- LMDB file path: `<data_dir>/cache.mdb`.
-- LMDB stores **status** data in a `status` database.
-- Map size: **10MB**; `max_dbs = 1`.
+- redb file path: `<data_dir>/cache.redb`.
+- redb stores **status** data in a `status` table.
+- Uses ACID transactions for durability with automatic sizing.
 
 Source: `src/daemon/handlers.rs`, `src/daemon/db.rs`.
 

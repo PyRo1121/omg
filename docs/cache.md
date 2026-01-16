@@ -1,103 +1,136 @@
 # Caching & Indexing
 
-OMG uses a multi-layered caching strategy to deliver sub-millisecond response times. This covers the in-memory moka cache, persistent redb storage, and the official package index with fuzzy search.
+OMG uses a multi-layered caching strategy to deliver sub-millisecond response times. This covers the in-memory moka cache, persistent redb storage, and the official package index with Nucleo fuzzy search.
 
 ## In-Memory Cache (`PackageCache`)
 
 ### Architecture Overview
 
-The `PackageCache` uses `moka`, a high-performance, concurrent caching library for Rust. It provides thread-safe caching with TTL and size-based eviction out of the box.
+The `PackageCache` uses `moka`, a high-performance, lock-free concurrent caching library for Rust. Moka provides built-in TTL expiration, size-based eviction, and excellent concurrent performance.
 
 ### Data Structures
 
 ```rust
 pub struct PackageCache {
     /// Search results cache: query -> packages
-    cache: DashMap<String, CacheEntry>,
+    cache: Cache<String, Vec<PackageInfo>>,
     /// Detailed info cache: pkgname -> info
-    detailed_cache: DashMap<String, DetailedEntry>,
-    /// LRU order tracking (critical for eviction)
-    lru_order: RwLock<VecDeque<String>>,
-    /// Maximum cache size (default: 1000 entries)
+    detailed_cache: Cache<String, DetailedPackageInfo>,
+    /// Negative cache for missing package info
+    info_miss_cache: Cache<String, bool>,
+    /// Maximum cache size
     max_size: usize,
-    /// Cache TTL (default: 5 minutes)
-    ttl: Duration,
-    /// System status cache with separate TTL logic
-    system_status: RwLock<Option<(StatusResult, Instant)>>,
-    /// Explicit package list cache
-    explicit_packages: RwLock<Option<(Vec<String>, Instant)>>,
+    /// System status cache (single entry)
+    system_status: Cache<String, StatusResult>,
+    /// Explicit package list cache (single entry)
+    explicit_packages: Cache<String, Vec<String>>,
 }
 ```
 
-### Cache Entry Types
+### Cache Configuration
 
-#### `CacheEntry` - Search Results
-```rust
-struct CacheEntry {
-    packages: Vec<PackageInfo>,
-    timestamp: Instant,
-}
-```
-- Stores complete search result vectors
-- Timestamp enables TTL-based expiration
-- Cloned on retrieval (immutable data structure)
-
-#### `DetailedEntry` - Package Info
-```rust
-struct DetailedEntry {
-    info: DetailedPackageInfo,
-    timestamp: Instant,
-}
-```
-- Stores individual package detailed information
-- Used by `omg info <package>` commands
-- Separate cache from search results for granular control
-
-### LRU Eviction Algorithm
-
-The LRU implementation uses a `VecDeque<String>` to track access order:
-
-1. **Insertion**: New keys are appended to the back of the deque (most recent position)
-2. **Access**: The `touch()` method removes the key from its current position and re-appends it to the back
-3. **Eviction**: When capacity is reached, `evict_oldest()` pops from the front (oldest position)
-
-This approach provides O(1) insertion and O(n) eviction (where n is typically small due to the deque's localized operations).
-
-### TTL Management
-
-TTL is checked on every read operation with lazy expiration:
-- Search cache entries expire after 5 minutes (300 seconds)
-- System status has independent TTL checking
-- Expired entries are removed on access (not proactively)
+Each cache is configured with:
+- **max_capacity**: Maximum number of entries
+- **time_to_live**: TTL for automatic expiration
 
 ```rust
-if entry.timestamp.elapsed() > self.ttl {
-    drop(entry);
-    self.cache.remove(query);
-    return None;
+let cache = Cache::builder()
+    .max_capacity(max_size as u64)
+    .time_to_live(ttl)
+    .build();
+```
+
+### Default Settings
+
+```rust
+impl Default for PackageCache {
+    fn default() -> Self {
+        // 1000 entries, 5 minute TTL for search/info
+        // 30 second TTL for status cache
+        Self::new_with_ttls(1000, 300, 30)
+    }
 }
 ```
 
-### Concurrency Model
+| Cache | Max Size | TTL |
+|-------|----------|-----|
+| Search results | 1000 queries | 5 minutes |
+| Detailed info | 1000 packages | 5 minutes |
+| Info miss (negative) | 1000 entries | 5 minutes |
+| System status | 1 entry | 30 seconds |
+| Explicit packages | 1 entry | 30 seconds |
 
-The cache uses multiple synchronization primitives:
+### Cache Operations
 
-- **`DashMap`**: Lock-free concurrent hashmap for cache storage
-- **`RwLock<VecDeque>`**: Protects LRU order tracking (write-heavy during eviction)
-- **`AtomicU64`**: For request ID generation in IPC client
+#### Search Results
+```rust
+// Get cached results
+pub fn get(&self, query: &str) -> Option<Vec<PackageInfo>> {
+    self.cache.get(query)
+}
 
-This design allows unlimited concurrent readers while ensuring consistency during writes.
+// Store results
+pub fn insert(&self, query: String, packages: Vec<PackageInfo>) {
+    self.cache.insert(query, packages);
+}
+```
+
+#### Package Info
+```rust
+// Get detailed info
+pub fn get_info(&self, name: &str) -> Option<DetailedPackageInfo> {
+    self.detailed_cache.get(name)
+}
+
+// Check negative cache (known missing)
+pub fn is_info_miss(&self, name: &str) -> bool {
+    self.info_miss_cache.get(name).unwrap_or(false)
+}
+
+// Store info (and clear negative cache)
+pub fn insert_info(&self, info: DetailedPackageInfo) {
+    let name = info.name.clone();
+    self.detailed_cache.insert(name.clone(), info);
+    self.info_miss_cache.invalidate(&name);
+}
+
+// Record a miss
+pub fn insert_info_miss(&self, name: &str) {
+    self.info_miss_cache.insert(name.to_string(), true);
+}
+```
+
+#### System Status
+```rust
+pub fn get_status(&self) -> Option<StatusResult> {
+    self.system_status.get("status")
+}
+
+pub fn update_status(&self, result: StatusResult) {
+    self.system_status.insert("status".to_string(), result);
+}
+```
 
 ### Cache Statistics
 
-The cache provides runtime statistics:
 ```rust
 pub fn stats(&self) -> CacheStats {
     CacheStats {
-        entries: self.cache.len(),
-        detailed_entries: self.detailed_cache.len(),
+        size: self.cache.entry_count() as usize,
         max_size: self.max_size,
     }
+}
+```
+
+### Cache Clearing
+
+```rust
+pub fn clear(&self) {
+    self.cache.invalidate_all();
+    self.detailed_cache.invalidate_all();
+    self.info_miss_cache.invalidate_all();
+    self.system_status.invalidate_all();
+    self.explicit_packages.invalidate_all();
 }
 ```
 
@@ -105,204 +138,350 @@ pub fn stats(&self) -> CacheStats {
 
 ### redb Integration
 
-The persistent cache uses redb (pure Rust embedded database) for durability across daemon restarts:
+The persistent cache uses redb, a pure Rust embedded database, for durability across daemon restarts:
 
 ```rust
 pub struct PersistentCache {
     db: Database,
-    // status table for StatusResult
 }
+
+const STATUS_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("status");
 ```
 
-### Configuration
+### Features
 
-- **Storage**: Single database file (`cache.redb`)
-- **Tables**: `status` table for system status
-- **Serialization**: bincode for compact binary storage
-- **Transactions**: ACID compliance with read/write transactions
-- **No configuration needed**: redb auto-sizes appropriately
+- **Pure Rust**: No C dependencies
+- **ACID Transactions**: Full transactional support
+- **Automatic Sizing**: No manual configuration needed
+- **Crash Safety**: Data survives unexpected shutdowns
+
+### Database Location
+
+```
+~/.local/share/omg/cache.redb
+```
 
 ### Operations
 
 ```rust
-pub fn get_status(&self) -> Result<Option<StatusResult>>
-pub fn set_status(&self, status: &StatusResult) -> Result<()>
+impl PersistentCache {
+    pub fn new(path: &Path) -> Result<Self> {
+        std::fs::create_dir_all(path)?;
+        let db_path = path.join("cache.redb");
+        let db = Database::create(&db_path)?;
+        Ok(Self { db })
+    }
+
+    pub fn get_status(&self) -> Result<Option<StatusResult>> {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(STATUS_TABLE)?;
+        
+        match table.get("current")? {
+            Some(guard) => {
+                let status: StatusResult = serde_json::from_slice(guard.value())?;
+                Ok(Some(status))
+            }
+            None => Ok(None),
+        }
+    }
+
+    pub fn set_status(&self, status: &StatusResult) -> Result<()> {
+        let data = serde_json::to_vec(status)?;
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(STATUS_TABLE)?;
+            table.insert("current", data.as_slice())?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+}
 ```
 
-The persistent cache stores only system status results, as other data is cheap to regenerate from libalpm.
+### What's Persisted
+
+Currently, only system status is persisted:
+- Total package count
+- Explicit package count
+- Orphan count
+- Updates available
+- Security vulnerabilities count
+- Runtime versions
+
+This allows fast daemon startup without re-querying everything.
 
 ## Official Package Index (`PackageIndex`)
 
 ### Data Architecture
 
-The package index maintains two synchronized data structures:
+The package index maintains several synchronized data structures for optimal query performance:
 
 ```rust
 pub struct PackageIndex {
     /// Maps package name to detailed info (using ahash for speed)
     packages: AHashMap<String, DetailedPackageInfo>,
-    /// Search items for Nucleo (pre-computed UTF-32 strings)
+    /// Search items with UTF-32 strings for Nucleo
     search_items: Vec<(String, Utf32String)>,
-    /// Reader-writer lock for package lookups
+    /// Lowercased versions for case-insensitive search
+    search_items_lower: Vec<Utf32String>,
+    /// Prefix index for 1-2 character fast path
+    prefix_index: AHashMap<String, Vec<usize>>,
+    /// Reader-writer lock for thread safety
     lock: RwLock<()>,
 }
 ```
 
-### Index Building Process
+### Index Building
 
-On startup, the index:
+On daemon startup, the index is built from system databases:
 
-1. **Initialize ALPM**: Connects to libalpm at `/var/lib/pacman`
-2. **Register Databases**: Loads `core`, `extra`, and `multilib` repositories
-3. **Extract Metadata**: For each package, collects:
-   - Name, version, description, URL
-   - Installed size and download size
-   - Repository source
-   - Dependencies (depends, makedepends, optdepends, checkdepends)
-   - Conflicts and provides
-4. **Generate Search Strings**: Concatenates name and description for fuzzy matching
-5. **UTF-32 Conversion**: Pre-converts to UTF-32 for Nucleo matcher efficiency
-
-### Search Algorithm
-
-#### Fast Path: Prefix Matching (1-2 character queries)
+#### Arch Linux (ALPM)
 ```rust
-if query.len() < 3 {
-    let matches: Vec<_> = self
-        .search_items
-        .iter()
-        .filter(|(name, _)| name.starts_with(query))
-        .take(limit)
-        // ... map to PackageInfo
+for db_name in ["core", "extra", "multilib"] {
+    let db = alpm.register_syncdb(db_name, SigLevel::USE_DEFAULT)?;
+    for pkg in db.pkgs() {
+        // Extract: name, version, description, URL, size,
+        // dependencies, licenses, etc.
+        packages.insert(info.name.clone(), info);
+    }
 }
 ```
 
-This optimization handles the common case of users typing short prefixes like 'f' or 'fi'.
+#### Debian/Ubuntu (APT)
+```rust
+let cache = Cache::new(&[])?;
+for pkg in cache.packages(&PackageSort::default()) {
+    // Extract from candidate or installed version
+    packages.insert(info.name.clone(), info);
+}
+```
 
-#### Fuzzy Matching (3+ character queries)
+### Search Algorithm
+
+#### Fast Path: Prefix Matching (1-2 characters)
+
+For short queries, the prefix index provides instant results:
+
+```rust
+if query_lower.len() < 3 {
+    let matches = self.prefix_index
+        .get(&query_lower)
+        .into_iter()
+        .flatten()
+        .take(limit)
+        .filter_map(|idx| {
+            let name = &self.search_items[*idx].0;
+            self.packages.get(name).map(to_package_info)
+        })
+        .collect();
+    
+    if !matches.is_empty() {
+        return matches;
+    }
+}
+```
+
+#### Fuzzy Matching (3+ characters)
 
 Uses Rayon for parallel processing and Nucleo for high-performance fuzzy matching:
 
-1. **Parallel Preparation**: Convert query to UTF-32 slice
-2. **Parallel Matching**: Rayon processes search items in parallel
-   ```rust
-   let matches: Vec<_> = self
-       .search_items
-       .par_iter()  // Parallel iterator
-       .enumerate()
-       .filter_map(|(idx, (_, search_str))| {
-           Matcher::new(Config::DEFAULT)
-               .fuzzy_match(query_slice, search_str.slice(..))
-               .map(|score| (score, idx))
-       })
-       .collect();
-   ```
-3. **Optimized Sorting**: Uses `select_nth_unstable_by` for O(n) partial sort when results exceed limit
-4. **Final Mapping**: Maps matched indices back to package info
+```rust
+// 1. Create thread-local matchers for parallelism
+let mut matches: Vec<(u16, usize)> = self.search_items_lower
+    .par_iter()
+    .enumerate()
+    .map_init(
+        || Matcher::new(Config::DEFAULT),  // Per-thread matcher
+        |matcher, (idx, search_str)| {
+            matcher.fuzzy_match(query_slice, search_str.slice(..))
+                .map(|score| (score, idx))
+        },
+    )
+    .flatten()
+    .collect();
 
-### Performance Characteristics
+// 2. Optimized partial sort for large result sets
+if matches.len() > limit {
+    matches.select_nth_unstable_by(limit, |a, b| b.0.cmp(&a.0));
+    matches.truncate(limit);
+}
 
-- **Index size**: ~15MB for full Arch repository
-- **Search latency**: <1ms for typical queries
-- **Memory usage**: AHashMap for O(1) lookups, minimal allocations
-- **Concurrency**: RwLock allows multiple concurrent readers
+// 3. Sort by score (descending)
+matches.sort_unstable_by(|a, b| b.0.cmp(&a.0));
+
+// 4. Map indices back to package info
+results = matches.iter()
+    .filter_map(|(_, idx)| self.packages.get(&self.search_items[*idx].0))
+    .map(to_package_info)
+    .collect();
+```
 
 ### Search String Construction
 
+Each package's searchable text combines name and description:
+
 ```rust
 let search_str = format!("{} {}", info.name, info.description);
+let search_lower = search_str.to_lowercase();
 ```
 
-This strategy allows users to find packages by either name or description keywords.
+This allows users to find packages by either name or description keywords.
+
+### Performance Characteristics
+
+| Operation | Time Complexity | Typical Latency |
+|-----------|-----------------|-----------------|
+| Get by name | O(1) | < 1μs |
+| Prefix search | O(1) lookup + O(k) iteration | < 100μs |
+| Fuzzy search | O(n) parallel | < 1ms |
+| Index build | O(n) | ~1-2s on startup |
+
+Where n = number of packages (~15,000 for Arch), k = matches
+
+### Memory Usage
+
+- **Package data**: ~15MB for full Arch repository
+- **Search strings**: ~10MB (UTF-32 for Nucleo)
+- **Prefix index**: ~2MB
+- **Total**: ~25-30MB
 
 ## Cache Interaction Patterns
 
 ### Search Request Flow
 
-1. **Cache Check**: `PackageCache.get(query)` with TTL validation
-2. **Index Search**: If cache miss, search `PackageIndex`
-3. **AUR Fallback**: Query AUR if official results insufficient
-4. **Cache Storage**: Store results in `PackageCache` with current timestamp
-5. **LRU Update**: Move query to most recent position in LRU deque
+```
+Client Request
+     │
+     ▼
+┌─────────────────┐
+│ Check moka      │ ─── Hit ───▶ Return cached
+│ search cache    │
+└────────┬────────┘
+         │ Miss
+         ▼
+┌─────────────────┐
+│ Search          │
+│ PackageIndex    │
+└────────┬────────┘
+         │ < 5 results
+         ▼
+┌─────────────────┐
+│ Query AUR       │
+│ (network)       │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ Combine results │
+│ Store in cache  │
+└────────┬────────┘
+         │
+         ▼
+    Return
+```
 
 ### Info Request Flow
 
-1. **Detailed Cache Check**: `PackageCache.get_info(name)`
-2. **Index Lookup**: If miss, use `PackageIndex.packages.get(name)`
-3. **Cache Storage**: Store in detailed cache for future requests
+```
+Client Request
+     │
+     ▼
+┌─────────────────┐
+│ Check moka      │ ─── Hit ───▶ Return cached
+│ detailed_cache  │
+└────────┬────────┘
+         │ Miss
+         ▼
+┌─────────────────┐
+│ Check negative  │ ─── Known miss ───▶ Return error
+│ info_miss_cache │
+└────────┬────────┘
+         │ Unknown
+         ▼
+┌─────────────────┐
+│ Lookup in       │ ─── Found ───▶ Cache & return
+│ PackageIndex    │
+└────────┬────────┘
+         │ Not found
+         ▼
+┌─────────────────┐
+│ Query AUR       │ ─── Found ───▶ Cache & return
+│ (network)       │
+└────────┬────────┘
+         │ Not found
+         ▼
+┌─────────────────┐
+│ Record miss     │
+│ Return error    │
+└─────────────────┘
+```
 
-### System Status Flow
+### Status Request Flow
 
-1. **Persistent Cache**: Check LMDB for stored status
-2. **TTL Validation**: Verify if status is still fresh
-3. **Live Generation**: If expired, generate new system status
-4. **Dual Storage**: Update both persistent cache and in-memory cache
+```
+Client Request
+     │
+     ▼
+┌─────────────────┐
+│ Check redb      │ ─── Found ───▶ Return persisted
+│ persistent DB   │
+└────────┬────────┘
+         │ Not found
+         ▼
+┌─────────────────┐
+│ Check moka      │ ─── Hit ───▶ Return cached
+│ system_status   │
+└────────┬────────┘
+         │ Miss
+         ▼
+┌─────────────────┐
+│ Generate fresh  │
+│ status via ALPM │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ Store in both   │
+│ redb + moka     │
+└────────┬────────┘
+         │
+         ▼
+    Return
+```
 
-## Design Rationale
-
-### Memory vs. Computation Trade-offs
-
-- **Pre-computation**: UTF-32 strings and package metadata are pre-computed
-- **Lazy Loading**: AUR results are fetched on-demand
-- **Selective Persistence**: Only system status persists across restarts
-
-### Concurrency Strategy
-
-- **Lock-free Reads**: DashMap enables unlimited concurrent readers
-- **Minimal Lock Contention**: LRU tracking uses separate lock from cache storage
-- **Parallel Processing**: Rayon parallelizes fuzzy matching
-
-### Performance Targets
-
-- **Cache Hit**: <0.1ms (memory access)
-- **Index Search**: <1ms (in-memory fuzzy matching)
-- **Cache Miss with AUR**: <100ms (network bound)
-- **Daemon Restart**: <5s (index rebuild from libalpm)
-
-## Cache Configuration
+## Tuning Considerations
 
 ### Cache Size
 
-monitor cache effectiveness through:
-- Hit/miss ratios (can be added via moka metrics)
-- Entry count from `cache.entry_count()`
-- Memory usage patterns
+- **Larger cache**: More memory, fewer AUR calls
+- **Smaller cache**: Less memory, more cache misses
+- **Default (1000)**: Good balance for most systems
 
-### Tuning Considerations
+### TTL Duration
 
-- **Cache Size**: Larger values increase memory usage but reduce AUR calls
-- **TTL Duration**: Shorter TTL provides fresher data but more cache misses
-- **LMDB Size**: Must accommodate system status with room for growth
+- **Shorter TTL**: Fresher data, more regeneration
+- **Longer TTL**: Staler data, better performance
+- **Search TTL (5 min)**: Package data rarely changes
+- **Status TTL (30 sec)**: Quick updates for dashboards
 
-## Monitoring and Debugging
+### Monitoring
 
-### Cache Statistics
+Available via daemon IPC:
+```bash
+# Cache stats (requires daemon)
+omg daemon  # If not running
+# Use Request::CacheStats
+```
 
-Monitor cache effectiveness through:
-- Hit/miss ratios (not directly tracked, can be added)
-- Eviction frequency
-- Memory usage patterns
+Returns:
+- Current entry count
+- Maximum size
 
-### Common Issues
+## Source Files
 
-1. **Memory Leaks**: Ensure LRU eviction is working correctly
-2. **Stale Data**: Verify TTL expiration is functioning
-3. **Lock Contention**: Monitor RwLock contention in high-load scenarios
-
-## Future Optimizations
-
-### Potential Enhancements
-
-1. **Adaptive TTL**: Dynamic TTL based on query frequency
-2. **Compression**: Compress cached package data to increase capacity
-3. **Sharding**: Partition cache by query pattern for reduced contention
-4. **Persistent Search Cache**: Extend LMDB to store frequent search results
-5. **Predictive Prefetching**: Cache related packages based on access patterns
-
-### Scaling Considerations
-
-- **Multi-repo Support**: Index structure supports additional repositories
-- **Distributed Cache**: Could extend to Redis for multi-node scenarios
-- **redb snapshots**: Supports consistent backup and restore
-
-Source: `src/daemon/index.rs`, `src/daemon/cache.rs`, `src/daemon/db.rs`.
+| File | Purpose |
+|------|---------|
+| [daemon/cache.rs](file:///home/pyro1121/Documents/code/filemanager/omg/src/daemon/cache.rs) | PackageCache implementation with moka |
+| [daemon/db.rs](file:///home/pyro1121/Documents/code/filemanager/omg/src/daemon/db.rs) | PersistentCache with redb |
+| [daemon/index.rs](file:///home/pyro1121/Documents/code/filemanager/omg/src/daemon/index.rs) | PackageIndex with Nucleo search |
+| [daemon/handlers.rs](file:///home/pyro1121/Documents/code/filemanager/omg/src/daemon/handlers.rs) | Cache interaction in request handlers |

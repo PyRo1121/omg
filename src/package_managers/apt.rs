@@ -6,7 +6,7 @@ use rust_apt::cache::{PackageSort, Upgrade};
 use rust_apt::progress::{AcquireProgress, InstallProgress};
 
 use crate::core::{Package, PackageSource, is_root};
-use crate::package_managers::types::{LocalPackage, SyncPackage, PackageInfo};
+use crate::package_managers::types::{LocalPackage, PackageInfo, SyncPackage};
 
 #[derive(Debug, Default)]
 pub struct AptPackageManager;
