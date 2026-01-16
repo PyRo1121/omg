@@ -35,7 +35,9 @@ where
             *maybe_handle = Some(alpm);
         }
 
-        f(maybe_handle.as_ref().expect("ALPM handle initialized above"))
+        f(maybe_handle
+            .as_ref()
+            .expect("ALPM handle initialized above"))
     })
 }
 
@@ -59,7 +61,9 @@ where
             *maybe_handle = Some(alpm);
         }
 
-        f(maybe_handle.as_mut().expect("ALPM handle initialized above"))
+        f(maybe_handle
+            .as_mut()
+            .expect("ALPM handle initialized above"))
     })
 }
 

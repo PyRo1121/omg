@@ -20,9 +20,11 @@ pub fn draw(f: &mut Frame, app: &App) {
         ])
         .split(f.area());
 
-    let (Some(header), Some(body), Some(footer)) = 
-        (main_chunks.first(), main_chunks.get(1), main_chunks.get(2)) 
-    else { return };
+    let (Some(header), Some(body), Some(footer)) =
+        (main_chunks.first(), main_chunks.get(1), main_chunks.get(2))
+    else {
+        return;
+    };
     let (header, body, footer) = (*header, *body, *footer);
 
     draw_header(f, header, app);
@@ -94,7 +96,9 @@ fn draw_dashboard(f: &mut Frame, area: Rect, app: &App) {
         ])
         .split(area);
 
-    let (Some(c0), Some(c1), Some(c2)) = (chunks.first(), chunks.get(1), chunks.get(2)) else { return };
+    let (Some(c0), Some(c1), Some(c2)) = (chunks.first(), chunks.get(1), chunks.get(2)) else {
+        return;
+    };
     draw_system_overview(f, *c0, app);
     draw_realtime_stats(f, *c1, app);
     draw_quick_actions(f, *c2, app);
@@ -110,7 +114,9 @@ fn draw_system_overview(f: &mut Frame, area: Rect, app: &App) {
         ])
         .split(area);
 
-    let (Some(b0), Some(b1), Some(b2)) = (blocks.first(), blocks.get(1), blocks.get(2)) else { return };
+    let (Some(b0), Some(b1), Some(b2)) = (blocks.first(), blocks.get(1), blocks.get(2)) else {
+        return;
+    };
     let (b0, b1, b2) = (*b0, *b1, *b2);
 
     // System Health
@@ -265,7 +271,9 @@ fn draw_realtime_stats(f: &mut Frame, area: Rect, app: &App) {
         ])
         .split(area);
 
-    let (Some(c0), Some(c1), Some(c2)) = (chunks.first(), chunks.get(1), chunks.get(2)) else { return };
+    let (Some(c0), Some(c1), Some(c2)) = (chunks.first(), chunks.get(1), chunks.get(2)) else {
+        return;
+    };
     let (c0, c1, c2) = (*c0, *c1, *c2);
 
     // CPU Usage
@@ -419,7 +427,10 @@ fn draw_quick_actions(f: &mut Frame, area: Rect, app: &App) {
             ListItem::new(Line::from(vec![
                 Span::styled("• ", Style::default().fg(Color::DarkGray)),
                 Span::styled(
-                    app.history.first().map_or_else(|| "omg".to_string(), |h| format!("omg {}", h.transaction_type)),
+                    app.history.first().map_or_else(
+                        || "omg".to_string(),
+                        |h| format!("omg {}", h.transaction_type),
+                    ),
                     Style::default().fg(Color::Gray),
                 ),
             ]))
@@ -444,7 +455,9 @@ fn draw_packages(f: &mut Frame, area: Rect, app: &App) {
         ])
         .split(area);
 
-    let (Some(c0), Some(c1)) = (chunks.first(), chunks.get(1)) else { return };
+    let (Some(c0), Some(c1)) = (chunks.first(), chunks.get(1)) else {
+        return;
+    };
     let (c0, c1) = (*c0, *c1);
 
     // Search bar
@@ -544,7 +557,9 @@ fn draw_security(f: &mut Frame, area: Rect, app: &App) {
         .constraints([Constraint::Length(8), Constraint::Min(0)])
         .split(area);
 
-    let (Some(c0), Some(c1)) = (chunks.first(), chunks.get(1)) else { return };
+    let (Some(c0), Some(c1)) = (chunks.first(), chunks.get(1)) else {
+        return;
+    };
     let (c0, c1) = (*c0, *c1);
 
     // Security Overview
@@ -688,7 +703,9 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
         .constraints([Constraint::Min(0), Constraint::Length(40)])
         .split(area);
 
-    let (Some(fc0), Some(fc1)) = (footer_chunks.first(), footer_chunks.get(1)) else { return };
+    let (Some(fc0), Some(fc1)) = (footer_chunks.first(), footer_chunks.get(1)) else {
+        return;
+    };
     let (fc0, fc1) = (*fc0, *fc1);
 
     // Tab bar
@@ -759,7 +776,10 @@ fn draw_popup(f: &mut Frame, app: &App) {
     let popup_text = match app.current_tab {
         Tab::Packages => {
             if !app.search_results.is_empty() && app.selected_index < app.search_results.len() {
-                app.search_results.get(app.selected_index).map_or_else(|| "No package".to_string(), |p| format!("Install {}?", p.name))
+                app.search_results.get(app.selected_index).map_or_else(
+                    || "No package".to_string(),
+                    |p| format!("Install {}?", p.name),
+                )
             } else {
                 "No package selected".to_string()
             }

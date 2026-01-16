@@ -514,7 +514,9 @@ pub async fn rollback(id: Option<String>) -> Result<()> {
             .default(0)
             .interact()?;
 
-        entries.get(entries.len() - 1 - selection).ok_or_else(|| anyhow::anyhow!("Invalid selection"))?
+        entries
+            .get(entries.len() - 1 - selection)
+            .ok_or_else(|| anyhow::anyhow!("Invalid selection"))?
     };
 
     println!(

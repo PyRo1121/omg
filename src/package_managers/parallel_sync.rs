@@ -282,7 +282,9 @@ pub async fn sync_databases_parallel() -> Result<()> {
 
     for (i, (_, urls, dest)) in repos_to_sync.into_iter().enumerate() {
         let client = client.clone();
-        let Some(pb) = progress_bars.get(i).cloned() else { continue };
+        let Some(pb) = progress_bars.get(i).cloned() else {
+            continue;
+        };
         let pb = pb;
 
         let handle = tokio::spawn(async move { download_db(&client, urls, &dest, &pb).await });

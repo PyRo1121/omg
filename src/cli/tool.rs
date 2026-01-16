@@ -154,7 +154,12 @@ async fn install_managed(
         "npm" => {
             // npm install --prefix <dir> <pkg>
             let status = Command::new("npm")
-                .args(["install", "--prefix", install_dir.to_str().unwrap_or("."), pkg])
+                .args([
+                    "install",
+                    "--prefix",
+                    install_dir.to_str().unwrap_or("."),
+                    pkg,
+                ])
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null()) // Silence noisy npm
                 .status()?;
@@ -167,7 +172,12 @@ async fn install_managed(
         "cargo" => {
             // cargo install --root <dir> <pkg>
             let status = Command::new("cargo")
-                .args(["install", "--root", install_dir.to_str().unwrap_or("."), pkg])
+                .args([
+                    "install",
+                    "--root",
+                    install_dir.to_str().unwrap_or("."),
+                    pkg,
+                ])
                 .stdout(std::process::Stdio::null()) // Cargo is noisy
                 .status()?;
 
@@ -267,7 +277,9 @@ fn link_binaries(install_dir: &Path, bin_dir: &Path, _tool_name: &str) -> Result
                     }
                 }
 
-                let Some(filename) = path.file_name() else { continue };
+                let Some(filename) = path.file_name() else {
+                    continue;
+                };
                 let dest = bin_dir.join(filename);
 
                 // Remove existing link
@@ -319,7 +331,12 @@ pub fn list() -> Result<()> {
         if let Ok(target) = fs::read_link(&path) {
             println!(
                 "  {} {} -> {}",
-                style::package(&path.file_name().map(|f| f.to_string_lossy()).unwrap_or_default()),
+                style::package(
+                    &path
+                        .file_name()
+                        .map(|f| f.to_string_lossy())
+                        .unwrap_or_default()
+                ),
                 style::arrow("points to"),
                 style::dim(&target.to_string_lossy())
             );
@@ -371,7 +388,9 @@ pub fn remove(name: &str) -> Result<()> {
             println!(
                 "    {} Removed link {}",
                 style::error("-"),
-                path.file_name().map(|f| f.to_string_lossy()).unwrap_or_default()
+                path.file_name()
+                    .map(|f| f.to_string_lossy())
+                    .unwrap_or_default()
             );
         }
     }

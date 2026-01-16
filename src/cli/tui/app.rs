@@ -165,7 +165,9 @@ impl App {
     fn get_disk_usage_sync() -> (u64, u64) {
         // Use statvfs to get disk usage (no subprocess)
         use std::ffi::CString;
-        let Ok(path) = CString::new("/") else { return (0, 0) };
+        let Ok(path) = CString::new("/") else {
+            return (0, 0);
+        };
         // SAFETY: zeroed statvfs is valid for libc::statvfs to populate
         let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
         // SAFETY: path is a valid CString, stat is a valid mutable pointer
