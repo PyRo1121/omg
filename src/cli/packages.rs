@@ -12,10 +12,11 @@ use crate::core::env::distro::is_debian_like;
 use crate::core::history::{HistoryManager, PackageChange, TransactionType};
 use crate::core::security::SecurityPolicy;
 use crate::daemon::protocol::{Request, ResponseResult};
+
+#[cfg(feature = "arch")]
 use crate::package_managers::{
     AurClient,
     OfficialPackageManager,
-    PackageManager,
     check_updates_cached,
     clean_cache,
     display_pkg_info,
@@ -27,6 +28,8 @@ use crate::package_managers::{
     search_sync,
     sync_databases_parallel,
 };
+
+use crate::package_managers::PackageManager;
 
 #[cfg(feature = "debian")]
 use crate::package_managers::{

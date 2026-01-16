@@ -10,6 +10,8 @@ use super::protocol::{
 };
 #[cfg(feature = "debian")]
 use crate::core::env::distro::is_debian_like;
+
+#[cfg(feature = "arch")]
 use crate::package_managers::{
     AurClient, OfficialPackageManager, alpm_worker::AlpmWorker, list_installed_fast,
     search_detailed,
@@ -255,8 +257,6 @@ async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) ->
 
 /// Handle status request
 fn handle_status(state: &Arc<DaemonState>, id: RequestId) -> Response {
-    use crate::package_managers::get_system_status;
-
     if let Ok(Some(cached)) = state.persistent.get_status() {
         return Response::Success {
             id,
@@ -271,6 +271,7 @@ fn handle_status(state: &Arc<DaemonState>, id: RequestId) -> Response {
         };
     }
 
+    #[cfg(feature = "arch")]
     let status = if use_debian_backend() {
         #[cfg(feature = "debian")]
         {
@@ -281,7 +282,22 @@ fn handle_status(state: &Arc<DaemonState>, id: RequestId) -> Response {
             Err(anyhow::anyhow!("Debian backend disabled"))
         }
     } else {
+        use crate::package_managers::get_system_status;
         get_system_status()
+    };
+
+    #[cfg(not(feature = "arch"))]
+    let status = if use_debian_backend() {
+        #[cfg(feature = "debian")]
+        {
+            apt_get_system_status()
+        }
+        #[cfg(not(feature = "debian"))]
+        {
+            Err(anyhow::anyhow!("No package manager backend available"))
+        }
+    } else {
+        Err(anyhow::anyhow!("Arch backend disabled"))
     };
 
     match status {
@@ -396,8 +412,6 @@ async fn handle_security_audit(_state: Arc<DaemonState>, id: RequestId) -> Respo
 
 /// Handle list explicit request
 fn handle_list_explicit(state: &Arc<DaemonState>, id: RequestId) -> Response {
-    use crate::package_managers::list_explicit_fast;
-
     if let Some(cached) = state.cache.get_explicit() {
         return Response::Success {
             id,
@@ -405,6 +419,7 @@ fn handle_list_explicit(state: &Arc<DaemonState>, id: RequestId) -> Response {
         };
     }
 
+    #[cfg(feature = "arch")]
     let packages = if use_debian_backend() {
         #[cfg(feature = "debian")]
         {
@@ -415,7 +430,22 @@ fn handle_list_explicit(state: &Arc<DaemonState>, id: RequestId) -> Response {
             Err(anyhow::anyhow!("Debian backend disabled"))
         }
     } else {
+        use crate::package_managers::list_explicit_fast;
         list_explicit_fast()
+    };
+
+    #[cfg(not(feature = "arch"))]
+    let packages = if use_debian_backend() {
+        #[cfg(feature = "debian")]
+        {
+            apt_list_explicit()
+        }
+        #[cfg(not(feature = "debian"))]
+        {
+            Err(anyhow::anyhow!("No package manager backend available"))
+        }
+    } else {
+        Err(anyhow::anyhow!("Arch backend disabled"))
     };
 
     match packages {
