@@ -130,11 +130,11 @@ pub fn detect_versions(start: &Path) -> HashMap<String, String> {
                     // Parse TOML format
                     if let Ok(content) = std::fs::read_to_string(&file_path) {
                         for line in content.lines() {
-                            if line.contains("channel") {
-                                if let Some(version) = line.split('=').nth(1) {
-                                    let v = version.trim().trim_matches('"').trim_matches('\'');
-                                    versions.insert((*runtime).to_string(), v.to_string());
-                                }
+                            if line.contains("channel")
+                                && let Some(version) = line.split('=').nth(1)
+                            {
+                                let v = version.trim().trim_matches('"').trim_matches('\'');
+                                versions.insert((*runtime).to_string(), v.to_string());
                             }
                         }
                     }

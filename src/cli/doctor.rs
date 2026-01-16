@@ -117,10 +117,10 @@ fn check_path() -> bool {
         // Check for ~/.local/bin or wherever we install
         // We can't know for sure where user installed, but usually ~/.local/bin
         // Or check if 'omg' is found in PATH and matches current executable path?
-        if let Ok(exe) = std::env::current_exe() {
-            if let Some(parent) = exe.parent() {
-                return path.contains(parent.to_str().unwrap_or(""));
-            }
+        if let Ok(exe) = std::env::current_exe()
+            && let Some(parent) = exe.parent()
+        {
+            return path.contains(parent.to_str().unwrap_or(""));
         }
     }
     false

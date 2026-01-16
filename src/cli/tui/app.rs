@@ -21,20 +21,19 @@ impl App {
 
     pub async fn refresh(&mut self) -> Result<()> {
         // 1. Fetch status from daemon
-        if let Ok(mut client) = crate::core::client::DaemonClient::connect().await {
-            if let Ok(crate::daemon::protocol::ResponseResult::Status(status)) = client
+        if let Ok(mut client) = crate::core::client::DaemonClient::connect().await
+            && let Ok(crate::daemon::protocol::ResponseResult::Status(status)) = client
                 .call(crate::daemon::protocol::Request::Status { id: 0 })
                 .await
-            {
-                self.status = Some(status);
-            }
+        {
+            self.status = Some(status);
         }
 
         // 2. Fetch history
-        if let Ok(history_mgr) = crate::core::history::HistoryManager::new() {
-            if let Ok(entries) = history_mgr.load() {
-                self.history = entries.into_iter().rev().take(10).collect();
-            }
+        if let Ok(history_mgr) = crate::core::history::HistoryManager::new()
+            && let Ok(entries) = history_mgr.load()
+        {
+            self.history = entries.into_iter().rev().take(10).collect();
         }
 
         Ok(())

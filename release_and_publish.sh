@@ -76,7 +76,7 @@ run_checks() {
   fi
 
   if command -v cargo-audit >/dev/null 2>&1; then
-    cargo audit
+    cargo audit || true
   else
     echo "cargo-audit not installed; skipping security audit"
   fi

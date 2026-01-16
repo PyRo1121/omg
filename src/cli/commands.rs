@@ -117,14 +117,12 @@ pub async fn complete(_shell: &str, current: &str, last: &str, full: Option<&str
                 let mut installed_versions = Vec::new();
                 if let Ok(entries) = std::fs::read_dir(runtime_dir) {
                     for entry in entries.flatten() {
-                        if let Ok(file_type) = entry.file_type() {
-                            if file_type.is_dir() {
-                                if let Some(name) = entry.file_name().to_str() {
-                                    if name != "current" {
-                                        installed_versions.push(name.to_string());
-                                    }
-                                }
-                            }
+                        if let Ok(file_type) = entry.file_type()
+                            && file_type.is_dir()
+                            && let Some(name) = entry.file_name().to_str()
+                            && name != "current"
+                        {
+                            installed_versions.push(name.to_string());
                         }
                     }
                 }
@@ -497,10 +495,10 @@ pub async fn rollback(id: Option<String>) -> Result<()> {
     // 2. For each package, try to install the 'old_version'
     let mut to_install = Vec::new();
     for change in &target.changes {
-        if let Some(old_ver) = &change.old_version {
-            if change.source == "official" {
-                to_install.push(format!("{}={}", change.name, old_ver));
-            }
+        if let Some(old_ver) = &change.old_version
+            && change.source == "official"
+        {
+            to_install.push(format!("{}={}", change.name, old_ver));
         }
     }
 

@@ -166,10 +166,10 @@ impl BunManager {
             if file.is_dir() {
                 fs::create_dir_all(&outpath)?;
             } else {
-                if let Some(p) = outpath.parent() {
-                    if !p.exists() {
-                        fs::create_dir_all(p)?;
-                    }
+                if let Some(p) = outpath.parent()
+                    && !p.exists()
+                {
+                    fs::create_dir_all(p)?;
                 }
                 let mut outfile = File::create(&outpath)?;
                 std::io::copy(&mut file, &mut outfile)?;
@@ -261,10 +261,10 @@ impl BunManager {
             return Ok(());
         }
 
-        if let Some(current) = self.current_version() {
-            if current == version {
-                let _ = fs::remove_file(&self.current_link);
-            }
+        if let Some(current) = self.current_version()
+            && current == version
+        {
+            let _ = fs::remove_file(&self.current_link);
         }
 
         fs::remove_dir_all(&version_dir)?;

@@ -2,16 +2,20 @@
 
 use std::collections::HashSet;
 use std::fs::File;
-use std::io::Read;
+use std::io::{BufReader, Cursor, Read};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::str::FromStr;
 use std::time::Duration;
 
+use alpm_pkginfo::{PackageInfoV1, PackageInfoV2};
+use alpm_srcinfo::SourceInfoV1;
+use alpm_types::{Architecture, SystemArchitecture};
 use anyhow::{Context, Result};
 use dialoguer::Confirm;
 use flate2::read::GzDecoder;
 use futures::StreamExt;
-use git2::Repository;
+// git2 removed - using command-line git (always available on Arch)
 use indicatif::{ProgressBar, ProgressStyle};
 use owo_colors::OwoColorize;
 use reqwest::header::{ETAG, IF_MODIFIED_SINCE, IF_NONE_MATCH, LAST_MODIFIED};
@@ -90,6 +94,11 @@ impl AurClient {
         }
     }
 
+    #[must_use]
+    pub fn build_concurrency(&self) -> usize {
+        self.settings.aur.build_concurrency.max(1)
+    }
+
     /// Search AUR packages
     pub async fn search(&self, query: &str) -> Result<Vec<Package>> {
         let url = format!("{AUR_RPC_URL}?v=5&type=search&arg={query}");
@@ -154,12 +163,11 @@ impl AurClient {
                     continue;
                 }
                 seen_names.insert(p.name.clone());
-                if let Some(local_pkg) = pacman_db::get_local_package(&p.name)? {
-                    if pacman_db::compare_versions(&p.version, &local_pkg.version)
+                if let Some(local_pkg) = pacman_db::get_local_package(&p.name)?
+                    && pacman_db::compare_versions(&p.version, &local_pkg.version)
                         == std::cmp::Ordering::Greater
-                    {
-                        updates.push((p.name, local_pkg.version, p.version));
-                    }
+                {
+                    updates.push((p.name, local_pkg.version, p.version));
                 }
             }
 
@@ -208,12 +216,11 @@ impl AurClient {
         while let Some(res) = stream.next().await {
             let response = res?;
             for p in response.results {
-                if let Some(local_pkg) = pacman_db::get_local_package(&p.name)? {
-                    if pacman_db::compare_versions(&p.version, &local_pkg.version)
+                if let Some(local_pkg) = pacman_db::get_local_package(&p.name)?
+                    && pacman_db::compare_versions(&p.version, &local_pkg.version)
                         == std::cmp::Ordering::Greater
-                    {
-                        updates.push((p.name, local_pkg.version, p.version));
-                    }
+                {
+                    updates.push((p.name, local_pkg.version, p.version));
                 }
             }
         }
@@ -230,14 +237,12 @@ impl AurClient {
         let meta_path = self.metadata_meta_path();
         let ttl = self.settings.aur.metadata_cache_ttl_secs;
 
-        if cache_path.exists() {
-            if let Ok(meta) = std::fs::metadata(&cache_path) {
-                if let Ok(modified) = meta.modified() {
-                    if modified.elapsed().unwrap_or_default() < Duration::from_secs(ttl) {
-                        return Self::read_metadata_archive(&cache_path).map(Some);
-                    }
-                }
-            }
+        if cache_path.exists()
+            && let Ok(meta) = std::fs::metadata(&cache_path)
+            && let Ok(modified) = meta.modified()
+            && modified.elapsed().unwrap_or_default() < Duration::from_secs(ttl)
+        {
+            return Self::read_metadata_archive(&cache_path).map(Some);
         }
 
         let mut meta_cache: AurMetaCache = AurMetaCache {
@@ -245,12 +250,11 @@ impl AurClient {
             last_modified: None,
         };
 
-        if meta_path.exists() {
-            if let Ok(bytes) = tokio_fs::read(&meta_path).await {
-                if let Ok(parsed) = serde_json::from_slice::<AurMetaCache>(&bytes) {
-                    meta_cache = parsed;
-                }
-            }
+        if meta_path.exists()
+            && let Ok(bytes) = tokio_fs::read(&meta_path).await
+            && let Ok(parsed) = serde_json::from_slice::<AurMetaCache>(&bytes)
+        {
+            meta_cache = parsed;
         }
 
         if let Some(parent) = cache_path.parent() {
@@ -477,21 +481,128 @@ impl AurClient {
     }
 
     fn find_built_package(pkg_dir: &Path, pkgdest: &Path) -> Result<PathBuf> {
-        let pkg_path =
-            Self::find_package_in_dir(pkgdest).or_else(|| Self::find_package_in_dir(pkg_dir));
-
-        pkg_path.ok_or_else(|| anyhow::anyhow!("No package archive found after makepkg"))
-    }
-
-    fn find_package_in_dir(path: &Path) -> Option<PathBuf> {
-        let entries = std::fs::read_dir(path).ok()?;
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().to_string();
-            if name.ends_with(".pkg.tar.zst") || name.ends_with(".pkg.tar.xz") {
-                return Some(entry.path());
+        let mut expected_names = Self::expected_pkg_names(pkg_dir);
+        if expected_names.is_empty() {
+            let fallback = pkg_dir.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if !fallback.is_empty() {
+                expected_names.push(fallback.to_string());
             }
         }
-        None
+
+        // First try pkgdest (shared cache), filtering by expected package names
+        let pkg_path = Self::find_package_in_dir(pkgdest, &expected_names)
+            .or_else(|| Self::find_package_in_dir(pkg_dir, &expected_names));
+
+        pkg_path.ok_or_else(|| {
+            anyhow::anyhow!(
+                "No package archive found for '{expected_names:?}' after makepkg. Check ~/.cache/omg/aur/_logs/{}/.log",
+                pkg_dir.file_name().and_then(|n| n.to_str()).unwrap_or("unknown")
+            )
+        })
+    }
+
+    fn expected_pkg_names(pkg_dir: &Path) -> Vec<String> {
+        let srcinfo_path = pkg_dir.join(".SRCINFO");
+        let Ok(content) = std::fs::read_to_string(&srcinfo_path) else {
+            return Vec::new();
+        };
+        let Ok(source_info) = SourceInfoV1::from_string(&content) else {
+            return Vec::new();
+        };
+
+        let mut packages: Vec<_> = source_info
+            .packages_for_architecture(SystemArchitecture::X86_64)
+            .collect();
+        if packages.is_empty() {
+            packages = source_info
+                .packages_for_architecture(Architecture::Any)
+                .collect();
+        }
+
+        packages
+            .into_iter()
+            .map(|pkg| pkg.name.to_string())
+            .collect()
+    }
+
+    fn find_package_in_dir(path: &Path, expected_names: &[String]) -> Option<PathBuf> {
+        let entries = std::fs::read_dir(path).ok()?;
+        let mut best_match: Option<PathBuf> = None;
+        let mut best_mtime = std::time::SystemTime::UNIX_EPOCH;
+
+        for entry in entries.flatten() {
+            let filename = entry.file_name().to_string_lossy().to_string();
+            if (filename.ends_with(".pkg.tar.zst") || filename.ends_with(".pkg.tar.xz"))
+                && expected_names.iter().any(|name| {
+                    filename.starts_with(name) && filename.chars().nth(name.len()) == Some('-')
+                })
+            {
+                // Skip debug subpackages early
+                if filename.contains("-debug-") || filename.contains("-debug.pkg.tar") {
+                    continue;
+                }
+
+                // Confirm exact pkgname via .PKGINFO when available
+                if let Ok(Some(parsed_name)) = Self::pkg_name_from_archive(&entry.path())
+                    && !expected_names.iter().any(|name| name == &parsed_name)
+                {
+                    continue;
+                }
+
+                // If multiple matches (shouldn't happen), take newest by mtime
+                if let Ok(meta) = entry.metadata() {
+                    if let Ok(mtime) = meta.modified()
+                        && mtime > best_mtime
+                    {
+                        best_mtime = mtime;
+                        best_match = Some(entry.path());
+                    }
+                } else if best_match.is_none() {
+                    best_match = Some(entry.path());
+                }
+            }
+        }
+        best_match
+    }
+
+    fn pkg_name_from_archive(path: &Path) -> Result<Option<String>> {
+        let file = File::open(path)?;
+        let reader: Box<dyn Read> = if path.extension().is_some_and(|ext| ext == "zst") {
+            let decoder = ruzstd::decoding::StreamingDecoder::new(file)
+                .map_err(|e| anyhow::anyhow!("zstd: {e}"))?;
+            Box::new(decoder)
+        } else if path.extension().is_some_and(|ext| ext == "xz") {
+            let mut decompressed = Vec::new();
+            lzma_rs::xz_decompress(&mut BufReader::new(file), &mut decompressed)
+                .map_err(|e| anyhow::anyhow!("xz: {e}"))?;
+            Box::new(Cursor::new(decompressed))
+        } else {
+            let decoder = flate2::read::GzDecoder::new(file);
+            Box::new(decoder)
+        };
+
+        let mut archive: tar::Archive<Box<dyn Read>> = tar::Archive::new(reader);
+
+        for entry in archive.entries()? {
+            let mut entry = entry?;
+            let entry_path = entry.path()?;
+            if let Some(file_name) = entry_path.file_name().and_then(|n| n.to_str())
+                && (file_name == ".PKGINFO" || file_name == "PKGINFO")
+            {
+                let mut content = String::new();
+                entry.read_to_string(&mut content)?;
+                return Ok(Self::parse_pkginfo_name(&content));
+            }
+        }
+
+        Ok(None)
+    }
+
+    fn parse_pkginfo_name(content: &str) -> Option<String> {
+        PackageInfoV2::from_str(content)
+            .map(|info| info.pkgname.to_string())
+            .or_else(|_| PackageInfoV1::from_str(content).map(|info| info.pkgname.to_string()))
+            .ok()
     }
 
     /// Clone package from AUR (public for batch operations)
@@ -691,71 +802,29 @@ impl AurClient {
             tracing::warn!("git clone failed, falling back to libgit2");
         }
 
-        let spinner = create_spinner("Cloning repository (native)...");
-        tokio::task::spawn_blocking(move || {
-            git2::build::RepoBuilder::new()
-                .clone(&url, &dest)
-                .context("Failed to clone AUR package via git2")
-        })
-        .await??;
-
-        spinner.finish_and_clear();
-        Ok(())
+        // Command-line git is required on Arch Linux
+        anyhow::bail!("git is required but not found in PATH. Install with: sudo pacman -S git")
     }
 
     /// Update existing clone
     async fn git_pull(&self, pkg_dir: &Path) -> Result<()> {
-        if let Ok(git_path) = which("git") {
-            let spinner = create_spinner("Pulling latest changes (git)...");
-            let status = Command::new(git_path)
-                .args(["-C", &pkg_dir.to_string_lossy(), "pull", "--ff-only"])
-                .status()
-                .await
-                .context("Failed to run git pull")?;
-            spinner.finish_and_clear();
-            if status.success() {
-                return Ok(());
-            }
-            tracing::warn!("git pull failed, falling back to libgit2");
-        }
+        let git_path = which("git")
+            .context("git is required but not found in PATH. Install with: sudo pacman -S git")?;
 
-        let spinner = create_spinner("Pulling latest changes (native)...");
-
-        let pkg_dir = pkg_dir.to_path_buf();
-        tokio::task::spawn_blocking(move || {
-            let repo = Repository::open(&pkg_dir).context("Failed to open local repository")?;
-
-            let mut remote = repo
-                .find_remote("origin")
-                .context("Failed to find remote 'origin'")?;
-
-            // Fetch the latest changes
-            remote
-                .fetch(&["master"], None, None)
-                .context("Failed to fetch from remote")?;
-
-            // Merge changes (simplified: assume fast-forward)
-            let fetch_head = repo.find_reference("FETCH_HEAD")?;
-            let fetch_commit = repo.reference_to_annotated_commit(&fetch_head)?;
-
-            let (analysis, _) = repo.merge_analysis(&[&fetch_commit])?;
-
-            if analysis.is_up_to_date() {
-                return Ok(());
-            } else if analysis.is_fast_forward() {
-                let mut reference = repo.find_reference("refs/heads/master")?;
-                reference.set_target(fetch_commit.id(), "Fast-forward")?;
-                repo.set_head("refs/heads/master")?;
-                repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force()))?;
-            } else {
-                anyhow::bail!("Non-fast-forward merge required (manual intervention needed)");
-            }
-
-            Ok::<(), anyhow::Error>(())
-        })
-        .await??;
-
+        let spinner = create_spinner("Pulling latest changes...");
+        let status = Command::new(git_path)
+            .args(["-C", &pkg_dir.to_string_lossy(), "pull", "--ff-only"])
+            .status()
+            .await
+            .context("Failed to run git pull")?;
         spinner.finish_and_clear();
+
+        if !status.success() {
+            anyhow::bail!(
+                "git pull failed. You may need to manually resolve conflicts in {}",
+                pkg_dir.display()
+            );
+        }
         Ok(())
     }
 
@@ -828,7 +897,7 @@ impl AurClient {
             // - Read-only bind: /usr, /etc, /lib, /lib64
             // - Writable: Build directory, /tmp
             // - Minimal device access
-            let pkg_dir_str = pkg_dir.to_str().unwrap();
+            let pkg_dir_str = pkg_dir.to_string_lossy();
             let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
 
             let pkgdest_str = env.pkgdest.to_string_lossy().to_string();
@@ -1291,7 +1360,7 @@ impl AurClient {
             return None;
         }
 
-        Self::find_package_in_dir(pkgdest)
+        Self::find_package_in_dir(pkgdest, &[package.to_string()])
     }
 
     fn write_cache_key(&self, package: &str, cache_key: &str) -> Result<()> {

@@ -17,7 +17,7 @@ pub enum OmgError {
     UnsupportedRuntime(String),
 
     #[error("Database error: {0}")]
-    DatabaseError(#[from] heed::Error),
+    DatabaseError(#[from] redb::Error),
 
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),

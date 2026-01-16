@@ -121,7 +121,10 @@ async fn download_db(
     dest: &PathBuf,
     pb: &ProgressBar,
 ) -> Result<()> {
-    let repo_name = dest.file_stem().unwrap().to_string_lossy().to_string();
+    let repo_name = dest.file_stem().map_or_else(
+        || "unknown".to_string(),
+        |s| s.to_string_lossy().to_string(),
+    );
     pb.set_message(repo_name.clone());
 
     // Get existing file's modification time for conditional request
@@ -457,13 +460,12 @@ async fn download_package(
     let dest = cache_dir.join(&job.filename);
 
     // Skip if already cached
-    if dest.exists() {
-        if let Ok(meta) = std::fs::metadata(&dest) {
-            if meta.len() == job.size || job.size == 0 {
-                pb.set_message(format!("{} (cached)", job.name));
-                return Ok(dest);
-            }
-        }
+    if dest.exists()
+        && let Ok(meta) = std::fs::metadata(&dest)
+        && (meta.len() == job.size || job.size == 0)
+    {
+        pb.set_message(format!("{} (cached)", job.name));
+        return Ok(dest);
     }
 
     let mut last_error = None;

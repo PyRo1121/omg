@@ -107,16 +107,16 @@ async fn handle_search(
     // 2. Conditional AUR Search (Network Bound)
     // Only search AUR if official results are low, to keep speed for common packages
     let mut aur = Vec::new();
-    if official.len() < 5 {
-        if let Ok(aur_pkgs) = state.aur.search(&query).await {
-            for pkg in aur_pkgs {
-                aur.push(PackageInfo {
-                    name: pkg.name,
-                    version: pkg.version,
-                    description: pkg.description,
-                    source: "aur".to_string(),
-                });
-            }
+    if official.len() < 5
+        && let Ok(aur_pkgs) = state.aur.search(&query).await
+    {
+        for pkg in aur_pkgs {
+            aur.push(PackageInfo {
+                name: pkg.name,
+                version: pkg.version,
+                description: pkg.description,
+                source: "aur".to_string(),
+            });
         }
     }
 
@@ -165,27 +165,27 @@ async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) ->
     }
 
     // 3. Try AUR
-    if let Ok(details) = search_detailed(&package).await {
-        if let Some(pkg) = details.into_iter().find(|p| p.name == package) {
-            let detailed = DetailedPackageInfo {
-                name: pkg.name,
-                version: pkg.version,
-                description: pkg.description.unwrap_or_default(),
-                url: pkg.url.unwrap_or_default(),
-                size: 0,
-                download_size: 0,
-                repo: "aur".to_string(),
-                depends: pkg.depends.unwrap_or_default(),
-                licenses: pkg.license.unwrap_or_default(),
-                source: "aur".to_string(),
-            };
+    if let Ok(details) = search_detailed(&package).await
+        && let Some(pkg) = details.into_iter().find(|p| p.name == package)
+    {
+        let detailed = DetailedPackageInfo {
+            name: pkg.name,
+            version: pkg.version,
+            description: pkg.description.unwrap_or_default(),
+            url: pkg.url.unwrap_or_default(),
+            size: 0,
+            download_size: 0,
+            repo: "aur".to_string(),
+            depends: pkg.depends.unwrap_or_default(),
+            licenses: pkg.license.unwrap_or_default(),
+            source: "aur".to_string(),
+        };
 
-            state.cache.insert_info(detailed.clone());
-            return Response::Success {
-                id,
-                result: ResponseResult::Info(detailed),
-            };
-        }
+        state.cache.insert_info(detailed.clone());
+        return Response::Success {
+            id,
+            result: ResponseResult::Info(detailed),
+        };
     }
 
     state.cache.insert_info_miss(&package);
@@ -276,28 +276,27 @@ async fn handle_security_audit(_state: Arc<DaemonState>, id: RequestId) -> Respo
     }
 
     while let Some(res) = set.join_next().await {
-        if let Ok((name, Ok(vulns))) = res {
-            if !vulns.is_empty() {
-                let mapped: Vec<Vulnerability> = vulns
-                    .into_iter()
-                    .map(|v| {
-                        if let Some(score_str) = &v.score {
-                            if let Ok(score) = score_str.parse::<f32>() {
-                                if score >= 7.0 {
-                                    high_severity += 1;
-                                }
-                            }
-                        }
-                        Vulnerability {
-                            id: v.id,
-                            summary: v.summary,
-                            score: v.score,
-                        }
-                    })
-                    .collect();
-                total_vulns += mapped.len();
-                vulnerabilities.push((name, mapped));
-            }
+        if let Ok((name, Ok(vulns))) = res
+            && !vulns.is_empty()
+        {
+            let mapped: Vec<Vulnerability> = vulns
+                .into_iter()
+                .map(|v| {
+                    if let Some(score_str) = &v.score
+                        && let Ok(score) = score_str.parse::<f32>()
+                        && score >= 7.0
+                    {
+                        high_severity += 1;
+                    }
+                    Vulnerability {
+                        id: v.id,
+                        summary: v.summary,
+                        score: v.score,
+                    }
+                })
+                .collect();
+            total_vulns += mapped.len();
+            vulnerabilities.push((name, mapped));
         }
     }
 

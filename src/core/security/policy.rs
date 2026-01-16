@@ -87,10 +87,10 @@ impl SecurityPolicy {
     ) -> SecurityGrade {
         // 1. Check for vulnerabilities (Risk)
         let scanner = super::vulnerability::VulnerabilityScanner::new();
-        if let Ok(vulns) = scanner.scan_package(name, version).await {
-            if !vulns.is_empty() {
-                return SecurityGrade::Risk;
-            }
+        if let Ok(vulns) = scanner.scan_package(name, version).await
+            && !vulns.is_empty()
+        {
+            return SecurityGrade::Risk;
         }
 
         // 2. Check for SLSA (Locked) - In 2026, we assume official core packages have SLSA

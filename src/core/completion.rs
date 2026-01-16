@@ -63,33 +63,29 @@ impl CompletionEngine {
                 "node" => {
                     // Check package.json
                     let pkg_json = path.join("package.json");
-                    if pkg_json.exists() {
-                        if let Ok(content) = std::fs::read_to_string(pkg_json) {
-                            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&content) {
-                                if let Some(engines) = v.get("engines") {
-                                    if let Some(node_v) = engines.get("node") {
-                                        if let Some(s) = node_v.as_str() {
-                                            suggestions.push(s.to_string());
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                    if pkg_json.exists()
+                        && let Ok(content) = std::fs::read_to_string(pkg_json)
+                        && let Ok(v) = serde_json::from_str::<serde_json::Value>(&content)
+                        && let Some(engines) = v.get("engines")
+                        && let Some(node_v) = engines.get("node")
+                        && let Some(s) = node_v.as_str()
+                    {
+                        suggestions.push(s.to_string());
                     }
                     // Check .nvmrc
                     let nvmrc = path.join(".nvmrc");
-                    if nvmrc.exists() {
-                        if let Ok(content) = std::fs::read_to_string(nvmrc) {
-                            suggestions.push(content.trim().to_string());
-                        }
+                    if nvmrc.exists()
+                        && let Ok(content) = std::fs::read_to_string(nvmrc)
+                    {
+                        suggestions.push(content.trim().to_string());
                     }
                 }
                 "python" => {
                     let py_version = path.join(".python-version");
-                    if py_version.exists() {
-                        if let Ok(content) = std::fs::read_to_string(py_version) {
-                            suggestions.push(content.trim().to_string());
-                        }
+                    if py_version.exists()
+                        && let Ok(content) = std::fs::read_to_string(py_version)
+                    {
+                        suggestions.push(content.trim().to_string());
                     }
                 }
                 "rust" => {
@@ -99,18 +95,17 @@ impl CompletionEngine {
                         if let Ok(content) = std::fs::read_to_string(toolchain) {
                             suggestions.push(content.trim().to_string());
                         }
-                    } else if toolchain_toml.exists() {
-                        if let Ok(content) = std::fs::read_to_string(toolchain_toml) {
-                            // Basic parsing, could be improved
-                            if content.contains("channel = \"") {
-                                if let Some(v) = content
-                                    .split("channel = \"")
-                                    .nth(1)
-                                    .and_then(|s| s.split('"').next())
-                                {
-                                    suggestions.push(v.to_string());
-                                }
-                            }
+                    } else if toolchain_toml.exists()
+                        && let Ok(content) = std::fs::read_to_string(toolchain_toml)
+                    {
+                        // Basic parsing, could be improved
+                        if content.contains("channel = \"")
+                            && let Some(v) = content
+                                .split("channel = \"")
+                                .nth(1)
+                                .and_then(|s| s.split('"').next())
+                        {
+                            suggestions.push(v.to_string());
                         }
                     }
                 }
@@ -127,25 +122,19 @@ impl CompletionEngine {
 
     /// Get AUR package names from cache or refresh if needed
     pub async fn get_aur_package_names(&self) -> Result<Vec<String>> {
-        let db = self.db.get_completion_db()?;
-        let env = self.db.env();
-
-        // Check last refresh
+        // Check last refresh using redb-based Database
+        if let Some(last_refresh) = self.db.get_completion("aur_last_refresh")?
+            && let Ok(last) = last_refresh.parse::<Timestamp>()
         {
-            let rtxn = env.read_txn()?;
-            if let Some(last_refresh) = db.get(&rtxn, "aur_last_refresh")? {
-                if let Ok(last) = last_refresh.parse::<Timestamp>() {
-                    let now = Timestamp::now();
-                    let hours_since = now.as_second() - last.as_second();
-                    if hours_since < 24 * 3600 {
-                        if let Some(data) = db.get(&rtxn, "aur_packages")? {
-                            return Ok(data
-                                .split(',')
-                                .map(std::string::ToString::to_string)
-                                .collect());
-                        }
-                    }
-                }
+            let now = Timestamp::now();
+            let hours_since = now.as_second() - last.as_second();
+            if hours_since < 24 * 3600
+                && let Some(data) = self.db.get_completion("aur_packages")?
+            {
+                return Ok(data
+                    .split(',')
+                    .map(std::string::ToString::to_string)
+                    .collect());
             }
         }
 
@@ -153,10 +142,9 @@ impl CompletionEngine {
         let names = self.fetch_aur_names().await?;
         let data = names.join(",");
 
-        let mut wtxn = env.write_txn()?;
-        db.put(&mut wtxn, "aur_packages", &data)?;
-        db.put(&mut wtxn, "aur_last_refresh", &Timestamp::now().to_string())?;
-        wtxn.commit()?;
+        self.db.set_completion("aur_packages", &data)?;
+        self.db
+            .set_completion("aur_last_refresh", &Timestamp::now().to_string())?;
 
         Ok(names)
     }
@@ -184,7 +172,7 @@ mod tests {
     #[test]
     fn fuzzy_match_returns_matches() {
         let temp_dir = TempDir::new().unwrap();
-        let db = Database::open(temp_dir.path()).unwrap();
+        let db = Database::open(temp_dir.path().join("test.redb")).unwrap();
         let engine = CompletionEngine::new(db);
 
         let candidates = vec![
@@ -200,7 +188,7 @@ mod tests {
     #[test]
     fn fuzzy_match_empty_pattern_returns_all() {
         let temp_dir = TempDir::new().unwrap();
-        let db = Database::open(temp_dir.path()).unwrap();
+        let db = Database::open(temp_dir.path().join("test.redb")).unwrap();
         let engine = CompletionEngine::new(db);
 
         let candidates = vec!["a".to_string(), "b".to_string()];

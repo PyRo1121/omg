@@ -45,13 +45,13 @@ async fn run_app<B: ratatui::backend::Backend>(
     loop {
         terminal.draw(|f| ui::draw(f, app))?;
 
-        if event::poll(std::time::Duration::from_millis(100))? {
-            if let Event::Key(key) = event::read()? {
-                match key.code {
-                    KeyCode::Char('q') => return Ok(()),
-                    KeyCode::Char('r') => app.refresh().await?,
-                    _ => app::App::handle_key(key.code),
-                }
+        if event::poll(std::time::Duration::from_millis(100))?
+            && let Event::Key(key) = event::read()?
+        {
+            match key.code {
+                KeyCode::Char('q') => return Ok(()),
+                KeyCode::Char('r') => app.refresh().await?,
+                _ => app::App::handle_key(key.code),
             }
         }
 

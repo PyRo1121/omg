@@ -92,8 +92,8 @@ pub fn get_update_download_list() -> Result<Vec<DownloadInfo>> {
 /// Get package info from sync DBs - INSTANT (<1ms)
 pub fn get_sync_pkg_info(name: &str) -> Result<Option<PackageInfo>> {
     if paths::test_mode() {
-        let packages = pacman_db::search_sync_fast(name)?;
-        if let Some(pkg) = packages.into_iter().find(|pkg| pkg.name == name) {
+        // Use direct cache lookup instead of searching
+        if let Some(pkg) = pacman_db::get_sync_package(name)? {
             return Ok(Some(PackageInfo {
                 name: pkg.name,
                 version: pkg.version,
@@ -171,12 +171,12 @@ pub fn clean_cache(keep_versions: usize) -> Result<(usize, u64)> {
         let entry = entry?;
         let path = entry.path();
 
-        if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
-            if filename.ends_with(".pkg.tar.zst") || filename.ends_with(".pkg.tar.xz") {
-                // Extract package name (remove version-release.arch.pkg.tar.zst)
-                if let Some(base) = filename.rsplitn(5, '-').last() {
-                    packages.entry(base.to_string()).or_default().push(path);
-                }
+        if let Some(filename) = path.file_name().and_then(|n| n.to_str())
+            && (filename.ends_with(".pkg.tar.zst") || filename.ends_with(".pkg.tar.xz"))
+        {
+            // Extract package name (remove version-release.arch.pkg.tar.zst)
+            if let Some(base) = filename.rsplitn(5, '-').last() {
+                packages.entry(base.to_string()).or_default().push(path);
             }
         }
     }
@@ -445,12 +445,13 @@ pub fn execute_transaction(packages: Vec<String>, remove: bool, sysupgrade: bool
                 let cache_path = paths::pacman_cache_dir().join(pkg_filename);
                 let sig_path = std::path::PathBuf::from(format!("{}.sig", cache_path.display()));
 
-                if cache_path.exists() && sig_path.exists() {
-                    if let Err(e) = verifier.verify_package(&cache_path, &sig_path) {
-                        anyhow::bail!(
-                            "✗ SECURITY ALERT: PGP verification failed for {pkg_name}.\n  Error: {e}\n  The package may be corrupted or tampered with."
-                        );
-                    }
+                if cache_path.exists()
+                    && sig_path.exists()
+                    && let Err(e) = verifier.verify_package(&cache_path, &sig_path)
+                {
+                    anyhow::bail!(
+                        "✗ SECURITY ALERT: PGP verification failed for {pkg_name}.\n  Error: {e}\n  The package may be corrupted or tampered with."
+                    );
                 }
             }
         }
@@ -491,10 +492,11 @@ fn configure_mirrors(alpm: &mut alpm::Alpm) -> Result<()> {
     for line in content.lines() {
         let line = line.trim();
         // Match active lines: Server = ...
-        if !line.starts_with('#') && line.starts_with("Server") {
-            if let Some(url) = line.split('=').nth(1) {
-                servers.push(url.trim().to_string());
-            }
+        if !line.starts_with('#')
+            && line.starts_with("Server")
+            && let Some(url) = line.split('=').nth(1)
+        {
+            servers.push(url.trim().to_string());
         }
     }
 

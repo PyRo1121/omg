@@ -258,10 +258,10 @@ fn link_binaries(install_dir: &Path, bin_dir: &Path, _tool_name: &str) -> Result
                 #[cfg(unix)]
                 {
                     use std::os::unix::fs::PermissionsExt;
-                    if let Ok(meta) = path.metadata() {
-                        if meta.permissions().mode() & 0o111 == 0 {
-                            continue; // Not executable
-                        }
+                    if let Ok(meta) = path.metadata()
+                        && meta.permissions().mode() & 0o111 == 0
+                    {
+                        continue; // Not executable
                     }
                 }
 
@@ -362,15 +362,15 @@ pub fn remove(name: &str) -> Result<()> {
     for entry in fs::read_dir(bin_dir)? {
         let entry = entry?;
         let path = entry.path();
-        if let Ok(target) = fs::read_link(&path) {
-            if !target.exists() {
-                fs::remove_file(&path)?;
-                println!(
-                    "    {} Removed link {}",
-                    style::error("-"),
-                    path.file_name().unwrap().to_string_lossy()
-                );
-            }
+        if let Ok(target) = fs::read_link(&path)
+            && !target.exists()
+        {
+            fs::remove_file(&path)?;
+            println!(
+                "    {} Removed link {}",
+                style::error("-"),
+                path.file_name().unwrap().to_string_lossy()
+            );
         }
     }
 
