@@ -1,7 +1,7 @@
 //! OMG CLI Binary
 //!
 //! The main command-line interface for OMG package manager.
-//! 
+//!
 //! Uses a single tokio runtime for all async operations (Rust 2024 best practice).
 
 use anyhow::Result;
