@@ -1,6 +1,6 @@
 [package]
 name = "omg"
-version = "0.1.40"
+version = "0.1.41"
 edition = "2024"
 rust-version = "1.92"
 description = "The Fastest Unified Package Manager for Arch Linux + All Language Runtimes"
@@ -95,7 +95,6 @@ home = "0.5.12"
 
 # Cryptography
 sha2 = "0.10.9"
-blake3 = "1.8.3"
 hex = "0.4.3"
 
 # Date & Time
@@ -139,7 +138,6 @@ uuid = { version = "1.19", features = ["v4"] }
 ratatui = "0.29"
 crossterm = "0.28"
 rust-apt = { version = "0.9.0", optional = true }
-rand = "0.8"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

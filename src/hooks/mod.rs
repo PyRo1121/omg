@@ -85,6 +85,7 @@ fn read_package_json_versions(dir: &Path) -> Option<HashMap<String, String>> {
     let pkg: PackageJsonVersions = serde_json::from_reader(file).ok()?;
     let mut versions = HashMap::new();
 
+    // Process volta first (lower priority)
     if let Some(volta) = pkg.volta {
         if let Some(node) = volta.node {
             versions.insert("node".to_string(), node);
@@ -94,12 +95,13 @@ fn read_package_json_versions(dir: &Path) -> Option<HashMap<String, String>> {
         }
     }
 
+    // Process engines second (higher priority - overwrites volta)
     if let Some(engines) = pkg.engines {
         if let Some(node) = engines.node {
-            versions.entry("node".to_string()).or_insert(node);
+            versions.insert("node".to_string(), node);
         }
         if let Some(bun) = engines.bun {
-            versions.entry("bun".to_string()).or_insert(bun);
+            versions.insert("bun".to_string(), bun);
         }
     }
 
