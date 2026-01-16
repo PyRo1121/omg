@@ -19,3 +19,17 @@
 ## Slow Searches
 - Confirm the daemon is running.
 - Consider clearing caches with `omg clean`.
+
+## TUI Dashboard Issues
+- **Dashboard won't start**: Check terminal supports raw mode and alternate screen.
+- **Display garbled**: Try resizing terminal or check `$TERM` environment variable.
+- **Data not updating**: Press `r` to refresh or restart the daemon.
+
+## History & Rollback Issues
+- **Rollback fails**: Ensure old package versions exist in `/var/cache/pacman/pkg/`.
+- **History not saved**: Check write permissions on `~/.local/share/omg/`.
+- **AUR rollback unsupported**: Currently only official packages can be rolled back.
+
+## Database Issues
+- **Cache corruption**: Delete `~/.local/share/omg/cache.redb` and restart daemon.
+- **Permission denied**: Ensure data directory is owned by your user.

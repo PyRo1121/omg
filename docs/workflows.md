@@ -44,3 +44,22 @@ omg daemon
 omgd --foreground
 ```
 Keep the daemon running for maximum search and info performance.
+
+## TUI Dashboard
+```bash
+omg dash
+```
+Launch the interactive dashboard for real-time system monitoring.
+- Press `q` to quit, `r` to refresh
+- View package counts, updates, vulnerabilities at a glance
+- Monitor active runtime versions
+
+## History Review
+```bash
+# View recent changes
+omg history --limit 10
+
+# Rollback if needed
+omg rollback
+```
+Review past package operations and rollback if something went wrong.

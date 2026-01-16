@@ -29,7 +29,7 @@ pub use alpm_direct::{
 #[cfg(feature = "arch")]
 pub use alpm_ops::DownloadInfo;
 #[cfg(feature = "arch")]
-pub use alpm_ops::PackageInfo as SyncPkgInfo;
+pub use types::PackageInfo as SyncPkgInfo;
 #[cfg(feature = "arch")]
 pub use alpm_ops::{
     clean_cache, display_pkg_info, execute_transaction, get_sync_pkg_info, get_system_status,

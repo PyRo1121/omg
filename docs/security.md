@@ -183,10 +183,12 @@ pub struct PgpVerifier {
 }
 ```
 
-The verifier uses Sequoia PGP for cryptographic operations:
-- **Keyring**: System Arch Linux keyring
+The verifier uses Sequoia PGP v2.2.0-pqc.1 for cryptographic operations:
+- **Backend**: crypto-rust (pure Rust, no OpenSSL)
+- **Keyring**: System Arch Linux keyring (`/usr/share/pacman/keyrings/archlinux.gpg`)
 - **Policy**: Standard validation policies
 - **Algorithms**: SHA256, RSA4096, Ed25519
+- **Post-Quantum**: Ready for future PQC algorithms
 
 ### Keyring Management
 
