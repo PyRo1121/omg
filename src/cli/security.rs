@@ -106,15 +106,12 @@ pub async fn generate_sbom(output: Option<String>, include_vulns: bool) -> Resul
 pub fn view_audit_log(limit: usize, severity_filter: Option<String>) -> Result<()> {
     println!("{} Security Audit Log\n", "OMG".cyan().bold());
 
-    let logger = match AuditLogger::new() {
-        Ok(l) => l,
-        Err(_) => {
-            println!(
-                "  {} No audit log exists yet. Events will be logged during package operations.",
-                "ℹ".blue()
-            );
-            return Ok(());
-        }
+    let Ok(logger) = AuditLogger::new() else {
+        println!(
+            "  {} No audit log exists yet. Events will be logged during package operations.",
+            "ℹ".blue()
+        );
+        return Ok(());
     };
 
     let entries = if let Some(sev) = severity_filter {
@@ -174,19 +171,13 @@ pub fn view_audit_log(limit: usize, severity_filter: Option<String>) -> Result<(
 pub fn verify_audit_log() -> Result<()> {
     println!("{} Verifying Audit Log Integrity...\n", "OMG".cyan().bold());
 
-    let logger = match AuditLogger::new() {
-        Ok(l) => l,
-        Err(_) => {
-            println!("  {} No audit log exists yet.", "ℹ".blue());
-            return Ok(());
-        }
+    let Ok(logger) = AuditLogger::new() else {
+        println!("  {} No audit log exists yet.", "ℹ".blue());
+        return Ok(());
     };
-    let report = match logger.verify_integrity() {
-        Ok(r) => r,
-        Err(_) => {
-            println!("  {} No audit log exists yet.", "ℹ".blue());
-            return Ok(());
-        }
+    let Ok(report) = logger.verify_integrity() else {
+        println!("  {} No audit log exists yet.", "ℹ".blue());
+        return Ok(());
     };
 
     if report.is_valid() {

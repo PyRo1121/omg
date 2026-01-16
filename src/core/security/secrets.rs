@@ -240,10 +240,10 @@ impl SecretScanner {
         for (line_num, line) in content.lines().enumerate() {
             for pattern in &self.patterns {
                 if let Some(captures) = pattern.pattern.captures(line) {
-                    let matched = captures.get(0).map(|m| m.as_str()).unwrap_or("");
+                    let matched = captures.get(0).map_or("", |m| m.as_str());
 
                     // Skip if it looks like a placeholder or example
-                    if self.is_placeholder(matched) {
+                    if Self::is_placeholder(matched) {
                         continue;
                     }
 
@@ -252,7 +252,7 @@ impl SecretScanner {
                         file_path: source.to_string(),
                         line_number: line_num + 1,
                         matched_text: matched.to_string(),
-                        redacted: self.redact(matched),
+                        redacted: Self::redact(matched),
                         severity: pattern.severity,
                     });
                 }
@@ -306,10 +306,10 @@ impl SecretScanner {
                 }
 
                 self.scan_directory_recursive(&entry_path, findings)?;
-            } else if self.is_scannable_file(&entry_path) {
-                if let Ok(file_findings) = self.scan_file(&entry_path) {
-                    findings.extend(file_findings);
-                }
+            } else if Self::is_scannable_file(&entry_path)
+                && let Ok(file_findings) = self.scan_file(&entry_path)
+            {
+                findings.extend(file_findings);
             }
         }
 
@@ -317,7 +317,7 @@ impl SecretScanner {
     }
 
     /// Check if a file should be scanned
-    fn is_scannable_file(&self, path: &Path) -> bool {
+    fn is_scannable_file(path: &Path) -> bool {
         let extension = path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
         let scannable_extensions = [
@@ -377,7 +377,7 @@ impl SecretScanner {
     }
 
     /// Check if a match looks like a placeholder
-    fn is_placeholder(&self, text: &str) -> bool {
+    fn is_placeholder(text: &str) -> bool {
         let placeholders = [
             "example",
             "sample",
@@ -404,7 +404,7 @@ impl SecretScanner {
     }
 
     /// Redact a secret for safe display
-    fn redact(&self, text: &str) -> String {
+    fn redact(text: &str) -> String {
         if text.len() <= 8 {
             return "*".repeat(text.len());
         }
@@ -492,11 +492,11 @@ mod tests {
 
     #[test]
     fn test_redaction() {
-        let scanner = SecretScanner::new();
-        let redacted = scanner.redact("secret_token_1234567890abcdef");
+        let _scanner = SecretScanner::new();
+        let redacted = SecretScanner::redact("secret_token_1234567890abcdef");
 
-        assert!(redacted.contains("*"), "Should contain asterisks");
-        assert!(redacted.len() > 0, "Should produce output");
+        assert!(redacted.contains('*'), "Should contain asterisks");
+        assert!(!redacted.is_empty(), "Should produce output");
     }
 
     #[test]

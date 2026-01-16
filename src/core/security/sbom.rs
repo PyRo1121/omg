@@ -4,8 +4,8 @@ use std::path::Path;
 
 use crate::core::paths;
 
-/// CycloneDX SBOM format (industry standard for enterprise)
-/// Compliant with CycloneDX 1.5 specification
+/// `CycloneDX` SBOM format (industry standard for enterprise)
+/// Compliant with `CycloneDX` 1.5 specification
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Sbom {
