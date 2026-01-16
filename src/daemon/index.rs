@@ -2,6 +2,8 @@
 //!
 //! Provides sub-millisecond fuzzy search and instant lookups
 //! by mirroring system package databases in memory.
+//!
+//! Supports index preloading from persistent cache for <10ms cold starts.
 
 use ahash::AHashMap;
 use anyhow::{Context, Result};
@@ -11,6 +13,7 @@ use rayon::prelude::*;
 
 use crate::core::env::distro::is_debian_like;
 use crate::core::paths;
+use crate::daemon::db::PersistentCache;
 use crate::daemon::protocol::{DetailedPackageInfo, PackageInfo};
 
 #[cfg(feature = "debian")]
@@ -41,6 +44,83 @@ impl PackageIndex {
         }
 
         Self::new_alpm()
+    }
+
+    /// Create index with preloading from persistent cache
+    pub fn new_with_cache(cache: &PersistentCache) -> Result<Self> {
+        let start = std::time::Instant::now();
+
+        // Get current DB mtime for cache validation
+        let db_mtime = Self::get_db_mtime();
+
+        // Try loading from cache first
+        if cache.is_index_valid(db_mtime)
+            && let Ok(Some(cached)) = cache.load_index()
+        {
+            let index = Self::from_packages(cached.packages);
+            tracing::info!(
+                "Index loaded from cache in {:?} ({} packages)",
+                start.elapsed(),
+                index.len()
+            );
+            return Ok(index);
+        }
+
+        // Cache miss or invalid - build fresh
+        tracing::info!("Building fresh index (cache miss or stale)");
+        let index = Self::new()?;
+
+        // Save to cache for next startup
+        let packages: Vec<_> = index.packages.values().cloned().collect();
+        if let Err(e) = cache.save_index(&packages, db_mtime) {
+            tracing::warn!("Failed to save index to cache: {e}");
+        }
+
+        tracing::info!("Index built in {:?} ({} packages)", start.elapsed(), index.len());
+        Ok(index)
+    }
+
+    /// Build index from pre-loaded packages (instant)
+    fn from_packages(packages_vec: Vec<DetailedPackageInfo>) -> Self {
+        let mut packages = AHashMap::with_capacity(packages_vec.len());
+        let mut search_items = Vec::with_capacity(packages_vec.len());
+        let mut search_items_lower = Vec::with_capacity(packages_vec.len());
+        let mut prefix_index: AHashMap<String, Vec<usize>> = AHashMap::new();
+
+        for info in packages_vec {
+            let search_str = format!("{} {}", info.name, info.description);
+            let search_lower = search_str.to_lowercase();
+            let idx = search_items.len();
+            search_items.push((info.name.clone(), Utf32String::from(search_str.as_str())));
+            search_items_lower.push(Utf32String::from(search_lower.as_str()));
+
+            let name_lower = info.name.to_lowercase();
+            for len in 1..=2 {
+                if name_lower.len() >= len {
+                    let prefix = name_lower[..len].to_string();
+                    prefix_index.entry(prefix).or_default().push(idx);
+                }
+            }
+            packages.insert(info.name.clone(), info);
+        }
+
+        Self {
+            packages,
+            search_items,
+            search_items_lower,
+            prefix_index,
+            lock: RwLock::new(()),
+        }
+    }
+
+    /// Get modification time of pacman sync databases
+    fn get_db_mtime() -> u64 {
+        let db_dir = paths::pacman_db_dir().join("sync");
+        std::fs::metadata(&db_dir)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(0, |d| d.as_secs())
     }
 
     fn new_alpm() -> Result<Self> {
@@ -277,6 +357,11 @@ impl PackageIndex {
     /// Check if the index is empty
     pub fn is_empty(&self) -> bool {
         self.packages.is_empty()
+    }
+
+    /// Get all packages (for cache serialization)
+    pub fn all_packages(&self) -> Vec<DetailedPackageInfo> {
+        self.packages.values().cloned().collect()
     }
 }
 

@@ -44,7 +44,6 @@ struct DbCache {
 
 fn load_sync_packages(sync_dir: &Path) -> Result<HashMap<String, SyncDbPackage>> {
     let db_paths = collect_sync_db_paths(sync_dir);
-
     let parsed: Vec<HashMap<String, SyncDbPackage>> = db_paths
         .par_iter()
         .map(|(path, name)| parse_sync_db(path, name))
@@ -54,7 +53,6 @@ fn load_sync_packages(sync_dir: &Path) -> Result<HashMap<String, SyncDbPackage>>
     for pkgs in parsed {
         packages.extend(pkgs);
     }
-
     Ok(packages)
 }
 
@@ -234,6 +232,57 @@ pub fn parse_sync_db(path: &Path, repo_name: &str) -> Result<HashMap<String, Syn
 }
 
 fn parse_desc_content(content: &str, repo: &str) -> SyncDbPackage {
+    // Try V2 first (newer format without MD5SUM - most packages use this now)
+    if let Ok(desc) = alpm_repo_db::desc::RepoDescFileV2::from_str(content) {
+        return SyncDbPackage {
+            name: desc.name.to_string(),
+            version: Version::from_str(&desc.version.to_string())
+                .unwrap_or_else(|_| super::types::zero_version()),
+            desc: desc.description.to_string(),
+            filename: desc.file_name.to_string(),
+            csize: desc.compressed_size,
+            isize: desc.installed_size,
+            url: desc
+                .url
+                .as_ref()
+                .map(std::string::ToString::to_string)
+                .unwrap_or_default(),
+            arch: desc.arch.to_string(),
+            repo: repo.to_string(),
+            depends: desc
+                .dependencies
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
+            makedepends: desc
+                .make_dependencies
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
+            optdepends: desc
+                .optional_dependencies
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
+            provides: desc
+                .provides
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
+            conflicts: desc
+                .conflicts
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
+            replaces: desc
+                .replaces
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
+        };
+    }
+
+    // Fallback to V1 (older format with MD5SUM)
     if let Ok(desc) = alpm_repo_db::desc::RepoDescFileV1::from_str(content) {
         return SyncDbPackage {
             name: desc.name.to_string(),
@@ -321,6 +370,8 @@ pub fn parse_local_db(path: &Path) -> Result<HashMap<String, LocalDbPackage>> {
 
 fn parse_local_desc(path: &Path) -> Result<LocalDbPackage> {
     let content = std::fs::read_to_string(path)?;
+    
+    // Try V1 first (most common)
     if let Ok(desc) = alpm_db::desc::DbDescFileV1::from_str(&content) {
         return Ok(LocalDbPackage {
             name: desc.name.to_string(),
@@ -332,7 +383,64 @@ fn parse_local_desc(path: &Path) -> Result<LocalDbPackage> {
         });
     }
 
-    anyhow::bail!("Failed to parse local desc file")
+    // Try V2 (has XDATA support)
+    if let Ok(desc) = alpm_db::desc::DbDescFileV2::from_str(&content) {
+        return Ok(LocalDbPackage {
+            name: desc.name.to_string(),
+            version: Version::from_str(&desc.version.to_string())
+                .unwrap_or_else(|_| super::types::zero_version()),
+            desc: desc.description.to_string(),
+            install_date: desc.installdate.to_string(),
+            explicit: matches!(desc.reason, alpm_types::PackageInstallReason::Explicit),
+        });
+    }
+
+    // Fallback: manual parsing for edge cases
+    parse_local_desc_manual(&content)
+}
+
+/// Manual local desc parser as fallback
+fn parse_local_desc_manual(content: &str) -> Result<LocalDbPackage> {
+    let mut name = String::new();
+    let mut version = String::new();
+    let mut desc = String::new();
+    let mut install_date = String::new();
+    let mut reason = String::new();
+    let mut current_field: Option<&str> = None;
+
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            current_field = None;
+            continue;
+        }
+
+        if line.starts_with('%') && line.ends_with('%') {
+            current_field = Some(line);
+            continue;
+        }
+
+        match current_field {
+            Some("%NAME%") => name = line.to_string(),
+            Some("%VERSION%") => version = line.to_string(),
+            Some("%DESC%") => desc = line.to_string(),
+            Some("%INSTALLDATE%") => install_date = line.to_string(),
+            Some("%REASON%") => reason = line.to_string(),
+            _ => {}
+        }
+    }
+
+    if name.is_empty() {
+        anyhow::bail!("Failed to parse local desc file: no NAME found");
+    }
+
+    Ok(LocalDbPackage {
+        name,
+        version: Version::from_str(&version).unwrap_or_else(|_| super::types::zero_version()),
+        desc,
+        install_date,
+        explicit: reason != "1", // 1 = dependency, empty/0 = explicit
+    })
 }
 
 /// ULTRA FAST update check - uses global cache (<5ms after first load!)
@@ -404,7 +512,7 @@ fn ensure_sync_cache_loaded(sync_dir: &Path) -> Result<()> {
 
     {
         let cache = SYNC_DB_CACHE.read();
-        if cache.last_modified == Some(current_mtime) && !cache.packages.is_empty() {
+            if cache.last_modified == Some(current_mtime) && !cache.packages.is_empty() {
             return Ok(());
         }
     }

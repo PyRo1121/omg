@@ -697,4 +697,44 @@ python = "3.12.1"
         assert_eq!(versions.get("bun"), Some(&"1.0.25".to_string()));
         assert_eq!(versions.get("python"), Some(&"3.12.1".to_string()));
     }
+
+    #[test]
+    fn test_mise_toml_non_native_runtimes() {
+        // Test that mise.toml detects runtimes we don't have native support for
+        let dir = tempdir().unwrap();
+        fs::write(
+            dir.path().join(".mise.toml"),
+            r#"[tools]
+deno = "1.40.0"
+elixir = "1.16.0"
+zig = "0.11.0"
+swift = "5.9"
+erlang = "26.2"
+"#,
+        )
+        .unwrap();
+
+        let versions = detect_versions(dir.path());
+        assert_eq!(versions.get("deno"), Some(&"1.40.0".to_string()));
+        assert_eq!(versions.get("elixir"), Some(&"1.16.0".to_string()));
+        assert_eq!(versions.get("zig"), Some(&"0.11.0".to_string()));
+        assert_eq!(versions.get("swift"), Some(&"5.9".to_string()));
+        assert_eq!(versions.get("erlang"), Some(&"26.2".to_string()));
+    }
+
+    #[test]
+    fn test_tool_versions_non_native_runtimes() {
+        // Test that .tool-versions detects runtimes we don't have native support for
+        let dir = tempdir().unwrap();
+        fs::write(
+            dir.path().join(".tool-versions"),
+            "deno 1.40.0\nelixir 1.16.0\nzig 0.11.0\n",
+        )
+        .unwrap();
+
+        let versions = detect_versions(dir.path());
+        assert_eq!(versions.get("deno"), Some(&"1.40.0".to_string()));
+        assert_eq!(versions.get("elixir"), Some(&"1.16.0".to_string()));
+        assert_eq!(versions.get("zig"), Some(&"0.11.0".to_string()));
+    }
 }

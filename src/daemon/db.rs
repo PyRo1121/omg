@@ -1,13 +1,31 @@
 //! Persistent metadata cache using redb (pure Rust)
 //!
-//! Stores system status metrics to survive daemon restarts.
+//! Stores system status metrics and package index to survive daemon restarts.
+//! Index preloading enables <10ms cold start times.
 
-use super::protocol::StatusResult;
+use super::protocol::{DetailedPackageInfo, StatusResult};
 use anyhow::{Context, Result};
 use redb::{Database, ReadableDatabase, TableDefinition};
 use std::path::Path;
 
 const STATUS_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("status");
+const INDEX_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("package_index");
+const INDEX_META_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("index_meta");
+
+/// Serialized package index for fast loading
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct SerializedIndex {
+    pub packages: Vec<DetailedPackageInfo>,
+    pub timestamp: u64,
+}
+
+/// Index metadata for cache invalidation
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct IndexMeta {
+    pub package_count: usize,
+    pub timestamp: u64,
+    pub db_mtime: u64,
+}
 
 pub struct PersistentCache {
     db: Database,
@@ -49,5 +67,95 @@ impl PersistentCache {
         }
         write_txn.commit()?;
         Ok(())
+    }
+
+    /// Get cached package index metadata
+    pub fn get_index_meta(&self) -> Result<Option<IndexMeta>> {
+        let read_txn = self.db.begin_read()?;
+        let table = match read_txn.open_table(INDEX_META_TABLE) {
+            Ok(t) => t,
+            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(None),
+            Err(e) => return Err(anyhow::anyhow!("Database error: {e}")),
+        };
+
+        match table.get("meta")? {
+            Some(guard) => {
+                let meta: IndexMeta = serde_json::from_slice(guard.value())?;
+                Ok(Some(meta))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Load cached package index (for instant startup)
+    pub fn load_index(&self) -> Result<Option<SerializedIndex>> {
+        let read_txn = self.db.begin_read()?;
+        let table = match read_txn.open_table(INDEX_TABLE) {
+            Ok(t) => t,
+            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(None),
+            Err(e) => return Err(anyhow::anyhow!("Database error: {e}")),
+        };
+
+        match table.get("packages")? {
+            Some(guard) => {
+                let start = std::time::Instant::now();
+                let (index, _): (SerializedIndex, _) =
+                    bincode::serde::decode_from_slice(guard.value(), bincode::config::legacy())?;
+                tracing::debug!(
+                    "Loaded {} packages from cache in {:?}",
+                    index.packages.len(),
+                    start.elapsed()
+                );
+                Ok(Some(index))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Save package index to cache (for fast reload)
+    pub fn save_index(&self, packages: &[DetailedPackageInfo], db_mtime: u64) -> Result<()> {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
+        let index = SerializedIndex {
+            packages: packages.to_vec(),
+            timestamp,
+        };
+
+        let meta = IndexMeta {
+            package_count: packages.len(),
+            timestamp,
+            db_mtime,
+        };
+
+        let index_data = bincode::serde::encode_to_vec(&index, bincode::config::legacy())?;
+        let meta_data = serde_json::to_vec(&meta)?;
+
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut index_table = write_txn.open_table(INDEX_TABLE)?;
+            index_table.insert("packages", index_data.as_slice())?;
+
+            let mut meta_table = write_txn.open_table(INDEX_META_TABLE)?;
+            meta_table.insert("meta", meta_data.as_slice())?;
+        }
+        write_txn.commit()?;
+
+        tracing::info!(
+            "Saved {} packages to index cache ({} bytes)",
+            packages.len(),
+            index_data.len()
+        );
+        Ok(())
+    }
+
+    /// Check if cached index is still valid
+    pub fn is_index_valid(&self, current_db_mtime: u64) -> bool {
+        match self.get_index_meta() {
+            Ok(Some(meta)) => meta.db_mtime == current_db_mtime,
+            _ => false,
+        }
     }
 }
