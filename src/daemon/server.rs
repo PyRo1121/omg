@@ -27,7 +27,7 @@ pub async fn run(listener: UnixListener) -> Result<()> {
     let state_worker = Arc::clone(&state);
     let mut shutdown_worker = shutdown_tx.subscribe();
 
-    fn use_debian_backend() -> bool {
+    const fn use_debian_backend() -> bool {
         #[cfg(feature = "debian")]
         {
             return is_debian_like();

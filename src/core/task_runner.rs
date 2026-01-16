@@ -511,7 +511,9 @@ pub fn run_task(
         return execute_process(task_name, &[], extra_args, backend_override);
     }
 
-    let task = matches[0];
+    let Some(task) = matches.first() else {
+        return execute_process(task_name, &[], extra_args, backend_override);
+    };
 
     println!(
         "{} Running task '{}' via {}...",

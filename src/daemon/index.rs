@@ -200,7 +200,8 @@ impl PackageIndex {
                 .flatten()
                 .take(limit)
                 .filter_map(|idx| {
-                    let name = &self.search_items[*idx].0;
+                    let item = self.search_items.get(*idx)?;
+                    let name = &item.0;
                     self.packages.get(name).map(|p| PackageInfo {
                         name: p.name.clone(),
                         version: p.version.clone(),
@@ -246,7 +247,8 @@ impl PackageIndex {
         // Pre-reserve capacity to avoid reallocations
         let mut results = Vec::with_capacity(matches.len());
         for (_, idx) in matches {
-            let name = &self.search_items[idx].0;
+            let Some(item) = self.search_items.get(idx) else { continue };
+            let name = &item.0;
             if let Some(p) = self.packages.get(name) {
                 results.push(PackageInfo {
                     name: p.name.clone(),

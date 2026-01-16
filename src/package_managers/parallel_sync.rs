@@ -219,7 +219,7 @@ async fn download_db(
 /// 1. Downloads all databases simultaneously (parallel I/O)
 /// 2. Uses HTTP/2 connection pooling
 /// 3. Shows real-time progress for each database
-#[allow(clippy::literal_string_with_formatting_args)]
+#[allow(clippy::literal_string_with_formatting_args, clippy::expect_used)]
 pub async fn sync_databases_parallel() -> Result<()> {
     let mirrors = get_mirrors()?;
 
@@ -282,7 +282,8 @@ pub async fn sync_databases_parallel() -> Result<()> {
 
     for (i, (_, urls, dest)) in repos_to_sync.into_iter().enumerate() {
         let client = client.clone();
-        let pb = progress_bars[i].clone();
+        let Some(pb) = progress_bars.get(i).cloned() else { continue };
+        let pb = pb;
 
         let handle = tokio::spawn(async move { download_db(&client, urls, &dest, &pb).await });
         handles.push(handle);
@@ -515,6 +516,7 @@ async fn download_package(
 }
 
 /// Download multiple packages in parallel
+#[allow(clippy::expect_used)]
 pub async fn download_packages_parallel(
     jobs: Vec<DownloadJob>,
     concurrency: usize,

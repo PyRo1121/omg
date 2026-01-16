@@ -30,7 +30,7 @@ pub fn ensure_active_version(runtime: &str) -> Option<String> {
         return None;
     }
 
-    if let Ok(true) = mise_install_runtime(runtime) {
+    if matches!(mise_install_runtime(runtime), Ok(true)) {
         return mise_current_version(runtime).ok().flatten();
     }
 

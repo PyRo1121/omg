@@ -100,7 +100,8 @@ async fn run_app<B: ratatui::backend::Backend>(
                                 && !app.show_popup =>
                         {
                             // Install selected package
-                            let pkg_name = &app.search_results[app.selected_index].name;
+                            let Some(pkg) = app.search_results.get(app.selected_index) else { continue };
+                            let pkg_name = &pkg.name;
                             if let Err(e) = app.install_package(pkg_name).await {
                                 eprintln!("Failed to install {pkg_name}: {e}");
                             }

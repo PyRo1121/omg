@@ -245,17 +245,17 @@ impl AurClient {
             return Self::read_metadata_archive(&cache_path).map(Some);
         }
 
-        let mut meta_cache: AurMetaCache = AurMetaCache {
-            etag: None,
-            last_modified: None,
-        };
-
-        if meta_path.exists()
+        let meta_cache = if meta_path.exists()
             && let Ok(bytes) = tokio_fs::read(&meta_path).await
             && let Ok(parsed) = serde_json::from_slice::<AurMetaCache>(&bytes)
         {
-            meta_cache = parsed;
-        }
+            parsed
+        } else {
+            AurMetaCache {
+                etag: None,
+                last_modified: None,
+            }
+        };
 
         if let Some(parent) = cache_path.parent() {
             tokio_fs::create_dir_all(parent).await?;

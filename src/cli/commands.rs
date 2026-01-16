@@ -18,7 +18,7 @@ use crate::package_managers::get_system_status;
 #[cfg(feature = "debian")]
 use crate::package_managers::{apt_get_system_status, apt_list_all_package_names};
 
-fn use_debian_backend() -> bool {
+const fn use_debian_backend() -> bool {
     #[cfg(feature = "debian")]
     {
         return is_debian_like();
@@ -514,7 +514,7 @@ pub async fn rollback(id: Option<String>) -> Result<()> {
             .default(0)
             .interact()?;
 
-        &entries[entries.len() - 1 - selection]
+        entries.get(entries.len() - 1 - selection).ok_or_else(|| anyhow::anyhow!("Invalid selection"))?
     };
 
     println!(
