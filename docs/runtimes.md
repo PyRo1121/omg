@@ -272,6 +272,7 @@ pub struct GoManager {
 - **Formats**: tar.gz (Linux/macOS), exe (Windows)
 - **Components**: rustc, cargo, rust-std
 - **Binary Names**: `rustc`, `cargo`
+- **Toolchain Files**: `rust-toolchain.toml` with channels, components, targets, and profiles
 
 #### Implementation Details
 ```rust
@@ -283,10 +284,10 @@ pub struct RustManager {
 ```
 
 #### Installation Process
-1. Download from `https://static.rust-lang.org/dist/`
-2. Install using rustup-init script
-3. Configure components
-4. Update symlinks
+1. Download toolchain archives from `https://static.rust-lang.org/dist/`
+2. Extract components directly (pure Rust, no rustup)
+3. Track installed components/targets in `.omg-toolchain.toml`
+4. Update `current` symlink for active toolchain
 
 ### Ruby Manager
 
