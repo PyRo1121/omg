@@ -4,7 +4,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-use crate::core::paths;
+use crate::core::{RuntimeBackend, paths};
 
 /// OMG configuration settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -24,6 +24,9 @@ pub struct Settings {
 
     /// Auto-update runtime versions on install
     pub auto_update: bool,
+
+    /// Runtime resolution backend (native, mise, native-then-mise)
+    pub runtime_backend: RuntimeBackend,
 
     /// AUR build configuration
     pub aur: AurBuildSettings,
@@ -88,6 +91,7 @@ impl Default for Settings {
             socket_path,
             default_shell: "zsh".to_string(),
             auto_update: false,
+            runtime_backend: RuntimeBackend::default(),
             aur: AurBuildSettings::default(),
         }
     }

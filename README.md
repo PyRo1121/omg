@@ -3,6 +3,7 @@
 **The Fastest Unified Package Manager for Arch Linux + All Language Runtimes**
 
 OMG is a next-generation package manager designed for 2026 standards. It eliminates the friction of switching between `pacman`, `yay`, `nvm`, `pyenv`, and `rustup` by unifying them into a single, blazing-fast, Rust-native binary.
+It now ships a full **runtime-aware task runner**, Bun-first JavaScript workflows, and native Rust toolchain management with `rust-toolchain.toml` support.
 
 > "50-200x faster than traditional tools. Zero subprocess overhead. Zero-trust security."
 
@@ -46,7 +47,9 @@ OMG is a next-generation package manager designed for 2026 standards. It elimina
 ### 🛠️ Unified Runtime Management
 One command to rule them all. No more `.nvmrc` vs `.tool-versions` confusion.
 - **Supported**: Node.js, Bun, Python, Go, Rust, Ruby, and Java.
-- **Auto-Detection**: OMG automatically detects the required version by climbing the directory tree for configuration files.
+- **Auto-Detection**: OMG detects required versions by climbing the directory tree for config files (`.nvmrc`, `.bun-version`, `.tool-versions`, `.mise.toml`, `.mise.local.toml`, `rust-toolchain.toml`).
+- **Mise Runtime Support**: When a runtime isn't native, OMG falls back to `mise` (e.g., `omg run` honors `.mise.toml` and `.tool-versions`).
+- **Node + NVM**: Prefers OMG-managed Node installs, but transparently falls back to local NVM versions when present.
 - **Rust Toolchains**: Native Rust downloads with `rust-toolchain.toml` support (components, targets, profiles).
 - **List Available**: `omg list node --available` shows real-time versions from official upstream APIs.
 
@@ -72,8 +75,38 @@ omg run build
 omg run test -- --watch
 ```
 
-OMG automatically **activates the correct runtime version** (e.g., Python virtual env, Node version from `.nvmrc`) before running the task.
+OMG automatically **activates the correct runtime version** (e.g., Python virtual env, Node version from `.nvmrc`, Bun from `.bun-version`, or any Mise-managed runtime) before running the task.
+For JavaScript projects, it respects `package.json#packageManager` and lockfiles to pick **Bun → pnpm → yarn → npm**, and adds a default `install` task.
+If `pnpm` or `yarn` are missing, OMG can enable them via **corepack** on demand.
 Supported task sources include `package.json`, `deno.json`, `Cargo.toml`, `Makefile`, `Taskfile.yml`, `pyproject.toml` (Poetry), `Pipfile`, `composer.json`, `pom.xml`, and `build.gradle`.
+
+#### JavaScript Runtime Behavior (Bun-First)
+- If `package.json` includes `"packageManager": "bun@1.2.5"`, OMG runs tasks with **Bun** and ensures that version.
+- If `package.json` includes `"packageManager": "pnpm@9"` or `"yarn@4"`, OMG will prompt to enable **corepack** if needed.
+- If no `packageManager` is set, OMG uses lockfiles in priority order: **bun.lockb → pnpm-lock.yaml → yarn.lock → package-lock.json**.
+- `.bun-version` or `.nvmrc` override defaults for the runtime version when present.
+
+#### Runtime Auto-Install Prompts
+When you run `omg run ...`, OMG checks for required runtime versions and prompts to install if missing:
+- **Rust**: reads `rust-toolchain.toml`/`rust-toolchain` and installs missing toolchains, components, or targets.
+- **Node/Bun**: installs the required version if it is not already present (prefers OMG installs, but detects local NVM installs for Node).
+- **pnpm/yarn**: if selected by `packageManager`, OMG can enable them via **corepack**.
+- **Mise**: `omg run` can be forced to use Mise with `--runtime-backend mise`.
+
+#### Task Runner Detection Matrix
+The task runner auto-detects common project files and routes commands accordingly:
+
+| Project File | Runtime/Tool | Example Command |
+|--------------|--------------|-----------------|
+| `package.json` | bun/pnpm/yarn/npm | `omg run dev` → `bun run dev` |
+| `deno.json` | deno | `omg run dev` → `deno task dev` |
+| `Cargo.toml` | cargo | `omg run test` → `cargo test` |
+| `Makefile` | make | `omg run build` → `make build` |
+| `Taskfile.yml` | task | `omg run list` → `task --list` |
+| `pyproject.toml` (Poetry) | poetry | `omg run api` → `poetry run api` |
+| `Pipfile` | pipenv | `omg run lint` → `pipenv run lint` |
+| `composer.json` | composer | `omg run test` → `composer run-script test` |
+| `pom.xml` / `build.gradle` | maven/gradle | `omg run test` → `mvn test` |
 
 ### 🏗️ Instant Scaffolding
 Start new projects with best practices built-in.
@@ -101,6 +134,11 @@ omg tool list
 - **Fuzzy Matching**: Powered by `fuzzy-matcher` (SkimMatcherV2). Type `omg i frfx` and get `firefox`.
 - **Context Aware**: Tab-completions prioritize versions and tools based on your current project directory.
 - **80k+ AUR Cache**: Smooth, lag-free completion for the entire Arch User Repository.
+
+### 🐧 Debian/Ubuntu Support (Experimental)
+- **Backend**: Native `rust-apt` bindings (no `apt` subprocess).
+- **Feature flag**: build with `--features debian` (requires `libapt-pkg-dev`).
+- **Scope**: Official repo operations (search/info/install/remove/update). AUR features remain Arch-only.
 
 ---
 
@@ -502,6 +540,27 @@ cargo clippy
 ```
 
 Use `cargo run -- <command>` to exercise CLI paths during development.
+
+### Debian Docker Smoke Test
+Build the Debian container and compile with the Debian backend enabled:
+
+```bash
+docker build -f Dockerfile.debian -t omg-debian-smoke .
+```
+
+Run the container for manual CLI testing:
+
+```bash
+docker run --rm -it omg-debian-smoke
+```
+
+Inside the container you can run:
+
+```bash
+cargo test
+cargo run -- --help
+cargo run -- search ripgrep
+```
 
 ---
 

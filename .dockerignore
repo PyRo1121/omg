@@ -1,0 +1,13 @@
+.git
+.gitignore
+.github
+.vscode
+.idea
+Cargo.lock
+/target
+/dist
+/tmp
+**/*.tar.gz
+**/*.sha256
+**/*.log
+node_modules

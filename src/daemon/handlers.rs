@@ -8,11 +8,30 @@ use super::protocol::{
     DetailedPackageInfo, ExplicitResult, PackageInfo, Request, RequestId, Response, ResponseResult,
     SearchResult, SecurityAuditResult, StatusResult, Vulnerability, error_codes,
 };
+#[cfg(feature = "debian")]
+use crate::core::env::distro::is_debian_like;
 use crate::package_managers::{
     AurClient, OfficialPackageManager, alpm_worker::AlpmWorker, list_installed_fast,
     search_detailed,
 };
 use parking_lot::RwLock;
+
+#[cfg(feature = "debian")]
+use crate::package_managers::{
+    apt_get_sync_pkg_info, apt_get_system_status, apt_list_explicit, apt_list_installed_fast,
+};
+
+fn use_debian_backend() -> bool {
+    #[cfg(feature = "debian")]
+    {
+        return is_debian_like();
+    }
+
+    #[cfg(not(feature = "debian"))]
+    {
+        false
+    }
+}
 
 /// Daemon state shared across handlers
 pub struct DaemonState {
@@ -104,6 +123,18 @@ async fn handle_search(
     // 1. Instant Official Search (Sub-millisecond)
     let official = state.index.search(&query, limit);
 
+    if use_debian_backend() {
+        let total = official.len();
+        state.cache.insert(query, official.clone());
+        return Response::Success {
+            id,
+            result: ResponseResult::Search(SearchResult {
+                packages: official,
+                total,
+            }),
+        };
+    }
+
     // 2. Conditional AUR Search (Network Bound)
     // Only search AUR if official results are low, to keep speed for common packages
     let mut aur = Vec::new();
@@ -164,28 +195,53 @@ async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) ->
         };
     }
 
-    // 3. Try AUR
-    if let Ok(details) = search_detailed(&package).await
-        && let Some(pkg) = details.into_iter().find(|p| p.name == package)
-    {
-        let detailed = DetailedPackageInfo {
-            name: pkg.name,
-            version: pkg.version,
-            description: pkg.description.unwrap_or_default(),
-            url: pkg.url.unwrap_or_default(),
-            size: 0,
-            download_size: 0,
-            repo: "aur".to_string(),
-            depends: pkg.depends.unwrap_or_default(),
-            licenses: pkg.license.unwrap_or_default(),
-            source: "aur".to_string(),
-        };
+    if use_debian_backend() {
+        #[cfg(feature = "debian")]
+        {
+            if let Ok(Some(info)) = apt_get_sync_pkg_info(&package) {
+                let detailed = DetailedPackageInfo {
+                    name: info.name,
+                    version: info.version,
+                    description: info.description,
+                    url: info.url,
+                    size: info.size,
+                    download_size: info.download_size,
+                    repo: info.repo,
+                    depends: info.depends,
+                    licenses: info.licenses,
+                    source: "official".to_string(),
+                };
+                state.cache.insert_info(detailed.clone());
+                return Response::Success {
+                    id,
+                    result: ResponseResult::Info(detailed),
+                };
+            }
+        }
+    } else {
+        // 3. Try AUR
+        if let Ok(details) = search_detailed(&package).await
+            && let Some(pkg) = details.into_iter().find(|p| p.name == package)
+        {
+            let detailed = DetailedPackageInfo {
+                name: pkg.name,
+                version: pkg.version,
+                description: pkg.description.unwrap_or_default(),
+                url: pkg.url.unwrap_or_default(),
+                size: 0,
+                download_size: 0,
+                repo: "aur".to_string(),
+                depends: pkg.depends.unwrap_or_default(),
+                licenses: pkg.license.unwrap_or_default(),
+                source: "aur".to_string(),
+            };
 
-        state.cache.insert_info(detailed.clone());
-        return Response::Success {
-            id,
-            result: ResponseResult::Info(detailed),
-        };
+            state.cache.insert_info(detailed.clone());
+            return Response::Success {
+                id,
+                result: ResponseResult::Info(detailed),
+            };
+        }
     }
 
     state.cache.insert_info_miss(&package);
@@ -215,7 +271,20 @@ fn handle_status(state: &Arc<DaemonState>, id: RequestId) -> Response {
         };
     }
 
-    match get_system_status() {
+    let status = if use_debian_backend() {
+        #[cfg(feature = "debian")]
+        {
+            apt_get_system_status()
+        }
+        #[cfg(not(feature = "debian"))]
+        {
+            Err(anyhow::anyhow!("Debian backend disabled"))
+        }
+    } else {
+        get_system_status()
+    };
+
+    match status {
         Ok((total, explicit, orphans, updates)) => {
             let res = StatusResult {
                 total_packages: total,
@@ -247,7 +316,20 @@ async fn handle_security_audit(_state: Arc<DaemonState>, id: RequestId) -> Respo
     use crate::core::security::vulnerability::VulnerabilityScanner;
 
     let scanner = VulnerabilityScanner::new();
-    let installed = match list_installed_fast() {
+    let installed = if use_debian_backend() {
+        #[cfg(feature = "debian")]
+        {
+            apt_list_installed_fast()
+        }
+        #[cfg(not(feature = "debian"))]
+        {
+            Err(anyhow::anyhow!("Debian backend disabled"))
+        }
+    } else {
+        list_installed_fast()
+    };
+
+    let installed = match installed {
         Ok(pkgs) => pkgs,
         Err(e) => {
             return Response::Error {
@@ -323,7 +405,20 @@ fn handle_list_explicit(state: &Arc<DaemonState>, id: RequestId) -> Response {
         };
     }
 
-    match list_explicit_fast() {
+    let packages = if use_debian_backend() {
+        #[cfg(feature = "debian")]
+        {
+            apt_list_explicit()
+        }
+        #[cfg(not(feature = "debian"))]
+        {
+            Err(anyhow::anyhow!("Debian backend disabled"))
+        }
+    } else {
+        list_explicit_fast()
+    };
+
+    match packages {
         Ok(packages) => {
             state.cache.update_explicit(packages.clone());
             Response::Success {

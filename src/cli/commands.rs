@@ -5,11 +5,28 @@
 use anyhow::{Context, Result};
 use std::process::{Command, Stdio};
 
+#[cfg(feature = "debian")]
+use crate::core::env::distro::is_debian_like;
 use crate::core::paths;
 use crate::package_managers::PackageManager;
 
 use crate::cli::style;
 use crate::package_managers::get_system_status;
+
+#[cfg(feature = "debian")]
+use crate::package_managers::{apt_get_system_status, apt_list_all_package_names};
+
+fn use_debian_backend() -> bool {
+    #[cfg(feature = "debian")]
+    {
+        return is_debian_like();
+    }
+
+    #[cfg(not(feature = "debian"))]
+    {
+        false
+    }
+}
 
 // Re-export moved commands
 pub use super::env::{capture as env_capture, check as env_check, share as env_share};
@@ -38,9 +55,16 @@ pub async fn complete(_shell: &str, current: &str, last: &str, full: Option<&str
                 return Ok(());
             }
             // Try daemon for package list
-            let mut names = if let Ok(mut client) =
-                crate::core::client::DaemonClient::connect().await
-            {
+            let mut names = if use_debian_backend() {
+                #[cfg(feature = "debian")]
+                {
+                    apt_list_all_package_names().unwrap_or_default()
+                }
+                #[cfg(not(feature = "debian"))]
+                {
+                    Vec::new()
+                }
+            } else if let Ok(mut client) = crate::core::client::DaemonClient::connect().await {
                 if let Ok(res) = client.search("", None).await {
                     res.packages.into_iter().map(|p| p.name).collect()
                 } else {
@@ -61,10 +85,7 @@ pub async fn complete(_shell: &str, current: &str, last: &str, full: Option<&str
             engine.fuzzy_match(current, names)
         }
         "use" | "ls" | "list" | "which" => {
-            let runtimes: Vec<String> = crate::runtimes::SUPPORTED_RUNTIMES
-                .iter()
-                .map(std::string::ToString::to_string)
-                .collect();
+            let runtimes = crate::cli::runtimes::known_runtimes();
             engine.fuzzy_match(current, runtimes)
         }
         "tool" => vec![
@@ -104,7 +125,10 @@ pub async fn complete(_shell: &str, current: &str, last: &str, full: Option<&str
         ],
         _ => {
             // Check if last word is a runtime (for 'omg use <runtime> <TAB>')
-            if crate::runtimes::SUPPORTED_RUNTIMES.contains(&last) {
+            if crate::cli::runtimes::known_runtimes()
+                .iter()
+                .any(|rt| rt == last)
+            {
                 // Priority 1: Context awareness (package.json, .nvmrc, etc.)
                 let mut suggestions = engine.probe_context(last);
 
@@ -181,7 +205,17 @@ pub fn status_sync() -> Result<()> {
 
     // ULTRA FAST: Use Daemon Cache if available (<1ms)
     let (total, explicit, orphans, updates, security_vulnerabilities, cached_runtimes) =
-        if let Ok(mut client) = crate::core::client::DaemonClient::connect_sync() {
+        if use_debian_backend() {
+            #[cfg(feature = "debian")]
+            {
+                let s = apt_get_system_status().unwrap_or((0, 0, 0, 0));
+                (s.0, s.1, s.2, s.3, 0, None)
+            }
+            #[cfg(not(feature = "debian"))]
+            {
+                (0, 0, 0, 0, 0, None)
+            }
+        } else if let Ok(mut client) = crate::core::client::DaemonClient::connect_sync() {
             // Fixed ID for zero-overhead
             if let Ok(crate::daemon::protocol::ResponseResult::Status(res)) =
                 client.call_sync(&crate::daemon::protocol::Request::Status { id: 0 })

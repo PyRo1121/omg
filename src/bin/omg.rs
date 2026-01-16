@@ -13,7 +13,7 @@ use omg_lib::cli::runtimes;
 use omg_lib::cli::security;
 use omg_lib::cli::tool;
 use omg_lib::cli::{Cli, Commands, EnvCommands, ToolCommands, commands};
-use omg_lib::core::{elevate_if_needed, is_root, task_runner};
+use omg_lib::core::{RuntimeBackend, elevate_if_needed, is_root, task_runner};
 use omg_lib::hooks;
 
 // Using system allocator (pure Rust - no C dependency)
@@ -138,8 +138,7 @@ fn main() -> Result<()> {
             hooks::completions::generate_completions(&shell, stdout)?;
         }
         Commands::Which { runtime } => {
-            let versions = hooks::get_active_versions();
-            if let Some(version) = versions.get(&runtime.to_lowercase()) {
+            if let Some(version) = runtimes::resolve_active_version(&runtime) {
                 println!("{runtime} {version}");
             } else {
                 println!("{runtime}: no version set (check .tool-versions, .nvmrc, etc.)");
@@ -172,8 +171,17 @@ fn main() -> Result<()> {
                 .build()?;
             rt.block_on(security::audit())?;
         }
-        Commands::Run { task, args } => {
-            task_runner::run_task(&task, &args)?;
+        Commands::Run {
+            task,
+            args,
+            runtime_backend,
+        } => {
+            let backend = runtime_backend
+                .as_deref()
+                .map(str::parse::<RuntimeBackend>)
+                .transpose()
+                .map_err(|err| anyhow::anyhow!(err))?;
+            task_runner::run_task(&task, &args, backend)?;
         }
         Commands::New { stack, name } => {
             new::run(&stack, &name)?;

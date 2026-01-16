@@ -1,8 +1,58 @@
+use std::process::Command;
+
+use anyhow::{Context, Result};
+use owo_colors::OwoColorize;
+
 use crate::runtimes::{
     BunManager, GoManager, JavaManager, NodeManager, PythonManager, RubyManager, RustManager,
+    SUPPORTED_RUNTIMES,
 };
-use anyhow::Result;
-use owo_colors::OwoColorize;
+
+pub fn resolve_active_version(runtime: &str) -> Option<String> {
+    let versions = crate::hooks::get_active_versions();
+    if let Some(version) = versions.get(&runtime.to_lowercase()) {
+        return Some(version.clone());
+    }
+
+    if mise_available() {
+        return mise_current_version(runtime).ok().flatten();
+    }
+
+    None
+}
+
+pub fn ensure_active_version(runtime: &str) -> Option<String> {
+    if let Some(version) = resolve_active_version(runtime) {
+        return Some(version);
+    }
+
+    if !mise_available() {
+        return None;
+    }
+
+    if let Ok(true) = mise_install_runtime(runtime) {
+        return mise_current_version(runtime).ok().flatten();
+    }
+
+    None
+}
+
+pub fn known_runtimes() -> Vec<String> {
+    let mut runtimes: Vec<String> = SUPPORTED_RUNTIMES
+        .iter()
+        .map(std::string::ToString::to_string)
+        .collect();
+
+    if mise_available()
+        && let Ok(extra) = mise_installed_runtimes()
+    {
+        runtimes.extend(extra);
+    }
+
+    runtimes.sort();
+    runtimes.dedup();
+    runtimes
+}
 
 /// Switch runtime version
 pub async fn use_version(runtime: &str, version: Option<&str>) -> Result<()> {
@@ -92,7 +142,7 @@ pub async fn use_version(runtime: &str, version: Option<&str>) -> Result<()> {
                 java_mgr.install(&version).await?;
             }
         }
-        "bun" => {
+        "bun" | "bunjs" => {
             let bun_mgr = BunManager::new();
 
             let installed = bun_mgr.list_installed().unwrap_or_default();
@@ -105,11 +155,153 @@ pub async fn use_version(runtime: &str, version: Option<&str>) -> Result<()> {
             }
         }
         _ => {
-            println!("{} Unknown runtime: {}", "✗".red(), runtime);
-            println!("  Supported: node, python, rust, go, ruby, java, bun");
+            if mise_available() {
+                mise_use_version(runtime, &version)?;
+            } else {
+                println!("{} Unknown runtime: {}", "✗".red(), runtime);
+                println!("  Supported: node, python, rust, go, ruby, java, bun");
+            }
         }
     }
 
+    Ok(())
+}
+
+fn mise_available() -> bool {
+    Command::new("mise")
+        .arg("--version")
+        .output()
+        .map(|out| out.status.success())
+        .unwrap_or(false)
+}
+
+fn mise_current_version(runtime: &str) -> Result<Option<String>> {
+    let output = Command::new("mise")
+        .args(["current", runtime])
+        .output()
+        .with_context(|| format!("Failed to run `mise current {runtime}`"))?;
+
+    if !output.status.success() {
+        return Ok(None);
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let line = stdout.lines().find(|line| !line.trim().is_empty());
+    let Some(line) = line else {
+        return Ok(None);
+    };
+    let line = line.trim();
+
+    if let Some(rest) = line.strip_prefix(runtime)
+        && let Some(version) = rest.split_whitespace().find(|token| !token.is_empty())
+    {
+        return Ok(Some(version.to_string()));
+    }
+
+    if let Some((_, version)) = line.split_once('@') {
+        return Ok(Some(version.trim().to_string()));
+    }
+
+    Ok(Some(line.to_string()))
+}
+
+fn mise_install_runtime(runtime: &str) -> Result<bool> {
+    let status = Command::new("mise")
+        .args(["install", runtime])
+        .status()
+        .with_context(|| format!("Failed to run `mise install {runtime}`"))?;
+
+    Ok(status.success())
+}
+
+fn mise_installed_runtimes() -> Result<Vec<String>> {
+    let output = Command::new("mise")
+        .args(["ls"])
+        .output()
+        .context("Failed to run `mise ls`")?;
+
+    if !output.status.success() {
+        anyhow::bail!("mise failed to list installed runtimes");
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut runtimes = Vec::new();
+    for line in stdout.lines() {
+        let runtime = line.split_whitespace().next().unwrap_or_default();
+        if !runtime.is_empty() {
+            runtimes.push(runtime.to_string());
+        }
+    }
+
+    runtimes.sort();
+    runtimes.dedup();
+    Ok(runtimes)
+}
+
+fn mise_use_version(runtime: &str, version: &str) -> Result<()> {
+    let tool_spec = format!("{runtime}@{version}");
+    let install_status = Command::new("mise")
+        .args(["install", &tool_spec])
+        .status()
+        .with_context(|| format!("Failed to run `mise install {tool_spec}`"))?;
+    if !install_status.success() {
+        anyhow::bail!("mise failed to install {tool_spec}");
+    }
+
+    let use_status = Command::new("mise")
+        .args(["use", "--local", &tool_spec])
+        .status()
+        .with_context(|| format!("Failed to run `mise use --local {tool_spec}`"))?;
+    if !use_status.success() {
+        anyhow::bail!("mise failed to activate {tool_spec}");
+    }
+
+    println!("{} Using mise for {} {}", "✓".green(), runtime, version);
+    Ok(())
+}
+
+fn mise_list_versions(runtime: &str, available: bool) -> Result<()> {
+    let args = if available {
+        vec!["ls-remote", runtime]
+    } else {
+        vec!["ls", runtime]
+    };
+    let output = Command::new("mise")
+        .args(&args)
+        .output()
+        .with_context(|| format!("Failed to run `mise {}`", args.join(" ")))?;
+    if !output.status.success() {
+        anyhow::bail!("mise failed to list versions for {runtime}");
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if stdout.trim().is_empty() {
+        println!("  {} No mise versions found for {}", "-".dimmed(), runtime);
+    } else {
+        for line in stdout.lines() {
+            println!("  {line}");
+        }
+    }
+    Ok(())
+}
+
+fn mise_list_all() -> Result<()> {
+    let output = Command::new("mise")
+        .args(["ls"])
+        .output()
+        .context("Failed to run `mise ls`")?;
+    if !output.status.success() {
+        anyhow::bail!("mise failed to list installed runtimes");
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if stdout.trim().is_empty() {
+        println!("  {} No mise runtimes installed", "-".dimmed());
+    } else {
+        for line in stdout.lines() {
+            println!("  {line}");
+        }
+    }
     Ok(())
 }
 
@@ -241,7 +433,7 @@ pub async fn list_versions(runtime: Option<&str>, available: bool) -> Result<()>
                     }
                 }
             }
-            "bun" => {
+            "bun" | "bunjs" => {
                 let mgr = BunManager::new();
                 if available {
                     println!("{} Available remote versions:", "→".blue());
@@ -262,8 +454,12 @@ pub async fn list_versions(runtime: Option<&str>, available: bool) -> Result<()>
                 }
             }
             _ => {
-                println!("  {} Unknown runtime: {}", "✗".red(), rt);
-                println!("  Supported: node, python, rust, go, ruby, java, bun");
+                if mise_available() {
+                    mise_list_versions(rt, available)?;
+                } else {
+                    println!("  {} Unknown runtime: {}", "✗".red(), rt);
+                    println!("  Supported: node, python, rust, go, ruby, java, bun");
+                }
             }
         }
     } else {
@@ -300,6 +496,11 @@ pub async fn list_versions(runtime: Option<&str>, available: bool) -> Result<()>
         }
         if let Ok(Some(v)) = bun_res {
             println!("  {} Bun {}", "●".green(), v);
+        }
+
+        if mise_available() {
+            println!("\n{} Mise runtimes:\n", "OMG".cyan().bold());
+            mise_list_all()?;
         }
     }
 

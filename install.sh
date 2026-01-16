@@ -32,7 +32,8 @@ REPO_OWNER="PyRo1121"
 REPO_NAME="omg"
 
 # Detect directory
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_SOURCE="${BASH_SOURCE[0]:-$0}"
+SCRIPT_DIR="$(cd "$(dirname "${SCRIPT_SOURCE}")" && pwd)"
 IS_SOURCE_INSTALL=false
 if [[ -f "$SCRIPT_DIR/Cargo.toml" ]]; then
     if grep -q 'name = "omg"' "$SCRIPT_DIR/Cargo.toml" 2>/dev/null; then
@@ -43,6 +44,12 @@ fi
 # 🔄 UI Functions
 spinner_pid=""
 tmp_dir=""
+
+tput_safe() {
+    if command -v tput >/dev/null 2>&1 && [[ -n "${TERM-}" ]]; then
+        tput "$@"
+    fi
+}
 
 cleanup_tmp_dir() {
     if [[ -n "$tmp_dir" && -d "$tmp_dir" ]]; then
@@ -56,7 +63,7 @@ cleanup() {
         kill "$spinner_pid" >/dev/null 2>&1 || true
     fi
     cleanup_tmp_dir
-    tput cnorm # Show cursor
+    tput_safe cnorm # Show cursor
 }
 
 check_runtime_dependencies() {
@@ -182,7 +189,7 @@ header() {
 
 start_spinner() {
     local msg="$1"
-    tput civis # Hide cursor
+    tput_safe civis # Hide cursor
     
     (
         local chars="⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
@@ -348,6 +355,11 @@ EOF
 
 # 🐚 Shell Setup
 setup_shell() {
+    if [[ "${OMG_SKIP_SHELL:-0}" == "1" ]]; then
+        info "Skipping shell integration (OMG_SKIP_SHELL=1)"
+        return
+    fi
+
     header "Shell Integration"
     
     local shell_type=$(basename "$SHELL")
@@ -408,8 +420,8 @@ finish() {
 # Run
 main() {
     print_banner
-    check_arch
     if ! install_from_release; then
+        check_arch
         check_dependencies
         build_omg
     fi

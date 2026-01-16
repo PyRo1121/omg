@@ -7,6 +7,8 @@ use crate::cli::style;
 use crate::core::Database;
 use crate::core::client::DaemonClient;
 use crate::core::completion::CompletionEngine;
+#[cfg(feature = "debian")]
+use crate::core::env::distro::is_debian_like;
 use crate::core::history::{HistoryManager, PackageChange, TransactionType};
 use crate::core::security::SecurityPolicy;
 use crate::daemon::protocol::{Request, ResponseResult};
@@ -26,8 +28,29 @@ use crate::package_managers::{
     sync_databases_parallel,
 };
 
+#[cfg(feature = "debian")]
+use crate::package_managers::{
+    AptPackageManager, apt_get_sync_pkg_info, apt_list_explicit, apt_list_updates,
+    apt_remove_orphans, apt_search_sync,
+};
+
+fn use_debian_backend() -> bool {
+    #[cfg(feature = "debian")]
+    {
+        return is_debian_like();
+    }
+
+    #[cfg(not(feature = "debian"))]
+    {
+        false
+    }
+}
+
 /// Search for packages in official repos and AUR (Synchronous fast-path)
 pub fn search_sync_cli(query: &str, detailed: bool, interactive: bool) -> Result<bool> {
+    if use_debian_backend() {
+        return Ok(false);
+    }
     if detailed || interactive {
         // Fallback to async for these modes as they require spin-up or complex interaction
         return Ok(false);
@@ -104,40 +127,47 @@ pub async fn search(query: &str, detailed: bool, interactive: bool) -> Result<()
     let mut aur_packages_detailed = None;
     let mut aur_packages_basic = None;
 
-    // 1. Try Daemon (Ultra Fast, Cached, Pooled)
     let mut daemon_used = false;
-    if let Ok(mut client) = DaemonClient::connect().await
-        && let Ok(res) = client.search(query, Some(50)).await
-    {
-        daemon_used = true;
-        let mut aur_basic = Vec::new();
+    if !use_debian_backend() {
+        // 1. Try Daemon (Ultra Fast, Cached, Pooled)
+        if let Ok(mut client) = DaemonClient::connect().await
+            && let Ok(res) = client.search(query, Some(50)).await
+        {
+            daemon_used = true;
+            let mut aur_basic = Vec::new();
 
-        for pkg in res.packages {
-            if pkg.source == "official" {
-                official_packages.push(crate::package_managers::SyncPackage {
-                    name: pkg.name,
-                    version: pkg.version,
-                    description: pkg.description,
-                    repo: "official".to_string(),
-                    download_size: 0,
-                    installed: false,
-                });
-            } else {
-                aur_basic.push(crate::core::Package {
-                    name: pkg.name,
-                    version: pkg.version,
-                    description: pkg.description,
-                    source: crate::core::PackageSource::Aur,
-                    installed: false,
-                });
+            for pkg in res.packages {
+                if pkg.source == "official" {
+                    official_packages.push(crate::package_managers::SyncPackage {
+                        name: pkg.name,
+                        version: pkg.version,
+                        description: pkg.description,
+                        repo: "official".to_string(),
+                        download_size: 0,
+                        installed: false,
+                    });
+                } else {
+                    aur_basic.push(crate::core::Package {
+                        name: pkg.name,
+                        version: pkg.version,
+                        description: pkg.description,
+                        source: crate::core::PackageSource::Aur,
+                        installed: false,
+                    });
+                }
             }
-        }
-        if !aur_basic.is_empty() {
-            aur_packages_basic = Some(aur_basic);
+            if !aur_basic.is_empty() {
+                aur_packages_basic = Some(aur_basic);
+            }
         }
     }
 
-    if !daemon_used {
+    if use_debian_backend() {
+        #[cfg(feature = "debian")]
+        {
+            official_packages = apt_search_sync(query).unwrap_or_default();
+        }
+    } else if !daemon_used {
         // 2. Fallback: Direct libalpm query + Network
         official_packages = search_sync(query).unwrap_or_default();
 
@@ -322,6 +352,13 @@ pub async fn search(query: &str, detailed: bool, interactive: bool) -> Result<()
 
 /// Install packages (auto-detects AUR) with Graded Security
 pub async fn install(packages: &[String], yes: bool) -> Result<()> {
+    if use_debian_backend() {
+        #[cfg(feature = "debian")]
+        {
+            let apt = AptPackageManager::new();
+            return apt.install(packages).await;
+        }
+    }
     if packages.is_empty() {
         anyhow::bail!("No packages specified");
     }
@@ -539,6 +576,14 @@ pub async fn install(packages: &[String], yes: bool) -> Result<()> {
 
 /// Remove packages
 pub async fn remove(packages: &[String], recursive: bool) -> Result<()> {
+    if use_debian_backend() {
+        #[cfg(feature = "debian")]
+        {
+            let apt = AptPackageManager::new();
+            let _ = recursive;
+            return apt.remove(packages).await;
+        }
+    }
     if packages.is_empty() {
         anyhow::bail!("No packages specified");
     }
@@ -576,6 +621,35 @@ pub async fn remove(packages: &[String], recursive: bool) -> Result<()> {
 
 /// Update all packages
 pub async fn update(check_only: bool) -> Result<()> {
+    if use_debian_backend() {
+        #[cfg(feature = "debian")]
+        {
+            let apt = AptPackageManager::new();
+            if check_only {
+                let updates = apt_list_updates().unwrap_or_default();
+                if updates.is_empty() {
+                    println!("{} System is up to date!", style::success("✓"));
+                } else {
+                    println!(
+                        "{} Found {} update(s):",
+                        style::header("OMG"),
+                        style::info(&updates.len().to_string())
+                    );
+                    for (name, old_ver, new_ver) in updates {
+                        println!(
+                            "  {} {} {} → {}",
+                            style::package(&name),
+                            style::dim(old_ver),
+                            style::arrow("→"),
+                            style::version(new_ver)
+                        );
+                    }
+                }
+                return Ok(());
+            }
+            return apt.update().await;
+        }
+    }
     let aur = AurClient::new();
     let pacman = OfficialPackageManager::new();
 
@@ -947,6 +1021,21 @@ pub async fn update(check_only: bool) -> Result<()> {
 /// Show package information
 /// Show package information (Synchronous fast-path)
 pub fn info_sync(package: &str) -> Result<bool> {
+    if use_debian_backend() {
+        #[cfg(feature = "debian")]
+        {
+            if let Some(info) = apt_get_sync_pkg_info(package).ok().flatten() {
+                display_pkg_info(&info);
+                println!(
+                    "\n  {} Official repository ({})",
+                    style::success("Source:"),
+                    style::info("apt")
+                );
+                return Ok(true);
+            }
+        }
+        return Ok(false);
+    }
     let start = std::time::Instant::now();
 
     // 1. Try daemon first (ULTRA FAST - <1ms)
@@ -1097,6 +1186,15 @@ pub async fn info(package: &str) -> Result<()> {
         return Ok(());
     }
 
+    if use_debian_backend() {
+        println!(
+            "{} Package '{}' not found in apt repositories.",
+            style::error("Error:"),
+            style::package(package)
+        );
+        return Ok(());
+    }
+
     // 3. Try AUR directly as final fallback
     println!(
         "{} Package info for '{}':\n",
@@ -1154,6 +1252,23 @@ pub async fn info(package: &str) -> Result<()> {
 #[allow(clippy::fn_params_excessive_bools)]
 pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool) -> Result<()> {
     println!("{} Cleaning up...\n", style::header("OMG"));
+
+    if use_debian_backend() {
+        #[cfg(feature = "debian")]
+        {
+            let do_orphans = orphans || all;
+            if do_orphans {
+                apt_remove_orphans()?;
+            }
+            if cache || aur {
+                println!(
+                    "{} Cache/AUR cleanup is not supported on APT yet",
+                    style::warning("→")
+                );
+            }
+            return Ok(());
+        }
+    }
 
     let do_orphans = orphans || all;
     let do_cache = cache || all;
@@ -1222,6 +1337,21 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool) -> Result<(
 
 /// List explicitly installed packages (Synchronous)
 pub fn explicit_sync(count: bool) -> Result<()> {
+    if use_debian_backend() {
+        #[cfg(feature = "debian")]
+        {
+            let mut packages = apt_list_explicit().unwrap_or_default();
+            packages.sort();
+            if count {
+                println!("{}", packages.len());
+            } else {
+                for pkg in packages {
+                    println!("{}", pkg);
+                }
+            }
+            return Ok(());
+        }
+    }
     // Try daemon first
     let packages = if let Ok(mut client) = DaemonClient::connect_sync() {
         if let Ok(ResponseResult::Explicit(res)) = client.call_sync(&Request::Explicit { id: 0 }) {
@@ -1289,13 +1419,31 @@ fn truncate(s: &str, max: usize) -> String {
 
 /// Sync package databases from mirrors (parallel, fast)
 pub async fn sync() -> Result<()> {
+    if use_debian_backend() {
+        #[cfg(feature = "debian")]
+        {
+            let apt = AptPackageManager::new();
+            return apt.sync_databases().await;
+        }
+    }
     sync_databases_parallel().await
 }
 
 /// Fuzzy match candidate for "Did you mean?"
 fn fuzzy_suggest(query: &str) -> Option<String> {
-    // 1. Get all names (Fast from local ALPM)
-    let names = crate::package_managers::alpm_direct::list_all_package_names().ok()?;
+    // 1. Get all names (Fast from local package DB)
+    let names = if use_debian_backend() {
+        #[cfg(feature = "debian")]
+        {
+            crate::package_managers::apt_list_all_package_names().ok()?
+        }
+        #[cfg(not(feature = "debian"))]
+        {
+            return None;
+        }
+    } else {
+        crate::package_managers::alpm_direct::list_all_package_names().ok()?
+    };
 
     // 2. Open DB for engine (Dummy open just to satisfy constructor)
     let db_path = Database::default_path().ok()?;
