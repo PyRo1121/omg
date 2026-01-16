@@ -3,6 +3,7 @@ use dialoguer::{Confirm, theme::ColorfulTheme};
 use owo_colors::OwoColorize;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
+use std::future::Future;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -20,6 +21,26 @@ pub struct Task {
     pub source: String,
 }
 
+/// Run an async future from sync context, reusing existing runtime if available
+/// This is the Rust 2024 best practice - avoid creating multiple runtimes
+fn run_async<F, T>(future: F) -> Result<T>
+where
+    F: Future<Output = Result<T>>,
+{
+    // Try to use existing runtime first (if we're already in an async context)
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        // We're in an async context, use block_in_place to avoid deadlock
+        tokio::task::block_in_place(|| handle.block_on(future))
+    } else {
+        // No runtime exists, create a minimal one
+        // Use current_thread for sync operations - faster startup than multi_thread
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?
+            .block_on(future)
+    }
+}
+
 fn ensure_python_runtime(version: &str) -> Result<String> {
     let normalized = version.trim_start_matches('v');
     let manager = crate::runtimes::PythonManager::new();
@@ -34,10 +55,7 @@ fn ensure_python_runtime(version: &str) -> Result<String> {
         .default(true)
         .interact()?
     {
-        let rt = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()?;
-        rt.block_on(manager.install(normalized))?;
+        run_async(manager.install(normalized))?;
         Ok(normalized.to_string())
     } else {
         anyhow::bail!("Python setup cancelled");
@@ -58,10 +76,7 @@ fn ensure_go_runtime(version: &str) -> Result<String> {
         .default(true)
         .interact()?
     {
-        let rt = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()?;
-        rt.block_on(manager.install(normalized))?;
+        run_async(manager.install(normalized))?;
         Ok(normalized.to_string())
     } else {
         anyhow::bail!("Go setup cancelled");
@@ -82,10 +97,7 @@ fn ensure_ruby_runtime(version: &str) -> Result<String> {
         .default(true)
         .interact()?
     {
-        let rt = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()?;
-        rt.block_on(manager.install(normalized))?;
+        run_async(manager.install(normalized))?;
         Ok(normalized.to_string())
     } else {
         anyhow::bail!("Ruby setup cancelled");
@@ -106,10 +118,7 @@ fn ensure_java_runtime(version: &str) -> Result<String> {
         .default(true)
         .interact()?
     {
-        let rt = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()?;
-        rt.block_on(manager.install(normalized))?;
+        run_async(manager.install(normalized))?;
         Ok(normalized.to_string())
     } else {
         anyhow::bail!("Java setup cancelled");
@@ -549,10 +558,7 @@ fn execute_process(
                 .default(true)
                 .interact()?
             {
-                let rt = tokio::runtime::Builder::new_multi_thread()
-                    .enable_all()
-                    .build()?;
-                rt.block_on(rust_manager.ensure_toolchain(&request))?;
+                run_async(rust_manager.ensure_toolchain(&request))?;
             } else {
                 anyhow::bail!("Rust toolchain setup cancelled");
             }
@@ -677,11 +683,8 @@ fn ensure_node_runtime(version: &str) -> Result<String> {
         .default(true)
         .interact()?
     {
-        let rt = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()?;
-        let resolved = rt.block_on(node_manager.resolve_alias(normalized))?;
-        rt.block_on(node_manager.install(&resolved))?;
+        let resolved = run_async(node_manager.resolve_alias(normalized))?;
+        run_async(node_manager.install(&resolved))?;
         Ok(resolved)
     } else {
         anyhow::bail!("Node.js setup cancelled");
@@ -702,11 +705,8 @@ fn ensure_bun_runtime(version: &str) -> Result<String> {
         .default(true)
         .interact()?
     {
-        let rt = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()?;
-        let resolved = rt.block_on(bun_manager.resolve_alias(normalized))?;
-        rt.block_on(bun_manager.install(&resolved))?;
+        let resolved = run_async(bun_manager.resolve_alias(normalized))?;
+        run_async(bun_manager.install(&resolved))?;
         Ok(resolved)
     } else {
         anyhow::bail!("Bun setup cancelled");

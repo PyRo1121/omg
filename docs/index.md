@@ -26,6 +26,8 @@ Welcome to the OMG documentation hub. This set of docs expands on the README wit
 - Daemon-optional fast path with cached searches
 - Graded security and policy enforcement
 - Environment lockfiles for team sync
+- **Built-in mise**: 100+ runtimes without external installation
+- **Pure Rust ALPM**: V1/V2 desc format support for complete package database parsing
 
 ## Conventions
 - Commands are shown as `omg <command>` unless otherwise specified.

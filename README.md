@@ -50,9 +50,10 @@ It now ships a full **runtime-aware task runner**, Bun-first JavaScript workflow
 
 ### 🛠️ Unified Runtime Management
 One command to rule them all. No more `.nvmrc` vs `.tool-versions` confusion.
-- **Supported**: Node.js, Bun, Python, Go, Rust, Ruby, and Java.
+- **Native Support**: Node.js, Bun, Python, Go, Rust, Ruby, and Java with pure Rust implementations.
+- **Built-in Mise**: 100+ additional runtimes (Deno, Elixir, Zig, Erlang, Swift, etc.) via **bundled mise** - no separate installation required!
 - **Auto-Detection**: OMG detects required versions by climbing the directory tree for config files (`.nvmrc`, `.bun-version`, `.tool-versions`, `.mise.toml`, `.mise.local.toml`, `rust-toolchain.toml`).
-- **Mise Runtime Support**: When a runtime isn't native, OMG falls back to `mise` (e.g., `omg run` honors `.mise.toml` and `.tool-versions`).
+- **Seamless Fallback**: When a runtime isn't natively supported, OMG automatically downloads and uses mise - zero user intervention needed.
 - **Node + NVM**: Prefers OMG-managed Node installs, but transparently falls back to local NVM versions when present.
 - **Rust Toolchains**: Native Rust downloads with `rust-toolchain.toml` support (components, targets, profiles).
 - **List Available**: `omg list node --available` shows real-time versions from official upstream APIs.
@@ -402,14 +403,17 @@ Below is a high-level map of the command surface. Run `omg <command> --help` for
 - AUR packages are built in parallel using configured concurrency.
 
 ### Runtime Management
-Supported runtimes: **node, bun, python, go, rust, ruby, java**.
+**Native runtimes**: node, bun, python, go, rust, ruby, java (pure Rust implementations).
+**Extended runtimes**: 100+ more via built-in mise (deno, elixir, zig, erlang, swift, dotnet, php, etc.).
 
 **Version detection**
 - OMG scans parent directories for runtime version files.
-- `.tool-versions` supports multiple runtimes in one file.
+- Supports: `.nvmrc`, `.node-version`, `.python-version`, `.ruby-version`, `.go-version`, `.java-version`, `.bun-version`, `rust-toolchain.toml`, `.tool-versions`, `.mise.toml`
+- `package.json` engines/volta fields are also detected for Node.js
 
 **Commands**
 - `omg use node 20.10.0` installs and activates
+- `omg use deno 1.40.0` auto-installs mise if needed, then installs deno
 - `omg list node --available` shows remote versions
 - `omg which python` prints the active version
 

@@ -166,15 +166,8 @@ pub async fn use_version(runtime: &str, version: Option<&str>) -> Result<()> {
                     "→".blue(),
                     runtime.yellow()
                 );
-                // Need async context for install
-                let rt = tokio::runtime::Handle::try_current();
-                if let Ok(handle) = rt {
-                    handle.block_on(MISE.ensure_installed())?;
-                } else {
-                    // Create a new runtime if we're not in one
-                    let rt = tokio::runtime::Runtime::new()?;
-                    rt.block_on(MISE.ensure_installed())?;
-                }
+                // We're already in an async context (use_version is async)
+                MISE.ensure_installed().await?;
             }
             MISE.use_version(runtime, &version)?;
         }

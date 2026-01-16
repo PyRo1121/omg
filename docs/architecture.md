@@ -38,9 +38,11 @@ This page is the high-level map; each subsystem has its own deep dive.
   - Debian/Ubuntu: index built from APT cache.
 
 ## Runtime Management
-- Pure Rust implementations per runtime via a common `RuntimeManager` trait.
-- Auto-detection via version files (`.nvmrc`, `.python-version`, `.tool-versions`, etc.).
+- **Native runtimes**: Pure Rust implementations for Node, Python, Go, Rust, Ruby, Java, Bun via `RuntimeManager` trait.
+- **Extended runtimes**: Built-in `MiseManager` provides 100+ additional runtimes (Deno, Elixir, Zig, etc.) with automatic mise download.
+- Auto-detection via version files (`.nvmrc`, `.python-version`, `.tool-versions`, `.mise.toml`, etc.).
 - Active version probes are stored in daemon status caches.
+- Mise binary is bundled at `~/.local/share/omg/mise/mise` - no external installation required.
 
 ## Security Model
 - Audit workflows are served by the daemon for speed.

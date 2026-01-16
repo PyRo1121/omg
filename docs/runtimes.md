@@ -4,7 +4,9 @@ OMG provides pure Rust implementations for managing multiple language runtimes w
 
 ## Supported Runtimes
 
-OMG currently supports seven major runtimes:
+### Native Runtimes (Pure Rust)
+
+OMG natively supports seven major runtimes with pure Rust implementations:
 
 | Runtime | Manager | Version Files | Binary Names |
 |---------|---------|---------------|--------------|
@@ -15,6 +17,26 @@ OMG currently supports seven major runtimes:
 | Ruby | `RubyManager` | `.ruby-version` | `ruby`, `gem` |
 | Java | `JavaManager` | `.java-version` | `java`, `javac` |
 | Bun | `BunManager` | `.bun-version` | `bun`, `bunx` |
+
+### Extended Runtimes (via Built-in Mise)
+
+For runtimes not natively supported, OMG includes a **built-in mise manager** that automatically downloads and manages mise when needed. This provides access to 100+ additional runtimes:
+
+| Category | Runtimes |
+|----------|----------|
+| **JavaScript/TypeScript** | Deno, Bun (alternative) |
+| **Functional** | Elixir, Erlang, Haskell, OCaml, Clojure |
+| **Systems** | Zig, Nim, Crystal, D |
+| **Mobile/Native** | Swift, Kotlin, Flutter, Dart |
+| **Enterprise** | .NET, PHP, Perl, Lua |
+| **Data Science** | Julia, R |
+| **And many more...** | 100+ runtimes supported |
+
+**How it works:**
+1. When you run `omg use <runtime>` for a non-native runtime, OMG checks if mise is available
+2. If mise isn't installed, OMG automatically downloads it to `~/.local/share/omg/mise/`
+3. OMG then uses mise to install and manage the requested runtime
+4. No manual mise installation required - it's completely seamless
 
 ### Runtime Enum
 
@@ -490,15 +512,82 @@ All downloads are verified:
 - **Verification**: Check binary integrity
 - **Audit Trail**: Log all operations
 
+## MiseManager
+
+The `MiseManager` handles the built-in mise integration:
+
+```rust
+pub struct MiseManager {
+    bin_dir: PathBuf,      // ~/.local/share/omg/mise/
+    mise_bin: PathBuf,     // ~/.local/share/omg/mise/mise
+    client: reqwest::Client,
+}
+
+impl MiseManager {
+    /// Check if mise is available (bundled or system)
+    pub fn is_available(&self) -> bool;
+    
+    /// Get path to mise binary
+    pub fn mise_path(&self) -> PathBuf;
+    
+    /// Download and install mise if not available
+    pub async fn ensure_installed(&self) -> Result<()>;
+    
+    /// Use a specific version of a runtime via mise
+    pub fn use_version(&self, runtime: &str, version: &str) -> Result<()>;
+    
+    /// Get current version of a runtime
+    pub fn current_version(&self, runtime: &str) -> Result<Option<String>>;
+    
+    /// List installed runtimes via mise
+    pub fn list_installed(&self) -> Result<Vec<String>>;
+}
+```
+
+### Auto-Installation Flow
+
+When a user requests a non-native runtime:
+
+```
+omg use deno 1.40.0
+     │
+     ▼
+┌─────────────────────┐
+│ Is runtime native?  │──Yes──▶ Use native manager
+└─────────────────────┘
+     │ No
+     ▼
+┌─────────────────────┐
+│ Is mise available?  │──Yes──▶ Use mise
+└─────────────────────┘
+     │ No
+     ▼
+┌─────────────────────┐
+│ Download mise from  │
+│ GitHub releases     │
+└─────────────────────┘
+     │
+     ▼
+┌─────────────────────┐
+│ Install to          │
+│ ~/.local/share/omg/ │
+│ mise/mise           │
+└─────────────────────┘
+     │
+     ▼
+┌─────────────────────┐
+│ Use mise to install │
+│ requested runtime   │
+└─────────────────────┘
+```
+
 ## Future Enhancements
 
-### Additional Runtimes
+### Additional Native Runtimes
 
-Planned support for:
-- **PHP**: Composer integration
-- **Deno**: TypeScript runtime
-- **Elixir**: BEAM ecosystem
-- **.NET**: Core runtime support
+With mise built-in, all 100+ runtimes are now available. Future work focuses on:
+- **Performance**: Native implementations for popular runtimes
+- **Integration**: Deeper mise configuration support
 
 ### Advanced Features
 
