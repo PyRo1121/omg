@@ -1,12 +1,12 @@
 # Caching & Indexing
 
-OMG uses a multi-layered caching strategy to deliver sub-millisecond response times. This covers the in-memory LRU cache, persistent LMDB cache, and the official package index with fuzzy search.
+OMG uses a multi-layered caching strategy to deliver sub-millisecond response times. This covers the in-memory moka cache, persistent redb storage, and the official package index with fuzzy search.
 
-## In-Memory LRU Cache (`PackageCache`)
+## In-Memory Cache (`PackageCache`)
 
 ### Architecture Overview
 
-The `PackageCache` is a high-performance, thread-safe caching structure designed for concurrent read/write operations. It uses a combination of `DashMap` (concurrent hash map) and `RwLock<VecDeque>` to implement an LRU eviction policy with TTL support.
+The `PackageCache` uses `moka`, a high-performance, concurrent caching library for Rust. It provides thread-safe caching with TTL and size-based eviction out of the box.
 
 ### Data Structures
 
@@ -103,23 +103,24 @@ pub fn stats(&self) -> CacheStats {
 
 ## Persistent Cache (`PersistentCache`)
 
-### LMDB Integration
+### redb Integration
 
-The persistent cache uses LMDB (Lightning Memory-Mapped Database) for durability across daemon restarts:
+The persistent cache uses redb (pure Rust embedded database) for durability across daemon restarts:
 
 ```rust
 pub struct PersistentCache {
-    env: Env,  // LMDB environment
-    status_db: Database<Str, SerdeJson<StatusResult>>,
+    db: Database,
+    // status table for StatusResult
 }
 ```
 
 ### Configuration
 
-- **Map size**: 10MB (sufficient for status metadata)
-- **Database**: Single named database "status"
-- **Serialization**: `bincode` for compact binary storage
+- **Storage**: Single database file (`cache.redb`)
+- **Tables**: `status` table for system status
+- **Serialization**: bincode for compact binary storage
 - **Transactions**: ACID compliance with read/write transactions
+- **No configuration needed**: redb auto-sizes appropriately
 
 ### Operations
 
@@ -260,16 +261,12 @@ This strategy allows users to find packages by either name or description keywor
 
 ## Cache Configuration
 
-### Default Values
+### Cache Size
 
-```rust
-impl Default for PackageCache {
-    fn default() -> Self {
-        // 1000 entries, 5 minute TTL
-        Self::new(1000, 300)
-    }
-}
-```
+monitor cache effectiveness through:
+- Hit/miss ratios (can be added via moka metrics)
+- Entry count from `cache.entry_count()`
+- Memory usage patterns
 
 ### Tuning Considerations
 
@@ -306,6 +303,6 @@ Monitor cache effectiveness through:
 
 - **Multi-repo Support**: Index structure supports additional repositories
 - **Distributed Cache**: Could extend to Redis for multi-node scenarios
-- **Snapshot Support**: LMDB allows for consistent snapshots
+- **redb snapshots**: Supports consistent backup and restore
 
-Source: `src/daemon/index.rs`.
+Source: `src/daemon/index.rs`, `src/daemon/cache.rs`, `src/daemon/db.rs`.

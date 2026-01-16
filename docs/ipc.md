@@ -53,12 +53,12 @@ This reduces system calls from 2 to 1 per message, critical for sub-millisecond 
 
 ### Bincode Choice
 
-Bincode is selected for serialization due to:
+Bincode 2.0 is selected for serialization due to:
 
 - **Performance**: No schema overhead, direct binary mapping
 - **Size**: Compact representation (no field names)
 - **Speed**: Zero-copy deserialization where possible
-- **Safety**: Compile-time type checking
+- **Safety**: Compile-time type checking via `Encode`/`Decode` traits
 
 ### Serialization Performance
 

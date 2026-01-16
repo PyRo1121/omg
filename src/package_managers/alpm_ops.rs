@@ -8,6 +8,7 @@ use owo_colors::OwoColorize;
 
 use crate::core::{paths, security::pgp::PgpVerifier};
 use crate::package_managers::pacman_db;
+use crate::package_managers::types::PackageInfo;
 
 /// Check available updates using direct DB comparison - INSTANT
 /// Get comprehensive system status (counts + updates) in a single pass - FAST
