@@ -1,8 +1,8 @@
 [package]
 name = "omg"
-version = "0.1.28"
+version = "0.1.29"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.92"
 description = "The Fastest Unified Package Manager for Arch Linux + All Language Runtimes"
 authors = ["OMG Team"]
 license = "MIT"
@@ -60,16 +60,16 @@ httpdate = "1.0"
 # Filesystem
 tokio-util = { version = "0.7.13", features = ["io", "codec"] }
 
-# Archives + compression (pure Rust - no subprocess)
+# Archives + compression (PURE RUST - no C deps)
 tar = "0.4.43"
-flate2 = "1.0.35"
-zip = "2.2.2"
-xz2 = "0.1.7"
+flate2 = { version = "1.0.35", default-features = false, features = ["rust_backend"] }  # miniz_oxide
+zip = { version = "2.2.2", default-features = false, features = ["deflate", "time"] }
+lzma-rs = "0.3"  # Pure Rust XZ/LZMA (replaces xz2)
 regex = "1.11.1"
-zstd = "0.13.2"
+ruzstd = "0.8"  # Pure Rust zstd decoder (replaces zstd)
 
-# Git operations (no subprocess)
-git2 = "0.20.3"
+# Git operations - using command-line git (always available on Arch)
+# Removed libgit2/gix dependency for simpler builds
 
 # Memory management
 parking_lot = "0.12.3"
@@ -101,11 +101,19 @@ hex = "0.4.3"
 # Date & Time
 jiff = { version = "0.2", features = ["serde"] }
 
-# Database (LMDB - Fastest for read-heavy caching)
-heed = "0.20.5"
+# Database (PURE RUST embedded DB - replaces LMDB)
+redb = "3.1"
 
-# Direct libalpm bindings (10-100x faster than spawning pacman)
+# Direct libalpm bindings (for transactions - install/remove/upgrade)
 alpm = "5.0.2"
+
+# Official Arch Linux pure Rust ALPM ecosystem (archlinux/alpm)
+# For parsing/inspection - pure Rust, spec-compliant
+alpm-types = "0.11"
+alpm-srcinfo = "0.6"
+alpm-db = "0.2"
+alpm-repo-db = "0.1"
+alpm-pkginfo = "0.6"
 
 # Process execution
 which = "7.0.0"
@@ -120,12 +128,12 @@ tempfile = "3.15.0"
 # Data parallelism
 rayon = "1.11"
 
-# Security (Phase 4.2)
-sequoia-openpgp = { version = "2.2.0-pqc.1", features = ["crypto-nettle"] }
+# Security (Phase 4.2) - PURE RUST crypto backend (for package verification, not secrets)
+sequoia-openpgp = { version = "2.2.0-pqc.1", default-features = false, features = ["crypto-rust", "allow-experimental-crypto", "allow-variable-time-crypto"] }
 nucleo-matcher = "0.3.1"
 dirs = "6.0.0"
 libc = "0.2.180"
-mimalloc = "0.1.48"
+# mimalloc removed - using system allocator (pure Rust)
 ahash = "0.8.12"
 uuid = { version = "1.12", features = ["v4"] }
 ratatui = "0.29"
