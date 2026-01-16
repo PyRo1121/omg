@@ -58,11 +58,15 @@ One command to rule them all. No more `.nvmrc` vs `.tool-versions` confusion.
 - **Rust Toolchains**: Native Rust downloads with `rust-toolchain.toml` support (components, targets, profiles).
 - **List Available**: `omg list node --available` shows real-time versions from official upstream APIs.
 
-### 🛡️ Graded Security (2026 Standard)
-OMG doesn't just install; it audits.
-- **SLSA & PGP**: Built-in verification for build provenance and signatures.
+### 🛡️ Enterprise-Grade Security (2026 Standard)
+OMG doesn't just install; it audits, verifies, and protects.
+- **SLSA & PGP**: Built-in verification for build provenance and signatures using Sequoia-OpenPGP (PQC-ready).
+- **Sigstore/Rekor Integration**: Binary transparency via the Sigstore public good infrastructure.
 - **Security Grading**: Every package is assigned a grade from `LOCKED` (Verified SLSA) to `RISK` (Known Vulnerabilities).
-- **Policy Enforcement**: Define a global policy (`omg.policy.toml`) to block packages that don't meet your team's security standards.
+- **SBOM Generation**: CycloneDX 1.5 compliant Software Bill of Materials for FDA, FedRAMP, and SOC2 compliance.
+- **Secret Scanning**: Detect leaked credentials (AWS keys, GitHub tokens, private keys) before they're committed.
+- **Tamper-Proof Audit Logs**: Hash-chained audit entries with integrity verification for compliance.
+- **Policy Enforcement**: Define a global policy (`policy.toml`) to block packages that don't meet your team's security standards.
 
 ### 👥 Team Sync & Drift Detection
 - **Fingerprinting**: Generate a deterministic SHA256 hash of your entire environment (runtimes + packages).
@@ -370,7 +374,14 @@ Below is a high-level map of the command surface. Run `omg <command> --help` for
 **System & security**
 - `omg status`: system overview (packages, updates, runtimes, security)
 - `omg doctor`: health checks
-- `omg audit`: security audit (daemon required)
+- `omg audit`: security audit suite with subcommands:
+  - `omg audit scan`: vulnerability scanning (default)
+  - `omg audit sbom`: generate CycloneDX 1.5 SBOM
+  - `omg audit secrets`: scan for leaked credentials
+  - `omg audit log`: view tamper-proof audit log
+  - `omg audit verify`: verify audit log integrity
+  - `omg audit policy`: show security policy status
+  - `omg audit slsa <pkg>`: check SLSA provenance
 
 **Workflow helpers**
 - `omg run <task> [-- <args...>]`: task runner
@@ -418,13 +429,22 @@ Below is a high-level map of the command surface. Run `omg <command> --help` for
 - `omg which python` prints the active version
 
 ### Security Model
-OMG assigns security grades based on package metadata and vulnerability scan results:
-- **LOCKED**: SLSA + PGP verified
-- **VERIFIED**: PGP / checksum verified
+OMG implements enterprise-grade security with defense-in-depth:
+
+**Security Grades**
+- **LOCKED**: SLSA Level 3 + PGP verified (core system packages)
+- **VERIFIED**: PGP / checksum verified (official repos)
 - **COMMUNITY**: AUR / unsigned sources
 - **RISK**: known vulnerabilities found
 
-You can enforce a policy in `~/.config/omg/policy.toml`:
+**Enterprise Security Features**
+- **SBOM Generation**: `omg audit sbom` generates CycloneDX 1.5 compliant SBOMs
+- **Secret Scanning**: `omg audit secrets` detects 20+ credential types (AWS, GitHub, Stripe, etc.)
+- **Audit Logging**: Tamper-proof, hash-chained logs with `omg audit verify`
+- **SLSA Verification**: `omg audit slsa <pkg>` checks Rekor transparency logs
+- **Vulnerability Scanning**: OSV.dev + Arch Linux Security Advisory integration
+
+**Policy Enforcement** (`~/.config/omg/policy.toml`):
 
 ```toml
 minimum_grade = "Verified"
@@ -433,6 +453,8 @@ require_pgp = true
 allowed_licenses = ["MIT", "Apache-2.0"]
 banned_packages = ["example-bad-package"]
 ```
+
+See [docs/security.md](docs/security.md) for complete security documentation.
 
 ### Environment Lockfiles
 OMG captures environment state (runtime versions + explicit packages) into `omg.lock`.

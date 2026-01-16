@@ -137,8 +137,31 @@ async fn main() -> Result<()> {
         Commands::Doctor => {
             doctor::run().await?;
         }
-        Commands::Audit => {
-            security::audit().await?;
+        Commands::Audit { command } => {
+            use omg_lib::cli::AuditCommands;
+            match command {
+                Some(AuditCommands::Scan) | None => {
+                    security::scan().await?;
+                }
+                Some(AuditCommands::Sbom { output, vulns }) => {
+                    security::generate_sbom(output, vulns).await?;
+                }
+                Some(AuditCommands::Secrets { path }) => {
+                    security::scan_secrets(path)?;
+                }
+                Some(AuditCommands::Log { limit, severity }) => {
+                    security::view_audit_log(limit, severity)?;
+                }
+                Some(AuditCommands::Verify) => {
+                    security::verify_audit_log()?;
+                }
+                Some(AuditCommands::Policy) => {
+                    security::show_policy()?;
+                }
+                Some(AuditCommands::Slsa { package }) => {
+                    security::check_slsa(&package).await?;
+                }
+            }
         }
         Commands::Run {
             task,
