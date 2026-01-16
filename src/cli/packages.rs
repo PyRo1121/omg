@@ -667,9 +667,11 @@ pub async fn update(check_only: bool) -> Result<()> {
 
     let pb = style::spinner("Checking for updates...");
 
-    // STEP 2: Get both official and AUR updates
-    let official_updates_raw = check_updates_cached().unwrap_or_default();
-    let aur_updates = aur.get_update_list().await.unwrap_or_default();
+    // STEP 2: Get both official and AUR updates IN PARALLEL
+    let (official_updates_raw, aur_updates) = tokio::join!(
+        async { check_updates_cached().unwrap_or_default() },
+        async { aur.get_update_list().await.unwrap_or_default() }
+    );
 
     pb.finish_and_clear();
 
@@ -811,7 +813,11 @@ pub async fn update(check_only: bool) -> Result<()> {
         println!("{} Fetching PKGBUILDs...", style::dim("→"));
         let aur_names: Vec<String> = aur_updates.iter().map(|(n, _, _)| n.clone()).collect();
 
-        // Parallel git operations - 16 concurrent
+        // Parallel git operations - use all cores for network I/O
+        let git_concurrency = std::thread::available_parallelism()
+            .map(std::num::NonZero::get)
+            .unwrap_or(8)
+            .max(16); // At least 16 for network I/O bound tasks
         let clone_tasks: Vec<_> = aur_names
             .iter()
             .map(|name| {
@@ -834,33 +840,42 @@ pub async fn update(check_only: bool) -> Result<()> {
             })
             .collect();
 
-        let clone_results: Vec<_> = futures::future::join_all(clone_tasks).await;
+        // Use buffered stream for controlled concurrency
+        let mut clone_stream = futures::stream::iter(clone_tasks).buffer_unordered(git_concurrency);
+        let mut clone_results = Vec::new();
+        while let Some(result) = clone_stream.next().await {
+            clone_results.push(result);
+        }
         println!(
             "{} Fetched {} PKGBUILDs",
             style::success("✓"),
             clone_results.len()
         );
 
-        // PHASE 2: Parse ALL PKGBUILDs and collect ALL dependencies
+        // PHASE 2: Parse ALL PKGBUILDs in parallel using rayon
         println!("{} Resolving dependencies...", style::dim("→"));
+        let parse_results: Vec<_> = clone_results
+            .iter()
+            .filter_map(|(_name, pkgbuild_path)| {
+                crate::package_managers::pkgbuild::PkgBuild::parse(pkgbuild_path).ok()
+            })
+            .collect();
+
         let mut all_makedeps: std::collections::HashSet<String> = std::collections::HashSet::new();
         let mut all_deps: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-        for (_name, pkgbuild_path) in &clone_results {
-            if let Ok(pkgbuild) = crate::package_managers::pkgbuild::PkgBuild::parse(pkgbuild_path)
-            {
-                for dep in &pkgbuild.depends {
-                    let dep_name = dep.split(['>', '<', '=']).next().unwrap_or(dep);
-                    all_deps.insert(dep_name.to_string());
-                }
-                for dep in &pkgbuild.makedepends {
-                    let dep_name = dep.split(['>', '<', '=']).next().unwrap_or(dep);
-                    all_makedeps.insert(dep_name.to_string());
-                }
-                for dep in &pkgbuild.checkdepends {
-                    let dep_name = dep.split(['>', '<', '=']).next().unwrap_or(dep);
-                    all_makedeps.insert(dep_name.to_string());
-                }
+        for pkgbuild in &parse_results {
+            for dep in &pkgbuild.depends {
+                let dep_name = dep.split(['>', '<', '=']).next().unwrap_or(dep);
+                all_deps.insert(dep_name.to_string());
+            }
+            for dep in &pkgbuild.makedepends {
+                let dep_name = dep.split(['>', '<', '=']).next().unwrap_or(dep);
+                all_makedeps.insert(dep_name.to_string());
+            }
+            for dep in &pkgbuild.checkdepends {
+                let dep_name = dep.split(['>', '<', '=']).next().unwrap_or(dep);
+                all_makedeps.insert(dep_name.to_string());
             }
         }
 
@@ -914,9 +929,10 @@ pub async fn update(check_only: bool) -> Result<()> {
         }
 
         // PHASE 4: Build packages in parallel (deps already installed)
+        // Use all available cores - modern CPUs like i9-14900K have 32 threads
         let mut built_packages: Vec<(String, String, std::path::PathBuf)> = Vec::new();
         let mut failed_builds: Vec<(String, String)> = Vec::new();
-        let concurrency = aur.build_concurrency().clamp(1, 8);
+        let concurrency = aur.build_concurrency().clamp(1, 32);
 
         let mut stream = futures::stream::iter(aur_updates.into_iter().enumerate())
             .map(|(i, (name, _old_ver, new_ver))| {

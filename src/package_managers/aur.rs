@@ -197,7 +197,8 @@ impl AurClient {
     ) -> Result<Vec<(String, Version, Version)>> {
         let mut updates = Vec::new();
         let chunked_names = Self::chunk_aur_names(packages);
-        let concurrency = self.settings.aur.build_concurrency.clamp(1, 8);
+        // Network I/O bound - use higher concurrency
+        let concurrency = self.settings.aur.build_concurrency.clamp(4, 16);
 
         let mut stream = futures::stream::iter(chunked_names)
             .map(|chunk| {
