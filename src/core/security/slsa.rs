@@ -169,10 +169,7 @@ impl SlsaVerifier {
 
     /// Query Rekor transparency log for an artifact hash
     pub async fn query_rekor(&self, artifact_hash: &str) -> Result<Vec<RekorEntry>> {
-        let url = format!(
-            "{}/api/v1/index/retrieve",
-            self.rekor_url
-        );
+        let url = format!("{}/api/v1/index/retrieve", self.rekor_url);
 
         let response = self
             .client
@@ -189,7 +186,7 @@ impl SlsaVerifier {
         }
 
         let uuids: Vec<String> = response.json().await.unwrap_or_default();
-        
+
         let mut entries = Vec::new();
         for uuid in uuids.iter().take(5) {
             if let Ok(entry) = self.get_rekor_entry(uuid).await {
@@ -203,7 +200,7 @@ impl SlsaVerifier {
     /// Get a specific Rekor entry by UUID
     async fn get_rekor_entry(&self, uuid: &str) -> Result<RekorEntry> {
         let url = format!("{}/api/v1/log/entries/{}", self.rekor_url, uuid);
-        
+
         let response = self
             .client
             .get(&url)
@@ -211,17 +208,17 @@ impl SlsaVerifier {
             .await
             .context("Failed to get Rekor entry")?;
 
-        let entry_map: std::collections::HashMap<String, serde_json::Value> = 
+        let entry_map: std::collections::HashMap<String, serde_json::Value> =
             response.json().await?;
-        
+
         if let Some((uuid, value)) = entry_map.into_iter().next() {
-            let log_index = value.get("logIndex")
+            let log_index = value.get("logIndex").and_then(|v| v.as_u64()).unwrap_or(0);
+            let integrated_time = value
+                .get("integratedTime")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0);
-            let integrated_time = value.get("integratedTime")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0);
-            let body = value.get("body")
+            let body = value
+                .get("body")
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
@@ -262,8 +259,7 @@ impl SlsaVerifier {
                             slsa_level: SlsaLevel::Level1,
                             transparency_log_entry: None,
                             builder_id: Some(provenance.builder.id),
-                            build_timestamp: provenance.metadata
-                                .and_then(|m| m.build_finished_on),
+                            build_timestamp: provenance.metadata.and_then(|m| m.build_finished_on),
                             error: None,
                         });
                     }
@@ -282,7 +278,7 @@ impl SlsaVerifier {
 
         // Found in Rekor - this is at least SLSA Level 2
         let entry = &rekor_entries[0];
-        
+
         Ok(VerificationResult {
             verified: true,
             slsa_level: SlsaLevel::Level2,
@@ -291,7 +287,7 @@ impl SlsaVerifier {
             build_timestamp: Some(
                 jiff::Timestamp::from_second(entry.integrated_time as i64)
                     .map(|t| t.strftime("%Y-%m-%dT%H:%M:%SZ").to_string())
-                    .unwrap_or_default()
+                    .unwrap_or_default(),
             ),
             error: None,
         })

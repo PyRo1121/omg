@@ -192,7 +192,9 @@ impl SbomGenerator {
         let installed = crate::package_managers::list_installed_fast()
             .map_err(|e| anyhow::anyhow!("Failed to list packages: {e}"))?;
 
-        let timestamp = jiff::Zoned::now().strftime("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let timestamp = jiff::Zoned::now()
+            .strftime("%Y-%m-%dT%H:%M:%SZ")
+            .to_string();
         let serial_number = format!("urn:uuid:{}", uuid::Uuid::new_v4());
 
         let mut components = Vec::with_capacity(installed.len());
@@ -202,7 +204,7 @@ impl SbomGenerator {
         // Build component list
         for pkg in &installed {
             let bom_ref = format!("pkg:pacman/archlinux/{}@{}", pkg.name, pkg.version);
-            
+
             let component = SbomComponent {
                 component_type: "library".to_string(),
                 mime_type: None,
@@ -213,12 +215,10 @@ impl SbomGenerator {
                 purl: Some(format!("pkg:pacman/archlinux/{}@{}", pkg.name, pkg.version)),
                 licenses: vec![],
                 hashes: vec![],
-                external_references: vec![
-                    SbomExternalRef {
-                        ref_type: "website".to_string(),
-                        url: format!("https://archlinux.org/packages/?name={}", pkg.name),
-                    },
-                ],
+                external_references: vec![SbomExternalRef {
+                    ref_type: "website".to_string(),
+                    url: format!("https://archlinux.org/packages/?name={}", pkg.name),
+                }],
                 properties: None,
             };
 
@@ -240,8 +240,9 @@ impl SbomGenerator {
                 for issue in issues {
                     for pkg_name in &issue.packages {
                         if let Some(pkg) = installed.iter().find(|p| p.name == *pkg_name) {
-                            let bom_ref = format!("pkg:pacman/archlinux/{}@{}", pkg.name, pkg.version);
-                            
+                            let bom_ref =
+                                format!("pkg:pacman/archlinux/{}@{}", pkg.name, pkg.version);
+
                             let severity = match issue.severity.to_lowercase().as_str() {
                                 "critical" => Some("critical".to_string()),
                                 "high" => Some("high".to_string()),
@@ -320,11 +321,11 @@ impl SbomGenerator {
     pub fn export_default(&self, sbom: &Sbom) -> Result<std::path::PathBuf> {
         let sbom_dir = paths::data_dir().join("sbom");
         std::fs::create_dir_all(&sbom_dir)?;
-        
+
         let timestamp = jiff::Zoned::now().strftime("%Y%m%d-%H%M%S").to_string();
         let filename = format!("sbom-{timestamp}.json");
         let path = sbom_dir.join(&filename);
-        
+
         self.export_json(sbom, &path)?;
         Ok(path)
     }

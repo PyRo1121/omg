@@ -1,7 +1,5 @@
 use crate::core::client::DaemonClient;
-use crate::core::security::{
-    AuditLogger, AuditSeverity, SbomGenerator, SecurityPolicy,
-};
+use crate::core::security::{AuditLogger, AuditSeverity, SbomGenerator, SecurityPolicy};
 use anyhow::Result;
 use owo_colors::OwoColorize;
 
@@ -69,9 +67,9 @@ pub async fn generate_sbom(output: Option<String>, include_vulns: bool) -> Resul
     );
 
     let generator = SbomGenerator::new().with_vulnerabilities(include_vulns);
-    
+
     let sbom = generator.generate_system_sbom().await?;
-    
+
     let path = if let Some(output_path) = output {
         let path = std::path::PathBuf::from(&output_path);
         generator.export_json(&sbom, &path)?;
@@ -85,7 +83,7 @@ pub async fn generate_sbom(output: Option<String>, include_vulns: bool) -> Resul
         "✓".green(),
         sbom.components.len().to_string().cyan().bold()
     );
-    
+
     if !sbom.vulnerabilities.is_empty() {
         println!(
             "{} {} vulnerabilities included",
@@ -93,31 +91,32 @@ pub async fn generate_sbom(output: Option<String>, include_vulns: bool) -> Resul
             sbom.vulnerabilities.len().to_string().yellow().bold()
         );
     }
-    
-    println!("\n  {} {}", "Output:".dimmed(), path.display().to_string().white());
+
     println!(
-        "  {} CycloneDX 1.5 (JSON)",
-        "Format:".dimmed()
+        "\n  {} {}",
+        "Output:".dimmed(),
+        path.display().to_string().white()
     );
+    println!("  {} CycloneDX 1.5 (JSON)", "Format:".dimmed());
 
     Ok(())
 }
 
 /// View audit log entries
 pub fn view_audit_log(limit: usize, severity_filter: Option<String>) -> Result<()> {
-    println!(
-        "{} Security Audit Log\n",
-        "OMG".cyan().bold()
-    );
+    println!("{} Security Audit Log\n", "OMG".cyan().bold());
 
     let logger = match AuditLogger::new() {
         Ok(l) => l,
         Err(_) => {
-            println!("  {} No audit log exists yet. Events will be logged during package operations.", "ℹ".blue());
+            println!(
+                "  {} No audit log exists yet. Events will be logged during package operations.",
+                "ℹ".blue()
+            );
             return Ok(());
         }
     };
-    
+
     let entries = if let Some(sev) = severity_filter {
         let min_severity = match sev.to_lowercase().as_str() {
             "debug" => AuditSeverity::Debug,
@@ -161,17 +160,19 @@ pub fn view_audit_log(limit: usize, severity_filter: Option<String>) -> Result<(
         }
     }
 
-    println!("\n  {} Showing {} of {} entries", "ℹ".blue(), entries.len().min(limit), entries.len());
+    println!(
+        "\n  {} Showing {} of {} entries",
+        "ℹ".blue(),
+        entries.len().min(limit),
+        entries.len()
+    );
 
     Ok(())
 }
 
 /// Verify audit log integrity
 pub fn verify_audit_log() -> Result<()> {
-    println!(
-        "{} Verifying Audit Log Integrity...\n",
-        "OMG".cyan().bold()
-    );
+    println!("{} Verifying Audit Log Integrity...\n", "OMG".cyan().bold());
 
     let logger = match AuditLogger::new() {
         Ok(l) => l,
@@ -189,24 +190,18 @@ pub fn verify_audit_log() -> Result<()> {
     };
 
     if report.is_valid() {
-        println!(
-            "{} Audit log integrity verified",
-            "✓".green()
-        );
+        println!("{} Audit log integrity verified", "✓".green());
         println!("  {} {} entries", "Total:".dimmed(), report.total_entries);
         println!("  {} {} entries", "Valid:".dimmed(), report.valid_entries);
         println!("  {} Intact", "Chain:".dimmed());
     } else {
-        println!(
-            "{} Audit log integrity FAILED",
-            "✗".red().bold()
-        );
+        println!("{} Audit log integrity FAILED", "✗".red().bold());
         println!("  {} {} entries", "Total:".dimmed(), report.total_entries);
         println!("  {} {} entries", "Valid:".dimmed(), report.valid_entries);
-        let chain_status = if report.chain_valid { 
-            "Intact".to_string() 
-        } else { 
-            "BROKEN".red().to_string() 
+        let chain_status = if report.chain_valid {
+            "Intact".to_string()
+        } else {
+            "BROKEN".red().to_string()
         };
         println!("  {} {}", "Chain:".dimmed(), chain_status);
         if let Some(first_invalid) = &report.first_invalid_entry {
@@ -221,14 +216,15 @@ pub fn verify_audit_log() -> Result<()> {
 
 /// Show security policy status
 pub fn show_policy() -> Result<()> {
-    println!(
-        "{} Security Policy Status\n",
-        "OMG".cyan().bold()
-    );
+    println!("{} Security Policy Status\n", "OMG".cyan().bold());
 
     let policy = SecurityPolicy::load_default().unwrap_or_default();
 
-    println!("  {} {}", "Minimum Grade:".dimmed(), format!("{}", policy.minimum_grade).cyan());
+    println!(
+        "  {} {}",
+        "Minimum Grade:".dimmed(),
+        format!("{}", policy.minimum_grade).cyan()
+    );
     println!(
         "  {} {}",
         "AUR Allowed:".dimmed(),
@@ -262,7 +258,10 @@ pub fn show_policy() -> Result<()> {
         }
     }
 
-    println!("\n  {} Edit ~/.config/omg/policy.toml to customize", "ℹ".blue());
+    println!(
+        "\n  {} Edit ~/.config/omg/policy.toml to customize",
+        "ℹ".blue()
+    );
 
     Ok(())
 }
@@ -270,9 +269,9 @@ pub fn show_policy() -> Result<()> {
 /// Scan for leaked secrets
 pub fn scan_secrets(path: Option<String>) -> Result<()> {
     use crate::core::security::SecretScanner;
-    
+
     let scan_path = path.unwrap_or_else(|| ".".to_string());
-    
+
     println!(
         "{} Scanning for secrets in {}...\n",
         "OMG".cyan().bold(),
@@ -312,10 +311,18 @@ pub fn scan_secrets(path: Option<String>) -> Result<()> {
 
     for finding in result.findings.iter().take(20) {
         let severity_color = match finding.severity {
-            crate::core::security::secrets::SecretSeverity::Critical => finding.severity.to_string().red().bold().to_string(),
-            crate::core::security::secrets::SecretSeverity::High => finding.severity.to_string().yellow().to_string(),
-            crate::core::security::secrets::SecretSeverity::Medium => finding.severity.to_string().blue().to_string(),
-            crate::core::security::secrets::SecretSeverity::Low => finding.severity.to_string().dimmed().to_string(),
+            crate::core::security::secrets::SecretSeverity::Critical => {
+                finding.severity.to_string().red().bold().to_string()
+            }
+            crate::core::security::secrets::SecretSeverity::High => {
+                finding.severity.to_string().yellow().to_string()
+            }
+            crate::core::security::secrets::SecretSeverity::Medium => {
+                finding.severity.to_string().blue().to_string()
+            }
+            crate::core::security::secrets::SecretSeverity::Low => {
+                finding.severity.to_string().dimmed().to_string()
+            }
         };
 
         println!(
@@ -329,7 +336,11 @@ pub fn scan_secrets(path: Option<String>) -> Result<()> {
     }
 
     if result.total_findings > 20 {
-        println!("\n  {} ... and {} more", "ℹ".blue(), result.total_findings - 20);
+        println!(
+            "\n  {} ... and {} more",
+            "ℹ".blue(),
+            result.total_findings - 20
+        );
     }
 
     if result.has_critical() {
@@ -345,7 +356,7 @@ pub fn scan_secrets(path: Option<String>) -> Result<()> {
 /// Check SLSA provenance for a package
 pub async fn check_slsa(package: &str) -> Result<()> {
     use crate::core::security::SlsaVerifier;
-    
+
     println!(
         "{} Checking SLSA provenance for {}...\n",
         "OMG".cyan().bold(),
@@ -359,15 +370,18 @@ pub async fn check_slsa(package: &str) -> Result<()> {
     }
 
     let verifier = SlsaVerifier::new()?;
-    let result = verifier.verify_provenance(path, None::<&std::path::Path>).await?;
+    let result = verifier
+        .verify_provenance(path, None::<&std::path::Path>)
+        .await?;
 
     if result.verified {
+        println!("{} SLSA verification passed", "✓".green());
         println!(
-            "{} SLSA verification passed",
-            "✓".green()
+            "  {} {}",
+            "Level:".dimmed(),
+            result.slsa_level.to_string().cyan()
         );
-        println!("  {} {}", "Level:".dimmed(), result.slsa_level.to_string().cyan());
-        
+
         if let Some(entry) = &result.transparency_log_entry {
             println!("  {} {}", "Rekor Entry:".dimmed(), entry);
         }
@@ -378,14 +392,14 @@ pub async fn check_slsa(package: &str) -> Result<()> {
             println!("  {} {}", "Build Time:".dimmed(), timestamp);
         }
     } else {
-        println!(
-            "{} SLSA verification failed",
-            "✗".red()
-        );
+        println!("{} SLSA verification failed", "✗".red());
         if let Some(error) = &result.error {
             println!("  {} {}", "Reason:".dimmed(), error);
         }
-        println!("\n  {} Package has no SLSA provenance attestation.", "ℹ".blue());
+        println!(
+            "\n  {} Package has no SLSA provenance attestation.",
+            "ℹ".blue()
+        );
         println!("  {} This is normal for AUR packages.", "ℹ".blue());
     }
 

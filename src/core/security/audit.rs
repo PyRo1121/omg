@@ -16,22 +16,22 @@ pub enum AuditEventType {
     PackageRemove,
     PackageUpgrade,
     PackageDowngrade,
-    
+
     // Security operations
     SecurityAudit,
     VulnerabilityDetected,
     SignatureVerified,
     SignatureFailed,
     PolicyViolation,
-    
+
     // Configuration changes
     PolicyChanged,
     ConfigChanged,
-    
+
     // Authentication/Authorization
     DaemonStarted,
     DaemonStopped,
-    
+
     // SBOM operations
     SbomGenerated,
     SbomExported,
@@ -126,13 +126,16 @@ impl AuditLogger {
     pub fn new() -> Result<Self> {
         let log_dir = paths::data_dir().join("audit");
         std::fs::create_dir_all(&log_dir)?;
-        
+
         let log_path = log_dir.join("audit.jsonl");
-        
+
         // Get the last hash from the log file
         let last_hash = Self::get_last_hash(&log_path)?;
-        
-        Ok(Self { log_path, last_hash })
+
+        Ok(Self {
+            log_path,
+            last_hash,
+        })
     }
 
     /// Get the hash of the last entry in the log
@@ -143,7 +146,7 @@ impl AuditLogger {
 
         let file = File::open(path)?;
         let reader = BufReader::new(file);
-        
+
         let mut last_hash = "genesis".to_string();
         for line in reader.lines() {
             if let Ok(line) = line {
@@ -154,12 +157,18 @@ impl AuditLogger {
                 }
             }
         }
-        
+
         Ok(last_hash)
     }
 
     /// Log an audit event
-    pub fn log(&mut self, event: AuditEventType, severity: AuditSeverity, resource: &str, description: &str) -> Result<()> {
+    pub fn log(
+        &mut self,
+        event: AuditEventType,
+        severity: AuditSeverity,
+        resource: &str,
+        description: &str,
+    ) -> Result<()> {
         self.log_with_metadata(event, severity, resource, description, None)
     }
 
@@ -172,7 +181,9 @@ impl AuditLogger {
         description: &str,
         metadata: Option<serde_json::Value>,
     ) -> Result<()> {
-        let timestamp = jiff::Zoned::now().strftime("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
+        let timestamp = jiff::Zoned::now()
+            .strftime("%Y-%m-%dT%H:%M:%S%.3fZ")
+            .to_string();
         let id = uuid::Uuid::new_v4().to_string();
         let user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
 
@@ -205,11 +216,21 @@ impl AuditLogger {
 
         // Also emit to tracing for real-time monitoring
         match severity {
-            AuditSeverity::Debug => tracing::debug!(target: "audit", "{}: {}", entry.event_type_str(), description),
-            AuditSeverity::Info => tracing::info!(target: "audit", "{}: {}", entry.event_type_str(), description),
-            AuditSeverity::Warning => tracing::warn!(target: "audit", "{}: {}", entry.event_type_str(), description),
-            AuditSeverity::Error => tracing::error!(target: "audit", "{}: {}", entry.event_type_str(), description),
-            AuditSeverity::Critical => tracing::error!(target: "audit", "CRITICAL - {}: {}", entry.event_type_str(), description),
+            AuditSeverity::Debug => {
+                tracing::debug!(target: "audit", "{}: {}", entry.event_type_str(), description)
+            }
+            AuditSeverity::Info => {
+                tracing::info!(target: "audit", "{}: {}", entry.event_type_str(), description)
+            }
+            AuditSeverity::Warning => {
+                tracing::warn!(target: "audit", "{}: {}", entry.event_type_str(), description)
+            }
+            AuditSeverity::Error => {
+                tracing::error!(target: "audit", "{}: {}", entry.event_type_str(), description)
+            }
+            AuditSeverity::Critical => {
+                tracing::error!(target: "audit", "CRITICAL - {}: {}", entry.event_type_str(), description)
+            }
         }
 
         Ok(())
@@ -361,7 +382,12 @@ pub fn init_audit_logger() -> Result<()> {
 }
 
 /// Log an audit event using the global logger
-pub fn audit_log(event: AuditEventType, severity: AuditSeverity, resource: &str, description: &str) {
+pub fn audit_log(
+    event: AuditEventType,
+    severity: AuditSeverity,
+    resource: &str,
+    description: &str,
+) {
     if let Ok(mut guard) = AUDIT_LOGGER.lock() {
         if let Some(logger) = guard.as_mut() {
             let _ = logger.log(event, severity, resource, description);
@@ -379,7 +405,8 @@ pub fn audit_log_with_metadata(
 ) {
     if let Ok(mut guard) = AUDIT_LOGGER.lock() {
         if let Some(logger) = guard.as_mut() {
-            let _ = logger.log_with_metadata(event, severity, resource, description, Some(metadata));
+            let _ =
+                logger.log_with_metadata(event, severity, resource, description, Some(metadata));
         }
     }
 }

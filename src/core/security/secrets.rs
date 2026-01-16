@@ -229,7 +229,7 @@ impl SecretScanner {
     pub fn scan_file<P: AsRef<Path>>(&self, path: P) -> Result<Vec<SecretFinding>> {
         let content = std::fs::read_to_string(&path)?;
         let path_str = path.as_ref().display().to_string();
-        
+
         self.scan_content(&content, &path_str)
     }
 
@@ -241,7 +241,7 @@ impl SecretScanner {
             for pattern in &self.patterns {
                 if let Some(captures) = pattern.pattern.captures(line) {
                     let matched = captures.get(0).map(|m| m.as_str()).unwrap_or("");
-                    
+
                     // Skip if it looks like a placeholder or example
                     if self.is_placeholder(matched) {
                         continue;
@@ -265,13 +265,17 @@ impl SecretScanner {
     /// Scan a directory recursively for secrets
     pub fn scan_directory<P: AsRef<Path>>(&self, path: P) -> Result<Vec<SecretFinding>> {
         let mut findings = Vec::new();
-        
+
         self.scan_directory_recursive(path.as_ref(), &mut findings)?;
-        
+
         Ok(findings)
     }
 
-    fn scan_directory_recursive(&self, path: &Path, findings: &mut Vec<SecretFinding>) -> Result<()> {
+    fn scan_directory_recursive(
+        &self,
+        path: &Path,
+        findings: &mut Vec<SecretFinding>,
+    ) -> Result<()> {
         if !path.is_dir() {
             return Ok(());
         }
@@ -282,12 +286,21 @@ impl SecretScanner {
 
             // Skip common non-text directories
             if entry_path.is_dir() {
-                let dir_name = entry_path.file_name()
+                let dir_name = entry_path
+                    .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or("");
-                
-                if ["node_modules", ".git", "target", "vendor", "__pycache__", ".venv", "venv"]
-                    .contains(&dir_name)
+
+                if [
+                    "node_modules",
+                    ".git",
+                    "target",
+                    "vendor",
+                    "__pycache__",
+                    ".venv",
+                    "venv",
+                ]
+                .contains(&dir_name)
                 {
                     continue;
                 }
@@ -305,38 +318,85 @@ impl SecretScanner {
 
     /// Check if a file should be scanned
     fn is_scannable_file(&self, path: &Path) -> bool {
-        let extension = path.extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("");
+        let extension = path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
         let scannable_extensions = [
-            "rs", "py", "js", "ts", "jsx", "tsx", "go", "rb", "java", "kt",
-            "c", "cpp", "h", "hpp", "cs", "php", "sh", "bash", "zsh",
-            "yaml", "yml", "json", "toml", "ini", "cfg", "conf", "config",
-            "env", "properties", "xml", "md", "txt",
+            "rs",
+            "py",
+            "js",
+            "ts",
+            "jsx",
+            "tsx",
+            "go",
+            "rb",
+            "java",
+            "kt",
+            "c",
+            "cpp",
+            "h",
+            "hpp",
+            "cs",
+            "php",
+            "sh",
+            "bash",
+            "zsh",
+            "yaml",
+            "yml",
+            "json",
+            "toml",
+            "ini",
+            "cfg",
+            "conf",
+            "config",
+            "env",
+            "properties",
+            "xml",
+            "md",
+            "txt",
         ];
 
-        let file_name = path.file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("");
+        let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
         // Check for dotfiles that might contain secrets
         let sensitive_files = [
-            ".env", ".env.local", ".env.production", ".env.development",
-            ".npmrc", ".pypirc", ".netrc", ".gitconfig",
-            "credentials", "secrets", "config",
+            ".env",
+            ".env.local",
+            ".env.production",
+            ".env.development",
+            ".npmrc",
+            ".pypirc",
+            ".netrc",
+            ".gitconfig",
+            "credentials",
+            "secrets",
+            "config",
         ];
 
-        scannable_extensions.contains(&extension) 
+        scannable_extensions.contains(&extension)
             || sensitive_files.iter().any(|f| file_name.contains(f))
     }
 
     /// Check if a match looks like a placeholder
     fn is_placeholder(&self, text: &str) -> bool {
         let placeholders = [
-            "example", "sample", "test", "demo", "placeholder",
-            "xxx", "yyy", "zzz", "abc", "123", "fake", "dummy",
-            "your_", "my_", "<", ">", "${", "{{",
+            "example",
+            "sample",
+            "test",
+            "demo",
+            "placeholder",
+            "xxx",
+            "yyy",
+            "zzz",
+            "abc",
+            "123",
+            "fake",
+            "dummy",
+            "your_",
+            "my_",
+            "<",
+            ">",
+            "${",
+            "{{",
         ];
 
         let lower = text.to_lowercase();
@@ -348,12 +408,12 @@ impl SecretScanner {
         if text.len() <= 8 {
             return "*".repeat(text.len());
         }
-        
+
         let visible_chars = 4;
         let prefix = &text[..visible_chars];
         let suffix = &text[text.len() - visible_chars..];
         let hidden_len = text.len() - (visible_chars * 2);
-        
+
         format!("{}{}...{}", prefix, "*".repeat(hidden_len.min(10)), suffix)
     }
 }
@@ -371,10 +431,22 @@ pub struct SecretScanResult {
 
 impl SecretScanResult {
     pub fn from_findings(findings: Vec<SecretFinding>) -> Self {
-        let critical_count = findings.iter().filter(|f| f.severity == SecretSeverity::Critical).count();
-        let high_count = findings.iter().filter(|f| f.severity == SecretSeverity::High).count();
-        let medium_count = findings.iter().filter(|f| f.severity == SecretSeverity::Medium).count();
-        let low_count = findings.iter().filter(|f| f.severity == SecretSeverity::Low).count();
+        let critical_count = findings
+            .iter()
+            .filter(|f| f.severity == SecretSeverity::Critical)
+            .count();
+        let high_count = findings
+            .iter()
+            .filter(|f| f.severity == SecretSeverity::High)
+            .count();
+        let medium_count = findings
+            .iter()
+            .filter(|f| f.severity == SecretSeverity::Medium)
+            .count();
+        let low_count = findings
+            .iter()
+            .filter(|f| f.severity == SecretSeverity::Low)
+            .count();
 
         Self {
             total_findings: findings.len(),
@@ -400,9 +472,13 @@ mod tests {
         let scanner = SecretScanner::new();
         let content = "-----BEGIN RSA PRIVATE KEY-----\nMIIE...";
         let findings = scanner.scan_content(content, "key.pem").unwrap();
-        
+
         assert!(!findings.is_empty(), "Should detect private key");
-        assert!(findings.iter().any(|f| matches!(f.secret_type, SecretType::PrivateKey)));
+        assert!(
+            findings
+                .iter()
+                .any(|f| matches!(f.secret_type, SecretType::PrivateKey))
+        );
     }
 
     #[test]
@@ -410,7 +486,7 @@ mod tests {
         let scanner = SecretScanner::new();
         let content = "api_key = 'your_api_key_here'";
         let findings = scanner.scan_content(content, "config.py").unwrap();
-        
+
         assert!(findings.is_empty(), "Should ignore placeholder values");
     }
 
@@ -418,24 +494,22 @@ mod tests {
     fn test_redaction() {
         let scanner = SecretScanner::new();
         let redacted = scanner.redact("secret_token_1234567890abcdef");
-        
+
         assert!(redacted.contains("*"), "Should contain asterisks");
         assert!(redacted.len() > 0, "Should produce output");
     }
 
     #[test]
     fn test_scan_result_from_findings() {
-        let findings = vec![
-            SecretFinding {
-                secret_type: SecretType::PrivateKey,
-                file_path: "test.pem".to_string(),
-                line_number: 1,
-                matched_text: "-----BEGIN PRIVATE KEY-----".to_string(),
-                redacted: "****".to_string(),
-                severity: SecretSeverity::Critical,
-            },
-        ];
-        
+        let findings = vec![SecretFinding {
+            secret_type: SecretType::PrivateKey,
+            file_path: "test.pem".to_string(),
+            line_number: 1,
+            matched_text: "-----BEGIN PRIVATE KEY-----".to_string(),
+            redacted: "****".to_string(),
+            severity: SecretSeverity::Critical,
+        }];
+
         let result = SecretScanResult::from_findings(findings);
         assert_eq!(result.total_findings, 1);
         assert_eq!(result.critical_count, 1);
