@@ -76,7 +76,11 @@ impl PackageIndex {
             tracing::warn!("Failed to save index to cache: {e}");
         }
 
-        tracing::info!("Index built in {:?} ({} packages)", start.elapsed(), index.len());
+        tracing::info!(
+            "Index built in {:?} ({} packages)",
+            start.elapsed(),
+            index.len()
+        );
         Ok(index)
     }
 
