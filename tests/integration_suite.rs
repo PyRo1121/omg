@@ -1482,7 +1482,10 @@ mod version_detection {
         let combined = format!("{stdout}{stderr}");
         // Should detect version or show switching message
         assert!(
-            combined.contains("1.21") || combined.contains("Detected") || combined.contains("Switching") || combined.contains("go"),
+            combined.contains("1.21")
+                || combined.contains("Detected")
+                || combined.contains("Switching")
+                || combined.contains("go"),
             "Should detect go version from .go-version: {combined}"
         );
     }
