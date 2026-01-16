@@ -84,10 +84,9 @@ impl PythonManager {
                 if asset.name.contains(arch)
                     && asset.name.contains("linux-gnu")
                     && asset.name.contains("install_only")
+                    && let Some(version) = Self::extract_cpython_version(&asset.name)
                 {
-                    if let Some(version) = Self::extract_cpython_version(&asset.name) {
-                        versions.insert(version);
-                    }
+                    versions.insert(version);
                 }
             }
         }
@@ -323,10 +322,10 @@ impl PythonManager {
             return Ok(());
         }
 
-        if let Some(current) = self.current_version() {
-            if current == version {
-                let _ = fs::remove_file(&self.current_link);
-            }
+        if let Some(current) = self.current_version()
+            && current == version
+        {
+            let _ = fs::remove_file(&self.current_link);
         }
 
         fs::remove_dir_all(&version_dir)?;

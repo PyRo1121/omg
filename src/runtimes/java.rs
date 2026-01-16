@@ -287,10 +287,10 @@ impl JavaManager {
             return Ok(());
         }
 
-        if let Some(current) = self.current_version() {
-            if current == version {
-                let _ = fs::remove_file(&self.current_link);
-            }
+        if let Some(current) = self.current_version()
+            && current == version
+        {
+            let _ = fs::remove_file(&self.current_link);
         }
 
         fs::remove_dir_all(&version_dir)?;

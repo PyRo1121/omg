@@ -252,22 +252,22 @@ fn lock_runtimes(target_dir: &Path, stack: &str) -> Result<()> {
                 return Some(s.trim().trim_start_matches('v').to_string());
             }
             // Python: "Python 3.11.0\n" -> "3.11.0"
-            if cmd == "python" {
-                if let Some(v) = s.split_whitespace().nth(1) {
-                    return Some(v.to_string());
-                }
+            if cmd == "python"
+                && let Some(v) = s.split_whitespace().nth(1)
+            {
+                return Some(v.to_string());
             }
             // Go: "go version go1.21.0 linux/amd64" -> "1.21.0"
-            if cmd == "go" {
-                if let Some(v) = s.split_whitespace().nth(2) {
-                    return Some(v.trim_start_matches("go").to_string());
-                }
+            if cmd == "go"
+                && let Some(v) = s.split_whitespace().nth(2)
+            {
+                return Some(v.trim_start_matches("go").to_string());
             }
             // Rust: "rustc 1.75.0 (....)" -> "1.75.0"
-            if cmd == "rustc" {
-                if let Some(v) = s.split_whitespace().nth(1) {
-                    return Some(v.to_string());
-                }
+            if cmd == "rustc"
+                && let Some(v) = s.split_whitespace().nth(1)
+            {
+                return Some(v.to_string());
             }
         }
         None

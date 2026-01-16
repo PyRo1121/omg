@@ -66,11 +66,17 @@ pub fn extract_tar_gz_strip(archive_path: &Path, dest_dir: &Path, strip: usize) 
 
 /// Extract a .tar.xz archive to a directory
 pub fn extract_tar_xz(archive_path: &Path, dest_dir: &Path) -> Result<()> {
+    use std::io::BufReader;
+
     let file = File::open(archive_path)
         .with_context(|| format!("Failed to open archive: {}", archive_path.display()))?;
 
-    let decoder = xz2::read::XzDecoder::new(file);
-    let mut archive = Archive::new(decoder);
+    // Pure Rust XZ decompression with lzma-rs
+    let mut decompressed = Vec::new();
+    lzma_rs::xz_decompress(&mut BufReader::new(file), &mut decompressed)
+        .with_context(|| "Failed to decompress XZ archive")?;
+
+    let mut archive = Archive::new(decompressed.as_slice());
 
     fs::create_dir_all(dest_dir)?;
 
@@ -122,10 +128,10 @@ pub fn extract_zip_strip(archive_path: &Path, dest_dir: &Path, strip: usize) -> 
         if file.is_dir() {
             fs::create_dir_all(&outpath)?;
         } else {
-            if let Some(p) = outpath.parent() {
-                if !p.exists() {
-                    fs::create_dir_all(p)?;
-                }
+            if let Some(p) = outpath.parent()
+                && !p.exists()
+            {
+                fs::create_dir_all(p)?;
             }
             let mut outfile = File::create(&outpath)?;
             std::io::copy(&mut file, &mut outfile)?;

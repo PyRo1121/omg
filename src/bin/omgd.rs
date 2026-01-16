@@ -10,12 +10,7 @@ use tokio::net::UnixListener;
 use omg_lib::core::paths;
 use omg_lib::daemon::server;
 
-#[cfg(not(target_env = "msvc"))]
-use mimalloc::MiMalloc;
-
-#[cfg(not(target_env = "msvc"))]
-#[global_allocator]
-static GLOBAL: MiMalloc = MiMalloc;
+// Using system allocator (pure Rust - no C dependency)
 
 /// OMG Daemon - Background service for fast package operations
 #[derive(Parser, Debug)]

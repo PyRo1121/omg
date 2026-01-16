@@ -69,10 +69,11 @@ fn collect_sync_db_paths(sync_dir: &Path) -> Vec<(PathBuf, String)> {
                 .file_stem()
                 .and_then(|n| n.to_str())
                 .map(str::to_string);
-            if let Some(name) = name {
-                if !["core", "extra", "multilib"].contains(&name.as_str()) && path.is_file() {
-                    dbs.push((path, name));
-                }
+            if let Some(name) = name
+                && !["core", "extra", "multilib"].contains(&name.as_str())
+                && path.is_file()
+            {
+                dbs.push((path, name));
             }
         }
     }
@@ -135,14 +136,26 @@ pub fn parse_sync_db(path: &Path, repo_name: &str) -> Result<HashMap<String, Syn
                 // gzip
                 (Box::new(GzDecoder::new(file)), false)
             } else if magic[0..4] == [0x28, 0xb5, 0x2f, 0xfd] {
-                // zstd
-                (Box::new(zstd::stream::read::Decoder::new(file)?), true)
+                // zstd - use pure Rust ruzstd
+                (
+                    Box::new(
+                        ruzstd::decoding::StreamingDecoder::new(file)
+                            .map_err(|e| anyhow::anyhow!("zstd: {e}"))?,
+                    ),
+                    true,
+                )
             } else {
                 // Assume gzip
                 (Box::new(GzDecoder::new(file)), false)
             }
         } else if path_str.ends_with(".zst") {
-            (Box::new(zstd::stream::read::Decoder::new(file)?), true)
+            (
+                Box::new(
+                    ruzstd::decoding::StreamingDecoder::new(file)
+                        .map_err(|e| anyhow::anyhow!("zstd: {e}"))?,
+                ),
+                true,
+            )
         } else {
             (Box::new(GzDecoder::new(file)), false)
         }
@@ -308,17 +321,17 @@ pub fn check_updates_cached() -> Result<Vec<(String, String, String, String, Str
     let mut updates = Vec::new();
 
     for (name, local_pkg) in &local_cache.packages {
-        if let Some(sync_pkg) = sync_cache.packages.get(name) {
-            if compare_versions(&local_pkg.version, &sync_pkg.version) == std::cmp::Ordering::Less {
-                updates.push((
-                    name.clone(),
-                    local_pkg.version.clone(),
-                    sync_pkg.version.clone(),
-                    sync_pkg.repo.clone(),
-                    sync_pkg.filename.clone(),
-                    sync_pkg.csize,
-                ));
-            }
+        if let Some(sync_pkg) = sync_cache.packages.get(name)
+            && compare_versions(&local_pkg.version, &sync_pkg.version) == std::cmp::Ordering::Less
+        {
+            updates.push((
+                name.clone(),
+                local_pkg.version.clone(),
+                sync_pkg.version.clone(),
+                sync_pkg.repo.clone(),
+                sync_pkg.filename.clone(),
+                sync_pkg.csize,
+            ));
         }
     }
 
@@ -364,12 +377,12 @@ fn ensure_sync_cache_loaded(sync_dir: &Path) -> Result<()> {
     }
 
     // Try to load from disk cache first (FAST < 5ms)
-    if let Ok(disk_cache) = load_cache_from_disk::<DbCache>("sync_db") {
-        if disk_cache.last_modified == Some(current_mtime) {
-            let mut cache = SYNC_DB_CACHE.write();
-            *cache = disk_cache;
-            return Ok(());
-        }
+    if let Ok(disk_cache) = load_cache_from_disk::<DbCache>("sync_db")
+        && disk_cache.last_modified == Some(current_mtime)
+    {
+        let mut cache = SYNC_DB_CACHE.write();
+        *cache = disk_cache;
+        return Ok(());
     }
 
     // Cache miss or stale - need to reload/parse
@@ -398,12 +411,12 @@ fn ensure_local_cache_loaded(local_dir: &Path) -> Result<()> {
     }
 
     // Try to load from disk cache first
-    if let Ok(disk_cache) = load_cache_from_disk::<LocalDbCache>("local_db") {
-        if disk_cache.last_modified == Some(current_mtime) {
-            let mut cache = LOCAL_DB_CACHE.write();
-            *cache = disk_cache;
-            return Ok(());
-        }
+    if let Ok(disk_cache) = load_cache_from_disk::<LocalDbCache>("local_db")
+        && disk_cache.last_modified == Some(current_mtime)
+    {
+        let mut cache = LOCAL_DB_CACHE.write();
+        *cache = disk_cache;
+        return Ok(());
     }
 
     // Cache miss - reload
@@ -426,12 +439,11 @@ fn get_newest_db_mtime(sync_dir: &Path) -> SystemTime {
 
     if let Ok(entries) = std::fs::read_dir(sync_dir) {
         for entry in entries.flatten() {
-            if let Ok(meta) = entry.metadata() {
-                if let Ok(mtime) = meta.modified() {
-                    if mtime > newest {
-                        newest = mtime;
-                    }
-                }
+            if let Ok(meta) = entry.metadata()
+                && let Ok(mtime) = meta.modified()
+                && mtime > newest
+            {
+                newest = mtime;
             }
         }
     }
@@ -596,26 +608,106 @@ pub fn get_local_package(name: &str) -> Result<Option<LocalDbPackage>> {
     Ok(cache.packages.get(name).cloned())
 }
 
-/// Fast package search - search sync databases WITHOUT ALPM
-pub fn search_sync_fast(query: &str) -> Result<Vec<SyncDbPackage>> {
+/// Get a specific sync package by exact name - FAST (<1ms)
+pub fn get_sync_package(name: &str) -> Result<Option<SyncDbPackage>> {
     let sync_dir = paths::pacman_sync_dir();
+    ensure_sync_cache_loaded(&sync_dir)?;
+
+    let cache = SYNC_DB_CACHE.read();
+    Ok(cache.packages.get(name).cloned())
+}
+
+/// Search local packages using cache - FAST (<1ms)
+pub fn search_local_cached(query: &str) -> Result<Vec<LocalDbPackage>> {
+    let local_dir = paths::pacman_local_dir();
+    ensure_local_cache_loaded(&local_dir)?;
+
     let query_lower = query.to_lowercase();
+    let cache = LOCAL_DB_CACHE.read();
 
-    let mut results = Vec::new();
+    let results = cache
+        .packages
+        .values()
+        .filter(|pkg| {
+            query_lower.is_empty()
+                || pkg.name.to_lowercase().contains(&query_lower)
+                || pkg.desc.to_lowercase().contains(&query_lower)
+        })
+        .cloned()
+        .collect();
 
-    for db_name in &["core", "extra", "multilib"] {
-        let db_path = sync_dir.join(format!("{db_name}.db"));
-        if db_path.exists() {
-            let pkgs = parse_sync_db(&db_path, db_name)?;
-            for (_, pkg) in pkgs {
-                if pkg.name.to_lowercase().contains(&query_lower)
-                    || pkg.desc.to_lowercase().contains(&query_lower)
-                {
-                    results.push(pkg);
-                }
-            }
+    Ok(results)
+}
+
+/// List all local packages using cache - FAST (<1ms)
+pub fn list_local_cached() -> Result<Vec<LocalDbPackage>> {
+    let local_dir = paths::pacman_local_dir();
+    ensure_local_cache_loaded(&local_dir)?;
+
+    let cache = LOCAL_DB_CACHE.read();
+    Ok(cache.packages.values().cloned().collect())
+}
+
+/// Check if package is installed using cache - INSTANT
+#[must_use]
+pub fn is_installed_cached(name: &str) -> bool {
+    let local_dir = paths::pacman_local_dir();
+    if ensure_local_cache_loaded(&local_dir).is_err() {
+        return false;
+    }
+
+    let cache = LOCAL_DB_CACHE.read();
+    cache.packages.contains_key(name)
+}
+
+/// List all package names (local + sync) using cache - FAST
+pub fn list_all_names_cached() -> Result<Vec<String>> {
+    let sync_dir = paths::pacman_sync_dir();
+    let local_dir = paths::pacman_local_dir();
+
+    ensure_sync_cache_loaded(&sync_dir)?;
+    ensure_local_cache_loaded(&local_dir)?;
+
+    let mut names = std::collections::HashSet::new();
+
+    {
+        let cache = LOCAL_DB_CACHE.read();
+        for name in cache.packages.keys() {
+            names.insert(name.clone());
         }
     }
+
+    {
+        let cache = SYNC_DB_CACHE.read();
+        for name in cache.packages.keys() {
+            names.insert(name.clone());
+        }
+    }
+
+    let mut result: Vec<String> = names.into_iter().collect();
+    result.sort();
+    Ok(result)
+}
+
+/// Fast package search - search sync databases WITHOUT ALPM
+/// Uses global cache for <1ms response after first load
+pub fn search_sync_fast(query: &str) -> Result<Vec<SyncDbPackage>> {
+    let sync_dir = paths::pacman_sync_dir();
+    ensure_sync_cache_loaded(&sync_dir)?;
+
+    let query_lower = query.to_lowercase();
+    let cache = SYNC_DB_CACHE.read();
+
+    let results = cache
+        .packages
+        .values()
+        .filter(|pkg| {
+            query_lower.is_empty()
+                || pkg.name.to_lowercase().contains(&query_lower)
+                || pkg.desc.to_lowercase().contains(&query_lower)
+        })
+        .cloned()
+        .collect();
 
     Ok(results)
 }
@@ -739,35 +831,14 @@ fn chunk_aur_names(names: &[String]) -> Vec<Vec<String>> {
     chunks
 }
 
-/// Get total package counts - INSTANT
+/// Get total package counts - INSTANT (<1ms with cache)
 pub fn get_counts_fast() -> Result<(usize, usize, usize)> {
     let local_dir = paths::pacman_local_dir();
+    ensure_local_cache_loaded(&local_dir)?;
 
-    let mut total = 0;
-    let mut explicit = 0;
-
-    if local_dir.exists() {
-        for entry in std::fs::read_dir(&local_dir)? {
-            let entry = entry?;
-            let pkg_path = entry.path();
-
-            if !pkg_path.is_dir() {
-                continue;
-            }
-
-            let desc_path = pkg_path.join("desc");
-            if desc_path.exists() {
-                total += 1;
-
-                // Quick check for explicit install
-                if let Ok(pkg) = parse_local_desc(&desc_path) {
-                    if pkg.explicit {
-                        explicit += 1;
-                    }
-                }
-            }
-        }
-    }
+    let cache = LOCAL_DB_CACHE.read();
+    let total = cache.packages.len();
+    let explicit = cache.packages.values().filter(|p| p.explicit).count();
 
     Ok((total, explicit, total - explicit))
 }

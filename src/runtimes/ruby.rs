@@ -69,10 +69,10 @@ impl RubyManager {
         let re = regex::Regex::new(r"^(\d+\.\d+\.\d+)$")?;
 
         for release in &releases {
-            if let Some(caps) = re.captures(&release.tag_name) {
-                if let Some(version) = caps.get(1) {
-                    versions.insert(version.as_str().to_string());
-                }
+            if let Some(caps) = re.captures(&release.tag_name)
+                && let Some(version) = caps.get(1)
+            {
+                versions.insert(version.as_str().to_string());
             }
         }
 
@@ -266,10 +266,10 @@ impl RubyManager {
             return Ok(());
         }
 
-        if let Some(current) = self.current_version() {
-            if current == version {
-                let _ = fs::remove_file(&self.current_link);
-            }
+        if let Some(current) = self.current_version()
+            && current == version
+        {
+            let _ = fs::remove_file(&self.current_link);
         }
 
         fs::remove_dir_all(&version_dir)?;

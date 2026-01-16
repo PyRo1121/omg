@@ -145,8 +145,13 @@ impl NodeManager {
         let file = File::open(&download_path)
             .with_context(|| format!("Failed to open: {}", download_path.display()))?;
 
-        let decoder = xz2::read::XzDecoder::new(file);
-        let mut archive = Archive::new(decoder);
+        // Pure Rust XZ decompression with lzma-rs
+        use std::io::BufReader;
+        let mut decompressed = Vec::new();
+        lzma_rs::xz_decompress(&mut BufReader::new(file), &mut decompressed)
+            .with_context(|| "Failed to decompress XZ archive")?;
+
+        let mut archive = Archive::new(decompressed.as_slice());
 
         // Extract with stripping top-level directory
         for entry in archive.entries()? {
@@ -249,11 +254,11 @@ impl NodeManager {
         }
 
         // Check if this is the current version
-        if let Some(current) = self.current_version() {
-            if current == version {
-                // Remove the symlink
-                let _ = std::fs::remove_file(&self.current_link);
-            }
+        if let Some(current) = self.current_version()
+            && current == version
+        {
+            // Remove the symlink
+            let _ = std::fs::remove_file(&self.current_link);
         }
 
         std::fs::remove_dir_all(&version_dir)?;

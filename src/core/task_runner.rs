@@ -50,50 +50,47 @@ pub fn detect_tasks() -> Result<Vec<Task>> {
     let current_dir = std::env::current_dir()?;
 
     // 1. Node.js / Bun (package.json)
-    if let Ok(file) = std::fs::File::open(current_dir.join("package.json")) {
-        if let Ok(pkg) = serde_json::from_reader::<_, PackageJson>(file) {
-            if let Some(scripts) = pkg.scripts {
-                for (name, _) in scripts {
-                    tasks.push(Task {
-                        name: name.clone(),
-                        command: "npm".to_string(),
-                        args: vec!["run".to_string(), name],
-                        source: "package.json".to_string(),
-                    });
-                }
-            }
+    if let Ok(file) = std::fs::File::open(current_dir.join("package.json"))
+        && let Ok(pkg) = serde_json::from_reader::<_, PackageJson>(file)
+        && let Some(scripts) = pkg.scripts
+    {
+        for (name, _) in scripts {
+            tasks.push(Task {
+                name: name.clone(),
+                command: "npm".to_string(),
+                args: vec!["run".to_string(), name],
+                source: "package.json".to_string(),
+            });
         }
     }
 
     // 2. Deno (deno.json)
-    if let Ok(file) = std::fs::File::open(current_dir.join("deno.json")) {
-        if let Ok(pkg) = serde_json::from_reader::<_, DenoJson>(file) {
-            if let Some(dtasks) = pkg.tasks {
-                for (name, _) in dtasks {
-                    tasks.push(Task {
-                        name: name.clone(),
-                        command: "deno".to_string(),
-                        args: vec!["task".to_string(), name],
-                        source: "deno.json".to_string(),
-                    });
-                }
-            }
+    if let Ok(file) = std::fs::File::open(current_dir.join("deno.json"))
+        && let Ok(pkg) = serde_json::from_reader::<_, DenoJson>(file)
+        && let Some(dtasks) = pkg.tasks
+    {
+        for (name, _) in dtasks {
+            tasks.push(Task {
+                name: name.clone(),
+                command: "deno".to_string(),
+                args: vec!["task".to_string(), name],
+                source: "deno.json".to_string(),
+            });
         }
     }
 
     // 3. PHP (composer.json)
-    if let Ok(file) = std::fs::File::open(current_dir.join("composer.json")) {
-        if let Ok(pkg) = serde_json::from_reader::<_, ComposerJson>(file) {
-            if let Some(scripts) = pkg.scripts {
-                for (name, _) in scripts {
-                    tasks.push(Task {
-                        name: name.clone(),
-                        command: "composer".to_string(),
-                        args: vec!["run-script".to_string(), name],
-                        source: "composer.json".to_string(),
-                    });
-                }
-            }
+    if let Ok(file) = std::fs::File::open(current_dir.join("composer.json"))
+        && let Ok(pkg) = serde_json::from_reader::<_, ComposerJson>(file)
+        && let Some(scripts) = pkg.scripts
+    {
+        for (name, _) in scripts {
+            tasks.push(Task {
+                name: name.clone(),
+                command: "composer".to_string(),
+                args: vec!["run-script".to_string(), name],
+                source: "composer.json".to_string(),
+            });
         }
     }
 
@@ -111,24 +108,24 @@ pub fn detect_tasks() -> Result<Vec<Task>> {
     }
 
     // 5. Makefile
-    if current_dir.join("Makefile").exists() {
-        if let Ok(content) = std::fs::read_to_string(current_dir.join("Makefile")) {
-            for line in content.lines() {
-                if let Some(target) = line.split(':').next() {
-                    let target = target.trim();
-                    if !target.is_empty()
-                        && !target.contains('=')
-                        && !target.contains('.')
-                        && !target.starts_with('#')
-                        && !target.contains('%')
-                    {
-                        tasks.push(Task {
-                            name: target.to_string(),
-                            command: "make".to_string(),
-                            args: vec![target.to_string()],
-                            source: "Makefile".to_string(),
-                        });
-                    }
+    if current_dir.join("Makefile").exists()
+        && let Ok(content) = std::fs::read_to_string(current_dir.join("Makefile"))
+    {
+        for line in content.lines() {
+            if let Some(target) = line.split(':').next() {
+                let target = target.trim();
+                if !target.is_empty()
+                    && !target.contains('=')
+                    && !target.contains('.')
+                    && !target.starts_with('#')
+                    && !target.contains('%')
+                {
+                    tasks.push(Task {
+                        name: target.to_string(),
+                        command: "make".to_string(),
+                        args: vec![target.to_string()],
+                        source: "Makefile".to_string(),
+                    });
                 }
             }
         }
@@ -160,22 +157,19 @@ pub fn detect_tasks() -> Result<Vec<Task>> {
     }
 
     // 8. Python (Poetry)
-    if let Ok(content) = std::fs::read_to_string(current_dir.join("pyproject.toml")) {
-        if let Ok(proj) = toml::from_str::<PyProject>(&content) {
-            if let Some(tool) = proj.tool {
-                if let Some(poetry) = tool.poetry {
-                    if let Some(scripts) = poetry.scripts {
-                        for (name, _) in scripts {
-                            tasks.push(Task {
-                                name: name.clone(),
-                                command: "poetry".to_string(),
-                                args: vec!["run".to_string(), name],
-                                source: "pyproject.toml".to_string(),
-                            });
-                        }
-                    }
-                }
-            }
+    if let Ok(content) = std::fs::read_to_string(current_dir.join("pyproject.toml"))
+        && let Ok(proj) = toml::from_str::<PyProject>(&content)
+        && let Some(tool) = proj.tool
+        && let Some(poetry) = tool.poetry
+        && let Some(scripts) = poetry.scripts
+    {
+        for (name, _) in scripts {
+            tasks.push(Task {
+                name: name.clone(),
+                command: "poetry".to_string(),
+                args: vec!["run".to_string(), name],
+                source: "pyproject.toml".to_string(),
+            });
         }
     }
 
@@ -196,16 +190,18 @@ pub fn detect_tasks() -> Result<Vec<Task>> {
                 if line.starts_with('[') && line != "[scripts]" {
                     in_scripts = false;
                 }
-                if in_scripts && !line.is_empty() && !line.starts_with('#') {
-                    if let Some((key, _)) = line.split_once('=') {
-                        let key = key.trim();
-                        tasks.push(Task {
-                            name: key.to_string(),
-                            command: "pipenv".to_string(),
-                            args: vec!["run".to_string(), key.to_string()],
-                            source: "Pipfile".to_string(),
-                        });
-                    }
+                if in_scripts
+                    && !line.is_empty()
+                    && !line.starts_with('#')
+                    && let Some((key, _)) = line.split_once('=')
+                {
+                    let key = key.trim();
+                    tasks.push(Task {
+                        name: key.to_string(),
+                        command: "pipenv".to_string(),
+                        args: vec!["run".to_string(), key.to_string()],
+                        source: "Pipfile".to_string(),
+                    });
                 }
             }
         }
@@ -383,11 +379,11 @@ fn execute_process(cmd: &str, args: &[String], extra_args: &[String]) -> Result<
         }
     }
 
-    if !path_additions.is_empty() {
-        if let Ok(current_path) = std::env::var("PATH") {
-            let new_path = format!("{}:{}", path_additions.join(":"), current_path);
-            command.env("PATH", new_path);
-        }
+    if !path_additions.is_empty()
+        && let Ok(current_path) = std::env::var("PATH")
+    {
+        let new_path = format!("{}:{}", path_additions.join(":"), current_path);
+        command.env("PATH", new_path);
     }
 
     let status = command

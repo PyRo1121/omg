@@ -35,55 +35,55 @@ pub fn search_sync_cli(query: &str, detailed: bool, interactive: bool) -> Result
     let start = std::time::Instant::now();
 
     // 1. Try Daemon first (ULTRA FAST - <1ms)
-    if let Ok(mut client) = DaemonClient::connect_sync() {
-        if let Ok(ResponseResult::Search(res)) = client.call_sync(&Request::Search {
+    if let Ok(mut client) = DaemonClient::connect_sync()
+        && let Ok(ResponseResult::Search(res)) = client.call_sync(&Request::Search {
             id: 0,
             query: query.to_string(),
             limit: Some(50),
-        }) {
-            let sync_time = start.elapsed();
+        })
+    {
+        let sync_time = start.elapsed();
 
-            if res.packages.is_empty() {
-                return Ok(false);
-            }
-
-            let mut stdout = std::io::BufWriter::new(std::io::stdout());
-            use std::io::Write;
-
-            writeln!(
-                stdout,
-                "{} {} results ({:.1}ms)\n",
-                style::header("OMG"),
-                res.packages.len(),
-                sync_time.as_secs_f64() * 1000.0
-            )?;
-
-            writeln!(stdout, "{}", style::header("Official Repositories"))?;
-            for pkg in res.packages.iter().take(20) {
-                writeln!(
-                    stdout,
-                    "  {} {} ({}) - {}",
-                    style::package(&pkg.name),
-                    style::version(&pkg.version),
-                    style::info(&pkg.source), // Source might be 'official' or 'aur' in search result
-                    style::dim(&truncate(&pkg.description, 50))
-                )?;
-            }
-            if res.packages.len() > 20 {
-                let more = res.packages.len() - 20;
-                write!(stdout, "  {}", style::dim("(+"))?;
-                write!(stdout, "{more}")?;
-                writeln!(stdout, "{})", style::dim(" more packages..."))?;
-            }
-            writeln!(
-                stdout,
-                "\n{} {}",
-                style::arrow("Use"),
-                style::command("omg info <package> for details")
-            )?;
-            stdout.flush()?;
-            return Ok(true);
+        if res.packages.is_empty() {
+            return Ok(false);
         }
+
+        let mut stdout = std::io::BufWriter::new(std::io::stdout());
+        use std::io::Write;
+
+        writeln!(
+            stdout,
+            "{} {} results ({:.1}ms)\n",
+            style::header("OMG"),
+            res.packages.len(),
+            sync_time.as_secs_f64() * 1000.0
+        )?;
+
+        writeln!(stdout, "{}", style::header("Official Repositories"))?;
+        for pkg in res.packages.iter().take(20) {
+            writeln!(
+                stdout,
+                "  {} {} ({}) - {}",
+                style::package(&pkg.name),
+                style::version(&pkg.version),
+                style::info(&pkg.source), // Source might be 'official' or 'aur' in search result
+                style::dim(&truncate(&pkg.description, 50))
+            )?;
+        }
+        if res.packages.len() > 20 {
+            let more = res.packages.len() - 20;
+            write!(stdout, "  {}", style::dim("(+"))?;
+            write!(stdout, "{more}")?;
+            writeln!(stdout, "{})", style::dim(" more packages..."))?;
+        }
+        writeln!(
+            stdout,
+            "\n{} {}",
+            style::arrow("Use"),
+            style::command("omg info <package> for details")
+        )?;
+        stdout.flush()?;
+        return Ok(true);
     }
 
     Ok(false)
@@ -105,34 +105,34 @@ pub async fn search(query: &str, detailed: bool, interactive: bool) -> Result<()
 
     // 1. Try Daemon (Ultra Fast, Cached, Pooled)
     let mut daemon_used = false;
-    if let Ok(mut client) = DaemonClient::connect().await {
-        if let Ok(res) = client.search(query, Some(50)).await {
-            daemon_used = true;
-            let mut aur_basic = Vec::new();
+    if let Ok(mut client) = DaemonClient::connect().await
+        && let Ok(res) = client.search(query, Some(50)).await
+    {
+        daemon_used = true;
+        let mut aur_basic = Vec::new();
 
-            for pkg in res.packages {
-                if pkg.source == "official" {
-                    official_packages.push(crate::package_managers::SyncPackage {
-                        name: pkg.name,
-                        version: pkg.version,
-                        description: pkg.description,
-                        repo: "official".to_string(),
-                        download_size: 0,
-                        installed: false,
-                    });
-                } else {
-                    aur_basic.push(crate::core::Package {
-                        name: pkg.name,
-                        version: pkg.version,
-                        description: pkg.description,
-                        source: crate::core::PackageSource::Aur,
-                        installed: false,
-                    });
-                }
+        for pkg in res.packages {
+            if pkg.source == "official" {
+                official_packages.push(crate::package_managers::SyncPackage {
+                    name: pkg.name,
+                    version: pkg.version,
+                    description: pkg.description,
+                    repo: "official".to_string(),
+                    download_size: 0,
+                    installed: false,
+                });
+            } else {
+                aur_basic.push(crate::core::Package {
+                    name: pkg.name,
+                    version: pkg.version,
+                    description: pkg.description,
+                    source: crate::core::PackageSource::Aur,
+                    installed: false,
+                });
             }
-            if !aur_basic.is_empty() {
-                aur_packages_basic = Some(aur_basic);
-            }
+        }
+        if !aur_basic.is_empty() {
+            aur_packages_basic = Some(aur_basic);
         }
     }
 
@@ -289,25 +289,25 @@ pub async fn search(query: &str, detailed: bool, interactive: bool) -> Result<()
             }
             println!();
         }
-    } else if let Some(aur_packages) = aur_packages_basic {
-        if !aur_packages.is_empty() {
-            println!("{}", style::header("AUR (Arch User Repository)"));
-            for pkg in aur_packages.iter().take(10) {
-                println!(
-                    "  {} {} - {}",
-                    style::package(&pkg.name),
-                    style::version(&pkg.version),
-                    style::dim(&truncate(&pkg.description, 55))
-                );
-            }
-            if aur_packages.len() > 10 {
-                println!(
-                    "  {}",
-                    style::dim(&format!("(+{}) more packages...", aur_packages.len() - 10))
-                );
-            }
-            println!();
+    } else if let Some(aur_packages) = aur_packages_basic
+        && !aur_packages.is_empty()
+    {
+        println!("{}", style::header("AUR (Arch User Repository)"));
+        for pkg in aur_packages.iter().take(10) {
+            println!(
+                "  {} {} - {}",
+                style::package(&pkg.name),
+                style::version(&pkg.version),
+                style::dim(&truncate(&pkg.description, 55))
+            );
         }
+        if aur_packages.len() > 10 {
+            println!(
+                "  {}",
+                style::dim(&format!("(+{}) more packages...", aur_packages.len() - 10))
+            );
+        }
+        println!();
     }
 
     println!(
@@ -403,21 +403,19 @@ pub async fn install(packages: &[String], yes: bool) -> Result<()> {
                         }
                     } else {
                         // Try AUR search
-                        if let Ok(results) = aur.search(&target_pkg_name).await {
-                            if let Some(best_match) = results.first() {
-                                if Confirm::with_theme(&ColorfulTheme::default())
-                                    .with_prompt(format!(
-                                        "Package '{}' not found. Did you mean '{}' (AUR)?",
-                                        style::package(&target_pkg_name),
-                                        style::package(&best_match.name)
-                                    ))
-                                    .default(true)
-                                    .interact()?
-                                {
-                                    target_pkg_name.clone_from(&best_match.name);
-                                    aur_info = Some(best_match.clone());
-                                }
-                            }
+                        if let Ok(results) = aur.search(&target_pkg_name).await
+                            && let Some(best_match) = results.first()
+                            && Confirm::with_theme(&ColorfulTheme::default())
+                                .with_prompt(format!(
+                                    "Package '{}' not found. Did you mean '{}' (AUR)?",
+                                    style::package(&target_pkg_name),
+                                    style::package(&best_match.name)
+                                ))
+                                .default(true)
+                                .interact()?
+                        {
+                            target_pkg_name.clone_from(&best_match.name);
+                            aur_info = Some(best_match.clone());
                         }
                     }
                 }
@@ -566,10 +564,10 @@ pub async fn remove(packages: &[String], recursive: bool) -> Result<()> {
     let success = result.is_ok();
 
     // Log transaction
-    if !changes.is_empty() {
-        if let Ok(history) = HistoryManager::new() {
-            let _ = history.add_transaction(TransactionType::Remove, changes, success);
-        }
+    if !changes.is_empty()
+        && let Ok(history) = HistoryManager::new()
+    {
+        let _ = history.add_transaction(TransactionType::Remove, changes, success);
     }
 
     result
@@ -825,28 +823,37 @@ pub async fn update(check_only: bool) -> Result<()> {
                 .status()
                 .await;
 
-            if let Ok(s) = status {
-                if s.success() {
-                    println!("{} Dependencies installed", style::success("✓"));
-                }
+            if let Ok(s) = status
+                && s.success()
+            {
+                println!("{} Dependencies installed", style::success("✓"));
             }
         }
 
-        // PHASE 4: Build packages sequentially (deps already installed = FAST!)
+        // PHASE 4: Build packages in parallel (deps already installed)
         let mut built_packages: Vec<(String, String, std::path::PathBuf)> = Vec::new();
         let mut failed_builds: Vec<(String, String)> = Vec::new();
+        let concurrency = aur.build_concurrency().clamp(1, 8);
 
-        for (i, (name, _old_ver, new_ver)) in aur_updates.into_iter().enumerate() {
-            println!(
-                "{} [{}/{}] Building {}...",
-                style::arrow("→"),
-                i + 1,
-                total,
-                style::package(&name)
-            );
+        let mut stream = futures::stream::iter(aur_updates.into_iter().enumerate())
+            .map(|(i, (name, _old_ver, new_ver))| {
+                let aur = aur.clone();
+                async move {
+                    println!(
+                        "{} [{}/{}] Building {}...",
+                        style::arrow("→"),
+                        i + 1,
+                        total,
+                        style::package(&name)
+                    );
+                    let res = aur.build_only(&name).await;
+                    (name, new_ver, res)
+                }
+            })
+            .buffer_unordered(concurrency);
 
-            // Use build_only since deps are pre-installed (no sudo needed = faster)
-            match aur.build_only(&name).await {
+        while let Some((name, new_ver, res)) = stream.next().await {
+            match res {
                 Ok(pkg_path) => {
                     println!("  {} Built {}", style::success("✓"), style::package(&name));
                     built_packages.push((name, new_ver, pkg_path));
@@ -942,23 +949,23 @@ pub fn info_sync(package: &str) -> Result<bool> {
     let start = std::time::Instant::now();
 
     // 1. Try daemon first (ULTRA FAST - <1ms)
-    if let Ok(mut client) = DaemonClient::connect_sync() {
-        if let Ok(info) = client.info_sync(package) {
-            let mut stdout = std::io::BufWriter::new(std::io::stdout());
-            use std::io::Write;
+    if let Ok(mut client) = DaemonClient::connect_sync()
+        && let Ok(info) = client.info_sync(package)
+    {
+        let mut stdout = std::io::BufWriter::new(std::io::stdout());
+        use std::io::Write;
 
-            writeln!(
-                stdout,
-                "{} {} ({:.1}ms)\n",
-                style::header("OMG"),
-                style::dim("Daemon result (Sync Bridge)"),
-                start.elapsed().as_secs_f64() * 1000.0
-            )?;
+        writeln!(
+            stdout,
+            "{} {} ({:.1}ms)\n",
+            style::header("OMG"),
+            style::dim("Daemon result (Sync Bridge)"),
+            start.elapsed().as_secs_f64() * 1000.0
+        )?;
 
-            display_detailed_info_buffered(&mut stdout, &info)?;
-            stdout.flush()?;
-            return Ok(true);
-        }
+        display_detailed_info_buffered(&mut stdout, &info)?;
+        stdout.flush()?;
+        return Ok(true);
     }
 
     // 2. Fallback to local ALPM (Sync, fast)
@@ -989,19 +996,19 @@ pub async fn info_aur(package: &str) -> Result<()> {
         println!("  {} {}", style::dim("Description:"), info.description);
 
         // Query detailed info for better UX
-        if let Ok(detailed) = search_detailed(package).await {
-            if let Some(d) = detailed.into_iter().find(|p| p.name == info.name) {
-                println!(
-                    "  {} {}",
-                    style::dim("URL:"),
-                    style::url(&d.url.unwrap_or_default())
-                );
-                println!("  {} {:.2} MB", style::dim("Popularity:"), d.popularity);
-                if let Some(license) = d.license {
-                    if !license.is_empty() {
-                        println!("  {} {}", style::dim("License:"), license.join(", "));
-                    }
-                }
+        if let Ok(detailed) = search_detailed(package).await
+            && let Some(d) = detailed.into_iter().find(|p| p.name == info.name)
+        {
+            println!(
+                "  {} {}",
+                style::dim("URL:"),
+                style::url(&d.url.unwrap_or_default())
+            );
+            println!("  {} {:.2} MB", style::dim("Popularity:"), d.popularity);
+            if let Some(license) = d.license
+                && !license.is_empty()
+            {
+                println!("  {} {}", style::dim("License:"), license.join(", "));
             }
         }
 
@@ -1099,40 +1106,40 @@ pub async fn info(package: &str) -> Result<()> {
     let details = search_detailed(package).await.ok();
     pb.finish_and_clear();
 
-    if let Some(pkgs) = details {
-        if let Some(pkg) = pkgs.into_iter().find(|p| p.name == package) {
+    if let Some(pkgs) = details
+        && let Some(pkg) = pkgs.into_iter().find(|p| p.name == package)
+    {
+        println!(
+            "  {} {}",
+            style::warning("Name:"),
+            style::package(&pkg.name)
+        );
+        println!(
+            "  {} {}",
+            style::warning("Version:"),
+            style::version(&pkg.version)
+        );
+        println!(
+            "  {} {}",
+            style::warning("Description:"),
+            pkg.description.unwrap_or_default()
+        );
+        println!(
+            "  {} {}",
+            style::warning("Maintainer:"),
+            pkg.maintainer.as_deref().unwrap_or("orphan")
+        );
+        println!("  {} {}", style::warning("Votes:"), pkg.num_votes);
+        println!("  {} {:.2}%", style::warning("Popularity:"), pkg.popularity);
+        if pkg.out_of_date.is_some() {
             println!(
                 "  {} {}",
-                style::warning("Name:"),
-                style::package(&pkg.name)
+                style::error("Status:"),
+                style::error("OUT OF DATE")
             );
-            println!(
-                "  {} {}",
-                style::warning("Version:"),
-                style::version(&pkg.version)
-            );
-            println!(
-                "  {} {}",
-                style::warning("Description:"),
-                pkg.description.unwrap_or_default()
-            );
-            println!(
-                "  {} {}",
-                style::warning("Maintainer:"),
-                pkg.maintainer.as_deref().unwrap_or("orphan")
-            );
-            println!("  {} {}", style::warning("Votes:"), pkg.num_votes);
-            println!("  {} {:.2}%", style::warning("Popularity:"), pkg.popularity);
-            if pkg.out_of_date.is_some() {
-                println!(
-                    "  {} {}",
-                    style::error("Status:"),
-                    style::error("OUT OF DATE")
-                );
-            }
-            println!("\n  {}", style::warning("AUR (Arch User Repository)"));
-            return Ok(());
         }
+        println!("\n  {}", style::warning("AUR (Arch User Repository)"));
+        return Ok(());
     }
 
     println!(

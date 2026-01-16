@@ -1,46 +1,53 @@
-//! Persistent metadata cache using LMDB (heed)
+//! Persistent metadata cache using redb (pure Rust)
 //!
 //! Stores system status metrics to survive daemon restarts.
 
 use super::protocol::StatusResult;
 use anyhow::{Context, Result};
-use heed::types::{SerdeJson, Str};
-use heed::{Database, Env, EnvOpenOptions};
+use redb::{Database, ReadableDatabase, TableDefinition};
 use std::path::Path;
 
+const STATUS_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("status");
+
 pub struct PersistentCache {
-    env: Env,
-    status_db: Database<Str, SerdeJson<StatusResult>>,
+    db: Database,
 }
 
 impl PersistentCache {
     pub fn new(path: &Path) -> Result<Self> {
         std::fs::create_dir_all(path)?;
+        let db_path = path.join("cache.redb");
 
-        let env = unsafe {
-            EnvOpenOptions::new()
-                .map_size(10 * 1024 * 1024) // 10MB
-                .max_dbs(1)
-                .open(path)
-                .context("Failed to open LMDB environment")?
-        };
+        let db = Database::create(&db_path).context("Failed to open redb database")?;
 
-        let mut wtxn = env.write_txn()?;
-        let status_db = env.create_database(&mut wtxn, Some("status"))?;
-        wtxn.commit()?;
-
-        Ok(Self { env, status_db })
+        Ok(Self { db })
     }
 
     pub fn get_status(&self) -> Result<Option<StatusResult>> {
-        let rtxn = self.env.read_txn()?;
-        Ok(self.status_db.get(&rtxn, "current")?)
+        let read_txn = self.db.begin_read()?;
+        let table = match read_txn.open_table(STATUS_TABLE) {
+            Ok(t) => t,
+            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(None),
+            Err(e) => return Err(anyhow::anyhow!("Database error: {e}")),
+        };
+
+        match table.get("current")? {
+            Some(guard) => {
+                let status: StatusResult = serde_json::from_slice(guard.value())?;
+                Ok(Some(status))
+            }
+            None => Ok(None),
+        }
     }
 
     pub fn set_status(&self, status: &StatusResult) -> Result<()> {
-        let mut wtxn = self.env.write_txn()?;
-        self.status_db.put(&mut wtxn, "current", status)?;
-        wtxn.commit()?;
+        let data = serde_json::to_vec(status)?;
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(STATUS_TABLE)?;
+            table.insert("current", data.as_slice())?;
+        }
+        write_txn.commit()?;
         Ok(())
     }
 }

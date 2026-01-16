@@ -16,12 +16,7 @@ use omg_lib::cli::{Cli, Commands, EnvCommands, ToolCommands, commands};
 use omg_lib::core::{elevate_if_needed, is_root, task_runner};
 use omg_lib::hooks;
 
-#[cfg(not(target_env = "msvc"))]
-use mimalloc::MiMalloc;
-
-#[cfg(not(target_env = "msvc"))]
-#[global_allocator]
-static GLOBAL: MiMalloc = MiMalloc;
+// Using system allocator (pure Rust - no C dependency)
 
 #[allow(clippy::too_many_lines)]
 fn main() -> Result<()> {

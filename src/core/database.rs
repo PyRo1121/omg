@@ -1,54 +1,63 @@
-//! LMDB database wrapper for high-performance caching
+//! Pure Rust embedded database wrapper using redb
 
 use anyhow::Result;
-use heed::{Database as HeedDatabase, Env, EnvOpenOptions};
+use redb::{Database as RedbDatabase, ReadableDatabase, TableDefinition};
 use std::path::Path;
+use std::sync::Arc;
 
 use crate::core::paths;
 
-/// Main database wrapper using LMDB via heed
+/// Table definition for completion cache
+const COMPLETION_TABLE: TableDefinition<&str, &str> = TableDefinition::new("completion_cache");
+
+/// Main database wrapper using redb (pure Rust)
 pub struct Database {
-    env: Env,
+    db: Arc<RedbDatabase>,
 }
 
 impl Database {
     /// Open or create a database at the given path
-    ///
-    /// Uses 4GB mmap size as per architecture spec for optimal performance
-    /// across all hardware configurations.
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
-        std::fs::create_dir_all(&path)?;
+        let path = path.as_ref();
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
 
-        let env = unsafe {
-            EnvOpenOptions::new()
-                .map_size(4 * 1024 * 1024 * 1024) // 4GB mmap
-                .max_readers(126)
-                .max_dbs(16)
-                .open(path)?
+        let db = RedbDatabase::create(path)?;
+        Ok(Self { db: Arc::new(db) })
+    }
+
+    /// Get a value from the completion database
+    pub fn get_completion(&self, key: &str) -> Result<Option<String>> {
+        let read_txn = self.db.begin_read()?;
+        let table = match read_txn.open_table(COMPLETION_TABLE) {
+            Ok(t) => t,
+            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(None),
+            Err(e) => return Err(anyhow::anyhow!("Database error: {e}")),
         };
-
-        Ok(Self { env })
+        Ok(table.get(key)?.map(|guard| guard.value().to_string()))
     }
 
-    /// Get the completion database
-    pub fn get_completion_db(&self) -> Result<HeedDatabase<heed::types::Str, heed::types::Str>> {
-        let mut wtxn = self.env.write_txn()?;
-        let db = self
-            .env
-            .create_database(&mut wtxn, Some("completion_cache"))?;
-        wtxn.commit()?;
-        Ok(db)
+    /// Set a value in the completion database
+    pub fn set_completion(&self, key: &str, value: &str) -> Result<()> {
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(COMPLETION_TABLE)?;
+            table.insert(key, value)?;
+        }
+        write_txn.commit()?;
+        Ok(())
     }
 
-    /// Get the underlying heed environment
+    /// Get the underlying redb database
     #[must_use]
-    pub const fn env(&self) -> &Env {
-        &self.env
+    pub fn inner(&self) -> &RedbDatabase {
+        &self.db
     }
 
     /// Get the default database path
     pub fn default_path() -> Result<std::path::PathBuf> {
-        Ok(paths::data_dir().join("db"))
+        Ok(paths::data_dir().join("omg.redb"))
     }
 }
 
@@ -60,7 +69,7 @@ mod tests {
     #[test]
     fn test_database_open() {
         let temp_dir = TempDir::new().unwrap();
-        let db = Database::open(temp_dir.path().join("test.db"));
+        let db = Database::open(temp_dir.path().join("test.redb"));
         assert!(db.is_ok());
     }
 }

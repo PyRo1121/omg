@@ -63,15 +63,11 @@ where
 /// Search local database (installed packages) - INSTANT
 pub fn search_local(query: &str) -> Result<Vec<LocalPackage>> {
     if paths::test_mode() {
-        let local_dir = paths::pacman_local_dir();
         let query_lower = query.to_lowercase();
-        let packages = pacman_db::parse_local_db(&local_dir)?;
+        // Use cached search for test mode - much faster than re-parsing
+        let packages = pacman_db::search_local_cached(&query_lower)?;
         let results = packages
-            .into_values()
-            .filter(|pkg| {
-                pkg.name.to_lowercase().contains(&query_lower)
-                    || pkg.desc.to_lowercase().contains(&query_lower)
-            })
+            .into_iter()
             .map(|pkg| LocalPackage {
                 name: pkg.name,
                 version: pkg.version,
@@ -119,18 +115,12 @@ pub fn search_local(query: &str) -> Result<Vec<LocalPackage>> {
 /// Search sync databases (available packages) - FAST (<10ms)
 pub fn search_sync(query: &str) -> Result<Vec<SyncPackage>> {
     if paths::test_mode() {
-        let query_lower = query.to_lowercase();
+        // search_sync_fast already uses cache and filters
         let packages = pacman_db::search_sync_fast(query)?;
-        let local_dir = paths::pacman_local_dir();
-        let local_packages = pacman_db::parse_local_db(&local_dir)?;
         let results = packages
             .into_iter()
-            .filter(|pkg| {
-                pkg.name.to_lowercase().contains(&query_lower)
-                    || pkg.desc.to_lowercase().contains(&query_lower)
-            })
             .map(|pkg| {
-                let installed = local_packages.contains_key(&pkg.name);
+                let installed = pacman_db::is_installed_cached(&pkg.name);
                 SyncPackage {
                     name: pkg.name,
                     version: pkg.version,
@@ -176,13 +166,12 @@ pub fn search_sync(query: &str) -> Result<Vec<SyncPackage>> {
 /// Get package info - INSTANT (<1ms)
 pub fn get_package_info(name: &str) -> Result<Option<PackageInfo>> {
     if paths::test_mode() {
-        let local_dir = paths::pacman_local_dir();
-        let local_packages = pacman_db::parse_local_db(&local_dir)?;
-        if let Some(pkg) = local_packages.get(name) {
+        // Use cached lookup instead of re-parsing
+        if let Some(pkg) = pacman_db::get_local_package(name)? {
             return Ok(Some(PackageInfo {
-                name: pkg.name.clone(),
-                version: pkg.version.clone(),
-                description: pkg.desc.clone(),
+                name: pkg.name,
+                version: pkg.version,
+                description: pkg.desc,
                 url: None,
                 licenses: Vec::new(),
                 depends: Vec::new(),
@@ -193,8 +182,7 @@ pub fn get_package_info(name: &str) -> Result<Option<PackageInfo>> {
             }));
         }
 
-        let sync_packages = pacman_db::search_sync_fast(name)?;
-        if let Some(pkg) = sync_packages.into_iter().find(|pkg| pkg.name == name) {
+        if let Some(pkg) = pacman_db::get_sync_package(name)? {
             return Ok(Some(PackageInfo {
                 name: pkg.name,
                 version: pkg.version,
@@ -262,10 +250,10 @@ pub fn get_package_info(name: &str) -> Result<Option<PackageInfo>> {
 /// List all installed packages - INSTANT
 pub fn list_installed_fast() -> Result<Vec<LocalPackage>> {
     if paths::test_mode() {
-        let local_dir = paths::pacman_local_dir();
-        let packages = pacman_db::parse_local_db(&local_dir)?;
+        // Use cached list instead of re-parsing
+        let packages = pacman_db::list_local_cached()?;
         let results = packages
-            .into_values()
+            .into_iter()
             .map(|pkg| LocalPackage {
                 name: pkg.name,
                 version: pkg.version,
@@ -306,10 +294,10 @@ pub fn list_installed_fast() -> Result<Vec<LocalPackage>> {
 /// List explicitly installed packages - INSTANT
 pub fn list_explicit_fast() -> Result<Vec<String>> {
     if paths::test_mode() {
-        let local_dir = paths::pacman_local_dir();
-        let packages = pacman_db::parse_local_db(&local_dir)?;
+        // Use cached list instead of re-parsing
+        let packages = pacman_db::list_local_cached()?;
         let results = packages
-            .into_values()
+            .into_iter()
             .filter(|pkg| pkg.explicit)
             .map(|pkg| pkg.name)
             .collect();
@@ -351,9 +339,7 @@ pub fn list_orphans_fast() -> Result<Vec<String>> {
 /// Check if package is installed - INSTANT
 pub fn is_installed_fast(name: &str) -> Result<bool> {
     if paths::test_mode() {
-        let local_dir = paths::pacman_local_dir();
-        let packages = pacman_db::parse_local_db(&local_dir)?;
-        return Ok(packages.contains_key(name));
+        return Ok(pacman_db::is_installed_cached(name));
     }
 
     with_handle(|handle| Ok(handle.localdb().pkg(name).is_ok()))
@@ -386,21 +372,7 @@ pub fn get_counts() -> Result<(usize, usize, usize)> {
 /// List all known package names (local + sync) for completion - FAST
 pub fn list_all_package_names() -> Result<Vec<String>> {
     if paths::test_mode() {
-        let mut names = std::collections::HashSet::new();
-        let local_dir = paths::pacman_local_dir();
-        let local_packages = pacman_db::parse_local_db(&local_dir)?;
-        for pkg in local_packages.values() {
-            names.insert(pkg.name.clone());
-        }
-
-        let sync_packages = pacman_db::search_sync_fast("")?;
-        for pkg in sync_packages {
-            names.insert(pkg.name);
-        }
-
-        let mut result: Vec<String> = names.into_iter().collect();
-        result.sort();
-        return Ok(result);
+        return pacman_db::list_all_names_cached();
     }
 
     with_handle(|handle| {
