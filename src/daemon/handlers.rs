@@ -51,11 +51,9 @@ impl DaemonState {
     pub fn new() -> Self {
         let data_dir = crate::core::paths::daemon_data_dir();
 
-        let db_path = data_dir.join("cache.mdb");
-
         Self {
             cache: PackageCache::default(),
-            persistent: super::db::PersistentCache::new(&db_path).expect("Failed to init LMDB"),
+            persistent: super::db::PersistentCache::new(&data_dir).expect("Failed to init redb"),
             pacman: OfficialPackageManager::new(),
             aur: AurClient::new(),
             alpm_worker: AlpmWorker::new(),
@@ -146,7 +144,7 @@ async fn handle_search(
         for pkg in aur_pkgs {
             aur.push(PackageInfo {
                 name: pkg.name,
-                version: pkg.version,
+                version: pkg.version.to_string(),
                 description: pkg.description,
                 source: "aur".to_string(),
             });
@@ -203,7 +201,7 @@ async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) ->
             if let Ok(Some(info)) = apt_get_sync_pkg_info(&package) {
                 let detailed = DetailedPackageInfo {
                     name: info.name,
-                    version: info.version,
+                    version: info.version.to_string(),
                     description: info.description,
                     url: info.url,
                     size: info.size,
@@ -227,7 +225,7 @@ async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) ->
         {
             let detailed = DetailedPackageInfo {
                 name: pkg.name,
-                version: pkg.version,
+                version: pkg.version.clone(),
                 description: pkg.description.unwrap_or_default(),
                 url: pkg.url.unwrap_or_default(),
                 size: 0,

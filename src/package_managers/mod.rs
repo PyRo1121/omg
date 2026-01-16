@@ -21,6 +21,8 @@ pub mod pkgbuild;
 mod traits;
 mod types;
 
+pub use types::{parse_version_or_zero, zero_version};
+
 #[cfg(feature = "arch")]
 pub use alpm_direct::{
     get_counts, get_package_info, is_installed_fast, list_explicit_fast, list_installed_fast,

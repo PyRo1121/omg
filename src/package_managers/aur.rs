@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use alpm_pkginfo::{PackageInfoV1, PackageInfoV2};
 use alpm_srcinfo::SourceInfoV1;
-use alpm_types::{Architecture, SystemArchitecture};
+use alpm_types::{Architecture, SystemArchitecture, Version};
 use anyhow::{Context, Result};
 use dialoguer::Confirm;
 use flate2::read::GzDecoder;
@@ -110,7 +110,7 @@ impl AurClient {
             .into_iter()
             .map(|p| Package {
                 name: p.name,
-                version: p.version,
+                version: crate::package_managers::parse_version_or_zero(&p.version),
                 description: p.description.unwrap_or_default(),
                 source: PackageSource::Aur,
                 installed: false,
@@ -131,7 +131,7 @@ impl AurClient {
 
         Ok(response.results.into_iter().next().map(|p| Package {
             name: p.name,
-            version: p.version,
+            version: crate::package_managers::parse_version_or_zero(&p.version),
             description: p.description.unwrap_or_default(),
             source: PackageSource::Aur,
             installed: false,
@@ -141,7 +141,7 @@ impl AurClient {
     /// Get list of upgradable AUR packages
     /// Queries AUR directly for all non-official packages (like yay/paru)
     #[instrument(skip(self))]
-    pub async fn get_update_list(&self) -> Result<Vec<(String, String, String)>> {
+    pub async fn get_update_list(&self) -> Result<Vec<(String, Version, Version)>> {
         // 1. Get all packages not in official repos
         let foreign_packages = get_potential_aur_packages()?;
 
@@ -163,11 +163,11 @@ impl AurClient {
                     continue;
                 }
                 seen_names.insert(p.name.clone());
-                if let Some(local_pkg) = pacman_db::get_local_package(&p.name)?
-                    && pacman_db::compare_versions(&p.version, &local_pkg.version)
-                        == std::cmp::Ordering::Greater
-                {
-                    updates.push((p.name, local_pkg.version, p.version));
+                if let Some(local_pkg) = pacman_db::get_local_package(&p.name)? {
+                    let p_ver = crate::package_managers::parse_version_or_zero(&p.version);
+                    if p_ver > local_pkg.version {
+                        updates.push((p.name, local_pkg.version, p_ver));
+                    }
                 }
             }
 
@@ -194,7 +194,7 @@ impl AurClient {
     async fn query_aur_updates(
         &self,
         packages: &[String],
-    ) -> Result<Vec<(String, String, String)>> {
+    ) -> Result<Vec<(String, Version, Version)>> {
         let mut updates = Vec::new();
         let chunked_names = Self::chunk_aur_names(packages);
         let concurrency = self.settings.aur.build_concurrency.clamp(1, 8);
@@ -216,11 +216,11 @@ impl AurClient {
         while let Some(res) = stream.next().await {
             let response = res?;
             for p in response.results {
-                if let Some(local_pkg) = pacman_db::get_local_package(&p.name)?
-                    && pacman_db::compare_versions(&p.version, &local_pkg.version)
-                        == std::cmp::Ordering::Greater
-                {
-                    updates.push((p.name, local_pkg.version, p.version));
+                if let Some(local_pkg) = pacman_db::get_local_package(&p.name)? {
+                    let p_ver = crate::package_managers::parse_version_or_zero(&p.version);
+                    if p_ver > local_pkg.version {
+                        updates.push((p.name, local_pkg.version, p_ver));
+                    }
                 }
             }
         }
@@ -1426,13 +1426,13 @@ impl Default for AurClient {
 }
 
 /// Create a spinner
-#[allow(clippy::literal_string_with_formatting_args)]
+#[allow(clippy::literal_string_with_formatting_args, clippy::expect_used)]
 fn create_spinner(msg: &str) -> ProgressBar {
     let pb = ProgressBar::new_spinner();
     pb.set_style(
         ProgressStyle::default_spinner()
             .template("{spinner:.cyan} {msg}")
-            .unwrap(),
+            .expect("valid template"),
     );
     pb.set_message(msg.to_string());
     pb.enable_steady_tick(std::time::Duration::from_millis(100));

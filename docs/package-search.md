@@ -22,7 +22,7 @@ async fn handle_search(
 
 ### Step 1: Cache Check (Sub-millisecond)
 
-The first stop is always the in-memory LRU cache:
+The first stop is always the in-memory moka cache:
 
 ```rust
 if let Some(cached) = state.cache.get(&query) {
@@ -205,7 +205,7 @@ Status requests use both persistent and in-memory caches:
 
 ```rust
 async fn handle_status(state: Arc<DaemonState>, id: RequestId) -> Response {
-    // 1. Check persistent cache (LMDB)
+    // 1. Check persistent cache (redb)
     if let Ok(Some(cached)) = state.persistent.get_status() {
         return Response::Success {
             id,
@@ -397,7 +397,7 @@ Severity thresholds:
 
 ### Caching Enhancements
 
-1. **Persistent Search Cache**: LMDB for frequent queries
+1. **Persistent Search Cache**: redb for frequent queries
 2. **Intelligent Preloading**: Predictive caching
 3. **Distributed Cache**: Multi-daemon sharing
 4. **Compression**: Reduce memory usage

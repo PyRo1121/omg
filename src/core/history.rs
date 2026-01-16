@@ -4,12 +4,23 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
 pub enum TransactionType {
     Install,
     Remove,
     Update,
     Sync,
+}
+
+impl std::fmt::Display for TransactionType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Install => write!(f, "Install"),
+            Self::Remove => write!(f, "Remove"),
+            Self::Update => write!(f, "Update"),
+            Self::Sync => write!(f, "Sync"),
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

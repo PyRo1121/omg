@@ -3,6 +3,7 @@
 //! Downloads all repository databases in parallel using async I/O,
 //! with progress bars and smart mirror selection.
 
+use alpm_types::Version;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -114,7 +115,7 @@ fn build_db_url(mirror_template: &str, repo: &str) -> String {
 
 /// Download a single database file with progress and failover
 /// Uses If-Modified-Since to skip unchanged databases (major speedup!)
-#[allow(clippy::literal_string_with_formatting_args)]
+#[allow(clippy::literal_string_with_formatting_args, clippy::expect_used)]
 async fn download_db(
     client: &Client,
     urls: Vec<String>,
@@ -183,7 +184,7 @@ async fn download_db(
                     .template(
                         "  {spinner:.green} {msg:12} [{bar:30.cyan/blue}] {bytes}/{total_bytes}",
                     )
-                    .unwrap()
+                    .expect("valid template")
                     .progress_chars("█▓▒░"),
             );
         }
@@ -268,7 +269,7 @@ pub async fn sync_databases_parallel() -> Result<()> {
             pb.set_style(
                 ProgressStyle::default_spinner()
                     .template("  {spinner:.green} {msg:12} [connecting...]")
-                    .unwrap(),
+                    .expect("valid template"),
             );
             pb.set_message(name.clone());
             pb.enable_steady_tick(Duration::from_millis(100));
@@ -359,7 +360,7 @@ fn get_custom_repos() -> Result<Vec<(String, String)>> {
 #[derive(Clone)]
 pub struct DownloadJob {
     pub name: String,
-    pub version: String,
+    pub version: Version,
     pub repo: String,
     pub filename: String,
     pub size: u64,
@@ -367,10 +368,10 @@ pub struct DownloadJob {
 
 impl DownloadJob {
     #[must_use]
-    pub fn new(name: &str, version: &str, repo: &str, filename: &str, size: u64) -> Self {
+    pub fn new(name: &str, version: &Version, repo: &str, filename: &str, size: u64) -> Self {
         Self {
             name: name.to_string(),
-            version: version.to_string(),
+            version: version.clone(),
             repo: repo.to_string(),
             filename: filename.to_string(),
             size,
@@ -545,7 +546,7 @@ pub async fn download_packages_parallel(
     main_pb.set_style(
         ProgressStyle::default_spinner()
             .template("\n  {spinner:.green} Downloading {pos}/{len} packages {msg}")
-            .unwrap()
+            .expect("valid template")
             .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"),
     );
 

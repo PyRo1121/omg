@@ -87,7 +87,9 @@ pub async fn install(name: &str) -> Result<()> {
 
     // 1. Check Registry
     if let Some((_, source)) = TOOL_REGISTRY.iter().find(|(k, _)| *k == name) {
-        let (manager, pkg) = source.split_once(':').unwrap();
+        let Some((manager, pkg)) = source.split_once(':') else {
+            anyhow::bail!("Invalid registry format for {name}");
+        };
         println!(
             "{} Found in registry: {} ({})",
             style::success("✓"),
@@ -152,7 +154,7 @@ async fn install_managed(
         "npm" => {
             // npm install --prefix <dir> <pkg>
             let status = Command::new("npm")
-                .args(["install", "--prefix", install_dir.to_str().unwrap(), pkg])
+                .args(["install", "--prefix", install_dir.to_str().unwrap_or("."), pkg])
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null()) // Silence noisy npm
                 .status()?;
@@ -165,7 +167,7 @@ async fn install_managed(
         "cargo" => {
             // cargo install --root <dir> <pkg>
             let status = Command::new("cargo")
-                .args(["install", "--root", install_dir.to_str().unwrap(), pkg])
+                .args(["install", "--root", install_dir.to_str().unwrap_or("."), pkg])
                 .stdout(std::process::Stdio::null()) // Cargo is noisy
                 .status()?;
 
@@ -177,7 +179,7 @@ async fn install_managed(
         "pip" => {
             // 1. Create venv
             let status_venv = Command::new("python")
-                .args(["-m", "venv", install_dir.to_str().unwrap()])
+                .args(["-m", "venv", install_dir.to_str().unwrap_or(".")])
                 .status()?;
 
             if !status_venv.success() {
@@ -265,7 +267,7 @@ fn link_binaries(install_dir: &Path, bin_dir: &Path, _tool_name: &str) -> Result
                     }
                 }
 
-                let filename = path.file_name().unwrap();
+                let Some(filename) = path.file_name() else { continue };
                 let dest = bin_dir.join(filename);
 
                 // Remove existing link
@@ -295,7 +297,7 @@ fn link_binaries(install_dir: &Path, bin_dir: &Path, _tool_name: &str) -> Result
             "  {} {} binaries available in {}",
             style::success("✓"),
             linked,
-            style::info(bin_dir.to_str().unwrap())
+            style::info(&bin_dir.to_string_lossy())
         );
     }
 
@@ -317,7 +319,7 @@ pub fn list() -> Result<()> {
         if let Ok(target) = fs::read_link(&path) {
             println!(
                 "  {} {} -> {}",
-                style::package(&path.file_name().unwrap().to_string_lossy()),
+                style::package(&path.file_name().map(|f| f.to_string_lossy()).unwrap_or_default()),
                 style::arrow("points to"),
                 style::dim(&target.to_string_lossy())
             );
@@ -369,7 +371,7 @@ pub fn remove(name: &str) -> Result<()> {
             println!(
                 "    {} Removed link {}",
                 style::error("-"),
-                path.file_name().unwrap().to_string_lossy()
+                path.file_name().map(|f| f.to_string_lossy()).unwrap_or_default()
             );
         }
     }
