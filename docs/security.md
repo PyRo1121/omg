@@ -1,6 +1,19 @@
 # Security Model
 
-OMG implements a defense-in-depth security model with vulnerability scanning, PGP verification, SLSA provenance, and configurable security policies. All operations are user-isolated with minimal privilege requirements.
+OMG implements enterprise-grade security with defense-in-depth: vulnerability scanning, PGP verification, SLSA provenance, SBOM generation, secret scanning, tamper-proof audit logging, and configurable security policies. All operations are user-isolated with minimal privilege requirements.
+
+## Quick Reference
+
+| Command | Description |
+|---------|-------------|
+| `omg audit` | Vulnerability scan (default) |
+| `omg audit scan` | Scan installed packages for CVEs |
+| `omg audit sbom` | Generate CycloneDX 1.5 SBOM |
+| `omg audit secrets` | Scan for leaked credentials |
+| `omg audit log` | View audit log entries |
+| `omg audit verify` | Verify audit log integrity |
+| `omg audit policy` | Show security policy status |
+| `omg audit slsa <pkg>` | Check SLSA provenance |
 
 ## Security Overview
 
@@ -8,10 +21,12 @@ OMG implements a defense-in-depth security model with vulnerability scanning, PG
 
 OMG protects against:
 - **Malicious Packages**: PGP signatures and vulnerability scanning
-- **Supply Chain Attacks**: SLSA provenance verification
+- **Supply Chain Attacks**: SLSA provenance verification via Sigstore/Rekor
+- **Leaked Credentials**: Secret scanning for 20+ credential types
+- **Compliance Violations**: SBOM generation for FDA, FedRAMP, SOC2
 - **Privilege Escalation**: User-level operations only
-- **Network Attacks**: HTTPS-only, certificate pinning
-- **Data Tampering**: Checksum verification and caching
+- **Network Attacks**: HTTPS-only with certificate validation
+- **Data Tampering**: Checksum verification and hash-chained audit logs
 
 ### Security Grades
 
@@ -524,14 +539,173 @@ Security metrics available:
 4. **Secure Defaults**: Enable security by default
 5. **Documentation**: Document security features
 
+## SBOM Generation
+
+OMG generates CycloneDX 1.5 compliant Software Bill of Materials for enterprise compliance.
+
+### Usage
+
+```bash
+# Generate SBOM with vulnerabilities
+omg audit sbom --vulns
+
+# Export to specific file
+omg audit sbom -o /path/to/sbom.json
+
+# Generate without vulnerability data
+omg audit sbom --vulns=false
+```
+
+### SBOM Contents
+
+The generated SBOM includes:
+- **All installed packages** with PURL identifiers
+- **Version information** for each component
+- **Vulnerability data** (optional) from ALSA
+- **Metadata** including generation timestamp and tool version
+
+### Compliance Standards
+
+OMG's SBOM generation supports:
+- **FDA Cybersecurity Requirements** for medical devices
+- **FedRAMP** for federal systems
+- **SOC2** for enterprise compliance
+- **NTIA Minimum Elements** for software transparency
+
+## Secret Scanning
+
+OMG detects leaked credentials before they're committed.
+
+### Usage
+
+```bash
+# Scan current directory
+omg audit secrets
+
+# Scan specific path
+omg audit secrets -p /path/to/project
+```
+
+### Detected Secret Types
+
+| Type | Pattern | Severity |
+|------|---------|----------|
+| AWS Access Key | `AKIA...` | Critical |
+| AWS Secret Key | `aws_secret_access_key=...` | Critical |
+| GitHub Token | `ghp_...`, `github_pat_...` | Critical |
+| GitLab Token | `glpat-...` | Critical |
+| Private Key | `-----BEGIN PRIVATE KEY-----` | Critical |
+| Stripe Key | `sk_live_...` | Critical |
+| Slack Token | `xoxb-...` | High |
+| Google API Key | `AIza...` | High |
+| NPM Token | `npm_...` | High |
+| JWT Token | `eyJ...` | Medium |
+| Generic API Key | `api_key=...` | Medium |
+| Generic Password | `password=...` | Medium |
+
+### Placeholder Detection
+
+The scanner automatically ignores common placeholders:
+- `your_api_key_here`
+- `example_token`
+- `<API_KEY>`
+- `${SECRET}`
+
+## Audit Logging
+
+OMG maintains tamper-proof audit logs for compliance and forensics.
+
+### Usage
+
+```bash
+# View recent entries
+omg audit log
+
+# View last 50 entries
+omg audit log -l 50
+
+# Filter by severity
+omg audit log -s error
+
+# Verify log integrity
+omg audit verify
+```
+
+### Event Types
+
+| Event | Description |
+|-------|-------------|
+| `PackageInstall` | Package installation |
+| `PackageRemove` | Package removal |
+| `PackageUpgrade` | Package upgrade |
+| `SecurityAudit` | Security scan performed |
+| `VulnerabilityDetected` | CVE found |
+| `SignatureVerified` | PGP verification success |
+| `SignatureFailed` | PGP verification failure |
+| `PolicyViolation` | Policy rule triggered |
+| `SbomGenerated` | SBOM created |
+
+### Tamper Detection
+
+Each audit entry includes:
+- **SHA-256 hash** of entry contents
+- **Previous entry hash** for chain integrity
+- **Timestamp** in ISO 8601 format
+- **User** who performed the action
+
+The `omg audit verify` command validates:
+1. Each entry's hash matches its contents
+2. The hash chain is unbroken
+3. No entries have been modified or deleted
+
+### Log Location
+
+Audit logs are stored at:
+```
+~/.local/share/omg/audit/audit.jsonl
+```
+
+## SLSA Verification
+
+OMG verifies SLSA provenance via Sigstore/Rekor.
+
+### Usage
+
+```bash
+# Check SLSA provenance for a package file
+omg audit slsa /path/to/package.pkg.tar.zst
+```
+
+### SLSA Levels
+
+| Level | Requirements | OMG Support |
+|-------|--------------|-------------|
+| Level 1 | Build process documented | ✅ |
+| Level 2 | Hosted build, signed provenance | ✅ |
+| Level 3 | Hardened build, non-falsifiable | ✅ |
+
+### Rekor Integration
+
+OMG queries the Sigstore Rekor transparency log to verify:
+- Package hash is recorded in the log
+- Build attestation is present
+- Signature is valid
+
+### Package SLSA Levels
+
+| Package Type | Default Level |
+|--------------|---------------|
+| Core packages (glibc, linux, pacman) | Level 3 |
+| Official repo packages | Level 2 |
+| AUR packages | None |
+
 ## Future Security Enhancements
 
 ### Planned Features
 
-1. **Binary Transparency**: Integration with Rekor
-2. **SBOM Support**: Software Bill of Materials
-3. **Runtime Security**: Monitor package behavior
-4. **Machine Learning**: Anomaly detection
+1. **Policy-as-Code**: OPA/Rego integration for complex policies
+2. **Runtime Security**: Monitor package behavior post-install
+3. **Machine Learning**: Anomaly detection for suspicious packages
 5. **Zero-Trust**: Enhanced verification
 
 ### Emerging Threats

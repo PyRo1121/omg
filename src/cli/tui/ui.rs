@@ -1,22 +1,58 @@
+//! World-class TUI for OMG Package Manager
+//!
+//! Inspired by bottom, lazygit, and k9s - modern, beautiful, and functional.
+
 use crate::cli::tui::app::{App, Tab};
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    style::{Color, Modifier, Style, Stylize},
+    symbols,
     text::{Line, Span},
     widgets::{
-        Block, Borders, Cell, Clear, Gauge, List, ListItem, Paragraph, Row, Sparkline, Table, Wrap,
+        Block, BorderType, Borders, Cell, Clear, Gauge, List, ListItem, Padding, Paragraph, Row,
+        Scrollbar, ScrollbarOrientation, ScrollbarState, Sparkline, Table, Tabs, Wrap,
     },
 };
 
+// Modern color palette (inspired by Catppuccin/Tokyo Night)
+mod colors {
+    use ratatui::style::Color;
+
+    pub const BG_DARK: Color = Color::Rgb(26, 27, 38);
+    pub const BG_MEDIUM: Color = Color::Rgb(36, 40, 59);
+    pub const BG_LIGHT: Color = Color::Rgb(52, 59, 88);
+    pub const BG_HIGHLIGHT: Color = Color::Rgb(41, 46, 66);
+
+    pub const FG_PRIMARY: Color = Color::Rgb(192, 202, 245);
+    pub const FG_SECONDARY: Color = Color::Rgb(130, 139, 184);
+    pub const FG_MUTED: Color = Color::Rgb(86, 95, 137);
+
+    pub const ACCENT_BLUE: Color = Color::Rgb(122, 162, 247);
+    pub const ACCENT_CYAN: Color = Color::Rgb(125, 207, 255);
+    pub const ACCENT_GREEN: Color = Color::Rgb(158, 206, 106);
+    pub const ACCENT_YELLOW: Color = Color::Rgb(224, 175, 104);
+    pub const ACCENT_ORANGE: Color = Color::Rgb(255, 158, 100);
+    pub const ACCENT_RED: Color = Color::Rgb(247, 118, 142);
+    pub const ACCENT_MAGENTA: Color = Color::Rgb(187, 154, 247);
+    pub const ACCENT_PINK: Color = Color::Rgb(255, 121, 198);
+
+    pub const BORDER_NORMAL: Color = Color::Rgb(61, 66, 91);
+    pub const BORDER_ACTIVE: Color = Color::Rgb(122, 162, 247);
+}
+
 pub fn draw(f: &mut Frame, app: &App) {
+    // Fill background
+    let bg_block = Block::default().style(Style::default().bg(colors::BG_DARK));
+    f.render_widget(bg_block, f.area());
+
     // Main layout with header, body, and footer
     let main_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3), // Header
+            Constraint::Length(3), // Header with tabs
             Constraint::Min(0),    // Body
-            Constraint::Length(3), // Footer
+            Constraint::Length(2), // Status bar
         ])
         .split(f.area());
 
@@ -37,7 +73,7 @@ pub fn draw(f: &mut Frame, app: &App) {
         Tab::Activity => draw_activity(f, body, app),
     }
 
-    draw_footer(f, footer, app);
+    draw_status_bar(f, footer, app);
 
     // Draw popup if active
     if app.show_popup {
@@ -46,404 +82,536 @@ pub fn draw(f: &mut Frame, app: &App) {
 }
 
 fn draw_header(f: &mut Frame, area: Rect, app: &App) {
-    let header_text = match app.current_tab {
-        Tab::Dashboard => "System Dashboard",
-        Tab::Packages => "Package Management",
-        Tab::Runtimes => "Runtime Versions",
-        Tab::Security => "Security Center",
-        Tab::Activity => "Activity Monitor",
+    let header_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Length(12), // Logo
+            Constraint::Min(0),     // Tabs
+            Constraint::Length(20), // Status indicators
+        ])
+        .split(area);
+
+    let (Some(logo_area), Some(tabs_area), Some(status_area)) = (
+        header_chunks.first(),
+        header_chunks.get(1),
+        header_chunks.get(2),
+    ) else {
+        return;
     };
 
-    let header = Paragraph::new(Line::from(vec![
+    // Logo
+    let logo = Paragraph::new(Line::from(vec![
+        Span::styled(" ", Style::default()),
         Span::styled(
-            " OMG ",
+            "◆",
             Style::default()
-                .bg(Color::Rgb(0, 150, 200))
-                .fg(Color::Black)
+                .fg(colors::ACCENT_CYAN)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
-            format!(" {header_text} "),
+            " OMG",
             Style::default()
-                .fg(Color::Rgb(200, 200, 200))
+                .fg(colors::FG_PRIMARY)
                 .add_modifier(Modifier::BOLD),
-        ),
-        if app.daemon_connected {
-            Span::styled(" ● ", Style::default().fg(Color::Green))
-        } else {
-            Span::styled(" ● ", Style::default().fg(Color::Red))
-        },
-        Span::styled(
-            format!(" v{} ", env!("CARGO_PKG_VERSION")),
-            Style::default().fg(Color::DarkGray),
         ),
     ]))
+    .style(Style::default().bg(colors::BG_MEDIUM))
+    .alignment(Alignment::Center)
     .block(
         Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Rgb(100, 100, 100))),
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(colors::BORDER_NORMAL)),
     );
-    f.render_widget(header, area);
+    f.render_widget(logo, *logo_area);
+
+    // Tabs
+    let tab_titles = vec![
+        "󰕮 Dashboard",
+        " Packages",
+        " Runtimes",
+        "󰒃 Security",
+        " Activity",
+    ];
+    let tabs = Tabs::new(tab_titles)
+        .select(app.current_tab as usize)
+        .style(Style::default().fg(colors::FG_MUTED))
+        .highlight_style(
+            Style::default()
+                .fg(colors::ACCENT_CYAN)
+                .add_modifier(Modifier::BOLD),
+        )
+        .divider(Span::styled(
+            " │ ",
+            Style::default().fg(colors::BORDER_NORMAL),
+        ))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(colors::BORDER_NORMAL))
+                .style(Style::default().bg(colors::BG_MEDIUM)),
+        );
+    f.render_widget(tabs, *tabs_area);
+
+    // Status indicators
+    let status = Paragraph::new(Line::from(vec![
+        if app.daemon_connected {
+            Span::styled("● ", Style::default().fg(colors::ACCENT_GREEN))
+        } else {
+            Span::styled("● ", Style::default().fg(colors::ACCENT_RED))
+        },
+        Span::styled(
+            format!("v{}", env!("CARGO_PKG_VERSION")),
+            Style::default().fg(colors::FG_MUTED),
+        ),
+    ]))
+    .alignment(Alignment::Right)
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(colors::BORDER_NORMAL))
+            .style(Style::default().bg(colors::BG_MEDIUM)),
+    );
+    f.render_widget(status, *status_area);
 }
 
 fn draw_dashboard(f: &mut Frame, area: Rect, app: &App) {
-    let chunks = Layout::default()
+    // Two-column layout for dashboard
+    let main_chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(30), // System Overview
-            Constraint::Percentage(40), // Real-time Stats
-            Constraint::Percentage(30), // Quick Actions
-        ])
+        .constraints([Constraint::Percentage(65), Constraint::Percentage(35)])
         .split(area);
 
-    let (Some(c0), Some(c1), Some(c2)) = (chunks.first(), chunks.get(1), chunks.get(2)) else {
+    let (Some(left), Some(right)) = (main_chunks.first(), main_chunks.get(1)) else {
         return;
     };
-    draw_system_overview(f, *c0, app);
-    draw_realtime_stats(f, *c1, app);
-    draw_quick_actions(f, *c2, app);
-}
 
-fn draw_system_overview(f: &mut Frame, area: Rect, app: &App) {
-    let blocks = Layout::default()
+    // Left side: System stats and metrics
+    let left_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(10),
-            Constraint::Length(10),
-            Constraint::Min(0),
+            Constraint::Length(7),  // System health cards
+            Constraint::Length(10), // CPU/Memory gauges
+            Constraint::Min(0),     // Network & Disk
+        ])
+        .split(*left);
+
+    let (Some(l0), Some(l1), Some(l2)) =
+        (left_chunks.first(), left_chunks.get(1), left_chunks.get(2))
+    else {
+        return;
+    };
+
+    draw_health_cards(f, *l0, app);
+    draw_system_gauges(f, *l1, app);
+    draw_system_info(f, *l2, app);
+
+    // Right side: Quick actions and activity
+    let right_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(*right);
+
+    let (Some(r0), Some(r1)) = (right_chunks.first(), right_chunks.get(1)) else {
+        return;
+    };
+
+    draw_quick_actions(f, *r0, app);
+    draw_recent_activity(f, *r1, app);
+}
+
+fn styled_block(title: &str) -> Block<'_> {
+    Block::default()
+        .title(format!(" {title} "))
+        .title_style(
+            Style::default()
+                .fg(colors::FG_PRIMARY)
+                .add_modifier(Modifier::BOLD),
+        )
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(colors::BORDER_NORMAL))
+        .style(Style::default().bg(colors::BG_MEDIUM))
+}
+
+fn draw_health_cards(f: &mut Frame, area: Rect, app: &App) {
+    let cards = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(25),
+            Constraint::Percentage(25),
+            Constraint::Percentage(25),
+            Constraint::Percentage(25),
         ])
         .split(area);
 
-    let (Some(b0), Some(b1), Some(b2)) = (blocks.first(), blocks.get(1), blocks.get(2)) else {
+    let total_packages = app.get_total_packages();
+    let updates = app.get_updates_available();
+    let orphans = app.get_orphan_packages();
+    let vulns = app.get_security_vulnerabilities();
+
+    // Packages card
+    if let Some(c) = cards.first() {
+        let card = Paragraph::new(vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                format!("{total_packages}"),
+                Style::default()
+                    .fg(colors::ACCENT_CYAN)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(Span::styled(
+                "Packages",
+                Style::default().fg(colors::FG_MUTED),
+            )),
+        ])
+        .alignment(Alignment::Center)
+        .block(styled_block("󰏗 Total"));
+        f.render_widget(card, *c);
+    }
+
+    // Updates card
+    if let Some(c) = cards.get(1) {
+        let color = if updates > 0 {
+            colors::ACCENT_YELLOW
+        } else {
+            colors::ACCENT_GREEN
+        };
+        let card = Paragraph::new(vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                format!("{updates}"),
+                Style::default().fg(color).add_modifier(Modifier::BOLD),
+            )),
+            Line::from(Span::styled(
+                "Updates",
+                Style::default().fg(colors::FG_MUTED),
+            )),
+        ])
+        .alignment(Alignment::Center)
+        .block(styled_block(" Updates"));
+        f.render_widget(card, *c);
+    }
+
+    // Orphans card
+    if let Some(c) = cards.get(2) {
+        let color = if orphans > 0 {
+            colors::ACCENT_ORANGE
+        } else {
+            colors::ACCENT_GREEN
+        };
+        let card = Paragraph::new(vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                format!("{orphans}"),
+                Style::default().fg(color).add_modifier(Modifier::BOLD),
+            )),
+            Line::from(Span::styled(
+                "Orphans",
+                Style::default().fg(colors::FG_MUTED),
+            )),
+        ])
+        .alignment(Alignment::Center)
+        .block(styled_block("󰃤 Orphans"));
+        f.render_widget(card, *c);
+    }
+
+    // Security card
+    if let Some(c) = cards.get(3) {
+        let color = if vulns == 0 {
+            colors::ACCENT_GREEN
+        } else {
+            colors::ACCENT_RED
+        };
+        let title = if vulns == 0 {
+            "󰒃 Security"
+        } else {
+            "󰀦 Security"
+        };
+        let card = Paragraph::new(vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                if vulns == 0 {
+                    "Secure".to_string()
+                } else {
+                    format!("{vulns} CVEs")
+                },
+                Style::default().fg(color).add_modifier(Modifier::BOLD),
+            )),
+            Line::from(Span::styled(
+                "Security",
+                Style::default().fg(colors::FG_MUTED),
+            )),
+        ])
+        .alignment(Alignment::Center)
+        .block(styled_block(title));
+        f.render_widget(card, *c);
+    }
+}
+
+fn draw_system_gauges(f: &mut Frame, area: Rect, app: &App) {
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(area);
+
+    let (Some(cpu_area), Some(mem_area)) = (chunks.first(), chunks.get(1)) else {
         return;
     };
-    let (b0, b1, b2) = (*b0, *b1, *b2);
 
-    // System Health
-    let vulnerabilities = app.get_security_vulnerabilities();
-    let health_color = if vulnerabilities == 0 {
-        Color::Green
-    } else if vulnerabilities < 5 {
-        Color::Yellow
-    } else {
-        Color::Red
+    // CPU Gauge
+    let cpu_percent = app.system_metrics.cpu_usage.min(100.0) as u16;
+    let cpu_color = match cpu_percent {
+        0..=50 => colors::ACCENT_GREEN,
+        51..=80 => colors::ACCENT_YELLOW,
+        _ => colors::ACCENT_RED,
     };
 
-    let health_text = match vulnerabilities {
-        0 => "Excellent",
-        1..=5 => "Good",
-        6..=20 => "Fair",
-        _ => "Critical",
+    let cpu_gauge = Gauge::default()
+        .block(styled_block(" CPU"))
+        .gauge_style(Style::default().fg(cpu_color).bg(colors::BG_LIGHT))
+        .percent(cpu_percent)
+        .label(format!("{:.1}%", app.system_metrics.cpu_usage));
+    f.render_widget(cpu_gauge, *cpu_area);
+
+    // Memory Gauge
+    let mem_percent = app.system_metrics.memory_usage.min(100.0) as u16;
+    let mem_color = match mem_percent {
+        0..=60 => colors::ACCENT_GREEN,
+        61..=85 => colors::ACCENT_YELLOW,
+        _ => colors::ACCENT_RED,
     };
 
-    let health_gauge = Gauge::default()
-        .block(
-            Block::default()
-                .title(" System Health ")
-                .borders(Borders::ALL),
-        )
-        .gauge_style(
-            Style::default()
-                .fg(health_color)
-                .bg(Color::Rgb(40, 40, 40))
-                .add_modifier(Modifier::BOLD),
-        )
-        .percent(if vulnerabilities == 0 {
-            100
-        } else {
-            std::cmp::max(20, 100 - (vulnerabilities * 5) as u16)
-        })
-        .label(format!("{health_text} ({vulnerabilities} CVEs)"));
+    let mem_gauge = Gauge::default()
+        .block(styled_block(" Memory"))
+        .gauge_style(Style::default().fg(mem_color).bg(colors::BG_LIGHT))
+        .percent(mem_percent)
+        .label(format!("{:.1}%", app.system_metrics.memory_usage));
+    f.render_widget(mem_gauge, *mem_area);
+}
 
-    f.render_widget(health_gauge, b0);
+fn draw_system_info(f: &mut Frame, area: Rect, app: &App) {
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(area);
 
-    // Package Stats
-    let total_packages = app.get_total_packages();
-    let updates_available = app.get_updates_available();
+    let (Some(disk_area), Some(net_area)) = (chunks.first(), chunks.get(1)) else {
+        return;
+    };
 
-    let package_lines = vec![
-        Line::from(vec![
-            Span::styled("Total: ", Style::default().fg(Color::Gray)),
-            Span::styled(
-                total_packages.to_string(),
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]),
-        Line::from(vec![
-            Span::styled("Updates: ", Style::default().fg(Color::Gray)),
-            Span::styled(
-                updates_available.to_string(),
-                Style::default()
-                    .fg(if updates_available > 0 {
-                        Color::Yellow
-                    } else {
-                        Color::Green
-                    })
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]),
-        Line::from(vec![
-            Span::styled("Orphans: ", Style::default().fg(Color::Gray)),
-            Span::styled(
-                app.get_orphan_packages().to_string(),
-                Style::default().fg(Color::Magenta),
-            ),
-        ]),
-        Line::from(vec![
-            Span::styled("Foreign: ", Style::default().fg(Color::Gray)),
-            Span::styled(
-                app.status
-                    .as_ref()
-                    .map_or(0, |s| s.explicit_packages)
-                    .to_string(),
-                Style::default().fg(Color::Blue),
-            ),
-        ]),
-    ];
-
-    let package_stats = Paragraph::new(package_lines)
-        .block(
-            Block::default()
-                .title(" Package Statistics ")
-                .borders(Borders::ALL),
-        )
-        .wrap(Wrap { trim: true });
-
-    f.render_widget(package_stats, b1);
-
-    // Disk Usage
+    // Disk info
     let disk_used_gb = app.system_metrics.disk_usage / 1024 / 1024;
     let disk_free_gb = app.system_metrics.disk_free / 1024 / 1024;
-    let disk_total_gb = disk_used_gb + disk_free_gb;
-    let disk_percent = if disk_total_gb > 0 {
-        (disk_used_gb * 100) / disk_total_gb
+    let disk_total = disk_used_gb + disk_free_gb;
+    let disk_percent = if disk_total > 0 {
+        (disk_used_gb * 100 / disk_total) as u16
     } else {
         0
     };
 
-    let disk_usage = vec![
-        Line::from("Disk Usage:"),
+    let disk_lines = vec![
+        Line::from(""),
         Line::from(vec![
-            Span::styled("┌─", Style::default().fg(Color::DarkGray)),
+            Span::styled("Used: ", Style::default().fg(colors::FG_MUTED)),
             Span::styled(
-                "■".repeat((disk_percent * 30 / 100) as usize),
-                Style::default().fg(Color::Blue),
-            ),
-            Span::styled(
-                "░".repeat(30 - (disk_percent * 30 / 100) as usize),
-                Style::default().fg(Color::DarkGray),
-            ),
-            Span::styled(
-                format!("┐ {disk_used_gb} GB"),
-                Style::default().fg(Color::Gray),
+                format!("{disk_used_gb} GB"),
+                Style::default()
+                    .fg(colors::ACCENT_BLUE)
+                    .add_modifier(Modifier::BOLD),
             ),
         ]),
         Line::from(vec![
-            Span::styled("│", Style::default().fg(Color::DarkGray)),
-            Span::styled(" ".repeat(30), Style::default()),
-            Span::styled("│", Style::default().fg(Color::DarkGray)),
+            Span::styled("Free: ", Style::default().fg(colors::FG_MUTED)),
+            Span::styled(
+                format!("{disk_free_gb} GB"),
+                Style::default().fg(colors::ACCENT_GREEN),
+            ),
         ]),
         Line::from(vec![
-            Span::styled("└─", Style::default().fg(Color::DarkGray)),
-            Span::styled("".repeat(30), Style::default()),
+            Span::styled("Usage: ", Style::default().fg(colors::FG_MUTED)),
             Span::styled(
-                format!("┘ {disk_free_gb} GB free"),
-                Style::default().fg(Color::Gray),
+                format!("{disk_percent}%"),
+                Style::default().fg(if disk_percent > 90 {
+                    colors::ACCENT_RED
+                } else {
+                    colors::FG_PRIMARY
+                }),
             ),
         ]),
     ];
 
-    let disk_widget =
-        Paragraph::new(disk_usage).block(Block::default().title(" Storage ").borders(Borders::ALL));
+    let disk_widget = Paragraph::new(disk_lines).block(styled_block(" Disk"));
+    f.render_widget(disk_widget, *disk_area);
 
-    f.render_widget(disk_widget, b2);
-}
-
-fn draw_realtime_stats(f: &mut Frame, area: Rect, app: &App) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(12),
-            Constraint::Length(12),
-            Constraint::Min(0),
-        ])
-        .split(area);
-
-    let (Some(c0), Some(c1), Some(c2)) = (chunks.first(), chunks.get(1), chunks.get(2)) else {
-        return;
-    };
-    let (c0, c1, c2) = (*c0, *c1, *c2);
-
-    // CPU Usage
-    let cpu_data = vec![
-        (app.system_metrics.cpu_usage * 100.0) as u64,
-        (app.system_metrics.cpu_usage * 95.0) as u64,
-        (app.system_metrics.cpu_usage * 105.0) as u64,
-        (app.system_metrics.cpu_usage * 90.0) as u64,
-        (app.system_metrics.cpu_usage * 110.0) as u64,
-        (app.system_metrics.cpu_usage * 85.0) as u64,
-        (app.system_metrics.cpu_usage * 100.0) as u64,
-        (app.system_metrics.cpu_usage * 95.0) as u64,
-        (app.system_metrics.cpu_usage * 105.0) as u64,
-        (app.system_metrics.cpu_usage * 100.0) as u64,
-        (app.system_metrics.cpu_usage * 90.0) as u64,
-        (app.system_metrics.cpu_usage * 95.0) as u64,
-    ];
-
-    let cpu_sparkline = Sparkline::default()
-        .block(
-            Block::default()
-                .title(format!(" CPU Usage {:.1}% ", app.system_metrics.cpu_usage))
-                .borders(Borders::ALL),
-        )
-        .data(&cpu_data)
-        .style(Style::default().fg(Color::Cyan))
-        .max(100);
-
-    f.render_widget(cpu_sparkline, c0);
-
-    // Memory Usage
-    let mem_data = vec![
-        (app.system_metrics.memory_usage * 100.0) as u64,
-        (app.system_metrics.memory_usage * 95.0) as u64,
-        (app.system_metrics.memory_usage * 105.0) as u64,
-        (app.system_metrics.memory_usage * 90.0) as u64,
-        (app.system_metrics.memory_usage * 110.0) as u64,
-        (app.system_metrics.memory_usage * 85.0) as u64,
-        (app.system_metrics.memory_usage * 100.0) as u64,
-        (app.system_metrics.memory_usage * 95.0) as u64,
-        (app.system_metrics.memory_usage * 105.0) as u64,
-        (app.system_metrics.memory_usage * 100.0) as u64,
-        (app.system_metrics.memory_usage * 90.0) as u64,
-        (app.system_metrics.memory_usage * 95.0) as u64,
-    ];
-
-    let mem_sparkline = Sparkline::default()
-        .block(
-            Block::default()
-                .title(format!(
-                    " Memory Usage {:.1}% ",
-                    app.system_metrics.memory_usage
-                ))
-                .borders(Borders::ALL),
-        )
-        .data(&mem_data)
-        .style(Style::default().fg(Color::Magenta))
-        .max(100);
-
-    f.render_widget(mem_sparkline, c1);
-
-    // Network Activity
-    let network_lines = vec![
-        Line::from("Network Activity:"),
+    // Network info
+    let net_lines = vec![
+        Line::from(""),
         Line::from(vec![
-            Span::styled("↓ ", Style::default().fg(Color::Green)),
-            Span::styled("RX: ", Style::default().fg(Color::Gray)),
+            Span::styled("↓ RX: ", Style::default().fg(colors::ACCENT_GREEN)),
             Span::styled(
                 format_bytes(app.system_metrics.network_rx),
-                Style::default()
-                    .fg(Color::Green)
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(colors::FG_PRIMARY),
             ),
         ]),
         Line::from(vec![
-            Span::styled("↑ ", Style::default().fg(Color::Blue)),
-            Span::styled("TX: ", Style::default().fg(Color::Gray)),
+            Span::styled("↑ TX: ", Style::default().fg(colors::ACCENT_BLUE)),
             Span::styled(
                 format_bytes(app.system_metrics.network_tx),
-                Style::default()
-                    .fg(Color::Blue)
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(colors::FG_PRIMARY),
             ),
         ]),
-        Line::from(""),
-        Line::from(format!(
-            "Daemon: {}",
+        Line::from(vec![
+            Span::styled("Daemon: ", Style::default().fg(colors::FG_MUTED)),
             if app.daemon_connected {
-                "Connected"
+                Span::styled("Connected", Style::default().fg(colors::ACCENT_GREEN))
             } else {
-                "Offline"
-            }
-        )),
+                Span::styled("Offline", Style::default().fg(colors::ACCENT_RED))
+            },
+        ]),
     ];
 
-    let network_widget = Paragraph::new(network_lines)
-        .block(Block::default().title(" Network ").borders(Borders::ALL));
-
-    f.render_widget(network_widget, c2);
+    let net_widget = Paragraph::new(net_lines).block(styled_block("󰛳 Network"));
+    f.render_widget(net_widget, *net_area);
 }
 
 fn draw_quick_actions(f: &mut Frame, area: Rect, app: &App) {
-    let updates_available = app.get_updates_available();
-    let orphans_count = app.get_orphan_packages();
+    let updates = app.get_updates_available();
+    let orphans = app.get_orphan_packages();
 
     let actions = vec![
         ListItem::new(Line::from(vec![
-            Span::styled("[u]", Style::default().fg(Color::Yellow)),
-            Span::styled(" Update System", Style::default()),
-            if updates_available > 0 {
+            Span::styled(
+                " u ",
+                Style::default()
+                    .bg(colors::BG_LIGHT)
+                    .fg(colors::ACCENT_YELLOW),
+            ),
+            Span::styled(" Update System", Style::default().fg(colors::FG_PRIMARY)),
+            if updates > 0 {
                 Span::styled(
-                    format!(" ({updates_available})"),
+                    format!(" ({updates})"),
                     Style::default()
-                        .fg(Color::Yellow)
+                        .fg(colors::ACCENT_YELLOW)
                         .add_modifier(Modifier::BOLD),
                 )
             } else {
-                Span::styled("", Style::default())
+                Span::styled(" ✓", Style::default().fg(colors::ACCENT_GREEN))
             },
         ])),
         ListItem::new(Line::from(vec![
-            Span::styled("[s]", Style::default().fg(Color::Yellow)),
-            Span::styled(" Search Packages", Style::default()),
+            Span::styled(
+                " 2 ",
+                Style::default()
+                    .bg(colors::BG_LIGHT)
+                    .fg(colors::ACCENT_CYAN),
+            ),
+            Span::styled(" Search Packages", Style::default().fg(colors::FG_PRIMARY)),
         ])),
         ListItem::new(Line::from(vec![
-            Span::styled("[c]", Style::default().fg(Color::Yellow)),
-            Span::styled(" Clean Cache", Style::default()),
+            Span::styled(
+                " c ",
+                Style::default()
+                    .bg(colors::BG_LIGHT)
+                    .fg(colors::ACCENT_MAGENTA),
+            ),
+            Span::styled(" Clean Cache", Style::default().fg(colors::FG_PRIMARY)),
         ])),
         ListItem::new(Line::from(vec![
-            Span::styled("[o]", Style::default().fg(Color::Yellow)),
-            Span::styled(" Remove Orphans", Style::default()),
-            if orphans_count > 0 {
+            Span::styled(
+                " o ",
+                Style::default()
+                    .bg(colors::BG_LIGHT)
+                    .fg(colors::ACCENT_ORANGE),
+            ),
+            Span::styled(" Remove Orphans", Style::default().fg(colors::FG_PRIMARY)),
+            if orphans > 0 {
                 Span::styled(
-                    format!(" ({orphans_count})"),
-                    Style::default().fg(Color::Magenta),
+                    format!(" ({orphans})"),
+                    Style::default().fg(colors::ACCENT_ORANGE),
                 )
             } else {
-                Span::styled("", Style::default())
+                Span::styled(" ✓", Style::default().fg(colors::ACCENT_GREEN))
             },
         ])),
         ListItem::new(Line::from(vec![
-            Span::styled("[r]", Style::default().fg(Color::Yellow)),
-            Span::styled(" Refresh Data", Style::default()),
+            Span::styled(
+                " r ",
+                Style::default()
+                    .bg(colors::BG_LIGHT)
+                    .fg(colors::ACCENT_BLUE),
+            ),
+            Span::styled(" Refresh", Style::default().fg(colors::FG_PRIMARY)),
         ])),
-        ListItem::new(Line::from("")),
-        ListItem::new(Line::from("Recent Commands:")),
-        // Show actual recent commands from history
-        if app.history.is_empty() {
-            ListItem::new(Line::from("  No recent activity"))
-        } else {
-            ListItem::new(Line::from(vec![
-                Span::styled("• ", Style::default().fg(Color::DarkGray)),
-                Span::styled(
-                    app.history.first().map_or_else(
-                        || "omg".to_string(),
-                        |h| format!("omg {}", h.transaction_type),
-                    ),
-                    Style::default().fg(Color::Gray),
-                ),
-            ]))
-        },
+        ListItem::new(Line::from(vec![
+            Span::styled(
+                " a ",
+                Style::default().bg(colors::BG_LIGHT).fg(colors::ACCENT_RED),
+            ),
+            Span::styled(" Security Audit", Style::default().fg(colors::FG_PRIMARY)),
+        ])),
     ];
 
-    let actions_list = List::new(actions).block(
-        Block::default()
-            .title(" Quick Actions ")
-            .borders(Borders::ALL),
-    );
+    let actions_list = List::new(actions)
+        .block(styled_block("󰌌 Quick Actions"))
+        .style(Style::default().bg(colors::BG_MEDIUM));
 
     f.render_widget(actions_list, area);
+}
+
+fn draw_recent_activity(f: &mut Frame, area: Rect, app: &App) {
+    let items: Vec<ListItem> = app
+        .history
+        .iter()
+        .take(5)
+        .map(|t| {
+            let time = t.timestamp.strftime("%H:%M").to_string();
+            let type_color = match t.transaction_type.to_string().as_str() {
+                "Install" => colors::ACCENT_GREEN,
+                "Remove" => colors::ACCENT_RED,
+                "Update" => colors::ACCENT_YELLOW,
+                "Sync" => colors::ACCENT_CYAN,
+                _ => colors::FG_MUTED,
+            };
+
+            let icon = match t.transaction_type.to_string().as_str() {
+                "Install" => "",
+                "Remove" => "",
+                "Update" => "",
+                "Sync" => "󰓦",
+                _ => "•",
+            };
+
+            ListItem::new(Line::from(vec![
+                Span::styled(format!("{time} "), Style::default().fg(colors::FG_MUTED)),
+                Span::styled(format!("{icon} "), Style::default().fg(type_color)),
+                Span::styled(
+                    format!("{}", t.transaction_type),
+                    Style::default().fg(type_color).add_modifier(Modifier::BOLD),
+                ),
+                if t.success {
+                    Span::styled(" ✓", Style::default().fg(colors::ACCENT_GREEN))
+                } else {
+                    Span::styled(" ✗", Style::default().fg(colors::ACCENT_RED))
+                },
+            ]))
+        })
+        .collect();
+
+    let activity_list = if items.is_empty() {
+        List::new(vec![ListItem::new(Line::from(Span::styled(
+            "No recent activity",
+            Style::default().fg(colors::FG_MUTED),
+        )))])
+    } else {
+        List::new(items)
+    }
+    .block(styled_block(" Recent"))
+    .style(Style::default().bg(colors::BG_MEDIUM));
+
+    f.render_widget(activity_list, area);
 }
 
 fn draw_packages(f: &mut Frame, area: Rect, app: &App) {
@@ -455,186 +623,314 @@ fn draw_packages(f: &mut Frame, area: Rect, app: &App) {
         ])
         .split(area);
 
-    let (Some(c0), Some(c1)) = (chunks.first(), chunks.get(1)) else {
+    let (Some(search_area), Some(list_area)) = (chunks.first(), chunks.get(1)) else {
         return;
     };
-    let (c0, c1) = (*c0, *c1);
 
-    // Search bar
+    // Search bar with modern styling
     let search_text = if app.search_mode {
-        format!("Search: {}_ ", app.search_query)
+        format!("  {}▏", app.search_query)
+    } else if app.search_query.is_empty() {
+        "  Type / to search packages...".to_string()
     } else {
-        format!("Search: {} ", app.search_query)
+        format!("  {}", app.search_query)
     };
 
-    let search_bar = Paragraph::new(search_text).block(
+    let search_bar = Paragraph::new(Line::from(vec![Span::styled(
+        search_text,
+        Style::default().fg(if app.search_mode {
+            colors::FG_PRIMARY
+        } else {
+            colors::FG_MUTED
+        }),
+    )]))
+    .block(
         Block::default()
-            .title(" Package Search ")
+            .title(" 󰍉 Search ")
+            .title_style(Style::default().fg(colors::FG_PRIMARY))
             .borders(Borders::ALL)
-            .border_style(if app.search_mode {
-                Style::default().fg(Color::Cyan)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(if app.search_mode {
+                colors::ACCENT_CYAN
             } else {
-                Style::default()
-            }),
+                colors::BORDER_NORMAL
+            }))
+            .style(Style::default().bg(colors::BG_MEDIUM)),
     );
+    f.render_widget(search_bar, *search_area);
 
-    f.render_widget(search_bar, c0);
-
-    // Package list
+    // Package table with modern styling
     let rows: Vec<Row> = app
         .search_results
         .iter()
         .enumerate()
         .map(|(i, pkg)| {
-            let style = if i == app.selected_index {
-                Style::default()
-                    .bg(Color::Rgb(50, 50, 50))
-                    .add_modifier(Modifier::BOLD)
+            let is_selected = i == app.selected_index;
+            let base_style = if is_selected {
+                Style::default().bg(colors::BG_HIGHLIGHT)
             } else {
                 Style::default()
             };
 
+            let source_color = if pkg.repo == "AUR" {
+                colors::ACCENT_MAGENTA
+            } else {
+                colors::ACCENT_BLUE
+            };
+
             Row::new(vec![
-                Cell::from(pkg.name.clone()).style(style),
-                Cell::from(pkg.version.to_string()).style(style),
-                Cell::from(pkg.repo.clone()).style(if pkg.repo == "AUR" {
-                    style.fg(Color::Blue)
-                } else {
-                    style
-                }),
-                Cell::from(pkg.description.clone()).style(style.fg(Color::DarkGray)),
+                Cell::from(Span::styled(
+                    pkg.name.clone(),
+                    base_style
+                        .fg(colors::FG_PRIMARY)
+                        .add_modifier(if is_selected {
+                            Modifier::BOLD
+                        } else {
+                            Modifier::empty()
+                        }),
+                )),
+                Cell::from(Span::styled(
+                    pkg.version.to_string(),
+                    base_style.fg(colors::ACCENT_GREEN),
+                )),
+                Cell::from(Span::styled(pkg.repo.clone(), base_style.fg(source_color))),
+                Cell::from(Span::styled(
+                    pkg.description.chars().take(50).collect::<String>(),
+                    base_style.fg(colors::FG_MUTED),
+                )),
             ])
+            .style(base_style)
         })
         .collect();
+
+    let header = Row::new(vec![
+        Cell::from(Span::styled(
+            "Name",
+            Style::default()
+                .fg(colors::ACCENT_CYAN)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Cell::from(Span::styled(
+            "Version",
+            Style::default()
+                .fg(colors::ACCENT_CYAN)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Cell::from(Span::styled(
+            "Source",
+            Style::default()
+                .fg(colors::ACCENT_CYAN)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Cell::from(Span::styled(
+            "Description",
+            Style::default()
+                .fg(colors::ACCENT_CYAN)
+                .add_modifier(Modifier::BOLD),
+        )),
+    ])
+    .style(Style::default().bg(colors::BG_LIGHT));
 
     let table = Table::new(
         rows,
         [
-            Constraint::Min(20),
+            Constraint::Min(25),
+            Constraint::Length(15),
             Constraint::Length(12),
-            Constraint::Length(10),
             Constraint::Min(30),
         ],
     )
-    .block(Block::default().title(" Packages ").borders(Borders::ALL))
-    .header(
-        Row::new(vec!["Name", "Version", "Source", "Description"])
-            .style(Style::default().add_modifier(Modifier::BOLD)),
-    );
+    .header(header)
+    .block(styled_block(" Packages"))
+    .row_highlight_style(Style::default().bg(colors::BG_HIGHLIGHT));
 
-    f.render_widget(table, c1);
+    f.render_widget(table, *list_area);
 }
 
 fn draw_runtimes(f: &mut Frame, area: Rect, app: &App) {
     let runtimes = app.get_runtime_versions();
 
+    let runtime_icons: std::collections::HashMap<&str, &str> = [
+        ("node", ""),
+        ("python", ""),
+        ("rust", ""),
+        ("go", ""),
+        ("ruby", ""),
+        ("java", ""),
+        ("bun", "󰟈"),
+        ("deno", "󰛦"),
+        ("zig", ""),
+    ]
+    .into_iter()
+    .collect();
+
     let items: Vec<ListItem> = runtimes
         .iter()
         .map(|(name, version)| {
+            let icon = runtime_icons
+                .get(name.to_lowercase().as_str())
+                .unwrap_or(&"󰏗");
             ListItem::new(Line::from(vec![
                 Span::styled(
-                    format!("{name:<10}"),
-                    Style::default().add_modifier(Modifier::BOLD),
+                    format!(" {icon} "),
+                    Style::default().fg(colors::ACCENT_CYAN),
                 ),
-                Span::styled(format!(" {version:<15}"), Style::default().fg(Color::Cyan)),
-                Span::styled(" Active", Style::default().fg(Color::Green)),
+                Span::styled(
+                    format!("{name:<12}"),
+                    Style::default()
+                        .fg(colors::FG_PRIMARY)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("{version:<15}"),
+                    Style::default().fg(colors::ACCENT_GREEN),
+                ),
+                Span::styled("● Active", Style::default().fg(colors::ACCENT_GREEN)),
             ]))
         })
         .collect();
 
-    let runtime_list = List::new(items).block(
-        Block::default()
-            .title(" Runtime Versions ")
-            .borders(Borders::ALL),
-    );
+    let runtime_list = if items.is_empty() {
+        List::new(vec![ListItem::new(Line::from(Span::styled(
+            "No runtimes detected. Use 'omg use <runtime> <version>' to install.",
+            Style::default().fg(colors::FG_MUTED),
+        )))])
+    } else {
+        List::new(items)
+    }
+    .block(styled_block(" Runtimes"))
+    .style(Style::default().bg(colors::BG_MEDIUM));
 
     f.render_widget(runtime_list, area);
 }
 
 fn draw_security(f: &mut Frame, area: Rect, app: &App) {
     let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(8), Constraint::Min(0)])
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(area);
 
-    let (Some(c0), Some(c1)) = (chunks.first(), chunks.get(1)) else {
+    let (Some(left), Some(right)) = (chunks.first(), chunks.get(1)) else {
         return;
     };
-    let (c0, c1) = (*c0, *c1);
+
+    let vulnerabilities = app.get_security_vulnerabilities();
+    let status_color = if vulnerabilities == 0 {
+        colors::ACCENT_GREEN
+    } else {
+        colors::ACCENT_RED
+    };
+    let status_icon = if vulnerabilities == 0 { "󰒃" } else { "󰀦" };
+    let status_text = if vulnerabilities == 0 {
+        "SECURE"
+    } else {
+        "VULNERABLE"
+    };
 
     // Security Overview
-    let vulnerabilities = app.get_security_vulnerabilities();
     let security_lines = vec![
+        Line::from(""),
         Line::from(vec![
-            Span::styled("Security Status: ", Style::default().fg(Color::Gray)),
             Span::styled(
-                if vulnerabilities == 0 {
-                    "SECURE"
-                } else {
-                    "VULNERABLE"
-                },
+                format!(" {status_icon} "),
+                Style::default().fg(status_color),
+            ),
+            Span::styled("Status: ", Style::default().fg(colors::FG_MUTED)),
+            Span::styled(
+                status_text,
                 Style::default()
-                    .fg(if vulnerabilities == 0 {
-                        Color::Green
+                    .fg(status_color)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("   CVEs Found: ", Style::default().fg(colors::FG_MUTED)),
+            Span::styled(
+                vulnerabilities.to_string(),
+                Style::default()
+                    .fg(if vulnerabilities > 0 {
+                        colors::ACCENT_RED
                     } else {
-                        Color::Red
+                        colors::ACCENT_GREEN
                     })
                     .add_modifier(Modifier::BOLD),
             ),
         ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            "   Policy:",
+            Style::default()
+                .fg(colors::FG_PRIMARY)
+                .add_modifier(Modifier::BOLD),
+        )),
         Line::from(vec![
-            Span::styled("Vulnerabilities Found: ", Style::default().fg(Color::Gray)),
+            Span::styled("   ├─ Min Grade: ", Style::default().fg(colors::FG_MUTED)),
+            Span::styled("VERIFIED", Style::default().fg(colors::ACCENT_GREEN)),
+        ]),
+        Line::from(vec![
+            Span::styled("   ├─ AUR: ", Style::default().fg(colors::FG_MUTED)),
+            Span::styled("Allowed", Style::default().fg(colors::ACCENT_YELLOW)),
+        ]),
+        Line::from(vec![
+            Span::styled("   └─ PGP: ", Style::default().fg(colors::FG_MUTED)),
+            Span::styled("Required", Style::default().fg(colors::ACCENT_GREEN)),
+        ]),
+    ];
+
+    let security_widget = Paragraph::new(security_lines)
+        .block(styled_block("󰒃 Security Status"))
+        .style(Style::default().bg(colors::BG_MEDIUM));
+    f.render_widget(security_widget, *left);
+
+    // Actions panel
+    let action_lines = vec![
+        Line::from(""),
+        Line::from(vec![
             Span::styled(
-                vulnerabilities.to_string(),
-                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                " a ",
+                Style::default().bg(colors::BG_LIGHT).fg(colors::ACCENT_RED),
+            ),
+            Span::styled(
+                " Run Security Audit",
+                Style::default().fg(colors::FG_PRIMARY),
             ),
         ]),
+        Line::from(""),
         Line::from(vec![
-            Span::styled("Last Audit: ", Style::default().fg(Color::Gray)),
-            Span::styled("Run 'omg audit' to check", Style::default().fg(Color::Cyan)),
+            Span::styled(
+                " f ",
+                Style::default()
+                    .bg(colors::BG_LIGHT)
+                    .fg(colors::ACCENT_YELLOW),
+            ),
+            Span::styled(
+                " Fix Vulnerabilities",
+                Style::default().fg(colors::FG_PRIMARY),
+            ),
         ]),
         Line::from(""),
-        Line::from("Policy Enforcement:"),
         Line::from(vec![
-            Span::styled("├─ Minimum Grade: ", Style::default().fg(Color::Gray)),
-            Span::styled("VERIFIED", Style::default().fg(Color::Green)),
+            Span::styled(
+                " p ",
+                Style::default()
+                    .bg(colors::BG_LIGHT)
+                    .fg(colors::ACCENT_BLUE),
+            ),
+            Span::styled(" Edit Policy", Style::default().fg(colors::FG_PRIMARY)),
         ]),
-        Line::from(vec![
-            Span::styled("├─ AUR Allowed: ", Style::default().fg(Color::Gray)),
-            Span::styled("Yes", Style::default().fg(Color::Yellow)),
-        ]),
-        Line::from(vec![
-            Span::styled("└─ PGP Required: ", Style::default().fg(Color::Gray)),
-            Span::styled("Yes", Style::default().fg(Color::Green)),
-        ]),
-    ];
-
-    let security_widget = Paragraph::new(security_lines).block(
-        Block::default()
-            .title(" Security Overview ")
-            .borders(Borders::ALL),
-    );
-
-    f.render_widget(security_widget, c0);
-
-    // Vulnerability List (placeholder - would show actual vulnerabilities)
-    let vuln_lines = vec![
-        Line::from("Run 'omg audit' to scan for vulnerabilities"),
         Line::from(""),
-        Line::from("Common vulnerabilities include:"),
-        Line::from("• Outdated cryptographic libraries"),
-        Line::from("• Known CVEs in installed packages"),
-        Line::from("• Insecure package configurations"),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Press 'a' to scan for vulnerabilities",
+            Style::default().fg(colors::FG_MUTED),
+        )),
     ];
 
-    let vuln_widget = Paragraph::new(vuln_lines).block(
-        Block::default()
-            .title(" Vulnerability Scan ")
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Yellow)),
-    );
-
-    f.render_widget(vuln_widget, c1);
+    let actions_widget = Paragraph::new(action_lines)
+        .block(styled_block("󰌌 Actions"))
+        .style(Style::default().bg(colors::BG_MEDIUM));
+    f.render_widget(actions_widget, *right);
 }
 
 fn draw_activity(f: &mut Frame, area: Rect, app: &App) {
@@ -646,23 +942,32 @@ fn draw_activity(f: &mut Frame, area: Rect, app: &App) {
             let time = t.timestamp.strftime("%H:%M:%S").to_string();
 
             let type_color = match t.transaction_type.to_string().as_str() {
-                "Install" => Color::Green,
-                "Remove" => Color::Red,
-                "Update" => Color::Yellow,
-                "Sync" => Color::Cyan,
-                _ => Color::Gray,
+                "Install" => colors::ACCENT_GREEN,
+                "Remove" => colors::ACCENT_RED,
+                "Update" => colors::ACCENT_YELLOW,
+                "Sync" => colors::ACCENT_CYAN,
+                _ => colors::FG_MUTED,
+            };
+
+            let icon = match t.transaction_type.to_string().as_str() {
+                "Install" => "",
+                "Remove" => "",
+                "Update" => "",
+                "Sync" => "󰓦",
+                _ => "•",
             };
 
             let header = Line::from(vec![
-                Span::styled(format!("[{time}] "), Style::default().fg(Color::DarkGray)),
+                Span::styled(format!(" {time} "), Style::default().fg(colors::FG_MUTED)),
+                Span::styled(format!("{icon} "), Style::default().fg(type_color)),
                 Span::styled(
-                    format!("{:<8} ", t.transaction_type),
+                    format!("{:<8}", t.transaction_type),
                     Style::default().fg(type_color).add_modifier(Modifier::BOLD),
                 ),
                 if t.success {
-                    Span::styled("✓", Style::default().fg(Color::Green))
+                    Span::styled(" ✓", Style::default().fg(colors::ACCENT_GREEN))
                 } else {
-                    Span::styled("✗", Style::default().fg(Color::Red))
+                    Span::styled(" ✗", Style::default().fg(colors::ACCENT_RED))
                 },
             ]);
 
@@ -681,120 +986,168 @@ fn draw_activity(f: &mut Frame, area: Rect, app: &App) {
             ListItem::new(vec![
                 header,
                 Line::from(Span::styled(
-                    format!("  {changes}"),
-                    Style::default().fg(Color::Gray),
+                    format!("    {changes}"),
+                    Style::default().fg(colors::FG_SECONDARY),
                 )),
             ])
         })
         .collect();
 
-    let activity_list = List::new(items).block(
-        Block::default()
-            .title(" Activity Log ")
-            .borders(Borders::ALL),
-    );
+    let activity_list = if items.is_empty() {
+        List::new(vec![ListItem::new(Line::from(Span::styled(
+            "No activity recorded yet",
+            Style::default().fg(colors::FG_MUTED),
+        )))])
+    } else {
+        List::new(items)
+    }
+    .block(styled_block(" Activity Log"))
+    .style(Style::default().bg(colors::BG_MEDIUM));
 
     f.render_widget(activity_list, area);
 }
 
-fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
-    let footer_chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Min(0), Constraint::Length(40)])
-        .split(area);
-
-    let (Some(fc0), Some(fc1)) = (footer_chunks.first(), footer_chunks.get(1)) else {
-        return;
-    };
-    let (fc0, fc1) = (*fc0, *fc1);
-
-    // Tab bar
-    let tabs = ["Dashboard", "Packages", "Runtimes", "Security", "Activity"];
-    let tab_spans: Vec<Span> = tabs
-        .iter()
-        .enumerate()
-        .map(|(i, tab)| {
-            let is_active = i == app.current_tab as usize;
-            Span::styled(
-                format!(" {tab} "),
-                Style::default()
-                    .fg(if is_active { Color::Cyan } else { Color::Gray })
-                    .bg(if is_active {
-                        Color::Rgb(30, 30, 30)
-                    } else {
-                        Color::Rgb(20, 20, 20)
-                    })
-                    .add_modifier(if is_active {
-                        Modifier::BOLD
-                    } else {
-                        Modifier::empty()
-                    }),
-            )
-        })
-        .collect();
-
-    let tab_bar = Paragraph::new(Line::from(tab_spans)).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Rgb(100, 100, 100))),
-    );
-
-    f.render_widget(tab_bar, fc0);
-
-    // Key hints
+fn draw_status_bar(f: &mut Frame, area: Rect, app: &App) {
+    // Key hints based on current tab
     let hints = match app.current_tab {
-        Tab::Dashboard => "[q]uit [r]efresh [1-5]abs",
-        Tab::Packages => "[q]uit [/]search [↑↓]nav [Enter]install",
-        Tab::Runtimes => "[q]uit [u]se [i]nstall [r]emove",
-        Tab::Security => "[q]uit [a]udit [f]ix [p]olicy",
-        Tab::Activity => "[q]uit [r]efresh [c]lear",
+        Tab::Dashboard => vec![
+            ("q", "Quit"),
+            ("u", "Update"),
+            ("c", "Clean"),
+            ("r", "Refresh"),
+            ("1-5", "Tabs"),
+        ],
+        Tab::Packages => vec![
+            ("q", "Quit"),
+            ("/", "Search"),
+            ("↑↓", "Navigate"),
+            ("Enter", "Install"),
+            ("Esc", "Cancel"),
+        ],
+        Tab::Runtimes => vec![
+            ("q", "Quit"),
+            ("u", "Use"),
+            ("i", "Install"),
+            ("r", "Remove"),
+        ],
+        Tab::Security => vec![("q", "Quit"), ("a", "Audit"), ("f", "Fix"), ("p", "Policy")],
+        Tab::Activity => vec![("q", "Quit"), ("r", "Refresh"), ("c", "Clear")],
     };
 
-    let key_hints = Paragraph::new(Line::from(vec![
-        Span::styled(" ", Style::default()),
-        Span::styled(hints, Style::default().fg(Color::DarkGray)),
-    ]))
-    .block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Rgb(100, 100, 100))),
-    );
+    let mut spans = vec![Span::styled(" ", Style::default())];
+    for (i, (key, action)) in hints.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::styled(
+                " │ ",
+                Style::default().fg(colors::BORDER_NORMAL),
+            ));
+        }
+        spans.push(Span::styled(
+            format!(" {key} "),
+            Style::default()
+                .bg(colors::BG_LIGHT)
+                .fg(colors::ACCENT_CYAN),
+        ));
+        spans.push(Span::styled(
+            format!(" {action}"),
+            Style::default().fg(colors::FG_MUTED),
+        ));
+    }
 
-    f.render_widget(key_hints, fc1);
+    let status_bar = Paragraph::new(Line::from(spans)).style(Style::default().bg(colors::BG_DARK));
+
+    f.render_widget(status_bar, area);
 }
 
 fn draw_popup(f: &mut Frame, app: &App) {
+    let popup_width = 50.min(f.area().width.saturating_sub(4));
+    let popup_height = 10.min(f.area().height.saturating_sub(4));
     let popup_area = Rect {
-        x: f.area().width / 4,
-        y: f.area().height / 4,
-        width: f.area().width / 2,
-        height: f.area().height / 2,
+        x: (f.area().width.saturating_sub(popup_width)) / 2,
+        y: (f.area().height.saturating_sub(popup_height)) / 2,
+        width: popup_width,
+        height: popup_height,
     };
 
     f.render_widget(Clear, popup_area);
 
-    let popup_text = match app.current_tab {
+    let (title, content) = match app.current_tab {
         Tab::Packages => {
             if !app.search_results.is_empty() && app.selected_index < app.search_results.len() {
-                app.search_results.get(app.selected_index).map_or_else(
-                    || "No package".to_string(),
-                    |p| format!("Install {}?", p.name),
+                let pkg = app.search_results.get(app.selected_index);
+                let name = pkg.map_or("package", |p| p.name.as_str());
+                (
+                    "󰏗 Install Package",
+                    vec![
+                        Line::from(""),
+                        Line::from(vec![
+                            Span::styled("Install ", Style::default().fg(colors::FG_PRIMARY)),
+                            Span::styled(
+                                name,
+                                Style::default()
+                                    .fg(colors::ACCENT_CYAN)
+                                    .add_modifier(Modifier::BOLD),
+                            ),
+                            Span::styled("?", Style::default().fg(colors::FG_PRIMARY)),
+                        ]),
+                        Line::from(""),
+                        Line::from(vec![
+                            Span::styled(
+                                " Enter ",
+                                Style::default()
+                                    .bg(colors::ACCENT_GREEN)
+                                    .fg(colors::BG_DARK),
+                            ),
+                            Span::styled(" Confirm  ", Style::default().fg(colors::FG_MUTED)),
+                            Span::styled(
+                                " Esc ",
+                                Style::default().bg(colors::ACCENT_RED).fg(colors::BG_DARK),
+                            ),
+                            Span::styled(" Cancel", Style::default().fg(colors::FG_MUTED)),
+                        ]),
+                    ],
                 )
             } else {
-                "No package selected".to_string()
+                ("󰀨 No Selection", vec![Line::from("No package selected")])
             }
         }
-        _ => "Confirm action?".to_string(),
+        _ => (
+            "󰀨 Confirm",
+            vec![
+                Line::from(""),
+                Line::from("Confirm this action?"),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled(
+                        " Enter ",
+                        Style::default()
+                            .bg(colors::ACCENT_GREEN)
+                            .fg(colors::BG_DARK),
+                    ),
+                    Span::styled(" Yes  ", Style::default().fg(colors::FG_MUTED)),
+                    Span::styled(
+                        " Esc ",
+                        Style::default().bg(colors::ACCENT_RED).fg(colors::BG_DARK),
+                    ),
+                    Span::styled(" No", Style::default().fg(colors::FG_MUTED)),
+                ]),
+            ],
+        ),
     };
 
-    let popup = Paragraph::new(popup_text)
-        .block(
-            Block::default()
-                .title(" Confirmation ")
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Yellow)),
-        )
-        .style(Style::default().bg(Color::Rgb(20, 20, 20)));
+    let popup = Paragraph::new(content).alignment(Alignment::Center).block(
+        Block::default()
+            .title(format!(" {title} "))
+            .title_style(
+                Style::default()
+                    .fg(colors::ACCENT_YELLOW)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(colors::ACCENT_YELLOW))
+            .style(Style::default().bg(colors::BG_MEDIUM)),
+    );
 
     f.render_widget(popup, popup_area);
 }

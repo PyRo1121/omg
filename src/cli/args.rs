@@ -203,8 +203,11 @@ pub enum Commands {
     /// Check system health and environment configuration
     Doctor,
 
-    /// Perform a security audit for vulnerabilities
-    Audit,
+    /// Security audit and compliance tools
+    Audit {
+        #[command(subcommand)]
+        command: Option<AuditCommands>,
+    },
 
     /// Run project scripts (e.g., 'omg run build' runs npm/cargo/make)
     Run {
@@ -261,7 +264,8 @@ pub enum Commands {
         id: Option<String>,
     },
 
-    /// Interactive TUI Dashboard
+    /// Launch the interactive TUI dashboard for system monitoring and management
+    #[command(visible_alias = "d")]
     Dash,
 }
 
@@ -298,6 +302,45 @@ pub enum ToolCommands {
     List,
     /// Remove a tool
     Remove { name: String },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum AuditCommands {
+    /// Scan for vulnerabilities in installed packages (default)
+    Scan,
+    /// Generate Software Bill of Materials (SBOM) in CycloneDX format
+    Sbom {
+        /// Output file path (default: ~/.local/share/omg/sbom/sbom-<timestamp>.json)
+        #[arg(short, long)]
+        output: Option<String>,
+        /// Include vulnerability data in SBOM
+        #[arg(long, default_value = "true")]
+        vulns: bool,
+    },
+    /// Scan for leaked secrets and credentials
+    Secrets {
+        /// Directory to scan (default: current directory)
+        #[arg(short, long)]
+        path: Option<String>,
+    },
+    /// View audit log entries
+    Log {
+        /// Number of entries to show
+        #[arg(short, long, default_value = "20")]
+        limit: usize,
+        /// Filter by severity (debug, info, warning, error, critical)
+        #[arg(short, long)]
+        severity: Option<String>,
+    },
+    /// Verify audit log integrity (tamper detection)
+    Verify,
+    /// Show security policy status
+    Policy,
+    /// Check SLSA provenance for a package
+    Slsa {
+        /// Package file to verify
+        package: String,
+    },
 }
 
 #[cfg(test)]

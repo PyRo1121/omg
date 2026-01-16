@@ -14,4 +14,4 @@ pub mod style;
 pub mod tool;
 pub mod tui;
 
-pub use args::{Cli, Commands, EnvCommands, ToolCommands};
+pub use args::{AuditCommands, Cli, Commands, EnvCommands, ToolCommands};
