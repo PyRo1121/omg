@@ -308,6 +308,7 @@ impl RustManager {
         Ok(())
     }
 
+    #[allow(clippy::expect_used)]
     async fn download_file(&self, url: &str, path: &PathBuf) -> Result<()> {
         let response =
             self.client.get(url).send().await.with_context(|| {
@@ -562,11 +563,10 @@ impl RustManager {
 
     async fn fetch_manifest(&self, channel: &str, date: Option<&str>) -> Result<toml::Value> {
         let filename = format!("{RUST_MANIFEST_PREFIX}-{channel}.toml");
-        let url = if let Some(date) = date {
-            format!("{RUST_DIST_URL}/{date}/{filename}")
-        } else {
-            format!("{RUST_DIST_URL}/{filename}")
-        };
+        let url = date.map_or_else(
+            || format!("{RUST_DIST_URL}/{filename}"),
+            |date| format!("{RUST_DIST_URL}/{date}/{filename}"),
+        );
 
         let manifest = self
             .client
@@ -598,17 +598,20 @@ impl RustToolchainSpec {
             && segments.get(1).is_some_and(|seg| seg.starts_with("beta"))
         {
             channel.push('-');
-            channel.push_str(segments[1]);
+            if let Some(s1) = segments.get(1) {
+                channel.push_str(s1);
+            }
             segments.drain(0..2);
         } else {
             segments.remove(0);
         }
 
         let mut date = None;
-        if segments.len() >= 3 && is_date_parts(segments[0], segments[1], segments[2]) {
-            date = Some(format!("{}-{}-{}", segments[0], segments[1], segments[2]));
-            segments.drain(0..3);
-        }
+        if let (Some(s0), Some(s1), Some(s2)) = (segments.first(), segments.get(1), segments.get(2))
+            && is_date_parts(s0, s1, s2) {
+                date = Some(format!("{s0}-{s1}-{s2}"));
+                segments.drain(0..3);
+            }
 
         let host = if segments.is_empty() {
             default_host_triple()?

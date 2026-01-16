@@ -660,8 +660,9 @@ const OFFICIAL_REPOS: &[&str] = &[
     "kde-unstable",
 ];
 
-/// Identify potential AUR packages (installed but not in official repos)
-/// Uses pure Rust cache for extreme speed (<1ms)
+/// Identify potential AUR packages (installed but not in official repos).
+///
+/// Uses pure Rust cache for extreme speed (<1ms).
 /// Note: Packages in custom repos (e.g., chaotic-aur) ARE included since they
 /// may have AUR updates available. Use `verify_aur_packages()` to filter.
 pub fn get_potential_aur_packages() -> Result<Vec<String>> {

@@ -23,7 +23,7 @@ use crate::package_managers::{
     apt_get_sync_pkg_info, apt_get_system_status, apt_list_explicit, apt_list_installed_fast,
 };
 
-fn use_debian_backend() -> bool {
+const fn use_debian_backend() -> bool {
     #[cfg(feature = "debian")]
     {
         return is_debian_like();
@@ -48,16 +48,17 @@ pub struct DaemonState {
 
 impl DaemonState {
     #[must_use]
+    #[allow(clippy::expect_used)]
     pub fn new() -> Self {
         let data_dir = crate::core::paths::daemon_data_dir();
 
         Self {
             cache: PackageCache::default(),
-            persistent: super::db::PersistentCache::new(&data_dir).expect("Failed to init redb"),
+            persistent: super::db::PersistentCache::new(&data_dir).expect("daemon requires redb"),
             pacman: OfficialPackageManager::new(),
             aur: AurClient::new(),
             alpm_worker: AlpmWorker::new(),
-            index: Arc::new(PackageIndex::new().expect("Failed to init Index")),
+            index: Arc::new(PackageIndex::new().expect("daemon requires index")),
             runtime_versions: Arc::new(RwLock::new(Vec::new())),
         }
     }

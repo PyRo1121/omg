@@ -4,7 +4,7 @@ use anyhow::Result;
 use crossterm::event::KeyCode;
 use std::time::Instant;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
     Dashboard = 0,
     Packages,
@@ -122,11 +122,11 @@ impl App {
             && let Some(line) = stat.lines().next()
         {
             let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() > 4 && parts[0] == "cpu" {
-                let user: u64 = parts[1].parse().unwrap_or(0);
-                let nice: u64 = parts[2].parse().unwrap_or(0);
-                let system: u64 = parts[3].parse().unwrap_or(0);
-                let idle: u64 = parts[4].parse().unwrap_or(0);
+            if parts.len() > 4 && parts.first() == Some(&"cpu") {
+                let user: u64 = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+                let nice: u64 = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
+                let system: u64 = parts.get(3).and_then(|s| s.parse().ok()).unwrap_or(0);
+                let idle: u64 = parts.get(4).and_then(|s| s.parse().ok()).unwrap_or(0);
 
                 let total = user + nice + system + idle;
                 if total > 0 {
@@ -166,7 +166,9 @@ impl App {
         // Use statvfs to get disk usage (no subprocess)
         use std::ffi::CString;
         let Ok(path) = CString::new("/") else { return (0, 0) };
+        // SAFETY: zeroed statvfs is valid for libc::statvfs to populate
         let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
+        // SAFETY: path is a valid CString, stat is a valid mutable pointer
         let result = unsafe { libc::statvfs(path.as_ptr(), std::ptr::addr_of_mut!(stat)) };
         if result == 0 {
             let block_size = stat.f_frsize as u64;
@@ -188,8 +190,9 @@ impl App {
             for line in netdev.lines().skip(2) {
                 let parts: Vec<&str> = line.split_whitespace().collect();
                 if parts.len() > 9
-                    && !parts[0].starts_with("lo")
-                    && let (Ok(rx), Ok(tx)) = (parts[1].parse::<u64>(), parts[9].parse::<u64>())
+                    && parts.first().is_some_and(|s| !s.starts_with("lo"))
+                    && let (Some(rx_str), Some(tx_str)) = (parts.get(1), parts.get(9))
+                    && let (Ok(rx), Ok(tx)) = (rx_str.parse::<u64>(), tx_str.parse::<u64>())
                 {
                     total_rx += rx;
                     total_tx += tx;

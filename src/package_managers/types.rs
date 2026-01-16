@@ -12,14 +12,14 @@ static ZERO_VERSION: LazyLock<Version> = LazyLock::new(|| {
 });
 
 /// Parse a version string, returning a zero version on failure.
-/// This is infallible and avoids expect()/unwrap() in hot paths.
+/// This is infallible and avoids `expect()/unwrap()` in hot paths.
 #[must_use]
 pub fn parse_version_or_zero(s: &str) -> Version {
     Version::from_str(s).unwrap_or_else(|_| ZERO_VERSION.clone())
 }
 
 /// Returns a default zero version.
-/// This is infallible and avoids expect()/unwrap() in hot paths.
+/// This is infallible and avoids `expect()/unwrap()` in hot paths.
 #[must_use]
 pub fn zero_version() -> Version {
     ZERO_VERSION.clone()

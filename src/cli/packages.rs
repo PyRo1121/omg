@@ -37,7 +37,7 @@ use crate::package_managers::{
     apt_remove_orphans, apt_search_sync,
 };
 
-fn use_debian_backend() -> bool {
+const fn use_debian_backend() -> bool {
     #[cfg(feature = "debian")]
     {
         return is_debian_like();
@@ -252,7 +252,7 @@ pub async fn search(query: &str, detailed: bool, interactive: bool) -> Result<()
 
         let selected_names: Vec<String> = selections
             .into_iter()
-            .map(|i| pkgs_to_install[i].clone())
+            .filter_map(|i| pkgs_to_install.get(i).cloned())
             .collect();
 
         return install(&selected_names, false).await;
@@ -1363,16 +1363,13 @@ pub fn explicit_sync(count: bool) -> Result<()> {
         }
     }
     // Try daemon first
-    let packages = if let Ok(mut client) = DaemonClient::connect_sync() {
+    let packages = DaemonClient::connect_sync().ok().and_then(|mut client| {
         if let Ok(ResponseResult::Explicit(res)) = client.call_sync(&Request::Explicit { id: 0 }) {
-            res.packages
+            Some(res.packages)
         } else {
-            // Sequential fallback to local ALPM
-            crate::package_managers::list_explicit_fast().unwrap_or_default()
+            None
         }
-    } else {
-        crate::package_managers::list_explicit_fast().unwrap_or_default()
-    };
+    }).unwrap_or_else(|| crate::package_managers::list_explicit_fast().unwrap_or_default());
 
     use std::io::Write;
     let mut stdout = std::io::BufWriter::new(std::io::stdout());

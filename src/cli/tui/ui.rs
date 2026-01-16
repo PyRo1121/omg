@@ -20,17 +20,22 @@ pub fn draw(f: &mut Frame, app: &App) {
         ])
         .split(f.area());
 
-    draw_header(f, main_chunks[0], app);
+    let (Some(header), Some(body), Some(footer)) = 
+        (main_chunks.first(), main_chunks.get(1), main_chunks.get(2)) 
+    else { return };
+    let (header, body, footer) = (*header, *body, *footer);
+
+    draw_header(f, header, app);
 
     match app.current_tab {
-        Tab::Dashboard => draw_dashboard(f, main_chunks[1], app),
-        Tab::Packages => draw_packages(f, main_chunks[1], app),
-        Tab::Runtimes => draw_runtimes(f, main_chunks[1], app),
-        Tab::Security => draw_security(f, main_chunks[1], app),
-        Tab::Activity => draw_activity(f, main_chunks[1], app),
+        Tab::Dashboard => draw_dashboard(f, body, app),
+        Tab::Packages => draw_packages(f, body, app),
+        Tab::Runtimes => draw_runtimes(f, body, app),
+        Tab::Security => draw_security(f, body, app),
+        Tab::Activity => draw_activity(f, body, app),
     }
 
-    draw_footer(f, main_chunks[2], app);
+    draw_footer(f, footer, app);
 
     // Draw popup if active
     if app.show_popup {
@@ -89,9 +94,10 @@ fn draw_dashboard(f: &mut Frame, area: Rect, app: &App) {
         ])
         .split(area);
 
-    draw_system_overview(f, chunks[0], app);
-    draw_realtime_stats(f, chunks[1], app);
-    draw_quick_actions(f, chunks[2], app);
+    let (Some(c0), Some(c1), Some(c2)) = (chunks.first(), chunks.get(1), chunks.get(2)) else { return };
+    draw_system_overview(f, *c0, app);
+    draw_realtime_stats(f, *c1, app);
+    draw_quick_actions(f, *c2, app);
 }
 
 fn draw_system_overview(f: &mut Frame, area: Rect, app: &App) {
@@ -103,6 +109,9 @@ fn draw_system_overview(f: &mut Frame, area: Rect, app: &App) {
             Constraint::Min(0),
         ])
         .split(area);
+
+    let (Some(b0), Some(b1), Some(b2)) = (blocks.first(), blocks.get(1), blocks.get(2)) else { return };
+    let (b0, b1, b2) = (*b0, *b1, *b2);
 
     // System Health
     let vulnerabilities = app.get_security_vulnerabilities();
@@ -140,7 +149,7 @@ fn draw_system_overview(f: &mut Frame, area: Rect, app: &App) {
         })
         .label(format!("{health_text} ({vulnerabilities} CVEs)"));
 
-    f.render_widget(health_gauge, blocks[0]);
+    f.render_widget(health_gauge, b0);
 
     // Package Stats
     let total_packages = app.get_total_packages();
@@ -196,7 +205,7 @@ fn draw_system_overview(f: &mut Frame, area: Rect, app: &App) {
         )
         .wrap(Wrap { trim: true });
 
-    f.render_widget(package_stats, blocks[1]);
+    f.render_widget(package_stats, b1);
 
     // Disk Usage
     let disk_used_gb = app.system_metrics.disk_usage / 1024 / 1024;
@@ -243,7 +252,7 @@ fn draw_system_overview(f: &mut Frame, area: Rect, app: &App) {
     let disk_widget =
         Paragraph::new(disk_usage).block(Block::default().title(" Storage ").borders(Borders::ALL));
 
-    f.render_widget(disk_widget, blocks[2]);
+    f.render_widget(disk_widget, b2);
 }
 
 fn draw_realtime_stats(f: &mut Frame, area: Rect, app: &App) {
@@ -255,6 +264,9 @@ fn draw_realtime_stats(f: &mut Frame, area: Rect, app: &App) {
             Constraint::Min(0),
         ])
         .split(area);
+
+    let (Some(c0), Some(c1), Some(c2)) = (chunks.first(), chunks.get(1), chunks.get(2)) else { return };
+    let (c0, c1, c2) = (*c0, *c1, *c2);
 
     // CPU Usage
     let cpu_data = vec![
@@ -282,7 +294,7 @@ fn draw_realtime_stats(f: &mut Frame, area: Rect, app: &App) {
         .style(Style::default().fg(Color::Cyan))
         .max(100);
 
-    f.render_widget(cpu_sparkline, chunks[0]);
+    f.render_widget(cpu_sparkline, c0);
 
     // Memory Usage
     let mem_data = vec![
@@ -313,7 +325,7 @@ fn draw_realtime_stats(f: &mut Frame, area: Rect, app: &App) {
         .style(Style::default().fg(Color::Magenta))
         .max(100);
 
-    f.render_widget(mem_sparkline, chunks[1]);
+    f.render_widget(mem_sparkline, c1);
 
     // Network Activity
     let network_lines = vec![
@@ -352,7 +364,7 @@ fn draw_realtime_stats(f: &mut Frame, area: Rect, app: &App) {
     let network_widget = Paragraph::new(network_lines)
         .block(Block::default().title(" Network ").borders(Borders::ALL));
 
-    f.render_widget(network_widget, chunks[2]);
+    f.render_widget(network_widget, c2);
 }
 
 fn draw_quick_actions(f: &mut Frame, area: Rect, app: &App) {
@@ -407,7 +419,7 @@ fn draw_quick_actions(f: &mut Frame, area: Rect, app: &App) {
             ListItem::new(Line::from(vec![
                 Span::styled("• ", Style::default().fg(Color::DarkGray)),
                 Span::styled(
-                    format!("omg {}", app.history[0].transaction_type),
+                    app.history.first().map_or_else(|| "omg".to_string(), |h| format!("omg {}", h.transaction_type)),
                     Style::default().fg(Color::Gray),
                 ),
             ]))
@@ -432,6 +444,9 @@ fn draw_packages(f: &mut Frame, area: Rect, app: &App) {
         ])
         .split(area);
 
+    let (Some(c0), Some(c1)) = (chunks.first(), chunks.get(1)) else { return };
+    let (c0, c1) = (*c0, *c1);
+
     // Search bar
     let search_text = if app.search_mode {
         format!("Search: {}_ ", app.search_query)
@@ -450,7 +465,7 @@ fn draw_packages(f: &mut Frame, area: Rect, app: &App) {
             }),
     );
 
-    f.render_widget(search_bar, chunks[0]);
+    f.render_widget(search_bar, c0);
 
     // Package list
     let rows: Vec<Row> = app
@@ -494,7 +509,7 @@ fn draw_packages(f: &mut Frame, area: Rect, app: &App) {
             .style(Style::default().add_modifier(Modifier::BOLD)),
     );
 
-    f.render_widget(table, chunks[1]);
+    f.render_widget(table, c1);
 }
 
 fn draw_runtimes(f: &mut Frame, area: Rect, app: &App) {
@@ -528,6 +543,9 @@ fn draw_security(f: &mut Frame, area: Rect, app: &App) {
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(8), Constraint::Min(0)])
         .split(area);
+
+    let (Some(c0), Some(c1)) = (chunks.first(), chunks.get(1)) else { return };
+    let (c0, c1) = (*c0, *c1);
 
     // Security Overview
     let vulnerabilities = app.get_security_vulnerabilities();
@@ -582,7 +600,7 @@ fn draw_security(f: &mut Frame, area: Rect, app: &App) {
             .borders(Borders::ALL),
     );
 
-    f.render_widget(security_widget, chunks[0]);
+    f.render_widget(security_widget, c0);
 
     // Vulnerability List (placeholder - would show actual vulnerabilities)
     let vuln_lines = vec![
@@ -601,7 +619,7 @@ fn draw_security(f: &mut Frame, area: Rect, app: &App) {
             .border_style(Style::default().fg(Color::Yellow)),
     );
 
-    f.render_widget(vuln_widget, chunks[1]);
+    f.render_widget(vuln_widget, c1);
 }
 
 fn draw_activity(f: &mut Frame, area: Rect, app: &App) {
@@ -670,6 +688,9 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
         .constraints([Constraint::Min(0), Constraint::Length(40)])
         .split(area);
 
+    let (Some(fc0), Some(fc1)) = (footer_chunks.first(), footer_chunks.get(1)) else { return };
+    let (fc0, fc1) = (*fc0, *fc1);
+
     // Tab bar
     let tabs = ["Dashboard", "Packages", "Runtimes", "Security", "Activity"];
     let tab_spans: Vec<Span> = tabs
@@ -701,7 +722,7 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
             .border_style(Style::default().fg(Color::Rgb(100, 100, 100))),
     );
 
-    f.render_widget(tab_bar, footer_chunks[0]);
+    f.render_widget(tab_bar, fc0);
 
     // Key hints
     let hints = match app.current_tab {
@@ -722,7 +743,7 @@ fn draw_footer(f: &mut Frame, area: Rect, app: &App) {
             .border_style(Style::default().fg(Color::Rgb(100, 100, 100))),
     );
 
-    f.render_widget(key_hints, footer_chunks[1]);
+    f.render_widget(key_hints, fc1);
 }
 
 fn draw_popup(f: &mut Frame, app: &App) {
@@ -738,7 +759,7 @@ fn draw_popup(f: &mut Frame, app: &App) {
     let popup_text = match app.current_tab {
         Tab::Packages => {
             if !app.search_results.is_empty() && app.selected_index < app.search_results.len() {
-                format!("Install {}?", app.search_results[app.selected_index].name)
+                app.search_results.get(app.selected_index).map_or_else(|| "No package".to_string(), |p| format!("Install {}?", p.name))
             } else {
                 "No package selected".to_string()
             }
@@ -769,9 +790,10 @@ fn format_bytes(bytes: u64) -> String {
         unit_index += 1;
     }
 
+    let unit = UNITS.get(unit_index).unwrap_or(&"B");
     if unit_index == 0 {
-        format!("{} {}", bytes, UNITS[unit_index])
+        format!("{bytes} {unit}")
     } else {
-        format!("{:.1} {}", size, UNITS[unit_index])
+        format!("{size:.1} {unit}")
     }
 }

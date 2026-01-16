@@ -225,6 +225,7 @@ impl JavaManager {
         Ok(())
     }
 
+    #[allow(clippy::expect_used)]
     async fn download_file(&self, url: &str, path: &PathBuf) -> Result<()> {
         let response =
             self.client.get(url).send().await.with_context(|| {

@@ -135,10 +135,10 @@ fn mise_tool_version(value: &Value) -> Option<String> {
         Value::String(s) => Some(s.clone()),
         Value::Array(items) => items
             .iter()
-            .find_map(|entry| entry.as_str().map(|s| s.to_string())),
+            .find_map(|entry| entry.as_str().map(std::string::ToString::to_string)),
         Value::Table(table) => table
             .get("version")
-            .and_then(|entry| entry.as_str().map(|s| s.to_string())),
+            .and_then(|entry| entry.as_str().map(std::string::ToString::to_string)),
         _ => None,
     }
 }
@@ -219,9 +219,9 @@ pub fn detect_versions(start: &Path) -> HashMap<String, String> {
                     if let Ok(content) = std::fs::read_to_string(&file_path) {
                         for line in content.lines() {
                             let parts: Vec<&str> = line.split_whitespace().collect();
-                            if parts.len() >= 2 {
-                                let rt = normalize_runtime_name(parts[0]);
-                                let ver = parts[1].to_string();
+                            if let (Some(rt_part), Some(ver_part)) = (parts.first(), parts.get(1)) {
+                                let rt = normalize_runtime_name(rt_part);
+                                let ver = (*ver_part).to_string();
                                 versions.entry(rt).or_insert(ver);
                             }
                         }
@@ -241,7 +241,7 @@ pub fn detect_versions(start: &Path) -> HashMap<String, String> {
                 } else if *filename == "package.json" {
                     if let Some(extra) = read_package_json_versions(&dir) {
                         for (runtime, version) in extra {
-                            versions.entry(runtime).or_insert(version.trim().to_string());
+                            versions.entry(runtime).or_insert_with(|| version.trim().to_string());
                         }
                     }
                 } else if *filename == ".mise.toml"
@@ -250,7 +250,7 @@ pub fn detect_versions(start: &Path) -> HashMap<String, String> {
                 {
                     if let Some(extra) = read_mise_versions(&file_path) {
                         for (runtime, version) in extra {
-                            versions.entry(runtime).or_insert(version.trim().to_string());
+                            versions.entry(runtime).or_insert_with(|| version.trim().to_string());
                         }
                     }
                 } else {
@@ -296,9 +296,7 @@ pub fn build_path_additions<S: std::hash::BuildHasher>(
             },
             "rust" => {
                 let toolchain = RustToolchainSpec::parse(version)
-                    .ok()
-                    .map(|spec| spec.name())
-                    .unwrap_or_else(|| version.to_string());
+                    .ok().map_or_else(|| version.clone(), |spec| spec.name());
                 data_dir.join("versions/rust").join(toolchain).join("bin")
             }
             _ => continue,
@@ -338,11 +336,10 @@ fn resolve_node_bin_path(data_dir: &Path, version: &str) -> Option<PathBuf> {
         return Some(path);
     }
 
-    if let Some(resolved) = resolve_installed_version_req(&versions_dir, normalized) {
-        if let Some(path) = node_version_bin_path(&versions_dir, &resolved) {
+    if let Some(resolved) = resolve_installed_version_req(&versions_dir, normalized)
+        && let Some(path) = node_version_bin_path(&versions_dir, &resolved) {
             return Some(path);
         }
-    }
 
     nvm_node_bin(normalized)
 }
@@ -354,11 +351,10 @@ fn resolve_bun_bin_path(data_dir: &Path, version: &str) -> Option<PathBuf> {
         return Some(path);
     }
 
-    if let Some(resolved) = resolve_installed_version_req(&versions_dir, normalized) {
-        if let Some(path) = bun_version_bin_path(&versions_dir, &resolved) {
+    if let Some(resolved) = resolve_installed_version_req(&versions_dir, normalized)
+        && let Some(path) = bun_version_bin_path(&versions_dir, &resolved) {
             return Some(path);
         }
-    }
 
     None
 }
@@ -506,9 +502,7 @@ fn native_runtime_bin_path(runtime: &str, version: &str) -> Option<PathBuf> {
         "bun" => resolve_bun_bin_path(&data_dir, version)?,
         "rust" => {
             let toolchain = RustToolchainSpec::parse(version)
-                .ok()
-                .map(|spec| spec.name())
-                .unwrap_or_else(|| version.to_string());
+                .ok().map_or_else(|| version.to_string(), |spec| spec.name());
             data_dir.join("versions/rust").join(toolchain).join("bin")
         }
         _ => return None,

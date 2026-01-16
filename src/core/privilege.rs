@@ -10,6 +10,7 @@ use std::process::Command;
 /// Check if we're running as root
 #[must_use]
 pub fn is_root() -> bool {
+    // SAFETY: geteuid() is always safe to call and has no side effects
     unsafe { libc::geteuid() == 0 }
 }
 
@@ -27,7 +28,7 @@ pub fn elevate_if_needed() -> std::io::Result<()> {
     let err = Command::new("sudo")
         .arg("--")
         .arg(&exe)
-        .args(&args[1..])
+        .args(args.get(1..).unwrap_or_default())
         .exec();
 
     // exec() only returns if it failed

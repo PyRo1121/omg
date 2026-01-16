@@ -8,7 +8,6 @@ use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-use std::str::FromStr;
 
 #[derive(Debug, Clone)]
 pub struct PkgBuild {
@@ -30,7 +29,7 @@ impl Default for PkgBuild {
     fn default() -> Self {
         Self {
             name: String::new(),
-            version: Version::from_str("0").expect("static version"),
+            version: super::types::zero_version(),
             release: String::new(),
             description: String::new(),
             url: String::new(),
@@ -63,7 +62,8 @@ impl PkgBuild {
         let lines: Vec<&str> = content.lines().collect();
         let mut i = 0;
         while i < lines.len() {
-            let line = lines[i].trim();
+            let Some(line_ref) = lines.get(i) else { break };
+            let line = line_ref.trim();
 
             // Skip empty lines and comments
             if line.is_empty() || line.starts_with('#') {
@@ -91,7 +91,8 @@ impl PkgBuild {
                     let mut array_content = val.to_string();
                     i += 1;
                     while i < lines.len() {
-                        let next_line = lines[i];
+                        let Some(next_line) = lines.get(i) else { break };
+                        let next_line = *next_line;
                         array_content.push(' ');
                         array_content.push_str(next_line);
                         if next_line.contains(')') {
