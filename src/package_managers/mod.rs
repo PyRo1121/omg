@@ -29,8 +29,6 @@ pub use alpm_direct::{
 #[cfg(feature = "arch")]
 pub use alpm_ops::DownloadInfo;
 #[cfg(feature = "arch")]
-pub use types::PackageInfo as SyncPkgInfo;
-#[cfg(feature = "arch")]
 pub use alpm_ops::{
     clean_cache, display_pkg_info, execute_transaction, get_sync_pkg_info, get_system_status,
     get_update_download_list, get_update_list, list_orphans_direct, sync_dbs,
@@ -51,6 +49,8 @@ pub use parallel_sync::{
     DownloadJob, download_packages_parallel, select_fastest_mirrors, sync_databases_parallel,
 };
 pub use traits::PackageManager;
+#[cfg(feature = "arch")]
+pub use types::PackageInfo as SyncPkgInfo;
 pub use types::{LocalPackage, SyncPackage};
 
 #[cfg(feature = "debian")]

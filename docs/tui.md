@@ -14,14 +14,25 @@ omg dash
 |-----|--------|
 | `q` | Quit the dashboard |
 | `r` | Refresh all data |
+| `Tab` | Switch view (planned) |
 
 ## Features
 
 The TUI dashboard provides a real-time view of:
 
-- **System Status**: Package counts, updates available, vulnerabilities
-- **Runtime Versions**: Active versions for all managed runtimes (Node, Python, Go, Rust, Ruby, Java, Bun)
-- **Package Information**: Quick access to package search and info
+### System Status Panel (40% width)
+- **Updates available**: Count of pending updates (yellow if > 0, green if up-to-date)
+- **Total packages**: Number of installed packages
+- **CVEs**: Known security vulnerabilities (red if > 0)
+- **Runtimes**: Active versions for all managed runtimes (Node, Python, Go, Rust, Ruby, Java, Bun)
+
+### Recent Activity Panel (60% width)
+- **Transaction history**: Last 10 package operations
+- **For each transaction**:
+  - Timestamp (HH:MM:SS format)
+  - Transaction type (Install, Remove, Update, Sync)
+  - Success/failure indicator (✓ or ✗)
+  - Affected packages (up to 3, then "...")
 
 ## Implementation
 
@@ -33,31 +44,38 @@ The TUI is built with:
 
 ### Architecture
 
+```
+src/cli/tui/
+├── mod.rs    # Entry point, terminal setup, main event loop
+├── app.rs    # Application state (status, history, refresh logic)
+└── ui.rs     # Layout and widget rendering
+```
+
+### Application State
+
 ```rust
-// Entry point: src/cli/tui/mod.rs
-pub async fn run() -> Result<()> {
-    enable_raw_mode()?;
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
-    
-    let mut app = App::new().await?;
-    run_app(&mut terminal, &mut app).await
+pub struct App {
+    pub status: Option<StatusResult>,  // System status from daemon
+    pub history: Vec<Transaction>,      // Recent transactions
+    pub last_tick: std::time::Instant,  // For auto-refresh timing
 }
 ```
 
-### Components
+### Data Sources
 
-The TUI consists of three main modules:
+1. **System Status**: Fetched from daemon via IPC
+   ```rust
+   let status = client.call(Request::Status { id: 0 }).await;
+   ```
 
-| Module | Purpose |
-|--------|---------|
-| `mod.rs` | Entry point, terminal setup/cleanup, main event loop |
-| `app.rs` | Application state management and business logic |
-| `ui.rs` | UI layout and widget rendering |
+2. **Transaction History**: Loaded from local history file
+   ```rust
+   let entries = HistoryManager::new()?.load()?;
+   ```
 
 ### Event Loop
 
-The dashboard uses a polling-based event loop:
+The dashboard uses a 100ms polling interval:
 
 ```rust
 async fn run_app(terminal: &mut Terminal, app: &mut App) -> Result<()> {
@@ -74,44 +92,67 @@ async fn run_app(terminal: &mut Terminal, app: &mut App) -> Result<()> {
             }
         }
         
-        app.tick().await?;
+        app.tick().await?;  // Auto-refresh every 10s
     }
 }
 ```
 
-Key characteristics:
-- **100ms poll interval**: Responsive but not CPU-intensive
-- **Async refresh**: Data fetches don't block UI
-- **Auto-tick**: Periodic background updates
+### Auto-Refresh
 
-## Data Sources
+The dashboard automatically refreshes every 10 seconds:
+```rust
+pub async fn tick(&mut self) -> Result<()> {
+    if self.last_tick.elapsed() >= Duration::from_secs(10) {
+        self.refresh().await?;
+        self.last_tick = Instant::now();
+    }
+    Ok(())
+}
+```
 
-The dashboard pulls data from:
+## UI Layout
 
-1. **Daemon IPC**: System status, package counts, vulnerabilities
-2. **Runtime Probes**: Active runtime versions from `<data_dir>/versions/*/current` symlinks
-3. **libalpm**: Package database queries (if daemon unavailable)
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ OMG  Dashboard                                                  │
+├─────────────────────────────┬───────────────────────────────────┤
+│ System Status               │ Recent Activity                   │
+│                             │                                   │
+│ Updates: Up to date         │ [13:00:00] Install ✓              │
+│ Packages: 1234              │   firefox, neovim                 │
+│ CVEs: None                  │ [12:30:00] Update ✓               │
+│                             │   linux, mesa                     │
+│ Runtimes:                   │ [12:00:00] Remove ✓               │
+│   • node     20.10.0        │   old-package                     │
+│   • python   3.12.0         │                                   │
+│   • rust     1.75.0         │                                   │
+│                             │                                   │
+├─────────────────────────────┴───────────────────────────────────┤
+│ [q] Quit  [r] Refresh  [Tab] Switch View                        │
+└─────────────────────────────────────────────────────────────────┘
+```
 
 ## Terminal Requirements
 
 The TUI requires:
-- **Terminal**: Any modern terminal emulator (xterm, alacritty, kitty, etc.)
+- **Terminal**: Any modern terminal emulator (xterm, alacritty, kitty, wezterm, etc.)
 - **Alternate Screen**: Uses alternate screen buffer to preserve shell history
-- **Mouse Support**: Optional, can be enabled for future enhancements
+- **Unicode Support**: Uses Unicode symbols (✓, ✗, •)
+- **Color Support**: 256 colors recommended (`$TERM` should report color support)
 
 ## Troubleshooting
 
 ### Dashboard doesn't start
 
-1. Check terminal compatibility:
+1. **Check terminal compatibility**:
    ```bash
    echo $TERM
    # Should show xterm-256color or similar
    ```
 
-2. Ensure raw mode is supported:
+2. **Check daemon connection**: Dashboard needs the daemon for status
    ```bash
-   stty -a
+   omg daemon  # Start daemon if not running
    ```
 
 ### Display issues
@@ -120,23 +161,23 @@ The TUI requires:
 - **Colors wrong**: Ensure `TERM` supports 256 colors
 - **Missing characters**: Use a font with Unicode support (Nerd Fonts recommended)
 
-### Data not refreshing
+### Data not updating
 
 - Press `r` to force refresh
-- Check if daemon is running: `omg daemon`
+- Check if daemon is running: `omg status`
 - Verify socket connectivity
 
-## Future Enhancements
+### Status shows "Loading..."
 
-Planned features include:
-- **Package search**: Interactive fuzzy search
-- **Install/Remove**: Direct package management
-- **Tabs**: Multiple views (packages, runtimes, history)
-- **Mouse support**: Click navigation
-- **Themes**: Customizable color schemes
+The dashboard couldn't connect to the daemon. Start it with:
+```bash
+omg daemon
+```
 
 ## Source Files
 
-- Entry point: [tui/mod.rs](file:///home/pyro1121/Documents/code/filemanager/omg/src/cli/tui/mod.rs)
-- App state: [tui/app.rs](file:///home/pyro1121/Documents/code/filemanager/omg/src/cli/tui/app.rs)
-- UI rendering: [tui/ui.rs](file:///home/pyro1121/Documents/code/filemanager/omg/src/cli/tui/ui.rs)
+| File | Purpose |
+|------|---------|
+| [tui/mod.rs](file:///home/pyro1121/Documents/code/filemanager/omg/src/cli/tui/mod.rs) | Entry point, terminal setup/cleanup, main event loop |
+| [tui/app.rs](file:///home/pyro1121/Documents/code/filemanager/omg/src/cli/tui/app.rs) | Application state management and refresh logic |
+| [tui/ui.rs](file:///home/pyro1121/Documents/code/filemanager/omg/src/cli/tui/ui.rs) | Layout definitions and widget rendering |
