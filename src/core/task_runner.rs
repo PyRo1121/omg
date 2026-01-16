@@ -544,25 +544,32 @@ fn execute_process(
     // This ensures 'npm' uses the correct node version, 'cargo' uses correct rust channel, etc.
     let current_dir = std::env::current_dir()?;
     if let Some(toolchain_file) = find_rust_toolchain_file(&current_dir) {
-        let rust_manager = RustManager::new();
-        let request = RustManager::parse_toolchain_file(&toolchain_file)?;
-        let status = rust_manager.toolchain_status(&request)?;
+        // First check if Rust is available via system (rustup) - if so, let rustup handle it
+        let has_system_rust = which::which("rustc").is_ok() || which::which("cargo").is_ok();
 
-        if status.needs_install
-            || !status.missing_components.is_empty()
-            || !status.missing_targets.is_empty()
-        {
-            let prompt = format!("Rust toolchain '{}' is missing. Install now?", status.name);
-            if Confirm::with_theme(&ColorfulTheme::default())
-                .with_prompt(prompt)
-                .default(true)
-                .interact()?
+        if !has_system_rust {
+            // Only use OMG's Rust manager if no system Rust is available
+            let rust_manager = RustManager::new();
+            let request = RustManager::parse_toolchain_file(&toolchain_file)?;
+            let status = rust_manager.toolchain_status(&request)?;
+
+            if status.needs_install
+                || !status.missing_components.is_empty()
+                || !status.missing_targets.is_empty()
             {
-                run_async(rust_manager.ensure_toolchain(&request))?;
-            } else {
-                anyhow::bail!("Rust toolchain setup cancelled");
+                let prompt = format!("Rust toolchain '{}' is missing. Install now?", status.name);
+                if Confirm::with_theme(&ColorfulTheme::default())
+                    .with_prompt(prompt)
+                    .default(true)
+                    .interact()?
+                {
+                    run_async(rust_manager.ensure_toolchain(&request))?;
+                } else {
+                    anyhow::bail!("Rust toolchain setup cancelled");
+                }
             }
         }
+        // If system Rust exists, rustup will handle toolchain switching automatically
     }
     let mut versions = hooks::detect_versions(&current_dir);
     if let Some((runtime, default_version)) = detect_js_runtime(&current_dir) {
@@ -667,12 +674,20 @@ fn find_rust_toolchain_file(start: &std::path::Path) -> Option<PathBuf> {
 
 fn ensure_node_runtime(version: &str) -> Result<String> {
     let normalized = version.trim_start_matches('v');
+
+    // Check if Node is available via system first (nvm, fnm, volta, or system node)
+    if which::which("node").is_ok() {
+        return Ok(normalized.to_string());
+    }
+
+    // Check OMG-managed Node
     let node_manager = NodeManager::new();
     let installed = node_manager.list_installed().unwrap_or_default();
     if installed.iter().any(|v| v == normalized) {
         return Ok(normalized.to_string());
     }
 
+    // Check nvm-managed Node
     if let Some(nvm_version) = nvm_resolve_version(normalized) {
         return Ok(nvm_version);
     }
@@ -693,6 +708,13 @@ fn ensure_node_runtime(version: &str) -> Result<String> {
 
 fn ensure_bun_runtime(version: &str) -> Result<String> {
     let normalized = version.trim_start_matches('v');
+
+    // Check if Bun is available via system first
+    if which::which("bun").is_ok() {
+        return Ok(normalized.to_string());
+    }
+
+    // Check OMG-managed Bun
     let bun_manager = BunManager::new();
     let installed = bun_manager.list_installed().unwrap_or_default();
     if installed.iter().any(|v| v == normalized) {
