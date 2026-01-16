@@ -84,7 +84,10 @@ pub enum ResponseResult {
     Explicit(ExplicitResult),
     SecurityAudit(SecurityAuditResult),
     Ping(String),
-    CacheStats { size: usize, max_size: usize },
+    CacheStats {
+        size: usize,
+        max_size: usize,
+    },
     Message(String),
     /// Batch response containing multiple results
     Batch(Vec<Response>),

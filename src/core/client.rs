@@ -8,8 +8,8 @@ use futures::sink::SinkExt;
 use futures::stream::StreamExt;
 use parking_lot::Mutex;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::net::UnixStream;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
@@ -332,7 +332,10 @@ impl DaemonClient {
     }
 
     /// Get info for multiple packages in a single round-trip
-    pub async fn batch_info(&mut self, packages: &[&str]) -> Result<Vec<Option<DetailedPackageInfo>>> {
+    pub async fn batch_info(
+        &mut self,
+        packages: &[&str],
+    ) -> Result<Vec<Option<DetailedPackageInfo>>> {
         let requests: Vec<Request> = packages
             .iter()
             .enumerate()
@@ -407,7 +410,10 @@ impl PooledSyncClient {
             bincode::serde::decode_from_slice(&resp_bytes, bincode::config::legacy())?;
 
         match response {
-            Response::Success { id: resp_id, result } => {
+            Response::Success {
+                id: resp_id,
+                result,
+            } => {
                 if resp_id != id {
                     anyhow::bail!("Request ID mismatch: sent {id}, got {resp_id}");
                 }

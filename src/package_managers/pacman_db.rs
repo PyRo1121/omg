@@ -370,7 +370,7 @@ pub fn parse_local_db(path: &Path) -> Result<HashMap<String, LocalDbPackage>> {
 
 fn parse_local_desc(path: &Path) -> Result<LocalDbPackage> {
     let content = std::fs::read_to_string(path)?;
-    
+
     // Try V1 first (most common)
     if let Ok(desc) = alpm_db::desc::DbDescFileV1::from_str(&content) {
         return Ok(LocalDbPackage {
@@ -512,7 +512,7 @@ fn ensure_sync_cache_loaded(sync_dir: &Path) -> Result<()> {
 
     {
         let cache = SYNC_DB_CACHE.read();
-            if cache.last_modified == Some(current_mtime) && !cache.packages.is_empty() {
+        if cache.last_modified == Some(current_mtime) && !cache.packages.is_empty() {
             return Ok(());
         }
     }
