@@ -142,19 +142,6 @@ pub fn get_pkg_info_from_db(alpm: &alpm::Alpm, name: &str) -> Result<Option<Pack
     Ok(None)
 }
 
-#[derive(Debug)]
-pub struct PackageInfo {
-    pub name: String,
-    pub version: String,
-    pub description: String,
-    pub url: String,
-    pub size: u64,
-    pub download_size: u64,
-    pub repo: String,
-    pub depends: Vec<String>,
-    pub licenses: Vec<String>,
-}
-
 /// Clean package cache using direct file system operations - FAST
 pub fn clean_cache(keep_versions: usize) -> Result<(usize, u64)> {
     let cache_dir = paths::pacman_cache_dir();
