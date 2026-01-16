@@ -137,7 +137,7 @@ pub async fn complete(_shell: &str, current: &str, last: &str, full: Option<&str
                 // Priority 2: Installed versions
                 let data_dir = crate::core::Database::default_path()?
                     .parent()
-                    .unwrap()
+                    .ok_or_else(|| anyhow::anyhow!("Invalid database path"))?
                     .to_path_buf();
                 let runtime_dir = data_dir.join("versions").join(last);
                 let mut installed_versions = Vec::new();

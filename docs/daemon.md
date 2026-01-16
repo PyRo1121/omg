@@ -221,7 +221,7 @@ The daemon uses a coordinated shutdown mechanism:
 1. **Signal Handling**: SIGINT/SIGTERM trigger graceful shutdown
 2. **Broadcast Channel**: Notifies all tasks to stop
 3. **Client Drain**: Existing connections allowed to complete current requests
-4. **Resource Cleanup**: Socket file removed, LMDB environment closed
+4. **Resource Cleanup**: Socket file removed, redb database closed
 5. **Timeout**: 5-second maximum shutdown duration
 
 ## Daemon State (`src/daemon/handlers.rs`)
@@ -230,8 +230,8 @@ The daemon uses a coordinated shutdown mechanism:
 
 ```rust
 pub struct DaemonState {
-    pub cache: PackageCache,                    // In-memory LRU cache
-    pub persistent: super::db::PersistentCache, // LMDB persistence
+    pub cache: PackageCache,                    // In-memory moka cache
+    pub persistent: super::db::PersistentCache, // redb persistence
     pub pacman: OfficialPackageManager,         // libalpm wrapper
     pub aur: AurClient,                        // AUR HTTP client
     pub alpm_worker: AlpmWorker,               // Threaded libalpm ops
@@ -256,7 +256,7 @@ let data_dir = directories::ProjectDirs::from("com", "omg", "omg")
 
 ```
 <XDG_DATA_DIR>/omg/
-├── cache.mdb              # LMDB persistent cache
+├── cache.redb             # redb persistent cache
 ├── versions/              # Runtime installations
 │   ├── node/
 │   │   ├── 18.17.0/
@@ -277,7 +277,7 @@ let data_dir = directories::ProjectDirs::from("com", "omg", "omg")
 Each component is initialized in a specific order:
 
 1. **Data Directory**: Created with appropriate permissions
-2. **LMDB Database**: Opens `cache.mdb` with 10MB map size
+2. **redb Database**: Opens `cache.redb` with automatic sizing
 3. **Package Cache**: Default 1000 entries, 5-minute TTL
 4. **Package Index**: Built from libalpm databases
 5. **Package Managers**: libalpm, AUR client, worker thread
@@ -288,7 +288,7 @@ Each component is initialized in a specific order:
 Typical daemon memory footprint:
 - **Package Index**: ~15MB (full Arch repository)
 - **Package Cache**: ~10MB (1000 cached results)
-- **LMDB Mapped**: 10MB (status persistence)
+- **redb Database**: ~1MB (status persistence)
 - **Runtime Data**: ~1MB (version strings)
 - **Total**: ~40MB baseline
 
@@ -411,7 +411,7 @@ The daemon runs with:
 
 1. **AUR Unavailable**: Falls back to official packages only
 2. **Cache Full**: Continues with LRU eviction
-3. **LMDB Error**: Continues with in-memory only
+3. **redb Error**: Continues with in-memory only
 4. **Index Build Failure**: Falls back to direct libalpm queries
 5. **Worker Crash**: Restarts on next 5-minute interval
 
@@ -419,7 +419,7 @@ The daemon runs with:
 
 1. **Automatic Restart**: Systemd can restart failed daemon
 2. **Cache Rebuild**: Lost cache rebuilt from libalpm
-3. **State Recovery**: LMDB provides ACID guarantees
+3. **State Recovery**: redb provides ACID guarantees
 4. **Connection Recovery**: Clients reconnect on socket errors
 5. **Partial Failure**: One component failure doesn't affect others
 

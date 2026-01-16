@@ -9,13 +9,14 @@ use std::cell::RefCell;
 
 use crate::core::paths;
 use crate::package_managers::pacman_db;
-use crate::package_managers::types::{LocalPackage, SyncPackage};
+use crate::package_managers::types::{LocalPackage, PackageInfo, SyncPackage};
 
 thread_local! {
     static ALPM_HANDLE: RefCell<Option<Alpm>> = const { RefCell::new(None) };
 }
 
 /// Get a cached ALPM handle or create a new one for this thread
+#[allow(clippy::expect_used)]
 pub fn with_handle<F, R>(f: F) -> Result<R>
 where
     F: FnOnce(&Alpm) -> Result<R>,
@@ -34,11 +35,12 @@ where
             *maybe_handle = Some(alpm);
         }
 
-        f(maybe_handle.as_ref().unwrap())
+        f(maybe_handle.as_ref().expect("ALPM handle initialized above"))
     })
 }
 
 /// Get a mutable cached ALPM handle
+#[allow(clippy::expect_used)]
 pub fn with_handle_mut<F, R>(f: F) -> Result<R>
 where
     F: FnOnce(&mut Alpm) -> Result<R>,
@@ -57,7 +59,7 @@ where
             *maybe_handle = Some(alpm);
         }
 
-        f(maybe_handle.as_mut().unwrap())
+        f(maybe_handle.as_mut().expect("ALPM handle initialized above"))
     })
 }
 
@@ -99,7 +101,7 @@ pub fn search_local(query: &str) -> Result<Vec<LocalPackage>> {
             })
             .map(|pkg| LocalPackage {
                 name: pkg.name().to_string(),
-                version: pkg.version().to_string(),
+                version: super::types::parse_version_or_zero(pkg.version()),
                 description: pkg.desc().unwrap_or("").to_string(),
                 install_size: pkg.isize(),
                 reason: match pkg.reason() {
@@ -150,7 +152,7 @@ pub fn search_sync(query: &str) -> Result<Vec<SyncPackage>> {
 
                     results.push(SyncPackage {
                         name: pkg.name().to_string(),
-                        version: pkg.version().to_string(),
+                        version: super::types::parse_version_or_zero(pkg.version()),
                         description: pkg.desc().unwrap_or("").to_string(),
                         repo: db.name().to_string(),
                         download_size: pkg.download_size(),
@@ -171,30 +173,32 @@ pub fn get_package_info(name: &str) -> Result<Option<PackageInfo>> {
         if let Some(pkg) = pacman_db::get_local_package(name)? {
             return Ok(Some(PackageInfo {
                 name: pkg.name,
-                version: pkg.version,
+                version: pkg.version.clone(),
                 description: pkg.desc,
                 url: None,
-                licenses: Vec::new(),
-                depends: Vec::new(),
-                installed: true,
+                size: 0,
                 install_size: None,
                 download_size: None,
-                repo: Some("local".to_string()),
+                repo: "local".to_string(),
+                depends: Vec::new(),
+                licenses: Vec::new(),
+                installed: true,
             }));
         }
 
         if let Some(pkg) = pacman_db::get_sync_package(name)? {
             return Ok(Some(PackageInfo {
                 name: pkg.name,
-                version: pkg.version,
+                version: pkg.version.clone(),
                 description: pkg.desc,
                 url: Some(pkg.url),
-                licenses: Vec::new(),
-                depends: pkg.depends,
-                installed: false,
+                size: pkg.isize,
                 install_size: Some(i64::try_from(pkg.isize).unwrap_or(i64::MAX)),
-                download_size: Some(i64::try_from(pkg.csize).unwrap_or(i64::MAX)),
-                repo: Some(pkg.repo),
+                download_size: Some(pkg.csize),
+                repo: pkg.repo,
+                depends: pkg.depends,
+                licenses: Vec::new(),
+                installed: false,
             }));
         }
 
@@ -206,19 +210,20 @@ pub fn get_package_info(name: &str) -> Result<Option<PackageInfo>> {
         if let Ok(pkg) = handle.localdb().pkg(name) {
             return Ok(Some(PackageInfo {
                 name: pkg.name().to_string(),
-                version: pkg.version().to_string(),
+                version: super::types::parse_version_or_zero(pkg.version()),
                 description: pkg.desc().unwrap_or("").to_string(),
                 url: pkg.url().map(std::string::ToString::to_string),
+                size: pkg.isize() as u64,
+                install_size: Some(pkg.isize()),
+                download_size: None,
+                repo: "local".to_string(),
+                depends: pkg.depends().iter().map(|d| d.name().to_string()).collect(),
                 licenses: pkg
                     .licenses()
                     .iter()
                     .map(std::string::ToString::to_string)
                     .collect(),
-                depends: pkg.depends().iter().map(|d| d.name().to_string()).collect(),
                 installed: true,
-                install_size: Some(pkg.isize()),
-                download_size: None,
-                repo: Some("local".to_string()),
             }));
         }
 
@@ -227,19 +232,20 @@ pub fn get_package_info(name: &str) -> Result<Option<PackageInfo>> {
             if let Ok(pkg) = db.pkg(name) {
                 return Ok(Some(PackageInfo {
                     name: pkg.name().to_string(),
-                    version: pkg.version().to_string(),
+                    version: super::types::parse_version_or_zero(pkg.version()),
                     description: pkg.desc().unwrap_or("").to_string(),
                     url: pkg.url().map(std::string::ToString::to_string),
+                    size: pkg.isize() as u64,
+                    install_size: Some(pkg.isize()),
+                    download_size: Some(pkg.download_size() as u64),
+                    repo: db.name().to_string(),
+                    depends: pkg.depends().iter().map(|d| d.name().to_string()).collect(),
                     licenses: pkg
                         .licenses()
                         .iter()
                         .map(std::string::ToString::to_string)
                         .collect(),
-                    depends: pkg.depends().iter().map(|d| d.name().to_string()).collect(),
                     installed: false,
-                    install_size: Some(pkg.isize()),
-                    download_size: Some(pkg.download_size()),
-                    repo: Some(db.name().to_string()),
                 }));
             }
         }
@@ -278,7 +284,7 @@ pub fn list_installed_fast() -> Result<Vec<LocalPackage>> {
             .iter()
             .map(|pkg| LocalPackage {
                 name: pkg.name().to_string(),
-                version: pkg.version().to_string(),
+                version: super::types::parse_version_or_zero(pkg.version()),
                 description: pkg.desc().unwrap_or("").to_string(),
                 install_size: pkg.isize(),
                 reason: match pkg.reason() {
@@ -395,18 +401,4 @@ pub fn list_all_package_names() -> Result<Vec<String>> {
         result.sort();
         Ok(result)
     })
-}
-
-#[derive(Debug, Clone)]
-pub struct PackageInfo {
-    pub name: String,
-    pub version: String,
-    pub description: String,
-    pub url: Option<String>,
-    pub licenses: Vec<String>,
-    pub depends: Vec<String>,
-    pub installed: bool,
-    pub install_size: Option<i64>,
-    pub download_size: Option<i64>,
-    pub repo: Option<String>,
 }

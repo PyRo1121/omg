@@ -3,6 +3,8 @@
 **The Fastest Unified Package Manager for Arch Linux + All Language Runtimes**
 
 OMG is a next-generation package manager designed for 2026 standards. It eliminates the friction of switching between `pacman`, `yay`, `nvm`, `pyenv`, and `rustup` by unifying them into a single, blazing-fast, Rust-native binary.
+> **Note**: Currently supports Arch Linux. Debian/Ubuntu support is planned for a future release.
+
 It now ships a full **runtime-aware task runner**, Bun-first JavaScript workflows, and native Rust toolchain management with `rust-toolchain.toml` support.
 
 > "50-200x faster than traditional tools. Zero subprocess overhead. Zero-trust security."
@@ -10,10 +12,11 @@ It now ships a full **runtime-aware task runner**, Bun-first JavaScript workflow
 ---
 
 ## 📚 Table of Contents
-- [Features](#features)
-- [Quick Start](#quick-start)
-- [Architecture](#architecture)
-- [In-Depth Documentation](#in-depth-documentation)
+- [Features](#-features)
+- [Quick Start](#-quick-start)
+- [Real-World Performance](#-real-world-performance)
+- [Architecture](#️-architecture)
+- [In-Depth Documentation](#-in-depth-documentation)
   - [Docs Hub](#docs-hub)
   - [Project Goals](#project-goals)
   - [How OMG Is Structured](#how-omg-is-structured)
@@ -31,10 +34,11 @@ It now ships a full **runtime-aware task runner**, Bun-first JavaScript workflow
   - [Project Scaffolding](#project-scaffolding)
   - [Daemon & IPC](#daemon--ipc)
   - [History & Rollback](#history--rollback)
+  - [Interactive Dashboard](#interactive-dashboard)
   - [Troubleshooting](#troubleshooting)
   - [Development](#development)
-- [Roadmap](#roadmap-the-1-stop-shop-vision)
-- [License](#license)
+- [Roadmap](#-roadmap-the-1-stop-shop-vision)
+- [License](#-license)
 
 ## ✨ Features
 
@@ -131,9 +135,10 @@ omg tool list
 ```
 
 ### 🧠 Intelligent Completions
-- **Fuzzy Matching**: Powered by `fuzzy-matcher` (SkimMatcherV2). Type `omg i frfx` and get `firefox`.
+- **Fuzzy Matching**: Powered by **Nucleo** for ultra-fast, high-precision matching. Type `omg i frfx` and get `firefox`.
 - **Context Aware**: Tab-completions prioritize versions and tools based on your current project directory.
 - **80k+ AUR Cache**: Smooth, lag-free completion for the entire Arch User Repository.
+- **Interactive TUI**: New `omg dash` dashboard for real-time system monitoring.
 
 ---
 
@@ -182,6 +187,9 @@ omg run dev
 
 # Check system health
 omg doctor
+
+# Interactive Dashboard
+omg dash
 
 # Install universal tools
 omg tool install ripgrep
@@ -248,7 +256,7 @@ curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/benchmark.sh | ba
 
 OMG is split into two components:
 1.  **`omg`**: A thin, high-performance CLI client.
-2.  **`omgd`**: A persistent daemon that maintains an in-memory package cache and handles LMDB interactions.
+2.  **`omgd`**: A persistent daemon that maintains an in-memory package index and handles redb persistence.
 
 Communication happens over a high-speed Unix Domain Socket using a custom binary protocol (Length-Delimited framing + Bincode) for zero-latency communication.
 
@@ -277,7 +285,7 @@ OMG ships as two binaries backed by a shared Rust library:
 - Runtime versions can be auto-detected from files like `.nvmrc`, `.python-version`, `.tool-versions`, and `rust-toolchain.toml`.
 
 **Daemon-Optional, Performance-First**
-- The daemon accelerates searches, status, and info lookups through caching and indexing.
+- The daemon accelerates searches, status, and info lookups through moka caching and Nucleo indexing.
 - If the daemon is not running, the CLI transparently falls back to direct libalpm and runtime calls.
 
 **Graded Security**
@@ -292,8 +300,8 @@ Default paths follow the XDG base directories when available.
 - Fallback: `~/.omg/`
 
 **Database and caches**:
-- LMDB cache: `<data_dir>/db/`
-- Daemon persistent cache: `<data_dir>/cache.mdb`
+- redb persistent status: `<data_dir>/cache.redb`
+- moka in-memory cache managed by daemon
 
 **Config**:
 - `~/.config/omg/config.toml`
@@ -365,6 +373,7 @@ Below is a high-level map of the command surface. Run `omg <command> --help` for
 
 **Workflow helpers**
 - `omg run <task> [-- <args...>]`: task runner
+- `omg dash`: interactive TUI dashboard (NEW)
 - `omg new <stack> <name>`: project scaffolding
 - `omg tool <install|list|remove>`: cross-ecosystem tools
 
@@ -507,7 +516,12 @@ omg history
 omg rollback
 ```
 
-Rollback currently supports official packages only (downgrade-based) and is evolving.
+Rollback currently supports official packages only (downgrade-based).
+
+### Interactive Dashboard
+The real-time dashboard (`omg dash`) provides a unified view of your system health, package updates, and active runtime versions. It uses `ratatui` for a premium terminal experience.
+
+See [docs/tui.md](docs/tui.md) for full documentation.
 
 ### Troubleshooting
 **Daemon not running**
@@ -542,10 +556,21 @@ Use `cargo run -- <command>` to exercise CLI paths during development.
 
 We are building the last dev tool you'll ever need.
 
+### Current Features ✅
 - [x] **`omg run <task>`**: Unified task runner. Detects 10+ project types (`package.json`, `Cargo.toml`, `Makefile`, `pyproject.toml`, etc.) and runs scripts with the correct runtime version pre-loaded.
 - [x] **`omg new <stack>`**: Instant project scaffolding. `omg new react`, `omg new rust-cli`, or `omg new python-flask` sets up a best-practice environment with locked runtime versions.
 - [x] **`omg doctor`**: System health check. Verifies PATHs, mirrors, PGP keys, and runtime integrity to debug environment issues instantly.
 - [x] **`omg tool`**: Cross-ecosystem binary manager. Install dev tools (`ripgrep`, `jq`, `tldr`) from any source (Pacman, NPM, Cargo, Pip) into a single managed path.
+- [x] **`omg dash`**: Interactive TUI dashboard. Real-time visualization of system status, vulnerabilities, and runtime versions.
+
+### Planned Features 🚧
+- [ ] **Debian/Ubuntu Support**: Full APT integration for Debian-based distributions
+- [ ] **Fedora/RPM Support**: DNF/YUM package manager integration
+- [ ] **macOS Support**: Homebrew integration for macOS users
+- [ ] **Windows Support**: Chocolatey/Winget integration for Windows
+- [ ] **Container Integration**: Docker/Podman support for containerized environments
+- [ ] **GUI Dashboard**: Desktop application for visual package management
+- [ ] **Team Features**: Shared environment locks with collaborative workflows
 
 ---
 

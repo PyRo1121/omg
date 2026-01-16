@@ -3,15 +3,17 @@
 //! Extracts package information from PKGBUILD files without a Bash interpreter.
 //! Handles multi-line arrays properly for accurate dependency extraction.
 
+use alpm_types::Version;
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
+use std::str::FromStr;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct PkgBuild {
     pub name: String,
-    pub version: String,
+    pub version: Version,
     pub release: String,
     pub description: String,
     pub url: String,
@@ -22,6 +24,25 @@ pub struct PkgBuild {
     pub sources: Vec<String>,
     pub sha256sums: Vec<String>,
     pub validpgpkeys: Vec<String>,
+}
+
+impl Default for PkgBuild {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            version: Version::from_str("0").expect("static version"),
+            release: String::new(),
+            description: String::new(),
+            url: String::new(),
+            license: Vec::new(),
+            depends: Vec::new(),
+            makedepends: Vec::new(),
+            checkdepends: Vec::new(),
+            sources: Vec::new(),
+            sha256sums: Vec::new(),
+            validpgpkeys: Vec::new(),
+        }
+    }
 }
 
 impl PkgBuild {
@@ -95,7 +116,7 @@ impl PkgBuild {
             keys.sort_by_key(|k| std::cmp::Reverse(k.len()));
 
             for k in keys {
-                let v = vars.get(k).unwrap();
+                let Some(v) = vars.get(k) else { continue };
                 let pattern1 = format!("${k}");
                 let pattern2 = format!("${{{k}}}");
                 result = result.replace(&pattern1, v);
@@ -108,7 +129,7 @@ impl PkgBuild {
             pkg.name = substitute(v, &vars);
         }
         if let Some(v) = vars.get("pkgver") {
-            pkg.version = substitute(v, &vars);
+            pkg.version = super::types::parse_version_or_zero(&substitute(v, &vars));
         }
         if let Some(v) = vars.get("pkgrel") {
             pkg.release = substitute(v, &vars);

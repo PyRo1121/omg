@@ -143,7 +143,7 @@ pub async fn search(query: &str, detailed: bool, interactive: bool) -> Result<()
                 if pkg.source == "official" {
                     official_packages.push(crate::package_managers::SyncPackage {
                         name: pkg.name,
-                        version: pkg.version,
+                        version: crate::package_managers::parse_version_or_zero(&pkg.version),
                         description: pkg.description,
                         repo: "official".to_string(),
                         download_size: 0,
@@ -152,7 +152,7 @@ pub async fn search(query: &str, detailed: bool, interactive: bool) -> Result<()
                 } else {
                     aur_basic.push(crate::core::Package {
                         name: pkg.name,
-                        version: pkg.version,
+                        version: crate::package_managers::parse_version_or_zero(&pkg.version),
                         description: pkg.description,
                         source: crate::core::PackageSource::Aur,
                         installed: false,
@@ -198,7 +198,7 @@ pub async fn search(query: &str, detailed: bool, interactive: bool) -> Result<()
             items.push(format!(
                 "{} {} {} ({}) - {}",
                 style::package(&pkg.name),
-                style::version(&pkg.version),
+                style::version(&pkg.version.to_string()),
                 status,
                 style::info(&pkg.repo),
                 style::dim(&truncate(&pkg.description, 40))
@@ -223,7 +223,7 @@ pub async fn search(query: &str, detailed: bool, interactive: bool) -> Result<()
                 items.push(format!(
                     "{} {} ({}) - {}",
                     style::package(&pkg.name),
-                    style::version(&pkg.version),
+                    style::version(&pkg.version.to_string()),
                     style::warning("AUR"),
                     style::dim(&truncate(&pkg.description, 40))
                 ));
@@ -277,7 +277,7 @@ pub async fn search(query: &str, detailed: bool, interactive: bool) -> Result<()
             println!(
                 "  {} {} ({}) - {}{}",
                 style::package(&pkg.name),
-                style::version(&pkg.version),
+                style::version(&pkg.version.to_string()),
                 style::info(&pkg.repo),
                 style::dim(&truncate(&pkg.description, 50)),
                 installed
@@ -331,7 +331,7 @@ pub async fn search(query: &str, detailed: bool, interactive: bool) -> Result<()
             println!(
                 "  {} {} - {}",
                 style::package(&pkg.name),
-                style::version(&pkg.version),
+                style::version(&pkg.version.to_string()),
                 style::dim(&truncate(&pkg.description, 55))
             );
         }
@@ -471,7 +471,7 @@ pub async fn install(packages: &[String], yes: bool) -> Result<()> {
             let change = PackageChange {
                 name: info.name.clone(),
                 old_version: None, // Simplified for now
-                new_version: Some(info.version.clone()),
+                new_version: Some(info.version.to_string()),
                 source: "official".to_string(),
             };
             (grade, false, true, license, change)
@@ -482,7 +482,7 @@ pub async fn install(packages: &[String], yes: bool) -> Result<()> {
             let change = PackageChange {
                 name: info.name.clone(),
                 old_version: None,
-                new_version: Some(info.version.clone()),
+                new_version: Some(info.version.to_string()),
                 source: "aur".to_string(),
             };
             (grade, true, false, None, change)
@@ -596,7 +596,7 @@ pub async fn remove(packages: &[String], recursive: bool) -> Result<()> {
         if let Ok(Some(info)) = crate::package_managers::get_local_package(pkg) {
             changes.push(PackageChange {
                 name: pkg.clone(),
-                old_version: Some(info.version),
+                old_version: Some(info.version.to_string()),
                 new_version: None,
                 source: "official".to_string(), // Defaulting to official for now
             });
@@ -718,26 +718,31 @@ pub async fn update(check_only: bool) -> Result<()> {
     // Convert raw official updates to common format for display
     let official_display: Vec<(String, String, String)> = official_updates_raw
         .iter()
-        .map(|(n, o, n2, _, _, _)| (n.clone(), o.clone(), n2.clone()))
+        .map(|(n, o, n2, _, _, _)| (n.clone(), o.to_string(), n2.to_string()))
+        .collect();
+
+    let aur_display: Vec<(String, String, String)> = aur_updates
+        .iter()
+        .map(|(n, o, n2)| (n.clone(), o.to_string(), n2.to_string()))
         .collect();
 
     display_list(&official_display, "repo");
-    display_list(&aur_updates, "aur");
+    display_list(&aur_display, "aur");
 
     let mut changes = Vec::new();
     for (name, old_ver, new_ver, _, _, _) in &official_updates_raw {
         changes.push(PackageChange {
             name: name.clone(),
-            old_version: Some(old_ver.clone()),
-            new_version: Some(new_ver.clone()),
+            old_version: Some(old_ver.to_string()),
+            new_version: Some(new_ver.to_string()),
             source: "official".to_string(),
         });
     }
     for (name, old_ver, new_ver) in &aur_updates {
         changes.push(PackageChange {
             name: name.clone(),
-            old_version: Some(old_ver.clone()),
-            new_version: Some(new_ver.clone()),
+            old_version: Some(old_ver.to_string()),
+            new_version: Some(new_ver.to_string()),
             source: "aur".to_string(),
         });
     }
@@ -934,7 +939,7 @@ pub async fn update(check_only: bool) -> Result<()> {
             match res {
                 Ok(pkg_path) => {
                     println!("  {} Built {}", style::success("✓"), style::package(&name));
-                    built_packages.push((name, new_ver, pkg_path));
+                    built_packages.push((name, new_ver.to_string(), pkg_path));
                 }
                 Err(e) => {
                     println!("  {} Failed: {}", style::error("✗"), style::package(&name));
@@ -1080,11 +1085,13 @@ pub async fn info_aur(package: &str) -> Result<()> {
     let aur = AurClient::new();
     if let Some(info) = aur.info(package).await? {
         // Display beautified info
+        let ver = info.version.to_string();
+        let source_str = info.source.to_string();
         println!(
-            "{} {} {}",
+            "  {} {} ({})",
             style::package(&info.name),
-            style::version(&info.version),
-            style::warning("(AUR)")
+            style::version(&ver),
+            style::info(&source_str)
         );
         println!("  {} {}", style::dim("Description:"), info.description);
 

@@ -5,17 +5,25 @@
 
 pub mod completions;
 
-use anyhow::Result;
 use std::collections::HashMap;
-use std::path::Path;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
-use crate::core::paths;
+use anyhow::Result;
+use semver::{Version, VersionReq};
+use serde::Deserialize;
+use toml::Value;
+
+use crate::config::Settings;
+use crate::core::{paths, RuntimeBackend};
+use crate::runtimes::rust::RustToolchainSpec;
 
 /// Known version files and their corresponding runtime
 const VERSION_FILES: &[(&str, &str)] = &[
     // Node.js
-    (".nvmrc", "node"),
     (".node-version", "node"),
+    (".nvmrc", "node"),
     // Python
     (".python-version", "python"),
     // Ruby
@@ -31,16 +39,107 @@ const VERSION_FILES: &[(&str, &str)] = &[
     ("rust-toolchain.toml", "rust"),
     // Universal
     (".tool-versions", "multi"),
+    (".mise.toml", "multi"),
+    (".mise.local.toml", "multi"),
+    ("mise.toml", "multi"),
+    ("package.json", "multi"),
 ];
 
 /// Normalize runtime name aliases to canonical names
 fn normalize_runtime_name(name: &str) -> String {
     match name.to_lowercase().as_str() {
         "nodejs" | "node" => "node".to_string(),
+        "bun" | "bunjs" => "bun".to_string(),
         "python3" | "python" => "python".to_string(),
         "golang" | "go" => "go".to_string(),
         "rustlang" | "rust" => "rust".to_string(),
         other => other.to_string(),
+    }
+}
+
+#[derive(Deserialize)]
+struct PackageJsonVersions {
+    engines: Option<PackageEngines>,
+    volta: Option<VoltaToolchain>,
+}
+
+#[derive(Deserialize)]
+struct PackageEngines {
+    node: Option<String>,
+    bun: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct VoltaToolchain {
+    node: Option<String>,
+    bun: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct MiseConfig {
+    tools: Option<HashMap<String, Value>>,
+}
+
+fn read_package_json_versions(dir: &Path) -> Option<HashMap<String, String>> {
+    let file = std::fs::File::open(dir.join("package.json")).ok()?;
+    let pkg: PackageJsonVersions = serde_json::from_reader(file).ok()?;
+    let mut versions = HashMap::new();
+
+    if let Some(volta) = pkg.volta {
+        if let Some(node) = volta.node {
+            versions.insert("node".to_string(), node);
+        }
+        if let Some(bun) = volta.bun {
+            versions.insert("bun".to_string(), bun);
+        }
+    }
+
+    if let Some(engines) = pkg.engines {
+        if let Some(node) = engines.node {
+            versions.entry("node".to_string()).or_insert(node);
+        }
+        if let Some(bun) = engines.bun {
+            versions.entry("bun".to_string()).or_insert(bun);
+        }
+    }
+
+    if versions.is_empty() {
+        None
+    } else {
+        Some(versions)
+    }
+}
+
+fn read_mise_versions(path: &Path) -> Option<HashMap<String, String>> {
+    let content = fs::read_to_string(path).ok()?;
+    let config: MiseConfig = toml::from_str(&content).ok()?;
+    let tools = config.tools?;
+    let mut versions = HashMap::new();
+
+    for (tool, value) in tools {
+        if let Some(version) = mise_tool_version(&value) {
+            let normalized = normalize_runtime_name(&tool);
+            versions.insert(normalized, version);
+        }
+    }
+
+    if versions.is_empty() {
+        None
+    } else {
+        Some(versions)
+    }
+}
+
+fn mise_tool_version(value: &Value) -> Option<String> {
+    match value {
+        Value::String(s) => Some(s.clone()),
+        Value::Array(items) => items
+            .iter()
+            .find_map(|entry| entry.as_str().map(|s| s.to_string())),
+        Value::Table(table) => table
+            .get("version")
+            .and_then(|entry| entry.as_str().map(|s| s.to_string())),
+        _ => None,
     }
 }
 
@@ -76,7 +175,8 @@ pub fn hook_env(shell: &str) -> Result<()> {
     }
 
     // Build PATH modifications
-    let path_additions = build_path_additions(&versions);
+    let settings = Settings::load()?;
+    let path_additions = build_path_additions_with_backend(&versions, settings.runtime_backend);
 
     if path_additions.is_empty() {
         return Ok(());
@@ -138,6 +238,21 @@ pub fn detect_versions(start: &Path) -> HashMap<String, String> {
                             }
                         }
                     }
+                } else if *filename == "package.json" {
+                    if let Some(extra) = read_package_json_versions(&dir) {
+                        for (runtime, version) in extra {
+                            versions.entry(runtime).or_insert(version.trim().to_string());
+                        }
+                    }
+                } else if *filename == ".mise.toml"
+                    || *filename == ".mise.local.toml"
+                    || *filename == "mise.toml"
+                {
+                    if let Some(extra) = read_mise_versions(&file_path) {
+                        for (runtime, version) in extra {
+                            versions.entry(runtime).or_insert(version.trim().to_string());
+                        }
+                    }
                 } else {
                     // Simple version file
                     if let Ok(content) = std::fs::read_to_string(&file_path) {
@@ -167,15 +282,24 @@ pub fn build_path_additions<S: std::hash::BuildHasher>(
 
     for (runtime, version) in versions {
         let bin_path = match runtime.as_str() {
-            "node" => data_dir.join("versions/node").join(version).join("bin"),
+            "node" => match resolve_node_bin_path(&data_dir, version) {
+                Some(path) => path,
+                None => continue,
+            },
             "python" => data_dir.join("versions/python").join(version).join("bin"),
             "go" => data_dir.join("versions/go").join(version).join("bin"),
             "ruby" => data_dir.join("versions/ruby").join(version).join("bin"),
             "java" => data_dir.join("versions/java").join(version).join("bin"),
-            "bun" => data_dir.join("versions/bun").join(version),
+            "bun" => match resolve_bun_bin_path(&data_dir, version) {
+                Some(path) => path,
+                None => continue,
+            },
             "rust" => {
-                // Rust uses rustup's PATH
-                home::home_dir().unwrap_or_default().join(".cargo/bin")
+                let toolchain = RustToolchainSpec::parse(version)
+                    .ok()
+                    .map(|spec| spec.name())
+                    .unwrap_or_else(|| version.to_string());
+                data_dir.join("versions/rust").join(toolchain).join("bin")
             }
             _ => continue,
         };
@@ -186,6 +310,262 @@ pub fn build_path_additions<S: std::hash::BuildHasher>(
     }
 
     paths
+}
+
+/// Build PATH additions for detected versions with backend preference
+#[must_use]
+pub fn build_path_additions_with_backend<S: std::hash::BuildHasher>(
+    versions: &HashMap<String, String, S>,
+    backend: RuntimeBackend,
+) -> Vec<String> {
+    let mut paths = match backend {
+        RuntimeBackend::Mise => Vec::new(),
+        _ => build_path_additions(versions),
+    };
+
+    if matches!(backend, RuntimeBackend::Mise | RuntimeBackend::NativeThenMise) {
+        let prefer_native = backend == RuntimeBackend::NativeThenMise;
+        add_mise_path_fallbacks(versions, &mut paths, prefer_native);
+    }
+
+    paths
+}
+
+fn resolve_node_bin_path(data_dir: &Path, version: &str) -> Option<PathBuf> {
+    let normalized = version.trim_start_matches('v');
+    let versions_dir = data_dir.join("versions/node");
+    if let Some(path) = node_version_bin_path(&versions_dir, normalized) {
+        return Some(path);
+    }
+
+    if let Some(resolved) = resolve_installed_version_req(&versions_dir, normalized) {
+        if let Some(path) = node_version_bin_path(&versions_dir, &resolved) {
+            return Some(path);
+        }
+    }
+
+    nvm_node_bin(normalized)
+}
+
+fn resolve_bun_bin_path(data_dir: &Path, version: &str) -> Option<PathBuf> {
+    let normalized = version.trim_start_matches('v');
+    let versions_dir = data_dir.join("versions/bun");
+    if let Some(path) = bun_version_bin_path(&versions_dir, normalized) {
+        return Some(path);
+    }
+
+    if let Some(resolved) = resolve_installed_version_req(&versions_dir, normalized) {
+        if let Some(path) = bun_version_bin_path(&versions_dir, &resolved) {
+            return Some(path);
+        }
+    }
+
+    None
+}
+
+fn node_version_bin_path(versions_dir: &Path, version: &str) -> Option<PathBuf> {
+    let path = versions_dir.join(version).join("bin");
+    if path.exists() {
+        Some(path)
+    } else {
+        None
+    }
+}
+
+fn bun_version_bin_path(versions_dir: &Path, version: &str) -> Option<PathBuf> {
+    let path = versions_dir.join(version);
+    if path.exists() {
+        Some(path)
+    } else {
+        None
+    }
+}
+
+fn resolve_installed_version_req(versions_dir: &Path, req: &str) -> Option<String> {
+    let req = normalize_version_req(req)?;
+    let mut candidates = Vec::new();
+
+    let entries = fs::read_dir(versions_dir).ok()?;
+    for entry in entries {
+        let entry = entry.ok()?;
+        if !entry.file_type().ok()?.is_dir() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name == "current" {
+            continue;
+        }
+        let ver_str = name.trim_start_matches('v');
+        let Ok(version) = Version::parse(ver_str) else {
+            continue;
+        };
+        if req.matches(&version) {
+            candidates.push((version, ver_str.to_string()));
+        }
+    }
+
+    candidates.sort_by(|a, b| b.0.cmp(&a.0));
+    candidates.first().map(|(_, name)| name.clone())
+}
+
+fn normalize_version_req(value: &str) -> Option<VersionReq> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let trimmed = trimmed.strip_prefix('v').unwrap_or(trimmed);
+
+    if trimmed.chars().all(|c| c.is_ascii_digit()) {
+        return VersionReq::parse(&format!("^{trimmed}.0.0")).ok();
+    }
+
+    if trimmed.chars().all(|c| c.is_ascii_digit() || c == '.') {
+        let normalized = normalize_version_number(trimmed);
+        return VersionReq::parse(&format!("={normalized}")).ok();
+    }
+
+    VersionReq::parse(&trimmed.replace(' ', ",")).ok()
+}
+
+fn normalize_version_number(value: &str) -> String {
+    let mut parts: Vec<&str> = value.split('.').filter(|p| !p.is_empty()).collect();
+    while parts.len() < 3 {
+        parts.push("0");
+    }
+    parts.truncate(3);
+    parts.join(".")
+}
+
+fn nvm_node_bin(version: &str) -> Option<PathBuf> {
+    let nvm_dir = std::env::var_os("NVM_DIR")
+        .map(PathBuf::from)
+        .or_else(|| home::home_dir().map(|dir| dir.join(".nvm")))?;
+
+    let resolved = resolve_nvm_alias(&nvm_dir, version).unwrap_or_else(|| version.to_string());
+    let normalized = resolved.trim_start_matches('v');
+    let bin_path = nvm_dir
+        .join("versions/node")
+        .join(format!("v{normalized}"))
+        .join("bin");
+
+    if bin_path.exists() {
+        Some(bin_path)
+    } else {
+        None
+    }
+}
+
+fn resolve_nvm_alias(nvm_dir: &Path, alias: &str) -> Option<String> {
+    let alias_path = nvm_dir.join("alias").join(alias);
+    if !alias_path.exists() {
+        return None;
+    }
+    let content = std::fs::read_to_string(alias_path).ok()?;
+    let resolved = content.trim();
+    if resolved.is_empty() {
+        None
+    } else {
+        Some(resolved.to_string())
+    }
+}
+
+fn add_mise_path_fallbacks<S: std::hash::BuildHasher>(
+    versions: &HashMap<String, String, S>,
+    path_additions: &mut Vec<String>,
+    prefer_native: bool,
+) {
+    if !mise_available() {
+        return;
+    }
+
+    let mut seen: std::collections::HashSet<String> =
+        path_additions.iter().cloned().collect();
+    for (runtime, version) in versions {
+        if prefer_native && native_runtime_bin_path(runtime, version).is_some() {
+            continue;
+        }
+
+        if let Some(bin_dir) = mise_runtime_bin_path(runtime, version) {
+            let bin = bin_dir.display().to_string();
+            if seen.insert(bin.clone()) {
+                path_additions.push(bin);
+            }
+        }
+    }
+}
+
+fn native_runtime_bin_path(runtime: &str, version: &str) -> Option<PathBuf> {
+    let data_dir = paths::data_dir();
+    let bin_path = match runtime {
+        "node" => resolve_node_bin_path(&data_dir, version)?,
+        "python" => data_dir.join("versions/python").join(version).join("bin"),
+        "go" => data_dir.join("versions/go").join(version).join("bin"),
+        "ruby" => data_dir.join("versions/ruby").join(version).join("bin"),
+        "java" => data_dir.join("versions/java").join(version).join("bin"),
+        "bun" => resolve_bun_bin_path(&data_dir, version)?,
+        "rust" => {
+            let toolchain = RustToolchainSpec::parse(version)
+                .ok()
+                .map(|spec| spec.name())
+                .unwrap_or_else(|| version.to_string());
+            data_dir.join("versions/rust").join(toolchain).join("bin")
+        }
+        _ => return None,
+    };
+
+    if bin_path.exists() {
+        Some(bin_path)
+    } else {
+        None
+    }
+}
+
+fn mise_available() -> bool {
+    find_in_path("mise").is_some()
+}
+
+fn mise_runtime_bin_path(runtime: &str, version: &str) -> Option<PathBuf> {
+    let tool_spec = if version.is_empty() {
+        runtime.to_string()
+    } else {
+        format!("{runtime}@{version}")
+    };
+
+    let output = Command::new("mise")
+        .args(["where", &tool_spec])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let install_dir = PathBuf::from(stdout.trim());
+    if install_dir.as_os_str().is_empty() {
+        return None;
+    }
+
+    let bin_dir = install_dir.join("bin");
+    if bin_dir.exists() {
+        Some(bin_dir)
+    } else if install_dir.exists() {
+        Some(install_dir)
+    } else {
+        None
+    }
+}
+
+fn find_in_path(binary: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path) {
+        let candidate = dir.join(binary);
+        if candidate.exists() {
+            return Some(candidate);
+        }
+    }
+    None
 }
 
 /// Get active versions for display
@@ -272,5 +652,51 @@ mod tests {
         let versions = detect_versions(dir.path());
         assert_eq!(versions.get("node"), Some(&"20.10.0".to_string()));
         assert_eq!(versions.get("python"), Some(&"3.12.0".to_string()));
+    }
+
+    #[test]
+    fn test_node_version_priority() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join(".nvmrc"), "18.19.0").unwrap();
+        fs::write(dir.path().join(".node-version"), "20.11.1").unwrap();
+
+        let versions = detect_versions(dir.path());
+        assert_eq!(versions.get("node"), Some(&"20.11.1".to_string()));
+    }
+
+    #[test]
+    fn test_package_json_engines_and_volta() {
+        let dir = tempdir().unwrap();
+        fs::write(
+            dir.path().join("package.json"),
+            r#"{
+  "engines": { "node": ">=18 <21", "bun": "1.1.0" },
+  "volta": { "node": "20.12.0" }
+}"#,
+        )
+        .unwrap();
+
+        let versions = detect_versions(dir.path());
+        assert_eq!(versions.get("node"), Some(&">=18 <21".to_string()));
+        assert_eq!(versions.get("bun"), Some(&"1.1.0".to_string()));
+    }
+
+    #[test]
+    fn test_mise_toml_tools() {
+        let dir = tempdir().unwrap();
+        fs::write(
+            dir.path().join(".mise.toml"),
+            r#"[tools]
+node = "20.10.0"
+bun = "1.0.25"
+python = "3.12.1"
+"#,
+        )
+        .unwrap();
+
+        let versions = detect_versions(dir.path());
+        assert_eq!(versions.get("node"), Some(&"20.10.0".to_string()));
+        assert_eq!(versions.get("bun"), Some(&"1.0.25".to_string()));
+        assert_eq!(versions.get("python"), Some(&"3.12.1".to_string()));
     }
 }

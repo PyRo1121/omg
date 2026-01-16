@@ -6,17 +6,23 @@
 //! First load: ~100ms (parse all DBs)
 //! Cached: <1ms (instant lookup)
 
+#[cfg(feature = "arch")]
+use alpm_db;
+#[cfg(feature = "arch")]
+use alpm_repo_db;
+#[cfg(feature = "arch")]
+use alpm_types::Version;
 use anyhow::{Context, Result};
 use flate2::read::GzDecoder;
 use futures::stream::StreamExt;
 use parking_lot::RwLock;
 use rayon::prelude::*;
-use reqwest;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::{self, File};
-use std::io::{BufRead, BufReader, Read};
+use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::time::SystemTime;
 use tracing::instrument;
 
@@ -88,10 +94,10 @@ struct LocalDbCache {
 }
 
 /// A package entry from the sync database
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncDbPackage {
     pub name: String,
-    pub version: String,
+    pub version: Version,
     pub desc: String,
     pub filename: String,
     pub csize: u64, // Compressed size (download size)
@@ -107,14 +113,48 @@ pub struct SyncDbPackage {
     pub replaces: Vec<String>,
 }
 
+impl Default for SyncDbPackage {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            version: super::types::zero_version(),
+            desc: String::new(),
+            filename: String::new(),
+            csize: 0,
+            isize: 0,
+            url: String::new(),
+            arch: String::new(),
+            repo: String::new(),
+            depends: Vec::new(),
+            makedepends: Vec::new(),
+            optdepends: Vec::new(),
+            provides: Vec::new(),
+            conflicts: Vec::new(),
+            replaces: Vec::new(),
+        }
+    }
+}
+
 /// A package from the local database
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LocalDbPackage {
     pub name: String,
-    pub version: String,
+    pub version: Version,
     pub desc: String,
     pub install_date: String,
     pub explicit: bool, // Explicitly installed vs dependency
+}
+
+impl Default for LocalDbPackage {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            version: super::types::zero_version(),
+            desc: String::new(),
+            install_date: String::new(),
+            explicit: false,
+        }
+    }
 }
 
 /// Parse a sync database file (core.db, extra.db, multilib.db)
@@ -193,48 +233,60 @@ pub fn parse_sync_db(path: &Path, repo_name: &str) -> Result<HashMap<String, Syn
     Ok(packages)
 }
 
-/// Parse the desc file content into a `SyncDbPackage`
 fn parse_desc_content(content: &str, repo: &str) -> SyncDbPackage {
-    let mut pkg = SyncDbPackage {
-        repo: repo.to_string(),
-        ..SyncDbPackage::default()
-    };
-
-    let mut current_field: Option<&str> = None;
-
-    for line in content.lines() {
-        let line = line.trim();
-
-        if line.starts_with('%') && line.ends_with('%') {
-            current_field = Some(&line[1..line.len() - 1]);
-            continue;
-        }
-
-        if line.is_empty() {
-            current_field = None;
-            continue;
-        }
-
-        match current_field {
-            Some("NAME") => pkg.name = line.to_string(),
-            Some("VERSION") => pkg.version = line.to_string(),
-            Some("DESC") => pkg.desc = line.to_string(),
-            Some("FILENAME") => pkg.filename = line.to_string(),
-            Some("CSIZE") => pkg.csize = line.parse().unwrap_or(0),
-            Some("ISIZE") => pkg.isize = line.parse().unwrap_or(0),
-            Some("URL") => pkg.url = line.to_string(),
-            Some("ARCH") => pkg.arch = line.to_string(),
-            Some("DEPENDS") => pkg.depends.push(line.to_string()),
-            Some("MAKEDEPENDS") => pkg.makedepends.push(line.to_string()),
-            Some("OPTDEPENDS") => pkg.optdepends.push(line.to_string()),
-            Some("PROVIDES") => pkg.provides.push(line.to_string()),
-            Some("CONFLICTS") => pkg.conflicts.push(line.to_string()),
-            Some("REPLACES") => pkg.replaces.push(line.to_string()),
-            _ => {}
-        }
+    if let Ok(desc) = alpm_repo_db::desc::RepoDescFileV1::from_str(content) {
+        return SyncDbPackage {
+            name: desc.name.to_string(),
+            version: Version::from_str(&desc.version.to_string())
+                .unwrap_or_else(|_| super::types::zero_version()),
+            desc: desc.description.to_string(),
+            filename: desc.file_name.to_string(),
+            csize: desc.compressed_size,
+            isize: desc.installed_size,
+            url: desc
+                .url
+                .as_ref()
+                .map(std::string::ToString::to_string)
+                .unwrap_or_default(),
+            arch: desc.arch.to_string(),
+            repo: repo.to_string(),
+            depends: desc
+                .dependencies
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
+            makedepends: desc
+                .make_dependencies
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
+            optdepends: desc
+                .optional_dependencies
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
+            provides: desc
+                .provides
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
+            conflicts: desc
+                .conflicts
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
+            replaces: desc
+                .replaces
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
+        };
     }
 
-    pkg
+    SyncDbPackage {
+        repo: repo.to_string(),
+        ..SyncDbPackage::default()
+    }
 }
 
 /// Parse the local package database (/var/lib/pacman/local/)
@@ -267,45 +319,26 @@ pub fn parse_local_db(path: &Path) -> Result<HashMap<String, LocalDbPackage>> {
     Ok(packages)
 }
 
-/// Parse a local package's desc file
 fn parse_local_desc(path: &Path) -> Result<LocalDbPackage> {
-    let file = File::open(path)?;
-    let reader = BufReader::new(file);
-
-    let mut pkg = LocalDbPackage::default();
-    let mut current_field: Option<String> = None;
-
-    for line in reader.lines() {
-        let line = line?;
-        let line = line.trim();
-
-        if line.starts_with('%') && line.ends_with('%') {
-            current_field = Some(line[1..line.len() - 1].to_string());
-            continue;
-        }
-
-        if line.is_empty() {
-            current_field = None;
-            continue;
-        }
-
-        match current_field.as_deref() {
-            Some("NAME") => pkg.name = line.to_string(),
-            Some("VERSION") => pkg.version = line.to_string(),
-            Some("DESC") => pkg.desc = line.to_string(),
-            Some("INSTALLDATE") => pkg.install_date = line.to_string(),
-            Some("REASON") => pkg.explicit = line == "0",
-            _ => {}
-        }
+    let content = std::fs::read_to_string(path)?;
+    if let Ok(desc) = alpm_db::desc::DbDescFileV1::from_str(&content) {
+        return Ok(LocalDbPackage {
+            name: desc.name.to_string(),
+            version: Version::from_str(&desc.version.to_string())
+                .unwrap_or_else(|_| super::types::zero_version()),
+            desc: desc.description.to_string(),
+            install_date: desc.installdate.to_string(),
+            explicit: matches!(desc.reason, alpm_types::PackageInstallReason::Explicit),
+        });
     }
 
-    Ok(pkg)
+    anyhow::bail!("Failed to parse local desc file")
 }
 
 /// ULTRA FAST update check - uses global cache (<5ms after first load!)
 /// Returns Vec of (name, `old_version`, `new_version`, repo, filename, `download_size`)
 #[instrument]
-pub fn check_updates_cached() -> Result<Vec<(String, String, String, String, String, u64)>> {
+pub fn check_updates_cached() -> Result<Vec<(String, Version, Version, String, String, u64)>> {
     let sync_dir = paths::pacman_sync_dir();
     let local_dir = paths::pacman_local_dir();
 
@@ -322,7 +355,7 @@ pub fn check_updates_cached() -> Result<Vec<(String, String, String, String, Str
 
     for (name, local_pkg) in &local_cache.packages {
         if let Some(sync_pkg) = sync_cache.packages.get(name)
-            && compare_versions(&local_pkg.version, &sync_pkg.version) == std::cmp::Ordering::Less
+            && local_pkg.version < sync_pkg.version
         {
             updates.push((
                 name.clone(),
@@ -487,116 +520,16 @@ pub fn preload_caches() -> Result<()> {
 }
 
 /// Legacy function - kept for compatibility, now uses cache
-pub fn check_updates_fast() -> Result<Vec<(String, String, String, String, String, u64)>> {
+pub fn check_updates_fast() -> Result<Vec<(String, Version, Version, String, String, u64)>> {
     check_updates_cached()
 }
 
-/// Compare two version strings (like `alpm_pkg_vercmp`)
-/// Returns `Ordering::Less` if v1 < v2, Equal if v1 == v2, Greater if v1 > v2
-#[must_use]
+/// Compare two version strings using `alpm_types::Version`
+/// Legacy wrapper for compatibility
 pub fn compare_versions(v1: &str, v2: &str) -> std::cmp::Ordering {
-    // Split into epoch:version-release
-    let (e1, vr1) = split_epoch(v1);
-    let (e2, vr2) = split_epoch(v2);
-
-    // Compare epochs first
-    match e1.cmp(&e2) {
-        std::cmp::Ordering::Equal => {}
-        other => return other,
-    }
-
-    // Split version-release
-    let (ver1, rel1) = split_release(vr1);
-    let (ver2, rel2) = split_release(vr2);
-
-    // Compare versions
-    match compare_version_parts(ver1, ver2) {
-        std::cmp::Ordering::Equal => {}
-        other => return other,
-    }
-
-    // Compare releases
-    compare_version_parts(rel1, rel2)
-}
-
-fn split_epoch(version: &str) -> (u64, &str) {
-    if let Some(idx) = version.find(':') {
-        let epoch = version[..idx].parse().unwrap_or(0);
-        (epoch, &version[idx + 1..])
-    } else {
-        (0, version)
-    }
-}
-
-fn split_release(version: &str) -> (&str, &str) {
-    if let Some(idx) = version.rfind('-') {
-        (&version[..idx], &version[idx + 1..])
-    } else {
-        (version, "")
-    }
-}
-
-fn compare_version_parts(v1: &str, v2: &str) -> std::cmp::Ordering {
-    let mut iter1 = v1.chars().peekable();
-    let mut iter2 = v2.chars().peekable();
-
-    loop {
-        // Skip non-alphanumeric
-        while iter1.peek().is_some_and(|c| !c.is_alphanumeric()) {
-            iter1.next();
-        }
-        while iter2.peek().is_some_and(|c| !c.is_alphanumeric()) {
-            iter2.next();
-        }
-
-        let seg1 = collect_segment(&mut iter1);
-        let seg2 = collect_segment(&mut iter2);
-
-        if seg1.is_empty() && seg2.is_empty() {
-            return std::cmp::Ordering::Equal;
-        }
-
-        // Compare segments
-        let is_num1 = seg1.chars().next().is_some_and(|c| c.is_ascii_digit());
-        let is_num2 = seg2.chars().next().is_some_and(|c| c.is_ascii_digit());
-
-        match (is_num1, is_num2) {
-            (true, true) => {
-                // Numeric comparison
-                let n1: u64 = seg1.parse().unwrap_or(0);
-                let n2: u64 = seg2.parse().unwrap_or(0);
-                if n1 != n2 {
-                    return n1.cmp(&n2);
-                }
-            }
-            (true, false) => return std::cmp::Ordering::Greater,
-            (false, true) => return std::cmp::Ordering::Less,
-            (false, false) => {
-                // String comparison
-                if seg1 != seg2 {
-                    return seg1.cmp(&seg2);
-                }
-            }
-        }
-    }
-}
-
-fn collect_segment(iter: &mut std::iter::Peekable<std::str::Chars>) -> String {
-    let mut seg = String::new();
-
-    if let Some(&c) = iter.peek() {
-        if c.is_ascii_digit() {
-            while iter.peek().is_some_and(char::is_ascii_digit) {
-                seg.push(iter.next().unwrap());
-            }
-        } else if c.is_alphabetic() {
-            while iter.peek().is_some_and(|c| c.is_alphabetic()) {
-                seg.push(iter.next().unwrap());
-            }
-        }
-    }
-
-    seg
+    let ver1 = Version::from_str(v1).unwrap_or_else(|_| super::types::zero_version());
+    let ver2 = Version::from_str(v2).unwrap_or_else(|_| super::types::zero_version());
+    ver1.cmp(&ver2)
 }
 
 /// Get a specific local package - FAST (<1ms)
@@ -848,80 +781,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_version_compare_basic() {
-        assert_eq!(compare_versions("1.0", "1.0"), std::cmp::Ordering::Equal);
-        assert_eq!(compare_versions("1.0", "2.0"), std::cmp::Ordering::Less);
-        assert_eq!(compare_versions("2.0", "1.0"), std::cmp::Ordering::Greater);
-    }
-
-    #[test]
-    fn test_version_compare_release() {
-        assert_eq!(compare_versions("1.0-1", "1.0-2"), std::cmp::Ordering::Less);
-        assert_eq!(
-            compare_versions("1.0-10", "1.0-9"),
-            std::cmp::Ordering::Greater
-        );
-        assert_eq!(
-            compare_versions("1.0-1", "1.0-1"),
-            std::cmp::Ordering::Equal
-        );
-    }
-
-    #[test]
-    fn test_version_compare_epoch() {
-        assert_eq!(
-            compare_versions("1:1.0", "1.0"),
-            std::cmp::Ordering::Greater
-        );
-        assert_eq!(compare_versions("1.0", "1:1.0"), std::cmp::Ordering::Less);
-        assert_eq!(
-            compare_versions("2:1.0", "1:2.0"),
-            std::cmp::Ordering::Greater
-        );
-    }
-
-    #[test]
-    fn test_version_compare_complex() {
-        // Real-world examples
-        assert_eq!(
-            compare_versions("2.35.0-1", "2.36.0-1"),
-            std::cmp::Ordering::Less
-        );
-        assert_eq!(
-            compare_versions("125.0.3-1", "126.0-1"),
-            std::cmp::Ordering::Less
-        );
-        assert_eq!(
-            compare_versions("6.12.12.arch1-1", "6.12.13.arch1-1"),
-            std::cmp::Ordering::Less
-        );
-    }
-
-    #[test]
-    fn test_version_compare_alpha_numeric() {
-        assert_eq!(compare_versions("1.0a", "1.0b"), std::cmp::Ordering::Less);
-        assert_eq!(
-            compare_versions("1.0rc1", "1.0rc2"),
-            std::cmp::Ordering::Less
-        );
-        assert_eq!(compare_versions("1.0", "1.0rc1"), std::cmp::Ordering::Less);
-    }
-
-    #[test]
-    fn test_split_epoch() {
-        assert_eq!(split_epoch("1.0"), (0, "1.0"));
-        assert_eq!(split_epoch("1:1.0"), (1, "1.0"));
-        assert_eq!(split_epoch("2:3.0-1"), (2, "3.0-1"));
-    }
-
-    #[test]
-    fn test_split_release() {
-        assert_eq!(split_release("1.0"), ("1.0", ""));
-        assert_eq!(split_release("1.0-1"), ("1.0", "1"));
-        assert_eq!(split_release("1.0-1-2"), ("1.0-1", "2"));
-    }
-
-    #[test]
     fn test_check_updates() {
         // Only run if we have a real system
         if crate::core::paths::pacman_sync_dir()
@@ -939,7 +798,7 @@ mod tests {
         if crate::core::paths::pacman_local_dir().exists() {
             // pacman should always be installed
             if let Ok(Some(pkg)) = get_local_package("pacman") {
-                assert!(!pkg.version.is_empty());
+                assert!(!pkg.version.to_string().is_empty());
             }
         }
     }

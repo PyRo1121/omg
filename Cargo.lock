@@ -2884,7 +2884,7 @@ dependencies = [
 
 [[package]]
 name = "omg"
-version = "0.1.38"
+version = "0.1.40"
 dependencies = [
  "ahash",
  "alpm",
@@ -2920,6 +2920,7 @@ dependencies = [
  "parking_lot",
  "pprof",
  "predicates",
+ "rand 0.8.5",
  "ratatui",
  "rayon",
  "redb",
@@ -3384,6 +3385,7 @@ version = "0.8.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "34af8d1a0e25924bc5b7c43c079c942339d8f0a8b57c39049bef581b46327404"
 dependencies = [
+ "libc",
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
 ]

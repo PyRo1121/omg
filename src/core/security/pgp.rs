@@ -24,10 +24,13 @@ impl PgpVerifier {
     pub fn new() -> Self {
         let system_keyring = "/usr/share/pacman/keyrings/archlinux.gpg";
         let certs = if std::path::Path::new(system_keyring).exists() {
-            let mut keyring_file = std::fs::File::open(system_keyring).unwrap();
-            openpgp::cert::CertParser::from_reader(&mut keyring_file)
-                .unwrap()
-                .collect::<Result<Vec<_>, _>>()
+            std::fs::File::open(system_keyring)
+                .ok()
+                .map(|mut f| {
+                    openpgp::cert::CertParser::from_reader(&mut f)
+                        .map(|parser| parser.collect::<Result<Vec<_>, _>>().unwrap_or_default())
+                        .unwrap_or_default()
+                })
                 .unwrap_or_default()
         } else {
             Vec::new()

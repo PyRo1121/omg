@@ -57,13 +57,13 @@ pub fn version(ver: &str) -> String {
 }
 
 #[must_use]
-#[allow(clippy::literal_string_with_formatting_args)]
+#[allow(clippy::literal_string_with_formatting_args, clippy::expect_used)]
 pub fn spinner(msg: &str) -> ProgressBar {
     let pb = ProgressBar::new_spinner();
     pb.set_style(
         ProgressStyle::default_spinner()
             .template("{spinner:.cyan} {msg}")
-            .unwrap()
+            .expect("static template")
             .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"),
     );
     pb.set_message(msg.to_string());

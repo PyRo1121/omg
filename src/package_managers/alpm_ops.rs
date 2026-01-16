@@ -3,6 +3,7 @@
 //! Pure libalpm transactions - no pacman subprocess.
 //! Install/remove/update operations at native C library speed.
 
+use alpm_types::Version;
 use anyhow::{Context, Result};
 use owo_colors::OwoColorize;
 
@@ -19,7 +20,7 @@ pub fn get_system_status() -> Result<(usize, usize, usize, usize)> {
 }
 
 /// Get detailed list of updates (name, `old_version`, `new_version`) - FAST
-pub fn get_update_list() -> Result<Vec<(String, String, String)>> {
+pub fn get_update_list() -> Result<Vec<(String, Version, Version)>> {
     crate::package_managers::alpm_direct::with_handle(|alpm| {
         let mut updates = Vec::new();
         let localdb = alpm.localdb();
@@ -27,17 +28,15 @@ pub fn get_update_list() -> Result<Vec<(String, String, String)>> {
 
         for pkg in localdb.pkgs() {
             let name = pkg.name();
-            let local_ver = pkg.version().as_str();
+            let local_ver_str = pkg.version().as_str();
+            let local_ver = super::types::parse_version_or_zero(local_ver_str);
 
             for db in syncdbs {
                 if let Ok(sync_pkg) = db.pkg(name) {
-                    let sync_ver = sync_pkg.version().as_str();
-                    if alpm::vercmp(sync_ver, local_ver) == std::cmp::Ordering::Greater {
-                        updates.push((
-                            name.to_string(),
-                            local_ver.to_string(),
-                            sync_ver.to_string(),
-                        ));
+                    let sync_ver_str = sync_pkg.version().as_str();
+                    let sync_ver = super::types::parse_version_or_zero(sync_ver_str);
+                    if alpm::vercmp(sync_ver_str, local_ver_str) == std::cmp::Ordering::Greater {
+                        updates.push((name.to_string(), local_ver, sync_ver));
                         break;
                     }
                 }
@@ -52,7 +51,7 @@ pub fn get_update_list() -> Result<Vec<(String, String, String)>> {
 #[derive(Debug, Clone)]
 pub struct DownloadInfo {
     pub name: String,
-    pub version: String,
+    pub version: Version,
     pub repo: String,
     pub filename: String,
     pub size: u64,
@@ -75,7 +74,7 @@ pub fn get_update_download_list() -> Result<Vec<DownloadInfo>> {
                     if alpm::vercmp(sync_ver, local_ver) == std::cmp::Ordering::Greater {
                         downloads.push(DownloadInfo {
                             name: name.to_string(),
-                            version: sync_ver.to_string(),
+                            version: super::types::parse_version_or_zero(sync_ver),
                             repo: db.name().to_string(),
                             filename: sync_pkg.filename().unwrap_or_default().to_string(),
                             size: sync_pkg.download_size() as u64,
@@ -97,14 +96,16 @@ pub fn get_sync_pkg_info(name: &str) -> Result<Option<PackageInfo>> {
         if let Some(pkg) = pacman_db::get_sync_package(name)? {
             return Ok(Some(PackageInfo {
                 name: pkg.name,
-                version: pkg.version,
+                version: pkg.version.clone(),
                 description: pkg.desc,
-                url: pkg.url,
+                url: Some(pkg.url),
                 size: pkg.isize,
-                download_size: pkg.csize,
+                install_size: Some(i64::try_from(pkg.isize).unwrap_or(i64::MAX)),
+                download_size: Some(pkg.csize),
                 repo: pkg.repo,
                 depends: pkg.depends,
                 licenses: Vec::new(),
+                installed: false,
             }));
         }
         return Ok(None);
@@ -120,22 +121,20 @@ pub fn get_pkg_info_from_db(alpm: &alpm::Alpm, name: &str) -> Result<Option<Pack
         if let Ok(pkg) = db.pkg(name) {
             return Ok(Some(PackageInfo {
                 name: pkg.name().to_string(),
-                version: pkg.version().to_string(),
+                version: super::types::parse_version_or_zero(pkg.version()),
                 description: pkg.desc().unwrap_or("").to_string(),
-                url: pkg.url().unwrap_or("").to_string(),
+                url: pkg.url().map(std::string::ToString::to_string),
                 size: pkg.isize() as u64,
-                download_size: pkg.size() as u64,
+                install_size: Some(pkg.isize()),
+                download_size: Some(pkg.size() as u64),
                 repo: db.name().to_string(),
-                depends: pkg
-                    .depends()
-                    .iter()
-                    .map(std::string::ToString::to_string)
-                    .collect(),
+                depends: pkg.depends().iter().map(|d| d.name().to_string()).collect(),
                 licenses: pkg
                     .licenses()
                     .iter()
                     .map(std::string::ToString::to_string)
                     .collect(),
+                installed: alpm.localdb().pkg(pkg.name()).is_ok(),
             }));
         }
     }
@@ -236,7 +235,11 @@ pub fn display_pkg_info(info: &PackageInfo) {
     println!("{} {}", info.name.white().bold(), info.version.green());
     println!("  {} {}", "Description:".dimmed(), info.description);
     println!("  {} {}", "Repository:".dimmed(), info.repo.cyan());
-    println!("  {} {}", "URL:".dimmed(), info.url);
+    println!(
+        "  {} {}",
+        "URL:".dimmed(),
+        info.url.as_deref().unwrap_or("-")
+    );
     println!(
         "  {} {:.2} MB",
         "Size:".dimmed(),
@@ -245,7 +248,7 @@ pub fn display_pkg_info(info: &PackageInfo) {
     println!(
         "  {} {:.2} MB",
         "Download:".dimmed(),
-        info.download_size as f64 / 1024.0 / 1024.0
+        info.download_size.unwrap_or(0) as f64 / 1024.0 / 1024.0
     );
     if !info.licenses.is_empty() {
         println!("  {} {}", "License:".dimmed(), info.licenses.join(", "));
@@ -256,7 +259,7 @@ pub fn display_pkg_info(info: &PackageInfo) {
 }
 
 /// Execute a libalpm transaction (install/remove/sysupgrade)
-#[allow(clippy::literal_string_with_formatting_args)]
+#[allow(clippy::literal_string_with_formatting_args, clippy::expect_used)]
 pub fn execute_transaction(packages: Vec<String>, remove: bool, sysupgrade: bool) -> Result<()> {
     use alpm::{SigLevel, TransFlag};
     use indicatif::{ProgressBar, ProgressStyle};
@@ -280,7 +283,7 @@ pub fn execute_transaction(packages: Vec<String>, remove: bool, sysupgrade: bool
     main_pb.set_style(
         ProgressStyle::default_spinner()
             .template("{spinner:.cyan} {msg}")
-            .unwrap(),
+            .expect("valid template"),
     );
     main_pb.enable_steady_tick(std::time::Duration::from_millis(100));
 
@@ -310,14 +313,14 @@ pub fn execute_transaction(packages: Vec<String>, remove: bool, sysupgrade: bool
     let mp_clone = mp;
 
     alpm.set_dl_cb(dl_pb_map, move |filename, event, map| {
-        let mut map = map.lock().unwrap();
+        let Ok(mut map) = map.lock() else { return };
         match event.event() {
             alpm::DownloadEvent::Init(_) => {
                 let pb = mp_clone.add(ProgressBar::new_spinner());
                 pb.set_style(
                     ProgressStyle::default_spinner()
                         .template("  {spinner:.green} {msg:20} [Starting download...]")
-                        .unwrap()
+                        .expect("valid template")
                 );
                 pb.set_message(filename.to_string());
                 map.insert(filename.to_string(), pb);
@@ -330,7 +333,7 @@ pub fn execute_transaction(packages: Vec<String>, remove: bool, sysupgrade: bool
                         pb.set_style(
                             ProgressStyle::default_bar()
                                 .template("  {spinner:.green} {msg:20} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec})")
-                                .unwrap()
+                                .expect("valid template")
                                 .progress_chars("█▓▒░")
                         );
                     }
@@ -341,7 +344,7 @@ pub fn execute_transaction(packages: Vec<String>, remove: bool, sysupgrade: bool
                     pb.set_style(
                         ProgressStyle::default_bar()
                             .template("  {spinner:.green} {msg:20} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec})")
-                            .unwrap()
+                            .expect("valid template")
                             .progress_chars("█▓▒░")
                     );
                     pb.set_message(filename.to_string());

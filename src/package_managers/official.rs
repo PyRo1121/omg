@@ -56,7 +56,7 @@ impl PackageManager for OfficialPackageManager {
             .into_iter()
             .map(|p| Package {
                 name: p.name,
-                version: p.version,
+                version: p.version.clone(),
                 description: p.description,
                 source: PackageSource::Official,
                 installed: p.installed,
@@ -178,7 +178,7 @@ impl PackageManager for OfficialPackageManager {
         if let Some(info) = crate::package_managers::get_sync_pkg_info(package)? {
             return Ok(Some(Package {
                 name: info.name,
-                version: info.version,
+                version: info.version.clone(),
                 description: info.description,
                 source: PackageSource::Official,
                 installed: crate::package_managers::is_installed_fast(package).unwrap_or(false),
@@ -194,7 +194,7 @@ impl PackageManager for OfficialPackageManager {
             .into_iter()
             .map(|p| Package {
                 name: p.name,
-                version: p.version,
+                version: p.version.clone(),
                 description: p.description,
                 source: PackageSource::Official,
                 installed: true,

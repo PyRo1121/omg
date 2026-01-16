@@ -217,7 +217,7 @@ impl RubyManager {
         pb.set_style(
             ProgressStyle::default_bar()
                 .template("{spinner:.green} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")
-                .unwrap()
+                .expect("valid template")
                 .progress_chars("█▓▒░"),
         );
 

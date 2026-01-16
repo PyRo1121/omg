@@ -1,3 +1,4 @@
+use alpm_types::Version;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -81,7 +82,7 @@ impl SecurityPolicy {
     pub async fn assign_grade(
         &self,
         name: &str,
-        version: &str,
+        version: &Version,
         is_aur: bool,
         is_official: bool,
     ) -> SecurityGrade {

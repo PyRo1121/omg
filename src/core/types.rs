@@ -1,5 +1,6 @@
 //! Common types used throughout OMG
 
+use alpm_types::Version;
 use serde::{Deserialize, Serialize};
 
 /// Supported runtimes
@@ -130,7 +131,7 @@ pub enum PackageSource {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Package {
     pub name: String,
-    pub version: String,
+    pub version: Version,
     pub description: String,
     pub source: PackageSource,
     pub installed: bool,
@@ -144,4 +145,12 @@ pub struct RuntimeVersion {
     pub installed: bool,
     pub active: bool,
     pub path: Option<std::path::PathBuf>,
+}
+impl std::fmt::Display for PackageSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Official => write!(f, "Official"),
+            Self::Aur => write!(f, "AUR"),
+        }
+    }
 }
