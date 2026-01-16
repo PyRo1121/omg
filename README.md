@@ -542,24 +542,44 @@ cargo clippy
 Use `cargo run -- <command>` to exercise CLI paths during development.
 
 ### Debian Docker Smoke Test
-Build the Debian container and compile with the Debian backend enabled:
+
+Build the Debian container with automated smoke tests:
 
 ```bash
 docker build -f Dockerfile.debian -t omg-debian-smoke .
 ```
 
-Run the container for manual CLI testing:
+Run the automated smoke test suite:
 
 ```bash
-docker run --rm -it omg-debian-smoke
+docker run --rm omg-debian-smoke
 ```
 
-Inside the container you can run:
+The smoke test automatically runs 20+ tests covering:
+- OMG version and help commands
+- System health checks (`omg doctor`)
+- Database synchronization (`omg sync`)
+- Package search and info queries
+- Package installation and removal
+- Update checks and status commands
+- Error handling for invalid packages
+
+All tests run as root to properly test apt operations.
+
+For interactive manual testing:
 
 ```bash
-cargo test
-cargo run -- --help
-cargo run -- search ripgrep
+docker run --rm -it omg-debian-smoke bash
+```
+
+Inside the container you can run any omg command:
+
+```bash
+omg search curl
+omg info vim
+omg install hello
+omg remove hello
+omg status
 ```
 
 ---

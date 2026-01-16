@@ -11,6 +11,8 @@ use crate::core::paths;
 use crate::package_managers::PackageManager;
 
 use crate::cli::style;
+
+#[cfg(feature = "arch")]
 use crate::package_managers::get_system_status;
 
 #[cfg(feature = "debian")]
@@ -229,13 +231,27 @@ pub fn status_sync() -> Result<()> {
                     Some(res.runtime_versions),
                 )
             } else {
-                let s = get_system_status().unwrap_or((0, 0, 0, 0));
-                (s.0, s.1, s.2, s.3, 0, None)
+                #[cfg(feature = "arch")]
+                {
+                    let s = get_system_status().unwrap_or((0, 0, 0, 0));
+                    (s.0, s.1, s.2, s.3, 0, None)
+                }
+                #[cfg(not(feature = "arch"))]
+                {
+                    (0, 0, 0, 0, 0, None)
+                }
             }
         } else {
             // Fallback to local optimized ALPM query
-            let s = get_system_status().unwrap_or((0, 0, 0, 0));
-            (s.0, s.1, s.2, s.3, 0, None)
+            #[cfg(feature = "arch")]
+            {
+                let s = get_system_status().unwrap_or((0, 0, 0, 0));
+                (s.0, s.1, s.2, s.3, 0, None)
+            }
+            #[cfg(not(feature = "arch"))]
+            {
+                (0, 0, 0, 0, 0, None)
+            }
         };
 
     if updates > 0 {

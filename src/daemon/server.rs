@@ -45,7 +45,6 @@ pub async fn run(listener: UnixListener) -> Result<()> {
         // Initial refresh
         {
             use crate::cli::runtimes::{ensure_active_version, known_runtimes};
-            use crate::package_managers::get_system_status;
             let mut versions = Vec::new();
             for runtime in known_runtimes() {
                 if let Some(v) = ensure_active_version(&runtime) {
@@ -53,6 +52,8 @@ pub async fn run(listener: UnixListener) -> Result<()> {
                 }
             }
             state_worker.runtime_versions.write().clone_from(&versions);
+
+            #[cfg(feature = "arch")]
             let status = if use_debian_backend() {
                 #[cfg(feature = "debian")]
                 {
@@ -63,7 +64,22 @@ pub async fn run(listener: UnixListener) -> Result<()> {
                     Err(anyhow::anyhow!("Debian backend disabled"))
                 }
             } else {
+                use crate::package_managers::get_system_status;
                 get_system_status()
+            };
+
+            #[cfg(not(feature = "arch"))]
+            let status = if use_debian_backend() {
+                #[cfg(feature = "debian")]
+                {
+                    apt_get_system_status()
+                }
+                #[cfg(not(feature = "debian"))]
+                {
+                    Err(anyhow::anyhow!("No package manager backend available"))
+                }
+            } else {
+                Err(anyhow::anyhow!("Arch backend disabled"))
             };
 
             if let Ok((total, explicit, orphans, updates)) = status {
@@ -88,7 +104,6 @@ pub async fn run(listener: UnixListener) -> Result<()> {
                 () = tokio::time::sleep(std::time::Duration::from_secs(300)) => {
                     tracing::debug!("Refreshing system status cache...");
                     use crate::cli::runtimes::{ensure_active_version, known_runtimes};
-                    use crate::package_managers::get_system_status;
 
                     // 1. Probe Runtimes (Fast)
                     let mut versions = Vec::new();
@@ -102,7 +117,8 @@ pub async fn run(listener: UnixListener) -> Result<()> {
                         .write()
                         .clone_from(&versions);
 
-                    // 2. Refresh Package Status (ALPM)
+                    // 2. Refresh Package Status
+                    #[cfg(feature = "arch")]
                     let status = if use_debian_backend() {
                         #[cfg(feature = "debian")]
                         {
@@ -113,7 +129,22 @@ pub async fn run(listener: UnixListener) -> Result<()> {
                             Err(anyhow::anyhow!("Debian backend disabled"))
                         }
                     } else {
+                        use crate::package_managers::get_system_status;
                         get_system_status()
+                    };
+
+                    #[cfg(not(feature = "arch"))]
+                    let status = if use_debian_backend() {
+                        #[cfg(feature = "debian")]
+                        {
+                            apt_get_system_status()
+                        }
+                        #[cfg(not(feature = "debian"))]
+                        {
+                            Err(anyhow::anyhow!("No package manager backend available"))
+                        }
+                    } else {
+                        Err(anyhow::anyhow!("Arch backend disabled"))
                     };
 
                     // 3. Scan for Vulnerabilities (New!)
