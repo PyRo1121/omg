@@ -30,6 +30,7 @@ const VERSION_FILES: &[(&str, &str)] = &[
     (".ruby-version", "ruby"),
     // Go
     (".go-version", "go"),
+    ("go.mod", "go"),
     // Java
     (".java-version", "java"),
     // Bun
@@ -246,6 +247,19 @@ pub fn detect_versions(start: &Path) -> HashMap<String, String> {
                             versions
                                 .entry(runtime)
                                 .or_insert_with(|| version.trim().to_string());
+                        }
+                    }
+                } else if *filename == "go.mod" {
+                    if let Ok(content) = std::fs::read_to_string(&file_path) {
+                        for line in content.lines() {
+                            let line = line.trim();
+                            if let Some(version) = line.strip_prefix("go ") {
+                                let version = version.trim();
+                                if !version.is_empty() {
+                                    versions.insert((*runtime).to_string(), version.to_string());
+                                    break;
+                                }
+                            }
                         }
                     }
                 } else if *filename == ".mise.toml"

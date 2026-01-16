@@ -1,12 +1,16 @@
 use std::process::Command;
+use std::sync::LazyLock;
 
 use anyhow::{Context, Result};
 use owo_colors::OwoColorize;
 
 use crate::runtimes::{
-    BunManager, GoManager, JavaManager, NodeManager, PythonManager, RubyManager, RustManager,
-    SUPPORTED_RUNTIMES,
+    BunManager, GoManager, JavaManager, MiseManager, NodeManager, PythonManager, RubyManager,
+    RustManager, SUPPORTED_RUNTIMES,
 };
+
+/// Global mise manager instance
+static MISE: LazyLock<MiseManager> = LazyLock::new(MiseManager::new);
 
 pub fn resolve_active_version(runtime: &str) -> Option<String> {
     let versions = crate::hooks::get_active_versions();
@@ -14,8 +18,8 @@ pub fn resolve_active_version(runtime: &str) -> Option<String> {
         return Some(version.clone());
     }
 
-    if mise_available() {
-        return mise_current_version(runtime).ok().flatten();
+    if MISE.is_available() {
+        return MISE.current_version(runtime).ok().flatten();
     }
 
     None
@@ -26,12 +30,12 @@ pub fn ensure_active_version(runtime: &str) -> Option<String> {
         return Some(version);
     }
 
-    if !mise_available() {
+    if !MISE.is_available() {
         return None;
     }
 
-    if matches!(mise_install_runtime(runtime), Ok(true)) {
-        return mise_current_version(runtime).ok().flatten();
+    if matches!(MISE.install_runtime(runtime), Ok(true)) {
+        return MISE.current_version(runtime).ok().flatten();
     }
 
     None
@@ -43,8 +47,8 @@ pub fn known_runtimes() -> Vec<String> {
         .map(std::string::ToString::to_string)
         .collect();
 
-    if mise_available()
-        && let Ok(extra) = mise_installed_runtimes()
+    if MISE.is_available()
+        && let Ok(extra) = MISE.list_installed()
     {
         runtimes.extend(extra);
     }
@@ -155,114 +159,32 @@ pub async fn use_version(runtime: &str, version: Option<&str>) -> Result<()> {
             }
         }
         _ => {
-            if mise_available() {
-                mise_use_version(runtime, &version)?;
-            } else {
-                println!("{} Unknown runtime: {}", "✗".red(), runtime);
-                println!("  Native support: node, python, rust, go, ruby, java, bun");
+            // Auto-install mise if not available, then use it for non-native runtimes
+            if !MISE.is_available() {
                 println!(
-                    "  Install mise for 100+ more: deno, elixir, erlang, zig, swift, dotnet, php, perl, lua, julia..."
+                    "{} {} is not natively supported, installing mise...\n",
+                    "→".blue(),
+                    runtime.yellow()
                 );
-                println!("  → https://mise.jdx.dev or: curl https://mise.run | sh");
+                // Need async context for install
+                let rt = tokio::runtime::Handle::try_current();
+                if let Ok(handle) = rt {
+                    handle.block_on(MISE.ensure_installed())?;
+                } else {
+                    // Create a new runtime if we're not in one
+                    let rt = tokio::runtime::Runtime::new()?;
+                    rt.block_on(MISE.ensure_installed())?;
+                }
             }
+            MISE.use_version(runtime, &version)?;
         }
     }
 
     Ok(())
 }
 
-fn mise_available() -> bool {
-    Command::new("mise")
-        .arg("--version")
-        .output()
-        .map(|out| out.status.success())
-        .unwrap_or(false)
-}
-
-fn mise_current_version(runtime: &str) -> Result<Option<String>> {
-    let output = Command::new("mise")
-        .args(["current", runtime])
-        .output()
-        .with_context(|| format!("Failed to run `mise current {runtime}`"))?;
-
-    if !output.status.success() {
-        return Ok(None);
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let line = stdout.lines().find(|line| !line.trim().is_empty());
-    let Some(line) = line else {
-        return Ok(None);
-    };
-    let line = line.trim();
-
-    if let Some(rest) = line.strip_prefix(runtime)
-        && let Some(version) = rest.split_whitespace().find(|token| !token.is_empty())
-    {
-        return Ok(Some(version.to_string()));
-    }
-
-    if let Some((_, version)) = line.split_once('@') {
-        return Ok(Some(version.trim().to_string()));
-    }
-
-    Ok(Some(line.to_string()))
-}
-
-fn mise_install_runtime(runtime: &str) -> Result<bool> {
-    let status = Command::new("mise")
-        .args(["install", runtime])
-        .status()
-        .with_context(|| format!("Failed to run `mise install {runtime}`"))?;
-
-    Ok(status.success())
-}
-
-fn mise_installed_runtimes() -> Result<Vec<String>> {
-    let output = Command::new("mise")
-        .args(["ls"])
-        .output()
-        .context("Failed to run `mise ls`")?;
-
-    if !output.status.success() {
-        anyhow::bail!("mise failed to list installed runtimes");
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut runtimes = Vec::new();
-    for line in stdout.lines() {
-        let runtime = line.split_whitespace().next().unwrap_or_default();
-        if !runtime.is_empty() {
-            runtimes.push(runtime.to_string());
-        }
-    }
-
-    runtimes.sort();
-    runtimes.dedup();
-    Ok(runtimes)
-}
-
-fn mise_use_version(runtime: &str, version: &str) -> Result<()> {
-    let tool_spec = format!("{runtime}@{version}");
-    let install_status = Command::new("mise")
-        .args(["install", &tool_spec])
-        .status()
-        .with_context(|| format!("Failed to run `mise install {tool_spec}`"))?;
-    if !install_status.success() {
-        anyhow::bail!("mise failed to install {tool_spec}");
-    }
-
-    let use_status = Command::new("mise")
-        .args(["use", "--local", &tool_spec])
-        .status()
-        .with_context(|| format!("Failed to run `mise use --local {tool_spec}`"))?;
-    if !use_status.success() {
-        anyhow::bail!("mise failed to activate {tool_spec}");
-    }
-
-    println!("{} Using mise for {} {}", "✓".green(), runtime, version);
-    Ok(())
-}
+// Note: mise_available, mise_current_version, mise_install_runtime, mise_installed_runtimes,
+// and mise_use_version are now handled by the MISE manager (MiseManager)
 
 fn mise_list_versions(runtime: &str, available: bool) -> Result<()> {
     let args = if available {
@@ -270,7 +192,7 @@ fn mise_list_versions(runtime: &str, available: bool) -> Result<()> {
     } else {
         vec!["ls", runtime]
     };
-    let output = Command::new("mise")
+    let output = Command::new(MISE.mise_path())
         .args(&args)
         .output()
         .with_context(|| format!("Failed to run `mise {}`", args.join(" ")))?;
@@ -290,7 +212,7 @@ fn mise_list_versions(runtime: &str, available: bool) -> Result<()> {
 }
 
 fn mise_list_all() -> Result<()> {
-    let output = Command::new("mise")
+    let output = Command::new(MISE.mise_path())
         .args(["ls"])
         .output()
         .context("Failed to run `mise ls`")?;
@@ -458,16 +380,16 @@ pub async fn list_versions(runtime: Option<&str>, available: bool) -> Result<()>
                 }
             }
             _ => {
-                if mise_available() {
-                    mise_list_versions(rt, available)?;
-                } else {
-                    println!("  {} Unknown runtime: {}", "✗".red(), rt);
-                    println!("  Native support: node, python, rust, go, ruby, java, bun");
+                // Auto-install mise if not available
+                if !MISE.is_available() {
                     println!(
-                        "  Install mise for 100+ more: deno, elixir, erlang, zig, swift, dotnet, php..."
+                        "{} {} is not natively supported, installing mise...\n",
+                        "→".blue(),
+                        rt.yellow()
                     );
-                    println!("  → https://mise.jdx.dev or: curl https://mise.run | sh");
+                    MISE.ensure_installed().await?;
                 }
+                mise_list_versions(rt, available)?;
             }
         }
     } else {
@@ -506,7 +428,7 @@ pub async fn list_versions(runtime: Option<&str>, available: bool) -> Result<()>
             println!("  {} Bun {}", "●".green(), v);
         }
 
-        if mise_available() {
+        if MISE.is_available() {
             println!("\n{} Mise runtimes:\n", "OMG".cyan().bold());
             mise_list_all()?;
         }
