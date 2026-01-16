@@ -148,13 +148,11 @@ impl AuditLogger {
         let reader = BufReader::new(file);
 
         let mut last_hash = "genesis".to_string();
-        for line in reader.lines() {
-            if let Ok(line) = line {
-                if let Ok(entry) = serde_json::from_str::<AuditEntry>(&line) {
-                    if let Some(hash) = entry.hash {
-                        last_hash = hash;
-                    }
-                }
+        for line in reader.lines().map_while(Result::ok) {
+            if let Ok(entry) = serde_json::from_str::<AuditEntry>(&line)
+                && let Some(hash) = entry.hash
+            {
+                last_hash = hash;
             }
         }
 
@@ -217,19 +215,19 @@ impl AuditLogger {
         // Also emit to tracing for real-time monitoring
         match severity {
             AuditSeverity::Debug => {
-                tracing::debug!(target: "audit", "{}: {}", entry.event_type_str(), description)
+                tracing::debug!(target: "audit", "{}: {}", entry.event_type_str(), description);
             }
             AuditSeverity::Info => {
-                tracing::info!(target: "audit", "{}: {}", entry.event_type_str(), description)
+                tracing::info!(target: "audit", "{}: {}", entry.event_type_str(), description);
             }
             AuditSeverity::Warning => {
-                tracing::warn!(target: "audit", "{}: {}", entry.event_type_str(), description)
+                tracing::warn!(target: "audit", "{}: {}", entry.event_type_str(), description);
             }
             AuditSeverity::Error => {
-                tracing::error!(target: "audit", "{}: {}", entry.event_type_str(), description)
+                tracing::error!(target: "audit", "{}: {}", entry.event_type_str(), description);
             }
             AuditSeverity::Critical => {
-                tracing::error!(target: "audit", "CRITICAL - {}: {}", entry.event_type_str(), description)
+                tracing::error!(target: "audit", "CRITICAL - {}: {}", entry.event_type_str(), description);
             }
         }
 
@@ -294,7 +292,7 @@ impl AuditLogger {
 
         let entries: Vec<AuditEntry> = reader
             .lines()
-            .filter_map(|line| line.ok())
+            .map_while(Result::ok)
             .filter_map(|line| serde_json::from_str(&line).ok())
             .collect();
 
@@ -302,15 +300,15 @@ impl AuditLogger {
     }
 
     /// Filter entries by event type
-    pub fn filter_by_type(&self, event_type: AuditEventType) -> Result<Vec<AuditEntry>> {
+    pub fn filter_by_type(&self, event_type: &AuditEventType) -> Result<Vec<AuditEntry>> {
         let file = File::open(&self.log_path)?;
         let reader = BufReader::new(file);
 
         let entries: Vec<AuditEntry> = reader
             .lines()
-            .filter_map(|line| line.ok())
+            .map_while(Result::ok)
             .filter_map(|line| serde_json::from_str::<AuditEntry>(&line).ok())
-            .filter(|e| e.event_type == event_type)
+            .filter(|e| &e.event_type == event_type)
             .collect();
 
         Ok(entries)
@@ -323,7 +321,7 @@ impl AuditLogger {
 
         let entries: Vec<AuditEntry> = reader
             .lines()
-            .filter_map(|line| line.ok())
+            .map_while(Result::ok)
             .filter_map(|line| serde_json::from_str::<AuditEntry>(&line).ok())
             .filter(|e| e.severity >= min_severity)
             .collect();
@@ -388,10 +386,10 @@ pub fn audit_log(
     resource: &str,
     description: &str,
 ) {
-    if let Ok(mut guard) = AUDIT_LOGGER.lock() {
-        if let Some(logger) = guard.as_mut() {
-            let _ = logger.log(event, severity, resource, description);
-        }
+    if let Ok(mut guard) = AUDIT_LOGGER.lock()
+        && let Some(logger) = guard.as_mut()
+    {
+        let _ = logger.log(event, severity, resource, description);
     }
 }
 
@@ -403,11 +401,10 @@ pub fn audit_log_with_metadata(
     description: &str,
     metadata: serde_json::Value,
 ) {
-    if let Ok(mut guard) = AUDIT_LOGGER.lock() {
-        if let Some(logger) = guard.as_mut() {
-            let _ =
-                logger.log_with_metadata(event, severity, resource, description, Some(metadata));
-        }
+    if let Ok(mut guard) = AUDIT_LOGGER.lock()
+        && let Some(logger) = guard.as_mut()
+    {
+        let _ = logger.log_with_metadata(event, severity, resource, description, Some(metadata));
     }
 }
 

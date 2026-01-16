@@ -6,12 +6,10 @@ use crate::cli::tui::app::{App, Tab};
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style, Stylize},
-    symbols,
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{
-        Block, BorderType, Borders, Cell, Clear, Gauge, List, ListItem, Padding, Paragraph, Row,
-        Scrollbar, ScrollbarOrientation, ScrollbarState, Sparkline, Table, Tabs, Wrap,
+        Block, BorderType, Borders, Cell, Clear, Gauge, List, ListItem, Paragraph, Row, Table, Tabs,
     },
 };
 
@@ -35,9 +33,11 @@ mod colors {
     pub const ACCENT_ORANGE: Color = Color::Rgb(255, 158, 100);
     pub const ACCENT_RED: Color = Color::Rgb(247, 118, 142);
     pub const ACCENT_MAGENTA: Color = Color::Rgb(187, 154, 247);
+    #[allow(dead_code)]
     pub const ACCENT_PINK: Color = Color::Rgb(255, 121, 198);
 
     pub const BORDER_NORMAL: Color = Color::Rgb(61, 66, 91);
+    #[allow(dead_code)]
     pub const BORDER_ACTIVE: Color = Color::Rgb(122, 162, 247);
 }
 
@@ -577,9 +577,7 @@ fn draw_recent_activity(f: &mut Frame, area: Rect, app: &App) {
             };
 
             let icon = match t.transaction_type.to_string().as_str() {
-                "Install" => "",
-                "Remove" => "",
-                "Update" => "",
+                "Install" | "Remove" | "Update" => "",
                 "Sync" => "󰓦",
                 _ => "•",
             };
@@ -950,9 +948,7 @@ fn draw_activity(f: &mut Frame, area: Rect, app: &App) {
             };
 
             let icon = match t.transaction_type.to_string().as_str() {
-                "Install" => "",
-                "Remove" => "",
-                "Update" => "",
+                "Install" | "Remove" | "Update" => "",
                 "Sync" => "󰓦",
                 _ => "•",
             };

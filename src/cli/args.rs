@@ -308,7 +308,7 @@ pub enum ToolCommands {
 pub enum AuditCommands {
     /// Scan for vulnerabilities in installed packages (default)
     Scan,
-    /// Generate Software Bill of Materials (SBOM) in CycloneDX format
+    /// Generate Software Bill of Materials (SBOM) in `CycloneDX` format
     Sbom {
         /// Output file path (default: ~/.local/share/omg/sbom/sbom-<timestamp>.json)
         #[arg(short, long)]

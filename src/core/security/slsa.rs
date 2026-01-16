@@ -212,10 +212,13 @@ impl SlsaVerifier {
             response.json().await?;
 
         if let Some((uuid, value)) = entry_map.into_iter().next() {
-            let log_index = value.get("logIndex").and_then(|v| v.as_u64()).unwrap_or(0);
+            let log_index = value
+                .get("logIndex")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
             let integrated_time = value
                 .get("integratedTime")
-                .and_then(|v| v.as_u64())
+                .and_then(serde_json::Value::as_u64)
                 .unwrap_or(0);
             let body = value
                 .get("body")
@@ -241,7 +244,7 @@ impl SlsaVerifier {
         provenance_path: Option<P>,
     ) -> Result<VerificationResult> {
         // Calculate artifact hash
-        let artifact_hash = self.calculate_hash(&blob_path)?;
+        let artifact_hash = Self::calculate_hash(&blob_path)?;
 
         // Check Rekor for transparency log entries
         let rekor_entries = self.query_rekor(&artifact_hash).await?;
@@ -249,20 +252,20 @@ impl SlsaVerifier {
         if rekor_entries.is_empty() {
             // No transparency log entry found
             // Check if we have local provenance
-            if let Some(prov_path) = provenance_path {
-                if prov_path.as_ref().exists() {
-                    // Parse local provenance
-                    let content = std::fs::read_to_string(prov_path.as_ref())?;
-                    if let Ok(provenance) = serde_json::from_str::<SlsaProvenance>(&content) {
-                        return Ok(VerificationResult {
-                            verified: true,
-                            slsa_level: SlsaLevel::Level1,
-                            transparency_log_entry: None,
-                            builder_id: Some(provenance.builder.id),
-                            build_timestamp: provenance.metadata.and_then(|m| m.build_finished_on),
-                            error: None,
-                        });
-                    }
+            if let Some(prov_path) = provenance_path
+                && prov_path.as_ref().exists()
+            {
+                // Parse local provenance
+                let content = std::fs::read_to_string(prov_path.as_ref())?;
+                if let Ok(provenance) = serde_json::from_str::<SlsaProvenance>(&content) {
+                    return Ok(VerificationResult {
+                        verified: true,
+                        slsa_level: SlsaLevel::Level1,
+                        transparency_log_entry: None,
+                        builder_id: Some(provenance.builder.id),
+                        build_timestamp: provenance.metadata.and_then(|m| m.build_finished_on),
+                        error: None,
+                    });
                 }
             }
 
@@ -285,7 +288,7 @@ impl SlsaVerifier {
             transparency_log_entry: Some(entry.uuid.clone()),
             builder_id: None,
             build_timestamp: Some(
-                jiff::Timestamp::from_second(entry.integrated_time as i64)
+                jiff::Timestamp::from_second(entry.integrated_time.cast_signed())
                     .map(|t| t.strftime("%Y-%m-%dT%H:%M:%SZ").to_string())
                     .unwrap_or_default(),
             ),
@@ -294,7 +297,7 @@ impl SlsaVerifier {
     }
 
     /// Calculate SHA-256 hash of a file
-    fn calculate_hash<P: AsRef<Path>>(&self, path: P) -> Result<String> {
+    fn calculate_hash<P: AsRef<Path>>(path: P) -> Result<String> {
         let mut hasher = Sha256::new();
         let mut file = std::fs::File::open(path)?;
         std::io::copy(&mut file, &mut hasher)?;
@@ -303,12 +306,12 @@ impl SlsaVerifier {
 
     /// Verify hash of a file against expected value
     pub fn verify_hash<P: AsRef<Path>>(&self, path: P, expected_hash: &str) -> Result<bool> {
-        let actual_hash = self.calculate_hash(path)?;
+        let actual_hash = Self::calculate_hash(path)?;
         Ok(actual_hash == expected_hash)
     }
 
     /// Determine SLSA level for a package based on available attestations
-    pub async fn determine_slsa_level(&self, package_name: &str, is_official: bool) -> SlsaLevel {
+    pub fn determine_slsa_level(&self, package_name: &str, is_official: bool) -> SlsaLevel {
         // Core system packages from official repos have SLSA Level 2+
         // (Arch Linux build system provides signed packages with reproducible builds)
         if is_official {
