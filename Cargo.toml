@@ -1,6 +1,6 @@
 [package]
 name = "omg"
-version = "0.1.37"
+version = "0.1.38"
 edition = "2024"
 rust-version = "1.92"
 description = "The Fastest Unified Package Manager for Arch Linux + All Language Runtimes"
@@ -105,15 +105,15 @@ jiff = { version = "0.2", features = ["serde"] }
 redb = "3.1"
 
 # Direct libalpm bindings (for transactions - install/remove/upgrade)
-alpm = "5.0.2"
+alpm = { version = "5.0.2", optional = true }
 
 # Official Arch Linux pure Rust ALPM ecosystem (archlinux/alpm)
 # Tracking git main (bleeding edge)
-alpm-types = { git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", package = "alpm-types" }
-alpm-srcinfo = { git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", package = "alpm-srcinfo" }
-alpm-db = { git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", package = "alpm-db" }
-alpm-repo-db = { git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", package = "alpm-repo-db" }
-alpm-pkginfo = { git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", package = "alpm-pkginfo" }
+alpm-types = { git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", package = "alpm-types", optional = true }
+alpm-srcinfo = { git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", package = "alpm-srcinfo", optional = true }
+alpm-db = { git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", package = "alpm-db", optional = true }
+alpm-repo-db = { git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", package = "alpm-repo-db", optional = true }
+alpm-pkginfo = { git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", package = "alpm-pkginfo", optional = true }
 
 # Process execution
 which = "7.0.3"
@@ -160,5 +160,12 @@ debug = true
 
 [features]
 default = ["arch"]
-arch = []
+arch = [
+    "alpm",
+    "alpm-types",
+    "alpm-srcinfo",
+    "alpm-db",
+    "alpm-repo-db",
+    "alpm-pkginfo",
+]
 debian = ["rust-apt"]
