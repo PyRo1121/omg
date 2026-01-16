@@ -110,14 +110,28 @@ impl BunManager {
             .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
     }
 
+    /// Resolve Bun alias (latest) to a concrete version
+    pub async fn resolve_alias(&self, alias: &str) -> Result<String> {
+        let alias = alias.trim_start_matches('v');
+        if alias == "latest" {
+            let versions = self.list_available().await?;
+            if let Some(v) = versions.first() {
+                return Ok(v.version.clone());
+            }
+            anyhow::bail!("No Bun versions found upstream");
+        }
+
+        Ok(alias.to_string())
+    }
+
     /// Install Bun - PURE RUST, NO SUBPROCESS
     pub async fn install(&self, version: &str) -> Result<()> {
-        let version = version.trim_start_matches('v');
-        let version_dir = self.versions_dir.join(version);
+        let version = self.resolve_alias(version).await?;
+        let version_dir = self.versions_dir.join(&version);
 
         if version_dir.exists() {
             println!("{} Bun {} is already installed", "✓".green(), version);
-            return self.use_version(version);
+            return self.use_version(&version);
         }
 
         println!(
@@ -188,7 +202,7 @@ impl BunManager {
         let _ = fs::remove_file(&download_path);
 
         println!("{} Bun {} installed!", "✓".green(), version);
-        self.use_version(version)?;
+        self.use_version(&version)?;
 
         Ok(())
     }

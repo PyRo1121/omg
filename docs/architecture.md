@@ -8,6 +8,11 @@ This page is the high-level map; each subsystem has its own deep dive.
 - **`omgd` (daemon)**: persistent background server with Unix socket IPC. Owns in-memory caches, LMDB persistence, and the official package index.
 - **Shared library**: CLI commands, runtime managers, security scanner, and IPC protocol types.
 
+### Distro Backends
+- **Arch (default)**: uses libalpm for package operations and indexing.
+- **Debian/Ubuntu (feature-gated)**: build with `--features debian`, backed by `rust-apt` and `libapt-pkg`.
+- **AUR**: Arch-only (disabled on Debian/Ubuntu).
+
 ## Request Lifecycle
 1. CLI receives a command and checks if it has a sync fast-path.
 2. If the daemon is running, the CLI hits IPC for cached results.
@@ -29,6 +34,8 @@ This page is the high-level map; each subsystem has its own deep dive.
 - **LMDB** for status persistence across daemon restarts.
 - **In-memory index** for instant search and info lookups.
 - **LRU cache** for search results, info lookups, and system status.
+  - Arch: index built from libalpm sync DBs.
+  - Debian/Ubuntu: index built from APT cache.
 
 ## Runtime Management
 - Pure Rust implementations per runtime via a common `RuntimeManager` trait.

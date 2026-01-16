@@ -87,6 +87,35 @@ jobs:
       - name: Check Formatting
         run: cargo fmt --all -- --check
 
+  debian-smoke:
+    name: Debian Smoke (APT)
+    runs-on: ubuntu-latest
+    container:
+      image: debian:bookworm-slim
+    steps:
+      - name: Install System Dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates curl git build-essential pkg-config \
+            libssl-dev libarchive-dev clang nodejs libapt-pkg-dev
+          rm -rf /var/lib/apt/lists/*
+
+      - uses: actions/checkout@v4
+      - name: Fix git ownership
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Install Rust
+        run: |
+          curl -sSf https://sh.rustup.rs | sh -s -- -y
+          . "$HOME/.cargo/env"
+          rustup default stable
+
+      - name: Build (debian feature)
+        run: |
+          . "$HOME/.cargo/env"
+          cargo build --no-default-features --features debian
+
   # Spell Check
   typos:
     name: Spell Check

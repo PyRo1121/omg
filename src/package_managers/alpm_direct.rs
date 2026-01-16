@@ -9,6 +9,7 @@ use std::cell::RefCell;
 
 use crate::core::paths;
 use crate::package_managers::pacman_db;
+use crate::package_managers::types::{LocalPackage, SyncPackage};
 
 thread_local! {
     static ALPM_HANDLE: RefCell<Option<Alpm>> = const { RefCell::new(None) };
@@ -394,25 +395,6 @@ pub fn list_all_package_names() -> Result<Vec<String>> {
         result.sort();
         Ok(result)
     })
-}
-
-#[derive(Debug, Clone)]
-pub struct LocalPackage {
-    pub name: String,
-    pub version: String,
-    pub description: String,
-    pub install_size: i64,
-    pub reason: &'static str,
-}
-
-#[derive(Debug, Clone)]
-pub struct SyncPackage {
-    pub name: String,
-    pub version: String,
-    pub description: String,
-    pub repo: String,
-    pub download_size: i64,
-    pub installed: bool,
 }
 
 #[derive(Debug, Clone)]

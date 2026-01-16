@@ -1145,7 +1145,6 @@ impl AurClient {
         ];
         if self.settings.aur.secure_makepkg {
             args.push("--cleanbuild".to_string());
-            args.push("--verifysource".to_string());
         }
         args
     }
@@ -1155,7 +1154,6 @@ impl AurClient {
         let mut args = vec!["--noconfirm".to_string(), "-f".to_string()];
         if self.settings.aur.secure_makepkg {
             args.push("--cleanbuild".to_string());
-            args.push("--verifysource".to_string());
         }
         args
     }

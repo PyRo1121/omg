@@ -215,6 +215,10 @@ pub enum Commands {
         /// Arguments to pass to the task
         #[arg(last = true)]
         args: Vec<String>,
+
+        /// Runtime backend (native, mise, native-then-mise)
+        #[arg(long)]
+        runtime_backend: Option<String>,
     },
 
     /// Create a new project from a template

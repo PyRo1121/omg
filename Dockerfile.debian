@@ -1,0 +1,28 @@
+FROM rust:1.92-bookworm AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates pkg-config libssl-dev libarchive-dev clang libapt-pkg-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /work
+COPY . /work
+
+RUN cargo build --no-default-features --features debian
+
+FROM debian:bookworm-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates libapt-pkg6.0 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY --from=builder /work/target/debug/omg /app/omg
+
+ENTRYPOINT ["/app/omg"]
+CMD ["--version"]

@@ -1,7 +1,7 @@
 //! High-performance in-memory package index using Nucleo
 //!
 //! Provides sub-millisecond fuzzy search and instant lookups
-//! by mirroring libalpm databases in memory.
+//! by mirroring system package databases in memory.
 
 use ahash::AHashMap;
 use anyhow::{Context, Result};
@@ -9,8 +9,14 @@ use nucleo_matcher::{Config, Matcher, Utf32String};
 use parking_lot::RwLock;
 use rayon::prelude::*;
 
+use crate::core::env::distro::is_debian_like;
 use crate::core::paths;
 use crate::daemon::protocol::{DetailedPackageInfo, PackageInfo};
+
+#[cfg(feature = "debian")]
+use rust_apt::Cache;
+#[cfg(feature = "debian")]
+use rust_apt::cache::PackageSort;
 
 pub struct PackageIndex {
     /// Maps package name to detailed info (using ahash for speed)
@@ -27,6 +33,17 @@ pub struct PackageIndex {
 
 impl PackageIndex {
     pub fn new() -> Result<Self> {
+        if is_debian_like() {
+            #[cfg(feature = "debian")]
+            {
+                return Self::new_apt();
+            }
+        }
+
+        Self::new_alpm()
+    }
+
+    fn new_alpm() -> Result<Self> {
         let mut packages = AHashMap::default();
         let mut search_items = Vec::new();
         let mut search_items_lower = Vec::new();
@@ -79,6 +96,83 @@ impl PackageIndex {
         }
 
         tracing::info!("Indexed {} packages from official repos", packages.len());
+
+        Ok(Self {
+            packages,
+            search_items,
+            search_items_lower,
+            prefix_index,
+            lock: RwLock::new(()),
+        })
+    }
+
+    #[cfg(feature = "debian")]
+    fn new_apt() -> Result<Self> {
+        let mut packages = AHashMap::default();
+        let mut search_items = Vec::new();
+        let mut search_items_lower = Vec::new();
+        let mut prefix_index: AHashMap<String, Vec<usize>> = AHashMap::new();
+
+        let cache =
+            Cache::new(&[]).map_err(|e| anyhow::anyhow!(format!("APT cache error: {e:?}")))?;
+        let sort = PackageSort::default();
+
+        for pkg in cache.packages(&sort) {
+            let version = pkg
+                .candidate()
+                .or_else(|| pkg.installed())
+                .map(|ver| ver.version().to_string())
+                .unwrap_or_else(|| "unknown".to_string());
+            let summary = pkg
+                .candidate()
+                .and_then(|ver| ver.summary())
+                .unwrap_or_default();
+            let long_description = pkg
+                .candidate()
+                .and_then(|ver| ver.description())
+                .unwrap_or_default();
+            let description = if summary.is_empty() {
+                long_description
+            } else {
+                summary
+            };
+            let url = pkg
+                .candidate()
+                .and_then(|ver| ver.get_record("Homepage"))
+                .unwrap_or_default();
+            let depends = pkg.candidate().map(collect_depends).unwrap_or_default();
+            let size = pkg.candidate().map(|ver| ver.installed_size()).unwrap_or(0);
+            let download_size = pkg.candidate().map(|ver| ver.size()).unwrap_or(0);
+
+            let info = DetailedPackageInfo {
+                name: pkg.name().to_string(),
+                version,
+                description,
+                url,
+                size,
+                download_size,
+                repo: "apt".to_string(),
+                depends,
+                licenses: Vec::new(),
+                source: "official".to_string(),
+            };
+
+            let search_str = format!("{} {}", info.name, info.description);
+            let search_lower = search_str.to_lowercase();
+            let idx = search_items.len();
+            search_items.push((info.name.clone(), Utf32String::from(search_str.as_str())));
+            search_items_lower.push(Utf32String::from(search_lower.as_str()));
+            let name_lower = info.name.to_lowercase();
+            for len in 1..=2 {
+                if name_lower.len() >= len {
+                    let prefix = name_lower[..len].to_string();
+                    prefix_index.entry(prefix).or_default().push(idx);
+                }
+            }
+            packages.insert(info.name.clone(), info);
+        }
+
+        tracing::info!("Indexed {} packages from apt", packages.len());
 
         Ok(Self {
             packages,
@@ -180,4 +274,21 @@ impl PackageIndex {
     pub fn is_empty(&self) -> bool {
         self.packages.is_empty()
     }
+}
+
+#[cfg(feature = "debian")]
+fn collect_depends(version: &rust_apt::Version<'_>) -> Vec<String> {
+    let mut depends = Vec::new();
+    if let Some(deps) = version.dependencies() {
+        for dep in deps {
+            if dep.is_or() {
+                for base in dep.iter() {
+                    depends.push(base.name().to_string());
+                }
+            } else if let Some(base) = dep.first() {
+                depends.push(base.name().to_string());
+            }
+        }
+    }
+    depends
 }

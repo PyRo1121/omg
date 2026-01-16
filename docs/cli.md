@@ -14,6 +14,11 @@ omg explicit                 # list explicitly installed packages
 omg sync                     # sync package databases
 ```
 
+### Debian/Ubuntu Notes
+- Build with `--features debian` (requires `libapt-pkg-dev`).
+- On Debian/Ubuntu, `search/info/install/remove/update/explicit/sync` target APT only.
+- AUR is Arch-only; `omg clean --aur` is ignored on Debian/Ubuntu.
+
 ### Interactive Search
 ```bash
 omg search vim -i

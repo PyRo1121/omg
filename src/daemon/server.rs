@@ -12,6 +12,11 @@ use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
 use super::handlers::{DaemonState, handle_request};
 use super::protocol::Request;
+#[cfg(feature = "debian")]
+use crate::core::env::distro::is_debian_like;
+
+#[cfg(feature = "debian")]
+use crate::package_managers::apt_get_system_status;
 
 /// Run the daemon server
 pub async fn run(listener: UnixListener) -> Result<()> {
@@ -22,21 +27,46 @@ pub async fn run(listener: UnixListener) -> Result<()> {
     let state_worker = Arc::clone(&state);
     let mut shutdown_worker = shutdown_tx.subscribe();
 
+    fn use_debian_backend() -> bool {
+        #[cfg(feature = "debian")]
+        {
+            return is_debian_like();
+        }
+
+        #[cfg(not(feature = "debian"))]
+        {
+            false
+        }
+    }
+
     tokio::spawn(async move {
         tracing::info!("Background status worker started");
 
         // Initial refresh
         {
+            use crate::cli::runtimes::{ensure_active_version, known_runtimes};
             use crate::package_managers::get_system_status;
-            use crate::runtimes::{SUPPORTED_RUNTIMES, probe_version};
             let mut versions = Vec::new();
-            for runtime in SUPPORTED_RUNTIMES {
-                if let Some(v) = probe_version(runtime) {
-                    versions.push(((*runtime).to_string(), v));
+            for runtime in known_runtimes() {
+                if let Some(v) = ensure_active_version(&runtime) {
+                    versions.push((runtime, v));
                 }
             }
             state_worker.runtime_versions.write().clone_from(&versions);
-            if let Ok((total, explicit, orphans, updates)) = get_system_status() {
+            let status = if use_debian_backend() {
+                #[cfg(feature = "debian")]
+                {
+                    apt_get_system_status()
+                }
+                #[cfg(not(feature = "debian"))]
+                {
+                    Err(anyhow::anyhow!("Debian backend disabled"))
+                }
+            } else {
+                get_system_status()
+            };
+
+            if let Ok((total, explicit, orphans, updates)) = status {
                 let scanner = crate::core::security::VulnerabilityScanner::new();
                 let vuln_count = scanner.scan_system().await.unwrap_or(0);
 
@@ -57,14 +87,14 @@ pub async fn run(listener: UnixListener) -> Result<()> {
             tokio::select! {
                 () = tokio::time::sleep(std::time::Duration::from_secs(300)) => {
                     tracing::debug!("Refreshing system status cache...");
+                    use crate::cli::runtimes::{ensure_active_version, known_runtimes};
                     use crate::package_managers::get_system_status;
-                    use crate::runtimes::{SUPPORTED_RUNTIMES, probe_version};
 
                     // 1. Probe Runtimes (Fast)
                     let mut versions = Vec::new();
-                    for runtime in SUPPORTED_RUNTIMES {
-                        if let Some(v) = probe_version(runtime) {
-                            versions.push(((*runtime).to_string(), v));
+                    for runtime in known_runtimes() {
+                        if let Some(v) = ensure_active_version(&runtime) {
+                            versions.push((runtime, v));
                         }
                     }
                     state_worker
@@ -73,7 +103,18 @@ pub async fn run(listener: UnixListener) -> Result<()> {
                         .clone_from(&versions);
 
                     // 2. Refresh Package Status (ALPM)
-                    let status = get_system_status();
+                    let status = if use_debian_backend() {
+                        #[cfg(feature = "debian")]
+                        {
+                            apt_get_system_status()
+                        }
+                        #[cfg(not(feature = "debian"))]
+                        {
+                            Err(anyhow::anyhow!("Debian backend disabled"))
+                        }
+                    } else {
+                        get_system_status()
+                    };
 
                     // 3. Scan for Vulnerabilities (New!)
                     let scanner = crate::core::security::VulnerabilityScanner::new();

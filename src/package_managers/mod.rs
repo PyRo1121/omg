@@ -3,16 +3,19 @@
 pub mod alpm_direct;
 pub mod alpm_ops;
 pub mod alpm_worker;
+#[cfg(feature = "debian")]
+pub mod apt;
 mod aur;
 mod official;
 pub mod pacman_db;
 pub mod parallel_sync;
 pub mod pkgbuild;
 mod traits;
+mod types;
 
 pub use alpm_direct::{
-    LocalPackage, SyncPackage, get_counts, get_package_info, is_installed_fast, list_explicit_fast,
-    list_installed_fast, list_orphans_fast, search_local, search_sync,
+    get_counts, get_package_info, is_installed_fast, list_explicit_fast, list_installed_fast,
+    list_orphans_fast, search_local, search_sync,
 };
 pub use alpm_ops::DownloadInfo;
 pub use alpm_ops::PackageInfo as SyncPkgInfo;
@@ -32,3 +35,14 @@ pub use parallel_sync::{
     DownloadJob, download_packages_parallel, select_fastest_mirrors, sync_databases_parallel,
 };
 pub use traits::PackageManager;
+pub use types::{LocalPackage, SyncPackage};
+
+#[cfg(feature = "debian")]
+pub use apt::{
+    AptPackageManager, get_sync_pkg_info as apt_get_sync_pkg_info,
+    get_system_status as apt_get_system_status,
+    list_all_package_names as apt_list_all_package_names, list_explicit as apt_list_explicit,
+    list_installed_fast as apt_list_installed_fast, list_orphans as apt_list_orphans,
+    list_updates as apt_list_updates, remove_orphans as apt_remove_orphans,
+    search_sync as apt_search_sync,
+};

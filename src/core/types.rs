@@ -15,6 +15,33 @@ pub enum Runtime {
     Java,
 }
 
+/// Runtime resolution backend
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum RuntimeBackend {
+    Native,
+    Mise,
+    #[default]
+    NativeThenMise,
+}
+
+impl std::str::FromStr for RuntimeBackend {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "native" => Ok(Self::Native),
+            "mise" => Ok(Self::Mise),
+            "native-then-mise" | "native_then_mise" | "native_then-mise" => {
+                Ok(Self::NativeThenMise)
+            }
+            _ => Err(format!(
+                "Unknown runtime backend: {s} (expected native, mise, native-then-mise)"
+            )),
+        }
+    }
+}
+
 impl Runtime {
     /// Get all supported runtimes
     #[must_use]
