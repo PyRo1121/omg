@@ -51,14 +51,22 @@ impl DaemonState {
     #[allow(clippy::expect_used)]
     pub fn new() -> Self {
         let data_dir = crate::core::paths::daemon_data_dir();
+        let persistent = super::db::PersistentCache::new(&data_dir).expect("daemon requires redb");
+
+        // Use cached index loading for instant startup
+        let index = PackageIndex::new_with_cache(&persistent)
+            .unwrap_or_else(|e| {
+                tracing::warn!("Failed to load cached index: {e}, building fresh");
+                PackageIndex::new().expect("daemon requires index")
+            });
 
         Self {
             cache: PackageCache::default(),
-            persistent: super::db::PersistentCache::new(&data_dir).expect("daemon requires redb"),
+            persistent,
             pacman: OfficialPackageManager::new(),
             aur: AurClient::new(),
             alpm_worker: AlpmWorker::new(),
-            index: Arc::new(PackageIndex::new().expect("daemon requires index")),
+            index: Arc::new(index),
             runtime_versions: Arc::new(RwLock::new(Vec::new())),
         }
     }
@@ -99,6 +107,32 @@ pub async fn handle_request(state: Arc<DaemonState>, request: Request) -> Respon
                 result: ResponseResult::Message("cleared".to_string()),
             }
         }
+        Request::Batch { id, requests } => handle_batch(state, id, requests).await,
+    }
+}
+
+/// Handle batch requests - process multiple requests in parallel
+async fn handle_batch(
+    state: Arc<DaemonState>,
+    id: RequestId,
+    requests: Vec<Request>,
+) -> Response {
+    use futures::future::join_all;
+
+    // Process all requests concurrently
+    let futures: Vec<_> = requests
+        .into_iter()
+        .map(|req| {
+            let state = Arc::clone(&state);
+            async move { Box::pin(handle_request(state, req)).await }
+        })
+        .collect();
+
+    let responses = join_all(futures).await;
+
+    Response::Success {
+        id,
+        result: ResponseResult::Batch(responses),
     }
 }
 

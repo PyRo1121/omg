@@ -38,6 +38,11 @@ pub enum Request {
     CacheClear {
         id: RequestId,
     },
+    /// Batch multiple requests in a single IPC round-trip
+    Batch {
+        id: RequestId,
+        requests: Vec<Self>,
+    },
 }
 
 impl Request {
@@ -51,7 +56,8 @@ impl Request {
             | Self::SecurityAudit { id }
             | Self::Ping { id }
             | Self::CacheStats { id }
-            | Self::CacheClear { id } => *id,
+            | Self::CacheClear { id }
+            | Self::Batch { id, .. } => *id,
         }
     }
 }
@@ -80,6 +86,8 @@ pub enum ResponseResult {
     Ping(String),
     CacheStats { size: usize, max_size: usize },
     Message(String),
+    /// Batch response containing multiple results
+    Batch(Vec<Response>),
 }
 
 // Error codes

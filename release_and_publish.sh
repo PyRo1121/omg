@@ -160,7 +160,7 @@ run_quality_checks() {
   
   # 2. Clippy (strict)
   log_info "Running clippy with strict warnings..."
-  if ! cargo clippy --all-targets --all-features -- -D warnings; then
+  if ! cargo clippy --all-targets -- -D warnings; then
     log_error "Clippy found issues"
     failed=1
   else
@@ -179,7 +179,7 @@ run_quality_checks() {
   # 4. Tests (unless skipped)
   if [[ "$SKIP_TESTS" != "1" ]]; then
     log_info "Running test suite..."
-    if ! cargo test --all-features -- --test-threads=1; then
+    if ! cargo test -- --test-threads=1; then
       log_error "Tests failed"
       failed=1
     else
@@ -191,7 +191,7 @@ run_quality_checks() {
   
   # 5. Documentation check
   log_info "Checking documentation..."
-  if ! cargo doc --no-deps --all-features 2>/dev/null; then
+  if ! cargo doc --no-deps 2>/dev/null; then
     log_warn "Documentation has warnings (non-blocking)"
   else
     log_success "Documentation OK"

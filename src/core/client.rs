@@ -1,12 +1,15 @@
 //! IPC Client for communicating with the daemon
 //!
 //! Uses `LengthDelimitedCodec` and Bincode for maximum IPC performance.
+//! Supports connection pooling for persistent connections across commands.
 
 use anyhow::{Context, Result};
 use futures::sink::SinkExt;
 use futures::stream::StreamExt;
+use parking_lot::Mutex;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::OnceLock;
 use tokio::net::UnixStream;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
@@ -17,6 +20,34 @@ use crate::daemon::protocol::{
 };
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream as SyncUnixStream;
+
+/// Global connection pool for sync clients (reuses connections across calls)
+static SYNC_POOL: OnceLock<Mutex<Option<SyncUnixStream>>> = OnceLock::new();
+
+/// Get or create a pooled sync connection
+fn get_pooled_sync() -> Result<SyncUnixStream> {
+    let pool = SYNC_POOL.get_or_init(|| Mutex::new(None));
+    let mut guard = pool.lock();
+
+    // Try to reuse existing connection
+    if let Some(stream) = guard.take() {
+        // Connection exists - return it (caller will handle errors if dead)
+        return Ok(stream);
+    }
+
+    // Create new connection
+    let socket_path = default_socket_path();
+    SyncUnixStream::connect(&socket_path)
+        .with_context(|| format!("Failed to connect to daemon at {}", socket_path.display()))
+}
+
+/// Return a connection to the pool
+fn return_to_pool(stream: SyncUnixStream) {
+    if let Some(pool) = SYNC_POOL.get() {
+        let mut guard = pool.lock();
+        *guard = Some(stream);
+    }
+}
 
 /// Get the default socket path
 #[must_use]
@@ -253,6 +284,180 @@ impl DaemonClient {
         match self.call(Request::Explicit { id }).await? {
             ResponseResult::Explicit(res) => Ok(res.packages),
             _ => anyhow::bail!("Invalid response type"),
+        }
+    }
+
+    /// Execute multiple requests in a single IPC round-trip
+    pub async fn batch(&mut self, requests: Vec<Request>) -> Result<Vec<Response>> {
+        let id = self.request_id.fetch_add(1, Ordering::SeqCst);
+        match self.call(Request::Batch { id, requests }).await? {
+            ResponseResult::Batch(responses) => Ok(responses),
+            _ => anyhow::bail!("Invalid response type"),
+        }
+    }
+
+    /// Search multiple queries in a single round-trip
+    pub async fn batch_search(
+        &mut self,
+        queries: &[&str],
+        limit: Option<usize>,
+    ) -> Result<Vec<SearchResult>> {
+        let requests: Vec<Request> = queries
+            .iter()
+            .enumerate()
+            .map(|(i, q)| Request::Search {
+                id: i as u64,
+                query: (*q).to_string(),
+                limit,
+            })
+            .collect();
+
+        let responses = self.batch(requests).await?;
+        let mut results = Vec::with_capacity(responses.len());
+
+        for resp in responses {
+            match resp {
+                Response::Success {
+                    result: ResponseResult::Search(sr),
+                    ..
+                } => results.push(sr),
+                Response::Error { message, .. } => {
+                    anyhow::bail!("Batch search error: {message}");
+                }
+                Response::Success { .. } => anyhow::bail!("Unexpected response type in batch"),
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Get info for multiple packages in a single round-trip
+    pub async fn batch_info(&mut self, packages: &[&str]) -> Result<Vec<Option<DetailedPackageInfo>>> {
+        let requests: Vec<Request> = packages
+            .iter()
+            .enumerate()
+            .map(|(i, p)| Request::Info {
+                id: i as u64,
+                package: (*p).to_string(),
+            })
+            .collect();
+
+        let responses = self.batch(requests).await?;
+        let mut results = Vec::with_capacity(responses.len());
+
+        for resp in responses {
+            match resp {
+                Response::Success {
+                    result: ResponseResult::Info(info),
+                    ..
+                } => results.push(Some(info)),
+                Response::Error { .. } => results.push(None),
+                Response::Success { .. } => anyhow::bail!("Unexpected response type in batch"),
+            }
+        }
+
+        Ok(results)
+    }
+}
+
+/// Pooled sync client that automatically returns connection to pool on drop
+pub struct PooledSyncClient {
+    stream: Option<SyncUnixStream>,
+    request_id: AtomicU64,
+}
+
+impl PooledSyncClient {
+    /// Get a pooled connection (reuses existing or creates new)
+    pub fn acquire() -> Result<Self> {
+        if DaemonClient::daemon_disabled() {
+            anyhow::bail!("Daemon disabled by environment");
+        }
+        Ok(Self {
+            stream: Some(get_pooled_sync()?),
+            request_id: AtomicU64::new(1),
+        })
+    }
+
+    /// Send a request and get response
+    pub fn call(&mut self, request: &Request) -> Result<ResponseResult> {
+        let id = request.id();
+        let stream = self.stream.as_mut().context("Connection not available")?;
+
+        // Encode
+        let request_bytes = bincode::serde::encode_to_vec(request, bincode::config::legacy())?;
+        let len = request_bytes.len() as u32;
+
+        // Send length-delimited
+        let mut send_buf = Vec::with_capacity(4 + request_bytes.len());
+        send_buf.extend_from_slice(&len.to_be_bytes());
+        send_buf.extend_from_slice(&request_bytes);
+        stream.write_all(&send_buf)?;
+
+        // Read length
+        let mut len_buf = [0u8; 4];
+        stream.read_exact(&mut len_buf)?;
+        let resp_len = u32::from_be_bytes(len_buf) as usize;
+
+        // Read body
+        let mut resp_bytes = vec![0u8; resp_len];
+        stream.read_exact(&mut resp_bytes)?;
+
+        // Decode
+        let (response, _): (Response, _) =
+            bincode::serde::decode_from_slice(&resp_bytes, bincode::config::legacy())?;
+
+        match response {
+            Response::Success { id: resp_id, result } => {
+                if resp_id != id {
+                    anyhow::bail!("Request ID mismatch: sent {id}, got {resp_id}");
+                }
+                Ok(result)
+            }
+            Response::Error { code, message, .. } => {
+                anyhow::bail!("Daemon error ({code}): {message}");
+            }
+        }
+    }
+
+    /// Get package info
+    pub fn info(&mut self, package: &str) -> Result<DetailedPackageInfo> {
+        let id = self.request_id.fetch_add(1, Ordering::SeqCst);
+        match self.call(&Request::Info {
+            id,
+            package: package.to_string(),
+        })? {
+            ResponseResult::Info(res) => Ok(res),
+            _ => anyhow::bail!("Invalid response type"),
+        }
+    }
+
+    /// Search packages
+    pub fn search(&mut self, query: &str, limit: Option<usize>) -> Result<SearchResult> {
+        let id = self.request_id.fetch_add(1, Ordering::SeqCst);
+        match self.call(&Request::Search {
+            id,
+            query: query.to_string(),
+            limit,
+        })? {
+            ResponseResult::Search(res) => Ok(res),
+            _ => anyhow::bail!("Invalid response type"),
+        }
+    }
+
+    /// Get system status
+    pub fn status(&mut self) -> Result<StatusResult> {
+        let id = self.request_id.fetch_add(1, Ordering::SeqCst);
+        match self.call(&Request::Status { id })? {
+            ResponseResult::Status(res) => Ok(res),
+            _ => anyhow::bail!("Invalid response type"),
+        }
+    }
+}
+
+impl Drop for PooledSyncClient {
+    fn drop(&mut self) {
+        if let Some(stream) = self.stream.take() {
+            return_to_pool(stream);
         }
     }
 }

@@ -159,7 +159,9 @@ pub async fn use_version(runtime: &str, version: Option<&str>) -> Result<()> {
                 mise_use_version(runtime, &version)?;
             } else {
                 println!("{} Unknown runtime: {}", "✗".red(), runtime);
-                println!("  Supported: node, python, rust, go, ruby, java, bun");
+                println!("  Native support: node, python, rust, go, ruby, java, bun");
+                println!("  Install mise for 100+ more: deno, elixir, erlang, zig, swift, dotnet, php, perl, lua, julia...");
+                println!("  → https://mise.jdx.dev or: curl https://mise.run | sh");
             }
         }
     }
@@ -458,7 +460,9 @@ pub async fn list_versions(runtime: Option<&str>, available: bool) -> Result<()>
                     mise_list_versions(rt, available)?;
                 } else {
                     println!("  {} Unknown runtime: {}", "✗".red(), rt);
-                    println!("  Supported: node, python, rust, go, ruby, java, bun");
+                    println!("  Native support: node, python, rust, go, ruby, java, bun");
+                    println!("  Install mise for 100+ more: deno, elixir, erlang, zig, swift, dotnet, php...");
+                    println!("  → https://mise.jdx.dev or: curl https://mise.run | sh");
                 }
             }
         }
