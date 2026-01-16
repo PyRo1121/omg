@@ -1,6 +1,6 @@
 [package]
 name = "omg"
-version = "0.1.31"
+version = "0.1.32"
 edition = "2024"
 rust-version = "1.92"
 description = "The Fastest Unified Package Manager for Arch Linux + All Language Runtimes"
@@ -26,14 +26,14 @@ path = "src/bin/omgd.rs"
 [dependencies]
 # CLI Framework
 clap = { version = "4.5.54", features = ["derive", "env", "wrap_help"] }
-clap_complete = "4.5.5"
+clap_complete = "4.5.65"
 
 # Error handling
 anyhow = "1.0.100"
 thiserror = "2.0.17"
 
 # Async runtime
-tokio = { version = "1.48", features = [
+tokio = { version = "1.49", features = [
     "rt",
     "rt-multi-thread",
     "macros",
@@ -49,8 +49,8 @@ futures = "0.3.31"
 
 # Serialization
 serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.138"
-toml = "0.8.20"
+serde_json = "1.0.149"
+toml = "0.8.23"
 bincode = { version = "2.0", features = ["serde"] }
 
 # HTTP client
@@ -58,44 +58,44 @@ reqwest = { version = "0.13", features = ["json", "stream"] }
 httpdate = "1.0"
 
 # Filesystem
-tokio-util = { version = "0.7.13", features = ["io", "codec"] }
+tokio-util = { version = "0.7.18", features = ["io", "codec"] }
 
 # Archives + compression (PURE RUST - no C deps)
-tar = "0.4.43"
-flate2 = { version = "1.0.35", default-features = false, features = ["rust_backend"] }  # miniz_oxide
-zip = { version = "2.2.2", default-features = false, features = ["deflate", "time"] }
+tar = "0.4.44"
+flate2 = { version = "1.1.8", default-features = false, features = ["rust_backend"] }  # miniz_oxide
+zip = { version = "2.4.2", default-features = false, features = ["deflate", "time"] }
 lzma-rs = "0.3"  # Pure Rust XZ/LZMA (replaces xz2)
-regex = "1.11.1"
+regex = "1.12.2"
 ruzstd = "0.8"  # Pure Rust zstd decoder (replaces zstd)
 
 # Git operations - using command-line git (always available on Arch)
 # Removed libgit2/gix dependency for simpler builds
 
 # Memory management
-parking_lot = "0.12.3"
-dashmap = "6.0"
+parking_lot = "0.12.5"
+dashmap = "6.1"
 moka = { version = "0.12", features = ["sync"] }
 
 # Logging
-tracing = "0.1.41"
-tracing-subscriber = { version = "0.3.19", features = ["env-filter", "json"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter", "json"] }
 
 # Progress bars
 indicatif = "0.18.3"
 
 # Colors/TTY
-owo-colors = "4.1"
+owo-colors = "4.2"
 console = "0.16.2"
 
 # Interactive prompts
 dialoguer = "0.12.0"
 
 # Configuration
-home = "0.5.11"
+home = "0.5.12"
 
 # Cryptography
-sha2 = "0.10.8"
-blake3 = "1.5.5"
+sha2 = "0.10.9"
+blake3 = "1.8.3"
 hex = "0.4.3"
 
 # Date & Time
@@ -108,21 +108,21 @@ redb = "3.1"
 alpm = "5.0.2"
 
 # Official Arch Linux pure Rust ALPM ecosystem (archlinux/alpm)
-# For parsing/inspection - pure Rust, spec-compliant
-alpm-types = "0.11"
-alpm-srcinfo = "0.6"
-alpm-db = "0.2"
-alpm-repo-db = "0.1"
-alpm-pkginfo = "0.6"
+# Tracking git main (bleeding edge)
+alpm-types = { git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", package = "alpm-types" }
+alpm-srcinfo = { git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", package = "alpm-srcinfo" }
+alpm-db = { git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", package = "alpm-db" }
+alpm-repo-db = { git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", package = "alpm-repo-db" }
+alpm-pkginfo = { git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", package = "alpm-pkginfo" }
 
 # Process execution
-which = "7.0.0"
+which = "7.0.3"
 
 # Semver handling
-semver = "1.0.25"
+semver = "1.0.27"
 
 # Tempfile handling
-tempfile = "3.15.0"
+tempfile = "3.24.0"
 
 
 # Data parallelism
@@ -135,14 +135,14 @@ dirs = "6.0.0"
 libc = "0.2.180"
 # mimalloc removed - using system allocator (pure Rust)
 ahash = "0.8.12"
-uuid = { version = "1.12", features = ["v4"] }
+uuid = { version = "1.19", features = ["v4"] }
 ratatui = "0.29"
 crossterm = "0.28"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
-tempfile = "3.10"
-assert_cmd = "2.0"
+tempfile = "3.24"
+assert_cmd = "2.1"
 predicates = "3.1"
 pprof = { version = "0.13", features = ["flamegraph"] }
 
