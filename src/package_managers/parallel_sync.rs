@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
-use colored::Colorize;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use owo_colors::OwoColorize;
 use reqwest::Client;
 use reqwest::header::RANGE;
 use serde::{Deserialize, Serialize};
@@ -113,6 +113,7 @@ fn build_db_url(mirror_template: &str, repo: &str) -> String {
 }
 
 /// Download a single database file with progress and failover
+/// Uses If-Modified-Since to skip unchanged databases (major speedup!)
 #[allow(clippy::literal_string_with_formatting_args)]
 async fn download_db(
     client: &Client,
@@ -123,6 +124,21 @@ async fn download_db(
     let repo_name = dest.file_stem().unwrap().to_string_lossy().to_string();
     pb.set_message(repo_name.clone());
 
+    // Get existing file's modification time for conditional request
+    let existing_mtime = if dest.exists() {
+        tokio::fs::metadata(dest)
+            .await
+            .ok()
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| {
+                t.duration_since(std::time::UNIX_EPOCH)
+                    .ok()
+                    .map(|d| httpdate::fmt_http_date(std::time::UNIX_EPOCH + d))
+            })
+    } else {
+        None
+    };
+
     let mut last_error = None;
 
     for (i, url) in urls.iter().enumerate() {
@@ -130,7 +146,13 @@ async fn download_db(
             pb.set_message(format!("{} (mirror {})", repo_name, i + 1));
         }
 
-        let mut response = match client.get(url).send().await {
+        // Build request with If-Modified-Since if we have existing file
+        let mut req = client.get(url);
+        if let Some(ref mtime) = existing_mtime {
+            req = req.header(reqwest::header::IF_MODIFIED_SINCE, mtime);
+        }
+
+        let response = match req.send().await {
             Ok(resp) => resp,
             Err(e) => {
                 last_error = Some(anyhow::anyhow!("Failed to connect to {url}: {e}"));
@@ -138,12 +160,18 @@ async fn download_db(
             }
         };
 
+        // 304 Not Modified - database unchanged, skip download!
+        if response.status() == reqwest::StatusCode::NOT_MODIFIED {
+            pb.finish_with_message(format!("{repo_name} ✓"));
+            return Ok(());
+        }
+
         if !response.status().is_success() {
             last_error = Some(anyhow::anyhow!("HTTP {}: {}", response.status(), url));
             continue;
         }
 
-        // If we got here, we have a successful response
+        // If we got here, we have a successful response - download it
         let total_size = response.content_length().unwrap_or(0);
         if total_size > 0 {
             pb.set_length(total_size);
@@ -163,6 +191,7 @@ async fn download_db(
             .await
             .with_context(|| format!("Failed to create {}", temp_path.display()))?;
 
+        let mut response = response;
         while let Some(chunk) = response.chunk().await? {
             file.write_all(&chunk).await?;
         }

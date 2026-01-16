@@ -1,6 +1,6 @@
 [package]
 name = "omg"
-version = "0.1.27"
+version = "0.1.28"
 edition = "2024"
 rust-version = "1.88"
 description = "The Fastest Unified Package Manager for Arch Linux + All Language Runtimes"
@@ -55,6 +55,7 @@ bincode = { version = "2.0", features = ["serde"] }
 
 # HTTP client
 reqwest = { version = "0.13", features = ["json", "stream"] }
+httpdate = "1.0"
 
 # Filesystem
 tokio-util = { version = "0.7.13", features = ["io", "codec"] }

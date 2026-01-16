@@ -1,6 +1,5 @@
 use anyhow::Result;
-use async_trait::async_trait;
-use colored::Colorize;
+use owo_colors::OwoColorize;
 
 use super::PackageManager;
 use crate::core::{Package, PackageSource, is_root};
@@ -44,7 +43,6 @@ impl Default for OfficialPackageManager {
     }
 }
 
-#[async_trait]
 impl PackageManager for OfficialPackageManager {
     fn name(&self) -> &'static str {
         "pacman"

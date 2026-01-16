@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -23,7 +23,7 @@ pub struct PackageChange {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Transaction {
     pub id: String,
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
     pub transaction_type: TransactionType,
     pub changes: Vec<PackageChange>,
     pub success: bool,
@@ -79,7 +79,7 @@ impl HistoryManager {
 
         let transaction = Transaction {
             id: uuid::Uuid::new_v4().to_string(),
-            timestamp: Utc::now(),
+            timestamp: Timestamp::now(),
             transaction_type,
             changes,
             success,

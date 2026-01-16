@@ -146,13 +146,14 @@ async fn handle_client(stream: tokio::net::UnixStream, state: Arc<DaemonState>) 
         let bytes = request_bytes?;
 
         // Decode request
-        let request: Request = bincode::deserialize(&bytes)?;
+        let (request, _): (Request, _) =
+            bincode::serde::decode_from_slice(&bytes, bincode::config::legacy())?;
 
         // Handle request
         let response = handle_request(Arc::clone(&state), request).await;
 
         // Encode and send response
-        let response_bytes = bincode::serialize(&response)?;
+        let response_bytes = bincode::serde::encode_to_vec(&response, bincode::config::legacy())?;
         framed.send(response_bytes.into()).await?;
     }
 

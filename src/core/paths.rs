@@ -6,55 +6,42 @@ fn env_path(var: &str) -> Option<PathBuf> {
     std::env::var_os(var).map(PathBuf::from)
 }
 
-fn project_dirs() -> Option<directories::ProjectDirs> {
-    directories::ProjectDirs::from("com", "omg", "omg")
-}
-
 fn fallback_home_dir() -> PathBuf {
     home::home_dir().unwrap_or_else(|| PathBuf::from("."))
 }
 
-/// Data directory (default: XDG data dir or ~/.omg).
+/// Data directory (default: XDG data dir/omg or ~/.omg).
 #[must_use]
 pub fn data_dir() -> PathBuf {
     env_path("OMG_DATA_DIR").unwrap_or_else(|| {
-        project_dirs().map_or_else(
-            || fallback_home_dir().join(".omg"),
-            |d| d.data_dir().to_path_buf(),
-        )
+        dirs::data_dir().map_or_else(|| fallback_home_dir().join(".omg"), |d| d.join("omg"))
     })
 }
 
-/// Daemon data directory (default: /var/lib/omg when no project dirs are available).
+/// Daemon data directory (default: /var/lib/omg).
 #[must_use]
 pub fn daemon_data_dir() -> PathBuf {
     env_path("OMG_DAEMON_DATA_DIR").unwrap_or_else(|| {
-        project_dirs().map_or_else(
-            || PathBuf::from("/var/lib/omg"),
-            |d| d.data_dir().to_path_buf(),
-        )
+        dirs::data_dir().map_or_else(|| PathBuf::from("/var/lib/omg"), |d| d.join("omg"))
     })
 }
 
-/// Config directory (default: XDG config dir or ~/.config/omg).
+/// Config directory (default: XDG config dir/omg or ~/.config/omg).
 #[must_use]
 pub fn config_dir() -> PathBuf {
     env_path("OMG_CONFIG_DIR").unwrap_or_else(|| {
-        project_dirs().map_or_else(
+        dirs::config_dir().map_or_else(
             || fallback_home_dir().join(".config/omg"),
-            |d| d.config_dir().to_path_buf(),
+            |d| d.join("omg"),
         )
     })
 }
 
-/// Cache directory (default: XDG cache dir or ~/.cache/omg).
+/// Cache directory (default: XDG cache dir/omg or ~/.cache/omg).
 #[must_use]
 pub fn cache_dir() -> PathBuf {
     env_path("OMG_CACHE_DIR").unwrap_or_else(|| {
-        project_dirs().map_or_else(
-            || fallback_home_dir().join(".cache/omg"),
-            |d| d.cache_dir().to_path_buf(),
-        )
+        dirs::cache_dir().map_or_else(|| fallback_home_dir().join(".cache/omg"), |d| d.join("omg"))
     })
 }
 

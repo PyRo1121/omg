@@ -1,31 +1,29 @@
 //! Package manager trait definition
 
 use anyhow::Result;
-use async_trait::async_trait;
 
 use crate::core::Package;
 
-/// Trait for package manager backends
-#[async_trait]
+/// Trait for package manager backends (Rust 2024 native async traits)
 pub trait PackageManager: Send + Sync {
     /// Get the name of this package manager
     fn name(&self) -> &'static str;
 
     /// Search for packages
-    async fn search(&self, query: &str) -> Result<Vec<Package>>;
+    fn search(&self, query: &str) -> impl Future<Output = Result<Vec<Package>>> + Send;
 
     /// Install packages
-    async fn install(&self, packages: &[String]) -> Result<()>;
+    fn install(&self, packages: &[String]) -> impl Future<Output = Result<()>> + Send;
 
     /// Remove packages
-    async fn remove(&self, packages: &[String]) -> Result<()>;
+    fn remove(&self, packages: &[String]) -> impl Future<Output = Result<()>> + Send;
 
     /// Update all packages
-    async fn update(&self) -> Result<()>;
+    fn update(&self) -> impl Future<Output = Result<()>> + Send;
 
     /// Get information about a package
-    async fn info(&self, package: &str) -> Result<Option<Package>>;
+    fn info(&self, package: &str) -> impl Future<Output = Result<Option<Package>>> + Send;
 
     /// List installed packages
-    async fn list_installed(&self) -> Result<Vec<Package>>;
+    fn list_installed(&self) -> impl Future<Output = Result<Vec<Package>>> + Send;
 }

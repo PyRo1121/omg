@@ -1,25 +1,22 @@
 //! Runtime version manager trait and implementation
 
 use anyhow::Result;
-use async_trait::async_trait;
 
 use crate::core::{Runtime, RuntimeVersion};
-// use crate::config::Settings;
 
-/// Trait for runtime version managers
-#[async_trait]
+/// Trait for runtime version managers (Rust 2024 native async traits)
 pub trait RuntimeManager: Send + Sync {
     /// Get the runtime type
     fn runtime(&self) -> Runtime;
 
     /// List available versions for download
-    async fn list_available(&self) -> Result<Vec<String>>;
+    fn list_available(&self) -> impl Future<Output = Result<Vec<String>>> + Send;
 
     /// List installed versions
     fn list_installed(&self) -> Result<Vec<RuntimeVersion>>;
 
     /// Install a specific version
-    async fn install(&self, version: &str) -> Result<()>;
+    fn install(&self, version: &str) -> impl Future<Output = Result<()>> + Send;
 
     /// Uninstall a specific version
     fn uninstall(&self, version: &str) -> Result<()>;

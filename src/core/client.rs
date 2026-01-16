@@ -94,7 +94,7 @@ impl DaemonClient {
         let framed = self.framed.as_mut().context("Client is in sync mode")?;
 
         // Encode and send
-        let request_bytes = bincode::serialize(&request)?;
+        let request_bytes = bincode::serde::encode_to_vec(&request, bincode::config::legacy())?;
         framed.send(request_bytes.into()).await?;
 
         // Read and decode response
@@ -103,7 +103,8 @@ impl DaemonClient {
             .await
             .ok_or_else(|| anyhow::anyhow!("Daemon disconnected"))??;
 
-        let response: Response = bincode::deserialize(&response_bytes)?;
+        let (response, _): (Response, _) =
+            bincode::serde::decode_from_slice(&response_bytes, bincode::config::legacy())?;
 
         match response {
             Response::Success {
@@ -134,7 +135,7 @@ impl DaemonClient {
             .context("Client is in async mode")?;
 
         // 1. Encode
-        let request_bytes = bincode::serialize(request)?;
+        let request_bytes = bincode::serde::encode_to_vec(request, bincode::config::legacy())?;
         let len = request_bytes.len() as u32;
 
         // 2. Send length-delimited (Big Endian) combined to save a syscall
@@ -153,7 +154,8 @@ impl DaemonClient {
         stream.read_exact(&mut resp_bytes)?;
 
         // 5. Decode
-        let response: Response = bincode::deserialize(&resp_bytes)?;
+        let (response, _): (Response, _) =
+            bincode::serde::decode_from_slice(&resp_bytes, bincode::config::legacy())?;
 
         match response {
             Response::Success {

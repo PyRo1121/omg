@@ -117,7 +117,7 @@ fn draw_history(f: &mut Frame, area: Rect, app: &App) {
         .history
         .iter()
         .map(|t| {
-            let time = t.timestamp.format("%H:%M:%S").to_string();
+            let time = t.timestamp.strftime("%H:%M:%S").to_string();
             let _status_color = if t.success { Color::Green } else { Color::Red };
 
             let header = Line::from(vec![
