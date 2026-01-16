@@ -608,10 +608,11 @@ impl RustToolchainSpec {
 
         let mut date = None;
         if let (Some(s0), Some(s1), Some(s2)) = (segments.first(), segments.get(1), segments.get(2))
-            && is_date_parts(s0, s1, s2) {
-                date = Some(format!("{s0}-{s1}-{s2}"));
-                segments.drain(0..3);
-            }
+            && is_date_parts(s0, s1, s2)
+        {
+            date = Some(format!("{s0}-{s1}-{s2}"));
+            segments.drain(0..3);
+        }
 
         let host = if segments.is_empty() {
             default_host_triple()?

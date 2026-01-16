@@ -16,7 +16,7 @@ use serde::Deserialize;
 use toml::Value;
 
 use crate::config::Settings;
-use crate::core::{paths, RuntimeBackend};
+use crate::core::{RuntimeBackend, paths};
 use crate::runtimes::rust::RustToolchainSpec;
 
 /// Known version files and their corresponding runtime
@@ -243,7 +243,9 @@ pub fn detect_versions(start: &Path) -> HashMap<String, String> {
                 } else if *filename == "package.json" {
                     if let Some(extra) = read_package_json_versions(&dir) {
                         for (runtime, version) in extra {
-                            versions.entry(runtime).or_insert_with(|| version.trim().to_string());
+                            versions
+                                .entry(runtime)
+                                .or_insert_with(|| version.trim().to_string());
                         }
                     }
                 } else if *filename == ".mise.toml"
@@ -252,7 +254,9 @@ pub fn detect_versions(start: &Path) -> HashMap<String, String> {
                 {
                     if let Some(extra) = read_mise_versions(&file_path) {
                         for (runtime, version) in extra {
-                            versions.entry(runtime).or_insert_with(|| version.trim().to_string());
+                            versions
+                                .entry(runtime)
+                                .or_insert_with(|| version.trim().to_string());
                         }
                     }
                 } else {
@@ -298,7 +302,8 @@ pub fn build_path_additions<S: std::hash::BuildHasher>(
             },
             "rust" => {
                 let toolchain = RustToolchainSpec::parse(version)
-                    .ok().map_or_else(|| version.clone(), |spec| spec.name());
+                    .ok()
+                    .map_or_else(|| version.clone(), |spec| spec.name());
                 data_dir.join("versions/rust").join(toolchain).join("bin")
             }
             _ => continue,
@@ -323,7 +328,10 @@ pub fn build_path_additions_with_backend<S: std::hash::BuildHasher>(
         _ => build_path_additions(versions),
     };
 
-    if matches!(backend, RuntimeBackend::Mise | RuntimeBackend::NativeThenMise) {
+    if matches!(
+        backend,
+        RuntimeBackend::Mise | RuntimeBackend::NativeThenMise
+    ) {
         let prefer_native = backend == RuntimeBackend::NativeThenMise;
         add_mise_path_fallbacks(versions, &mut paths, prefer_native);
     }
@@ -339,9 +347,10 @@ fn resolve_node_bin_path(data_dir: &Path, version: &str) -> Option<PathBuf> {
     }
 
     if let Some(resolved) = resolve_installed_version_req(&versions_dir, normalized)
-        && let Some(path) = node_version_bin_path(&versions_dir, &resolved) {
-            return Some(path);
-        }
+        && let Some(path) = node_version_bin_path(&versions_dir, &resolved)
+    {
+        return Some(path);
+    }
 
     nvm_node_bin(normalized)
 }
@@ -354,29 +363,22 @@ fn resolve_bun_bin_path(data_dir: &Path, version: &str) -> Option<PathBuf> {
     }
 
     if let Some(resolved) = resolve_installed_version_req(&versions_dir, normalized)
-        && let Some(path) = bun_version_bin_path(&versions_dir, &resolved) {
-            return Some(path);
-        }
+        && let Some(path) = bun_version_bin_path(&versions_dir, &resolved)
+    {
+        return Some(path);
+    }
 
     None
 }
 
 fn node_version_bin_path(versions_dir: &Path, version: &str) -> Option<PathBuf> {
     let path = versions_dir.join(version).join("bin");
-    if path.exists() {
-        Some(path)
-    } else {
-        None
-    }
+    if path.exists() { Some(path) } else { None }
 }
 
 fn bun_version_bin_path(versions_dir: &Path, version: &str) -> Option<PathBuf> {
     let path = versions_dir.join(version);
-    if path.exists() {
-        Some(path)
-    } else {
-        None
-    }
+    if path.exists() { Some(path) } else { None }
 }
 
 fn resolve_installed_version_req(versions_dir: &Path, req: &str) -> Option<String> {
@@ -477,8 +479,7 @@ fn add_mise_path_fallbacks<S: std::hash::BuildHasher>(
         return;
     }
 
-    let mut seen: std::collections::HashSet<String> =
-        path_additions.iter().cloned().collect();
+    let mut seen: std::collections::HashSet<String> = path_additions.iter().cloned().collect();
     for (runtime, version) in versions {
         if prefer_native && native_runtime_bin_path(runtime, version).is_some() {
             continue;
@@ -504,7 +505,8 @@ fn native_runtime_bin_path(runtime: &str, version: &str) -> Option<PathBuf> {
         "bun" => resolve_bun_bin_path(&data_dir, version)?,
         "rust" => {
             let toolchain = RustToolchainSpec::parse(version)
-                .ok().map_or_else(|| version.to_string(), |spec| spec.name());
+                .ok()
+                .map_or_else(|| version.to_string(), |spec| spec.name());
             data_dir.join("versions/rust").join(toolchain).join("bin")
         }
         _ => return None,

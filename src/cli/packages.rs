@@ -1363,13 +1363,18 @@ pub fn explicit_sync(count: bool) -> Result<()> {
         }
     }
     // Try daemon first
-    let packages = DaemonClient::connect_sync().ok().and_then(|mut client| {
-        if let Ok(ResponseResult::Explicit(res)) = client.call_sync(&Request::Explicit { id: 0 }) {
-            Some(res.packages)
-        } else {
-            None
-        }
-    }).unwrap_or_else(|| crate::package_managers::list_explicit_fast().unwrap_or_default());
+    let packages = DaemonClient::connect_sync()
+        .ok()
+        .and_then(|mut client| {
+            if let Ok(ResponseResult::Explicit(res)) =
+                client.call_sync(&Request::Explicit { id: 0 })
+            {
+                Some(res.packages)
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| crate::package_managers::list_explicit_fast().unwrap_or_default());
 
     use std::io::Write;
     let mut stdout = std::io::BufWriter::new(std::io::stdout());

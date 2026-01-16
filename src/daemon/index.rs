@@ -247,7 +247,9 @@ impl PackageIndex {
         // Pre-reserve capacity to avoid reallocations
         let mut results = Vec::with_capacity(matches.len());
         for (_, idx) in matches {
-            let Some(item) = self.search_items.get(idx) else { continue };
+            let Some(item) = self.search_items.get(idx) else {
+                continue;
+            };
             let name = &item.0;
             if let Some(p) = self.packages.get(name) {
                 results.push(PackageInfo {
