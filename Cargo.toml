@@ -1,6 +1,6 @@
 [package]
 name = "omg"
-version = "0.1.20"
+version = "0.1.21"
 edition = "2024"
 rust-version = "1.88"
 description = "The Fastest Unified Package Manager for Arch Linux + All Language Runtimes"
@@ -45,7 +45,6 @@ tokio = { version = "1.48", features = [
     "signal",
     "time",
 ] }
-async-trait = "0.1.86"
 futures = "0.3.31"
 
 # Serialization
@@ -123,7 +122,6 @@ rayon = "1.11"
 # Security (Phase 4.2)
 sequoia-openpgp = { version = "2.2.0-pqc.1", features = ["crypto-nettle"] }
 nucleo-matcher = "0.3.1"
-fuzzy-matcher = "0.3.7"
 dirs = "6.0.0"
 libc = "0.2.180"
 mimalloc = "0.1.48"
