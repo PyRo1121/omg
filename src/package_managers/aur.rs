@@ -8,12 +8,12 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use colored::Colorize;
 use dialoguer::Confirm;
 use flate2::read::GzDecoder;
 use futures::StreamExt;
 use git2::Repository;
 use indicatif::{ProgressBar, ProgressStyle};
+use owo_colors::OwoColorize;
 use reqwest::header::{ETAG, IF_MODIFIED_SINCE, IF_NONE_MATCH, LAST_MODIFIED};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -130,24 +130,30 @@ impl AurClient {
     }
 
     /// Get list of upgradable AUR packages
-    /// Uses pure Rust cache (<1ms) to identify local AUR packages,
-    /// and parallel RPC calls to check for updates.
+    /// Queries AUR directly for all non-official packages (like yay/paru)
     #[instrument(skip(self))]
     pub async fn get_update_list(&self) -> Result<Vec<(String, String, String)>> {
-        // 1. Identify potential AUR packages using pure Rust cache (Fast-path)
-        let potential_aur_names = get_potential_aur_packages()?;
+        // 1. Get all packages not in official repos
+        let foreign_packages = get_potential_aur_packages()?;
 
-        if potential_aur_names.is_empty() {
+        if foreign_packages.is_empty() {
             return Ok(Vec::new());
         }
 
+        // 2. Query AUR for ALL foreign packages - AUR only returns packages that exist there
+        // Packages not in AUR (custom repo only) simply won't be in the response
+        let mut updates = Vec::new();
+
+        // Try metadata archive first (faster for bulk queries)
         if let Some(archive) = self.load_metadata_archive().await? {
-            let mut updates = Vec::new();
-            let names: HashSet<&str> = potential_aur_names.iter().map(String::as_str).collect();
+            let names: HashSet<&str> = foreign_packages.iter().map(String::as_str).collect();
+            let mut seen_names = HashSet::new();
+
             for p in archive.results {
                 if !names.contains(p.name.as_str()) {
                     continue;
                 }
+                seen_names.insert(p.name.clone());
                 if let Some(local_pkg) = pacman_db::get_local_package(&p.name)? {
                     if pacman_db::compare_versions(&p.version, &local_pkg.version)
                         == std::cmp::Ordering::Greater
@@ -156,14 +162,35 @@ impl AurClient {
                     }
                 }
             }
+
+            // Query remaining packages not in archive via RPC
+            let remaining: Vec<String> = foreign_packages
+                .iter()
+                .filter(|name| !seen_names.contains(*name))
+                .cloned()
+                .collect();
+
+            if !remaining.is_empty() {
+                let rpc_updates = self.query_aur_updates(&remaining).await?;
+                updates.extend(rpc_updates);
+            }
+
             return Ok(updates);
         }
 
-        // 2. Query AUR for these packages in parallel (batch query)
-        let mut updates = Vec::new();
-        let chunked_names = Self::chunk_aur_names(&potential_aur_names);
+        // Fallback: Query AUR RPC directly
+        self.query_aur_updates(&foreign_packages).await
+    }
 
+    /// Query AUR RPC for package updates (parallel chunked requests)
+    async fn query_aur_updates(
+        &self,
+        packages: &[String],
+    ) -> Result<Vec<(String, String, String)>> {
+        let mut updates = Vec::new();
+        let chunked_names = Self::chunk_aur_names(packages);
         let concurrency = self.settings.aur.build_concurrency.clamp(1, 8);
+
         let mut stream = futures::stream::iter(chunked_names)
             .map(|chunk| {
                 let client = &self.client;
@@ -176,12 +203,11 @@ impl AurClient {
                     client.get(&url).send().await?.json::<AurResponse>().await
                 }
             })
-            .buffer_unordered(concurrency); // Query chunks in parallel
+            .buffer_unordered(concurrency);
 
         while let Some(res) = stream.next().await {
             let response = res?;
             for p in response.results {
-                // Version comparison using pure Rust pacman_db version logic
                 if let Some(local_pkg) = pacman_db::get_local_package(&p.name)? {
                     if pacman_db::compare_versions(&p.version, &local_pkg.version)
                         == std::cmp::Ordering::Greater
@@ -275,8 +301,9 @@ impl AurClient {
         let mut buf = Vec::new();
         file.read_to_end(&mut buf)?;
         let decoder = GzDecoder::new(&buf[..]);
-        let response: AurResponse = serde_json::from_reader(decoder)?;
-        Ok(response)
+        // The metadata archive is a raw JSON array, not wrapped in {"results": [...]}
+        let results: Vec<AurPackage> = serde_json::from_reader(decoder)?;
+        Ok(AurResponse { results })
     }
 
     fn metadata_cache_path(&self) -> PathBuf {
@@ -345,16 +372,8 @@ impl AurClient {
             );
         }
 
-        // Parse PKGBUILD
-        let pkgbuild = PkgBuild::parse(&pkgbuild_path).with_context(|| {
-            format!("Failed to parse PKGBUILD for '{package}'. The file may be malformed.")
-        })?;
-        println!(
-            "{} Parsed PKGBUILD: {} v{}",
-            "→".blue(),
-            pkgbuild.name,
-            pkgbuild.version
-        );
+        // Auto-fetch missing GPG keys before build
+        Self::fetch_missing_pgp_keys(&pkgbuild_path).await;
 
         let env = self.makepkg_env(&pkg_dir)?;
         let cache_key = self.cache_key(&pkg_dir, &env.makeflags)?;
@@ -430,6 +449,9 @@ impl AurClient {
             );
         }
 
+        // Auto-fetch missing GPG keys from PKGBUILD
+        Self::fetch_missing_pgp_keys(&pkgbuild_path).await;
+
         let env = self.makepkg_env(&pkg_dir)?;
         let cache_key = self.cache_key(&pkg_dir, &env.makeflags)?;
         if self.settings.aur.review_pkgbuild {
@@ -439,7 +461,7 @@ impl AurClient {
             return Ok(cached);
         }
 
-        // Use sandboxed build with bubblewrap if available, fallback to regular makepkg
+        // Build with makepkg
         let status = self
             .run_build(&pkg_dir, &env)
             .await
@@ -470,6 +492,176 @@ impl AurClient {
             }
         }
         None
+    }
+
+    /// Clone package from AUR (public for batch operations)
+    pub async fn git_clone_public(&self, package: &str) -> Result<()> {
+        self.git_clone(package).await
+    }
+
+    /// Update existing clone (public for batch operations)
+    pub async fn git_pull_public(&self, pkg_dir: &Path) -> Result<()> {
+        self.git_pull(pkg_dir).await
+    }
+
+    /// Build an AUR package interactively like yay/paru
+    /// Uses makepkg -si which handles deps automatically with sudo prompts
+    /// Returns the path to the built package (not installed yet)
+    #[instrument(skip(self))]
+    pub async fn build_package_interactive(&self, package: &str) -> Result<PathBuf> {
+        std::fs::create_dir_all(&self.build_dir)?;
+
+        let pkg_dir = self.build_dir.join(package);
+        let pkgbuild_path = pkg_dir.join("PKGBUILD");
+
+        // Clone or update
+        if pkg_dir.exists() && pkgbuild_path.exists() {
+            self.git_pull(&pkg_dir)
+                .await
+                .with_context(|| format!("Failed to update AUR package '{package}'"))?;
+        } else {
+            if pkg_dir.exists() {
+                std::fs::remove_dir_all(&pkg_dir).ok();
+            }
+            self.git_clone(package)
+                .await
+                .with_context(|| format!("Failed to clone AUR package '{package}'"))?;
+        }
+
+        if !pkgbuild_path.exists() {
+            anyhow::bail!("PKGBUILD not found for '{package}'");
+        }
+
+        // Auto-fetch missing GPG keys
+        Self::fetch_missing_pgp_keys(&pkgbuild_path).await;
+
+        let env = self.makepkg_env(&pkg_dir)?;
+
+        // Check build cache
+        let cache_key = self.cache_key(&pkg_dir, &env.makeflags)?;
+        if let Some(cached) = self.cached_package(package, &env.pkgdest, &cache_key) {
+            return Ok(cached);
+        }
+
+        // Build with makepkg -s (syncdeps) - handles deps with sudo, interactive
+        let mut cmd = Command::new("makepkg");
+        cmd.args(["-s", "--noconfirm", "-f", "--needed"])
+            .env("MAKEFLAGS", &env.makeflags)
+            .env("PKGDEST", &env.pkgdest)
+            .env("SRCDEST", &env.srcdest)
+            .env("BUILDDIR", &env.builddir)
+            .current_dir(&pkg_dir);
+
+        for (key, value) in &env.extra_env {
+            cmd.env(key, value);
+        }
+
+        let status = cmd.status().await.context("Failed to run makepkg")?;
+
+        if !status.success() {
+            anyhow::bail!("makepkg failed for '{package}'");
+        }
+
+        let pkg_file = Self::find_built_package(&pkg_dir, &env.pkgdest)?;
+        self.write_cache_key(package, &cache_key)?;
+        Ok(pkg_file)
+    }
+
+    /// Build an AUR package without installing dependencies (deps pre-installed)
+    /// Used for parallel batch builds where deps are resolved upfront
+    #[instrument(skip(self))]
+    pub async fn build_only_nodeps(&self, package: &str) -> Result<PathBuf> {
+        let pkg_dir = self.build_dir.join(package);
+        let pkgbuild_path = pkg_dir.join("PKGBUILD");
+
+        // Package should already be cloned/updated by the batch prep phase
+        if !pkgbuild_path.exists() {
+            anyhow::bail!("PKGBUILD not found for '{package}'. Run preparation phase first.");
+        }
+
+        // Auto-fetch missing GPG keys from PKGBUILD
+        Self::fetch_missing_pgp_keys(&pkgbuild_path).await;
+
+        let env = self.makepkg_env(&pkg_dir)?;
+        let cache_key = self.cache_key(&pkg_dir, &env.makeflags)?;
+
+        if let Some(cached) = self.cached_package(package, &env.pkgdest, &cache_key) {
+            return Ok(cached);
+        }
+
+        // Build with makepkg --nodeps (dependencies already installed)
+        let status = self
+            .run_build_nodeps(&pkg_dir, &env)
+            .await
+            .with_context(|| format!("Failed to run makepkg for '{package}'"))?;
+
+        if !status.success() {
+            anyhow::bail!(
+                "makepkg failed for '{package}'. Check ~/.cache/omg/aur/_logs/{package}.log"
+            );
+        }
+
+        let pkg_file = Self::find_built_package(&pkg_dir, &env.pkgdest)?;
+        self.write_cache_key(package, &cache_key)?;
+        Ok(pkg_file)
+    }
+
+    /// Run makepkg without --syncdeps (deps pre-installed)
+    async fn run_build_nodeps(
+        &self,
+        pkg_dir: &Path,
+        env: &MakepkgEnv,
+    ) -> Result<std::process::ExitStatus> {
+        let package_name = pkg_dir
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("package");
+        let log_dir = self.build_dir.join("_logs");
+        std::fs::create_dir_all(&log_dir)?;
+        let log_path = log_dir.join(format!("{package_name}.log"));
+        let log_file = File::create(&log_path)?;
+        let log_file_err = log_file.try_clone()?;
+
+        let spinner = create_spinner(&format!("Building {package_name}..."));
+
+        let mut cmd = Command::new("makepkg");
+        // Use --nodeps since dependencies are pre-installed
+        // Don't use --cleanbuild for parallel builds as it can cause race conditions
+        cmd.args(["--noconfirm", "-f", "--nodeps"])
+            .env("MAKEFLAGS", &env.makeflags)
+            .env("PKGDEST", &env.pkgdest)
+            .env("SRCDEST", &env.srcdest)
+            .env("BUILDDIR", &env.builddir);
+
+        for (key, value) in &env.extra_env {
+            cmd.env(key, value);
+        }
+
+        // Spawn the process and wait for it to complete
+        let child = cmd
+            .current_dir(pkg_dir)
+            .stdout(std::process::Stdio::from(log_file))
+            .stderr(std::process::Stdio::from(log_file_err))
+            .spawn()
+            .context("Failed to spawn makepkg")?;
+
+        let output = child
+            .wait_with_output()
+            .await
+            .context("Failed to wait for makepkg")?;
+
+        let status = output.status;
+
+        spinner.finish_and_clear();
+        if !status.success() {
+            eprintln!(
+                "  {} Build failed: {} (see {})",
+                "✗".red(),
+                package_name,
+                log_path.display()
+            );
+        }
+        Ok(status)
     }
 
     /// Clone package from AUR
@@ -619,6 +811,19 @@ impl AurClient {
             tracing::info!("Using bubblewrap sandbox for secure AUR build");
             println!("{} Building in sandbox (bubblewrap)...", "🔒".green());
 
+            // Install dependencies BEFORE entering sandbox (requires sudo)
+            let dep_status = Command::new("makepkg")
+                .args(["--syncdeps", "--noconfirm", "--nobuild"])
+                .current_dir(pkg_dir)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .await;
+
+            if let Err(e) = dep_status {
+                tracing::warn!("Failed to install dependencies: {e}");
+            }
+
             // Sandboxed build with bubblewrap
             // - Read-only bind: /usr, /etc, /lib, /lib64
             // - Writable: Build directory, /tmp
@@ -633,6 +838,8 @@ impl AurClient {
             let pacman_cache_root = paths::pacman_cache_root_dir().to_string_lossy().to_string();
 
             let mut args = vec![
+                // Share network namespace to allow downloading sources
+                "--share-net".to_string(),
                 "--ro-bind".to_string(),
                 "/usr".to_string(),
                 "/usr".to_string(),
@@ -701,7 +908,8 @@ impl AurClient {
                 args.push(value.clone());
             }
 
-            let makepkg_args = self.makepkg_args();
+            // Use sandbox-safe args (no -s since deps installed above)
+            let makepkg_args = self.makepkg_args_sandbox();
             args.extend(["--".to_string(), "makepkg".to_string()]);
             args.extend(makepkg_args);
 
@@ -873,6 +1081,16 @@ impl AurClient {
         args
     }
 
+    /// Makepkg args for sandboxed builds (no -s since deps are pre-installed)
+    fn makepkg_args_sandbox(&self) -> Vec<String> {
+        let mut args = vec!["--noconfirm".to_string(), "-f".to_string()];
+        if self.settings.aur.secure_makepkg {
+            args.push("--cleanbuild".to_string());
+            args.push("--verifysource".to_string());
+        }
+        args
+    }
+
     fn review_pkgbuild(pkgbuild_path: &Path) -> Result<()> {
         println!(
             "{} Review PKGBUILD before building: {}",
@@ -887,6 +1105,68 @@ impl AurClient {
             anyhow::bail!("Build aborted by user after PKGBUILD review.");
         }
         Ok(())
+    }
+
+    /// Auto-fetch missing PGP keys from PKGBUILD validpgpkeys array
+    /// This prevents "unknown public key" errors during makepkg
+    /// Fetches keys in parallel for speed
+    async fn fetch_missing_pgp_keys(pkgbuild_path: &Path) {
+        let Ok(pkgbuild) = PkgBuild::parse(pkgbuild_path) else {
+            return;
+        };
+
+        if pkgbuild.validpgpkeys.is_empty() {
+            return;
+        }
+
+        // Filter to only missing keys first (parallel check)
+        let mut missing_keys = Vec::new();
+        for key_id in &pkgbuild.validpgpkeys {
+            let check = Command::new("gpg")
+                .args(["--list-keys", key_id])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .await;
+
+            if !check.map(|s| s.success()).unwrap_or(false) {
+                missing_keys.push(key_id.clone());
+            }
+        }
+
+        if missing_keys.is_empty() {
+            return;
+        }
+
+        // Fetch all missing keys in parallel from Ubuntu keyserver (most reliable)
+        let mut handles = Vec::new();
+        for key_id in missing_keys {
+            let handle = tokio::spawn(async move {
+                let result = Command::new("gpg")
+                    .args([
+                        "--keyserver",
+                        "hkps://keyserver.ubuntu.com",
+                        "--recv-keys",
+                        &key_id,
+                    ])
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status()
+                    .await;
+
+                if result.map(|s| s.success()).unwrap_or(false) {
+                    tracing::debug!("Fetched PGP key {key_id}");
+                }
+            });
+            handles.push(handle);
+        }
+
+        // Wait for all key fetches (with timeout)
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            futures::future::join_all(handles),
+        )
+        .await;
     }
 
     fn makepkg_env(&self, pkg_dir: &Path) -> Result<MakepkgEnv> {

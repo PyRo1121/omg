@@ -1,7 +1,7 @@
 use crate::core::env::fingerprint::{DriftReport, EnvironmentState};
 use crate::core::http::shared_client;
 use anyhow::{Context, Result};
-use colored::Colorize;
+use owo_colors::OwoColorize;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

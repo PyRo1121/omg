@@ -3,9 +3,9 @@
 //! Downloads Rust toolchains directly from static.rust-lang.org
 
 use anyhow::{Context, Result};
-use colored::Colorize;
 use flate2::read::GzDecoder;
 use indicatif::{ProgressBar, ProgressStyle};
+use owo_colors::OwoColorize;
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use tar::Archive;

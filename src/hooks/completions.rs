@@ -3,7 +3,7 @@
 use anyhow::{Context, Result};
 use clap::CommandFactory;
 use clap_complete::{Shell, generate};
-use colored::Colorize;
+use owo_colors::OwoColorize;
 use std::fs;
 use std::io;
 

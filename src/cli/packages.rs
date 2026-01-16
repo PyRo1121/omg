@@ -1,10 +1,8 @@
 use anyhow::Result;
-use colored::Colorize;
 use dialoguer::{Confirm, MultiSelect, theme::ColorfulTheme};
-use futures::StreamExt;
+use owo_colors::OwoColorize;
 
 use crate::cli::style;
-use crate::config::Settings;
 use crate::core::Database;
 use crate::core::client::DaemonClient;
 use crate::core::completion::CompletionEngine;
@@ -620,14 +618,14 @@ pub async fn update(check_only: bool) -> Result<()> {
             ) {
                 (Ok(old), Ok(new)) => {
                     if new.major > old.major {
-                        "MAJOR".red().bold()
+                        "MAJOR".red().bold().to_string()
                     } else if new.minor > old.minor {
-                        "minor".yellow().bold()
+                        "minor".yellow().bold().to_string()
                     } else {
-                        "patch".green()
+                        "patch".green().bold().to_string()
                     }
                 }
-                _ => "update".dimmed(),
+                _ => "update".dimmed().to_string(),
             };
 
             println!(
@@ -720,10 +718,6 @@ pub async fn update(check_only: bool) -> Result<()> {
     }
 
     if !aur_updates.is_empty() {
-        use indicatif::{ProgressBar, ProgressStyle};
-
-        let settings = Settings::load().unwrap_or_default();
-        let concurrency = settings.aur.build_concurrency.max(1);
         let total = aur_updates.len();
         println!(
             "\n{} Building {} AUR package{}...\n",
@@ -731,62 +725,146 @@ pub async fn update(check_only: bool) -> Result<()> {
             total,
             if total == 1 { "" } else { "s" }
         );
+
+        // PHASE 1: Clone/update ALL packages in parallel (FAST!)
+        println!("{} Fetching PKGBUILDs...", style::dim("→"));
+        let aur_names: Vec<String> = aur_updates.iter().map(|(n, _, _)| n.clone()).collect();
+
+        // Parallel git operations - 16 concurrent
+        let clone_tasks: Vec<_> = aur_names
+            .iter()
+            .map(|name| {
+                let aur = aur.clone();
+                let name = name.clone();
+                async move {
+                    let pkg_dir = crate::core::paths::cache_dir().join("aur").join(&name);
+                    let pkgbuild_path = pkg_dir.join("PKGBUILD");
+
+                    if pkg_dir.exists() && pkgbuild_path.exists() {
+                        let _ = aur.git_pull_public(&pkg_dir).await;
+                    } else {
+                        if pkg_dir.exists() {
+                            std::fs::remove_dir_all(&pkg_dir).ok();
+                        }
+                        let _ = aur.git_clone_public(&name).await;
+                    }
+                    (name, pkgbuild_path)
+                }
+            })
+            .collect();
+
+        let clone_results: Vec<_> = futures::future::join_all(clone_tasks).await;
         println!(
-            "{} Using build concurrency: {}",
-            style::dim("→"),
-            style::info(&concurrency.to_string())
+            "{} Fetched {} PKGBUILDs",
+            style::success("✓"),
+            clone_results.len()
         );
 
-        let progress = ProgressBar::new(total as u64);
-        progress.set_style(
-            ProgressStyle::default_bar()
-                .template("  [{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} {msg}")
-                .unwrap(),
-        );
+        // PHASE 2: Parse ALL PKGBUILDs and collect ALL dependencies
+        println!("{} Resolving dependencies...", style::dim("→"));
+        let mut all_makedeps: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut all_deps: std::collections::HashSet<String> = std::collections::HashSet::new();
 
+        for (_name, pkgbuild_path) in &clone_results {
+            if let Ok(pkgbuild) = crate::package_managers::pkgbuild::PkgBuild::parse(pkgbuild_path)
+            {
+                for dep in &pkgbuild.depends {
+                    let dep_name = dep.split(['>', '<', '=']).next().unwrap_or(dep);
+                    all_deps.insert(dep_name.to_string());
+                }
+                for dep in &pkgbuild.makedepends {
+                    let dep_name = dep.split(['>', '<', '=']).next().unwrap_or(dep);
+                    all_makedeps.insert(dep_name.to_string());
+                }
+                for dep in &pkgbuild.checkdepends {
+                    let dep_name = dep.split(['>', '<', '=']).next().unwrap_or(dep);
+                    all_makedeps.insert(dep_name.to_string());
+                }
+            }
+        }
+
+        // Filter out already installed packages
+        let installed: std::collections::HashSet<String> =
+            crate::package_managers::list_installed_fast()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|p| p.name)
+                .collect();
+
+        let makedeps_to_install: Vec<String> = all_makedeps
+            .into_iter()
+            .filter(|d| !installed.contains(d) && !aur_names.contains(d))
+            .collect();
+
+        let deps_to_install: Vec<String> = all_deps
+            .into_iter()
+            .filter(|d| {
+                !installed.contains(d) && !aur_names.contains(d) && !makedeps_to_install.contains(d)
+            })
+            .collect();
+
+        // PHASE 3: Install ALL dependencies in ONE transaction (FAST!)
+        let total_deps = makedeps_to_install.len() + deps_to_install.len();
+        if total_deps > 0 {
+            println!(
+                "{} Installing {} dependencies...",
+                style::arrow("→"),
+                total_deps
+            );
+
+            let mut all_to_install = makedeps_to_install.clone();
+            all_to_install.extend(deps_to_install);
+
+            let status = tokio::process::Command::new("sudo")
+                .arg("pacman")
+                .arg("-S")
+                .arg("--needed")
+                .arg("--noconfirm")
+                .arg("--asdeps")
+                .args(&all_to_install)
+                .status()
+                .await;
+
+            if let Ok(s) = status {
+                if s.success() {
+                    println!("{} Dependencies installed", style::success("✓"));
+                }
+            }
+        }
+
+        // PHASE 4: Build packages sequentially (deps already installed = FAST!)
         let mut built_packages: Vec<(String, String, std::path::PathBuf)> = Vec::new();
         let mut failed_builds: Vec<(String, String)> = Vec::new();
 
-        let mut stream = futures::stream::iter(aur_updates.into_iter())
-            .map(|(name, _old_ver, new_ver)| {
-                let aur = aur.clone();
-                async move {
-                    let result = aur.build_only(&name).await;
-                    (name, new_ver, result)
-                }
-            })
-            .buffer_unordered(concurrency);
+        for (i, (name, _old_ver, new_ver)) in aur_updates.into_iter().enumerate() {
+            println!(
+                "{} [{}/{}] Building {}...",
+                style::arrow("→"),
+                i + 1,
+                total,
+                style::package(&name)
+            );
 
-        while let Some((name, new_ver, result)) = stream.next().await {
-            progress.inc(1);
-            match result {
+            // Use build_only since deps are pre-installed (no sudo needed = faster)
+            match aur.build_only(&name).await {
                 Ok(pkg_path) => {
-                    progress.set_message(format!("Built {name}"));
+                    println!("  {} Built {}", style::success("✓"), style::package(&name));
                     built_packages.push((name, new_ver, pkg_path));
                 }
                 Err(e) => {
-                    progress.set_message(format!("Failed {name}"));
+                    println!("  {} Failed: {}", style::error("✗"), style::package(&name));
                     failed_builds.push((name, e.to_string()));
                 }
             }
         }
 
-        progress.finish_and_clear();
-
         // Phase 2: Install all built packages in a single transaction
         if !built_packages.is_empty() {
-            let spinner = ProgressBar::new_spinner();
-            #[allow(clippy::literal_string_with_formatting_args)]
-            let install_template = format!(
-                "\n  {{spinner}} Installing {} packages...",
+            println!(
+                "\n{} Installing {} built packages...",
+                style::arrow("→"),
                 built_packages.len()
             );
-            spinner.set_style(
-                ProgressStyle::default_spinner()
-                    .template(&install_template)
-                    .unwrap(),
-            );
-            spinner.enable_steady_tick(std::time::Duration::from_millis(80));
 
             let pkg_paths: Vec<_> = built_packages.iter().map(|(_, _, p)| p.clone()).collect();
 
@@ -796,37 +874,30 @@ pub async fn update(check_only: bool) -> Result<()> {
             for path in &pkg_paths {
                 cmd.arg(path);
             }
-            // Suppress install output for clean UI
-            cmd.stdout(std::process::Stdio::null());
-            cmd.stderr(std::process::Stdio::null());
 
             match cmd.status().await {
                 Ok(status) if status.success() => {
-                    spinner.finish_and_clear();
                     println!(
-                        "\n  {} Installed {} packages",
+                        "{} Installed {} packages",
                         style::success("✓"),
                         built_packages.len()
                     );
                 }
                 Ok(_) | Err(_) => {
-                    spinner.finish_and_clear();
                     println!(
-                        "\n  {} Batch install failed, trying individually...",
+                        "{} Batch install failed, trying individually...",
                         style::warning("⚠")
                     );
-                    // Fallback to individual installs (quiet)
+                    // Fallback to individual installs
                     for (name, _ver, path) in &built_packages {
                         let mut cmd = tokio::process::Command::new("sudo");
                         cmd.arg("--").arg(&exe).arg("install").arg(path);
-                        cmd.stdout(std::process::Stdio::null());
-                        cmd.stderr(std::process::Stdio::null());
                         if let Ok(status) = cmd.status().await {
                             if status.success() {
-                                // Silent success in fallback
+                                println!("  {} Installed {}", style::success("✓"), name);
                             } else {
                                 println!(
-                                    "    {} Failed: {}",
+                                    "  {} Failed: {}",
                                     style::error("✗"),
                                     style::package(name)
                                 );
@@ -1048,7 +1119,7 @@ pub async fn info(package: &str) -> Result<()> {
             println!(
                 "  {} {}",
                 style::warning("Maintainer:"),
-                pkg.maintainer.unwrap_or("orphan".to_string())
+                pkg.maintainer.as_deref().unwrap_or("orphan")
             );
             println!("  {} {}", style::warning("Votes:"), pkg.num_votes);
             println!("  {} {:.2}%", style::warning("Popularity:"), pkg.popularity);

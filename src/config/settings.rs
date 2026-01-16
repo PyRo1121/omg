@@ -99,12 +99,12 @@ impl Default for AurBuildSettings {
             .map(std::num::NonZero::get)
             .unwrap_or(1);
         Self {
-            build_method: AurBuildMethod::Bubblewrap,
+            build_method: AurBuildMethod::Native,
             build_concurrency: jobs.max(1),
             review_pkgbuild: false,
             secure_makepkg: true,
-            allow_unsafe_builds: false,
-            use_metadata_archive: false,
+            allow_unsafe_builds: true,
+            use_metadata_archive: true,
             metadata_cache_ttl_secs: 300,
             makeflags: None,
             pkgdest: None,

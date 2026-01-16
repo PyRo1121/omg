@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use colored::Colorize;
+use owo_colors::OwoColorize;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::process::Command;

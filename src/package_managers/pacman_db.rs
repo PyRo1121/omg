@@ -8,8 +8,10 @@
 
 use anyhow::{Context, Result};
 use flate2::read::GzDecoder;
+use futures::stream::StreamExt;
 use parking_lot::RwLock;
 use rayon::prelude::*;
+use reqwest;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::{self, File};
@@ -336,8 +338,8 @@ fn save_cache_to_disk<T: Serialize>(cache: &T, name: &str) -> Result<()> {
 
     // Write to a temporary file first for atomicity
     let tmp_path = path.with_extension("tmp");
-    let file = File::create(&tmp_path)?;
-    bincode::serialize_into(file, cache)?;
+    let mut file = File::create(&tmp_path)?;
+    bincode::serde::encode_into_std_write(cache, &mut file, bincode::config::standard())?;
     fs::rename(tmp_path, path)?;
     Ok(())
 }
@@ -345,8 +347,8 @@ fn save_cache_to_disk<T: Serialize>(cache: &T, name: &str) -> Result<()> {
 /// Load cache from disk
 fn load_cache_from_disk<T: for<'de> Deserialize<'de>>(name: &str) -> Result<T> {
     let path = get_cache_dir().join(format!("{name}.bin"));
-    let file = File::open(&path)?;
-    let cache = bincode::deserialize_from(file)?;
+    let mut file = File::open(&path)?;
+    let cache: T = bincode::serde::decode_from_std_read(&mut file, bincode::config::standard())?;
     Ok(cache)
 }
 
@@ -418,60 +420,6 @@ fn ensure_local_cache_loaded(local_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Get sync database from cache (loads if empty or stale)
-fn get_sync_cache() -> Result<HashMap<String, SyncDbPackage>> {
-    let sync_dir = paths::pacman_sync_dir();
-
-    // Check if cache is valid
-    let current_mtime = get_newest_db_mtime(&sync_dir);
-
-    {
-        let cache = SYNC_DB_CACHE.read();
-        if cache.last_modified == Some(current_mtime) && !cache.packages.is_empty() {
-            return Ok(cache.packages.clone());
-        }
-    }
-
-    // Cache miss - need to reload
-    let packages = load_sync_packages(&sync_dir)?;
-
-    // Update cache
-    {
-        let mut cache = SYNC_DB_CACHE.write();
-        cache.packages.clone_from(&packages);
-        cache.last_modified = Some(current_mtime);
-    }
-
-    Ok(packages)
-}
-
-/// Get local database from cache (loads if empty or stale)
-fn get_local_cache() -> Result<HashMap<String, LocalDbPackage>> {
-    let local_dir = paths::pacman_local_dir();
-
-    // Check newest modification time in local db
-    let current_mtime = get_local_db_mtime(&local_dir)?;
-
-    {
-        let cache = LOCAL_DB_CACHE.read();
-        if cache.last_modified == Some(current_mtime) && !cache.packages.is_empty() {
-            return Ok(cache.packages.clone());
-        }
-    }
-
-    // Cache miss - reload
-    let packages = parse_local_db(&local_dir)?;
-
-    // Update cache
-    {
-        let mut cache = LOCAL_DB_CACHE.write();
-        cache.packages.clone_from(&packages);
-        cache.last_modified = Some(current_mtime);
-    }
-
-    Ok(packages)
-}
-
 /// Get newest modification time of sync DBs
 fn get_newest_db_mtime(sync_dir: &Path) -> SystemTime {
     let mut newest = SystemTime::UNIX_EPOCH;
@@ -499,6 +447,7 @@ fn get_local_db_mtime(local_dir: &Path) -> Result<SystemTime> {
 
 /// Force refresh of all caches (call after sync/install)
 pub fn invalidate_caches() {
+    // Clear in-memory caches
     {
         let mut cache = SYNC_DB_CACHE.write();
         cache.packages.clear();
@@ -509,12 +458,19 @@ pub fn invalidate_caches() {
         cache.packages.clear();
         cache.last_modified = None;
     }
+
+    // Delete disk caches to force fresh parse on next access
+    let cache_dir = get_cache_dir();
+    let _ = fs::remove_file(cache_dir.join("sync_db.bin"));
+    let _ = fs::remove_file(cache_dir.join("local_db.bin"));
 }
 
 /// Pre-load caches in background (call on daemon startup)
 pub fn preload_caches() -> Result<()> {
-    let _ = get_sync_cache()?;
-    let _ = get_local_cache()?;
+    let sync_dir = paths::pacman_sync_dir();
+    let local_dir = paths::pacman_local_dir();
+    ensure_sync_cache_loaded(&sync_dir)?;
+    ensure_local_cache_loaded(&local_dir)?;
     Ok(())
 }
 
@@ -664,8 +620,25 @@ pub fn search_sync_fast(query: &str) -> Result<Vec<SyncDbPackage>> {
     Ok(results)
 }
 
-/// Identify potential AUR packages (installed but not in any sync DB)
+/// Official Arch Linux repositories - packages in these are NOT AUR candidates
+/// Source: <https://wiki.archlinux.org/title/Official_repositories>
+const OFFICIAL_REPOS: &[&str] = &[
+    // Stable
+    "core",
+    "extra",
+    "multilib",
+    // Testing
+    "core-testing",
+    "extra-testing",
+    "multilib-testing",
+    "gnome-unstable",
+    "kde-unstable",
+];
+
+/// Identify potential AUR packages (installed but not in official repos)
 /// Uses pure Rust cache for extreme speed (<1ms)
+/// Note: Packages in custom repos (e.g., chaotic-aur) ARE included since they
+/// may have AUR updates available. Use `verify_aur_packages()` to filter.
 pub fn get_potential_aur_packages() -> Result<Vec<String>> {
     let sync_dir = paths::pacman_sync_dir();
     let local_dir = paths::pacman_local_dir();
@@ -678,12 +651,92 @@ pub fn get_potential_aur_packages() -> Result<Vec<String>> {
 
     let mut potential = Vec::new();
     for name in local_cache.packages.keys() {
-        if !sync_cache.packages.contains_key(name) {
+        // Only exclude packages from OFFICIAL repos (not custom repos)
+        let in_official_repo = sync_cache
+            .packages
+            .get(name)
+            .is_some_and(|pkg| OFFICIAL_REPOS.contains(&pkg.repo.as_str()));
+
+        if !in_official_repo {
             potential.push(name.clone());
         }
     }
 
     Ok(potential)
+}
+
+/// Verify which packages actually exist in AUR by querying the AUR API
+/// This distinguishes true AUR packages from custom repo packages
+pub async fn verify_aur_packages(package_names: &[String]) -> Result<Vec<String>> {
+    if package_names.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Use the same chunking logic as AurClient for API queries
+    let chunked_names = chunk_aur_names(package_names);
+    let mut aur_packages = Vec::new();
+
+    // Create HTTP client
+    let client = reqwest::Client::builder().user_agent("omg/0.1.0").build()?;
+
+    // Query AUR API in parallel
+    let concurrency = std::cmp::min(8, chunked_names.len());
+    let mut stream = futures::stream::iter(chunked_names)
+        .map(|chunk| {
+            let client = &client;
+            async move {
+                let mut url = "https://aur.archlinux.org/rpc?v=5&type=info".to_string();
+                for name in &chunk {
+                    url.push_str("&arg[]=");
+                    url.push_str(name);
+                }
+                let response = client.get(&url).send().await?;
+                let json: serde_json::Value = response.json().await?;
+                Ok::<serde_json::Value, anyhow::Error>(json)
+            }
+        })
+        .buffer_unordered(concurrency);
+
+    while let Some(result) = stream.next().await {
+        let response = result?;
+        if let Some(results) = response.get("results").and_then(|r| r.as_array()) {
+            for package in results {
+                if let Some(name) = package.get("Name").and_then(|n| n.as_str()) {
+                    aur_packages.push(name.to_string());
+                }
+            }
+        }
+    }
+
+    Ok(aur_packages)
+}
+
+/// Helper function to chunk package names for AUR API queries
+fn chunk_aur_names(names: &[String]) -> Vec<Vec<String>> {
+    const AUR_RPC_MAX_URI: usize = 4400;
+    let mut chunks = Vec::new();
+    let mut current_chunk = Vec::new();
+    let mut current_len = 0; // URL length
+
+    for name in names {
+        // Each &arg[]=name adds about 10 chars overhead + name length
+        let add_len = 10 + name.len();
+
+        if current_len + add_len > AUR_RPC_MAX_URI && !current_chunk.is_empty() {
+            chunks.push(current_chunk);
+            current_chunk = Vec::new();
+            current_len = 0;
+        }
+
+        current_chunk.push(name.clone());
+        current_len += add_len;
+    }
+
+    if !current_chunk.is_empty() {
+        chunks.push(current_chunk);
+    }
+
+    chunks
 }
 
 /// Get total package counts - INSTANT

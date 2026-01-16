@@ -1,6 +1,6 @@
 use crate::core::client::DaemonClient;
 use anyhow::Result;
-use colored::Colorize;
+use owo_colors::OwoColorize;
 
 /// Perform security audit
 pub async fn audit() -> Result<()> {

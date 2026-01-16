@@ -3,8 +3,8 @@
 //! Downloads and manages Node.js versions - PURE RUST, NO SUBPROCESS.
 
 use anyhow::{Context, Result};
-use colored::Colorize;
 use indicatif::{ProgressBar, ProgressStyle};
+use owo_colors::OwoColorize;
 use serde::Deserialize;
 use std::fs::{self, File};
 use std::path::PathBuf;

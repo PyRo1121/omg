@@ -2,7 +2,7 @@ use crate::runtimes::{
     BunManager, GoManager, JavaManager, NodeManager, PythonManager, RubyManager, RustManager,
 };
 use anyhow::Result;
-use colored::Colorize;
+use owo_colors::OwoColorize;
 
 /// Switch runtime version
 pub async fn use_version(runtime: &str, version: Option<&str>) -> Result<()> {

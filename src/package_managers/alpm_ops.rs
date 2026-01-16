@@ -4,7 +4,7 @@
 //! Install/remove/update operations at native C library speed.
 
 use anyhow::{Context, Result};
-use colored::Colorize;
+use owo_colors::OwoColorize;
 
 use crate::core::{paths, security::pgp::PgpVerifier};
 use crate::package_managers::pacman_db;

@@ -3,9 +3,9 @@
 //! Downloads JDK from Eclipse Adoptium.
 
 use anyhow::{Context, Result};
-use colored::Colorize;
 use flate2::read::GzDecoder;
 use indicatif::{ProgressBar, ProgressStyle};
+use owo_colors::OwoColorize;
 use serde::Deserialize;
 use std::fs::{self, File};
 use std::path::PathBuf;

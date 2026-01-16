@@ -4,7 +4,7 @@
 //! to detect environment drift and ensure reproducibility.
 
 use anyhow::Result;
-use colored::Colorize;
+use owo_colors::OwoColorize;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -80,7 +80,7 @@ impl EnvironmentState {
         packages.sort_unstable();
         packages.dedup();
 
-        let timestamp = chrono::Utc::now().timestamp();
+        let timestamp = jiff::Timestamp::now().as_second();
 
         let mut state = Self {
             runtimes,

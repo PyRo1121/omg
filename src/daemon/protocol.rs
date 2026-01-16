@@ -2,13 +2,14 @@
 //!
 //! Uses bincode for maximum performance.
 
+use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 
 /// Request ID type
 pub type RequestId = u64;
 
 /// Unified Request Enum
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub enum Request {
     Search {
         id: RequestId,
@@ -56,7 +57,7 @@ impl Request {
 }
 
 /// Unified Response Enum
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub enum Response {
     Success {
         id: RequestId,
@@ -69,7 +70,7 @@ pub enum Response {
     },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub enum ResponseResult {
     Search(SearchResult),
     Info(DetailedPackageInfo),
@@ -91,20 +92,20 @@ pub mod error_codes {
 }
 
 /// Search result
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct SearchResult {
     pub packages: Vec<PackageInfo>,
     pub total: usize,
 }
 
 /// Explicit packages result
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct ExplicitResult {
     pub packages: Vec<String>,
 }
 
 /// Status result
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct StatusResult {
     pub total_packages: usize,
     pub explicit_packages: usize,
@@ -115,7 +116,7 @@ pub struct StatusResult {
 }
 
 /// Package info for IPC (minimal)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct PackageInfo {
     pub name: String,
     pub version: String,
@@ -124,7 +125,7 @@ pub struct PackageInfo {
 }
 
 /// Detailed package info for IPC
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct DetailedPackageInfo {
     pub name: String,
     pub version: String,
@@ -139,7 +140,7 @@ pub struct DetailedPackageInfo {
 }
 
 /// Vulnerability info for IPC
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct Vulnerability {
     pub id: String,
     pub summary: String,
@@ -147,7 +148,7 @@ pub struct Vulnerability {
 }
 
 /// Security audit result
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct SecurityAuditResult {
     pub total_vulnerabilities: usize,
     pub high_severity: usize,

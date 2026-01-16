@@ -395,7 +395,7 @@ pub fn history(limit: usize) -> Result<()> {
     }
 
     for entry in entries.iter().rev().take(limit) {
-        let timestamp = entry.timestamp.with_timezone(&chrono::Local);
+        let timestamp = entry.timestamp.strftime("%Y-%m-%d %H:%M:%S");
         let status = if entry.success {
             style::success("✓")
         } else {
@@ -405,7 +405,7 @@ pub fn history(limit: usize) -> Result<()> {
         println!(
             "{} {} [{}] - {} {}",
             status,
-            style::dim(&timestamp.format("%Y-%m-%d %H:%M:%S").to_string()),
+            style::dim(&timestamp.to_string()),
             style::info(&entry.id[..8]),
             style::warning(&format!("{:?}", entry.transaction_type)),
             style::dim(&format!("({} changes)", entry.changes.len()))
@@ -452,9 +452,7 @@ pub async fn rollback(id: Option<String>) -> Result<()> {
             .map(|e| {
                 format!(
                     "{} [{}] - {:?} ({} changes)",
-                    e.timestamp
-                        .with_timezone(&chrono::Local)
-                        .format("%Y-%m-%d %H:%M"),
+                    e.timestamp.strftime("%Y-%m-%d %H:%M"),
                     &e.id[..8],
                     e.transaction_type,
                     e.changes.len()
@@ -474,10 +472,7 @@ pub async fn rollback(id: Option<String>) -> Result<()> {
     println!(
         "\n{} Rolling back to state from {} [{}]",
         style::warning("⚠"),
-        target
-            .timestamp
-            .with_timezone(&chrono::Local)
-            .format("%Y-%m-%d %H:%M:%S"),
+        target.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
         style::info(&target.id[..8])
     );
 

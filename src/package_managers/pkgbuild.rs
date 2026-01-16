@@ -1,7 +1,7 @@
 //! PKGBUILD metadata parser
 //!
 //! Extracts package information from PKGBUILD files without a Bash interpreter.
-//! Uses optimized string scanning and regex for high performance.
+//! Handles multi-line arrays properly for accurate dependency extraction.
 
 use anyhow::{Context, Result};
 use std::collections::HashMap;
@@ -18,6 +18,7 @@ pub struct PkgBuild {
     pub license: Vec<String>,
     pub depends: Vec<String>,
     pub makedepends: Vec<String>,
+    pub checkdepends: Vec<String>,
     pub sources: Vec<String>,
     pub sha256sums: Vec<String>,
     pub validpgpkeys: Vec<String>,
@@ -32,43 +33,64 @@ impl PkgBuild {
         Self::parse_content(&content)
     }
 
-    /// Parse PKGBUILD content
+    /// Parse PKGBUILD content - handles multi-line arrays
     pub fn parse_content(content: &str) -> Result<Self> {
         let mut pkg = Self::default();
         let mut vars: HashMap<String, String> = HashMap::new();
 
-        for line in content.lines() {
-            let line = line.trim();
+        // First pass: Extract all variables including multi-line arrays
+        let lines: Vec<&str> = content.lines().collect();
+        let mut i = 0;
+        while i < lines.len() {
+            let line = lines[i].trim();
+
+            // Skip empty lines and comments
             if line.is_empty() || line.starts_with('#') {
+                i += 1;
                 continue;
             }
 
-            let (key, val) = match line.split_once('=') {
-                Some((k, v)) => (k.trim(), v.trim()),
-                None => continue,
-            };
+            // Look for variable assignment
+            if let Some((key, val)) = line.split_once('=') {
+                let key = key.trim();
+                let val = val.trim();
 
-            if !key
-                .chars()
-                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
-            {
-                continue;
+                // Validate key is a valid bash variable name
+                if !key
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+                {
+                    i += 1;
+                    continue;
+                }
+
+                // Check if this is a multi-line array
+                if val.starts_with('(') && !val.ends_with(')') {
+                    // Multi-line array - collect until closing paren
+                    let mut array_content = val.to_string();
+                    i += 1;
+                    while i < lines.len() {
+                        let next_line = lines[i];
+                        array_content.push(' ');
+                        array_content.push_str(next_line);
+                        if next_line.contains(')') {
+                            break;
+                        }
+                        i += 1;
+                    }
+                    vars.insert(key.to_string(), array_content);
+                } else {
+                    // Single-line value
+                    let val = val.trim_matches('"').trim_matches('\'').to_string();
+                    vars.insert(key.to_string(), val);
+                }
             }
-
-            let val = val.trim_matches('"').trim_matches('\'').to_string();
-
-            // Handle basic arrays
-            if val.starts_with('(') && val.ends_with(')') {
-                // Keep as is for now, will process later
-            }
-
-            vars.insert(key.to_string(), val);
+            i += 1;
         }
 
         // Second pass: Perform variable substitution
         let substitute = |val: &str, vars: &HashMap<String, String>| -> String {
             let mut result = val.to_string();
-            // Sort keys by length descending to avoid partial matches (e.g., $pkgname vs $pkgname_ext)
             let mut keys: Vec<_> = vars.keys().collect();
             keys.sort_by_key(|k| std::cmp::Reverse(k.len()));
 
@@ -105,6 +127,9 @@ impl PkgBuild {
         if let Some(v) = vars.get("makedepends") {
             pkg.makedepends = parse_array(&substitute(v, &vars));
         }
+        if let Some(v) = vars.get("checkdepends") {
+            pkg.checkdepends = parse_array(&substitute(v, &vars));
+        }
         if let Some(v) = vars.get("source") {
             pkg.sources = parse_array(&substitute(v, &vars));
         }
@@ -123,12 +148,22 @@ impl PkgBuild {
 }
 
 fn parse_array(val: &str) -> Vec<String> {
+    // Remove comments and join lines
     let cleaned = val
         .lines()
-        .map(|line| line.split('#').next().unwrap_or(""))
+        .map(|line| {
+            // Remove inline comments
+            line.split('#').next().unwrap_or("")
+        })
         .collect::<Vec<_>>()
         .join(" ");
-    let trimmed = cleaned.trim_matches('(').trim_matches(')');
+
+    // Remove parentheses
+    let trimmed = cleaned.trim();
+    let trimmed = trimmed.strip_prefix('(').unwrap_or(trimmed);
+    let trimmed = trimmed.strip_suffix(')').unwrap_or(trimmed);
+
+    // Parse items - handle both quoted and unquoted
     trimmed
         .split_whitespace()
         .filter_map(|s| {

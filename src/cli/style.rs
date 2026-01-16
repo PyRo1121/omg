@@ -1,5 +1,5 @@
-use colored::Colorize;
 use indicatif::{ProgressBar, ProgressStyle};
+use owo_colors::OwoColorize;
 
 #[must_use]
 pub fn header(msg: &str) -> String {
