@@ -1,5 +1,6 @@
 use anyhow::Result;
 use dialoguer::{Confirm, MultiSelect, theme::ColorfulTheme};
+use futures::StreamExt;
 use owo_colors::OwoColorize;
 
 use crate::cli::style;

@@ -17,6 +17,9 @@ omg run build
 omg run test -- --watch
 ```
 OMG auto-detects common project files and activates the correct runtime before running.
+Supported task sources include `package.json`, `deno.json`, `Cargo.toml`, `Makefile`, `Taskfile.yml`,
+`pyproject.toml` (Poetry), `Pipfile`, `composer.json`, `pom.xml`, and `build.gradle`.
+If a task name is unknown, OMG falls back to invoking the command directly with runtime-aware PATH.
 
 ## Tool Management
 ```bash

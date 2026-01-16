@@ -1,10 +1,13 @@
 use anyhow::{Context, Result};
+use dialoguer::{Confirm, theme::ColorfulTheme};
 use owo_colors::OwoColorize;
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::process::Command;
 
 use crate::hooks;
+use crate::runtimes::rust::RustManager;
 
 #[derive(Debug, Clone)]
 pub struct Task {
@@ -329,7 +332,8 @@ pub fn run_task(task_name: &str, extra_args: &[String]) -> Result<()> {
             );
         }
 
-        anyhow::bail!("Task '{task_name}' not found in this project.");
+        // Final fallback: run the command directly with runtime-aware PATH
+        return execute_process(task_name, &[], extra_args);
     }
 
     let task = matches[0];
@@ -348,6 +352,30 @@ fn execute_process(cmd: &str, args: &[String], extra_args: &[String]) -> Result<
     // Detect required runtime versions and inject them into PATH
     // This ensures 'npm' uses the correct node version, 'cargo' uses correct rust channel, etc.
     let current_dir = std::env::current_dir()?;
+    if let Some(toolchain_file) = find_rust_toolchain_file(&current_dir) {
+        let rust_manager = RustManager::new();
+        let request = RustManager::parse_toolchain_file(&toolchain_file)?;
+        let status = rust_manager.toolchain_status(&request)?;
+
+        if status.needs_install
+            || !status.missing_components.is_empty()
+            || !status.missing_targets.is_empty()
+        {
+            let prompt = format!("Rust toolchain '{}' is missing. Install now?", status.name);
+            if Confirm::with_theme(&ColorfulTheme::default())
+                .with_prompt(prompt)
+                .default(true)
+                .interact()?
+            {
+                let rt = tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .build()?;
+                rt.block_on(rust_manager.ensure_toolchain(&request))?;
+            } else {
+                anyhow::bail!("Rust toolchain setup cancelled");
+            }
+        }
+    }
     let versions = hooks::detect_versions(&current_dir);
     let mut path_additions = hooks::build_path_additions(&versions);
 
@@ -395,4 +423,20 @@ fn execute_process(cmd: &str, args: &[String], extra_args: &[String]) -> Result<
     }
 
     Ok(())
+}
+
+fn find_rust_toolchain_file(start: &std::path::Path) -> Option<PathBuf> {
+    let mut current = Some(start.to_path_buf());
+    while let Some(dir) = current {
+        let rust_toml = dir.join("rust-toolchain.toml");
+        if rust_toml.exists() {
+            return Some(rust_toml);
+        }
+        let rust_plain = dir.join("rust-toolchain");
+        if rust_plain.exists() {
+            return Some(rust_plain);
+        }
+        current = dir.parent().map(std::path::Path::to_path_buf);
+    }
+    None
 }
