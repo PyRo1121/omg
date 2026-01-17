@@ -450,7 +450,7 @@ OMG implements enterprise-grade security with defense-in-depth:
 minimum_grade = "Verified"
 allow_aur = false
 require_pgp = true
-allowed_licenses = ["MIT", "Apache-2.0"]
+allowed_licenses = ["AGPL-3.0-or-later", "Apache-2.0"]
 banned_packages = ["example-bad-package"]
 ```
 
@@ -601,4 +601,4 @@ We are building the last dev tool you'll ever need.
 ---
 
 ## 📜 License
-MIT © 2026 OMG Team
+AGPL-3.0-or-later © 2026 OMG Team

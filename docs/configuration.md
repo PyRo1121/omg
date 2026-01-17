@@ -36,7 +36,7 @@ sccache_dir = "/home/you/.cache/sccache"
 minimum_grade = "Verified"
 allow_aur = false
 require_pgp = true
-allowed_licenses = ["MIT", "Apache-2.0"]
+allowed_licenses = ["AGPL-3.0-or-later", "Apache-2.0"]
 banned_packages = ["example-bad-package"]
 ```
 
