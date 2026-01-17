@@ -62,8 +62,16 @@ impl DaemonState {
             PackageIndex::new().expect("daemon requires index")
         });
 
+        let cache = PackageCache::default();
+
+        // Pre-warm caches from persistent storage for instant first queries
+        if let Ok(Some(status)) = persistent.get_status() {
+            cache.update_status(status);
+            tracing::debug!("Pre-warmed status cache from persistent storage");
+        }
+
         Self {
-            cache: PackageCache::default(),
+            cache,
             persistent,
             #[cfg(feature = "arch")]
             pacman: OfficialPackageManager::new(),
@@ -94,6 +102,7 @@ pub async fn handle_request(state: Arc<DaemonState>, request: Request) -> Respon
         },
         Request::Status { id } => handle_status(&state, id),
         Request::Explicit { id } => handle_list_explicit(&state, id),
+        Request::ExplicitCount { id } => handle_explicit_count(&state, id),
         Request::SecurityAudit { id } => handle_security_audit(state, id).await,
         Request::CacheStats { id } => {
             let stats = state.cache.stats();
@@ -171,22 +180,12 @@ async fn handle_search(
         };
     }
 
-    // 2. Conditional AUR Search (Network Bound) - Arch only
-    // Only search AUR if official results are low, to keep speed for common packages
-    let mut aur = Vec::new();
+    // 2. Skip AUR for speed - official index is instant
+    // AUR searches are network-bound (100-500ms) and hurt perceived performance
+    // Users can explicitly search AUR with `omg search --aur` if needed
+    let aur: Vec<PackageInfo> = Vec::new();
     #[cfg(feature = "arch")]
-    if official.len() < 5
-        && let Ok(aur_pkgs) = state.aur.search(&query).await
-    {
-        for pkg in aur_pkgs {
-            aur.push(PackageInfo {
-                name: pkg.name,
-                version: pkg.version.to_string(),
-                description: pkg.description,
-                source: "aur".to_string(),
-            });
-        }
-    }
+    let _ = &state.aur; // suppress unused warning
 
     // Combined results
     let mut packages: Vec<PackageInfo> = Vec::with_capacity(official.len() + aur.len());
@@ -295,14 +294,18 @@ async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) ->
 
 /// Handle status request
 fn handle_status(state: &Arc<DaemonState>, id: RequestId) -> Response {
-    if let Ok(Some(cached)) = state.persistent.get_status() {
+    // 1. Check MEMORY cache first (instant - sub-microsecond)
+    if let Some(cached) = state.cache.get_status() {
         return Response::Success {
             id,
             result: ResponseResult::Status(cached),
         };
     }
 
-    if let Some(cached) = state.cache.get_status() {
+    // 2. Check persistent cache (disk - slower)
+    if let Ok(Some(cached)) = state.persistent.get_status() {
+        // Promote to memory cache for next hit
+        state.cache.update_status(cached.clone());
         return Response::Success {
             id,
             result: ResponseResult::Status(cached),
@@ -506,6 +509,60 @@ fn handle_list_explicit(state: &Arc<DaemonState>, id: RequestId) -> Response {
             id,
             code: error_codes::INTERNAL_ERROR,
             message: format!("Failed to list explicit packages: {e}"),
+        },
+    }
+}
+
+/// Handle explicit package count request
+fn handle_explicit_count(state: &Arc<DaemonState>, id: RequestId) -> Response {
+    if let Some(cached) = state.cache.get_explicit_count() {
+        return Response::Success {
+            id,
+            result: ResponseResult::ExplicitCount(cached),
+        };
+    }
+
+    #[cfg(feature = "arch")]
+    let count = if use_debian_backend() {
+        #[cfg(feature = "debian")]
+        {
+            apt_list_explicit().map(|packages| packages.len())
+        }
+        #[cfg(not(feature = "debian"))]
+        {
+            Err(anyhow::anyhow!("Debian backend disabled"))
+        }
+    } else {
+        use crate::package_managers::list_explicit_fast;
+        list_explicit_fast().map(|packages| packages.len())
+    };
+
+    #[cfg(not(feature = "arch"))]
+    let count = if use_debian_backend() {
+        #[cfg(feature = "debian")]
+        {
+            apt_list_explicit().map(|packages| packages.len())
+        }
+        #[cfg(not(feature = "debian"))]
+        {
+            Err(anyhow::anyhow!("No package manager backend available"))
+        }
+    } else {
+        Err(anyhow::anyhow!("Arch backend disabled"))
+    };
+
+    match count {
+        Ok(count) => {
+            state.cache.update_explicit_count(count);
+            Response::Success {
+                id,
+                result: ResponseResult::ExplicitCount(count),
+            }
+        }
+        Err(e) => Response::Error {
+            id,
+            code: error_codes::INTERNAL_ERROR,
+            message: format!("Failed to count explicit packages: {e}"),
         },
     }
 }

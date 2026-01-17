@@ -7,20 +7,14 @@
 
 use ahash::AHashMap;
 use anyhow::{Context, Result};
-use nucleo_matcher::{Config, Matcher, Utf32String};
+use nucleo_matcher::Utf32String;
 use parking_lot::RwLock;
-use rayon::prelude::*;
 
 #[cfg(feature = "debian")]
 use crate::core::env::distro::is_debian_like;
 use crate::core::paths;
 use crate::daemon::db::PersistentCache;
 use crate::daemon::protocol::{DetailedPackageInfo, PackageInfo};
-
-#[cfg(feature = "debian")]
-use rust_apt::Cache;
-#[cfg(feature = "debian")]
-use rust_apt::cache::PackageSort;
 
 pub struct PackageIndex {
     /// Maps package name to detailed info (using ahash for speed)
@@ -29,7 +23,8 @@ pub struct PackageIndex {
     search_items: Vec<(String, Utf32String)>,
     /// Lowercased search strings for case-insensitive match
     search_items_lower: Vec<Utf32String>,
-    /// Prefix index for 1-2 char fast path
+    /// Prefix index for 1-2 char fast path (reserved for future optimization)
+    #[allow(dead_code)]
     prefix_index: AHashMap<String, Vec<usize>>,
     /// Reader-writer lock for package lookups
     lock: RwLock<()>,
@@ -207,47 +202,122 @@ impl PackageIndex {
 
     #[cfg(feature = "debian")]
     fn new_apt() -> Result<Self> {
+        use std::fs;
+        use std::io::Read;
+        use std::path::Path;
+
         let mut packages = AHashMap::default();
         let mut search_items = Vec::new();
         let mut search_items_lower = Vec::new();
         let mut prefix_index: AHashMap<String, Vec<usize>> = AHashMap::new();
 
-        let empty: &[&str] = &[];
-        let cache =
-            Cache::new(empty).map_err(|e| anyhow::anyhow!(format!("APT cache error: {e:?}")))?;
-        let sort = PackageSort::default();
+        let lists_dir = Path::new("/var/lib/apt/lists");
+        if !lists_dir.exists() {
+            anyhow::bail!("APT lists directory not found");
+        }
 
-        for pkg in cache.packages(&sort) {
-            let version = pkg
-                .candidate()
-                .or_else(|| pkg.installed())
-                .map(|ver| ver.version().to_string())
-                .unwrap_or_else(|| "unknown".to_string());
-            let summary = pkg
-                .candidate()
-                .and_then(|ver| ver.summary())
-                .unwrap_or_default();
-            let long_description = pkg
-                .candidate()
-                .and_then(|ver| ver.description())
-                .unwrap_or_default();
-            let description = if summary.is_empty() {
-                long_description
+        // Parse all Packages files directly (much faster than rust-apt Cache iteration)
+        for entry in fs::read_dir(lists_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+
+            let content = if filename.ends_with("_Packages.lz4") {
+                fs::read(&path).ok().and_then(|compressed| {
+                    let mut decoder = lz4_flex::frame::FrameDecoder::new(&compressed[..]);
+                    let mut buf = Vec::new();
+                    decoder.read_to_end(&mut buf).ok()?;
+                    String::from_utf8(buf).ok()
+                })
+            } else if filename.ends_with("_Packages.gz") {
+                fs::read(&path).ok().and_then(|compressed| {
+                    let mut decoder = flate2::read::GzDecoder::new(&compressed[..]);
+                    let mut content = String::new();
+                    decoder.read_to_string(&mut content).ok()?;
+                    Some(content)
+                })
+            } else if filename.ends_with("_Packages") && !filename.contains('.') {
+                fs::read_to_string(&path).ok()
             } else {
-                summary
+                None
             };
-            let url = pkg
-                .candidate()
-                .and_then(|ver| ver.get_record("Homepage"))
-                .unwrap_or_default();
-            let depends = pkg.candidate().map(collect_depends).unwrap_or_default();
-            let size = pkg.candidate().map(|ver| ver.installed_size()).unwrap_or(0);
-            let download_size = pkg.candidate().map(|ver| ver.size()).unwrap_or(0);
+
+            if let Some(content) = content {
+                Self::parse_packages_content(
+                    &content,
+                    &mut packages,
+                    &mut search_items,
+                    &mut search_items_lower,
+                    &mut prefix_index,
+                );
+            }
+        }
+
+        tracing::info!("Indexed {} packages from apt", packages.len());
+
+        Ok(Self {
+            packages,
+            search_items,
+            search_items_lower,
+            prefix_index,
+            lock: RwLock::new(()),
+        })
+    }
+
+    #[cfg(feature = "debian")]
+    fn parse_packages_content(
+        content: &str,
+        packages: &mut AHashMap<String, DetailedPackageInfo>,
+        search_items: &mut Vec<(String, Utf32String)>,
+        search_items_lower: &mut Vec<Utf32String>,
+        prefix_index: &mut AHashMap<String, Vec<usize>>,
+    ) {
+        for paragraph in content.split("\n\n") {
+            if paragraph.trim().is_empty() {
+                continue;
+            }
+
+            let mut name = String::new();
+            let mut version = String::new();
+            let mut description = String::new();
+            let mut url = String::new();
+            let mut size = 0u64;
+            let mut download_size = 0u64;
+            let mut depends = Vec::new();
+
+            for line in paragraph.lines() {
+                if line.starts_with(' ') || line.starts_with('\t') {
+                    continue;
+                }
+                if let Some((key, value)) = line.split_once(':') {
+                    let value = value.trim();
+                    match key.trim() {
+                        "Package" => name = value.to_string(),
+                        "Version" => version = value.to_string(),
+                        "Description" => description = value.to_string(),
+                        "Homepage" => url = value.to_string(),
+                        "Installed-Size" => size = value.parse::<u64>().unwrap_or(0) * 1024,
+                        "Size" => download_size = value.parse().unwrap_or(0),
+                        "Depends" => {
+                            depends = value
+                                .split(',')
+                                .map(|d| d.trim().split_whitespace().next().unwrap_or("").to_string())
+                                .filter(|d| !d.is_empty())
+                                .collect();
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
+            if name.is_empty() || packages.contains_key(&name) {
+                continue;
+            }
 
             let info = DetailedPackageInfo {
-                name: pkg.name().to_string(),
+                name: name.clone(),
                 version,
-                description,
+                description: description.clone(),
                 url,
                 size,
                 download_size,
@@ -271,95 +341,41 @@ impl PackageIndex {
             }
             packages.insert(info.name.clone(), info);
         }
-
-        tracing::info!("Indexed {} packages from apt", packages.len());
-
-        Ok(Self {
-            packages,
-            search_items,
-            search_items_lower,
-            prefix_index,
-            lock: RwLock::new(()),
-        })
     }
 
-    /// Fuzzy search for packages
+    /// Fast substring search for packages (like apt-cache search)
     pub fn search(&self, query: &str, limit: usize) -> Vec<PackageInfo> {
         if query.is_empty() {
             return Vec::new();
         }
         let query_lower = query.to_lowercase();
 
-        // FAST PASS: Prefix match for short queries (1-2 chars)
-        // Users typing 'f' or 'fi' usually want things starting with those letters.
-        if query_lower.len() < 3 {
-            let matches: Vec<_> = self
-                .prefix_index
-                .get(&query_lower)
-                .into_iter()
-                .flatten()
-                .take(limit)
-                .filter_map(|idx| {
-                    let item = self.search_items.get(*idx)?;
+        // FAST PATH: Simple substring matching (what users expect, like apt-cache)
+        // This is O(n) but with very fast string operations
+        let mut results = Vec::with_capacity(limit);
+        
+        for (idx, search_lower) in self.search_items_lower.iter().enumerate() {
+            if results.len() >= limit {
+                break;
+            }
+            
+            // Convert Utf32String to &str for fast contains check
+            let search_str = search_lower.to_string();
+            if search_str.contains(&query_lower) {
+                if let Some(item) = self.search_items.get(idx) {
                     let name = &item.0;
-                    self.packages.get(name).map(|p| PackageInfo {
-                        name: p.name.clone(),
-                        version: p.version.clone(),
-                        description: p.description.clone(),
-                        source: p.source.clone(),
-                    })
-                })
-                .collect();
-
-            if !matches.is_empty() {
-                return matches;
+                    if let Some(p) = self.packages.get(name) {
+                        results.push(PackageInfo {
+                            name: p.name.clone(),
+                            version: p.version.clone(),
+                            description: p.description.clone(),
+                            source: p.source.clone(),
+                        });
+                    }
+                }
             }
         }
-
-        let query_utf32 = Utf32String::from(query_lower.as_str());
-        let query_slice = query_utf32.slice(..);
-
-        // 1. Parallel search using rayon (one matcher per thread)
-        let mut matches: Vec<(u16, usize)> = self
-            .search_items_lower
-            .par_iter()
-            .enumerate()
-            .map_init(
-                || Matcher::new(Config::DEFAULT),
-                |matcher, (idx, search_str)| {
-                    matcher
-                        .fuzzy_match(query_slice, search_str.slice(..))
-                        .map(|score| (score, idx))
-                },
-            )
-            .flatten()
-            .collect();
-
-        // 2. Optimized sorting
-        if matches.len() > limit {
-            matches.select_nth_unstable_by(limit, |a, b| b.0.cmp(&a.0));
-            matches.truncate(limit);
-        }
-
-        matches.sort_unstable_by(|a, b| b.0.cmp(&a.0));
-
-        // 3. Map back to info (One clone per result only)
-        // Pre-reserve capacity to avoid reallocations
-        let mut results = Vec::with_capacity(matches.len());
-        for (_, idx) in matches {
-            let Some(item) = self.search_items.get(idx) else {
-                continue;
-            };
-            let name = &item.0;
-            if let Some(p) = self.packages.get(name) {
-                results.push(PackageInfo {
-                    name: p.name.clone(),
-                    version: p.version.clone(),
-                    description: p.description.clone(),
-                    source: p.source.clone(),
-                });
-            }
-        }
+        
         results
     }
 

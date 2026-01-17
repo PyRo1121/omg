@@ -51,9 +51,7 @@ fn use_debian_backend() -> bool {
 
 /// Search for packages in official repos and AUR (Synchronous fast-path)
 pub fn search_sync_cli(query: &str, detailed: bool, interactive: bool) -> Result<bool> {
-    if use_debian_backend() {
-        return Ok(false);
-    }
+    // Daemon path works for both Arch and Debian - provides cached searches
     if detailed || interactive {
         // Fallback to async for these modes as they require spin-up or complex interaction
         return Ok(false);
@@ -1496,6 +1494,42 @@ pub fn explicit_sync(count: bool) -> Result<()> {
             return Ok(());
         }
     }
+    if count {
+        // FAST PATH: Read from daemon's status file (zero IPC, sub-ms)
+        if let Some(count) = crate::core::fast_status::FastStatus::read_explicit_count() {
+            println!("{count}");
+            return Ok(());
+        }
+
+        // Fallback: IPC to daemon
+        let total = DaemonClient::connect_sync()
+            .ok()
+            .and_then(|mut client| {
+                if let Ok(ResponseResult::ExplicitCount(count)) =
+                    client.call_sync(&Request::ExplicitCount { id: 0 })
+                {
+                    Some(count)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_else(|| {
+                #[cfg(feature = "arch")]
+                {
+                    crate::package_managers::list_explicit_fast()
+                        .map(|pkgs| pkgs.len())
+                        .unwrap_or_default()
+                }
+                #[cfg(not(feature = "arch"))]
+                {
+                    0
+                }
+            });
+
+        println!("{total}");
+        return Ok(());
+    }
+
     // Try daemon first
     let packages = DaemonClient::connect_sync()
         .ok()
@@ -1521,17 +1555,6 @@ pub fn explicit_sync(count: bool) -> Result<()> {
 
     use std::io::Write;
     let mut stdout = std::io::BufWriter::new(std::io::stdout());
-
-    if count {
-        writeln!(
-            stdout,
-            "{} {} packages",
-            style::success("Total:"),
-            packages.len()
-        )?;
-        stdout.flush()?;
-        return Ok(());
-    }
 
     writeln!(
         stdout,

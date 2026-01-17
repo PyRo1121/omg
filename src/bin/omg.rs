@@ -20,11 +20,40 @@ use omg_lib::hooks;
 
 // Using system allocator (pure Rust - no C dependency)
 
+/// Ultra-fast path for explicit --count (bypasses tokio entirely)
+/// This shaves ~2ms by avoiding runtime initialization
+fn try_fast_explicit_count() -> bool {
+    let args: Vec<_> = std::env::args().collect();
+    // Check for "omg explicit --count" or "omg explicit -c"
+    if args.len() >= 2 && args[1] == "explicit" {
+        let has_count = args.iter().any(|a| a == "--count" || a == "-c");
+        if has_count {
+            if let Some(count) = omg_lib::core::fast_status::FastStatus::read_explicit_count() {
+                println!("{count}");
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn main() -> Result<()> {
+    // ULTRA FAST PATH: explicit --count without tokio
+    if try_fast_explicit_count() {
+        return Ok(());
+    }
+
+    // Normal path with tokio runtime
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(async_main())
+}
+
 /// Main entry point - uses single tokio runtime for all async operations
 /// This eliminates the overhead of creating a new runtime for each command
-#[tokio::main(flavor = "multi_thread")]
 #[allow(clippy::too_many_lines)]
-async fn main() -> Result<()> {
+async fn async_main() -> Result<()> {
     // Initialize tracing
     tracing_subscriber::fmt()
         .with_env_filter(

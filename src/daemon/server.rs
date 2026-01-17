@@ -96,6 +96,23 @@ pub async fn run(listener: UnixListener) -> Result<()> {
                 };
                 let _ = state_worker.persistent.set_status(&res);
                 state_worker.cache.update_status(res);
+
+                // Write fast status file for zero-IPC CLI reads
+                let fast_status = crate::core::fast_status::FastStatus::new(
+                    total, explicit, orphans, updates,
+                );
+                if let Err(e) = fast_status.write_default() {
+                    tracing::warn!("Failed to write fast status file: {e}");
+                }
+            }
+
+            // Pre-compute explicit package list for instant first query
+            #[cfg(feature = "arch")]
+            if !use_debian_backend() {
+                if let Ok(explicit_pkgs) = crate::package_managers::list_explicit_fast() {
+                    state_worker.cache.update_explicit(explicit_pkgs);
+                    tracing::debug!("Pre-warmed explicit package cache");
+                }
             }
         }
 

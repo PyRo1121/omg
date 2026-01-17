@@ -26,6 +26,9 @@ pub enum Request {
     Explicit {
         id: RequestId,
     },
+    ExplicitCount {
+        id: RequestId,
+    },
     SecurityAudit {
         id: RequestId,
     },
@@ -53,6 +56,7 @@ impl Request {
             | Self::Info { id, .. }
             | Self::Status { id }
             | Self::Explicit { id }
+            | Self::ExplicitCount { id }
             | Self::SecurityAudit { id }
             | Self::Ping { id }
             | Self::CacheStats { id }
@@ -82,6 +86,7 @@ pub enum ResponseResult {
     Info(DetailedPackageInfo),
     Status(StatusResult),
     Explicit(ExplicitResult),
+    ExplicitCount(usize),
     SecurityAudit(SecurityAuditResult),
     Ping(String),
     CacheStats {
