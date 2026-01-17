@@ -1,0 +1,16 @@
+name = "omg-saas"
+main = "src/index.ts"
+compatibility_date = "2026-01-17"
+
+# Custom domain routes
+routes = [
+  { pattern = "api.pyro1121.com/*", zone_name = "pyro1121.com" }
+]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "omg-licensing"
+database_id = "bcaf7781-a747-4637-92d9-94782e4fa1db"
+
+# Secrets are set via: bunx wrangler secret put <NAME>
+# Required: STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, JWT_SECRET

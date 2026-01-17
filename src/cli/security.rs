@@ -1,10 +1,14 @@
 use crate::core::client::DaemonClient;
+use crate::core::license;
 use crate::core::security::{AuditLogger, AuditSeverity, SbomGenerator, SecurityPolicy};
 use anyhow::Result;
 use owo_colors::OwoColorize;
 
 /// Perform security audit (vulnerability scan)
 pub async fn scan() -> Result<()> {
+    // Require Pro tier for vulnerability scanning
+    license::require_feature("audit")?;
+
     println!(
         "{} Performing system security audit...\n",
         "OMG".cyan().bold()
@@ -61,6 +65,9 @@ pub async fn scan() -> Result<()> {
 
 /// Generate SBOM (Software Bill of Materials)
 pub async fn generate_sbom(output: Option<String>, include_vulns: bool) -> Result<()> {
+    // Require Pro tier for SBOM generation
+    license::require_feature("sbom")?;
+
     println!(
         "{} Generating Software Bill of Materials (CycloneDX 1.5)...\n",
         "OMG".cyan().bold()
@@ -104,6 +111,9 @@ pub async fn generate_sbom(output: Option<String>, include_vulns: bool) -> Resul
 
 /// View audit log entries
 pub fn view_audit_log(limit: usize, severity_filter: Option<String>) -> Result<()> {
+    // Require Team tier for audit logs
+    license::require_feature("audit-log")?;
+
     println!("{} Security Audit Log\n", "OMG".cyan().bold());
 
     let Ok(logger) = AuditLogger::new() else {

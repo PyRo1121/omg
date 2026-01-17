@@ -7,7 +7,9 @@ use alpm_types::Version;
 use anyhow::{Context, Result};
 use owo_colors::OwoColorize;
 
-use crate::core::{paths, security::pgp::PgpVerifier};
+use crate::core::paths;
+#[cfg(feature = "pgp")]
+use crate::core::security::pgp::PgpVerifier;
 use crate::package_managers::pacman_db;
 use crate::package_managers::types::PackageInfo;
 
@@ -424,25 +426,29 @@ pub fn execute_transaction(packages: Vec<String>, remove: bool, sysupgrade: bool
             )
         })?;
 
-    // ZERO-TRUST SECURITY: Detached PGP Verification with Sequoia
-    let verifier = PgpVerifier::new();
-    let pkgs_to_add = alpm.trans_add();
+    // ZERO-TRUST SECURITY: Detached PGP Verification with Sequoia (optional)
+    #[cfg(feature = "pgp")]
+    {
+        let verifier = PgpVerifier::new();
+        let pkgs_to_add = alpm.trans_add();
 
-    if !pkgs_to_add.is_empty() {
-        main_pb.set_message("Verifying package signatures with Sequoia...");
-        for pkg in pkgs_to_add {
-            let pkg_name: &str = pkg.name();
-            if let Some(pkg_filename) = pkg.filename() {
-                let cache_path = paths::pacman_cache_dir().join(pkg_filename);
-                let sig_path = std::path::PathBuf::from(format!("{}.sig", cache_path.display()));
+        if !pkgs_to_add.is_empty() {
+            main_pb.set_message("Verifying package signatures with Sequoia...");
+            for pkg in pkgs_to_add {
+                let pkg_name: &str = pkg.name();
+                if let Some(pkg_filename) = pkg.filename() {
+                    let cache_path = paths::pacman_cache_dir().join(pkg_filename);
+                    let sig_path =
+                        std::path::PathBuf::from(format!("{}.sig", cache_path.display()));
 
-                if cache_path.exists()
-                    && sig_path.exists()
-                    && let Err(e) = verifier.verify_package(&cache_path, &sig_path)
-                {
-                    anyhow::bail!(
-                        "✗ SECURITY ALERT: PGP verification failed for {pkg_name}.\n  Error: {e}\n  The package may be corrupted or tampered with."
-                    );
+                    if cache_path.exists()
+                        && sig_path.exists()
+                        && let Err(e) = verifier.verify_package(&cache_path, &sig_path)
+                    {
+                        anyhow::bail!(
+                            "✗ SECURITY ALERT: PGP verification failed for {pkg_name}.\n  Error: {e}\n  The package may be corrupted or tampered with."
+                        );
+                    }
                 }
             }
         }

@@ -78,7 +78,7 @@ ruzstd = "0.8"  # Pure Rust zstd decoder (replaces zstd)
 
 # Memory management
 parking_lot = "0.12.5"
-dashmap = "6.1"
+dashmap = "5.5"
 moka = { version = "0.12", features = ["sync"] }
 
 # Logging
@@ -101,6 +101,7 @@ home = "0.5.12"
 # Cryptography
 sha2 = "0.10.9"
 hex = "0.4.3"
+base64 = "0.22"
 
 # Date & Time
 jiff = { version = "0.2", features = ["serde"] }
@@ -133,7 +134,8 @@ tempfile = "3.24.0"
 rayon = "1.11"
 
 # Security (Phase 4.2) - PURE RUST crypto backend (for package verification, not secrets)
-sequoia-openpgp = { version = "2.2.0-pqc.1", default-features = false, features = ["crypto-rust", "allow-experimental-crypto", "allow-variable-time-crypto"] }
+# NOTE: sequoia-openpgp requires Rust 1.80+ due to ff crate
+sequoia-openpgp = { version = "2.2.0-pqc.1", default-features = false, features = ["crypto-rust", "allow-experimental-crypto", "allow-variable-time-crypto"], optional = true }
 nucleo-matcher = "0.3.1"
 dirs = "6.0.0"
 libc = "0.2.180"
@@ -180,6 +182,7 @@ arch = [
     "alpm-repo-db",
     "alpm-pkginfo",
 ]
+pgp = ["sequoia-openpgp"]  # Optional PGP verification (requires Rust 1.80+)
 debian = [
     "rust-apt",
     "debian-packaging",

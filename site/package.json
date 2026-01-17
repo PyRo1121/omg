@@ -1,0 +1,22 @@
+{
+  "name": "omg-site",
+  "version": "1.0.0",
+  "description": "OMG Package Manager - Marketing Site",
+  "type": "module",
+  "scripts": {
+    "dev": "bunx --bun vite",
+    "build": "bunx --bun vite build",
+    "preview": "bunx --bun vite preview"
+  },
+  "dependencies": {
+    "solid-js": "^1.9.5"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.1.18",
+    "autoprefixer": "^10.4.21",
+    "postcss": "^8.5.3",
+    "tailwindcss": "^4.1.7",
+    "vite": "^6.3.5",
+    "vite-plugin-solid": "^2.11.6"
+  }
+}

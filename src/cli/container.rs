@@ -14,9 +14,9 @@ pub fn status() -> Result<()> {
     match detect_runtime() {
         Some(runtime) => {
             println!("  Runtime: {} ✓", runtime.to_string().green());
-            
+
             let manager = ContainerManager::with_runtime(runtime);
-            
+
             // List running containers
             match manager.list_running() {
                 Ok(containers) if !containers.is_empty() => {
@@ -208,11 +208,7 @@ pub fn images() -> Result<()> {
 pub fn pull(image: &str) -> Result<()> {
     let manager = ContainerManager::new()?;
 
-    println!(
-        "{} Pulling image: {}",
-        "OMG".cyan().bold(),
-        image.cyan()
-    );
+    println!("{} Pulling image: {}", "OMG".cyan().bold(), image.cyan());
 
     manager.pull(image)?;
 
@@ -258,9 +254,7 @@ pub fn init(base_image: Option<String>) -> Result<()> {
     let dockerfile_path = cwd.join("Dockerfile.omg");
 
     if dockerfile_path.exists() {
-        anyhow::bail!(
-            "Dockerfile.omg already exists. Remove it first or use a different name."
-        );
+        anyhow::bail!("Dockerfile.omg already exists. Remove it first or use a different name.");
     }
 
     let base = base_image.unwrap_or_else(|| "ubuntu:24.04".to_string());
@@ -281,14 +275,10 @@ pub fn init(base_image: Option<String>) -> Result<()> {
         runtimes.push(("python", "3.12".to_string()));
     }
 
-    let manager = ContainerManager::new().unwrap_or_else(|_| {
-        ContainerManager::with_runtime(ContainerRuntime::Docker)
-    });
+    let manager = ContainerManager::new()
+        .unwrap_or_else(|_| ContainerManager::with_runtime(ContainerRuntime::Docker));
 
-    let runtime_refs: Vec<(&str, &str)> = runtimes
-        .iter()
-        .map(|(r, v)| (*r, v.as_str()))
-        .collect();
+    let runtime_refs: Vec<(&str, &str)> = runtimes.iter().map(|(r, v)| (*r, v.as_str())).collect();
 
     let dockerfile = manager.generate_dockerfile(&base, &runtime_refs);
 
@@ -296,7 +286,7 @@ pub fn init(base_image: Option<String>) -> Result<()> {
 
     println!("{} Created Dockerfile.omg", "✓".green());
     println!("  Base image: {}", base.cyan());
-    
+
     if !runtimes.is_empty() {
         println!("  Detected runtimes:");
         for (rt, ver) in &runtimes {
@@ -304,7 +294,10 @@ pub fn init(base_image: Option<String>) -> Result<()> {
         }
     }
 
-    println!("\n  Build with: {} container build -t myapp .", "omg".cyan());
+    println!(
+        "\n  Build with: {} container build -t myapp .",
+        "omg".cyan()
+    );
 
     Ok(())
 }

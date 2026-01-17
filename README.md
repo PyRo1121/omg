@@ -467,6 +467,12 @@ Below is a high-level map of the command surface. Run `omg <command> --help` for
 - `omg daemon`: start daemon in background
 - `omgd`: run the daemon directly
 
+**License management (Pro features)**
+- `omg license status`: show current license status
+- `omg license activate <key>`: activate a license key
+- `omg license deactivate`: deactivate current license
+- `omg license check <feature>`: check if a feature is available
+
 **Ultra-fast queries (omg-fast)**
 - `omg-fast status`: instant system status (3ms)
 - `omg-fast ec`: explicit package count (sub-ms)

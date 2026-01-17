@@ -7,6 +7,7 @@ pub mod commands;
 pub mod container;
 pub mod doctor;
 pub mod env;
+pub mod license;
 pub mod new;
 pub mod packages;
 pub mod runtimes;
@@ -16,4 +17,7 @@ pub mod team;
 pub mod tool;
 pub mod tui;
 
-pub use args::{AuditCommands, Cli, Commands, ContainerCommands, EnvCommands, TeamCommands, ToolCommands};
+pub use args::{
+    AuditCommands, Cli, Commands, ContainerCommands, EnvCommands, LicenseCommands, TeamCommands,
+    ToolCommands,
+};
