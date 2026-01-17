@@ -83,6 +83,14 @@ pub async fn run(listener: UnixListener) -> Result<()> {
             };
 
             if let Ok((total, explicit, orphans, updates)) = status {
+                // Write fast status file for zero-IPC CLI reads (no vuln scan needed)
+                let fast_status = crate::core::fast_status::FastStatus::new(
+                    total, explicit, orphans, updates,
+                );
+                if let Err(e) = fast_status.write_default() {
+                    tracing::warn!("Failed to write fast status file: {e}");
+                }
+
                 let scanner = crate::core::security::VulnerabilityScanner::new();
                 let vuln_count = scanner.scan_system().await.unwrap_or(0);
 
@@ -96,14 +104,6 @@ pub async fn run(listener: UnixListener) -> Result<()> {
                 };
                 let _ = state_worker.persistent.set_status(&res);
                 state_worker.cache.update_status(res);
-
-                // Write fast status file for zero-IPC CLI reads
-                let fast_status = crate::core::fast_status::FastStatus::new(
-                    total, explicit, orphans, updates,
-                );
-                if let Err(e) = fast_status.write_default() {
-                    tracing::warn!("Failed to write fast status file: {e}");
-                }
             }
 
             // Pre-compute explicit package list for instant first query
@@ -169,6 +169,13 @@ pub async fn run(listener: UnixListener) -> Result<()> {
                     let vuln_count = scanner.scan_system().await.unwrap_or(0);
 
                     if let Ok((total, explicit, orphans, updates)) = status {
+                        let fast_status = crate::core::fast_status::FastStatus::new(
+                            total, explicit, orphans, updates,
+                        );
+                        if let Err(e) = fast_status.write_default() {
+                            tracing::warn!("Failed to write fast status file: {e}");
+                        }
+
                         let res = super::protocol::StatusResult {
                             total_packages: total,
                             explicit_packages: explicit,

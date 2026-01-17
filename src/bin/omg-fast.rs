@@ -4,10 +4,11 @@
 //! It reads the daemon's binary status file directly.
 //!
 //! Usage:
-//!   omg-fast ec    # explicit count
-//!   omg-fast tc    # total count  
-//!   omg-fast oc    # orphan count
-//!   omg-fast uc    # updates count
+//!   omg-fast ec       # explicit count
+//!   omg-fast tc       # total count  
+//!   omg-fast oc       # orphan count
+//!   omg-fast uc       # updates count
+//!   omg-fast status   # full status display
 
 use std::fs::File;
 use std::io::Read;
@@ -43,17 +44,32 @@ fn main() {
         std::process::exit(1);
     }
     
-    // Extract the requested count
-    let value = match cmd {
-        "tc" | "total" => u32::from_le_bytes([buf[8], buf[9], buf[10], buf[11]]),
-        "ec" | "explicit" => u32::from_le_bytes([buf[12], buf[13], buf[14], buf[15]]),
-        "oc" | "orphan" => u32::from_le_bytes([buf[16], buf[17], buf[18], buf[19]]),
-        "uc" | "updates" => u32::from_le_bytes([buf[20], buf[21], buf[22], buf[23]]),
+    // Extract values
+    let total = u32::from_le_bytes([buf[8], buf[9], buf[10], buf[11]]);
+    let explicit = u32::from_le_bytes([buf[12], buf[13], buf[14], buf[15]]);
+    let orphans = u32::from_le_bytes([buf[16], buf[17], buf[18], buf[19]]);
+    let updates = u32::from_le_bytes([buf[20], buf[21], buf[22], buf[23]]);
+    
+    match cmd {
+        "tc" | "total" => println!("{total}"),
+        "ec" | "explicit" => println!("{explicit}"),
+        "oc" | "orphan" => println!("{orphans}"),
+        "uc" | "updates" => println!("{updates}"),
+        "status" | "s" => {
+            println!("==> OMG System Status\n");
+            if updates > 0 {
+                println!("  ⚠ Updates: {updates} available");
+            } else {
+                println!("  ✓ Updates: System is up to date");
+            }
+            println!("  ✓ Packages: {total} total ({explicit} explicit)");
+            if orphans > 0 {
+                println!("  ⚠ Orphans: {orphans} packages");
+            }
+        }
         _ => {
-            eprintln!("Usage: omg-fast [ec|tc|oc|uc]");
+            eprintln!("Usage: omg-fast [ec|tc|oc|uc|status]");
             std::process::exit(1);
         }
     };
-    
-    println!("{value}");
 }
