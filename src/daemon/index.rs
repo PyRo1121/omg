@@ -22,7 +22,7 @@ pub struct PackageIndex {
     /// Search items for Nucleo
     search_items: Vec<(String, Utf32String)>,
     /// Lowercased search strings for case-insensitive match
-    search_items_lower: Vec<Utf32String>,
+    search_items_lower: Vec<String>,
     /// Prefix index for 1-2 char fast path (reserved for future optimization)
     #[allow(dead_code)]
     prefix_index: AHashMap<String, Vec<usize>>,
@@ -105,7 +105,7 @@ impl PackageIndex {
             let search_lower = search_str.to_lowercase();
             let idx = search_items.len();
             search_items.push((info.name.clone(), Utf32String::from(search_str.as_str())));
-            search_items_lower.push(Utf32String::from(search_lower.as_str()));
+            search_items_lower.push(search_lower);
 
             let name_lower = info.name.to_lowercase();
             for len in 1..=2 {
@@ -177,7 +177,7 @@ impl PackageIndex {
                 let search_lower = search_str.to_lowercase();
                 let idx = search_items.len();
                 search_items.push((info.name.clone(), Utf32String::from(search_str.as_str())));
-                search_items_lower.push(Utf32String::from(search_lower.as_str()));
+                search_items_lower.push(search_lower);
                 let name_lower = info.name.to_lowercase();
                 for len in 1..=2 {
                     if name_lower.len() >= len {
@@ -269,7 +269,7 @@ impl PackageIndex {
         content: &str,
         packages: &mut AHashMap<String, DetailedPackageInfo>,
         search_items: &mut Vec<(String, Utf32String)>,
-        search_items_lower: &mut Vec<Utf32String>,
+        search_items_lower: &mut Vec<String>,
         prefix_index: &mut AHashMap<String, Vec<usize>>,
     ) {
         for paragraph in content.split("\n\n") {
@@ -331,7 +331,7 @@ impl PackageIndex {
             let search_lower = search_str.to_lowercase();
             let idx = search_items.len();
             search_items.push((info.name.clone(), Utf32String::from(search_str.as_str())));
-            search_items_lower.push(Utf32String::from(search_lower.as_str()));
+            search_items_lower.push(search_lower);
             let name_lower = info.name.to_lowercase();
             for len in 1..=2 {
                 if name_lower.len() >= len {
@@ -353,24 +353,34 @@ impl PackageIndex {
         // FAST PATH: Simple substring matching (what users expect, like apt-cache)
         // This is O(n) but with very fast string operations
         let mut results = Vec::with_capacity(limit);
-        
-        for (idx, search_lower) in self.search_items_lower.iter().enumerate() {
+
+        let indices: Box<dyn Iterator<Item = usize> + '_> = if query_lower.len() <= 2 {
+            if let Some(matches) = self.prefix_index.get(&query_lower) {
+                Box::new(matches.iter().copied())
+            } else {
+                Box::new(std::iter::empty())
+            }
+        } else {
+            Box::new(0..self.search_items_lower.len())
+        };
+
+        for idx in indices {
             if results.len() >= limit {
                 break;
             }
-            
-            // Convert Utf32String to &str for fast contains check
-            let search_str = search_lower.to_string();
-            if search_str.contains(&query_lower) {
-                if let Some(item) = self.search_items.get(idx) {
-                    let name = &item.0;
-                    if let Some(p) = self.packages.get(name) {
-                        results.push(PackageInfo {
-                            name: p.name.clone(),
-                            version: p.version.clone(),
-                            description: p.description.clone(),
-                            source: p.source.clone(),
-                        });
+
+            if let Some(search_lower) = self.search_items_lower.get(idx) {
+                if search_lower.contains(&query_lower) {
+                    if let Some(item) = self.search_items.get(idx) {
+                        let name = &item.0;
+                        if let Some(p) = self.packages.get(name) {
+                            results.push(PackageInfo {
+                                name: p.name.clone(),
+                                version: p.version.clone(),
+                                description: p.description.clone(),
+                                source: p.source.clone(),
+                            });
+                        }
                     }
                 }
             }

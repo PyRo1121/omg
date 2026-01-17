@@ -241,12 +241,12 @@ OMG achieves ~6ms performance on all core operations through a persistent daemon
 
 | Command | OMG (Daemon) | pacman | yay | Speedup |
 |---------|--------------|--------|-----|---------:|
-| **search** | **5.70ms** ✨ | 129ms | 1321ms | **22x faster** |
-| **info** | **6.30ms** ✨ | 135ms | 292ms | **21x faster** |
-| **status** | **6.20ms** ✨ | N/A | N/A | *OMG only* |
-| **explicit** | **1.40ms** ✨ | 14ms | 24ms | **10x faster** |
+| **search** | **6.60ms** ✨ | 132.40ms | 1329.50ms | **20.0x faster** |
+| **info** | **6.00ms** ✨ | 134.40ms | 286.00ms | **22.4x faster** |
+| **status** | **3ms** ✨ | N/A | N/A | *omg-fast* |
+| **explicit** | **1.00ms** ✨ | 14.40ms | 34.50ms | **14.4x faster** |
 
-> 💡 **Pro tip:** Use `omg-fast ec` or shell function `omg-explicit-count` for 10x faster explicit counts!
+> 💡 **Pro tip:** Use `omg-fast status` for **3ms** status display, or `omg-fast ec` for sub-millisecond explicit counts!
 
 ### Debian/Ubuntu (apt)
 

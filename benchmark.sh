@@ -120,7 +120,11 @@ echo -e "\n📋 Benchmark: EXPLICIT"
 echo "-------------------------------"
 # Warm explicit cache once to hit daemon cache for measured runs
 $OMG explicit --count > /dev/null 2>&1 || true
-RESULTS["explicit,OMG (Daemon)"]=$(run_bench "OMG (Daemon)" "$OMG explicit --count" $ITERATIONS $WARMUP)
+if [ -x "./target/release/omg-fast" ]; then
+    RESULTS["explicit,OMG (Daemon)"]=$(run_bench "OMG (Daemon)" "./target/release/omg-fast ec" $ITERATIONS $WARMUP)
+else
+    RESULTS["explicit,OMG (Daemon)"]=$(run_bench "OMG (Daemon)" "$OMG explicit --count" $ITERATIONS $WARMUP)
+fi
 if command -v pacman &> /dev/null; then
     RESULTS["explicit,pacman"]=$(run_bench "pacman" "pacman -Qe" $ITERATIONS $WARMUP)
 fi

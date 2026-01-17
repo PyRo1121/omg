@@ -304,9 +304,8 @@ pub fn list_installed_fast() -> Result<Vec<LocalPackage>> {
 
 /// List explicitly installed packages - INSTANT
 pub fn list_explicit_fast() -> Result<Vec<String>> {
-    if paths::test_mode() {
-        // Use cached list instead of re-parsing
-        let packages = pacman_db::list_local_cached()?;
+    // Prefer cached local DB parsing for speed (works in normal mode too)
+    if let Ok(packages) = pacman_db::list_local_cached() {
         let results = packages
             .into_iter()
             .filter(|pkg| pkg.explicit)

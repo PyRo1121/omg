@@ -217,9 +217,12 @@ pub fn status_sync() -> Result<()> {
 
     writeln!(stdout, "{} System Status\n", style::header("OMG"))?;
 
-    // ULTRA FAST: Use Daemon Cache if available (<1ms)
+    // ULTRA FAST: Try binary status file first (zero IPC, sub-ms)
     let (total, explicit, orphans, updates, security_vulnerabilities, cached_runtimes) =
-        if use_debian_backend() {
+        if let Some(fast) = crate::core::fast_status::FastStatus::read_from_file(&crate::core::paths::fast_status_path()) {
+            (fast.total_packages as usize, fast.explicit_packages as usize, 
+             fast.orphan_packages as usize, fast.updates_available as usize, 0, None)
+        } else if use_debian_backend() {
             #[cfg(feature = "debian")]
             {
                 let s = apt_get_system_status().unwrap_or((0, 0, 0, 0));
