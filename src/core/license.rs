@@ -18,11 +18,13 @@ use anyhow::{Context, Result};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::str::FromStr;
 
 const LICENSE_API_URL: &str = "https://api.pyro1121.com/api/validate-license";
 
 /// Public key for JWT verification (HMAC secret is server-side only)
 /// For offline validation, we embed a verification key
+#[allow(dead_code)]
 const JWT_PUBLIC_KEY: &str = "omg-license-v1"; // Used for basic validation
 
 /// License tiers (ordered by level)
@@ -37,13 +39,8 @@ pub enum Tier {
 
 impl Tier {
     #[must_use]
-    pub fn from_str(s: &str) -> Self {
-        match s.to_lowercase().as_str() {
-            "pro" => Self::Pro,
-            "team" => Self::Team,
-            "enterprise" => Self::Enterprise,
-            _ => Self::Free,
-        }
+    pub fn parse(s: &str) -> Self {
+        s.parse().unwrap_or(Self::Free)
     }
 
     #[must_use]
@@ -73,6 +70,20 @@ impl Tier {
             Self::Pro => "$9/mo",
             Self::Team => "$200/mo",
             Self::Enterprise => "Contact us",
+        }
+    }
+}
+
+impl FromStr for Tier {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "free" => Ok(Self::Free),
+            "pro" => Ok(Self::Pro),
+            "team" => Ok(Self::Team),
+            "enterprise" => Ok(Self::Enterprise),
+            _ => Err(()),
         }
     }
 }
@@ -120,6 +131,7 @@ impl Feature {
         }
     }
 
+    #[allow(clippy::should_implement_trait)]
     #[must_use]
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
@@ -246,17 +258,17 @@ pub struct StoredLicense {
 impl StoredLicense {
     #[must_use]
     pub fn tier_enum(&self) -> Tier {
-        Tier::from_str(&self.tier)
+        Tier::parse(&self.tier)
     }
 
     /// Check if the stored token is still valid
     #[must_use]
     pub fn is_token_valid(&self) -> bool {
-        if let Some(token) = &self.token {
-            if let Some(payload) = decode_jwt_payload(token) {
-                let now = jiff::Timestamp::now().as_second();
-                return payload.exp > now;
-            }
+        if let Some(token) = &self.token
+            && let Some(payload) = decode_jwt_payload(token)
+        {
+            let now = jiff::Timestamp::now().as_second();
+            return payload.exp > now;
         }
         false
     }
@@ -264,12 +276,12 @@ impl StoredLicense {
     /// Check if token needs refresh (< 1 day remaining)
     #[must_use]
     pub fn needs_refresh(&self) -> bool {
-        if let Some(token) = &self.token {
-            if let Some(payload) = decode_jwt_payload(token) {
-                let now = jiff::Timestamp::now().as_second();
-                let one_day = 24 * 60 * 60;
-                return payload.exp - now < one_day;
-            }
+        if let Some(token) = &self.token
+            && let Some(payload) = decode_jwt_payload(token)
+        {
+            let now = jiff::Timestamp::now().as_second();
+            let one_day = 24 * 60 * 60;
+            return payload.exp - now < one_day;
         }
         true
     }
@@ -444,43 +456,21 @@ pub async fn refresh_if_needed() -> Result<()> {
 
 /// Get current user tier
 pub fn current_tier() -> Tier {
-    load_license().map(|l| l.tier_enum()).unwrap_or(Tier::Free)
+    load_license().map_or(Tier::Free, |l| l.tier_enum())
 }
 
 /// Check if a feature is available based on current tier
 pub fn has_feature(feature_name: &str) -> bool {
-    let feature = match Feature::from_str(feature_name) {
-        Some(f) => f,
-        None => return true, // Unknown features are allowed
+    let Some(feature) = Feature::from_str(feature_name) else {
+        return true; // Unknown features are allowed
     };
 
-    let required = feature.required_tier();
-    let current = current_tier();
-
-    // Tier hierarchy: Enterprise > Team > Pro > Free
-    match (current, required) {
-        (Tier::Enterprise, _) => true,
-        (Tier::Team, Tier::Enterprise) => false,
-        (Tier::Team, _) => true,
-        (Tier::Pro, Tier::Enterprise | Tier::Team) => false,
-        (Tier::Pro, _) => true,
-        (Tier::Free, Tier::Free) => true,
-        (Tier::Free, _) => false,
-    }
+    current_tier() >= feature.required_tier()
 }
 
 /// Check if user has at least the specified tier
 pub fn has_tier(required: Tier) -> bool {
-    let current = current_tier();
-    match (current, required) {
-        (Tier::Enterprise, _) => true,
-        (Tier::Team, Tier::Enterprise) => false,
-        (Tier::Team, _) => true,
-        (Tier::Pro, Tier::Enterprise | Tier::Team) => false,
-        (Tier::Pro, _) => true,
-        (Tier::Free, Tier::Free) => true,
-        (Tier::Free, _) => false,
-    }
+    current_tier() >= required
 }
 
 /// Require a feature, returning an error if not available
@@ -489,8 +479,7 @@ pub fn require_feature(feature_name: &str) -> Result<()> {
         return Ok(());
     }
 
-    let feature = Feature::from_str(feature_name);
-    let required_tier = feature.map(|f| f.required_tier()).unwrap_or(Tier::Pro);
+    let required_tier = Feature::from_str(feature_name).map_or(Tier::Pro, |f| f.required_tier());
 
     anyhow::bail!(
         "Feature '{}' requires {} tier ({}). Upgrade at https://pyro1121.com/pricing",
@@ -546,10 +535,10 @@ mod tests {
 
     #[test]
     fn test_tier_hierarchy() {
-        assert!(matches!(Tier::from_str("pro"), Tier::Pro));
-        assert!(matches!(Tier::from_str("team"), Tier::Team));
-        assert!(matches!(Tier::from_str("enterprise"), Tier::Enterprise));
-        assert!(matches!(Tier::from_str("unknown"), Tier::Free));
+        assert!(matches!(Tier::parse("pro"), Tier::Pro));
+        assert!(matches!(Tier::parse("team"), Tier::Team));
+        assert!(matches!(Tier::parse("enterprise"), Tier::Enterprise));
+        assert!(matches!(Tier::parse("unknown"), Tier::Free));
     }
 
     #[test]

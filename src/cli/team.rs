@@ -7,7 +7,7 @@ use crate::core::env::team::{TeamStatus, TeamWorkspace};
 use crate::core::license;
 
 /// Initialize a new team workspace
-pub async fn init(team_id: &str, name: Option<&str>) -> Result<()> {
+pub fn init(team_id: &str, name: Option<&str>) -> Result<()> {
     // Require Team tier for team sync features
     license::require_feature("team-sync")?;
     let cwd = std::env::current_dir()?;
@@ -21,7 +21,7 @@ pub async fn init(team_id: &str, name: Option<&str>) -> Result<()> {
 
     println!("{} Team workspace initialized!", "✓".green());
     println!("  Team ID: {}", team_id.cyan());
-    println!("  Name: {}", display_name);
+    println!("  Name: {display_name}");
     println!();
     println!("Next steps:");
     println!(
@@ -130,7 +130,7 @@ pub async fn pull() -> Result<()> {
 }
 
 /// List team members
-pub async fn members() -> Result<()> {
+pub fn members() -> Result<()> {
     let cwd = std::env::current_dir()?;
     let workspace = TeamWorkspace::new(&cwd);
 
@@ -252,7 +252,7 @@ fn extract_team_id(url: &str) -> String {
     // e.g., "https://gist.github.com/user/abc123" -> "gist-abc123"
 
     if url.contains("gist.github.com") {
-        let id = url.split('/').last().unwrap_or("team");
+        let id = url.split('/').next_back().unwrap_or("team");
         format!("gist-{}", &id[..8.min(id.len())])
     } else if url.contains("github.com") {
         url.trim_end_matches(".git")
