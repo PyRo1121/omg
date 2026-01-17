@@ -14,7 +14,7 @@ use omg_lib::cli::packages;
 use omg_lib::cli::runtimes;
 use omg_lib::cli::security;
 use omg_lib::cli::tool;
-use omg_lib::cli::{Cli, Commands, EnvCommands, ToolCommands, commands};
+use omg_lib::cli::{Cli, Commands, ContainerCommands, EnvCommands, TeamCommands, ToolCommands, commands};
 use omg_lib::core::{RuntimeBackend, elevate_if_needed, is_root, task_runner};
 use omg_lib::hooks;
 
@@ -235,6 +235,64 @@ async fn async_main() -> Result<()> {
                 env::sync(url).await?;
             }
         },
+        Commands::Team { command } => {
+            use omg_lib::cli::team;
+            match command {
+                TeamCommands::Init { team_id, name } => {
+                    team::init(&team_id, name.as_deref()).await?;
+                }
+                TeamCommands::Join { url } => {
+                    team::join(&url).await?;
+                }
+                TeamCommands::Status => {
+                    team::status().await?;
+                }
+                TeamCommands::Push => {
+                    team::push().await?;
+                }
+                TeamCommands::Pull => {
+                    team::pull().await?;
+                }
+                TeamCommands::Members => {
+                    team::members().await?;
+                }
+            }
+        }
+        Commands::Container { command } => {
+            use omg_lib::cli::container;
+            match command {
+                ContainerCommands::Status => {
+                    container::status()?;
+                }
+                ContainerCommands::Run { image, command: cmd, name, detach } => {
+                    container::run(&image, cmd, name, detach)?;
+                }
+                ContainerCommands::Shell { image } => {
+                    container::shell(image)?;
+                }
+                ContainerCommands::Build { dockerfile, tag } => {
+                    container::build(dockerfile, &tag)?;
+                }
+                ContainerCommands::List => {
+                    container::list()?;
+                }
+                ContainerCommands::Images => {
+                    container::images()?;
+                }
+                ContainerCommands::Pull { image } => {
+                    container::pull(&image)?;
+                }
+                ContainerCommands::Stop { container: c } => {
+                    container::stop(&c)?;
+                }
+                ContainerCommands::Exec { container: c, command: cmd } => {
+                    container::exec(&c, cmd)?;
+                }
+                ContainerCommands::Init { base } => {
+                    container::init(base)?;
+                }
+            }
+        }
         Commands::History { limit } => {
             commands::history(limit)?;
         }

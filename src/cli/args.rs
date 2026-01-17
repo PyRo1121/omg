@@ -251,6 +251,18 @@ pub enum Commands {
         command: EnvCommands,
     },
 
+    /// Team collaboration (shared locks, sync, status)
+    Team {
+        #[command(subcommand)]
+        command: TeamCommands,
+    },
+
+    /// Container management (Docker/Podman)
+    Container {
+        #[command(subcommand)]
+        command: ContainerCommands,
+    },
+
     /// View package transaction history
     History {
         /// Number of entries to show
@@ -302,6 +314,94 @@ pub enum ToolCommands {
     List,
     /// Remove a tool
     Remove { name: String },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum TeamCommands {
+    /// Initialize a new team workspace
+    Init {
+        /// Team identifier (e.g., "mycompany/frontend")
+        team_id: String,
+        /// Display name for the team
+        #[arg(short, long)]
+        name: Option<String>,
+    },
+    /// Join an existing team by remote URL
+    Join {
+        /// Remote URL (GitHub repo or Gist)
+        url: String,
+    },
+    /// Show team status and member sync state
+    Status,
+    /// Push local environment to team lock
+    Push,
+    /// Pull team lock and check for drift
+    Pull,
+    /// List team members and their sync status
+    Members,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ContainerCommands {
+    /// Show container runtime status (Docker/Podman)
+    Status,
+    /// Run a command in a container
+    Run {
+        /// Container image to use
+        image: String,
+        /// Command to run
+        #[arg(last = true)]
+        command: Vec<String>,
+        /// Container name
+        #[arg(short, long)]
+        name: Option<String>,
+        /// Run in background (detached)
+        #[arg(short, long)]
+        detach: bool,
+    },
+    /// Start an interactive shell in a container
+    Shell {
+        /// Container image (default: ubuntu:24.04 with project mounted)
+        #[arg(short, long)]
+        image: Option<String>,
+    },
+    /// Build a container image
+    Build {
+        /// Path to Dockerfile
+        #[arg(short, long)]
+        dockerfile: Option<String>,
+        /// Image tag
+        #[arg(short, long, default_value = "omg-dev:latest")]
+        tag: String,
+    },
+    /// List running containers
+    List,
+    /// List container images
+    Images,
+    /// Pull a container image
+    Pull {
+        /// Image to pull
+        image: String,
+    },
+    /// Stop a running container
+    Stop {
+        /// Container name or ID
+        container: String,
+    },
+    /// Execute a command in a running container
+    Exec {
+        /// Container name or ID
+        container: String,
+        /// Command to execute
+        #[arg(last = true)]
+        command: Vec<String>,
+    },
+    /// Generate a Dockerfile for the current project
+    Init {
+        /// Base image to use
+        #[arg(short, long)]
+        base: Option<String>,
+    },
 }
 
 #[derive(Subcommand, Debug)]
