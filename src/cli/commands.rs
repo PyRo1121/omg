@@ -18,7 +18,7 @@ use crate::package_managers::get_system_status;
 #[cfg(feature = "debian")]
 use crate::package_managers::{apt_get_system_status, apt_list_all_package_names};
 
-const fn use_debian_backend() -> bool {
+fn use_debian_backend() -> bool {
     #[cfg(feature = "debian")]
     {
         return is_debian_like();
@@ -70,14 +70,25 @@ pub async fn complete(_shell: &str, current: &str, last: &str, full: Option<&str
                 if let Ok(res) = client.search("", None).await {
                     res.packages.into_iter().map(|p| p.name).collect()
                 } else {
-                    crate::package_managers::alpm_direct::list_all_package_names()
-                        .unwrap_or_default()
+                    #[cfg(feature = "arch")]
+                    {
+                        crate::package_managers::alpm_direct::list_all_package_names()
+                            .unwrap_or_default()
+                    }
+                    #[cfg(not(feature = "arch"))]
+                    Vec::new()
                 }
             } else {
-                crate::package_managers::alpm_direct::list_all_package_names().unwrap_or_default()
+                #[cfg(feature = "arch")]
+                {
+                    crate::package_managers::alpm_direct::list_all_package_names().unwrap_or_default()
+                }
+                #[cfg(not(feature = "arch"))]
+                Vec::new()
             };
 
-            // Also include AUR package names (from cache)
+            // Also include AUR package names (from cache) - Arch only
+            #[cfg(feature = "arch")]
             if let Ok(aur_names) = engine.get_aur_package_names().await {
                 names.extend(aur_names);
                 names.sort();
@@ -562,8 +573,15 @@ pub async fn rollback(id: Option<String>) -> Result<()> {
             )
         );
     } else {
-        let pacman = crate::package_managers::OfficialPackageManager::new();
-        pacman.install(&to_install).await?;
+        #[cfg(feature = "arch")]
+        {
+            let pacman = crate::package_managers::OfficialPackageManager::new();
+            pacman.install(&to_install).await?;
+        }
+        #[cfg(not(feature = "arch"))]
+        {
+            anyhow::bail!("Rollback not implemented for this backend");
+        }
     }
 
     Ok(())

@@ -1,6 +1,6 @@
 //! Common types used throughout OMG
 
-use alpm_types::Version;
+use crate::package_managers::types::Version;
 use serde::{Deserialize, Serialize};
 
 /// Supported runtimes

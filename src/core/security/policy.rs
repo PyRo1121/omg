@@ -1,4 +1,4 @@
-use alpm_types::Version;
+use crate::package_managers::types::Version;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::fs;

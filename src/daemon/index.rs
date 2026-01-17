@@ -11,6 +11,7 @@ use nucleo_matcher::{Config, Matcher, Utf32String};
 use parking_lot::RwLock;
 use rayon::prelude::*;
 
+#[cfg(feature = "debian")]
 use crate::core::env::distro::is_debian_like;
 use crate::core::paths;
 use crate::daemon::db::PersistentCache;
@@ -36,14 +37,26 @@ pub struct PackageIndex {
 
 impl PackageIndex {
     pub fn new() -> Result<Self> {
-        if is_debian_like() {
-            #[cfg(feature = "debian")]
-            {
-                return Self::new_apt();
-            }
+        #[cfg(all(feature = "debian", not(feature = "arch")))]
+        {
+            return Self::new_apt();
         }
 
-        Self::new_alpm()
+        #[cfg(all(feature = "arch", feature = "debian"))]
+        {
+            if is_debian_like() {
+                return Self::new_apt();
+            }
+            return Self::new_alpm();
+        }
+
+        #[cfg(all(feature = "arch", not(feature = "debian")))]
+        {
+            return Self::new_alpm();
+        }
+
+        #[cfg(not(any(feature = "arch", feature = "debian")))]
+        anyhow::bail!("No package manager backend enabled")
     }
 
     /// Create index with preloading from persistent cache
@@ -127,6 +140,7 @@ impl PackageIndex {
             .map_or(0, |d| d.as_secs())
     }
 
+    #[cfg(feature = "arch")]
     fn new_alpm() -> Result<Self> {
         let mut packages = AHashMap::default();
         let mut search_items = Vec::new();
@@ -197,8 +211,9 @@ impl PackageIndex {
         let mut search_items_lower = Vec::new();
         let mut prefix_index: AHashMap<String, Vec<usize>> = AHashMap::new();
 
+        let empty: &[&str] = &[];
         let cache =
-            Cache::new(&[]).map_err(|e| anyhow::anyhow!(format!("APT cache error: {e:?}")))?;
+            Cache::new(empty).map_err(|e| anyhow::anyhow!(format!("APT cache error: {e:?}")))?;
         let sort = PackageSort::default();
 
         for pkg in cache.packages(&sort) {
@@ -370,7 +385,7 @@ impl PackageIndex {
 }
 
 #[cfg(feature = "debian")]
-fn collect_depends(version: &rust_apt::Version<'_>) -> Vec<String> {
+fn collect_depends(version: rust_apt::Version<'_>) -> Vec<String> {
     let mut depends = Vec::new();
     if let Some(deps) = version.dependencies() {
         for dep in deps {
@@ -378,7 +393,8 @@ fn collect_depends(version: &rust_apt::Version<'_>) -> Vec<String> {
                 for base in dep.iter() {
                     depends.push(base.name().to_string());
                 }
-            } else if let Some(base) = dep.first() {
+            } else {
+                let base = dep.first();
                 depends.push(base.name().to_string());
             }
         }
