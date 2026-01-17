@@ -244,7 +244,8 @@ impl App {
         }
         #[cfg(feature = "debian")]
         {
-            self.search_results = crate::package_managers::apt_search_sync(query).unwrap_or_default();
+            self.search_results =
+                crate::package_managers::apt_search_sync(query).unwrap_or_default();
         }
 
         Ok(())
@@ -267,11 +268,11 @@ impl App {
         // Use the actual orphan removal
         #[cfg(feature = "arch")]
         {
-            return crate::package_managers::remove_orphans().await;
+            crate::package_managers::remove_orphans().await
         }
         #[cfg(feature = "debian")]
         {
-            return crate::package_managers::apt_remove_orphans().map_err(Into::into);
+            crate::package_managers::apt_remove_orphans().map_err(Into::into)
         }
         #[cfg(not(any(feature = "arch", feature = "debian")))]
         Ok(())

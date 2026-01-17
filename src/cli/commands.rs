@@ -81,7 +81,8 @@ pub async fn complete(_shell: &str, current: &str, last: &str, full: Option<&str
             } else {
                 #[cfg(feature = "arch")]
                 {
-                    crate::package_managers::alpm_direct::list_all_package_names().unwrap_or_default()
+                    crate::package_managers::alpm_direct::list_all_package_names()
+                        .unwrap_or_default()
                 }
                 #[cfg(not(feature = "arch"))]
                 Vec::new()

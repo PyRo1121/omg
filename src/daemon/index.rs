@@ -39,20 +39,21 @@ impl PackageIndex {
     pub fn new() -> Result<Self> {
         #[cfg(all(feature = "debian", not(feature = "arch")))]
         {
-            return Self::new_apt();
+            Self::new_apt()
         }
 
         #[cfg(all(feature = "arch", feature = "debian"))]
         {
             if is_debian_like() {
-                return Self::new_apt();
+                Self::new_apt()
+            } else {
+                Self::new_alpm()
             }
-            return Self::new_alpm();
         }
 
         #[cfg(all(feature = "arch", not(feature = "debian")))]
         {
-            return Self::new_alpm();
+            Self::new_alpm()
         }
 
         #[cfg(not(any(feature = "arch", feature = "debian")))]
