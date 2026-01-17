@@ -98,6 +98,15 @@ pub fn socket_path() -> PathBuf {
     })
 }
 
+/// Fast status file path for zero-IPC reads (daemon writes, CLI reads directly).
+/// Located next to socket for same permissions/lifecycle.
+#[must_use]
+pub fn fast_status_path() -> PathBuf {
+    // Derive from socket path to ensure same directory
+    let sock = socket_path();
+    sock.with_file_name("omg.status")
+}
+
 /// Returns true if running in hermetic test mode.
 #[must_use]
 pub fn test_mode() -> bool {

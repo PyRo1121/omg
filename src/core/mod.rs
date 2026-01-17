@@ -6,6 +6,7 @@ pub mod completion;
 mod database;
 pub mod env;
 mod error;
+pub mod fast_status;
 pub mod history;
 pub mod http;
 pub mod paths;

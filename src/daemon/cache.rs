@@ -19,6 +19,8 @@ pub struct PackageCache {
     system_status: Cache<String, StatusResult>,
     /// Explicit package list cache
     explicit_packages: Cache<String, Vec<String>>,
+    /// Explicit package count cache
+    explicit_count: Cache<String, usize>,
 }
 
 impl PackageCache {
@@ -53,6 +55,10 @@ impl PackageCache {
             .max_capacity(1)
             .time_to_live(status_ttl)
             .build();
+        let explicit_count = Cache::builder()
+            .max_capacity(1)
+            .time_to_live(ttl)
+            .build();
         Self {
             cache,
             detailed_cache,
@@ -60,6 +66,7 @@ impl PackageCache {
             max_size,
             system_status,
             explicit_packages,
+            explicit_count,
         }
     }
 
@@ -70,6 +77,8 @@ impl PackageCache {
 
     /// Update system status cache
     pub fn update_status(&self, result: StatusResult) {
+        self.explicit_count
+            .insert("explicit_count".to_string(), result.explicit_packages);
         self.system_status.insert("status".to_string(), result);
     }
 
@@ -78,10 +87,23 @@ impl PackageCache {
         self.explicit_packages.get("explicit")
     }
 
+    /// Get cached explicit package count
+    pub fn get_explicit_count(&self) -> Option<usize> {
+        self.explicit_count.get("explicit_count")
+    }
+
     /// Update explicit package cache
     pub fn update_explicit(&self, packages: Vec<String>) {
+        self.explicit_count
+            .insert("explicit_count".to_string(), packages.len());
         self.explicit_packages
             .insert("explicit".to_string(), packages);
+    }
+
+    /// Update explicit package count cache
+    pub fn update_explicit_count(&self, count: usize) {
+        self.explicit_count
+            .insert("explicit_count".to_string(), count);
     }
 
     /// Get cached results for a query
@@ -109,6 +131,7 @@ impl PackageCache {
         self.info_miss_cache.invalidate_all();
         self.system_status.invalidate_all();
         self.explicit_packages.invalidate_all();
+        self.explicit_count.invalidate_all();
     }
 
     /// Get detailed info from cache

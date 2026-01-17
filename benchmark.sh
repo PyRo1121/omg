@@ -1,11 +1,19 @@
 #!/bin/bash
 set -e
 
+# Use rustup toolchain to avoid cargo/rustc mismatch
+export PATH="$HOME/.cargo/bin:$PATH"
+
 # Configuration
 ITERATIONS=10
 WARMUP=2
 OMG="./target/release/omg"
 OMGD="./target/release/omgd"
+BENCH_DIR="$(mktemp -d -t omg-bench-XXXX)"
+export OMG_DAEMON_DATA_DIR="$BENCH_DIR/data"
+export OMG_SOCKET_PATH="$BENCH_DIR/omg.sock"
+DAEMON_LOG="$BENCH_DIR/omgd.log"
+mkdir -p "$OMG_DAEMON_DATA_DIR"
 
 if ! command -v bc >/dev/null 2>&1; then
     echo "❌ 'bc' is required for benchmarking (install: pacman -S bc)" >&2
@@ -14,7 +22,7 @@ fi
 
 # Build release first
 echo "🔨 Building release binaries..."
-cargo build --release --quiet
+cargo build --release --features arch --quiet
 
 echo "========================================================"
 echo "🚀 OMG World-Class Performance Benchmark"
@@ -22,18 +30,20 @@ echo "========================================================"
 
 # Start Daemon for max speed
 echo "Starting OMG Daemon..."
-$OMGD --foreground > /dev/null 2>&1 &
+$OMGD --foreground > "$DAEMON_LOG" 2>&1 &
 DAEMON_PID=$!
 sleep 2
 
 if ! $OMG status > /dev/null 2>&1; then
     echo "❌ OMG daemon failed to start" >&2
+    tail -n 50 "$DAEMON_LOG" >&2 || true
     kill $DAEMON_PID > /dev/null 2>&1 || true
     exit 1
 fi
 
 cleanup() {
     kill $DAEMON_PID > /dev/null 2>&1 || true
+    rm -rf "$BENCH_DIR"
 }
 trap cleanup EXIT
 

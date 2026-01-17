@@ -450,6 +450,15 @@ impl PooledSyncClient {
         }
     }
 
+    /// Get explicit package count
+    pub fn explicit_count(&mut self) -> Result<usize> {
+        let id = self.request_id.fetch_add(1, Ordering::SeqCst);
+        match self.call(&Request::ExplicitCount { id })? {
+            ResponseResult::ExplicitCount(count) => Ok(count),
+            _ => anyhow::bail!("Invalid response type"),
+        }
+    }
+
     /// Get system status
     pub fn status(&mut self) -> Result<StatusResult> {
         let id = self.request_id.fetch_add(1, Ordering::SeqCst);

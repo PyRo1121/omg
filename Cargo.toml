@@ -23,6 +23,10 @@ path = "src/bin/omg.rs"
 name = "omgd"
 path = "src/bin/omgd.rs"
 
+[[bin]]
+name = "omg-fast"
+path = "src/bin/omg-fast.rs"
+
 [dependencies]
 # CLI Framework
 clap = { version = "4.5.54", features = ["derive", "env", "wrap_help"] }
@@ -63,6 +67,7 @@ tokio-util = { version = "0.7.18", features = ["io", "codec"] }
 # Archives + compression (PURE RUST - no C deps)
 tar = "0.4.44"
 flate2 = { version = "1.1.8", default-features = false, features = ["rust_backend"] }  # miniz_oxide
+lz4_flex = "0.11"  # Pure Rust LZ4 for Ubuntu Packages files
 zip = { version = "2.4.2", default-features = false, features = ["deflate", "time"] }
 lzma-rs = "0.3"  # Pure Rust XZ/LZMA (replaces xz2)
 regex = "1.12.2"
@@ -154,7 +159,7 @@ predicates = "3.1"
 pprof = { version = "0.13", features = ["flamegraph"] }
 
 [profile.release]
-lto = true
+lto = "thin"  # Use thin LTO to avoid rustc ICE with full LTO
 codegen-units = 1
 panic = "abort"
 strip = true

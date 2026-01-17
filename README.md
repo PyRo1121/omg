@@ -5,6 +5,19 @@
 OMG is a next-generation package manager designed for 2026 standards. It eliminates the friction of switching between `pacman`, `yay`, `nvm`, `pyenv`, and `rustup` by unifying them into a single, blazing-fast, Rust-native binary.
 > **Note**: Currently supports Arch Linux. Debian/Ubuntu support is planned for a future release.
 
+## ⭐ Big Changes
+- **World-class performance** across system packages and language runtimes.
+- **Swiss‑army‑knife unification** of system packages + language runtimes + tooling in one Rust-native binary.
+- **Built for acquisition-grade scale**: single-binary deployment, zero-subprocess architecture, and measurable speed wins over legacy tooling.
+- **Go-to-market in motion**: initial user growth planned with upcoming ad campaigns.
+
+## 🧠 About the Founder (VC-Oriented)
+**Olen Latham** — solo founder and builder. Focused on solid AI-first engineering and shipping high-performance developer infrastructure.
+
+**Vision**: replace fragmented tooling with a single, best‑in‑class “developer Swiss Army knife” that is faster than anything on the market.
+
+**Business trajectory**: early-stage with no current traction; marketing activation is planned to drive adoption. Long‑term path targets strategic acquisition by a larger software corporation.
+
 It now ships a full **runtime-aware task runner**, Bun-first JavaScript workflows, and native Rust toolchain management with `rust-toolchain.toml` support.
 
 > "50-200x faster than traditional tools. Zero subprocess overhead. Zero-trust security."
@@ -216,7 +229,9 @@ omg env sync <gist-url>
 
 ## 📊 Real-World Performance
 
-OMG achieves sub-5ms performance on all core operations through a persistent daemon that maintains an in-memory index of Arch packages.
+OMG achieves ~6ms performance on all core operations through a persistent daemon that maintains an in-memory index of packages.
+
+### Arch Linux (pacman/yay)
 
 **Benchmark Environment:**
 - **CPU:** Intel i9-14900K (32 cores, 5.8GHz turbo)
@@ -224,14 +239,28 @@ OMG achieves sub-5ms performance on all core operations through a persistent dae
 - **Kernel:** Linux 6.18.3-arch1-1
 - **Iterations:** 10 (with 2 warmup runs)
 
-### Search, Info, and Status Commands
-
 | Command | OMG (Daemon) | pacman | yay | Speedup |
 |---------|--------------|--------|-----|---------:|
-| **search** | **4.70ms** ✨ | 126.40ms | 1516.80ms | **27x faster** |
-| **info** | **4.80ms** ✨ | 128.80ms | 267.50ms | **56x faster** |
-| **status** | **4.60ms** ✨ | N/A | N/A | *OMG only* |
-| **explicit** | **4.50ms** ✨ | 11.50ms | 20.90ms | 2.5x faster |
+| **search** | **5.70ms** ✨ | 129ms | 1321ms | **22x faster** |
+| **info** | **6.30ms** ✨ | 135ms | 292ms | **21x faster** |
+| **status** | **6.20ms** ✨ | N/A | N/A | *OMG only* |
+| **explicit** | **1.40ms** ✨ | 14ms | 24ms | **10x faster** |
+
+> 💡 **Pro tip:** Use `omg-fast ec` or shell function `omg-explicit-count` for 10x faster explicit counts!
+
+### Debian/Ubuntu (apt)
+
+**Benchmark Environment:**
+- **OS:** Ubuntu 24.04 (Docker)
+- **Iterations:** 5 (with 2 warmup runs)
+
+| Command | OMG (Daemon) | apt-cache | Nala | vs apt | vs Nala |
+|---------|--------------|-----------|------|-------:|--------:|
+| **search** | **11ms** ✨ | 652ms | 1160ms | **59x** | **105x** |
+| **info** | **27ms** ✨ | 462ms | 788ms | **17x** | **29x** |
+| **explicit** | **2ms** ✨ | 601ms | 966ms | **300x** | **483x** |
+
+OMG parses `/var/lib/dpkg/status` and APT's Packages files directly, bypassing slow Python/apt-cache overhead. The daemon maintains an in-memory index for instant cached searches.
 
 ### Why These Numbers Matter
 
