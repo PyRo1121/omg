@@ -3,7 +3,7 @@
 **The Fastest Unified Package Manager for Arch Linux + All Language Runtimes**
 
 OMG is a next-generation package manager designed for 2026 standards. It eliminates the friction of switching between `pacman`, `yay`, `nvm`, `pyenv`, and `rustup` by unifying them into a single, blazing-fast, Rust-native binary.
-> **Note**: Currently supports Arch Linux. Debian/Ubuntu support is planned for a future release.
+> **Note**: Supports **Arch Linux** and **Debian/Ubuntu**. RPM-based distros coming soon.
 
 ## ⭐ Big Changes
 - **World-class performance** across system packages and language runtimes.
@@ -85,6 +85,12 @@ OMG doesn't just install; it audits, verifies, and protects.
 - **Fingerprinting**: Generate a deterministic SHA256 hash of your entire environment (runtimes + packages).
 - **Drift Protection**: `omg env check` alerts you the moment your local environment diverges from the project's `omg.lock`.
 - **Gist Integration**: Share your exact setup instantly with `omg env share` and `omg env sync <url>`.
+
+### 🐳 Container Integration (Docker/Podman)
+- **Auto-Detection**: Automatically detects Docker or Podman (prefers Podman for rootless security).
+- **Dev Shells**: `omg container shell` mounts your project and drops you into an interactive container.
+- **Build Support**: `omg container build` builds images from Dockerfiles with OMG-optimized defaults.
+- **Project Init**: `omg container init` generates a Dockerfile based on detected project runtimes.
 
 ### 🏃 Unified Task Runner
 Stop guessing if it's `npm run`, `cargo run`, `make`, `maven`, or `gradle`.
@@ -223,6 +229,22 @@ omg env share
 
 # Teammate syncs
 omg env sync <gist-url>
+```
+
+### 4. Container Development
+```bash
+# Check container runtime status
+omg container status
+
+# Start a dev shell with project mounted
+omg container shell
+
+# Generate a Dockerfile for your project
+omg container init
+
+# Build and run
+omg container build -t myapp
+omg container run myapp -- npm start
 ```
 
 ---
@@ -420,12 +442,37 @@ Below is a high-level map of the command surface. Run `omg <command> --help` for
 
 **Team sync & history**
 - `omg env <capture|check|share|sync>`: environment lock management
+- `omg team init <team-id>`: initialize team workspace with git hooks
+- `omg team join <url>`: join existing team by remote URL
+- `omg team status`: show team sync status and members
+- `omg team push`: push local environment to team lock
+- `omg team pull`: pull team lock and check for drift
+- `omg team members`: list team members and sync status
 - `omg history`: list transactions
 - `omg rollback [id]`: rollback (official packages only for now)
+
+**Container management (Docker/Podman)**
+- `omg container status`: show container runtime status
+- `omg container shell`: interactive dev shell with project mounted
+- `omg container run <image> [-- cmd]`: run command in container
+- `omg container build [-t tag]`: build container image
+- `omg container init`: generate Dockerfile for project
+- `omg container list`: list running containers
+- `omg container images`: list container images
+- `omg container pull <image>`: pull container image
+- `omg container stop <container>`: stop running container
+- `omg container exec <container> [-- cmd]`: exec in running container
 
 **Daemon**
 - `omg daemon`: start daemon in background
 - `omgd`: run the daemon directly
+
+**Ultra-fast queries (omg-fast)**
+- `omg-fast status`: instant system status (3ms)
+- `omg-fast ec`: explicit package count (sub-ms)
+- `omg-fast tc`: total package count
+- `omg-fast uc`: updates count
+- `omg-fast oc`: orphan count
 
 ### Package Management Details
 **Search flow**
@@ -619,13 +666,13 @@ We are building the last dev tool you'll ever need.
 - [x] **`omg dash`**: Interactive TUI dashboard. Real-time visualization of system status, vulnerabilities, and runtime versions.
 
 ### Planned Features 🚧
-- [ ] **Debian/Ubuntu Support**: Full APT integration for Debian-based distributions
+- [x] **Debian/Ubuntu Support**: Full APT integration (59-483x faster than apt-cache/Nala)
 - [ ] **Fedora/RPM Support**: DNF/YUM package manager integration
 - [ ] **macOS Support**: Homebrew integration for macOS users
 - [ ] **Windows Support**: Chocolatey/Winget integration for Windows
-- [ ] **Container Integration**: Docker/Podman support for containerized environments
+- [x] **Container Integration**: Docker/Podman support for containerized environments (`omg container shell/run/build/init`)
 - [ ] **GUI Dashboard**: Desktop application for visual package management
-- [ ] **Team Features**: Shared environment locks with collaborative workflows
+- [x] **Team Features**: Shared environment locks with collaborative workflows (`omg team init/join/status/push/pull`)
 
 ---
 
