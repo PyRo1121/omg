@@ -12,10 +12,10 @@ use std::fs;
 use std::path::Path;
 use tokio::task;
 
-#[cfg(feature = "arch")]
-use crate::package_managers::list_explicit;
 #[cfg(feature = "debian")]
 use crate::package_managers::apt_list_explicit as list_explicit;
+#[cfg(feature = "arch")]
+use crate::package_managers::list_explicit;
 use crate::runtimes::{
     BunManager, GoManager, JavaManager, NodeManager, PythonManager, RubyManager, RustManager,
 };

@@ -11,6 +11,9 @@
 #
 set -euo pipefail
 
+# Fix PATH to use rustup's cargo/rustc pair (avoids version mismatch with OMG-managed Rust)
+export PATH="$HOME/.cargo/bin:$PATH"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -160,7 +163,7 @@ run_quality_checks() {
   
   # 2. Clippy (strict)
   log_info "Running clippy with strict warnings..."
-  if ! cargo clippy --all-targets -- -D warnings; then
+  if ! cargo clippy --features arch --all-targets -- -D warnings; then
     log_error "Clippy found issues"
     failed=1
   else
@@ -169,7 +172,7 @@ run_quality_checks() {
   
   # 3. Build check
   log_info "Checking build..."
-  if ! cargo check --all-targets; then
+  if ! cargo check --features arch --all-targets; then
     log_error "Build check failed"
     failed=1
   else
@@ -179,7 +182,7 @@ run_quality_checks() {
   # 4. Tests (unless skipped)
   if [[ "$SKIP_TESTS" != "1" ]]; then
     log_info "Running test suite..."
-    if ! cargo test -- --test-threads=1; then
+    if ! cargo test --features arch -- --test-threads=1; then
       log_error "Tests failed"
       failed=1
     else
@@ -249,9 +252,9 @@ build_release() {
   
   log_info "Target: $TARGET"
   
-  # Build with optimizations
-  RUSTFLAGS="-C target-cpu=native" cargo build --release --locked 2>&1 || \
-    cargo build --release  # Fallback without --locked
+  # Build with optimizations (arch feature for Arch Linux)
+  RUSTFLAGS="-C target-cpu=native" cargo build --release --features arch --locked 2>&1 || \
+    cargo build --release --features arch  # Fallback without --locked
   
   # Verify binaries exist
   [[ -f target/release/omg ]] || die "Binary 'omg' not found"

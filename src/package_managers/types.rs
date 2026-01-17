@@ -7,7 +7,7 @@ use std::str::FromStr;
 #[cfg(feature = "arch")]
 use std::sync::LazyLock;
 
-/// Version type - uses alpm_types::Version on Arch, String on Debian
+/// Version type - uses `alpm_types::Version` on Arch, String on Debian
 #[cfg(feature = "arch")]
 pub type Version = AlpmVersion;
 
