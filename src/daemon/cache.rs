@@ -55,10 +55,7 @@ impl PackageCache {
             .max_capacity(1)
             .time_to_live(status_ttl)
             .build();
-        let explicit_count = Cache::builder()
-            .max_capacity(1)
-            .time_to_live(ttl)
-            .build();
+        let explicit_count = Cache::builder().max_capacity(1).time_to_live(ttl).build();
         Self {
             cache,
             detailed_cache,
