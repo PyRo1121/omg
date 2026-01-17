@@ -55,16 +55,14 @@ impl FastStatus {
     /// Write status to file (atomic via temp + rename)
     pub fn write_to_file(&self, path: &Path) -> std::io::Result<()> {
         let tmp_path = path.with_extension("tmp");
-        
+
         // Write as raw bytes
-        let bytes: [u8; std::mem::size_of::<Self>()] = unsafe {
-            std::mem::transmute_copy(self)
-        };
-        
+        let bytes: [u8; std::mem::size_of::<Self>()] = unsafe { std::mem::transmute_copy(self) };
+
         let mut file = File::create(&tmp_path)?;
         file.write_all(&bytes)?;
         file.sync_all()?;
-        
+
         // Atomic rename
         std::fs::rename(&tmp_path, path)?;
         Ok(())
@@ -75,13 +73,13 @@ impl FastStatus {
         let mut file = File::open(path).ok()?;
         let mut bytes = [0u8; std::mem::size_of::<Self>()];
         file.read_exact(&mut bytes).ok()?;
-        
+
         // Validate magic
         let status: Self = unsafe { std::mem::transmute(bytes) };
         if status.magic != MAGIC || status.version != VERSION {
             return None;
         }
-        
+
         // Check freshness (max 60 seconds old)
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -89,7 +87,7 @@ impl FastStatus {
         if now.saturating_sub(status.timestamp) > 60 {
             return None;
         }
-        
+
         Some(status)
     }
 

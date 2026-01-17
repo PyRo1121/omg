@@ -84,9 +84,8 @@ pub async fn run(listener: UnixListener) -> Result<()> {
 
             if let Ok((total, explicit, orphans, updates)) = status {
                 // Write fast status file for zero-IPC CLI reads (no vuln scan needed)
-                let fast_status = crate::core::fast_status::FastStatus::new(
-                    total, explicit, orphans, updates,
-                );
+                let fast_status =
+                    crate::core::fast_status::FastStatus::new(total, explicit, orphans, updates);
                 if let Err(e) = fast_status.write_default() {
                     tracing::warn!("Failed to write fast status file: {e}");
                 }

@@ -301,7 +301,9 @@ impl PackageIndex {
                         "Depends" => {
                             depends = value
                                 .split(',')
-                                .map(|d| d.trim().split_whitespace().next().unwrap_or("").to_string())
+                                .map(|d| {
+                                    d.trim().split_whitespace().next().unwrap_or("").to_string()
+                                })
                                 .filter(|d| !d.is_empty())
                                 .collect();
                         }
@@ -385,7 +387,7 @@ impl PackageIndex {
                 }
             }
         }
-        
+
         results
     }
 

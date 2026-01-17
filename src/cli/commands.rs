@@ -219,9 +219,17 @@ pub fn status_sync() -> Result<()> {
 
     // ULTRA FAST: Try binary status file first (zero IPC, sub-ms)
     let (total, explicit, orphans, updates, security_vulnerabilities, cached_runtimes) =
-        if let Some(fast) = crate::core::fast_status::FastStatus::read_from_file(&crate::core::paths::fast_status_path()) {
-            (fast.total_packages as usize, fast.explicit_packages as usize, 
-             fast.orphan_packages as usize, fast.updates_available as usize, 0, None)
+        if let Some(fast) = crate::core::fast_status::FastStatus::read_from_file(
+            &crate::core::paths::fast_status_path(),
+        ) {
+            (
+                fast.total_packages as usize,
+                fast.explicit_packages as usize,
+                fast.orphan_packages as usize,
+                fast.updates_available as usize,
+                0,
+                None,
+            )
         } else if use_debian_backend() {
             #[cfg(feature = "debian")]
             {

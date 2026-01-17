@@ -193,17 +193,17 @@ pub fn get_sync_pkg_info(name: &str) -> Result<Option<PackageInfo>> {
     use std::fs;
     use std::io::Read;
     use std::path::Path;
-    
+
     let lists_dir = Path::new("/var/lib/apt/lists");
     if !lists_dir.exists() {
         return Ok(None);
     }
-    
+
     for entry in fs::read_dir(lists_dir)? {
         let entry = entry?;
         let path = entry.path();
         let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        
+
         let content = if filename.ends_with("_Packages.lz4") {
             if let Ok(compressed) = fs::read(&path) {
                 let mut decoder = lz4_flex::frame::FrameDecoder::new(&compressed[..]);
@@ -221,14 +221,14 @@ pub fn get_sync_pkg_info(name: &str) -> Result<Option<PackageInfo>> {
         } else {
             None
         };
-        
+
         if let Some(content) = content {
             if let Some(info) = parse_package_info(&content, name) {
                 return Ok(Some(info));
             }
         }
     }
-    
+
     Ok(None)
 }
 
@@ -238,7 +238,7 @@ fn parse_package_info(content: &str, target_name: &str) -> Option<PackageInfo> {
         if paragraph.trim().is_empty() {
             continue;
         }
-        
+
         let mut name = String::new();
         let mut version = String::new();
         let mut description = String::new();
@@ -246,16 +246,16 @@ fn parse_package_info(content: &str, target_name: &str) -> Option<PackageInfo> {
         let mut size = 0u64;
         let mut installed_size = 0i64;
         let mut depends = Vec::new();
-        
+
         for line in paragraph.lines() {
             if line.starts_with(' ') || line.starts_with('\t') {
                 continue;
             }
-            
+
             if let Some((key, value)) = line.split_once(':') {
                 let key = key.trim();
                 let value = value.trim();
-                
+
                 match key {
                     "Package" => name = value.to_string(),
                     "Version" => version = value.to_string(),
@@ -264,7 +264,8 @@ fn parse_package_info(content: &str, target_name: &str) -> Option<PackageInfo> {
                     "Size" => size = value.parse().unwrap_or(0),
                     "Installed-Size" => installed_size = value.parse::<i64>().unwrap_or(0) * 1024,
                     "Depends" => {
-                        depends = value.split(',')
+                        depends = value
+                            .split(',')
                             .map(|d| d.trim().split_whitespace().next().unwrap_or("").to_string())
                             .filter(|d| !d.is_empty())
                             .collect();
@@ -273,7 +274,7 @@ fn parse_package_info(content: &str, target_name: &str) -> Option<PackageInfo> {
                 }
             }
         }
-        
+
         if name == target_name {
             return Some(PackageInfo {
                 name,
@@ -302,21 +303,21 @@ pub fn list_installed_fast() -> Result<Vec<LocalPackage>> {
 /// Parse dpkg status file directly for maximum speed
 fn list_installed_direct() -> Result<Vec<LocalPackage>> {
     use std::fs;
-    
+
     let status_file = fs::read_to_string("/var/lib/dpkg/status")?;
     let mut packages = Vec::with_capacity(1000);
-    
+
     for paragraph in status_file.split("\n\n") {
         if paragraph.trim().is_empty() {
             continue;
         }
-        
+
         let mut name = "";
         let mut version = "";
         let mut description = "";
         let mut status = "";
         let mut auto_installed = false;
-        
+
         for line in paragraph.lines() {
             if line.starts_with(' ') || line.starts_with('\t') {
                 continue;
@@ -333,21 +334,25 @@ fn list_installed_direct() -> Result<Vec<LocalPackage>> {
                 }
             }
         }
-        
+
         // Only include installed packages (status contains "installed")
         if name.is_empty() || !status.contains("installed") || status.contains("deinstall") {
             continue;
         }
-        
+
         packages.push(LocalPackage {
             name: name.to_string(),
             version: version.to_string(),
             description: description.to_string(),
             install_size: 0,
-            reason: if auto_installed { "dependency" } else { "explicit" },
+            reason: if auto_installed {
+                "dependency"
+            } else {
+                "explicit"
+            },
         });
     }
-    
+
     Ok(packages)
 }
 
@@ -360,17 +365,19 @@ pub fn list_explicit() -> Result<Vec<String>> {
 fn list_explicit_direct() -> Result<Vec<String>> {
     use std::collections::HashSet;
     use std::fs;
-    
+
     // Step 1: Get all installed packages from dpkg status
     let status_file = fs::read_to_string("/var/lib/dpkg/status")?;
     let mut installed: HashSet<String> = HashSet::new();
-    
+
     for paragraph in status_file.split("\n\n") {
         let mut name = "";
         let mut status = "";
-        
+
         for line in paragraph.lines() {
-            if line.starts_with(' ') { continue; }
+            if line.starts_with(' ') {
+                continue;
+            }
             if let Some((key, value)) = line.split_once(':') {
                 match key {
                     "Package" => name = value.trim(),
@@ -379,12 +386,12 @@ fn list_explicit_direct() -> Result<Vec<String>> {
                 }
             }
         }
-        
+
         if !name.is_empty() && status.contains("installed") && !status.contains("deinstall") {
             installed.insert(name.to_string());
         }
     }
-    
+
     // Step 2: Read auto-installed markers from apt
     let auto_installed: HashSet<String> = fs::read_to_string("/var/lib/apt/extended_states")
         .map(|content| {
@@ -400,14 +407,14 @@ fn list_explicit_direct() -> Result<Vec<String>> {
             auto
         })
         .unwrap_or_default();
-    
+
     // Step 3: Explicit = installed - auto-installed
     let mut explicit: Vec<String> = installed
         .into_iter()
         .filter(|pkg| !auto_installed.contains(pkg))
         .collect();
     explicit.sort();
-    
+
     Ok(explicit)
 }
 
@@ -451,25 +458,25 @@ fn search_sync_blocking(query: &str) -> Result<Vec<SyncPackage>> {
     use std::fs;
     use std::io::Read;
     use std::path::Path;
-    
+
     let query_lower = query.to_lowercase();
     let mut results = Vec::new();
     let lists_dir = Path::new("/var/lib/apt/lists");
-    
+
     if !lists_dir.exists() {
         return Ok(results);
     }
-    
+
     // Parse Packages files with early termination once we have enough results
     if let Ok(entries) = fs::read_dir(lists_dir) {
         for entry in entries.flatten() {
             if results.len() >= 100 {
                 break;
             }
-            
+
             let path = entry.path();
             let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            
+
             let content = if filename.ends_with("_Packages.lz4") {
                 fs::read(&path).ok().and_then(|compressed| {
                     let mut decoder = lz4_flex::frame::FrameDecoder::new(&compressed[..]);
@@ -489,13 +496,13 @@ fn search_sync_blocking(query: &str) -> Result<Vec<SyncPackage>> {
             } else {
                 None
             };
-            
+
             if let Some(content) = content {
                 parse_packages_fast(&content, &query_lower, &mut results);
             }
         }
     }
-    
+
     results.truncate(100);
     Ok(results)
 }
@@ -509,12 +516,12 @@ fn parse_packages_fast(content: &str, query: &str, results: &mut Vec<SyncPackage
         if paragraph.trim().is_empty() {
             continue;
         }
-        
+
         let mut name = "";
         let mut version = "";
         let mut description = "";
         let mut size = 0u64;
-        
+
         for line in paragraph.lines() {
             if line.starts_with(' ') || line.starts_with('\t') {
                 continue;
@@ -529,11 +536,11 @@ fn parse_packages_fast(content: &str, query: &str, results: &mut Vec<SyncPackage
                 }
             }
         }
-        
+
         if name.is_empty() {
             continue;
         }
-        
+
         // Check match
         let name_lower = name.to_lowercase();
         if name_lower.contains(query) || description.to_lowercase().contains(query) {
