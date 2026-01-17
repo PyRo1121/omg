@@ -107,11 +107,11 @@ pub async fn run(listener: UnixListener) -> Result<()> {
 
             // Pre-compute explicit package list for instant first query
             #[cfg(feature = "arch")]
-            if !use_debian_backend() {
-                if let Ok(explicit_pkgs) = crate::package_managers::list_explicit_fast() {
-                    state_worker.cache.update_explicit(explicit_pkgs);
-                    tracing::debug!("Pre-warmed explicit package cache");
-                }
+            if !use_debian_backend()
+                && let Ok(explicit_pkgs) = crate::package_managers::list_explicit_fast()
+            {
+                state_worker.cache.update_explicit(explicit_pkgs);
+                tracing::debug!("Pre-warmed explicit package cache");
             }
         }
 

@@ -5,7 +5,7 @@
 //!
 //! Usage:
 //!   omg-fast ec       # explicit count
-//!   omg-fast tc       # total count  
+//!   omg-fast tc       # total count
 //!   omg-fast oc       # orphan count
 //!   omg-fast uc       # updates count
 //!   omg-fast status   # full status display
@@ -15,20 +15,18 @@ use std::io::Read;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let cmd = args.get(1).map(String::as_str).unwrap_or("ec");
+    let cmd = args.get(1).map_or("ec", String::as_str);
 
     // Get status file path (same logic as daemon)
-    let path = std::env::var("XDG_RUNTIME_DIR")
-        .map(|d| format!("{}/omg.status", d))
-        .unwrap_or_else(|_| "/tmp/omg.status".to_string());
+    let path = std::env::var("XDG_RUNTIME_DIR").map_or_else(
+        |_| "/tmp/omg.status".to_string(),
+        |d| format!("{d}/omg.status"),
+    );
 
     // Read 32-byte status file
-    let mut file = match File::open(&path) {
-        Ok(f) => f,
-        Err(_) => {
-            eprintln!("0");
-            std::process::exit(1);
-        }
+    let Ok(mut file) = File::open(&path) else {
+        eprintln!("0");
+        std::process::exit(1);
     };
 
     let mut buf = [0u8; 32];
@@ -71,5 +69,5 @@ fn main() {
             eprintln!("Usage: omg-fast [ec|tc|oc|uc|status]");
             std::process::exit(1);
         }
-    };
+    }
 }

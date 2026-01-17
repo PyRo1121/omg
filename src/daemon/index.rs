@@ -371,19 +371,18 @@ impl PackageIndex {
                 break;
             }
 
-            if let Some(search_lower) = self.search_items_lower.get(idx) {
-                if search_lower.contains(&query_lower) {
-                    if let Some(item) = self.search_items.get(idx) {
-                        let name = &item.0;
-                        if let Some(p) = self.packages.get(name) {
-                            results.push(PackageInfo {
-                                name: p.name.clone(),
-                                version: p.version.clone(),
-                                description: p.description.clone(),
-                                source: p.source.clone(),
-                            });
-                        }
-                    }
+            if let Some(search_lower) = self.search_items_lower.get(idx)
+                && search_lower.contains(&query_lower)
+                && let Some(item) = self.search_items.get(idx)
+            {
+                let name = &item.0;
+                if let Some(p) = self.packages.get(name) {
+                    results.push(PackageInfo {
+                        name: p.name.clone(),
+                        version: p.version.clone(),
+                        description: p.description.clone(),
+                        source: p.source.clone(),
+                    });
                 }
             }
         }

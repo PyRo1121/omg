@@ -720,11 +720,15 @@ mod security {
     #[test]
     fn test_audit_command() {
         let (success, _stdout, stderr) = run_omg(&["audit"]);
-        // May succeed or fail depending on daemon status
+        // May succeed or fail depending on daemon status or license tier
         // Should not crash
         assert!(
-            success || stderr.contains("daemon") || stderr.contains("Daemon"),
-            "Audit should work or report daemon issue"
+            success
+                || stderr.contains("daemon")
+                || stderr.contains("Daemon")
+                || stderr.contains("requires")
+                || stderr.contains("tier"),
+            "Audit should work or report daemon/license issue"
         );
     }
 

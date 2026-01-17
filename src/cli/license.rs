@@ -21,10 +21,10 @@ pub async fn activate(key: &str) -> Result<()> {
                 tier.price().dimmed()
             );
             if let Some(customer) = &stored.customer {
-                println!("  Customer: {}", customer);
+                println!("  Customer: {customer}");
             }
             if let Some(expires) = &stored.expires_at {
-                println!("  Expires: {}", expires);
+                println!("  Expires: {expires}");
             }
             println!("\n  Features unlocked:");
             for feature in license::features_for_tier(tier) {
@@ -58,10 +58,10 @@ pub fn status() -> Result<()> {
                 tier.price().dimmed()
             );
             if let Some(customer) = &stored.customer {
-                println!("  Customer: {}", customer);
+                println!("  Customer: {customer}");
             }
             if let Some(expires) = &stored.expires_at {
-                println!("  Expires: {}", expires);
+                println!("  Expires: {expires}");
             }
         }
         None => {
@@ -99,7 +99,7 @@ pub fn status() -> Result<()> {
         if tier >= Tier::Team {
             "✓".green().to_string()
         } else {
-            format!("{}", "$29/mo".dimmed())
+            format!("{}", "$200/mo".dimmed())
         }
     );
     for feature in TEAM_FEATURES {

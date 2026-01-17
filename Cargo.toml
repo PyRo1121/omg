@@ -1,6 +1,6 @@
 [package]
 name = "omg"
-version = "0.1.55"
+version = "0.1.59"
 edition = "2024"
 rust-version = "1.92"
 description = "The Fastest Unified Package Manager for Arch Linux + All Language Runtimes"
@@ -10,6 +10,9 @@ repository = "https://github.com/PyRo1121/omg/"
 readme = "README.md"
 keywords = ["package-manager", "arch-linux", "version-manager", "runtime"]
 categories = ["command-line-utilities", "development-tools"]
+
+[package.metadata.cargo-machete]
+ignored = ["ar", "gzp", "winnow"]  # Used in debian feature
 
 [lib]
 name = "omg_lib"

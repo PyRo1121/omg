@@ -324,7 +324,8 @@ impl ContainerManager {
 
         // Add runtime version comments
         for (runtime, version) in runtimes {
-            dockerfile.push_str(&format!("# {runtime}: {version}\n"));
+            use std::fmt::Write as _;
+            let _ = writeln!(dockerfile, "# {runtime}: {version}");
         }
 
         dockerfile.push_str("\nWORKDIR /app\n");

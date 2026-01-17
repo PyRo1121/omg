@@ -18,7 +18,7 @@ pub struct FastStatus {
     /// Version of the format
     pub version: u8,
     /// Padding for alignment
-    pub _pad: [u8; 3],
+    pub pad: [u8; 3],
     /// Total installed packages
     pub total_packages: u32,
     /// Explicitly installed packages
@@ -41,7 +41,7 @@ impl FastStatus {
         Self {
             magic: MAGIC,
             version: VERSION,
-            _pad: [0; 3],
+            pad: [0; 3],
             total_packages: total as u32,
             explicit_packages: explicit as u32,
             orphan_packages: orphans as u32,

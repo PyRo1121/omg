@@ -28,14 +28,13 @@ use omg_lib::hooks;
 fn try_fast_explicit_count() -> bool {
     let args: Vec<_> = std::env::args().collect();
     // Check for "omg explicit --count" or "omg explicit -c"
-    if args.len() >= 2 && args[1] == "explicit" {
-        let has_count = args.iter().any(|a| a == "--count" || a == "-c");
-        if has_count {
-            if let Some(count) = omg_lib::core::fast_status::FastStatus::read_explicit_count() {
-                println!("{count}");
-                return true;
-            }
-        }
+    if args.len() >= 2
+        && args[1] == "explicit"
+        && args.iter().any(|a| a == "--count" || a == "-c")
+        && let Some(count) = omg_lib::core::fast_status::FastStatus::read_explicit_count()
+    {
+        println!("{count}");
+        return true;
     }
     false
 }
@@ -242,7 +241,7 @@ async fn async_main() -> Result<()> {
             use omg_lib::cli::team;
             match command {
                 TeamCommands::Init { team_id, name } => {
-                    team::init(&team_id, name.as_deref()).await?;
+                    team::init(&team_id, name.as_deref())?;
                 }
                 TeamCommands::Join { url } => {
                     team::join(&url).await?;
@@ -257,7 +256,7 @@ async fn async_main() -> Result<()> {
                     team::pull().await?;
                 }
                 TeamCommands::Members => {
-                    team::members().await?;
+                    team::members()?;
                 }
             }
         }
@@ -273,7 +272,7 @@ async fn async_main() -> Result<()> {
                     name,
                     detach,
                 } => {
-                    container::run(&image, cmd, name, detach)?;
+                    container::run(&image, &cmd, name, detach)?;
                 }
                 ContainerCommands::Shell { image } => {
                     container::shell(image)?;
@@ -297,7 +296,7 @@ async fn async_main() -> Result<()> {
                     container: c,
                     command: cmd,
                 } => {
-                    container::exec(&c, cmd)?;
+                    container::exec(&c, &cmd)?;
                 }
                 ContainerCommands::Init { base } => {
                     container::init(base)?;

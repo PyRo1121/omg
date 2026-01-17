@@ -94,7 +94,7 @@ impl Default for DaemonState {
 /// Handle an incoming request
 pub async fn handle_request(state: Arc<DaemonState>, request: Request) -> Response {
     match request {
-        Request::Search { id, query, limit } => handle_search(state, id, query, limit).await,
+        Request::Search { id, query, limit } => handle_search(&state, id, query, limit),
         Request::Info { id, package } => handle_info(state, id, package).await,
         Request::Ping { id } => Response::Success {
             id,
@@ -147,8 +147,8 @@ async fn handle_batch(state: Arc<DaemonState>, id: RequestId, requests: Vec<Requ
 }
 
 /// Handle search request
-async fn handle_search(
-    state: Arc<DaemonState>,
+fn handle_search(
+    state: &Arc<DaemonState>,
     id: RequestId,
     query: String,
     limit: Option<usize>,

@@ -11,46 +11,43 @@ use crate::core::container::{
 pub fn status() -> Result<()> {
     println!("{} Container Status\n", "OMG".cyan().bold());
 
-    match detect_runtime() {
-        Some(runtime) => {
-            println!("  Runtime: {} ✓", runtime.to_string().green());
+    if let Some(runtime) = detect_runtime() {
+        println!("  Runtime: {} ✓", runtime.to_string().green());
 
-            let manager = ContainerManager::with_runtime(runtime);
+        let manager = ContainerManager::with_runtime(runtime);
 
-            // List running containers
-            match manager.list_running() {
-                Ok(containers) if !containers.is_empty() => {
-                    println!("\n  Running containers:");
-                    for c in containers {
-                        println!(
-                            "    {} {} ({})",
-                            "•".cyan(),
-                            c.name.bold(),
-                            c.image.dimmed()
-                        );
-                    }
-                }
-                Ok(_) => {
-                    println!("\n  No running containers");
-                }
-                Err(e) => {
-                    println!("\n  {} Failed to list containers: {}", "⚠".yellow(), e);
+        // List running containers
+        match manager.list_running() {
+            Ok(containers) if !containers.is_empty() => {
+                println!("\n  Running containers:");
+                for c in containers {
+                    println!(
+                        "    {} {} ({})",
+                        "•".cyan(),
+                        c.name.bold(),
+                        c.image.dimmed()
+                    );
                 }
             }
+            Ok(_) => {
+                println!("\n  No running containers");
+            }
+            Err(e) => {
+                println!("\n  {} Failed to list containers: {}", "⚠".yellow(), e);
+            }
         }
-        None => {
-            println!("  Runtime: {} ✗", "Not found".red());
-            println!("\n  Install Docker or Podman to use container features.");
-            println!("    Docker: https://docs.docker.com/engine/install/");
-            println!("    Podman: https://podman.io/getting-started/installation");
-        }
+    } else {
+        println!("  Runtime: {} ✗", "Not found".red());
+        println!("\n  Install Docker or Podman to use container features.");
+        println!("    Docker: https://docs.docker.com/engine/install/");
+        println!("    Podman: https://podman.io/getting-started/installation");
     }
 
     Ok(())
 }
 
 /// Run a command in a container
-pub fn run(image: &str, command: Vec<String>, name: Option<String>, detach: bool) -> Result<()> {
+pub fn run(image: &str, command: &[String], name: Option<String>, detach: bool) -> Result<()> {
     let manager = ContainerManager::new()?;
 
     println!(
@@ -112,9 +109,8 @@ pub fn build(dockerfile: Option<String>, tag: &str) -> Result<()> {
     let manager = ContainerManager::new()?;
     let cwd = std::env::current_dir()?;
 
-    let dockerfile_path = dockerfile
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| cwd.join("Dockerfile"));
+    let dockerfile_path =
+        dockerfile.map_or_else(|| cwd.join("Dockerfile"), std::path::PathBuf::from);
 
     if !dockerfile_path.exists() {
         anyhow::bail!(
@@ -235,7 +231,7 @@ pub fn stop(container: &str) -> Result<()> {
 }
 
 /// Execute a command in a running container
-pub fn exec(container: &str, command: Vec<String>) -> Result<()> {
+pub fn exec(container: &str, command: &[String]) -> Result<()> {
     let manager = ContainerManager::new()?;
 
     let cmd_refs: Vec<&str> = command.iter().map(String::as_str).collect();
