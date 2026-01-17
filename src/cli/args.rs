@@ -263,6 +263,12 @@ pub enum Commands {
         command: ContainerCommands,
     },
 
+    /// License management (activate, status, deactivate)
+    License {
+        #[command(subcommand)]
+        command: LicenseCommands,
+    },
+
     /// View package transaction history
     History {
         /// Number of entries to show
@@ -401,6 +407,24 @@ pub enum ContainerCommands {
         /// Base image to use
         #[arg(short, long)]
         base: Option<String>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum LicenseCommands {
+    /// Activate a license key
+    Activate {
+        /// License key to activate
+        key: String,
+    },
+    /// Show current license status
+    Status,
+    /// Deactivate current license
+    Deactivate,
+    /// Check if a feature is available
+    Check {
+        /// Feature name to check
+        feature: String,
     },
 }
 

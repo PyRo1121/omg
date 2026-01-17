@@ -10,6 +10,7 @@ mod error;
 pub mod fast_status;
 pub mod history;
 pub mod http;
+pub mod license;
 pub mod paths;
 pub mod privilege;
 pub mod security;

@@ -1,0 +1,53 @@
+<svg width="1200" height="630" viewBox="0 0 1200 630" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1200" y2="630" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0F172A"/>
+      <stop offset="0.55" stop-color="#111827"/>
+      <stop offset="1" stop-color="#0B1120"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="180" y1="120" x2="980" y2="520" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#6366F1"/>
+      <stop offset="0.45" stop-color="#22D3EE"/>
+      <stop offset="1" stop-color="#10B981"/>
+    </linearGradient>
+    <linearGradient id="glow" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#38BDF8" stop-opacity="0.25"/>
+      <stop offset="1" stop-color="#A855F7" stop-opacity="0.15"/>
+    </linearGradient>
+    <filter id="blur" x="-20%" y="-20%" width="140%" height="140%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="30" />
+    </filter>
+  </defs>
+
+  <rect width="1200" height="630" rx="32" fill="url(#bg)" />
+
+  <circle cx="180" cy="120" r="160" fill="url(#glow)" filter="url(#blur)" />
+  <circle cx="1040" cy="520" r="220" fill="url(#glow)" filter="url(#blur)" />
+
+  <g opacity="0.18" stroke="#1E293B" stroke-width="2">
+    <path d="M120 120H1080" />
+    <path d="M120 210H1080" />
+    <path d="M120 300H1080" />
+    <path d="M120 390H1080" />
+    <path d="M120 480H1080" />
+  </g>
+
+  <g>
+    <rect x="120" y="120" width="960" height="390" rx="28" fill="#0F172A" stroke="#1E293B" stroke-width="2" />
+    <rect x="120" y="120" width="960" height="86" rx="28" fill="#0B1220" />
+    <circle cx="160" cy="163" r="8" fill="#F87171" />
+    <circle cx="186" cy="163" r="8" fill="#FBBF24" />
+    <circle cx="212" cy="163" r="8" fill="#34D399" />
+  </g>
+
+  <text x="180" y="280" font-family="Inter, Arial, sans-serif" font-size="64" font-weight="700" fill="#E2E8F0">OMG</text>
+  <text x="180" y="340" font-family="Inter, Arial, sans-serif" font-size="38" font-weight="600" fill="#94A3B8">Unified Package + Runtime Manager</text>
+
+  <text x="180" y="405" font-family="JetBrains Mono, monospace" font-size="28" fill="#38BDF8">Native core runtimes</text>
+  <text x="540" y="405" font-family="JetBrains Mono, monospace" font-size="28" fill="#22D3EE">100+ via mise</text>
+  <text x="180" y="450" font-family="JetBrains Mono, monospace" font-size="28" fill="#34D399">50–200x faster</text>
+
+  <rect x="760" y="250" width="260" height="120" rx="18" fill="url(#accent)" opacity="0.15" />
+  <text x="785" y="310" font-family="JetBrains Mono, monospace" font-size="26" fill="#E2E8F0">omg use node@20</text>
+  <text x="785" y="350" font-family="JetBrains Mono, monospace" font-size="22" fill="#94A3B8">→ switched in 1.8ms</text>
+</svg>

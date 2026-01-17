@@ -106,8 +106,8 @@ pub struct ContainerManager {
 impl ContainerManager {
     /// Create a new container manager
     pub fn new() -> Result<Self> {
-        let runtime = detect_runtime()
-            .context("No container runtime found. Install Docker or Podman.")?;
+        let runtime =
+            detect_runtime().context("No container runtime found. Install Docker or Podman.")?;
         Ok(Self { runtime })
     }
 
@@ -203,7 +203,11 @@ impl ContainerManager {
     /// List running containers
     pub fn list_running(&self) -> Result<Vec<ContainerInfo>> {
         let output = Command::new(self.runtime.command())
-            .args(["ps", "--format", "{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}"])
+            .args([
+                "ps",
+                "--format",
+                "{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}",
+            ])
             .output()
             .context("Failed to list containers")?;
 
@@ -273,7 +277,11 @@ impl ContainerManager {
     /// List available images
     pub fn list_images(&self) -> Result<Vec<ImageInfo>> {
         let output = Command::new(self.runtime.command())
-            .args(["images", "--format", "{{.Repository}}\t{{.Tag}}\t{{.ID}}\t{{.Size}}"])
+            .args([
+                "images",
+                "--format",
+                "{{.Repository}}\t{{.Tag}}\t{{.ID}}\t{{.Size}}",
+            ])
             .output()
             .context("Failed to list images")?;
 
@@ -363,12 +371,8 @@ pub fn dev_container_config(project_dir: &Path) -> ContainerConfig {
     ContainerConfig {
         image: "ubuntu:24.04".to_string(),
         name: Some(format!("{project_name}-dev")),
-        env: vec![
-            ("TERM".to_string(), "xterm-256color".to_string()),
-        ],
-        volumes: vec![
-            (project_dir.display().to_string(), "/app".to_string()),
-        ],
+        env: vec![("TERM".to_string(), "xterm-256color".to_string())],
+        volumes: vec![(project_dir.display().to_string(), "/app".to_string())],
         ports: Vec::new(),
         workdir: Some("/app".to_string()),
         rm: true,

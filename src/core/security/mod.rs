@@ -1,4 +1,5 @@
 pub mod audit;
+#[cfg(feature = "pgp")]
 pub mod pgp;
 pub mod policy;
 pub mod sbom;

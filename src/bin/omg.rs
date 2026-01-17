@@ -14,7 +14,10 @@ use omg_lib::cli::packages;
 use omg_lib::cli::runtimes;
 use omg_lib::cli::security;
 use omg_lib::cli::tool;
-use omg_lib::cli::{Cli, Commands, ContainerCommands, EnvCommands, TeamCommands, ToolCommands, commands};
+use omg_lib::cli::{
+    Cli, Commands, ContainerCommands, EnvCommands, LicenseCommands, TeamCommands, ToolCommands,
+    commands,
+};
 use omg_lib::core::{RuntimeBackend, elevate_if_needed, is_root, task_runner};
 use omg_lib::hooks;
 
@@ -264,7 +267,12 @@ async fn async_main() -> Result<()> {
                 ContainerCommands::Status => {
                     container::status()?;
                 }
-                ContainerCommands::Run { image, command: cmd, name, detach } => {
+                ContainerCommands::Run {
+                    image,
+                    command: cmd,
+                    name,
+                    detach,
+                } => {
                     container::run(&image, cmd, name, detach)?;
                 }
                 ContainerCommands::Shell { image } => {
@@ -285,11 +293,31 @@ async fn async_main() -> Result<()> {
                 ContainerCommands::Stop { container: c } => {
                     container::stop(&c)?;
                 }
-                ContainerCommands::Exec { container: c, command: cmd } => {
+                ContainerCommands::Exec {
+                    container: c,
+                    command: cmd,
+                } => {
                     container::exec(&c, cmd)?;
                 }
                 ContainerCommands::Init { base } => {
                     container::init(base)?;
+                }
+            }
+        }
+        Commands::License { command } => {
+            use omg_lib::cli::license;
+            match command {
+                LicenseCommands::Activate { key } => {
+                    license::activate(&key).await?;
+                }
+                LicenseCommands::Status => {
+                    license::status()?;
+                }
+                LicenseCommands::Deactivate => {
+                    license::deactivate()?;
+                }
+                LicenseCommands::Check { feature } => {
+                    license::check_feature(&feature)?;
                 }
             }
         }
