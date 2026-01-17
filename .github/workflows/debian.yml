@@ -1,0 +1,86 @@
+name: Debian/Ubuntu CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  debian:
+    name: Build & Test (Debian Bookworm)
+    runs-on: ubuntu-latest
+    container: debian:bookworm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y curl build-essential pkg-config libssl-dev libapt-pkg-dev clang git
+
+      - name: Install Rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: debian-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: debian-cargo-
+
+      - name: Build
+        run: |
+          . $HOME/.cargo/env
+          cargo build --release --features debian
+
+      - name: Run tests
+        run: |
+          . $HOME/.cargo/env
+          cargo test --features debian
+
+      - name: Run smoke test
+        run: |
+          apt-get update
+          chmod +x scripts/debian-smoke-test.sh
+          ./scripts/debian-smoke-test.sh
+
+  ubuntu:
+    name: Build & Test (Ubuntu 24.04)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libapt-pkg-dev pkg-config libssl-dev clang
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ubuntu-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ubuntu-cargo-
+
+      - name: Build
+        run: cargo build --release --features debian
+
+      - name: Run tests
+        run: cargo test --features debian
+
+      - name: Run smoke test
+        run: |
+          sudo apt-get update
+          chmod +x scripts/debian-smoke-test.sh
+          sudo ./scripts/debian-smoke-test.sh

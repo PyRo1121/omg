@@ -12,7 +12,10 @@ use std::fs;
 use std::path::Path;
 use tokio::task;
 
+#[cfg(feature = "arch")]
 use crate::package_managers::list_explicit;
+#[cfg(feature = "debian")]
+use crate::package_managers::apt_list_explicit as list_explicit;
 use crate::runtimes::{
     BunManager, GoManager, JavaManager, NodeManager, PythonManager, RubyManager, RustManager,
 };
@@ -70,13 +73,23 @@ impl EnvironmentState {
         }
 
         // Capture system packages
+        #[cfg(feature = "arch")]
         let mut packages: Vec<String> = list_explicit()
             .await
             .unwrap_or_default()
             .into_iter()
-            .map(|pkg| pkg.trim().to_string())
-            .filter(|pkg| !pkg.is_empty())
+            .map(|pkg: String| pkg.trim().to_string())
+            .filter(|pkg: &String| !pkg.is_empty())
             .collect();
+        #[cfg(feature = "debian")]
+        let mut packages: Vec<String> = list_explicit()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|pkg: String| pkg.trim().to_string())
+            .filter(|pkg: &String| !pkg.is_empty())
+            .collect();
+        #[cfg(not(any(feature = "arch", feature = "debian")))]
+        let mut packages: Vec<String> = Vec::new();
         packages.sort_unstable();
         packages.dedup();
 

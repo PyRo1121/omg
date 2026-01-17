@@ -238,7 +238,14 @@ impl App {
         }
 
         // Fallback to direct search if daemon is not available
-        self.search_results = crate::package_managers::search_sync(query).unwrap_or_default();
+        #[cfg(feature = "arch")]
+        {
+            self.search_results = crate::package_managers::search_sync(query).unwrap_or_default();
+        }
+        #[cfg(feature = "debian")]
+        {
+            self.search_results = crate::package_managers::apt_search_sync(query).unwrap_or_default();
+        }
 
         Ok(())
     }
@@ -258,7 +265,16 @@ impl App {
 
     pub async fn remove_orphans(&self) -> Result<()> {
         // Use the actual orphan removal
-        crate::package_managers::remove_orphans().await
+        #[cfg(feature = "arch")]
+        {
+            return crate::package_managers::remove_orphans().await;
+        }
+        #[cfg(feature = "debian")]
+        {
+            return crate::package_managers::apt_remove_orphans().map_err(Into::into);
+        }
+        #[cfg(not(any(feature = "arch", feature = "debian")))]
+        Ok(())
     }
 
     pub async fn run_security_audit(&self) -> Result<usize> {

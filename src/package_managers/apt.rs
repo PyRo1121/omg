@@ -212,12 +212,14 @@ pub fn get_sync_pkg_info(name: &str) -> Result<Option<PackageInfo>> {
         } else {
             description
         },
-        url,
+        url: if url.is_empty() { None } else { Some(url) },
         size: version.installed_size(),
-        download_size: version.size(),
+        install_size: Some(version.installed_size() as i64),
+        download_size: Some(version.size()),
         repo: "apt".to_string(),
         depends,
         licenses: Vec::new(),
+        installed: pkg.is_installed(),
     }))
 }
 
@@ -437,7 +439,8 @@ fn collect_depends(version: &rust_apt::Version<'_>) -> Vec<String> {
                 for base in dep.iter() {
                     depends.push(base.name().to_string());
                 }
-            } else if let Some(base) = dep.first() {
+            } else {
+                let base = dep.first();
                 depends.push(base.name().to_string());
             }
         }

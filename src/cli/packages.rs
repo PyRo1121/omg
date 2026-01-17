@@ -37,7 +37,7 @@ use crate::package_managers::{
     apt_remove_orphans, apt_search_sync,
 };
 
-const fn use_debian_backend() -> bool {
+fn use_debian_backend() -> bool {
     #[cfg(feature = "debian")]
     {
         return is_debian_like();
@@ -126,9 +126,17 @@ pub async fn search(query: &str, detailed: bool, interactive: bool) -> Result<()
     // ... rest of async search
     let start = std::time::Instant::now();
 
-    let mut official_packages = Vec::new();
-    let mut aur_packages_detailed = None;
-    let mut aur_packages_basic = None;
+    let mut official_packages: Vec<crate::package_managers::SyncPackage> = Vec::new();
+    // AUR variables - typed differently per feature
+    #[cfg(feature = "arch")]
+    let mut aur_packages_detailed: Option<Vec<crate::package_managers::AurPackageDetail>> = None;
+    #[cfg(feature = "arch")]
+    let mut aur_packages_basic: Option<Vec<crate::core::Package>> = None;
+    // Debian doesn't use AUR, but variables must exist for code structure
+    #[cfg(not(feature = "arch"))]
+    let mut aur_packages_detailed: Option<Vec<crate::core::Package>> = None;
+    #[cfg(not(feature = "arch"))]
+    let mut aur_packages_basic: Option<Vec<crate::core::Package>> = None;
 
     let mut daemon_used = false;
     if !use_debian_backend() {
@@ -172,17 +180,23 @@ pub async fn search(query: &str, detailed: bool, interactive: bool) -> Result<()
         }
     } else if !daemon_used {
         // 2. Fallback: Direct libalpm query + Network
-        official_packages = search_sync(query).unwrap_or_default();
+        #[cfg(feature = "arch")]
+        {
+            official_packages = search_sync(query).unwrap_or_default();
+        }
 
-        // Search AUR
-        if detailed || interactive {
-            let pb = style::spinner("Searching AUR...");
-            let res = search_detailed(query).await.unwrap_or_default();
-            pb.finish_and_clear();
-            aur_packages_detailed = Some(res);
-        } else if !interactive {
-            let aur = AurClient::new();
-            aur_packages_basic = Some(aur.search(query).await.unwrap_or_default());
+        // Search AUR (Arch only)
+        #[cfg(feature = "arch")]
+        {
+            if detailed || interactive {
+                let pb = style::spinner("Searching AUR...");
+                let res = search_detailed(query).await.unwrap_or_default();
+                pb.finish_and_clear();
+                aur_packages_detailed = Some(res);
+            } else if !interactive {
+                let aur = AurClient::new();
+                aur_packages_basic = Some(aur.search(query).await.unwrap_or_default());
+            }
         }
     }
 
@@ -206,29 +220,37 @@ pub async fn search(query: &str, detailed: bool, interactive: bool) -> Result<()
             pkgs_to_install.push(pkg.name.clone());
         }
 
-        // Add AUR
-        if let Some(aur) = &aur_packages_detailed {
-            for pkg in aur {
-                items.push(format!(
-                    "{} {} ({}) - {}",
-                    style::package(&pkg.name),
-                    style::version(&pkg.version),
-                    style::warning("AUR"),
-                    style::dim(&truncate(&pkg.description.clone().unwrap_or_default(), 40))
-                ));
-                pkgs_to_install.push(pkg.name.clone());
+        // Add AUR (Arch only)
+        #[cfg(feature = "arch")]
+        {
+            if let Some(aur) = &aur_packages_detailed {
+                for pkg in aur {
+                    items.push(format!(
+                        "{} {} ({}) - {}",
+                        style::package(&pkg.name),
+                        style::version(&pkg.version),
+                        style::warning("AUR"),
+                        style::dim(&truncate(&pkg.description.clone().unwrap_or_default(), 40))
+                    ));
+                    pkgs_to_install.push(pkg.name.clone());
+                }
+            } else if let Some(aur) = &aur_packages_basic {
+                for pkg in aur {
+                    items.push(format!(
+                        "{} {} ({}) - {}",
+                        style::package(&pkg.name),
+                        style::version(&pkg.version.to_string()),
+                        style::warning("AUR"),
+                        style::dim(&truncate(&pkg.description, 40))
+                    ));
+                    pkgs_to_install.push(pkg.name.clone());
+                }
             }
-        } else if let Some(aur) = &aur_packages_basic {
-            for pkg in aur {
-                items.push(format!(
-                    "{} {} ({}) - {}",
-                    style::package(&pkg.name),
-                    style::version(&pkg.version.to_string()),
-                    style::warning("AUR"),
-                    style::dim(&truncate(&pkg.description, 40))
-                ));
-                pkgs_to_install.push(pkg.name.clone());
-            }
+        }
+        #[cfg(not(feature = "arch"))]
+        {
+            let _ = &aur_packages_detailed;
+            let _ = &aur_packages_basic;
         }
 
         if items.is_empty() {
@@ -295,24 +317,46 @@ pub async fn search(query: &str, detailed: bool, interactive: bool) -> Result<()
         println!();
     }
 
-    // Search AUR (cached result)
-    if let Some(aur_packages) = aur_packages_detailed {
-        if !aur_packages.is_empty() {
+    // Search AUR (cached result) - Arch only
+    #[cfg(feature = "arch")]
+    {
+        if let Some(aur_packages) = aur_packages_detailed {
+            if !aur_packages.is_empty() {
+                println!("{}", style::header("AUR (Arch User Repository)"));
+                for pkg in aur_packages.iter().take(10) {
+                    let out_of_date = if pkg.out_of_date.is_some() {
+                        style::error(" [OUT OF DATE]")
+                    } else {
+                        String::new()
+                    };
+                    println!(
+                        "  {} {} - {} {} {}{}",
+                        style::package(&pkg.name),
+                        style::version(&pkg.version),
+                        style::info(&format!("↑{}", pkg.num_votes)),
+                        style::info(&format!("{:.1}%", pkg.popularity)),
+                        style::dim(&truncate(&pkg.description.clone().unwrap_or_default(), 40)),
+                        out_of_date
+                    );
+                }
+                if aur_packages.len() > 10 {
+                    println!(
+                        "  {}",
+                        style::dim(&format!("(+{}) more packages...", aur_packages.len() - 10))
+                    );
+                }
+                println!();
+            }
+        } else if let Some(aur_packages) = aur_packages_basic
+            && !aur_packages.is_empty()
+        {
             println!("{}", style::header("AUR (Arch User Repository)"));
             for pkg in aur_packages.iter().take(10) {
-                let out_of_date = if pkg.out_of_date.is_some() {
-                    style::error(" [OUT OF DATE]")
-                } else {
-                    String::new()
-                };
                 println!(
-                    "  {} {} - {} {} {}{}",
+                    "  {} {} - {}",
                     style::package(&pkg.name),
-                    style::version(&pkg.version),
-                    style::info(&format!("↑{}", pkg.num_votes)),
-                    style::info(&format!("{:.1}%", pkg.popularity)),
-                    style::dim(&truncate(&pkg.description.clone().unwrap_or_default(), 40)),
-                    out_of_date
+                    style::version(&pkg.version.to_string()),
+                    style::dim(&truncate(&pkg.description, 55))
                 );
             }
             if aur_packages.len() > 10 {
@@ -323,25 +367,11 @@ pub async fn search(query: &str, detailed: bool, interactive: bool) -> Result<()
             }
             println!();
         }
-    } else if let Some(aur_packages) = aur_packages_basic
-        && !aur_packages.is_empty()
+    }
+    #[cfg(not(feature = "arch"))]
     {
-        println!("{}", style::header("AUR (Arch User Repository)"));
-        for pkg in aur_packages.iter().take(10) {
-            println!(
-                "  {} {} - {}",
-                style::package(&pkg.name),
-                style::version(&pkg.version.to_string()),
-                style::dim(&truncate(&pkg.description, 55))
-            );
-        }
-        if aur_packages.len() > 10 {
-            println!(
-                "  {}",
-                style::dim(&format!("(+{}) more packages...", aur_packages.len() - 10))
-            );
-        }
-        println!();
+        let _ = aur_packages_detailed;
+        let _ = aur_packages_basic;
     }
 
     println!(
@@ -375,12 +405,21 @@ pub async fn install(packages: &[String], yes: bool) -> Result<()> {
         style::success("Graded Security")
     );
 
+    #[cfg(not(feature = "arch"))]
+    {
+        let _ = policy;
+        let _ = yes;
+        anyhow::bail!("Install not fully implemented for this backend - use debian backend");
+    }
+
+    #[cfg(feature = "arch")]
+    {
     let aur = AurClient::new();
     let mut official = Vec::new();
     let mut aur_pkgs = Vec::new();
     let mut local_pkgs = Vec::new();
     let mut not_found = Vec::new();
-    let mut changes = Vec::new();
+    let mut changes: Vec<PackageChange> = Vec::new();
 
     for pkg_name in packages {
         // Check if it's a local package file
@@ -532,33 +571,36 @@ pub async fn install(packages: &[String], yes: bool) -> Result<()> {
     }
     println!();
 
-    // Install official packages
+    // Install official packages (Arch only for now)
+    #[cfg(feature = "arch")]
     if !official.is_empty() {
         let pacman = OfficialPackageManager::new();
         if let Err(e) = pacman.install(&official).await {
             if let Ok(history) = HistoryManager::new() {
-                let _ = history.add_transaction(TransactionType::Install, changes, false);
+                let _ = history.add_transaction(TransactionType::Install, changes.clone(), false);
             }
             return Err(e);
         }
     }
 
-    // Install local packages
+    // Install local packages (Arch only)
+    #[cfg(feature = "arch")]
     if !local_pkgs.is_empty() {
         let pacman = OfficialPackageManager::new();
         if let Err(e) = pacman.install(&local_pkgs).await {
             if let Ok(history) = HistoryManager::new() {
-                let _ = history.add_transaction(TransactionType::Install, changes, false);
+                let _ = history.add_transaction(TransactionType::Install, changes.clone(), false);
             }
             return Err(e);
         }
     }
 
-    // Install AUR packages
+    // Install AUR packages (Arch only)
+    #[cfg(feature = "arch")]
     for pkg in &aur_pkgs {
         if let Err(e) = aur.install(pkg).await {
             if let Ok(history) = HistoryManager::new() {
-                let _ = history.add_transaction(TransactionType::Install, changes, false);
+                let _ = history.add_transaction(TransactionType::Install, changes.clone(), false);
             }
             return Err(e);
         }
@@ -575,6 +617,7 @@ pub async fn install(packages: &[String], yes: bool) -> Result<()> {
     }
 
     Ok(())
+    } // end #[cfg(feature = "arch")] block
 }
 
 /// Remove packages
@@ -591,35 +634,45 @@ pub async fn remove(packages: &[String], recursive: bool) -> Result<()> {
         anyhow::bail!("No packages specified");
     }
 
-    let mut changes = Vec::new();
+    let mut changes: Vec<PackageChange> = Vec::new();
+    #[cfg(feature = "arch")]
     for pkg in packages {
         if let Ok(Some(info)) = crate::package_managers::get_local_package(pkg) {
             changes.push(PackageChange {
                 name: pkg.clone(),
                 old_version: Some(info.version.to_string()),
                 new_version: None,
-                source: "official".to_string(), // Defaulting to official for now
+                source: "official".to_string(),
             });
         }
     }
 
-    let pacman = OfficialPackageManager::new();
-
-    if recursive {
-        println!("{}", style::info("Removing with unused dependencies..."));
-    }
-
-    let result = pacman.remove(packages).await;
-    let success = result.is_ok();
-
-    // Log transaction
-    if !changes.is_empty()
-        && let Ok(history) = HistoryManager::new()
+    #[cfg(not(feature = "arch"))]
     {
-        let _ = history.add_transaction(TransactionType::Remove, changes, success);
+        let _ = changes;
+        anyhow::bail!("Remove not implemented for this backend");
     }
 
-    result
+    #[cfg(feature = "arch")]
+    {
+        let pacman = OfficialPackageManager::new();
+
+        if recursive {
+            println!("{}", style::info("Removing with unused dependencies..."));
+        }
+
+        let result = pacman.remove(packages).await;
+        let success = result.is_ok();
+
+        // Log transaction
+        if !changes.is_empty()
+            && let Ok(history) = HistoryManager::new()
+        {
+            let _ = history.add_transaction(TransactionType::Remove, changes, success);
+        }
+
+        result
+    }
 }
 
 /// Update all packages
@@ -642,9 +695,9 @@ pub async fn update(check_only: bool) -> Result<()> {
                         println!(
                             "  {} {} {} → {}",
                             style::package(&name),
-                            style::dim(old_ver),
+                            style::dim(&old_ver),
                             style::arrow("→"),
-                            style::version(new_ver)
+                            style::version(&new_ver)
                         );
                     }
                 }
@@ -653,6 +706,13 @@ pub async fn update(check_only: bool) -> Result<()> {
             return apt.update().await;
         }
     }
+    #[cfg(not(feature = "arch"))]
+    {
+        anyhow::bail!("Update not implemented for this backend - use debian backend");
+    }
+
+    #[cfg(feature = "arch")]
+    {
     let aur = AurClient::new();
     let pacman = OfficialPackageManager::new();
 
@@ -1040,6 +1100,7 @@ pub async fn update(check_only: bool) -> Result<()> {
     }
 
     Ok(())
+    } // end #[cfg(feature = "arch")] block
 }
 
 /// Show package information
@@ -1049,7 +1110,7 @@ pub fn info_sync(package: &str) -> Result<bool> {
         #[cfg(feature = "debian")]
         {
             if let Some(info) = apt_get_sync_pkg_info(package).ok().flatten() {
-                display_pkg_info(&info);
+                display_package_info(&info);
                 println!(
                     "\n  {} Official repository ({})",
                     style::success("Source:"),
@@ -1083,6 +1144,7 @@ pub fn info_sync(package: &str) -> Result<bool> {
     }
 
     // 2. Fallback to local ALPM (Sync, fast)
+    #[cfg(feature = "arch")]
     if let Some(info) = get_sync_pkg_info(package).ok().flatten() {
         display_pkg_info(&info);
         println!(
@@ -1096,7 +1158,8 @@ pub fn info_sync(package: &str) -> Result<bool> {
     Ok(false)
 }
 
-/// Show AUR package information (Async fallback)
+/// Show AUR package information (Async fallback) - Arch only
+#[cfg(feature = "arch")]
 pub async fn info_aur(package: &str) -> Result<()> {
     let aur = AurClient::new();
     if let Some(info) = aur.info(package).await? {
@@ -1141,6 +1204,17 @@ pub async fn info_aur(package: &str) -> Result<()> {
         style::error("Error:"),
         style::package(package)
     );
+    Ok(())
+}
+
+/// Show AUR package information - stub for non-arch
+#[cfg(not(feature = "arch"))]
+pub async fn info_aur(package: &str) -> Result<()> {
+    println!(
+        "{} AUR is not available on this system.",
+        style::error("Error:")
+    );
+    let _ = package;
     Ok(())
 }
 
@@ -1221,19 +1295,21 @@ pub async fn info(package: &str) -> Result<()> {
         return Ok(());
     }
 
-    // 3. Try AUR directly as final fallback
-    println!(
-        "{} Package info for '{}':\n",
-        style::header("OMG"),
-        style::package(package)
-    );
-    let pb = style::spinner("Searching AUR...");
-    let details = search_detailed(package).await.ok();
-    pb.finish_and_clear();
-
-    if let Some(pkgs) = details
-        && let Some(pkg) = pkgs.into_iter().find(|p| p.name == package)
+    // 3. Try AUR directly as final fallback (Arch only)
+    #[cfg(feature = "arch")]
     {
+        println!(
+            "{} Package info for '{}':\n",
+            style::header("OMG"),
+            style::package(package)
+        );
+        let pb = style::spinner("Searching AUR...");
+        let details: Option<Vec<crate::package_managers::AurPackageDetail>> = search_detailed(package).await.ok();
+        pb.finish_and_clear();
+
+        if let Some(pkgs) = details
+            && let Some(pkg) = pkgs.into_iter().find(|p| p.name == package)
+        {
         println!(
             "  {} {}",
             style::warning("Name:"),
@@ -1265,12 +1341,13 @@ pub async fn info(package: &str) -> Result<()> {
         }
         println!("\n  {}", style::warning("AUR (Arch User Repository)"));
         return Ok(());
-    }
+        }
 
-    println!(
-        "{}",
-        style::error(&format!("Package '{package}' not found"))
-    );
+        println!(
+            "{}",
+            style::error(&format!("Package '{package}' not found"))
+        );
+    }
     Ok(())
 }
 
@@ -1302,14 +1379,17 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool) -> Result<(
 
     if !do_orphans && !do_cache && !do_aur {
         // Default: show what can be cleaned
-        let orphan_list = list_orphans_direct().unwrap_or_default();
-        if !orphan_list.is_empty() {
-            println!(
-                "{} {} orphan packages can be removed",
-                style::arrow("→"),
-                orphan_list.len()
-            );
-            println!("  Run: {}", style::command("omg clean --orphans"));
+        #[cfg(feature = "arch")]
+        {
+            let orphan_list = list_orphans_direct().unwrap_or_default();
+            if !orphan_list.is_empty() {
+                println!(
+                    "{} {} orphan packages can be removed",
+                    style::arrow("→"),
+                    orphan_list.len()
+                );
+                println!("  Run: {}", style::command("omg clean --orphans"));
+            }
         }
 
         println!(
@@ -1317,6 +1397,7 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool) -> Result<(
             style::arrow("→"),
             style::command("omg clean --cache")
         );
+        #[cfg(feature = "arch")]
         println!(
             "{} To clear AUR builds: {}",
             style::arrow("→"),
@@ -1331,11 +1412,19 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool) -> Result<(
     }
 
     if do_orphans {
-        remove_orphans().await?;
+        #[cfg(feature = "arch")]
+        {
+            remove_orphans().await?;
+        }
+        #[cfg(not(feature = "arch"))]
+        {
+            println!("{}", style::info("Orphan removal not available on this system"));
+        }
     }
 
     if do_cache {
         println!("{}", style::info("Clearing package cache..."));
+        #[cfg(feature = "arch")]
         match clean_cache(1) {
             // Keep 1 version by default
             Ok((removed, freed)) => {
@@ -1350,11 +1439,18 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool) -> Result<(
                 println!("{}", style::error(&format!("Failed to clear cache: {e}")));
             }
         }
+        #[cfg(feature = "debian")]
+        println!("{}", style::info("Use 'apt clean' for cache cleanup on Debian"));
     }
 
     if do_aur {
-        let aur_client = AurClient::new();
-        aur_client.clean_all()?;
+        #[cfg(feature = "arch")]
+        {
+            let aur_client = AurClient::new();
+            aur_client.clean_all()?;
+        }
+        #[cfg(not(feature = "arch"))]
+        println!("{}", style::info("AUR cleanup not available on this system"));
     }
 
     println!("\n{}", style::success("Cleanup complete!"));
@@ -1390,7 +1486,16 @@ pub fn explicit_sync(count: bool) -> Result<()> {
                 None
             }
         })
-        .unwrap_or_else(|| crate::package_managers::list_explicit_fast().unwrap_or_default());
+        .unwrap_or_else(|| {
+            #[cfg(feature = "arch")]
+            {
+                crate::package_managers::list_explicit_fast().unwrap_or_default()
+            }
+            #[cfg(not(feature = "arch"))]
+            {
+                Vec::new()
+            }
+        });
 
     use std::io::Write;
     let mut stdout = std::io::BufWriter::new(std::io::stdout());
@@ -1454,7 +1559,37 @@ pub async fn sync() -> Result<()> {
             return apt.sync_databases().await;
         }
     }
-    sync_databases_parallel().await
+    #[cfg(feature = "arch")]
+    {
+        return sync_databases_parallel().await;
+    }
+    #[cfg(not(feature = "arch"))]
+    Ok(())
+}
+
+/// Display package info (debian only)
+#[cfg(feature = "debian")]
+fn display_package_info(info: &crate::package_managers::types::PackageInfo) {
+    println!(
+        "{} {}",
+        style::header("Package:"),
+        style::package(&info.name)
+    );
+    println!(
+        "  {} {}",
+        style::dim("Version:"),
+        style::version(&info.version.to_string())
+    );
+    println!("  {} {}", style::dim("Description:"), info.description);
+    if let Some(url) = &info.url {
+        println!("  {} {}", style::dim("URL:"), url);
+    }
+    if let Some(size) = info.install_size {
+        println!("  {} {} bytes", style::dim("Install Size:"), size);
+    }
+    if !info.depends.is_empty() {
+        println!("  {} {}", style::dim("Depends:"), info.depends.join(", "));
+    }
 }
 
 /// Fuzzy match candidate for "Did you mean?"
@@ -1470,7 +1605,14 @@ fn fuzzy_suggest(query: &str) -> Option<String> {
             return None;
         }
     } else {
-        crate::package_managers::alpm_direct::list_all_package_names().ok()?
+        #[cfg(feature = "arch")]
+        {
+            crate::package_managers::alpm_direct::list_all_package_names().ok()?
+        }
+        #[cfg(not(feature = "arch"))]
+        {
+            return None;
+        }
     };
 
     // 2. Open DB for engine (Dummy open just to satisfy constructor)

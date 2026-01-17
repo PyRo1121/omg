@@ -189,8 +189,14 @@ impl SbomGenerator {
 
     /// Generate SBOM for all installed packages
     pub async fn generate_system_sbom(&self) -> Result<Sbom> {
+        #[cfg(feature = "arch")]
         let installed = crate::package_managers::list_installed_fast()
             .map_err(|e| anyhow::anyhow!("Failed to list packages: {e}"))?;
+        #[cfg(feature = "debian")]
+        let installed = crate::package_managers::apt_list_installed_fast()
+            .map_err(|e| anyhow::anyhow!("Failed to list packages: {e}"))?;
+        #[cfg(not(any(feature = "arch", feature = "debian")))]
+        let installed: Vec<crate::package_managers::types::LocalPackage> = Vec::new();
 
         let timestamp = jiff::Zoned::now()
             .strftime("%Y-%m-%dT%H:%M:%SZ")

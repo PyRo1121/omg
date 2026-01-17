@@ -139,6 +139,13 @@ ratatui = "0.29"
 crossterm = "0.28"
 rust-apt = { version = "0.9.0", optional = true }
 
+# Debian/Ubuntu 2026 Performance Stack
+debian-packaging = { version = "0.18", optional = true }  # Pure Rust apt reimplementation
+rkyv = { version = "0.8", optional = true }  # Zero-copy deserialization
+winnow = { version = "0.7", optional = true }  # Zero-copy parser combinators
+gzp = { version = "2.0", optional = true }  # Parallel gzip/zstd decompression
+ar = { version = "0.9", optional = true }  # Pure Rust .ar archive parsing
+
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 tempfile = "3.24"
@@ -167,4 +174,11 @@ arch = [
     "alpm-repo-db",
     "alpm-pkginfo",
 ]
-debian = ["rust-apt"]
+debian = [
+    "rust-apt",
+    "debian-packaging",
+    "rkyv",
+    "winnow",
+    "gzp",
+    "ar",
+]

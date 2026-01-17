@@ -19,7 +19,7 @@ pub mod parallel_sync;
 #[cfg(feature = "arch")]
 pub mod pkgbuild;
 mod traits;
-mod types;
+pub mod types;
 
 pub use types::{parse_version_or_zero, zero_version};
 

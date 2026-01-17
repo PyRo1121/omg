@@ -23,7 +23,7 @@ use crate::package_managers::{
     apt_get_sync_pkg_info, apt_get_system_status, apt_list_explicit, apt_list_installed_fast,
 };
 
-const fn use_debian_backend() -> bool {
+fn use_debian_backend() -> bool {
     #[cfg(feature = "debian")]
     {
         return is_debian_like();
@@ -39,8 +39,11 @@ const fn use_debian_backend() -> bool {
 pub struct DaemonState {
     pub cache: PackageCache,
     pub persistent: super::db::PersistentCache,
+    #[cfg(feature = "arch")]
     pub pacman: OfficialPackageManager,
+    #[cfg(feature = "arch")]
     pub aur: AurClient,
+    #[cfg(feature = "arch")]
     pub alpm_worker: AlpmWorker,
     pub index: Arc<PackageIndex>,
     pub runtime_versions: Arc<RwLock<Vec<(String, String)>>>,
@@ -62,8 +65,11 @@ impl DaemonState {
         Self {
             cache: PackageCache::default(),
             persistent,
+            #[cfg(feature = "arch")]
             pacman: OfficialPackageManager::new(),
+            #[cfg(feature = "arch")]
             aur: AurClient::new(),
+            #[cfg(feature = "arch")]
             alpm_worker: AlpmWorker::new(),
             index: Arc::new(index),
             runtime_versions: Arc::new(RwLock::new(Vec::new())),
@@ -165,9 +171,10 @@ async fn handle_search(
         };
     }
 
-    // 2. Conditional AUR Search (Network Bound)
+    // 2. Conditional AUR Search (Network Bound) - Arch only
     // Only search AUR if official results are low, to keep speed for common packages
     let mut aur = Vec::new();
+    #[cfg(feature = "arch")]
     if official.len() < 5
         && let Ok(aur_pkgs) = state.aur.search(&query).await
     {
@@ -233,9 +240,9 @@ async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) ->
                     name: info.name,
                     version: info.version.to_string(),
                     description: info.description,
-                    url: info.url,
+                    url: info.url.unwrap_or_default(),
                     size: info.size,
-                    download_size: info.download_size,
+                    download_size: info.download_size.unwrap_or(0),
                     repo: info.repo,
                     depends: info.depends,
                     licenses: info.licenses,
@@ -249,28 +256,31 @@ async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) ->
             }
         }
     } else {
-        // 3. Try AUR
-        if let Ok(details) = search_detailed(&package).await
-            && let Some(pkg) = details.into_iter().find(|p| p.name == package)
+        // 3. Try AUR (arch only)
+        #[cfg(feature = "arch")]
         {
-            let detailed = DetailedPackageInfo {
-                name: pkg.name,
-                version: pkg.version.clone(),
-                description: pkg.description.unwrap_or_default(),
-                url: pkg.url.unwrap_or_default(),
-                size: 0,
-                download_size: 0,
-                repo: "aur".to_string(),
-                depends: pkg.depends.unwrap_or_default(),
-                licenses: pkg.license.unwrap_or_default(),
-                source: "aur".to_string(),
-            };
+            if let Ok(details) = search_detailed(&package).await
+                && let Some(pkg) = details.into_iter().find(|p| p.name == package)
+            {
+                let detailed = DetailedPackageInfo {
+                    name: pkg.name,
+                    version: pkg.version.clone(),
+                    description: pkg.description.unwrap_or_default(),
+                    url: pkg.url.unwrap_or_default(),
+                    size: 0,
+                    download_size: 0,
+                    repo: "aur".to_string(),
+                    depends: pkg.depends.unwrap_or_default(),
+                    licenses: pkg.license.unwrap_or_default(),
+                    source: "aur".to_string(),
+                };
 
-            state.cache.insert_info(detailed.clone());
-            return Response::Success {
-                id,
-                result: ResponseResult::Info(detailed),
-            };
+                state.cache.insert_info(detailed.clone());
+                return Response::Success {
+                    id,
+                    result: ResponseResult::Info(detailed),
+                };
+            }
         }
     }
 
@@ -360,18 +370,26 @@ async fn handle_security_audit(_state: Arc<DaemonState>, id: RequestId) -> Respo
     use crate::core::security::vulnerability::VulnerabilityScanner;
 
     let scanner = VulnerabilityScanner::new();
-    let installed = if use_debian_backend() {
-        #[cfg(feature = "debian")]
-        {
-            apt_list_installed_fast()
-        }
-        #[cfg(not(feature = "debian"))]
-        {
-            Err(anyhow::anyhow!("Debian backend disabled"))
-        }
-    } else {
-        list_installed_fast()
-    };
+    let installed: Result<Vec<crate::package_managers::types::LocalPackage>, anyhow::Error> =
+        if use_debian_backend() {
+            #[cfg(feature = "debian")]
+            {
+                apt_list_installed_fast()
+            }
+            #[cfg(not(feature = "debian"))]
+            {
+                Err(anyhow::anyhow!("Debian backend disabled"))
+            }
+        } else {
+            #[cfg(feature = "arch")]
+            {
+                list_installed_fast()
+            }
+            #[cfg(not(feature = "arch"))]
+            {
+                Err(anyhow::anyhow!("Arch backend disabled"))
+            }
+        };
 
     let installed = match installed {
         Ok(pkgs) => pkgs,

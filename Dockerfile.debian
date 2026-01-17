@@ -1,0 +1,32 @@
+FROM debian:bookworm
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    build-essential \
+    pkg-config \
+    libssl-dev \
+    libapt-pkg-dev \
+    git \
+    clang \
+    cmake \
+    zlib1g-dev \
+    liblzma-dev \
+    libbz2-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Rust
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# Set working directory
+WORKDIR /omg
+
+# Copy source
+COPY . .
+
+# Build with debian feature
+RUN cargo build --release --no-default-features --features debian
+
+# Run smoke tests
+CMD ["./scripts/debian-smoke-test.sh"]
