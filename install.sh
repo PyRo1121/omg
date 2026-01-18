@@ -106,50 +106,7 @@ install_from_release() {
         *) warn "No prebuilt binaries for architecture: $(uname -m)"; return 1 ;;
     esac
 
-    # Try hosted binary first (pyro1121.com)
-    local hosted_url="https://pyro1121.com/omg-${arch}.tar.gz"
-    if curl -fsSL --head "$hosted_url" >/dev/null 2>&1; then
-        header "Installing Prebuilt OMG"
-        tmp_dir=$(mktemp -d)
-        trap 'cleanup_tmp_dir' RETURN
-
-        start_spinner "Downloading prebuilt binary"
-        if curl -fsSL "$hosted_url" -o "$tmp_dir/omg.tar.gz" >/dev/null 2>&1; then
-            stop_spinner "Download complete"
-        else
-            fail_spinner "Download failed"
-            return 1
-        fi
-
-        start_spinner "Extracting binaries"
-        if tar -xzf "$tmp_dir/omg.tar.gz" -C "$tmp_dir" >/dev/null 2>&1; then
-            stop_spinner "Extraction complete"
-        else
-            fail_spinner "Extraction failed"
-            return 1
-        fi
-
-        local omg_path omgd_path
-        omg_path=$(find "$tmp_dir" -maxdepth 3 -type f -name omg | head -n1)
-        omgd_path=$(find "$tmp_dir" -maxdepth 3 -type f -name omgd | head -n1)
-
-        if [[ -z "$omg_path" ]]; then
-            warn "Prebuilt archive missing omg binary"
-            return 1
-        fi
-
-        mkdir -p "$INSTALL_DIR"
-        cp "$omg_path" "$INSTALL_DIR/omg"
-        if [[ -n "$omgd_path" ]]; then
-            cp "$omgd_path" "$INSTALL_DIR/omgd"
-        fi
-        chmod +x "$INSTALL_DIR/omg" "$INSTALL_DIR/omgd" 2>/dev/null || true
-
-        success "Installed prebuilt binaries to $INSTALL_DIR"
-        return 0
-    fi
-
-    # Fallback to GitHub releases
+    # Use GitHub releases (always up-to-date)
     local release_json
     if ! release_json=$(fetch_release_json 2>/dev/null); then
         warn "Unable to fetch GitHub release metadata"
