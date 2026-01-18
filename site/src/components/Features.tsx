@@ -2,7 +2,7 @@ import { Component, For } from 'solid-js';
 
 const Features: Component = () => {
   return (
-    <section id="features" class="py-32 px-6 relative">
+    <section id="features" class="py-32 px-6 relative" aria-labelledby="features-heading">
       {/* Background accent */}
       <div class="absolute inset-0 bg-gradient-to-b from-transparent via-indigo-500/5 to-transparent pointer-events-none" />
       
@@ -12,7 +12,7 @@ const Features: Component = () => {
           <div class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-sm text-indigo-300 mb-6">
             <span>Why OMG?</span>
           </div>
-          <h2 class="text-4xl md:text-5xl lg:text-6xl font-bold mb-6">
+          <h2 id="features-heading" class="text-4xl md:text-5xl lg:text-6xl font-bold mb-6">
             One Tool to <span class="gradient-text">Rule Them All</span>
           </h2>
           <p class="text-xl text-slate-400 max-w-3xl mx-auto leading-relaxed">

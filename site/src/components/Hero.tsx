@@ -62,15 +62,13 @@ const Hero: Component = () => {
               <span class="text-slate-300">Native runtimes • 100+ via mise • Pure Rust</span>
             </div>
 
-            {/* Main headline */}
+            {/* Main headline - SEO optimized with keywords */}
             <h1 class="text-5xl md:text-6xl lg:text-7xl font-black leading-[1.1] mb-6 tracking-tight">
-              <span class="text-white">One CLI for </span>
-              <span class="gradient-text">Packages</span>
+              <span class="text-white">The Fastest </span>
+              <span class="gradient-text">Package Manager</span>
               <br />
-              <span class="text-white">and </span>
-              <span class="text-cyan-400">Runtimes</span>
-              <br />
-              <span class="text-white">on Linux</span>
+              <span class="text-white">for </span>
+              <span class="text-cyan-400">Linux</span>
             </h1>
 
             <p class="text-xl md:text-2xl text-slate-400 mb-8 leading-relaxed max-w-xl">
