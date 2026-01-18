@@ -655,7 +655,11 @@ pub fn stats() -> Result<()> {
             "\n  {} {} day streak {}",
             style::success("🔥 Current Streak:"),
             stats.current_streak,
-            if stats.current_streak == stats.longest_streak { "(personal best!)" } else { "" }
+            if stats.current_streak == stats.longest_streak {
+                "(personal best!)"
+            } else {
+                ""
+            }
         );
         if stats.longest_streak > stats.current_streak {
             println!(

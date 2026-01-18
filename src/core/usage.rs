@@ -432,18 +432,28 @@ mod tests {
 
     #[test]
     fn test_time_saved_human() {
-        let mut stats = UsageStats::default();
-
-        stats.time_saved_ms = 500;
+        let stats = UsageStats {
+            time_saved_ms: 500,
+            ..Default::default()
+        };
         assert_eq!(stats.time_saved_human(), "500ms");
 
-        stats.time_saved_ms = 5000;
+        let stats = UsageStats {
+            time_saved_ms: 5000,
+            ..Default::default()
+        };
         assert_eq!(stats.time_saved_human(), "5.0s");
 
-        stats.time_saved_ms = 120_000;
+        let stats = UsageStats {
+            time_saved_ms: 120_000,
+            ..Default::default()
+        };
         assert_eq!(stats.time_saved_human(), "2.0min");
 
-        stats.time_saved_ms = 7_200_000;
+        let stats = UsageStats {
+            time_saved_ms: 7_200_000,
+            ..Default::default()
+        };
         assert_eq!(stats.time_saved_human(), "2.0hr");
     }
 
