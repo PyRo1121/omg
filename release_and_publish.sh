@@ -431,6 +431,40 @@ publish_release() {
 }
 
 #=============================================================================
+# Sync & Deploy Website
+#=============================================================================
+
+sync_and_deploy_site() {
+  log_step "Syncing install script to website"
+  
+  local site_dir="$ROOT_DIR/site"
+  
+  if [[ ! -d "$site_dir" ]]; then
+    log_warn "Site directory not found, skipping website sync"
+    return
+  fi
+  
+  # Sync install.sh to site/public
+  cp "$ROOT_DIR/install.sh" "$site_dir/public/install.sh"
+  log_success "Synced install.sh to site/public/"
+  
+  # Deploy site if wrangler is available
+  if command -v bunx >/dev/null 2>&1 || command -v npx >/dev/null 2>&1; then
+    log_info "Deploying website to Cloudflare Pages..."
+    (
+      cd "$site_dir"
+      if command -v bunx >/dev/null 2>&1; then
+        bunx wrangler pages deploy dist --project-name=omg-site-4gd 2>&1 || log_warn "Site deploy failed (non-blocking)"
+      else
+        npx wrangler pages deploy dist --project-name=omg-site-4gd 2>&1 || log_warn "Site deploy failed (non-blocking)"
+      fi
+    ) && log_success "Website deployed"
+  else
+    log_warn "wrangler not available, skipping site deploy"
+  fi
+}
+
+#=============================================================================
 # Main
 #=============================================================================
 
@@ -468,6 +502,9 @@ main() {
   
   # Publish
   publish_release "$version"
+  
+  # Sync and deploy website
+  sync_and_deploy_site
   
   # Summary
   echo ""
