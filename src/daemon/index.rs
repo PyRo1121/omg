@@ -388,17 +388,16 @@ impl PackageIndex {
                     break;
                 }
                 // SIMD-accelerated substring search (10x faster than str::contains)
-                if finder.find(search_lower.as_bytes()).is_some() {
-                    if let Some((name, _)) = self.search_items.get(idx) {
-                        if let Some(p) = self.packages.get(name) {
-                            results.push(PackageInfo {
-                                name: p.name.clone(),
-                                version: p.version.clone(),
-                                description: p.description.clone(),
-                                source: p.source.clone(),
-                            });
-                        }
-                    }
+                if finder.find(search_lower.as_bytes()).is_some()
+                    && let Some((name, _)) = self.search_items.get(idx)
+                    && let Some(p) = self.packages.get(name)
+                {
+                    results.push(PackageInfo {
+                        name: p.name.clone(),
+                        version: p.version.clone(),
+                        description: p.description.clone(),
+                        source: p.source.clone(),
+                    });
                 }
             }
         }
