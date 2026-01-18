@@ -56,7 +56,6 @@ impl Database {
     }
 
     /// Get the default database path
-    #[must_use]
     pub fn default_path() -> Result<std::path::PathBuf> {
         Ok(paths::data_dir().join("omg.redb"))
     }
