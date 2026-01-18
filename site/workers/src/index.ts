@@ -181,6 +181,11 @@ export default {
         return await handleBillingPortal(request, env, corsHeaders);
       }
 
+      // Register free account
+      if (url.pathname === '/api/register-free' && request.method === 'POST') {
+        return await handleRegisterFree(request, env, corsHeaders);
+      }
+
       // Install telemetry ping
       if (url.pathname === '/api/install-ping' && request.method === 'POST') {
         return await handleInstallPing(request, env, corsHeaders);
@@ -780,6 +785,88 @@ async function handleBillingPortal(
   }), {
     headers: { 'Content-Type': 'application/json', ...corsHeaders },
   });
+}
+
+// Handle free account registration
+async function handleRegisterFree(
+  request: Request,
+  env: Env,
+  corsHeaders: Record<string, string>
+): Promise<Response> {
+  const body = await request.json() as { email?: string };
+  const { email } = body;
+
+  if (!email) {
+    return new Response(JSON.stringify({ success: false, error: 'Missing email' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  // Check if customer already exists
+  let customer = await env.DB.prepare(`
+    SELECT c.*, l.license_key, l.tier, l.status as license_status
+    FROM customers c
+    LEFT JOIN licenses l ON c.id = l.customer_id
+    WHERE c.email = ?
+    LIMIT 1
+  `).bind(email).first();
+
+  if (customer && customer.license_key) {
+    // Already registered - return existing license
+    return new Response(JSON.stringify({
+      success: true,
+      license_key: customer.license_key,
+      tier: customer.tier || 'free',
+      already_registered: true,
+      usage: {
+        time_saved_ms: 0,
+        total_commands: 0,
+        current_streak: 0,
+        achievements: [],
+      },
+    }), {
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  // Create new free customer
+  const customerId = crypto.randomUUID();
+  const licenseKey = `free-${crypto.randomUUID()}`;
+
+  try {
+    // Create customer
+    await env.DB.prepare(`
+      INSERT INTO customers (id, email, tier, created_at)
+      VALUES (?, ?, 'free', datetime('now'))
+    `).bind(customerId, email).run();
+
+    // Create free license (never expires)
+    await env.DB.prepare(`
+      INSERT INTO licenses (id, customer_id, license_key, tier, status, expires_at, created_at)
+      VALUES (?, ?, ?, 'free', 'active', NULL, datetime('now'))
+    `).bind(crypto.randomUUID(), customerId, licenseKey).run();
+
+    return new Response(JSON.stringify({
+      success: true,
+      license_key: licenseKey,
+      tier: 'free',
+      usage: {
+        time_saved_ms: 0,
+        total_commands: 0,
+        current_streak: 0,
+        achievements: [],
+      },
+    }), {
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  } catch (e) {
+    console.error('Registration error:', e);
+    return new Response(JSON.stringify({ success: false, error: 'Registration failed. Please try again.' }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
 }
 
 // Handle install telemetry ping

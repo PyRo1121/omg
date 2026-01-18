@@ -38,7 +38,22 @@ CREATE TABLE IF NOT EXISTS usage (
   license_key TEXT NOT NULL,
   feature TEXT NOT NULL,
   count INTEGER DEFAULT 1,
+  machine_id TEXT,
   timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS install_stats (
+  id TEXT PRIMARY KEY,
+  date TEXT UNIQUE NOT NULL,
+  count INTEGER DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS install_details (
+  id TEXT PRIMARY KEY,
+  timestamp TEXT NOT NULL,
+  version TEXT,
+  platform TEXT,
+  backend TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_licenses_key ON licenses(license_key);

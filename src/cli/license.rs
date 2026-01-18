@@ -117,7 +117,7 @@ pub fn status() -> Result<()> {
         if tier >= Tier::Enterprise {
             "✓".green().to_string()
         } else {
-            format!("{}", "$99/mo".dimmed())
+            format!("{}", "$200/mo".dimmed())
         }
     );
     for feature in ENTERPRISE_FEATURES {

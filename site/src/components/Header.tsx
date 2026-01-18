@@ -6,6 +6,10 @@ const Header: Component = () => {
   const [showDashboard, setShowDashboard] = createSignal(false);
   const [showShortcuts, setShowShortcuts] = createSignal(false);
 
+  const openDashboard = () => {
+    setShowDashboard(true);
+  };
+
   // Global keyboard shortcuts
   onMount(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -20,18 +24,19 @@ const Header: Component = () => {
         setShowDashboard(false);
       } else if (e.key === 'd' && !e.ctrlKey && !e.metaKey) {
         e.preventDefault();
-        setShowDashboard(true);
+        openDashboard();
       }
     };
     
     document.addEventListener('keydown', handleKeyDown);
+    
     onCleanup(() => document.removeEventListener('keydown', handleKeyDown));
   });
 
   return (
     <>
-    <header class="fixed top-0 left-0 right-0 z-50 bg-[#0f0f23]/80 backdrop-blur-lg border-b border-white/5">
-      <nav class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+    <header class="fixed top-0 left-0 right-0 z-50 bg-[#0f0f23]/80 backdrop-blur-lg border-b border-white/5 pointer-events-auto">
+      <nav class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between relative">
         <a href="/" class="flex items-center gap-3" aria-label="OMG Package Manager - Home">
           <div class="w-8 h-8 flex items-center justify-center">
             <img src="/favicon.svg" alt="OMG Package Manager Logo - Fastest Linux Package Manager" class="w-8 h-8 rounded-lg" width="32" height="32" />
@@ -55,8 +60,13 @@ const Header: Component = () => {
             ?
           </button>
           <button 
-            onClick={() => setShowDashboard(true)}
-            class="text-slate-400 hover:text-white transition-colors text-sm flex items-center gap-1.5"
+            type="button"
+            onClick={() => {
+              console.log('Dashboard clicked');
+              setShowDashboard(true);
+            }}
+            class="cursor-pointer text-slate-400 hover:text-white transition-colors text-sm flex items-center gap-1.5 px-3 py-2 rounded-lg hover:bg-slate-800/50 select-none"
+            style={{ "user-select": "none" }}
           >
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5.121 17.804A13.937 13.937 0 0112 16c2.5 0 4.847.655 6.879 1.804M15 10a3 3 0 11-6 0 3 3 0 016 0zm6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
