@@ -1,4 +1,4 @@
-import { Component, createSignal, Show, onMount } from 'solid-js';
+import { Component, createSignal, Show } from 'solid-js';
 
 interface LicenseInfo {
   license_key: string;
@@ -282,13 +282,12 @@ const Dashboard: Component<{ isOpen: boolean; onClose: () => void }> = (props) =
     return date.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
   };
 
-  if (!props.isOpen) return null;
-
   return (
-    <div 
-      class="fixed inset-0 z-50 flex items-center justify-center p-4"
-      onClick={(e) => e.target === e.currentTarget && props.onClose()}
-    >
+    <Show when={props.isOpen}>
+      <div 
+        class="fixed inset-0 z-[100] flex items-center justify-center p-4"
+        onClick={(e) => e.target === e.currentTarget && props.onClose()}
+      >
       <div class="absolute inset-0 bg-black/80 backdrop-blur-md animate-fade-in" />
       
       <div class="relative bg-gradient-to-b from-slate-800 to-slate-900 border border-slate-700/50 rounded-3xl max-w-2xl w-full shadow-2xl shadow-black/50 animate-scale-in overflow-hidden max-h-[90vh] overflow-y-auto">
@@ -697,7 +696,8 @@ const Dashboard: Component<{ isOpen: boolean; onClose: () => void }> = (props) =
           </Show>
         </div>
       </div>
-    </div>
+      </div>
+    </Show>
   );
 };
 

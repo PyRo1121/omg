@@ -43,7 +43,7 @@ const Hero: Component = () => {
   return (
     <section class="min-h-screen pt-24 pb-20 px-6 relative overflow-hidden flex items-center">
       {/* Animated background */}
-      <div class="absolute inset-0 overflow-hidden">
+      <div class="absolute inset-0 overflow-hidden pointer-events-none">
         <div class="absolute -top-1/2 -left-1/2 w-full h-full bg-gradient-radial from-indigo-500/20 via-transparent to-transparent animate-pulse-slow" />
         <div class="absolute -bottom-1/2 -right-1/2 w-full h-full bg-gradient-radial from-cyan-500/15 via-transparent to-transparent animate-pulse-slow delay-1000" />
         <div class="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPjxnIGZpbGw9IiM2MzY2ZjEiIGZpbGwtb3BhY2l0eT0iMC4wMyI+PGNpcmNsZSBjeD0iMzAiIGN5PSIzMCIgcj0iMiIvPjwvZz48L2c+PC9zdmc+')] opacity-50" />
