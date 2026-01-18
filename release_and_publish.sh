@@ -454,9 +454,9 @@ sync_and_deploy_site() {
     (
       cd "$site_dir"
       if command -v bunx >/dev/null 2>&1; then
-        bunx wrangler pages deploy dist --project-name=omg-site-4gd 2>&1 || log_warn "Site deploy failed (non-blocking)"
+        bunx wrangler pages deploy dist --project-name=omg-site 2>&1 || log_warn "Site deploy failed (non-blocking)"
       else
-        npx wrangler pages deploy dist --project-name=omg-site-4gd 2>&1 || log_warn "Site deploy failed (non-blocking)"
+        npx wrangler pages deploy dist --project-name=omg-site 2>&1 || log_warn "Site deploy failed (non-blocking)"
       fi
     ) && log_success "Website deployed"
   else
