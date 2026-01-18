@@ -51,14 +51,15 @@ This reduces system calls from 2 to 1 per message, critical for sub-millisecond 
 
 ## Serialization Format
 
-### Bincode Choice
+### Bitcode Choice
 
-Bincode 2.0 is selected for serialization due to:
+Bitcode 0.6 is selected for serialization due to:
 
-- **Performance**: No schema overhead, direct binary mapping
-- **Size**: Compact representation (no field names)
-- **Speed**: Zero-copy deserialization where possible
-- **Safety**: Compile-time type checking via `Encode`/`Decode` traits
+- **Performance**: Fastest binary serializer in Rust benchmarks
+- **Size**: Smallest serialized output (better than bincode)
+- **Compression**: Highly compressible by Deflate/LZ4/Zstd
+- **Maintained**: Actively developed (unlike abandoned bincode 3.0)
+- **Serde Integration**: Uses serde for recursive types compatibility
 
 ### Serialization Performance
 

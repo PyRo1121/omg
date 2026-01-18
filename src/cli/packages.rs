@@ -1113,7 +1113,12 @@ pub async fn update(check_only: bool) -> Result<()> {
     } // end #[cfg(feature = "arch")] block
 }
 
-/// Show package information
+/// Show package information (Synchronous fast-path)
+/// Alias for CLI fast path
+pub fn info_sync_cli(package: &str) -> Result<bool> {
+    info_sync(package)
+}
+
 /// Show package information (Synchronous fast-path)
 pub fn info_sync(package: &str) -> Result<bool> {
     if use_debian_backend() {

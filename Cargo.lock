@@ -3969,7 +3969,7 @@ dependencies = [
 
 [[package]]
 name = "omg"
-version = "0.1.64"
+version = "0.1.65"
 dependencies = [
  "ahash",
  "alpm",
@@ -4003,6 +4003,7 @@ dependencies = [
  "libc",
  "lz4_flex",
  "lzma-rs",
+ "memchr",
  "moka",
  "nucleo-matcher",
  "owo-colors",

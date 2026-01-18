@@ -68,6 +68,8 @@ impl PackageCache {
     }
 
     /// Get cached system status
+    #[inline]
+    #[must_use]
     pub fn get_status(&self) -> Option<StatusResult> {
         self.system_status.get("status")
     }
@@ -85,6 +87,8 @@ impl PackageCache {
     }
 
     /// Get cached explicit package count
+    #[inline]
+    #[must_use]
     pub fn get_explicit_count(&self) -> Option<usize> {
         self.explicit_count.get("explicit_count")
     }
@@ -104,6 +108,8 @@ impl PackageCache {
     }
 
     /// Get cached results for a query
+    #[inline]
+    #[must_use]
     pub fn get(&self, query: &str) -> Option<Vec<PackageInfo>> {
         self.cache.get(query)
     }
@@ -114,6 +120,7 @@ impl PackageCache {
     }
 
     /// Get cache statistics
+    #[must_use]
     pub fn stats(&self) -> CacheStats {
         CacheStats {
             size: self.cache.entry_count() as usize,
@@ -132,6 +139,8 @@ impl PackageCache {
     }
 
     /// Get detailed info from cache
+    #[inline]
+    #[must_use]
     pub fn get_info(&self, name: &str) -> Option<DetailedPackageInfo> {
         self.detailed_cache.get(name)
     }

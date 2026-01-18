@@ -1,6 +1,6 @@
 //! IPC Client for communicating with the daemon
 //!
-//! Uses `LengthDelimitedCodec` and Bincode for maximum IPC performance.
+//! Uses `LengthDelimitedCodec` and bitcode for maximum IPC performance.
 //! Supports connection pooling for persistent connections across commands.
 
 use anyhow::{Context, Result};
@@ -99,13 +99,13 @@ impl DaemonClient {
     }
 
     /// Connect to the daemon synchronously (sub-millisecond)
+    /// Uses connection pooling for even faster subsequent calls
     pub fn connect_sync() -> Result<Self> {
         if Self::daemon_disabled() {
             anyhow::bail!("Daemon disabled by environment");
         }
-        let socket_path = default_socket_path();
-        let stream = SyncUnixStream::connect(&socket_path)
-            .with_context(|| format!("Failed to connect to daemon at {}", socket_path.display()))?;
+        // Try pooled connection first (faster)
+        let stream = get_pooled_sync()?;
 
         Ok(Self {
             framed: None,
@@ -125,7 +125,7 @@ impl DaemonClient {
         let framed = self.framed.as_mut().context("Client is in sync mode")?;
 
         // Encode and send
-        let request_bytes = bincode::serde::encode_to_vec(&request, bincode::config::legacy())?;
+        let request_bytes = bitcode::serialize(&request)?;
         framed.send(request_bytes.into()).await?;
 
         // Read and decode response
@@ -134,8 +134,7 @@ impl DaemonClient {
             .await
             .ok_or_else(|| anyhow::anyhow!("Daemon disconnected"))??;
 
-        let (response, _): (Response, _) =
-            bincode::serde::decode_from_slice(&response_bytes, bincode::config::legacy())?;
+        let response: Response = bitcode::deserialize(&response_bytes)?;
 
         match response {
             Response::Success {
@@ -166,7 +165,7 @@ impl DaemonClient {
             .context("Client is in async mode")?;
 
         // 1. Encode
-        let request_bytes = bincode::serde::encode_to_vec(request, bincode::config::legacy())?;
+        let request_bytes = bitcode::serialize(request)?;
         let len = request_bytes.len() as u32;
 
         // 2. Send length-delimited (Big Endian) combined to save a syscall
@@ -185,8 +184,7 @@ impl DaemonClient {
         stream.read_exact(&mut resp_bytes)?;
 
         // 5. Decode
-        let (response, _): (Response, _) =
-            bincode::serde::decode_from_slice(&resp_bytes, bincode::config::legacy())?;
+        let response: Response = bitcode::deserialize(&resp_bytes)?;
 
         match response {
             Response::Success {
@@ -290,8 +288,14 @@ impl DaemonClient {
     /// Execute multiple requests in a single IPC round-trip
     pub async fn batch(&mut self, requests: Vec<Request>) -> Result<Vec<Response>> {
         let id = self.request_id.fetch_add(1, Ordering::SeqCst);
-        match self.call(Request::Batch { id, requests }).await? {
-            ResponseResult::Batch(responses) => Ok(responses),
+        match self
+            .call(Request::Batch {
+                id,
+                requests: Box::new(requests),
+            })
+            .await?
+        {
+            ResponseResult::Batch(responses) => Ok(*responses),
             _ => anyhow::bail!("Invalid response type"),
         }
     }
@@ -387,7 +391,7 @@ impl PooledSyncClient {
         let stream = self.stream.as_mut().context("Connection not available")?;
 
         // Encode
-        let request_bytes = bincode::serde::encode_to_vec(request, bincode::config::legacy())?;
+        let request_bytes = bitcode::serialize(request)?;
         let len = request_bytes.len() as u32;
 
         // Send length-delimited
@@ -406,8 +410,7 @@ impl PooledSyncClient {
         stream.read_exact(&mut resp_bytes)?;
 
         // Decode
-        let (response, _): (Response, _) =
-            bincode::serde::decode_from_slice(&resp_bytes, bincode::config::legacy())?;
+        let response: Response = bitcode::deserialize(&resp_bytes)?;
 
         match response {
             Response::Success {

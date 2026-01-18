@@ -1,6 +1,6 @@
 //! Daemon server implementation with Unix socket IPC
 //!
-//! Uses `LengthDelimitedCodec` and Bincode for maximum IPC performance.
+//! Uses `LengthDelimitedCodec` and bitcode for maximum IPC performance.
 
 use anyhow::Result;
 use futures::sink::SinkExt;
@@ -241,14 +241,13 @@ async fn handle_client(stream: tokio::net::UnixStream, state: Arc<DaemonState>) 
         let bytes = request_bytes?;
 
         // Decode request
-        let (request, _): (Request, _) =
-            bincode::serde::decode_from_slice(&bytes, bincode::config::legacy())?;
+        let request: Request = bitcode::deserialize(&bytes)?;
 
         // Handle request
         let response = handle_request(Arc::clone(&state), request).await;
 
         // Encode and send response
-        let response_bytes = bincode::serde::encode_to_vec(&response, bincode::config::legacy())?;
+        let response_bytes = bitcode::serialize(&response)?;
         framed.send(response_bytes.into()).await?;
     }
 

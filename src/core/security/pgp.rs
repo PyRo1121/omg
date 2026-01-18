@@ -1,5 +1,3 @@
-#![cfg(feature = "pgp")]
-
 use anyhow::{Context, Result};
 use openpgp::Cert;
 use openpgp::Packet;
