@@ -156,7 +156,7 @@ const Installation: Component = () => {
               </svg>
             </div>
             <h3 class="font-bold text-lg mb-2">Debian / Ubuntu</h3>
-            <p class="text-slate-400 text-sm mb-3">Full APT integration via rust-apt. 59-483x faster than apt-cache.</p>
+            <p class="text-slate-400 text-sm mb-3">Full APT integration via rust-apt. Up to 300x faster than apt.</p>
             <code class="text-xs text-orange-400 font-mono">curl ... | bash</code>
           </div>
 

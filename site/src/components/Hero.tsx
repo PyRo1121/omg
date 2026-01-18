@@ -5,7 +5,7 @@ const Hero: Component = () => {
   const [showCursor, setShowCursor] = createSignal(true);
   
   const commands = [
-    { cmd: 'omg search firefox', output: 'Found 12 packages in 6ms', highlight: '(pacman: 132ms, yay: 1329ms)' },
+    { cmd: 'omg search firefox', output: 'Found 12 packages in 6ms', highlight: '(pacman: 133ms, yay: 150ms)' },
     { cmd: 'omg use node 22', output: '✓ Switched to node v22.0.0', highlight: '(1.8ms)' },
     { cmd: 'omg audit', output: '✓ No vulnerabilities found', highlight: '(scanned 847 packages)' },
   ];
@@ -74,7 +74,7 @@ const Hero: Component = () => {
             <p class="text-xl md:text-2xl text-slate-400 mb-8 leading-relaxed max-w-xl">
               Native managers for <span class="text-white font-medium">Node</span>, <span class="text-white font-medium">Python</span>, <span class="text-white font-medium">Go</span>, <span class="text-white font-medium">Rust</span>, <span class="text-white font-medium">Ruby</span>, <span class="text-white font-medium">Java</span>, and <span class="text-white font-medium">Bun</span>.
               The long‑tail of 100+ runtimes comes from <span class="text-white font-medium">mise</span> while we keep expanding the native core.
-              <span class="text-cyan-400 font-semibold"> 50-200x faster</span> end‑to‑end.
+              <span class="text-cyan-400 font-semibold"> 22x faster</span> than pacman/yay.
             </p>
 
             {/* CTA buttons */}
@@ -138,7 +138,7 @@ const Hero: Component = () => {
                     <span class="text-cyan-400 font-bold">6ms</span>
                   </div>
                   <div class="text-slate-500 text-xs pl-5">
-                    vs pacman: 132ms • yay: 1,329ms • apt: 890ms
+                    vs pacman: 133ms • yay: 150ms • apt: 652ms
                   </div>
                 </div>
                 
@@ -163,7 +163,7 @@ const Hero: Component = () => {
             
             {/* Floating badges */}
             <div class="absolute -top-4 -right-4 bg-gradient-to-r from-green-500 to-emerald-500 text-white text-xs font-bold px-3 py-1.5 rounded-full shadow-lg animate-bounce-slow">
-              200x Faster
+              22x Faster
             </div>
             <div class="absolute -bottom-4 -left-4 bg-gradient-to-r from-indigo-500 to-purple-500 text-white text-xs font-bold px-3 py-1.5 rounded-full shadow-lg">
               Pure Rust
@@ -183,8 +183,8 @@ const Hero: Component = () => {
               <div class="text-slate-400 text-sm">Runtimes via mise</div>
             </div>
             <div class="text-center group">
-              <div class="stat-number group-hover:scale-110 transition-transform">200x</div>
-              <div class="text-slate-400 text-sm">Faster Than AUR Helpers</div>
+              <div class="stat-number group-hover:scale-110 transition-transform">22x</div>
+              <div class="text-slate-400 text-sm">Faster Than pacman</div>
             </div>
             <div class="text-center group">
               <div class="stat-number group-hover:scale-110 transition-transform">0</div>

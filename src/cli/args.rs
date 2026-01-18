@@ -285,6 +285,9 @@ pub enum Commands {
     /// Launch the interactive TUI dashboard for system monitoring and management
     #[command(visible_alias = "d")]
     Dash,
+
+    /// Show usage statistics (time saved, commands used, etc.)
+    Stats,
 }
 
 #[derive(Subcommand, Debug)]

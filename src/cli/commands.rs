@@ -598,3 +598,136 @@ pub async fn rollback(id: Option<String>) -> Result<()> {
 
     Ok(())
 }
+
+/// Show usage statistics
+pub fn stats() -> Result<()> {
+    use crate::cli::style;
+    use crate::core::usage::UsageStats;
+
+    let stats = UsageStats::load();
+
+    println!("\n{}", style::header("OMG Usage Statistics"));
+    println!("{}", style::dim(&"─".repeat(50)));
+
+    // Time saved
+    println!(
+        "\n  {} {}",
+        style::success("Time Saved:"),
+        style::header(&stats.time_saved_human())
+    );
+
+    // Total commands
+    println!(
+        "  {} {}",
+        style::info("Total Commands:"),
+        stats.total_commands
+    );
+
+    // Today's activity
+    println!(
+        "  {} {}",
+        style::info("Queries Today:"),
+        stats.queries_today
+    );
+    println!(
+        "  {} {}",
+        style::info("Queries This Month:"),
+        stats.queries_this_month
+    );
+
+    // Top commands
+    let top = stats.top_commands();
+    if !top.is_empty() {
+        println!("\n  {}", style::header("Most Used Commands:"));
+        for (cmd, count) in top {
+            println!(
+                "    {} {} ({}x)",
+                style::arrow("→"),
+                style::command(&cmd),
+                count
+            );
+        }
+    }
+
+    // Streak info
+    if stats.current_streak > 0 {
+        println!(
+            "\n  {} {} day streak {}",
+            style::success("🔥 Current Streak:"),
+            stats.current_streak,
+            if stats.current_streak == stats.longest_streak { "(personal best!)" } else { "" }
+        );
+        if stats.longest_streak > stats.current_streak {
+            println!(
+                "    {} Longest: {} days",
+                style::dim("📊"),
+                stats.longest_streak
+            );
+        }
+    }
+
+    // Achievements
+    if !stats.achievements.is_empty() {
+        println!("\n  {}", style::header("🏆 Achievements:"));
+        for achievement in &stats.achievements {
+            println!(
+                "    {} {} - {}",
+                achievement.emoji(),
+                style::success(achievement.name()),
+                style::dim(achievement.description())
+            );
+        }
+    }
+
+    // Pro features (if applicable)
+    if stats.sbom_generated > 0 || stats.vulnerabilities_found > 0 {
+        println!("\n  {}", style::header("Security Stats:"));
+        println!(
+            "    {} SBOMs Generated: {}",
+            style::arrow("→"),
+            stats.sbom_generated
+        );
+        println!(
+            "    {} Vulnerabilities Found: {}",
+            style::arrow("→"),
+            stats.vulnerabilities_found
+        );
+    }
+
+    // Dollar savings calculation
+    let time_saved_hours = stats.time_saved_ms as f64 / 3_600_000.0;
+    let hourly_rate = 150_000.0 / 2080.0; // $150k/year, 2080 work hours
+    let dollar_savings = time_saved_hours * hourly_rate;
+
+    if dollar_savings > 0.01 {
+        println!(
+            "\n  {} ${:.2}",
+            style::success("Estimated Value Saved:"),
+            dollar_savings
+        );
+        println!(
+            "    {}",
+            style::dim("(Based on $150k/yr avg software engineer salary)")
+        );
+    }
+
+    println!();
+
+    // Sync hint
+    if let Some(license) = crate::core::license::load_license() {
+        println!(
+            "  {} Synced to dashboard ({})",
+            style::success("✓"),
+            style::info(&license.tier)
+        );
+    } else {
+        println!(
+            "  {} {}",
+            style::dim("Tip:"),
+            style::dim("Register at pyro1121.com to sync stats to your dashboard")
+        );
+    }
+
+    println!();
+    Ok(())
+}

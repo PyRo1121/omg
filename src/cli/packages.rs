@@ -108,6 +108,10 @@ pub fn search_sync_cli(query: &str, detailed: bool, interactive: bool) -> Result
             style::command("omg info <package> for details")
         )?;
         stdout.flush()?;
+
+        // Track usage
+        crate::core::usage::track_search();
+
         return Ok(true);
     }
 
@@ -620,6 +624,9 @@ pub async fn install(packages: &[String], yes: bool) -> Result<()> {
         if let Ok(history) = HistoryManager::new() {
             let _ = history.add_transaction(TransactionType::Install, changes, true);
         }
+
+        // Track usage
+        crate::core::usage::track_install();
 
         Ok(())
     } // end #[cfg(feature = "arch")] block
@@ -1155,6 +1162,10 @@ pub fn info_sync(package: &str) -> Result<bool> {
 
         display_detailed_info_buffered(&mut stdout, &info)?;
         stdout.flush()?;
+
+        // Track usage
+        crate::core::usage::track_info();
+
         return Ok(true);
     }
 
@@ -1167,6 +1178,10 @@ pub fn info_sync(package: &str) -> Result<bool> {
             style::success("Source:"),
             style::info(&info.repo)
         );
+
+        // Track usage
+        crate::core::usage::track_info();
+
         return Ok(true);
     }
 

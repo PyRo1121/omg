@@ -17,6 +17,7 @@ pub mod security;
 pub mod task_runner;
 pub mod telemetry;
 mod types;
+pub mod usage;
 
 pub use archive::{
     extract_auto, extract_auto_strip, extract_tar_gz, extract_tar_gz_strip, extract_zip,

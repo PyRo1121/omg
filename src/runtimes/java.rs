@@ -25,20 +25,6 @@ struct AdoptiumPackage {
     name: String,
 }
 
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
-struct AdoptiumVersionInfo {
-    major: u32,
-    minor: u32,
-    security: u32,
-}
-
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
-struct AdoptiumRelease {
-    version_data: AdoptiumVersionInfo,
-}
-
 /// Java version info
 #[derive(Debug, Clone)]
 pub struct JavaVersion {
