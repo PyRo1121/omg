@@ -39,14 +39,61 @@ fn try_fast_explicit_count() -> bool {
     false
 }
 
+/// Ultra-fast path for simple search (bypasses tokio entirely)
+/// This shaves ~2ms by avoiding runtime initialization
+fn try_fast_search() -> bool {
+    let args: Vec<_> = std::env::args().collect();
+    // Check for "omg search <query>" or "omg s <query>" (simple search, no flags)
+    if args.len() == 3 && (args[1] == "search" || args[1] == "s") {
+        let query = &args[2];
+        // Skip if query looks like a flag
+        if query.starts_with('-') {
+            return false;
+        }
+        // Use sync path directly
+        if packages::search_sync_cli(query, false, false).unwrap_or(false) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Ultra-fast path for simple info (bypasses tokio entirely)
+fn try_fast_info() -> bool {
+    let args: Vec<_> = std::env::args().collect();
+    // Check for "omg info <package>" (simple info, no flags)
+    if args.len() == 3 && args[1] == "info" {
+        let package = &args[2];
+        // Skip if package looks like a flag
+        if package.starts_with('-') {
+            return false;
+        }
+        // Use sync path directly
+        if packages::info_sync_cli(package).unwrap_or(false) {
+            return true;
+        }
+    }
+    false
+}
+
 fn main() -> Result<()> {
     // ULTRA FAST PATH: explicit --count without tokio
     if try_fast_explicit_count() {
         return Ok(());
     }
 
-    // Normal path with tokio runtime
-    tokio::runtime::Builder::new_multi_thread()
+    // ULTRA FAST PATH: simple search without tokio
+    if try_fast_search() {
+        return Ok(());
+    }
+
+    // ULTRA FAST PATH: simple info without tokio
+    if try_fast_info() {
+        return Ok(());
+    }
+
+    // Normal path with tokio runtime (current_thread for faster startup)
+    tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?
         .block_on(async_main())

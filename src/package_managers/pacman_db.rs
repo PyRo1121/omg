@@ -492,8 +492,8 @@ fn save_cache_to_disk<T: Serialize>(cache: &T, name: &str) -> Result<()> {
 
     // Write to a temporary file first for atomicity
     let tmp_path = path.with_extension("tmp");
-    let mut file = File::create(&tmp_path)?;
-    bincode::serde::encode_into_std_write(cache, &mut file, bincode::config::standard())?;
+    let data = bitcode::serialize(cache)?;
+    fs::write(&tmp_path, data)?;
     fs::rename(tmp_path, path)?;
     Ok(())
 }
@@ -501,8 +501,8 @@ fn save_cache_to_disk<T: Serialize>(cache: &T, name: &str) -> Result<()> {
 /// Load cache from disk
 fn load_cache_from_disk<T: for<'de> Deserialize<'de>>(name: &str) -> Result<T> {
     let path = get_cache_dir().join(format!("{name}.bin"));
-    let mut file = File::open(&path)?;
-    let cache: T = bincode::serde::decode_from_std_read(&mut file, bincode::config::standard())?;
+    let data = fs::read(&path)?;
+    let cache: T = bitcode::deserialize(&data)?;
     Ok(cache)
 }
 

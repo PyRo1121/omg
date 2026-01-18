@@ -99,8 +99,7 @@ impl PersistentCache {
         match table.get("packages")? {
             Some(guard) => {
                 let start = std::time::Instant::now();
-                let (index, _): (SerializedIndex, _) =
-                    bincode::serde::decode_from_slice(guard.value(), bincode::config::legacy())?;
+                let index: SerializedIndex = bitcode::deserialize(guard.value())?;
                 tracing::debug!(
                     "Loaded {} packages from cache in {:?}",
                     index.packages.len(),
@@ -130,7 +129,7 @@ impl PersistentCache {
             db_mtime,
         };
 
-        let index_data = bincode::serde::encode_to_vec(&index, bincode::config::legacy())?;
+        let index_data = bitcode::serialize(&index)?;
         let meta_data = serde_json::to_vec(&meta)?;
 
         let write_txn = self.db.begin_write()?;

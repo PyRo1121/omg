@@ -24,7 +24,7 @@ OMG is a next-generation package manager designed for 2026 standards. It elimina
 
 It now ships a full **runtime-aware task runner**, Bun-first JavaScript workflows, and native Rust toolchain management with `rust-toolchain.toml` support.
 
-> "50-200x faster than traditional tools. Zero subprocess overhead. Zero-trust security."
+> "22x faster than pacman/yay. Zero subprocess overhead. Zero-trust security."
 
 ---
 
@@ -267,12 +267,12 @@ OMG achieves ~6ms performance on all core operations through a persistent daemon
 
 | Command | OMG (Daemon) | pacman | yay | Speedup |
 |---------|--------------|--------|-----|---------:|
-| **search** | **6.60ms** ✨ | 132.40ms | 1329.50ms | **20.0x faster** |
-| **info** | **6.00ms** ✨ | 134.40ms | 286.00ms | **22.4x faster** |
-| **status** | **3ms** ✨ | N/A | N/A | *omg-fast* |
-| **explicit** | **1.00ms** ✨ | 14.40ms | 34.50ms | **14.4x faster** |
+| **search** | **6ms** ✨ | 133ms | 150ms | **22x faster** |
+| **info** | **6.5ms** ✨ | 138ms | 300ms | **21x faster** |
+| **status** | **7ms** ✨ | N/A | N/A | — |
+| **explicit** | **1.2ms** ✨ | 14ms | 27ms | **12x faster** |
 
-> 💡 **Pro tip:** Use `omg-fast status` for **3ms** status display, or `omg-fast ec` for sub-millisecond explicit counts!
+> 💡 **Note:** yay benchmarked with `--repo` flag (no AUR network calls) for fair comparison.
 
 ### Debian/Ubuntu (apt)
 
@@ -297,12 +297,16 @@ OMG parses `/var/lib/dpkg/status` and APT's Packages files directly, bypassing s
 
 OMG operates in the imperceptible range. Your fingers literally move faster than OMG responds.
 
-**Annual Time Savings (10 package ops/day):**
-| Tool | Per Year | 10-person team |
-|------|----------|----------------|
-| pacman | 12.6 minutes | 2.1 hours |
-| yay | 151.7 minutes | 25.3 hours |
-| **OMG** | **0.5 minutes** | **83 minutes reclaimed** |
+**Annual Time & Cost Savings:**
+
+*Based on 50 package operations/day (typical active development) and $150K avg. software engineer salary ($72/hr):*
+
+| Metric | vs pacman | vs yay | 10-person team |
+|--------|-----------|--------|----------------|
+| **Time saved/engineer/year** | 39 min | 44 min | 6.5–7.3 hours |
+| **Dollar savings/year** | $47 | $53 | **$470–$530** |
+
+> 💰 For a 50-person engineering org, that's **$2,350–$2,650/year** in reclaimed productivity—and that's just package queries. Factor in the cognitive benefit of instant feedback and the ROI compounds.
 
 **Verification**
 Want to reproduce these numbers?

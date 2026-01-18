@@ -5,7 +5,7 @@ use std::sync::Arc;
 use super::cache::PackageCache;
 use super::index::PackageIndex;
 use super::protocol::{
-    DetailedPackageInfo, ExplicitResult, PackageInfo, Request, RequestId, Response, ResponseResult,
+    DetailedPackageInfo, ExplicitResult, Request, RequestId, Response, ResponseResult,
     SearchResult, SecurityAuditResult, StatusResult, Vulnerability, error_codes,
 };
 #[cfg(feature = "debian")]
@@ -98,7 +98,7 @@ pub async fn handle_request(state: Arc<DaemonState>, request: Request) -> Respon
         Request::Info { id, package } => handle_info(state, id, package).await,
         Request::Ping { id } => Response::Success {
             id,
-            result: ResponseResult::Ping("pong".to_string()),
+            result: ResponseResult::Ping(String::from("pong")),
         },
         Request::Status { id } => handle_status(&state, id),
         Request::Explicit { id } => handle_list_explicit(&state, id),
@@ -121,7 +121,7 @@ pub async fn handle_request(state: Arc<DaemonState>, request: Request) -> Respon
                 result: ResponseResult::Message("cleared".to_string()),
             }
         }
-        Request::Batch { id, requests } => handle_batch(state, id, requests).await,
+        Request::Batch { id, requests } => handle_batch(state, id, *requests).await,
     }
 }
 
@@ -142,11 +142,12 @@ async fn handle_batch(state: Arc<DaemonState>, id: RequestId, requests: Vec<Requ
 
     Response::Success {
         id,
-        result: ResponseResult::Batch(responses),
+        result: ResponseResult::Batch(Box::new(responses)),
     }
 }
 
 /// Handle search request
+#[inline]
 fn handle_search(
     state: &Arc<DaemonState>,
     id: RequestId,
@@ -168,43 +169,21 @@ fn handle_search(
     // 1. Instant Official Search (Sub-millisecond)
     let official = state.index.search(&query, limit);
 
-    if use_debian_backend() {
-        let total = official.len();
-        state.cache.insert(query, official.clone());
-        return Response::Success {
-            id,
-            result: ResponseResult::Search(SearchResult {
-                packages: official,
-                total,
-            }),
-        };
-    }
-
-    // 2. Skip AUR for speed - official index is instant
-    // AUR searches are network-bound (100-500ms) and hurt perceived performance
-    // Users can explicitly search AUR with `omg search --aur` if needed
-    let aur: Vec<PackageInfo> = Vec::new();
-    #[cfg(feature = "arch")]
-    let _ = &state.aur; // suppress unused warning
-
-    // Combined results
-    let mut packages: Vec<PackageInfo> = Vec::with_capacity(official.len() + aur.len());
-    packages.extend(official);
-    packages.extend(aur);
-
-    // Cache the results
-    state.cache.insert(query, packages.clone());
-
-    let total = packages.len();
-    let packages: Vec<_> = packages.into_iter().take(limit).collect();
+    // Cache results and return (clone only for cache, return original)
+    let total = official.len();
+    state.cache.insert(query, official.clone());
 
     Response::Success {
         id,
-        result: ResponseResult::Search(SearchResult { packages, total }),
+        result: ResponseResult::Search(SearchResult {
+            packages: official,
+            total,
+        }),
     }
 }
 
 /// Handle info request
+#[inline]
 async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) -> Response {
     // 1. Check cache first
     if let Some(cached) = state.cache.get_info(&package) {

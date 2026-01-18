@@ -1,6 +1,6 @@
 [package]
 name = "omg"
-version = "0.1.64"
+version = "0.1.65"
 edition = "2024"
 rust-version = "1.92"
 description = "The Fastest Unified Package Manager for Arch Linux + All Language Runtimes"
@@ -83,6 +83,7 @@ ruzstd = "0.8.2"  # Pure Rust zstd decoder (replaces zstd)
 parking_lot = "0.12.5"
 dashmap = "5.5"
 moka = { version = "0.12", features = ["sync"] }
+memchr = "2.7"  # SIMD-accelerated string search
 
 # Logging
 tracing = "0.1.44"
@@ -165,11 +166,15 @@ predicates = "3.1"
 pprof = { version = "0.15", features = ["flamegraph"] }
 
 [profile.release]
-lto = "thin"  # Use thin LTO to avoid rustc ICE with full LTO
+lto = "fat"  # Full LTO for maximum cross-crate inlining
 codegen-units = 1
 panic = "abort"
 strip = true
 opt-level = 3
+
+# Faster dev builds for iteration
+[profile.dev.package."*"]
+opt-level = 2  # Optimize dependencies in dev mode
 
 [profile.dev]
 opt-level = 0
