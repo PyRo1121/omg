@@ -2,6 +2,10 @@
 
 **The Fastest Unified Package Manager for Arch Linux + All Language Runtimes**
 
+![Installs](https://img.shields.io/endpoint?url=https://api.pyro1121.com/api/badge/installs&style=flat-square)
+[![License](https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat-square)](LICENSE)
+[![Rust](https://img.shields.io/badge/rust-1.92%2B-orange?style=flat-square)](https://www.rust-lang.org)
+
 OMG is a next-generation package manager designed for 2026 standards. It eliminates the friction of switching between `pacman`, `yay`, `nvm`, `pyenv`, and `rustup` by unifying them into a single, blazing-fast, Rust-native binary.
 > **Note**: Supports **Arch Linux** and **Debian/Ubuntu**. RPM-based distros coming soon.
 

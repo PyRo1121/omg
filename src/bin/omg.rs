@@ -67,6 +67,16 @@ async fn async_main() -> Result<()> {
 
     let cli = Cli::parse();
 
+    // First-run telemetry (opt-out with OMG_TELEMETRY=0)
+    if omg_lib::core::telemetry::is_first_run() && !omg_lib::core::telemetry::is_telemetry_opt_out()
+    {
+        tokio::spawn(async {
+            if let Err(e) = omg_lib::core::telemetry::ping_install().await {
+                tracing::debug!("Failed to ping install telemetry: {}", e);
+            }
+        });
+    }
+
     // Commands that require root - auto-elevate with sudo
     // Note: Install/Remove/Update handle elevation internally via subprocess
     // to allow user-level operations (like AUR building) to persist.

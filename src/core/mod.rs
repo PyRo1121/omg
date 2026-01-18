@@ -15,6 +15,7 @@ pub mod paths;
 pub mod privilege;
 pub mod security;
 pub mod task_runner;
+pub mod telemetry;
 mod types;
 
 pub use archive::{

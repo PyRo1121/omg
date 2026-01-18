@@ -107,6 +107,12 @@ pub fn fast_status_path() -> PathBuf {
     sock.with_file_name("omg.status")
 }
 
+/// Install marker file path (tracks first run for telemetry).
+#[must_use]
+pub fn installed_marker_path() -> PathBuf {
+    data_dir().join(".installed")
+}
+
 /// Returns true if running in hermetic test mode.
 #[must_use]
 pub fn test_mode() -> bool {

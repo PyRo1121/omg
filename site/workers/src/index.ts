@@ -181,6 +181,16 @@ export default {
         return await handleBillingPortal(request, env, corsHeaders);
       }
 
+      // Install telemetry ping
+      if (url.pathname === '/api/install-ping' && request.method === 'POST') {
+        return await handleInstallPing(request, env, corsHeaders);
+      }
+
+      // Install badge endpoint (shields.io format)
+      if (url.pathname === '/api/badge/installs' && request.method === 'GET') {
+        return await handleInstallsBadge(env, corsHeaders);
+      }
+
       // Health check
       if (url.pathname === '/health') {
         return new Response(JSON.stringify({ status: 'ok', timestamp: new Date().toISOString() }), {
@@ -770,4 +780,93 @@ async function handleBillingPortal(
   }), {
     headers: { 'Content-Type': 'application/json', ...corsHeaders },
   });
+}
+
+// Handle install telemetry ping
+async function handleInstallPing(
+  request: Request,
+  env: Env,
+  corsHeaders: Record<string, string>
+): Promise<Response> {
+  try {
+    const body = await request.json() as {
+      install_id?: string;
+      timestamp?: string;
+      version?: string;
+      platform?: string;
+      backend?: string;
+    };
+
+    const { install_id, timestamp, version, platform, backend } = body;
+
+    if (!install_id || !timestamp || !version) {
+      return new Response(JSON.stringify({ success: false, error: 'Missing required fields' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      });
+    }
+
+    // Store install details
+    await env.DB.prepare(`
+      INSERT OR IGNORE INTO install_details (id, timestamp, version, platform, backend)
+      VALUES (?, ?, ?, ?, ?)
+    `).bind(install_id, timestamp, version, platform || 'unknown', backend || 'unknown').run();
+
+    // Increment daily counter
+    const today = new Date().toISOString().split('T')[0];
+    await env.DB.prepare(`
+      INSERT INTO install_stats (id, date, count)
+      VALUES (?, ?, 1)
+      ON CONFLICT(date) DO UPDATE SET count = count + 1
+    `).bind(`day-${today}`, today).run();
+
+    return new Response(JSON.stringify({ success: true }), {
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  } catch (e) {
+    console.error('Install ping error:', e);
+    return new Response(JSON.stringify({ success: false, error: 'Internal error' }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+}
+
+// Handle install badge endpoint (shields.io format)
+async function handleInstallsBadge(
+  env: Env,
+  corsHeaders: Record<string, string>
+): Promise<Response> {
+  try {
+    // Get total install count
+    const result = await env.DB.prepare(`
+      SELECT COUNT(DISTINCT id) as total FROM install_details
+    `).first();
+
+    const total = (result?.total as number) || 0;
+
+    // Return shields.io endpoint JSON format
+    return new Response(JSON.stringify({
+      schemaVersion: 1,
+      label: 'installs',
+      message: total.toLocaleString(),
+      color: 'blue',
+    }), {
+      headers: { 
+        'Content-Type': 'application/json',
+        'Cache-Control': 'public, max-age=300', // Cache for 5 minutes
+        ...corsHeaders 
+      },
+    });
+  } catch (e) {
+    console.error('Badge error:', e);
+    return new Response(JSON.stringify({
+      schemaVersion: 1,
+      label: 'installs',
+      message: 'error',
+      color: 'red',
+    }), {
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
 }
