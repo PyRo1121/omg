@@ -1,6 +1,6 @@
 [package]
 name = "omg"
-version = "0.1.62"
+version = "0.1.64"
 edition = "2024"
 rust-version = "1.92"
 description = "The Fastest Unified Package Manager for Arch Linux + All Language Runtimes"
@@ -33,7 +33,7 @@ path = "src/bin/omg-fast.rs"
 [dependencies]
 # CLI Framework
 clap = { version = "4.5.54", features = ["derive", "env", "wrap_help"] }
-clap_complete = "4.5.65"
+clap_complete = "4.5"
 
 # Error handling
 anyhow = "1.0.100"
@@ -58,11 +58,11 @@ futures = "0.3.31"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 toml = "0.8.23"
-bincode = { version = "2.0", features = ["serde"] }
+bitcode = { version = "0.6", features = ["serde"] }
 
 # HTTP client
-reqwest = { version = "0.13", features = ["json", "stream"] }
-httpdate = "1.0"
+reqwest = { version = "0.13.1", features = ["json", "stream"] }
+httpdate = "1.0.3"
 
 # Filesystem
 tokio-util = { version = "0.7.18", features = ["io", "codec"] }
@@ -70,11 +70,11 @@ tokio-util = { version = "0.7.18", features = ["io", "codec"] }
 # Archives + compression (PURE RUST - no C deps)
 tar = "0.4.44"
 flate2 = { version = "1.1.8", default-features = false, features = ["rust_backend"] }  # miniz_oxide
-lz4_flex = "0.11"  # Pure Rust LZ4 for Ubuntu Packages files
+lz4_flex = "0.12"  # Pure Rust LZ4 for Ubuntu Packages files
 zip = { version = "2.4.2", default-features = false, features = ["deflate", "time"] }
 lzma-rs = "0.3"  # Pure Rust XZ/LZMA (replaces xz2)
 regex = "1.12.2"
-ruzstd = "0.8"  # Pure Rust zstd decoder (replaces zstd)
+ruzstd = "0.8.2"  # Pure Rust zstd decoder (replaces zstd)
 
 # Git operations - using command-line git (always available on Arch)
 # Removed libgit2/gix dependency for simpler builds
@@ -92,7 +92,7 @@ tracing-subscriber = { version = "0.3.22", features = ["env-filter", "json"] }
 indicatif = "0.18.3"
 
 # Colors/TTY
-owo-colors = "4.2"
+owo-colors = "4.2.3"
 console = "0.16.2"
 
 # Interactive prompts
@@ -104,10 +104,10 @@ home = "0.5.12"
 # Cryptography
 sha2 = "0.10.9"
 hex = "0.4.3"
-base64 = "0.22"
+base64 = "0.22.1"
 
 # Date & Time
-jiff = { version = "0.2", features = ["serde"] }
+jiff = { version = "0.2.18", features = ["serde"] }
 
 # Database (PURE RUST embedded DB - replaces LMDB)
 redb = "3.1"
@@ -124,7 +124,7 @@ alpm-repo-db = { git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", p
 alpm-pkginfo = { git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", package = "alpm-pkginfo", optional = true }
 
 # Process execution
-which = "7.0.3"
+which = "8.0"
 
 # Semver handling
 semver = "1.0.27"
@@ -134,7 +134,7 @@ tempfile = "3.24.0"
 
 
 # Data parallelism
-rayon = "1.11"
+rayon = "1.11.0"
 
 # Security (Phase 4.2) - PURE RUST crypto backend (for package verification, not secrets)
 # NOTE: sequoia-openpgp requires Rust 1.80+ due to ff crate
@@ -145,8 +145,8 @@ libc = "0.2.180"
 # mimalloc removed - using system allocator (pure Rust)
 ahash = "0.8.12"
 uuid = { version = "1.19", features = ["v4"] }
-ratatui = "0.29"
-crossterm = "0.28"
+ratatui = "0.30"
+crossterm = "0.29"
 rust-apt = { version = "0.9.0", optional = true }
 
 # Debian/Ubuntu 2026 Performance Stack
@@ -158,11 +158,11 @@ ar = { version = "0.9", optional = true }  # Pure Rust .ar archive parsing
 whoami = "2.0.2"
 
 [dev-dependencies]
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.6", features = ["html_reports"] }
 tempfile = "3.24"
 assert_cmd = "2.1"
 predicates = "3.1"
-pprof = { version = "0.13", features = ["flamegraph"] }
+pprof = { version = "0.15", features = ["flamegraph"] }
 
 [profile.release]
 lto = "thin"  # Use thin LTO to avoid rustc ICE with full LTO
