@@ -160,8 +160,8 @@ impl Default for LocalDbPackage {
 pub fn parse_sync_db(path: &Path, repo_name: &str) -> Result<HashMap<String, SyncDbPackage>> {
     let file = File::open(path).with_context(|| format!("Failed to open {}", path.display()))?;
 
-    // Detect compression type from extension
-    let (reader, is_zstd): (Box<dyn Read>, bool) = {
+    // Detect compression type from magic bytes
+    let reader: Box<dyn Read> = {
         let path_str = path.to_string_lossy();
         if path_str.ends_with(".db") {
             // Try to detect actual format by reading magic bytes
@@ -172,33 +172,26 @@ pub fn parse_sync_db(path: &Path, repo_name: &str) -> Result<HashMap<String, Syn
             let file = File::open(path)?;
             if magic[0..2] == [0x1f, 0x8b] {
                 // gzip
-                (Box::new(GzDecoder::new(file)), false)
+                Box::new(GzDecoder::new(file))
             } else if magic[0..4] == [0x28, 0xb5, 0x2f, 0xfd] {
                 // zstd - use pure Rust ruzstd
-                (
-                    Box::new(
-                        ruzstd::decoding::StreamingDecoder::new(file)
-                            .map_err(|e| anyhow::anyhow!("zstd: {e}"))?,
-                    ),
-                    true,
-                )
-            } else {
-                // Assume gzip
-                (Box::new(GzDecoder::new(file)), false)
-            }
-        } else if path_str.ends_with(".zst") {
-            (
                 Box::new(
                     ruzstd::decoding::StreamingDecoder::new(file)
                         .map_err(|e| anyhow::anyhow!("zstd: {e}"))?,
-                ),
-                true,
+                )
+            } else {
+                // Assume gzip
+                Box::new(GzDecoder::new(file))
+            }
+        } else if path_str.ends_with(".zst") {
+            Box::new(
+                ruzstd::decoding::StreamingDecoder::new(file)
+                    .map_err(|e| anyhow::anyhow!("zstd: {e}"))?,
             )
         } else {
-            (Box::new(GzDecoder::new(file)), false)
+            Box::new(GzDecoder::new(file))
         }
     };
-    let _ = is_zstd; // Suppress unused warning
 
     let mut archive = tar::Archive::new(reader);
     let mut packages = HashMap::new();

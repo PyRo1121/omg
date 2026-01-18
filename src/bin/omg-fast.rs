@@ -89,8 +89,7 @@ fn main() {
 fn socket_path() -> String {
     std::env::var("OMG_SOCKET_PATH").unwrap_or_else(|_| {
         std::env::var("XDG_RUNTIME_DIR")
-            .map(|d| format!("{d}/omg.sock"))
-            .unwrap_or_else(|_| "/tmp/omg.sock".to_string())
+            .map_or_else(|_| "/tmp/omg.sock".to_string(), |d| format!("{d}/omg.sock"))
     })
 }
 
@@ -168,7 +167,7 @@ fn send_search_request(
         Response::Error { message, .. } => {
             eprintln!("Error: {message}");
         }
-        _ => {}
+        Response::Success { .. } => {}
     }
 
     Ok(())
@@ -214,7 +213,7 @@ fn send_info_request(
         Response::Error { message, .. } => {
             eprintln!("Package not found: {message}");
         }
-        _ => {}
+        Response::Success { .. } => {}
     }
 
     Ok(())

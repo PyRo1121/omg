@@ -32,6 +32,9 @@ pub struct App {
 
     // Last update time
     pub last_update: Instant,
+
+    // Usage stats
+    pub usage_stats: crate::core::usage::UsageStats,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -59,6 +62,7 @@ impl App {
             search_results: Vec::new(),
             system_metrics: SystemMetrics::default(),
             last_update: Instant::now(),
+            usage_stats: crate::core::usage::UsageStats::load(),
         };
         app.refresh().await?;
         Ok(app)

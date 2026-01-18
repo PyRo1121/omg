@@ -386,6 +386,9 @@ async fn async_main() -> Result<()> {
         Commands::Dash => {
             omg_lib::cli::tui::run().await?;
         }
+        Commands::Stats => {
+            commands::stats()?;
+        }
     }
 
     Ok(())

@@ -24,8 +24,7 @@ pub struct PackageIndex {
     search_items: Vec<(String, Utf32String)>,
     /// Lowercased search strings for case-insensitive match
     search_items_lower: Vec<String>,
-    /// Prefix index for 1-2 char fast path (reserved for future optimization)
-    #[allow(dead_code)]
+    /// Prefix index for 1-2 char fast path
     prefix_index: AHashMap<String, Vec<usize>>,
     /// Reader-writer lock for package lookups
     lock: RwLock<()>,

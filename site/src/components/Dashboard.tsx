@@ -7,7 +7,57 @@ interface LicenseInfo {
   status: string;
   used_seats?: number;
   max_seats?: number;
+  machines?: Machine[];
+  usage?: UsageStats;
 }
+
+interface Machine {
+  id: string;
+  hostname: string;
+  last_seen: string;
+  os: string;
+}
+
+interface UsageStats {
+  queries_today: number;
+  queries_this_month: number;
+  sbom_generated: number;
+  vulnerabilities_found: number;
+  time_saved_ms: number;
+  total_commands: number;
+  current_streak: number;
+  longest_streak: number;
+  achievements: string[];
+}
+
+interface Achievement {
+  id: string;
+  emoji: string;
+  name: string;
+  description: string;
+}
+
+const ACHIEVEMENTS: Record<string, Achievement> = {
+  FirstStep: { id: 'FirstStep', emoji: '🚀', name: 'First Step', description: 'Executed your first command' },
+  Centurion: { id: 'Centurion', emoji: '💯', name: 'Centurion', description: 'Executed 100 commands' },
+  PowerUser: { id: 'PowerUser', emoji: '⚡', name: 'Power User', description: 'Executed 1,000 commands' },
+  Legend: { id: 'Legend', emoji: '🏆', name: 'Legend', description: 'Executed 10,000 commands' },
+  MinuteSaver: { id: 'MinuteSaver', emoji: '⏱️', name: 'Minute Saver', description: 'Saved 1 minute of time' },
+  HourSaver: { id: 'HourSaver', emoji: '⏰', name: 'Hour Saver', description: 'Saved 1 hour of time' },
+  DaySaver: { id: 'DaySaver', emoji: '📅', name: 'Day Saver', description: 'Saved 24 hours of time' },
+  WeekStreak: { id: 'WeekStreak', emoji: '🔥', name: 'Week Streak', description: 'Used OMG for 7 days straight' },
+  MonthStreak: { id: 'MonthStreak', emoji: '💎', name: 'Month Streak', description: 'Used OMG for 30 days straight' },
+  Polyglot: { id: 'Polyglot', emoji: '🌐', name: 'Polyglot', description: 'Used all 7 built-in runtimes' },
+  SecurityFirst: { id: 'SecurityFirst', emoji: '🛡️', name: 'Security First', description: 'Generated your first SBOM' },
+  BugHunter: { id: 'BugHunter', emoji: '🐛', name: 'Bug Hunter', description: 'Found and addressed vulnerabilities' },
+};
+
+const formatTimeSaved = (ms: number): string => {
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+  if (ms < 3600000) return `${(ms / 60000).toFixed(1)}min`;
+  return `${(ms / 3600000).toFixed(1)}hr`;
+};
 
 const Dashboard: Component<{ isOpen: boolean; onClose: () => void }> = (props) => {
   const [email, setEmail] = createSignal('');
@@ -15,10 +65,11 @@ const Dashboard: Component<{ isOpen: boolean; onClose: () => void }> = (props) =
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal('');
   const [license, setLicense] = createSignal<LicenseInfo | null>(null);
-  const [view, setView] = createSignal<'login' | 'dashboard'>('login');
+  const [view, setView] = createSignal<'login' | 'register' | 'dashboard'>('login');
   const [actionLoading, setActionLoading] = createSignal(false);
   const [actionMessage, setActionMessage] = createSignal('');
   const [copied, setCopied] = createSignal(false);
+  const [registerSuccess, setRegisterSuccess] = createSignal(false);
 
   const API_BASE = 'https://api.pyro1121.com';
 
@@ -168,12 +219,52 @@ const Dashboard: Component<{ isOpen: boolean; onClose: () => void }> = (props) =
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const registerFreeAccount = async () => {
+    const userEmail = email();
+    if (!userEmail) {
+      setError('Please enter your email');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+
+    try {
+      const res = await fetch(`${API_BASE}/api/register-free`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: userEmail }),
+      });
+      const data = await res.json();
+
+      if (data.success) {
+        setRegisterSuccess(true);
+        setLicense({
+          license_key: data.license_key,
+          tier: 'free',
+          expires_at: 'Never',
+          status: 'active',
+          usage: data.usage,
+        });
+        setLicenseKey(data.license_key);
+        setView('dashboard');
+      } else {
+        setError(data.error || 'Registration failed. Please try again.');
+      }
+    } catch (e) {
+      setError('Failed to connect to server. Please try again.');
+    }
+
+    setLoading(false);
+  };
+
   const logout = () => {
     setView('login');
     setLicense(null);
     setEmail('');
     setLicenseKey('');
     setError('');
+    setRegisterSuccess(false);
   };
 
   const getTierColor = (tier: string) => {
@@ -286,8 +377,87 @@ const Dashboard: Component<{ isOpen: boolean; onClose: () => void }> = (props) =
                 </button>
               </div>
 
+              <div class="text-center space-y-3">
+                <p class="text-slate-500 text-sm">
+                  Don't have an account? <button onClick={() => setView('register')} class="text-indigo-400 hover:underline">Create free account</button>
+                </p>
+                <p class="text-slate-600 text-xs">
+                  Or <a href="#pricing" onClick={props.onClose} class="text-indigo-400 hover:underline">upgrade to Pro</a> for security features
+                </p>
+              </div>
+            </div>
+          </Show>
+
+          <Show when={view() === 'register'}>
+            <div class="space-y-6">
+              <div class="bg-gradient-to-br from-green-500/10 to-emerald-500/10 border border-green-500/30 rounded-2xl p-6">
+                <div class="flex items-start gap-3 mb-5">
+                  <div class="p-2 bg-green-500/20 rounded-lg">
+                    <svg class="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <p class="text-white font-medium">Create Free Account</p>
+                    <p class="text-sm text-slate-400">Track your usage, time saved, and most-used commands</p>
+                  </div>
+                </div>
+
+                <input
+                  type="email"
+                  value={email()}
+                  onInput={(e) => setEmail(e.currentTarget.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && registerFreeAccount()}
+                  placeholder="you@email.com"
+                  class="w-full px-4 py-3 bg-slate-900/50 border border-slate-600 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-green-500 focus:ring-2 focus:ring-green-500/20 transition-all"
+                />
+
+                <Show when={error()}>
+                  <div class="mt-4 flex items-start gap-3 p-4 bg-red-500/10 border border-red-500/30 rounded-xl">
+                    <svg class="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <p class="text-red-400 text-sm">{error()}</p>
+                  </div>
+                </Show>
+
+                <button
+                  onClick={registerFreeAccount}
+                  disabled={loading() || !email()}
+                  class="w-full mt-5 py-4 bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-400 hover:to-emerald-400 disabled:from-slate-600 disabled:to-slate-600 text-white font-semibold rounded-xl transition-all flex items-center justify-center gap-2"
+                >
+                  {loading() ? (
+                    <>
+                      <svg class="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                      </svg>
+                      Creating account...
+                    </>
+                  ) : (
+                    <>
+                      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                      </svg>
+                      Create Free Account
+                    </>
+                  )}
+                </button>
+
+                <div class="mt-4 p-4 bg-slate-800/50 rounded-xl">
+                  <p class="text-sm text-slate-300 font-medium mb-2">Free tier includes:</p>
+                  <ul class="text-xs text-slate-400 space-y-1">
+                    <li class="flex items-center gap-2"><span class="text-green-400">✓</span> Usage tracking & analytics</li>
+                    <li class="flex items-center gap-2"><span class="text-green-400">✓</span> Time saved calculations</li>
+                    <li class="flex items-center gap-2"><span class="text-green-400">✓</span> Command history & stats</li>
+                    <li class="flex items-center gap-2"><span class="text-green-400">✓</span> Package management</li>
+                    <li class="flex items-center gap-2"><span class="text-green-400">✓</span> 100+ runtimes via mise</li>
+                  </ul>
+                </div>
+              </div>
+
               <p class="text-center text-slate-500 text-sm">
-                Don't have a license? <a href="#pricing" onClick={props.onClose} class="text-indigo-400 hover:underline">Get one here</a>
+                Already have an account? <button onClick={() => setView('login')} class="text-indigo-400 hover:underline">Sign in</button>
               </p>
             </div>
           </Show>
@@ -377,6 +547,77 @@ const Dashboard: Component<{ isOpen: boolean; onClose: () => void }> = (props) =
                   Activate with: <code class="text-slate-400">omg license activate {licenseKey()}</code>
                 </p>
               </div>
+
+              {/* Usage Statistics - All tiers */}
+              <div class="bg-slate-800/50 border border-slate-700/50 rounded-2xl p-6">
+                <h3 class="text-white font-semibold flex items-center gap-2 mb-4">
+                  <svg class="w-5 h-5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                  </svg>
+                  Usage Statistics
+                </h3>
+                <div class="grid grid-cols-2 gap-3 mb-4">
+                  <div class="bg-slate-900/50 rounded-xl p-4 text-center">
+                    <div class="text-2xl font-bold text-green-400">{license()!.usage?.time_saved_ms ? formatTimeSaved(license()!.usage!.time_saved_ms) : '0ms'}</div>
+                    <div class="text-xs text-slate-500">Time Saved</div>
+                  </div>
+                  <div class="bg-slate-900/50 rounded-xl p-4 text-center">
+                    <div class="text-2xl font-bold text-cyan-400">{license()!.usage?.total_commands || 0}</div>
+                    <div class="text-xs text-slate-500">Commands</div>
+                  </div>
+                  <div class="bg-slate-900/50 rounded-xl p-4 text-center">
+                    <div class="text-2xl font-bold text-indigo-400">{license()!.usage?.queries_today || 0}</div>
+                    <div class="text-xs text-slate-500">Today</div>
+                  </div>
+                  <div class="bg-slate-900/50 rounded-xl p-4 text-center flex flex-col items-center justify-center">
+                    <div class="text-2xl font-bold text-orange-400 flex items-center gap-1">
+                      🔥 {license()!.usage?.current_streak || 0}
+                    </div>
+                    <div class="text-xs text-slate-500">Day Streak</div>
+                  </div>
+                </div>
+
+                {/* Achievements */}
+                <Show when={license()!.usage?.achievements && license()!.usage!.achievements.length > 0}>
+                  <div class="border-t border-slate-700/50 pt-4 mt-4">
+                    <h4 class="text-sm font-medium text-slate-300 mb-3 flex items-center gap-2">
+                      🏆 Achievements ({license()!.usage!.achievements.length}/12)
+                    </h4>
+                    <div class="flex flex-wrap gap-2">
+                      {license()!.usage!.achievements.map((id: string) => {
+                        const achievement = ACHIEVEMENTS[id];
+                        return achievement ? (
+                          <div 
+                            class="group relative px-2 py-1 bg-slate-700/50 rounded-lg text-sm cursor-help"
+                            title={`${achievement.name}: ${achievement.description}`}
+                          >
+                            <span>{achievement.emoji}</span>
+                          </div>
+                        ) : null;
+                      })}
+                    </div>
+                  </div>
+                </Show>
+              </div>
+
+              {/* Security Stats - Pro/Team feature */}
+              <Show when={license()!.tier.toLowerCase() !== 'free' && (license()!.usage?.sbom_generated || license()!.usage?.vulnerabilities_found)}>
+                <div class="bg-slate-800/50 border border-slate-700/50 rounded-2xl p-6">
+                  <h3 class="text-white font-semibold flex items-center gap-2 mb-4">
+                    🛡️ Security Stats
+                  </h3>
+                  <div class="grid grid-cols-2 gap-4">
+                    <div class="bg-slate-900/50 rounded-xl p-4 text-center">
+                      <div class="text-2xl font-bold text-green-400">{license()!.usage?.sbom_generated || 0}</div>
+                      <div class="text-xs text-slate-500">SBOMs Generated</div>
+                    </div>
+                    <div class="bg-slate-900/50 rounded-xl p-4 text-center">
+                      <div class="text-2xl font-bold text-amber-400">{license()!.usage?.vulnerabilities_found || 0}</div>
+                      <div class="text-xs text-slate-500">CVEs Found</div>
+                    </div>
+                  </div>
+                </div>
+              </Show>
 
               {/* Subscription Management */}
               <div class="bg-slate-800/50 border border-slate-700/50 rounded-2xl p-6">

@@ -4,9 +4,9 @@
 //! the `omg` CLI and `omgd` daemon.
 //!
 //! ## Performance
-//! - **Search**: <10ms (20x faster than pacman, 200x faster than yay)
-//! - **Info**: <10ms with in-memory index
-//! - **Explicit**: <2ms with cached results
+//! - **Search**: 6ms (22x faster than pacman)
+//! - **Info**: 6.5ms (21x faster than pacman)
+//! - **Explicit**: 1.2ms (12x faster than pacman)
 //!
 //! ## Architecture
 //! - [`daemon`] - Background daemon with Unix socket IPC

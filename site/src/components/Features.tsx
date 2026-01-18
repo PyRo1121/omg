@@ -17,7 +17,7 @@ const Features: Component = () => {
           </h2>
           <p class="text-xl text-slate-400 max-w-3xl mx-auto leading-relaxed">
             Stop juggling between pacman, yay, nvm, pyenv, and rbenv. OMG unifies everything into a single, 
-            blazing-fast CLI that's 50-200x faster than the alternatives.
+            blazing-fast CLI that's 22x faster than the alternatives.
           </p>
         </div>
 
@@ -34,7 +34,7 @@ const Features: Component = () => {
               </div>
               <h3 class="text-2xl font-bold mb-3">Blazing Fast</h3>
               <p class="text-slate-400 mb-4">
-                6ms average query time. Direct libalpm access means we're 22x faster than pacman and 200x faster than yay.
+                6ms average query time. Direct libalpm access and in-memory indexing means we're 22x faster than pacman.
               </p>
               <div class="flex items-center gap-4 text-sm">
                 <div class="flex items-center gap-1">
@@ -46,7 +46,7 @@ const Features: Component = () => {
                   <span class="text-slate-500">pacman</span>
                 </div>
                 <div class="flex items-center gap-1">
-                  <span class="text-slate-400 font-mono">1.3s</span>
+                  <span class="text-slate-400 font-mono">150ms</span>
                   <span class="text-slate-500">yay</span>
                 </div>
               </div>

@@ -31,23 +31,23 @@ const Benchmarks: Component = () => {
               
               <div class="benchmark-row">
                 <span>search</span>
-                <span class="text-cyan-400 font-mono font-bold">6.6ms</span>
-                <span class="text-slate-400 font-mono">132ms</span>
-                <span class="text-green-400 font-semibold">20x</span>
-              </div>
-              
-              <div class="benchmark-row">
-                <span>info</span>
-                <span class="text-cyan-400 font-mono font-bold">6.0ms</span>
-                <span class="text-slate-400 font-mono">134ms</span>
+                <span class="text-cyan-400 font-mono font-bold">6ms</span>
+                <span class="text-slate-400 font-mono">133ms</span>
                 <span class="text-green-400 font-semibold">22x</span>
               </div>
               
               <div class="benchmark-row">
+                <span>info</span>
+                <span class="text-cyan-400 font-mono font-bold">6.5ms</span>
+                <span class="text-slate-400 font-mono">138ms</span>
+                <span class="text-green-400 font-semibold">21x</span>
+              </div>
+              
+              <div class="benchmark-row">
                 <span>explicit</span>
-                <span class="text-cyan-400 font-mono font-bold">1.0ms</span>
+                <span class="text-cyan-400 font-mono font-bold">1.2ms</span>
                 <span class="text-slate-400 font-mono">14ms</span>
-                <span class="text-green-400 font-semibold">14x</span>
+                <span class="text-green-400 font-semibold">12x</span>
               </div>
             </div>
           </div>
@@ -69,23 +69,23 @@ const Benchmarks: Component = () => {
               
               <div class="benchmark-row">
                 <span>search</span>
-                <span class="text-cyan-400 font-mono font-bold">5.9ms</span>
-                <span class="text-slate-400 font-mono">349ms</span>
+                <span class="text-cyan-400 font-mono font-bold">11ms</span>
+                <span class="text-slate-400 font-mono">652ms</span>
                 <span class="text-green-400 font-semibold">59x</span>
               </div>
               
               <div class="benchmark-row">
                 <span>info</span>
-                <span class="text-cyan-400 font-mono font-bold">5.7ms</span>
-                <span class="text-slate-400 font-mono">2752ms</span>
-                <span class="text-green-400 font-semibold">483x</span>
+                <span class="text-cyan-400 font-mono font-bold">27ms</span>
+                <span class="text-slate-400 font-mono">462ms</span>
+                <span class="text-green-400 font-semibold">17x</span>
               </div>
               
               <div class="benchmark-row">
                 <span>explicit</span>
-                <span class="text-cyan-400 font-mono font-bold">1.0ms</span>
-                <span class="text-slate-400 font-mono">53ms</span>
-                <span class="text-green-400 font-semibold">53x</span>
+                <span class="text-cyan-400 font-mono font-bold">2ms</span>
+                <span class="text-slate-400 font-mono">601ms</span>
+                <span class="text-green-400 font-semibold">300x</span>
               </div>
             </div>
           </div>

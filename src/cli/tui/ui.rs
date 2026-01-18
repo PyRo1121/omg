@@ -208,18 +208,64 @@ fn draw_dashboard(f: &mut Frame, area: Rect, app: &App) {
     draw_system_gauges(f, *l1, app);
     draw_system_info(f, *l2, app);
 
-    // Right side: Quick actions and activity
+    // Right side: Usage stats, quick actions and activity
     let right_chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .constraints([
+            Constraint::Length(8),  // Usage stats
+            Constraint::Min(0),     // Quick actions
+            Constraint::Length(10), // Recent activity
+        ])
         .split(*right);
 
-    let (Some(r0), Some(r1)) = (right_chunks.first(), right_chunks.get(1)) else {
+    let (Some(r0), Some(r1), Some(r2)) = (right_chunks.first(), right_chunks.get(1), right_chunks.get(2)) else {
         return;
     };
 
-    draw_quick_actions(f, *r0, app);
-    draw_recent_activity(f, *r1, app);
+    draw_usage_stats(f, *r0, app);
+    draw_quick_actions(f, *r1, app);
+    draw_recent_activity(f, *r2, app);
+}
+
+fn draw_usage_stats(f: &mut Frame, area: Rect, app: &App) {
+    let stats = &app.usage_stats;
+
+    let usage_lines = vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  Time Saved: ", Style::default().fg(colors::FG_MUTED)),
+            Span::styled(
+                stats.time_saved_human(),
+                Style::default()
+                    .fg(colors::ACCENT_GREEN)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("  Commands: ", Style::default().fg(colors::FG_MUTED)),
+            Span::styled(
+                format!("{}", stats.total_commands),
+                Style::default().fg(colors::ACCENT_CYAN),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("  Today: ", Style::default().fg(colors::FG_MUTED)),
+            Span::styled(
+                format!("{}", stats.queries_today),
+                Style::default().fg(colors::ACCENT_BLUE),
+            ),
+            Span::styled(" │ Month: ", Style::default().fg(colors::FG_MUTED)),
+            Span::styled(
+                format!("{}", stats.queries_this_month),
+                Style::default().fg(colors::ACCENT_BLUE),
+            ),
+        ]),
+    ];
+
+    let usage_widget = Paragraph::new(usage_lines)
+        .block(styled_block("󰄉 Usage Stats"))
+        .style(Style::default().bg(colors::BG_MEDIUM));
+    f.render_widget(usage_widget, area);
 }
 
 fn styled_block(title: &str) -> Block<'_> {
