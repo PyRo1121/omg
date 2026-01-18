@@ -218,7 +218,11 @@ fn draw_dashboard(f: &mut Frame, area: Rect, app: &App) {
         ])
         .split(*right);
 
-    let (Some(r0), Some(r1), Some(r2)) = (right_chunks.first(), right_chunks.get(1), right_chunks.get(2)) else {
+    let (Some(r0), Some(r1), Some(r2)) = (
+        right_chunks.first(),
+        right_chunks.get(1),
+        right_chunks.get(2),
+    ) else {
         return;
     };
 
