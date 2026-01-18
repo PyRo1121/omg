@@ -1,4 +1,6 @@
 <svg width="1200" height="630" viewBox="0 0 1200 630" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- OMG Package Manager - Open Graph Image for Social Sharing -->
+  <!-- Keywords: Linux package manager, runtime manager, nvm alternative, pyenv alternative -->
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1200" y2="630" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#0F172A"/>
@@ -14,40 +16,75 @@
       <stop offset="0" stop-color="#38BDF8" stop-opacity="0.25"/>
       <stop offset="1" stop-color="#A855F7" stop-opacity="0.15"/>
     </linearGradient>
+    <linearGradient id="badge" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#10B981"/>
+      <stop offset="1" stop-color="#059669"/>
+    </linearGradient>
     <filter id="blur" x="-20%" y="-20%" width="140%" height="140%" color-interpolation-filters="sRGB">
       <feGaussianBlur stdDeviation="30" />
     </filter>
   </defs>
 
-  <rect width="1200" height="630" rx="32" fill="url(#bg)" />
+  <!-- Background -->
+  <rect width="1200" height="630" fill="url(#bg)" />
 
+  <!-- Glow effects -->
   <circle cx="180" cy="120" r="160" fill="url(#glow)" filter="url(#blur)" />
   <circle cx="1040" cy="520" r="220" fill="url(#glow)" filter="url(#blur)" />
 
-  <g opacity="0.18" stroke="#1E293B" stroke-width="2">
-    <path d="M120 120H1080" />
-    <path d="M120 210H1080" />
-    <path d="M120 300H1080" />
-    <path d="M120 390H1080" />
-    <path d="M120 480H1080" />
+  <!-- Grid lines -->
+  <g opacity="0.12" stroke="#1E293B" stroke-width="1">
+    <path d="M0 157.5H1200" />
+    <path d="M0 315H1200" />
+    <path d="M0 472.5H1200" />
   </g>
 
+  <!-- Main content area -->
   <g>
-    <rect x="120" y="120" width="960" height="390" rx="28" fill="#0F172A" stroke="#1E293B" stroke-width="2" />
-    <rect x="120" y="120" width="960" height="86" rx="28" fill="#0B1220" />
-    <circle cx="160" cy="163" r="8" fill="#F87171" />
-    <circle cx="186" cy="163" r="8" fill="#FBBF24" />
-    <circle cx="212" cy="163" r="8" fill="#34D399" />
+    <!-- Terminal window -->
+    <rect x="80" y="100" width="640" height="430" rx="16" fill="#0F172A" stroke="#1E293B" stroke-width="2" />
+    <rect x="80" y="100" width="640" height="48" rx="16" fill="#0B1220" />
+    <circle cx="112" cy="124" r="7" fill="#F87171" />
+    <circle cx="136" cy="124" r="7" fill="#FBBF24" />
+    <circle cx="160" cy="124" r="7" fill="#34D399" />
+    <text x="400" y="130" font-family="system-ui, -apple-system, sans-serif" font-size="14" fill="#64748B" text-anchor="middle">~</text>
   </g>
 
-  <text x="180" y="280" font-family="Inter, Arial, sans-serif" font-size="64" font-weight="700" fill="#E2E8F0">OMG</text>
-  <text x="180" y="340" font-family="Inter, Arial, sans-serif" font-size="38" font-weight="600" fill="#94A3B8">Unified Package + Runtime Manager</text>
+  <!-- Main headline -->
+  <text x="120" y="210" font-family="system-ui, -apple-system, sans-serif" font-size="72" font-weight="800" fill="#F8FAFC">OMG</text>
+  <text x="120" y="275" font-family="system-ui, -apple-system, sans-serif" font-size="32" font-weight="600" fill="#94A3B8">The Fastest Package Manager</text>
+  <text x="120" y="315" font-family="system-ui, -apple-system, sans-serif" font-size="32" font-weight="600" fill="#94A3B8">for Linux</text>
 
-  <text x="180" y="405" font-family="JetBrains Mono, monospace" font-size="28" fill="#38BDF8">Native core runtimes</text>
-  <text x="540" y="405" font-family="JetBrains Mono, monospace" font-size="28" fill="#22D3EE">100+ via mise</text>
-  <text x="180" y="450" font-family="JetBrains Mono, monospace" font-size="28" fill="#34D399">50–200x faster</text>
+  <!-- Feature badges -->
+  <text x="120" y="380" font-family="ui-monospace, monospace" font-size="22" fill="#38BDF8">▸ Node • Python • Go • Rust • Ruby • Java • Bun</text>
+  <text x="120" y="420" font-family="ui-monospace, monospace" font-size="22" fill="#22D3EE">▸ 100+ runtimes via mise</text>
+  <text x="120" y="460" font-family="ui-monospace, monospace" font-size="22" fill="#34D399">▸ 200x faster than yay/nvm/pyenv</text>
+  <text x="120" y="500" font-family="ui-monospace, monospace" font-size="22" fill="#A78BFA">▸ Pure Rust • Zero dependencies</text>
 
-  <rect x="760" y="250" width="260" height="120" rx="18" fill="url(#accent)" opacity="0.15" />
-  <text x="785" y="310" font-family="JetBrains Mono, monospace" font-size="26" fill="#E2E8F0">omg use node@20</text>
-  <text x="785" y="350" font-family="JetBrains Mono, monospace" font-size="22" fill="#94A3B8">→ switched in 1.8ms</text>
+  <!-- Right side: Speed badge -->
+  <g transform="translate(780, 140)">
+    <rect width="340" height="380" rx="20" fill="#1E293B" opacity="0.6" />
+    <rect x="20" y="20" width="300" height="100" rx="12" fill="url(#badge)" />
+    <text x="170" y="60" font-family="system-ui, sans-serif" font-size="28" font-weight="700" fill="white" text-anchor="middle">200x FASTER</text>
+    <text x="170" y="95" font-family="system-ui, sans-serif" font-size="18" fill="rgba(255,255,255,0.8)" text-anchor="middle">than legacy tools</text>
+    
+    <!-- Stats -->
+    <text x="40" y="170" font-family="ui-monospace, monospace" font-size="18" fill="#64748B">Query time</text>
+    <text x="280" y="170" font-family="ui-monospace, monospace" font-size="24" font-weight="700" fill="#38BDF8" text-anchor="end">6ms</text>
+    
+    <text x="40" y="210" font-family="ui-monospace, monospace" font-size="18" fill="#64748B">Version switch</text>
+    <text x="280" y="210" font-family="ui-monospace, monospace" font-size="24" font-weight="700" fill="#22D3EE" text-anchor="end">1.8ms</text>
+    
+    <text x="40" y="250" font-family="ui-monospace, monospace" font-size="18" fill="#64748B">vs pacman</text>
+    <text x="280" y="250" font-family="ui-monospace, monospace" font-size="24" font-weight="700" fill="#34D399" text-anchor="end">22x</text>
+    
+    <text x="40" y="290" font-family="ui-monospace, monospace" font-size="18" fill="#64748B">vs yay</text>
+    <text x="280" y="290" font-family="ui-monospace, monospace" font-size="24" font-weight="700" fill="#A78BFA" text-anchor="end">200x</text>
+    
+    <!-- URL -->
+    <text x="170" y="350" font-family="system-ui, sans-serif" font-size="20" font-weight="600" fill="#F8FAFC" text-anchor="middle">pyro1121.com</text>
+  </g>
+
+  <!-- Bottom tagline -->
+  <text x="600" y="590" font-family="system-ui, sans-serif" font-size="18" fill="#475569" text-anchor="middle">Arch Linux • Debian • Ubuntu | AGPL-3.0</text>
 </svg>

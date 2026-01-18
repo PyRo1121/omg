@@ -161,6 +161,26 @@ export default {
         return await handleGetLicense(request, env, corsHeaders);
       }
 
+      // Refresh license token (get new JWT without changing key)
+      if (url.pathname === '/api/refresh-license' && request.method === 'POST') {
+        return await handleRefreshLicense(request, env, corsHeaders);
+      }
+
+      // Regenerate license key (new key, invalidates old one)
+      if (url.pathname === '/api/regenerate-license' && request.method === 'POST') {
+        return await handleRegenerateLicense(request, env, corsHeaders);
+      }
+
+      // Revoke machine access
+      if (url.pathname === '/api/revoke-machine' && request.method === 'POST') {
+        return await handleRevokeMachine(request, env, corsHeaders);
+      }
+
+      // Create Stripe Customer Portal session (for upgrade/downgrade/cancel)
+      if (url.pathname === '/api/billing-portal' && request.method === 'POST') {
+        return await handleBillingPortal(request, env, corsHeaders);
+      }
+
       // Health check
       if (url.pathname === '/health') {
         return new Response(JSON.stringify({ status: 'ok', timestamp: new Date().toISOString() }), {
@@ -512,6 +532,241 @@ async function handleGetLicense(
     tier: customer.tier,
     expires_at: customer.expires_at,
     status: customer.license_status,
+  }), {
+    headers: { 'Content-Type': 'application/json', ...corsHeaders },
+  });
+}
+
+// Refresh license token (get new JWT without changing the license key)
+async function handleRefreshLicense(
+  request: Request,
+  env: Env,
+  corsHeaders: Record<string, string>
+): Promise<Response> {
+  const body = await request.json() as { license_key?: string };
+  const { license_key } = body;
+
+  if (!license_key) {
+    return new Response(JSON.stringify({ success: false, error: 'Missing license_key' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  // Find the license
+  const license = await env.DB.prepare(`
+    SELECT l.*, c.email, c.company, c.id as customer_id
+    FROM licenses l 
+    JOIN customers c ON l.customer_id = c.id 
+    WHERE l.license_key = ? AND l.status = 'active'
+  `).bind(license_key).first();
+
+  if (!license) {
+    return new Response(JSON.stringify({ success: false, error: 'Invalid or inactive license' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  const tier = license.tier as string;
+  const features = getFeaturesForTier(tier);
+  const customerId = license.customer_id as string;
+
+  // Create new JWT token
+  const now = Math.floor(Date.now() / 1000);
+  const tokenExpiry = now + (7 * 24 * 60 * 60); // 7 days
+
+  const jwtPayload: JWTPayload = {
+    sub: customerId,
+    tier,
+    features,
+    exp: tokenExpiry,
+    iat: now,
+    lic: license_key,
+  };
+
+  const token = await createJWT(jwtPayload, env.JWT_SECRET);
+
+  return new Response(JSON.stringify({
+    success: true,
+    license: {
+      license_key,
+      tier,
+      expires_at: license.expires_at,
+      status: license.status,
+    },
+    token,
+  }), {
+    headers: { 'Content-Type': 'application/json', ...corsHeaders },
+  });
+}
+
+// Regenerate license key (creates new key, invalidates old one)
+async function handleRegenerateLicense(
+  request: Request,
+  env: Env,
+  corsHeaders: Record<string, string>
+): Promise<Response> {
+  const body = await request.json() as { email?: string; old_license_key?: string };
+  const { email, old_license_key } = body;
+
+  if (!email || !old_license_key) {
+    return new Response(JSON.stringify({ success: false, error: 'Missing email or old_license_key' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  // Verify the old license belongs to this email
+  const license = await env.DB.prepare(`
+    SELECT l.*, c.email, c.id as customer_id
+    FROM licenses l 
+    JOIN customers c ON l.customer_id = c.id 
+    WHERE l.license_key = ? AND c.email = ?
+  `).bind(old_license_key, email).first();
+
+  if (!license) {
+    return new Response(JSON.stringify({ success: false, error: 'License not found or email mismatch' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  // Generate new license key
+  const newLicenseKey = crypto.randomUUID();
+
+  // Update the license with new key and reset machine binding
+  await env.DB.prepare(`
+    UPDATE licenses 
+    SET license_key = ?, machine_id = NULL, used_seats = 0
+    WHERE license_key = ?
+  `).bind(newLicenseKey, old_license_key).run();
+
+  // Log the regeneration
+  await env.DB.prepare(`
+    INSERT INTO usage (id, license_key, feature, timestamp)
+    VALUES (?, ?, 'key_regenerated', datetime('now'))
+  `).bind(crypto.randomUUID(), newLicenseKey).run();
+
+  return new Response(JSON.stringify({
+    success: true,
+    new_license_key: newLicenseKey,
+    message: 'License key regenerated. All machines will need to re-activate.',
+  }), {
+    headers: { 'Content-Type': 'application/json', ...corsHeaders },
+  });
+}
+
+// Revoke machine access (for Team tier seat management)
+async function handleRevokeMachine(
+  request: Request,
+  env: Env,
+  corsHeaders: Record<string, string>
+): Promise<Response> {
+  const body = await request.json() as { license_key?: string; machine_id?: string };
+  const { license_key, machine_id } = body;
+
+  if (!license_key || !machine_id) {
+    return new Response(JSON.stringify({ success: false, error: 'Missing license_key or machine_id' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  // Verify the license exists
+  const license = await env.DB.prepare(`
+    SELECT * FROM licenses WHERE license_key = ? AND status = 'active'
+  `).bind(license_key).first();
+
+  if (!license) {
+    return new Response(JSON.stringify({ success: false, error: 'Invalid license' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  // For Pro tier, clear the machine binding
+  if (license.tier === 'pro') {
+    await env.DB.prepare(`
+      UPDATE licenses SET machine_id = NULL WHERE license_key = ?
+    `).bind(license_key).run();
+  }
+
+  // Delete usage records for this machine and decrement seat count
+  const deleted = await env.DB.prepare(`
+    DELETE FROM usage WHERE license_key = ? AND machine_id = ?
+  `).bind(license_key, machine_id).run();
+
+  if (deleted.meta.changes > 0) {
+    await env.DB.prepare(`
+      UPDATE licenses SET used_seats = MAX(0, used_seats - 1) WHERE license_key = ?
+    `).bind(license_key).run();
+  }
+
+  return new Response(JSON.stringify({
+    success: true,
+    message: 'Machine access revoked',
+  }), {
+    headers: { 'Content-Type': 'application/json', ...corsHeaders },
+  });
+}
+
+// Create Stripe Customer Portal session for subscription management
+async function handleBillingPortal(
+  request: Request,
+  env: Env,
+  corsHeaders: Record<string, string>
+): Promise<Response> {
+  const body = await request.json() as { email?: string };
+  const { email } = body;
+
+  if (!email) {
+    return new Response(JSON.stringify({ success: false, error: 'Missing email' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  // Find customer's Stripe customer ID
+  const customer = await env.DB.prepare(`
+    SELECT stripe_customer_id FROM customers WHERE email = ?
+  `).bind(email).first();
+
+  if (!customer || !customer.stripe_customer_id) {
+    return new Response(JSON.stringify({ success: false, error: 'No billing account found for this email' }), {
+      status: 404,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  // Create Stripe Customer Portal session
+  const portalResponse = await fetch('https://api.stripe.com/v1/billing_portal/sessions', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${env.STRIPE_SECRET_KEY}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({
+      'customer': customer.stripe_customer_id as string,
+      'return_url': 'https://pyro1121.com/?portal=closed',
+    }),
+  });
+
+  const session = await portalResponse.json() as { url?: string; error?: { message: string } };
+
+  if (session.error || !session.url) {
+    return new Response(JSON.stringify({ 
+      success: false, 
+      error: session.error?.message || 'Failed to create portal session' 
+    }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  return new Response(JSON.stringify({
+    success: true,
+    url: session.url,
   }), {
     headers: { 'Content-Type': 'application/json', ...corsHeaders },
   });

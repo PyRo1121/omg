@@ -5,3 +5,4 @@ AGENTS.md
 benchmark_report.md
 node_modules
 .wrangler
+dist

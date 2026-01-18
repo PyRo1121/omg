@@ -1,4 +1,185 @@
+# OMG Package Manager - https://pyro1121.com
+# The fastest unified package manager for Linux
+# Manage packages + runtimes (Node, Python, Go, Rust, Ruby, Java, Bun) in one CLI
+
+# Default rules for all crawlers
 User-agent: *
 Allow: /
+Disallow: /api/
+Disallow: /_*
+Disallow: /private/
 
+# Sitemaps (multiple formats for maximum compatibility)
 Sitemap: https://pyro1121.com/sitemap.xml
+
+# ===========================================
+# Major Search Engines - Full Access
+# ===========================================
+
+# Google (primary)
+User-agent: Googlebot
+Allow: /
+Crawl-delay: 0
+
+# Google Images
+User-agent: Googlebot-Image
+Allow: /og/
+Allow: /favicon.svg
+
+# Google Mobile
+User-agent: Googlebot-Mobile
+Allow: /
+
+# Bing & Microsoft
+User-agent: Bingbot
+Allow: /
+Crawl-delay: 1
+
+User-agent: msnbot
+Allow: /
+
+# Yahoo (uses Bing)
+User-agent: Slurp
+Allow: /
+
+# DuckDuckGo
+User-agent: DuckDuckBot
+Allow: /
+
+# Yandex (Russia)
+User-agent: Yandex
+Allow: /
+Crawl-delay: 2
+
+# Baidu (China)
+User-agent: Baiduspider
+Allow: /
+Crawl-delay: 2
+
+# Sogou (China)
+User-agent: Sogou
+Allow: /
+
+# Naver (Korea)
+User-agent: Yeti
+Allow: /
+
+# Seznam (Czech Republic)
+User-agent: SeznamBot
+Allow: /
+
+# Qwant (France/EU privacy-focused)
+User-agent: Qwantify
+Allow: /
+
+# Ecosia (eco-friendly search)
+User-agent: Ecosia
+Allow: /
+
+# Brave Search
+User-agent: BraveBot
+Allow: /
+
+# ===========================================
+# Social Media Crawlers - Allow for previews
+# ===========================================
+
+# Twitter/X Cards
+User-agent: Twitterbot
+Allow: /
+
+# Facebook/Meta Open Graph
+User-agent: facebookexternalhit
+Allow: /
+
+User-agent: Facebot
+Allow: /
+
+# LinkedIn previews
+User-agent: LinkedInBot
+Allow: /
+
+# Pinterest
+User-agent: Pinterest
+Allow: /
+
+# Slack previews
+User-agent: Slackbot
+Allow: /
+
+# Discord previews
+User-agent: Discordbot
+Allow: /
+
+# Telegram previews
+User-agent: TelegramBot
+Allow: /
+
+# WhatsApp previews
+User-agent: WhatsApp
+Allow: /
+
+# ===========================================
+# Developer/Tech Crawlers
+# ===========================================
+
+# GitHub link previews
+User-agent: github-camo
+Allow: /
+
+# Archive.org (preserve history)
+User-agent: ia_archiver
+Allow: /
+
+# ===========================================
+# AI/LLM Crawlers - Allow for training data
+# ===========================================
+
+User-agent: GPTBot
+Allow: /
+
+User-agent: ChatGPT-User
+Allow: /
+
+User-agent: anthropic-ai
+Allow: /
+
+User-agent: Claude-Web
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: Applebot
+Allow: /
+
+# ===========================================
+# Block Bad Bots & Scrapers
+# ===========================================
+
+User-agent: AhrefsBot
+Disallow: /
+
+User-agent: SemrushBot
+Disallow: /
+
+User-agent: MJ12bot
+Disallow: /
+
+User-agent: DotBot
+Disallow: /
+
+User-agent: BLEXBot
+Disallow: /
+
+# Block aggressive crawlers
+User-agent: MegaIndex
+Disallow: /
+
+User-agent: ltx71
+Disallow: /
+
+# ===========================================
+# Host directive (canonical domain)
+# ===========================================
+Host: https://pyro1121.com
