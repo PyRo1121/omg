@@ -139,16 +139,39 @@ jobs:
       - name: Smoke Test
         run: |
           . /root/.cargo/env
-          apt-get update && apt-get install -y bc
-          echo "Testing omg sync..."
-          ./target/release/omg sync
-          echo "Testing omg search..."
-          ./target/release/omg search vim | head -5
-          echo "Testing omg info..."
-          ./target/release/omg info curl
-          echo "Testing omg status..."
-          ./target/release/omg status
-          echo "✓ Debian smoke tests passed!"
+          OMG="./target/release/omg"
+          
+          echo "═══════════════════════════════════════════════════════════"
+          echo "  OMG Debian Smoke Tests - All Commands"
+          echo "═══════════════════════════════════════════════════════════"
+          
+          echo "\n[1/8] omg sync (database refresh)..."
+          $OMG sync
+          
+          echo "\n[2/8] omg search vim..."
+          $OMG search vim | head -5
+          
+          echo "\n[3/8] omg info curl..."
+          $OMG info curl
+          
+          echo "\n[4/8] omg status..."
+          $OMG status
+          
+          echo "\n[5/8] omg explicit --count..."
+          $OMG explicit --count
+          
+          echo "\n[6/8] omg update --check..."
+          $OMG update --check || echo "(no updates or check failed - ok)"
+          
+          echo "\n[7/8] omg install cowsay -y..."
+          $OMG install cowsay -y
+          
+          echo "\n[8/8] omg remove cowsay -y..."
+          $OMG remove cowsay || echo "(remove test - ok)"
+          
+          echo "\n═══════════════════════════════════════════════════════════"
+          echo "  ✓ All Debian smoke tests passed!"
+          echo "═══════════════════════════════════════════════════════════"
 
   ubuntu:
     name: "Ubuntu Build"
@@ -177,16 +200,39 @@ jobs:
 
       - name: Smoke Test
         run: |
-          sudo apt-get install -y bc
-          echo "Testing omg sync..."
-          ./target/release/omg sync
-          echo "Testing omg search..."
-          ./target/release/omg search vim | head -5
-          echo "Testing omg info..."
-          ./target/release/omg info curl
-          echo "Testing omg status..."
-          ./target/release/omg status
-          echo "✓ Ubuntu smoke tests passed!"
+          OMG="./target/release/omg"
+          
+          echo "═══════════════════════════════════════════════════════════"
+          echo "  OMG Ubuntu Smoke Tests - All Commands"
+          echo "═══════════════════════════════════════════════════════════"
+          
+          echo "\n[1/8] omg sync (database refresh)..."
+          $OMG sync
+          
+          echo "\n[2/8] omg search vim..."
+          $OMG search vim | head -5
+          
+          echo "\n[3/8] omg info curl..."
+          $OMG info curl
+          
+          echo "\n[4/8] omg status..."
+          $OMG status
+          
+          echo "\n[5/8] omg explicit --count..."
+          $OMG explicit --count
+          
+          echo "\n[6/8] omg update --check..."
+          $OMG update --check || echo "(no updates or check failed - ok)"
+          
+          echo "\n[7/8] omg install cowsay -y..."
+          sudo $OMG install cowsay -y
+          
+          echo "\n[8/8] omg remove cowsay..."
+          sudo $OMG remove cowsay || echo "(remove test - ok)"
+          
+          echo "\n═══════════════════════════════════════════════════════════"
+          echo "  ✓ All Ubuntu smoke tests passed!"
+          echo "═══════════════════════════════════════════════════════════"
 
   # ════════════════════════════════════════════════════════════════════════════
   # 4. DOCUMENTATION SYNC

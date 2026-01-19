@@ -288,6 +288,22 @@ pub enum Commands {
 
     /// Show usage statistics (time saved, commands used, etc.)
     Stats,
+
+    /// Interactive first-run setup wizard
+    ///
+    /// Configures shell hooks, daemon startup, and captures initial environment.
+    /// Reduces time from install to first successful command to <2 minutes.
+    Init {
+        /// Run in non-interactive mode with defaults
+        #[arg(long)]
+        defaults: bool,
+        /// Skip shell hook installation
+        #[arg(long)]
+        skip_shell: bool,
+        /// Skip daemon setup
+        #[arg(long)]
+        skip_daemon: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
