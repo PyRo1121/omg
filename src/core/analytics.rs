@@ -197,7 +197,12 @@ fn get_session() -> SessionState {
         session.start_new();
         // Queue session start event
         if is_enabled() {
-            queue_event(EventType::SessionStart, "session_start", HashMap::new(), None);
+            queue_event(
+                EventType::SessionStart,
+                "session_start",
+                HashMap::new(),
+                None,
+            );
         }
     }
     session
@@ -307,12 +312,21 @@ pub fn track_error(error_type: &str, message: &str, context: Option<&str>) {
 }
 
 /// Track performance metric
-pub fn track_performance(operation: &str, duration_ms: u64, metadata: HashMap<String, serde_json::Value>) {
+pub fn track_performance(
+    operation: &str,
+    duration_ms: u64,
+    metadata: HashMap<String, serde_json::Value>,
+) {
     if !is_enabled() {
         return;
     }
 
-    queue_event(EventType::Performance, operation, metadata, Some(duration_ms));
+    queue_event(
+        EventType::Performance,
+        operation,
+        metadata,
+        Some(duration_ms),
+    );
 }
 
 /// Start timing an operation
@@ -531,7 +545,10 @@ pub fn track_stage_transition(from: Option<UserStage>, to: UserStage) {
 
     let mut props = HashMap::new();
     if let Some(from_stage) = from {
-        props.insert("from_stage".to_string(), serde_json::json!(from_stage.as_str()));
+        props.insert(
+            "from_stage".to_string(),
+            serde_json::json!(from_stage.as_str()),
+        );
     }
     props.insert("to_stage".to_string(), serde_json::json!(to.as_str()));
 
@@ -602,7 +619,10 @@ pub fn track_geo_info() {
 
     let mut props = HashMap::new();
     props.insert("timezone".to_string(), serde_json::json!(tz));
-    props.insert("locale".to_string(), serde_json::json!(locale.split('.').next().unwrap_or("en_US")));
+    props.insert(
+        "locale".to_string(),
+        serde_json::json!(locale.split('.').next().unwrap_or("en_US")),
+    );
 
     queue_event(EventType::Feature, "geo_info", props, None);
 }

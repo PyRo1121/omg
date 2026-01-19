@@ -20,17 +20,28 @@ fn prompt(message: &str) -> String {
 /// Activate a license key
 pub async fn activate(key: &str) -> Result<()> {
     println!("{} Activating license...\n", "OMG".cyan().bold());
-    
+
     // Prompt for user identification (for team management)
-    println!("  {} For team licenses, please provide your info so your manager", "📋".cyan());
+    println!(
+        "  {} For team licenses, please provide your info so your manager",
+        "📋".cyan()
+    );
     println!("     can identify you in the dashboard. Press Enter to skip.\n");
-    
+
     let user_name = prompt("  Your name (optional): ");
     let user_email = prompt("  Your email (optional): ");
-    
-    let user_name_opt = if user_name.is_empty() { None } else { Some(user_name.as_str()) };
-    let user_email_opt = if user_email.is_empty() { None } else { Some(user_email.as_str()) };
-    
+
+    let user_name_opt = if user_name.is_empty() {
+        None
+    } else {
+        Some(user_name.as_str())
+    };
+    let user_email_opt = if user_email.is_empty() {
+        None
+    } else {
+        Some(user_email.as_str())
+    };
+
     println!("\n  Validating license...");
 
     match license::activate_with_user(key, user_name_opt, user_email_opt).await {
