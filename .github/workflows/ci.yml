@@ -174,9 +174,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Sync to Wiki
+        continue-on-error: true
         run: |
           chmod +x scripts/sync-wiki.sh
-          ./scripts/sync-wiki.sh
+          ./scripts/sync-wiki.sh || echo "Wiki sync failed (wiki may not exist)"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
