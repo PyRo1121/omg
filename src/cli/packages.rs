@@ -1,5 +1,6 @@
 use anyhow::Result;
 use dialoguer::{Confirm, MultiSelect, theme::ColorfulTheme};
+#[cfg(feature = "arch")]
 use futures::StreamExt;
 use owo_colors::OwoColorize;
 
@@ -646,6 +647,7 @@ pub async fn remove(packages: &[String], recursive: bool) -> Result<()> {
         anyhow::bail!("No packages specified");
     }
 
+    #[cfg(feature = "arch")]
     let mut changes: Vec<PackageChange> = Vec::new();
     #[cfg(feature = "arch")]
     for pkg in packages {
@@ -661,7 +663,6 @@ pub async fn remove(packages: &[String], recursive: bool) -> Result<()> {
 
     #[cfg(not(feature = "arch"))]
     {
-        let _ = changes;
         anyhow::bail!("Remove not implemented for this backend");
     }
 
@@ -1661,6 +1662,7 @@ fn display_package_info(info: &crate::package_managers::types::PackageInfo) {
 }
 
 /// Fuzzy match candidate for "Did you mean?"
+#[allow(dead_code)]
 fn fuzzy_suggest(query: &str) -> Option<String> {
     // 1. Get all names (Fast from local package DB)
     let names = if use_debian_backend() {

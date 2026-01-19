@@ -8,6 +8,7 @@ use std::process::{Command, Stdio};
 #[cfg(feature = "debian")]
 use crate::core::env::distro::is_debian_like;
 use crate::core::paths;
+#[cfg(feature = "arch")]
 use crate::package_managers::PackageManager;
 
 use crate::cli::style;
