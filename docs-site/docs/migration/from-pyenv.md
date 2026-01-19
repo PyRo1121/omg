@@ -14,7 +14,7 @@ This guide helps pyenv users transition to OMG's unified runtime management.
 | Feature | pyenv | OMG |
 |---------|-------|-----|
 | Version Switch | 50-100ms | **1-2ms (50x faster)** |
-| Shell Startup | 50-200ms | **<10ms** |
+| Shell Startup | 50-200ms | **&lt;10ms** |
 | Implementation | Bash + shims | Pure Rust binary |
 | Other Runtimes | ❌ | ✅ Node, Go, Rust, Ruby, Java, Bun |
 | Package Management | ❌ | ✅ pacman, AUR, apt |

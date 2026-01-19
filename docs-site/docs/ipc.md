@@ -281,7 +281,7 @@ Typical operation latencies (cached results):
 - **Max Requests/Second**: ~10,000 (limited by daemon processing)
 - **Bandwidth Usage**: ~1MB/s at full load
 - **Memory Overhead**: ~1KB per in-flight request
-- **CPU Usage**: <1% for serialization/deserialization
+- **CPU Usage**: &lt;1% for serialization/deserialization
 
 ### Optimization Techniques
 

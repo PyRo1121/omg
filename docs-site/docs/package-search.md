@@ -44,7 +44,7 @@ if let Some(cached) = state.cache.get(&query) {
 
 Cache characteristics:
 - **Hit Rate**: ~80% for repeated queries
-- **Latency**: <0.1ms (memory access)
+- **Latency**: &lt;0.1ms (memory access)
 - **TTL**: 5 minutes for freshness
 - **Capacity**: 1000 cached queries
 
@@ -63,7 +63,7 @@ Index search process:
 4. **Sorting**: Results sorted by score, then truncated
 
 Performance metrics:
-- **Latency**: <1ms for typical queries
+- **Latency**: &lt;1ms for typical queries
 - **Index Size**: ~15MB (full Arch repository)
 - **Package Count**: ~15,000 packages
 - **Search Algorithm**: Fuzzy matching with prefix optimization
@@ -89,7 +89,7 @@ if official.len() < 5 {
 ```
 
 AUR search characteristics:
-- **Trigger**: <5 official results
+- **Trigger**: &lt;5 official results
 - **Latency**: 50-200ms (network bound)
 - **API**: AUR RPC endpoint
 - **Rate Limiting**: Respect AUR limits
@@ -335,7 +335,7 @@ for vuln in vulnerabilities {
 Severity thresholds:
 - **High**: >=7.0 (CVSS)
 - **Medium**: 4.0-6.9
-- **Low**: <4.0
+- **Low**: &lt;4.0
 - **Reporting**: Only high severity in summary
 
 ## Performance Optimization
@@ -389,7 +389,7 @@ Severity thresholds:
 ### Alerting Thresholds
 
 - **Latency >100ms**: Potential performance issue
-- **Cache Hit Rate <50%**: Cache ineffective
+- **Cache Hit Rate &lt;50%**: Cache ineffective
 - **Error Rate >5%**: System problems
 - **AUR Failures >10%**: Network issues
 

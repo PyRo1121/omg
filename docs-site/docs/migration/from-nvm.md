@@ -14,7 +14,7 @@ This guide helps nvm users transition to OMG's blazing-fast Node.js version mana
 | Feature | nvm | OMG |
 |---------|-----|-----|
 | Version Switch | 100-200ms | **1-2ms (100x faster)** |
-| Shell Startup | 100-500ms | **<10ms** |
+| Shell Startup | 100-500ms | **&lt;10ms** |
 | Implementation | Bash script | Pure Rust binary |
 | Other Runtimes | ❌ | ✅ Python, Go, Rust, Ruby, Java, Bun |
 | Package Management | ❌ | ✅ pacman, AUR, apt |
@@ -47,7 +47,7 @@ export NVM_DIR="$HOME/.nvm"
 
 Add to `~/.zshrc`:
 ```bash
-# OMG shell integration (adds <10ms to startup)
+# OMG shell integration (adds &lt;10ms to startup)
 eval "$(omg hook zsh)"
 ```
 
