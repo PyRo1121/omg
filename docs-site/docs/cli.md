@@ -1,3 +1,10 @@
+---
+title: CLI Reference
+sidebar_label: CLI Reference
+sidebar_position: 2
+description: Complete command reference for all OMG commands
+---
+
 # CLI Reference
 
 **Complete Command Reference for OMG**
