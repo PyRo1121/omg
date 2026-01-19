@@ -397,8 +397,8 @@ const DashboardPage: Component = () => {
       <header class="relative z-10 border-b border-slate-800/50 backdrop-blur-sm">
         <div class="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
           <A href="/" class="group flex items-center gap-3">
-            <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 shadow-lg shadow-indigo-500/25 transition-shadow group-hover:shadow-indigo-500/40">
-              <span class="text-lg font-bold text-white">⚡</span>
+            <div class="flex h-10 w-10 items-center justify-center overflow-hidden rounded-xl shadow-lg shadow-indigo-500/25 transition-shadow group-hover:shadow-indigo-500/40">
+              <img src="/logo-globe.png" alt="OMG Logo" class="h-10 w-10 object-cover" />
             </div>
             <span class="text-xl font-bold text-white">OMG</span>
           </A>
