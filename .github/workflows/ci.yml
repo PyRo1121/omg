@@ -42,10 +42,11 @@ jobs:
           cargo deny check 2>&1 || echo "Advisory warnings (non-blocking)"
 
       - name: Unused Dependencies
+        continue-on-error: true
         run: |
-          curl -L https://github.com/bnjbvr/cargo-machete/releases/latest/download/cargo-machete-x86_64-unknown-linux-musl.tar.gz | tar xz
+          curl -fsSL https://github.com/bnjbvr/cargo-machete/releases/latest/download/cargo-machete-x86_64-unknown-linux-musl.tar.gz | tar xz
           chmod +x cargo-machete
-          ./cargo-machete || true  # Advisory only, don't fail CI
+          ./cargo-machete || echo "Unused dependencies found (advisory)"
 
   # ════════════════════════════════════════════════════════════════════════════
   # 2. ARCH LINUX (Full System Integration)
