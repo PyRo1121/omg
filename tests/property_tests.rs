@@ -78,7 +78,7 @@ proptest! {
             "rust", "Rust", "RUST", "rustlang"
         ])
     ) {
-        let result1 = run_omg(&["which", &runtime]);
+        let result1 = run_omg(&["which", runtime]);
         // Should not crash on any variant
         prop_assert!(!result1.stderr.contains("panic"));
     }
@@ -105,7 +105,7 @@ proptest! {
     /// Very long inputs should be handled gracefully
     #[test]
     fn prop_long_input_handled(len in 100usize..10000) {
-        let long_input: String = std::iter::repeat('a').take(len).collect();
+        let long_input: String = "a".repeat(len);
         let result = run_omg(&["search", &long_input]);
         prop_assert!(!result.stderr.contains("panic"));
     }

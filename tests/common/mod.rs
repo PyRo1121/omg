@@ -3,6 +3,8 @@
 //! Comprehensive testing utilities, fixtures, mocks, and helpers
 //! for enterprise-grade test coverage.
 
+#![allow(dead_code)] // Test utilities may not all be used in every test file
+
 pub mod assertions;
 pub mod fixtures;
 pub mod mocks;
