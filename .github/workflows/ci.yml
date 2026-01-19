@@ -37,6 +37,7 @@ jobs:
           config: ./_typos.toml
 
       - name: License & Advisory Audit
+        continue-on-error: true
         run: |
           cargo install cargo-deny --locked || true
           cargo deny check 2>&1 || echo "Advisory warnings (non-blocking)"

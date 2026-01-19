@@ -1,4 +1,7 @@
-//! Custom assertions for OMG testing
+//! Custom assertions for OMG tests
+
+#![allow(dead_code)]
+#![allow(clippy::expect_fun_call)]
 
 use super::CommandResult;
 use std::time::Duration;

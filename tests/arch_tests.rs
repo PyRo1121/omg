@@ -661,7 +661,7 @@ mod edge_cases {
         project.with_node_project();
 
         let deep_path = project.create_dir("a/b/c/d/e/f/g/h/i/j");
-        let result = run_omg_in_dir(&["use", "node"], &deep_path);
+        let _result = run_omg_in_dir(&["use", "node"], &deep_path);
         // Should find version file in parent
     }
 
@@ -675,7 +675,7 @@ mod edge_cases {
             let link_path = project.path().join("link");
             std::os::unix::fs::symlink(project.path(), &link_path).ok();
             if link_path.exists() {
-                let result = run_omg_in_dir(&["use", "node"], &link_path);
+                let _result = run_omg_in_dir(&["use", "node"], &link_path);
                 // Should work through symlinks
             }
         }
@@ -684,7 +684,7 @@ mod edge_cases {
     #[test]
     fn test_readonly_directory() {
         // Test handling of readonly directories
-        let project = TestProject::new();
+        let _project = TestProject::new();
         // Would need elevated permissions to test properly
     }
 

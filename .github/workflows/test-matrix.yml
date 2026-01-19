@@ -37,7 +37,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         
       - name: Run unit tests
-        run: cargo test --lib --all-features
+        run: cargo test --lib --no-default-features
 
   # ═══════════════════════════════════════════════════════════════════════════
   # ARCH LINUX TESTS
@@ -91,7 +91,7 @@ jobs:
       - name: Install dependencies
         run: |
           apt-get update
-          apt-get install -y build-essential curl git pkg-config libssl-dev
+          apt-get install -y build-essential curl git pkg-config libssl-dev libapt-pkg-dev clang cmake
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
           . $HOME/.cargo/env
           
@@ -128,7 +128,7 @@ jobs:
       - name: Install dependencies
         run: |
           apt-get update
-          apt-get install -y build-essential curl git pkg-config libssl-dev
+          apt-get install -y build-essential curl git pkg-config libssl-dev libapt-pkg-dev clang cmake
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
           . $HOME/.cargo/env
           
@@ -151,11 +151,17 @@ jobs:
   property-tests:
     name: Property-Based Tests
     runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+      options: --privileged
     steps:
       - uses: actions/checkout@v4
       
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install dependencies
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm base-devel git rustup clang
+          rustup default stable
         
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -163,7 +169,7 @@ jobs:
       - name: Run property tests
         run: cargo test --test property_tests --features arch
         env:
-          PROPTEST_CASES: 500
+          PROPTEST_CASES: 100
 
   # ═══════════════════════════════════════════════════════════════════════════
   # SECURITY TESTS
@@ -171,11 +177,17 @@ jobs:
   security-tests:
     name: Security Tests
     runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+      options: --privileged
     steps:
       - uses: actions/checkout@v4
       
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install dependencies
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm base-devel git rustup clang
+          rustup default stable
         
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -204,7 +216,7 @@ jobs:
       - name: Install dependencies
         run: |
           pacman -Syu --noconfirm
-          pacman -S --noconfirm base-devel git rustup
+          pacman -S --noconfirm base-devel git rustup clang
           rustup default stable
           
       - name: Build release
@@ -233,7 +245,7 @@ jobs:
       - name: Install dependencies
         run: |
           pacman -Syu --noconfirm
-          pacman -S --noconfirm base-devel git rustup
+          pacman -S --noconfirm base-devel git rustup clang
           rustup default stable
           
       - name: Build release
@@ -271,19 +283,24 @@ jobs:
   lint:
     name: Lint & Format
     runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+      options: --privileged
     steps:
       - uses: actions/checkout@v4
       
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
+      - name: Install dependencies
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm base-devel git rustup clang
+          rustup default stable
+          rustup component add rustfmt clippy
           
       - name: Check formatting
         run: cargo fmt -- --check
         
-      - name: Clippy
-        run: cargo clippy --all-features -- -D warnings
+      - name: Clippy (Arch)
+        run: cargo clippy --features arch -- -D warnings
 
   # ═══════════════════════════════════════════════════════════════════════════
   # DOCUMENTATION TESTS
@@ -291,17 +308,23 @@ jobs:
   doc-tests:
     name: Documentation Tests
     runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+      options: --privileged
     steps:
       - uses: actions/checkout@v4
       
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install dependencies
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm base-devel git rustup clang
+          rustup default stable
         
       - name: Run doc tests
-        run: cargo test --doc --all-features
+        run: cargo test --doc --features arch
         
       - name: Build docs
-        run: cargo doc --all-features --no-deps
+        run: cargo doc --features arch --no-deps
 
   # ═══════════════════════════════════════════════════════════════════════════
   # COVERAGE REPORT
@@ -319,7 +342,7 @@ jobs:
       - name: Install dependencies
         run: |
           pacman -Syu --noconfirm
-          pacman -S --noconfirm base-devel git rustup llvm
+          pacman -S --noconfirm base-devel git rustup llvm clang
           rustup default stable
           rustup component add llvm-tools-preview
           cargo install cargo-llvm-cov

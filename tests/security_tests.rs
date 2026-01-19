@@ -644,7 +644,7 @@ mod privilege_tests {
         ];
 
         for args in safe_commands {
-            let result = run_omg(&args.iter().map(|s| *s).collect::<Vec<_>>());
+            let result = run_omg(&args.to_vec());
             // Should work without sudo
             assert!(
                 result.success || !result.stderr.contains("root"),
@@ -673,15 +673,13 @@ mod privilege_tests {
             use std::fs;
             use std::os::unix::fs::PermissionsExt;
 
-            for entry in walkdir::WalkDir::new(project.path()) {
-                if let Ok(entry) = entry {
-                    if entry.file_type().is_file() {
-                        if let Ok(meta) = fs::metadata(entry.path()) {
-                            let mode = meta.permissions().mode();
-                            assert!(mode & 0o4000 == 0, "SUID file created: {:?}", entry.path());
-                            assert!(mode & 0o2000 == 0, "SGID file created: {:?}", entry.path());
-                        }
-                    }
+            for entry in walkdir::WalkDir::new(project.path()).into_iter().flatten() {
+                if entry.file_type().is_file()
+                    && let Ok(meta) = fs::metadata(entry.path())
+                {
+                    let mode = meta.permissions().mode();
+                    assert!(mode & 0o4000 == 0, "SUID file created: {:?}", entry.path());
+                    assert!(mode & 0o2000 == 0, "SGID file created: {:?}", entry.path());
                 }
             }
         }
