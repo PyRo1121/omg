@@ -144,7 +144,10 @@ pub async fn search(query: &str, detailed: bool, interactive: bool) -> Result<()
     #[cfg(not(feature = "arch"))]
     let aur_packages_detailed: Option<Vec<crate::core::Package>> = None;
     #[cfg(not(feature = "arch"))]
-    let aur_packages_basic: Option<Vec<crate::core::Package>> = None;
+    let mut aur_packages_basic: Option<Vec<crate::core::Package>> = None;
+
+    #[cfg(not(feature = "arch"))]
+    let _ = &aur_packages_detailed; // Suppress unused warning
 
     let mut daemon_used = false;
     if !use_debian_backend() {
