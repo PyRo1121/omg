@@ -1,0 +1,114 @@
+/**
+ * OMG Documentation - Custom Styles
+ * Matches the main site's dark indigo/purple theme
+ */
+
+/* Light mode - still dark-ish to match brand */
+:root {
+  --ifm-color-primary: #6366f1;
+  --ifm-color-primary-dark: #4f46e5;
+  --ifm-color-primary-darker: #4338ca;
+  --ifm-color-primary-darkest: #3730a3;
+  --ifm-color-primary-light: #818cf8;
+  --ifm-color-primary-lighter: #a5b4fc;
+  --ifm-color-primary-lightest: #c7d2fe;
+  --ifm-code-font-size: 95%;
+  --ifm-font-family-base: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --ifm-font-family-monospace: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
+  --docusaurus-highlighted-code-line-bg: rgba(99, 102, 241, 0.1);
+}
+
+/* Dark mode - primary theme */
+[data-theme='dark'] {
+  --ifm-color-primary: #818cf8;
+  --ifm-color-primary-dark: #6366f1;
+  --ifm-color-primary-darker: #4f46e5;
+  --ifm-color-primary-darkest: #4338ca;
+  --ifm-color-primary-light: #a5b4fc;
+  --ifm-color-primary-lighter: #c7d2fe;
+  --ifm-color-primary-lightest: #e0e7ff;
+  --ifm-background-color: #0f172a;
+  --ifm-background-surface-color: #1e293b;
+  --ifm-navbar-background-color: rgba(15, 23, 42, 0.95);
+  --ifm-footer-background-color: #0f172a;
+  --ifm-toc-border-color: #334155;
+  --ifm-color-emphasis-300: #475569;
+  --docusaurus-highlighted-code-line-bg: rgba(99, 102, 241, 0.2);
+}
+
+/* Navbar styling */
+.navbar {
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.navbar__title {
+  font-weight: 700;
+  background: linear-gradient(135deg, #818cf8, #c084fc);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Sidebar styling */
+[data-theme='dark'] .menu {
+  background: transparent;
+}
+
+[data-theme='dark'] .menu__link--active {
+  background: rgba(99, 102, 241, 0.15);
+  border-left: 3px solid var(--ifm-color-primary);
+}
+
+/* Code blocks */
+[data-theme='dark'] .prism-code {
+  background: #1e293b !important;
+  border: 1px solid #334155;
+  border-radius: 8px;
+}
+
+/* Hero/landing enhancements */
+.hero {
+  background: linear-gradient(180deg, #0f172a 0%, #1e1b4b 100%);
+}
+
+.hero__title {
+  background: linear-gradient(135deg, #fff, #a5b4fc);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Admonitions */
+[data-theme='dark'] .alert {
+  border-radius: 8px;
+  border-left-width: 4px;
+}
+
+/* Footer */
+[data-theme='dark'] .footer {
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* Version badge */
+.badge--secondary {
+  background: rgba(99, 102, 241, 0.2);
+  color: #a5b4fc;
+  border: 1px solid rgba(99, 102, 241, 0.3);
+}
+
+/* Search */
+[data-theme='dark'] .DocSearch-Button {
+  background: #1e293b;
+  border: 1px solid #334155;
+}
+
+/* Table of contents */
+[data-theme='dark'] .table-of-contents__link--active {
+  color: var(--ifm-color-primary);
+}
+
+/* Smooth scrolling */
+html {
+  scroll-behavior: smooth;
+}

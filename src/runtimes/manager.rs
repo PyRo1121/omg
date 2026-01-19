@@ -30,31 +30,3 @@ pub trait RuntimeManager: Send + Sync {
     /// Get the path to a specific version's binaries
     fn version_bin_path(&self, version: &str) -> Result<std::path::PathBuf>;
 }
-
-/*
-/// Get the versions directory for a runtime
-pub fn versions_dir(settings: &Settings, runtime: Runtime) -> std::path::PathBuf {
-    settings.versions_dir().join(runtime.to_string())
-}
-
-/// Detect version from version file in current or parent directories
-pub fn detect_version_file(runtime: Runtime) -> Option<String> {
-    let version_file = runtime.version_file();
-    let mut current_dir = std::env::current_dir().ok()?;
-
-    loop {
-        let version_path = current_dir.join(version_file);
-        if version_path.exists() {
-            return std::fs::read_to_string(version_path)
-                .ok()
-                .map(|s| s.trim().to_string());
-        }
-
-        if !current_dir.pop() {
-            break;
-        }
-    }
-
-    None
-}
-*/

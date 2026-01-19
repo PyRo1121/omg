@@ -11,79 +11,39 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # Fast check for syntax errors
+  # Fast check for syntax errors (self-hosted Arch)
   check:
     name: Check
-    runs-on: ubuntu-latest
-    container:
-      image: archlinux:latest
+    runs-on: self-hosted
     steps:
-      - name: Install System Dependencies
-        run: |
-          pacman -Syu --noconfirm
-          pacman -S --noconfirm base-devel git rust cargo pkgconf openssl libarchive clang nodejs
-
       - uses: actions/checkout@v4
-      - name: Fix git ownership
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-
-      - uses: Swatinem/rust-cache@v2
-
       - name: Cargo Check
         run: cargo check --verbose
 
-  # Run Integration Tests
+  # Run Integration Tests (self-hosted Arch)
   test:
     name: Test Suite
-    runs-on: ubuntu-latest
-    container:
-      image: archlinux:latest
+    runs-on: self-hosted
     steps:
-      - name: Install System Dependencies
-        run: |
-          pacman -Syu --noconfirm
-          pacman -S --noconfirm base-devel git rust cargo pkgconf openssl libarchive clang nodejs
-
       - uses: actions/checkout@v4
-      - name: Fix git ownership
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-      
-      - uses: Swatinem/rust-cache@v2
-      
       - name: Run Tests
         run: cargo test --verbose
 
-  # Linting with Clippy
+  # Linting with Clippy (self-hosted Arch)
   clippy:
     name: Clippy
-    runs-on: ubuntu-latest
-    container:
-      image: archlinux:latest
+    runs-on: self-hosted
     steps:
-      - name: Install System Dependencies
-        run: |
-          pacman -Syu --noconfirm
-          pacman -S --noconfirm base-devel git rust cargo pkgconf openssl libarchive clang nodejs
-
       - uses: actions/checkout@v4
-      - name: Fix git ownership
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-      
-      - uses: Swatinem/rust-cache@v2
-      
       - name: Run Clippy
         run: cargo clippy -- -D warnings
 
-  # Formatting (runs on Ubuntu, fast)
+  # Formatting (self-hosted)
   fmt:
     name: Rustfmt
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
       - name: Check Formatting
         run: cargo fmt --all -- --check
 
