@@ -1,8 +1,7 @@
 ---
 title: History & Rollback
-sidebar_label: History
-sidebar_position: 25
-description: Transaction history and system rollback capabilities
+sidebar_position: 24
+description: Transaction history and system rollback
 ---
 
 # History & Rollback

@@ -1,7 +1,6 @@
 ---
 title: CLI Reference
-sidebar_label: CLI Reference
-sidebar_position: 2
+sidebar_position: 3
 description: Complete command reference for all OMG commands
 ---
 
@@ -941,7 +940,7 @@ These options work with all commands:
 
 ## 📚 See Also
 
-- [Introduction](/)
+- [Quick Start Guide](./quickstart.md)
 - [Configuration](./configuration.md)
 - [Runtime Management](./runtimes.md)
 - [Security & Compliance](./security.md)

@@ -71,105 +71,27 @@ omg update
 ~/.config/omg/config.toml
 ```
 
-### Common Settings
-
-```toml
-# ~/.config/omg/config.toml
-
-[aur]
-enabled = true
-build_dir = "~/.cache/omg/aur"
-
-[search]
-limit = 50
-include_aur = true
-```
-
 ## New Capabilities
 
 After migrating, you gain access to:
 
 ### Runtime Management
 ```bash
-# Install and use Node.js
 omg use node 20
-
-# Install Python
 omg use python 3.12
-
-# List available versions
 omg list node --available
 ```
 
 ### Security Scanning
 ```bash
-# Scan for vulnerabilities
 omg audit
-
-# Generate SBOM
 omg audit sbom --format cyclonedx
 ```
 
 ### Team Sync
 ```bash
-# Capture environment
 omg env capture
-
-# Share with team
 omg env share
-```
-
-### Shell Integration
-```bash
-# Add to ~/.zshrc
-eval "$(omg hook zsh)"
-
-# Enable completions
-omg completions zsh > ~/.zsh/completions/_omg
-```
-
-## Common Workflows
-
-### Daily Update
-```bash
-# yay
-yay -Syu
-
-# OMG (same result, faster)
-omg update
-```
-
-### Search and Install
-```bash
-# yay
-yay firefox
-
-# OMG
-omg search firefox -i
-# or
-omg install firefox
-```
-
-### Clean System
-```bash
-# yay
-yay -Sc && yay -Yc
-
-# OMG
-omg clean
-```
-
-## Troubleshooting
-
-### "Package not found in AUR"
-OMG searches official repos first. Use `omg search <pkg> --aur` to force AUR search.
-
-### Build failures
-Check `~/.cache/omg/aur/<pkg>/` for build logs. Same PKGBUILD format as yay.
-
-### Missing dependencies
-```bash
-omg doctor
 ```
 
 ## Next Steps

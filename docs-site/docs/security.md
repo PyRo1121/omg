@@ -1,8 +1,7 @@
 ---
 title: Security & Compliance
-sidebar_label: Security
-sidebar_position: 12
-description: Vulnerability scanning, SBOM generation, PGP verification, and audit logging
+sidebar_position: 20
+description: Vulnerability scanning, SBOM, PGP verification, and audit logging
 ---
 
 # Security Model

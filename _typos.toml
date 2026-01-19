@@ -1,5 +1,9 @@
 [default]
 extend-ignore-re = [
     "omg",
-    "omgd"
+    "omgd",
+    "ratatui"
 ]
+
+[files]
+extend-exclude = ["errors.txt"]
