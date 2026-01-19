@@ -392,6 +392,17 @@ async fn async_main() -> Result<()> {
         Commands::Stats => {
             commands::stats()?;
         }
+        Commands::Init {
+            defaults,
+            skip_shell,
+            skip_daemon,
+        } => {
+            if defaults {
+                omg_lib::cli::init::run_defaults().await?;
+            } else {
+                omg_lib::cli::init::run_interactive(skip_shell, skip_daemon).await?;
+            }
+        }
     }
 
     // Track command execution for analytics

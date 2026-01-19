@@ -72,6 +72,7 @@ impl DaemonStartup {
 }
 
 /// Wizard state
+#[allow(dead_code)]
 struct WizardState {
     shell: Option<Shell>,
     daemon_startup: DaemonStartup,
@@ -409,7 +410,7 @@ fn confirm_env_capture(stdout: &mut io::Stdout) -> Result<bool> {
 
     loop {
         let labels = ["  ▸ Yes, capture my environment", "    No, I'll do it later"];
-        for (i, label) in labels.iter().enumerate() {
+        for (i, _label) in labels.iter().enumerate() {
             let display = if i == 0 {
                 if selected == 0 { "  ▸ Yes, capture my environment" } else { "    Yes, capture my environment" }
             } else if selected == 1 {
