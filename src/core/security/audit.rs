@@ -286,6 +286,7 @@ impl AuditLogger {
     }
 
     /// Get recent audit entries
+    #[allow(clippy::needless_collect)] // Need to collect to reverse the iterator
     pub fn get_recent(&self, limit: usize) -> Result<Vec<AuditEntry>> {
         let file = File::open(&self.log_path)?;
         let reader = BufReader::new(file);

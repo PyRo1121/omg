@@ -34,6 +34,13 @@
 #![allow(clippy::significant_drop_tightening)]
 // Allow pedantic lints that are not critical
 #![allow(clippy::type_complexity)]
+// Nursery lints - these are unstable/too aggressive
+#![allow(clippy::missing_const_for_fn)] // Many of these can't actually be const
+#![allow(clippy::option_if_let_else)] // Pattern is often clearer with if-let
+#![allow(clippy::use_self)] // Explicit types are clearer sometimes
+#![allow(clippy::redundant_pub_crate)] // Visibility for future expansion
+// Cargo lints - transitive deps we don't control
+#![allow(clippy::multiple_crate_versions)]
 
 pub mod cli;
 pub mod config;
