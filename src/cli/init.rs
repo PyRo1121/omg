@@ -135,9 +135,10 @@ pub async fn run_interactive(skip_shell: bool, skip_daemon: bool) -> Result<()> 
     )?;
     println!();
 
-    // Install shell hook
+    // Install shell hook (with daemon startup if user selected OnShellInit)
     if let Some(shell) = state.shell {
-        install_shell_hook(&mut stdout, shell)?;
+        let start_daemon_on_shell = state.daemon_startup == DaemonStartup::OnShellInit;
+        install_shell_hook(&mut stdout, shell, start_daemon_on_shell)?;
     }
 
     // Configure daemon startup
@@ -171,7 +172,7 @@ pub async fn run_defaults() -> Result<()> {
     // Detect shell
     let shell = detect_current_shell();
     if let Some(s) = shell {
-        install_shell_hook(&mut stdout, s)?;
+        install_shell_hook(&mut stdout, s, false)?;
     }
 
     // Start daemon
@@ -235,9 +236,7 @@ fn detect_current_shell() -> Option<Shell> {
 fn select_shell(stdout: &mut io::Stdout) -> Result<Shell> {
     let detected = detect_current_shell();
     let shells = [Shell::Zsh, Shell::Bash, Shell::Fish];
-    let mut selected = detected
-        .map(|s| shells.iter().position(|x| *x == s).unwrap_or(0))
-        .unwrap_or(0);
+    let mut selected = detected.map_or(0, |s| shells.iter().position(|x| *x == s).unwrap_or(0));
 
     execute!(
         stdout,
@@ -293,9 +292,7 @@ fn select_shell(stdout: &mut io::Stdout) -> Result<Shell> {
             }
             match key.code {
                 KeyCode::Up => {
-                    if selected > 0 {
-                        selected -= 1;
-                    }
+                    selected = selected.saturating_sub(1);
                 }
                 KeyCode::Down => {
                     if selected < shells.len() - 1 {
@@ -369,9 +366,7 @@ fn select_daemon_startup(stdout: &mut io::Stdout) -> Result<DaemonStartup> {
             }
             match key.code {
                 KeyCode::Up => {
-                    if selected > 0 {
-                        selected -= 1;
-                    }
+                    selected = selected.saturating_sub(1);
                 }
                 KeyCode::Down => {
                     if selected < options.len() - 1 {
@@ -437,11 +432,11 @@ fn confirm_env_capture(stdout: &mut io::Stdout) -> Result<bool> {
                 execute!(
                     stdout,
                     SetForegroundColor(Color::Green),
-                    Print(format!("{}\n", display)),
+                    Print(format!("{display}\n")),
                     ResetColor
                 )?;
             } else {
-                execute!(stdout, Print(format!("{}\n", display)))?;
+                execute!(stdout, Print(format!("{display}\n")))?;
             }
         }
 
@@ -471,7 +466,7 @@ fn confirm_env_capture(stdout: &mut io::Stdout) -> Result<bool> {
     }
 }
 
-fn install_shell_hook(stdout: &mut io::Stdout, shell: Shell) -> Result<()> {
+fn install_shell_hook(stdout: &mut io::Stdout, shell: Shell, start_daemon: bool) -> Result<()> {
     let home = std::env::var("HOME").unwrap_or_else(|_| "~".to_string());
     let config_path = shell.config_file().replace('~', &home);
     let hook_cmd = shell.hook_command();
@@ -486,16 +481,16 @@ fn install_shell_hook(stdout: &mut io::Stdout, shell: Shell) -> Result<()> {
     )?;
 
     // Check if hook already exists
-    if let Ok(content) = std::fs::read_to_string(&config_path) {
-        if content.contains("omg hook") {
-            execute!(
-                stdout,
-                SetForegroundColor(Color::Yellow),
-                Print(" (already installed)\n"),
-                ResetColor
-            )?;
-            return Ok(());
-        }
+    if let Ok(content) = std::fs::read_to_string(&config_path)
+        && content.contains("omg hook")
+    {
+        execute!(
+            stdout,
+            SetForegroundColor(Color::Yellow),
+            Print(" (already installed)\n"),
+            ResetColor
+        )?;
+        return Ok(());
     }
 
     // Append hook to config
@@ -503,10 +498,20 @@ fn install_shell_hook(stdout: &mut io::Stdout, shell: Shell) -> Result<()> {
         .create(true)
         .append(true)
         .open(&config_path)
-        .with_context(|| format!("Failed to open {}", config_path))?;
+        .with_context(|| format!("Failed to open {config_path}"))?;
 
     writeln!(file, "\n# OMG shell integration")?;
-    writeln!(file, "{}", hook_cmd)?;
+
+    // Optionally start daemon on shell init (background, silent)
+    if start_daemon {
+        writeln!(
+            file,
+            "# Start OMG daemon if not running (for 22x faster searches)"
+        )?;
+        writeln!(file, "pgrep -x omgd >/dev/null || omg daemon &>/dev/null &")?;
+    }
+
+    writeln!(file, "{hook_cmd}")?;
 
     execute!(
         stdout,
@@ -573,10 +578,10 @@ fn configure_daemon_startup(stdout: &mut io::Stdout, startup: DaemonStartup) -> 
 
 fn create_systemd_service() -> Result<()> {
     let home = std::env::var("HOME")?;
-    let service_dir = format!("{}/.config/systemd/user", home);
+    let service_dir = format!("{home}/.config/systemd/user");
     std::fs::create_dir_all(&service_dir)?;
 
-    let service_content = r#"[Unit]
+    let service_content = r"[Unit]
 Description=OMG Package Manager Daemon
 After=default.target
 
@@ -588,9 +593,9 @@ RestartSec=5
 
 [Install]
 WantedBy=default.target
-"#;
+";
 
-    std::fs::write(format!("{}/omgd.service", service_dir), service_content)?;
+    std::fs::write(format!("{service_dir}/omgd.service"), service_content)?;
 
     // Enable and start the service
     let _ = Command::new("systemctl")
@@ -621,7 +626,7 @@ async fn capture_environment(stdout: &mut io::Stdout) -> Result<()> {
                 execute!(
                     stdout,
                     SetForegroundColor(Color::Yellow),
-                    Print(format!(" (failed: {})\n", e)),
+                    Print(format!(" (failed: {e})\n")),
                     ResetColor
                 )?;
             } else {
@@ -637,7 +642,7 @@ async fn capture_environment(stdout: &mut io::Stdout) -> Result<()> {
             execute!(
                 stdout,
                 SetForegroundColor(Color::Yellow),
-                Print(format!(" (skipped: {})\n", e)),
+                Print(format!(" (skipped: {e})\n")),
                 ResetColor
             )?;
         }
