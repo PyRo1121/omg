@@ -22,22 +22,28 @@ env:
 
 jobs:
   # ═══════════════════════════════════════════════════════════════════════════
-  # UNIT TESTS (All platforms)
+  # UNIT TESTS (Arch container - code requires arch features)
   # ═══════════════════════════════════════════════════════════════════════════
   unit-tests:
     name: Unit Tests
     runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+      options: --privileged
     steps:
       - uses: actions/checkout@v4
       
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install dependencies
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm base-devel git rustup clang
+          rustup default stable
         
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         
       - name: Run unit tests
-        run: cargo test --lib --no-default-features
+        run: cargo test --lib --features arch
 
   # ═══════════════════════════════════════════════════════════════════════════
   # ARCH LINUX TESTS
@@ -91,7 +97,7 @@ jobs:
       - name: Install dependencies
         run: |
           apt-get update
-          apt-get install -y build-essential curl git pkg-config libssl-dev libapt-pkg-dev clang cmake
+          apt-get install -y build-essential curl git pkg-config libssl-dev libapt-pkg-dev clang cmake zlib1g-dev
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
           . $HOME/.cargo/env
           
@@ -128,7 +134,7 @@ jobs:
       - name: Install dependencies
         run: |
           apt-get update
-          apt-get install -y build-essential curl git pkg-config libssl-dev libapt-pkg-dev clang cmake
+          apt-get install -y build-essential curl git pkg-config libssl-dev libapt-pkg-dev clang cmake zlib1g-dev
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
           . $HOME/.cargo/env
           
