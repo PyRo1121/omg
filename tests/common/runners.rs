@@ -1,11 +1,10 @@
 //! Test runners for parallel and sequential test execution
 
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use super::{CommandResult, run_omg};
+use super::CommandResult;
 
 /// Test result with metadata
 #[derive(Debug, Clone)]

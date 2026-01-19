@@ -657,7 +657,7 @@ mod privilege_tests {
     #[test]
     fn test_safe_sudo_usage() {
         // When sudo is needed, it should be explicit
-        let result = run_omg(&["install", "nonexistent-pkg-12345"]);
+        let _result = run_omg(&["install", "nonexistent-pkg-12345"]);
         // Should either work or clearly indicate need for elevation
         // Should not silently escalate
     }
@@ -703,7 +703,7 @@ mod crypto_security {
         // Lock file should have integrity hash
         if let Some(lock) = project.read_file("omg.lock") {
             // Check for hash field
-            let has_hash =
+            let _has_hash =
                 lock.contains("hash") || lock.contains("checksum") || lock.contains("sha");
             // Hash presence is implementation detail
         }
@@ -715,7 +715,7 @@ mod crypto_security {
         let project = TestProject::new();
         project.run(&["env", "capture"]);
 
-        if let Some(lock) = project.read_file("omg.lock") {
+        if let Some(_lock) = project.read_file("omg.lock") {
             // SHA256 or better should be used
             // (Implementation verification)
         }
