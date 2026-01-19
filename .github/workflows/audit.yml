@@ -1,20 +1,68 @@
-name: Security Audit
+name: Security
 
 on:
   schedule:
-    - cron: '0 0 * * *' # Run daily at midnight
+    - cron: '0 6 * * *'  # Daily at 6 AM UTC
   push:
     paths:
       - '**/Cargo.lock'
+      - '**/Cargo.toml'
+  pull_request:
+    paths:
+      - '**/Cargo.lock'
+      - '**/Cargo.toml'
+  workflow_dispatch:
 
 jobs:
+  # ════════════════════════════════════════════════════════════════════════════
+  # Dependency Audit
+  # ════════════════════════════════════════════════════════════════════════════
+
   audit:
+    name: Dependency Audit
     runs-on: ubuntu-latest
     permissions:
       issues: write
       contents: read
     steps:
       - uses: actions/checkout@v4
-      - uses: rustsec/audit-check@v1.4.1
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Run security audit
+        run: cargo audit --deny warnings
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # Dependency License Check
+  # ════════════════════════════════════════════════════════════════════════════
+
+  licenses:
+    name: License Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked
+
+      - name: Check licenses
+        run: cargo deny check licenses
+        continue-on-error: true  # Informational
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # Dependency Updates
+  # ════════════════════════════════════════════════════════════════════════════
+
+  outdated:
+    name: Check Outdated Dependencies
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cargo-outdated
+        run: cargo install cargo-outdated --locked
+
+      - name: Check for updates
+        run: cargo outdated --exit-code 0
