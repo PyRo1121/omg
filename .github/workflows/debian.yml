@@ -16,7 +16,7 @@ jobs:
       - name: Install build dependencies
         run: |
           apt-get update
-          apt-get install -y curl build-essential pkg-config libssl-dev libapt-pkg-dev clang git
+          apt-get install -y curl build-essential pkg-config libssl-dev libapt-pkg-dev clang git cmake
 
       - name: Install Rust
         run: |
@@ -58,7 +58,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libapt-pkg-dev pkg-config libssl-dev clang
+          sudo apt-get install -y libapt-pkg-dev pkg-config libssl-dev clang cmake
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
