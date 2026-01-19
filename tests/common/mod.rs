@@ -8,12 +8,10 @@ pub mod fixtures;
 pub mod mocks;
 pub mod runners;
 
-use std::collections::HashMap;
 use std::env;
-use std::fs::{self, File};
-use std::io::Write;
+use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::Once;
 use std::time::{Duration, Instant};
 
@@ -40,6 +38,7 @@ pub fn init_test_env() {
 
 /// Test configuration flags
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct TestConfig {
     pub run_system_tests: bool,
     pub run_network_tests: bool,
@@ -78,6 +77,7 @@ impl Default for TestConfig {
     }
 }
 
+#[allow(dead_code)]
 impl TestConfig {
     pub fn skip_if_no_system(&self, test_name: &str) -> bool {
         if !self.run_system_tests {
@@ -131,12 +131,14 @@ impl TestConfig {
 #[derive(Debug, Clone)]
 pub struct CommandResult {
     pub success: bool,
+    #[allow(dead_code)]
     pub exit_code: i32,
     pub stdout: String,
     pub stderr: String,
     pub duration: Duration,
 }
 
+#[allow(dead_code)]
 impl CommandResult {
     pub fn combined_output(&self) -> String {
         format!("{}{}", self.stdout, self.stderr)
@@ -250,6 +252,7 @@ pub fn run_omg_with_options(
 }
 
 /// Run a raw shell command
+#[allow(dead_code)]
 pub fn run_shell(cmd: &str) -> CommandResult {
     let start = Instant::now();
 
@@ -276,11 +279,13 @@ pub fn run_shell(cmd: &str) -> CommandResult {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// A test project with managed temp directory
+#[allow(dead_code)]
 pub struct TestProject {
     pub dir: TempDir,
     pub config: TestConfig,
 }
 
+#[allow(dead_code)]
 impl TestProject {
     pub fn new() -> Self {
         init_test_env();

@@ -13,7 +13,6 @@ mod common;
 use common::assertions::*;
 use common::fixtures::*;
 use common::*;
-use std::time::Duration;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // PACMAN INTEGRATION TESTS
@@ -207,7 +206,7 @@ mod aur_integration {
         require_network_tests!();
         require_arch!();
 
-        let result = run_omg(&["info", "yay"]);
+        let _result = run_omg(&["info", "yay"]);
         // Should show AUR info or indicate AUR source
     }
 

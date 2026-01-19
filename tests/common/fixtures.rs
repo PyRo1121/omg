@@ -2,8 +2,6 @@
 //!
 //! Pre-defined test data and scenarios for consistent testing.
 
-use std::collections::HashMap;
-
 /// Common package names for testing across distros
 pub mod packages {
     /// Packages that exist on all supported distros
@@ -284,8 +282,6 @@ pub mod perf {
 
 /// Test scenarios combining multiple fixtures
 pub mod scenarios {
-    use super::*;
-
     /// Full-stack Node.js project
     pub struct NodeProject;
     impl NodeProject {
