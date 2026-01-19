@@ -6,8 +6,20 @@
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
 #
+# Options (set before piping to bash):
+#   OMG_NO_TELEMETRY=1  - Disable anonymous telemetry (no prompt)
+#   OMG_SKIP_SHELL=1    - Skip shell integration
+#   OMG_VERSION=v0.1.0  - Install specific version
+#
+# Example with no telemetry:
+#   curl -fsSL https://... | OMG_NO_TELEMETRY=1 bash
+#
 
 set -u
+
+# 🔒 Telemetry opt-out (set before running to skip prompt)
+# Usage: OMG_NO_TELEMETRY=1 curl ... | bash
+OMG_NO_TELEMETRY="${OMG_NO_TELEMETRY:-}"
 
 # 🎨 Colors (Chalk-like style)
 RESET='\033[0m'
@@ -354,6 +366,66 @@ EOF
     fi
 }
 
+# 🔒 Telemetry Setup
+setup_telemetry() {
+    header "Privacy & Telemetry"
+
+    # Check if already opted out via environment variable
+    if [[ "$OMG_NO_TELEMETRY" == "1" ]]; then
+        info "Telemetry disabled via OMG_NO_TELEMETRY=1"
+        set_telemetry_opt_out
+        return
+    fi
+
+    # Show privacy disclosure
+    printf "\\n${BOLD}Data Collection Disclosure:${RESET}\\n"
+    printf "  OMG collects ${BOLD}anonymous${RESET} usage data to improve the product:\\n"
+    printf "  • One-time install ping (version, platform, random UUID)\\n"
+    printf "  • Command usage statistics (what commands you run)\\n"
+    printf "  • Error reports (helps us fix bugs)\\n"
+    printf "\\n"
+    printf "  ${DIM}No personal information, file contents, or package names collected.${RESET}\\n"
+    printf "  ${DIM}Data is sent to api.pyro1121.com. You can opt out at any time.${RESET}\\n"
+    printf "\\n"
+
+    # Ask for consent
+    read -p "$(printf "${BOLD}Allow anonymous telemetry to help improve OMG?${RESET} [Y/n] ")" -n 1 -r
+    echo
+    
+    if [[ $REPLY =~ ^[Nn]$ ]]; then
+        set_telemetry_opt_out
+        success "Telemetry disabled. You can re-enable with: unset OMG_TELEMETRY"
+    else
+        success "Telemetry enabled. Thank you for helping improve OMG!"
+        printf "  ${DIM}Opt out anytime with: export OMG_TELEMETRY=0${RESET}\\n"
+    fi
+}
+
+# Helper to set telemetry opt-out in shell config
+set_telemetry_opt_out() {
+    local shell_type=$(basename "$SHELL")
+    local rc_file=""
+    
+    case "$shell_type" in
+        bash) rc_file="$HOME/.bashrc" ;;
+        zsh)  rc_file="$HOME/.zshrc" ;;
+        fish) rc_file="$HOME/.config/fish/config.fish" ;;
+        *)    warn "Unsupported shell: $shell_type"; return ;;
+    esac
+
+    if [[ -f "$rc_file" ]]; then
+        if ! grep -q "OMG_TELEMETRY" "$rc_file"; then
+            echo >> "$rc_file"
+            echo "# OMG Telemetry opt-out" >> "$rc_file"
+            if [[ "$shell_type" == "fish" ]]; then
+                echo "set -gx OMG_TELEMETRY 0" >> "$rc_file"
+            else
+                echo "export OMG_TELEMETRY=0" >> "$rc_file"
+            fi
+        fi
+    fi
+}
+
 # 🐚 Shell Setup
 setup_shell() {
     if [[ "${OMG_SKIP_SHELL:-0}" == "1" ]]; then
@@ -427,6 +499,7 @@ main() {
         build_omg
     fi
     setup_config
+    setup_telemetry
     setup_shell
     finish
 }

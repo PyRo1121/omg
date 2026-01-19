@@ -30,10 +30,16 @@ The easiest way to install OMG:
 curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
 ```
 
+**To disable telemetry** (anonymous usage data):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | OMG_NO_TELEMETRY=1 bash
+```
+
 This script will:
-1. Clone the repository
-2. Build the release binary
-3. Install to `~/.local/bin/`
+1. Download or build the release binary
+2. Install to `~/.local/bin/`
+3. Ask about telemetry preferences
 4. Configure shell integration
 5. Install shell completions
 
