@@ -8,6 +8,7 @@ const sidebars: SidebarsConfig = {
       label: 'Getting Started',
       collapsed: false,
       items: [
+        'quickstart',
         'cli',
         'configuration',
         {
@@ -23,28 +24,47 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
-      label: 'Core Concepts',
+      label: 'Core Features',
       items: [
-        'architecture',
+        'packages',
         'runtimes',
-        'security',
-        'workflows',
+        'shell-integration',
+        'task-runner',
       ],
     },
     {
       type: 'category',
-      label: 'Deep Dives',
+      label: 'Advanced Features',
       items: [
+        'security',
+        'team',
+        'containers',
+        'tui',
+        'history',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Architecture & Internals',
+      items: [
+        'architecture',
         'daemon',
         'cache',
         'ipc',
         'package-search',
         'cli-internals',
-        'history',
-        'tui',
       ],
     },
-    'troubleshooting',
+    {
+      type: 'category',
+      label: 'Reference',
+      items: [
+        'workflows',
+        'troubleshooting',
+        'faq',
+        'changelog',
+      ],
+    },
   ],
 };
 

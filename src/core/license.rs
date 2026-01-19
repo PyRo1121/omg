@@ -17,6 +17,7 @@
 use anyhow::{Context, Result};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::{Deserialize, Serialize};
+use std::fmt::Write;
 use std::path::PathBuf;
 use std::str::FromStr;
 
@@ -386,10 +387,10 @@ pub async fn validate_license_with_user(
     let mut url = format!("{LICENSE_API_URL}?key={key}&machine_id={machine_id}");
 
     if let Some(name) = user_name {
-        url.push_str(&format!("&user_name={}", urlencoding::encode(name)));
+        let _ = write!(url, "&user_name={}", urlencoding::encode(name));
     }
     if let Some(email) = user_email {
-        url.push_str(&format!("&user_email={}", urlencoding::encode(email)));
+        let _ = write!(url, "&user_email={}", urlencoding::encode(email));
     }
 
     let response = reqwest::Client::new()
