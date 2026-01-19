@@ -177,9 +177,9 @@ impl App {
         // SAFETY: path is a valid CString, stat is a valid mutable pointer
         let result = unsafe { libc::statvfs(path.as_ptr(), std::ptr::addr_of_mut!(stat)) };
         if result == 0 {
-            let block_size = stat.f_frsize as u64;
-            let total_blocks = stat.f_blocks as u64;
-            let free_blocks = stat.f_bfree as u64;
+            let block_size = stat.f_frsize;
+            let total_blocks = stat.f_blocks;
+            let free_blocks = stat.f_bfree;
             let used = (total_blocks - free_blocks) * block_size / 1024; // KB
             let free = free_blocks * block_size / 1024; // KB
             return (used, free);
