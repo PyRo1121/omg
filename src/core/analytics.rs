@@ -7,7 +7,7 @@
 //! - Performance metrics
 //! - Retention signals
 //!
-//! Privacy-respecting: opt-out via OMG_TELEMETRY=0
+//! Privacy-respecting: opt-out via `OMG_TELEMETRY=0`
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -46,7 +46,7 @@ pub enum EventType {
 pub struct AnalyticsEvent {
     /// Event type
     pub event_type: EventType,
-    /// Event name (e.g., "search", "install", "node_use")
+    /// Event name (e.g., "search", "install", "`node_use`")
     pub event_name: String,
     /// Event properties
     #[serde(default)]
@@ -238,6 +238,7 @@ fn create_event(
 }
 
 /// Queue an event for sending
+#[allow(clippy::implicit_hasher)]
 pub fn queue_event(
     event_type: EventType,
     event_name: &str,
@@ -275,6 +276,7 @@ pub fn track_command(command: &str, subcommand: Option<&str>, duration_ms: u64, 
 }
 
 /// Track a feature usage
+#[allow(clippy::implicit_hasher)]
 pub fn track_feature(feature: &str, properties: HashMap<String, serde_json::Value>) {
     if !is_enabled() {
         return;
@@ -312,6 +314,7 @@ pub fn track_error(error_type: &str, message: &str, context: Option<&str>) {
 }
 
 /// Track performance metric
+#[allow(clippy::implicit_hasher)]
 pub fn track_performance(
     operation: &str,
     duration_ms: u64,

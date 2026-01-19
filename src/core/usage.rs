@@ -348,7 +348,7 @@ impl UsageStats {
     pub fn needs_immediate_sync(&self) -> bool {
         // Sync immediately after first command, achievements, or milestones
         self.total_commands == 1
-            || self.total_commands % 100 == 0
+            || self.total_commands.is_multiple_of(100)
             || (self.time_saved_ms >= 60_000 && self.last_sync == 0)
     }
 
@@ -470,10 +470,10 @@ pub fn track_and_sync(command: &str, time_saved_ms: u64) {
 pub async fn sync_usage_now() {
     if let Some(license) = crate::core::license::load_license() {
         let mut stats = UsageStats::load();
-        if stats.needs_sync() || stats.needs_immediate_sync() || stats.total_commands > 0 {
-            if let Err(e) = stats.sync(&license.key).await {
-                tracing::debug!("Usage sync failed: {e}");
-            }
+        if (stats.needs_sync() || stats.needs_immediate_sync() || stats.total_commands > 0)
+            && let Err(e) = stats.sync(&license.key).await
+        {
+            tracing::debug!("Usage sync failed: {e}");
         }
     }
 }
