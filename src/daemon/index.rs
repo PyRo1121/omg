@@ -6,13 +6,11 @@
 //! Supports index preloading from persistent cache for <10ms cold starts.
 
 use ahash::AHashMap;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use memchr::memmem;
 use nucleo_matcher::Utf32String;
 use parking_lot::RwLock;
 
-#[cfg(feature = "debian")]
-use crate::core::env::distro::is_debian_like;
 use crate::core::paths;
 use crate::daemon::db::PersistentCache;
 use crate::daemon::protocol::{DetailedPackageInfo, PackageInfo};
