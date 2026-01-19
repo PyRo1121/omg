@@ -11,31 +11,30 @@ const Pricing: Component = () => {
   };
 
   return (
-    <section id="pricing" class="py-24 px-6">
-      <div class="max-w-7xl mx-auto">
-        <div class="text-center mb-16">
-          <h2 class="text-4xl md:text-5xl font-bold mb-4">
-            Simple, Transparent Pricing
-          </h2>
-          <p class="text-xl text-slate-400 max-w-2xl mx-auto">
-            Start free, upgrade when you need security scanning, team features, or enterprise controls.
+    <section id="pricing" class="px-6 py-24">
+      <div class="mx-auto max-w-7xl">
+        <div class="mb-16 text-center">
+          <h2 class="mb-4 text-4xl font-bold md:text-5xl">Simple, Transparent Pricing</h2>
+          <p class="mx-auto max-w-2xl text-xl text-slate-400">
+            Start free, upgrade when you need security scanning, team features, or enterprise
+            controls.
           </p>
         </div>
 
-        <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-6 max-w-7xl mx-auto">
+        <div class="mx-auto grid max-w-7xl gap-6 md:grid-cols-2 lg:grid-cols-4">
           {/* Free Tier */}
           <div class="pricing-card">
             <div class="mb-6">
-              <h3 class="text-2xl font-bold mb-2">Free</h3>
-              <p class="text-slate-400 text-sm">For individual developers</p>
-            </div>
-            
-            <div class="mb-6">
-              <span class="text-4xl font-bold">$0</span>
-              <span class="text-slate-400 text-sm">/forever</span>
+              <h3 class="mb-2 text-2xl font-bold">Free</h3>
+              <p class="text-sm text-slate-400">For individual developers</p>
             </div>
 
-            <ul class="space-y-3 mb-6 text-sm">
+            <div class="mb-6">
+              <span class="text-4xl font-bold">$0</span>
+              <span class="text-sm text-slate-400">/forever</span>
+            </div>
+
+            <ul class="mb-6 space-y-3 text-sm">
               <li class="flex items-center gap-2">
                 <span class="text-green-400">✓</span>
                 Package management
@@ -66,22 +65,22 @@ const Pricing: Component = () => {
           {/* Pro Tier */}
           <div class="pricing-card featured">
             <div class="absolute -top-3 left-1/2 -translate-x-1/2">
-              <span class="bg-indigo-500 text-white text-xs font-semibold px-3 py-1 rounded-full">
+              <span class="rounded-full bg-indigo-500 px-3 py-1 text-xs font-semibold text-white">
                 Popular
               </span>
             </div>
-            
+
             <div class="mb-6">
-              <h3 class="text-2xl font-bold mb-2">Pro</h3>
-              <p class="text-slate-400 text-sm">For security-conscious devs</p>
-            </div>
-            
-            <div class="mb-6">
-              <span class="text-4xl font-bold">$9</span>
-              <span class="text-slate-400 text-sm">/month</span>
+              <h3 class="mb-2 text-2xl font-bold">Pro</h3>
+              <p class="text-sm text-slate-400">For security-conscious devs</p>
             </div>
 
-            <ul class="space-y-3 mb-6 text-sm">
+            <div class="mb-6">
+              <span class="text-4xl font-bold">$9</span>
+              <span class="text-sm text-slate-400">/month</span>
+            </div>
+
+            <ul class="mb-6 space-y-3 text-sm">
               <li class="flex items-center gap-2">
                 <span class="text-green-400">✓</span>
                 Everything in Free
@@ -100,7 +99,7 @@ const Pricing: Component = () => {
               </li>
             </ul>
 
-            <button 
+            <button
               class="btn-primary w-full justify-center text-sm"
               onClick={() => openUpgrade('pro')}
             >
@@ -111,22 +110,22 @@ const Pricing: Component = () => {
           {/* Team Tier */}
           <div class="pricing-card featured">
             <div class="absolute -top-3 left-1/2 -translate-x-1/2">
-              <span class="bg-purple-500 text-white text-xs font-semibold px-3 py-1 rounded-full">
+              <span class="rounded-full bg-purple-500 px-3 py-1 text-xs font-semibold text-white">
                 Best Value
               </span>
             </div>
-            
+
             <div class="mb-6">
-              <h3 class="text-2xl font-bold mb-2">Team</h3>
-              <p class="text-slate-400 text-sm">For teams & organizations</p>
-            </div>
-            
-            <div class="mb-6">
-              <span class="text-4xl font-bold">$200</span>
-              <span class="text-slate-400 text-sm">/month</span>
+              <h3 class="mb-2 text-2xl font-bold">Team</h3>
+              <p class="text-sm text-slate-400">For teams & organizations</p>
             </div>
 
-            <ul class="space-y-3 mb-6 text-sm">
+            <div class="mb-6">
+              <span class="text-4xl font-bold">$200</span>
+              <span class="text-sm text-slate-400">/month</span>
+            </div>
+
+            <ul class="mb-6 space-y-3 text-sm">
               <li class="flex items-center gap-2">
                 <span class="text-green-400">✓</span>
                 Everything in Pro
@@ -149,7 +148,7 @@ const Pricing: Component = () => {
               </li>
             </ul>
 
-            <button 
+            <button
               class="btn-primary w-full justify-center text-sm"
               onClick={() => openUpgrade('team')}
             >
@@ -160,16 +159,16 @@ const Pricing: Component = () => {
           {/* Enterprise Tier */}
           <div class="pricing-card">
             <div class="mb-6">
-              <h3 class="text-2xl font-bold mb-2">Enterprise</h3>
-              <p class="text-slate-400 text-sm">For large organizations</p>
-            </div>
-            
-            <div class="mb-6">
-              <span class="text-3xl font-bold">Custom</span>
-              <span class="text-slate-400 text-sm block mt-1">tailored to your needs</span>
+              <h3 class="mb-2 text-2xl font-bold">Enterprise</h3>
+              <p class="text-sm text-slate-400">For large organizations</p>
             </div>
 
-            <ul class="space-y-3 mb-6 text-sm">
+            <div class="mb-6">
+              <span class="text-3xl font-bold">Custom</span>
+              <span class="mt-1 block text-sm text-slate-400">tailored to your needs</span>
+            </div>
+
+            <ul class="mb-6 space-y-3 text-sm">
               <li class="flex items-center gap-2">
                 <span class="text-green-400">✓</span>
                 Everything in Team
@@ -192,7 +191,7 @@ const Pricing: Component = () => {
               </li>
             </ul>
 
-            <a 
+            <a
               href="mailto:enterprise@pyro1121.com"
               class="btn-secondary w-full justify-center text-sm"
             >
@@ -201,13 +200,16 @@ const Pricing: Component = () => {
           </div>
         </div>
 
-        <p class="text-center text-slate-500 mt-8">
-          Need custom terms or volume pricing? <a href="mailto:sales@pyro1121.com" class="text-indigo-400 hover:underline">Contact sales</a>
+        <p class="mt-8 text-center text-slate-500">
+          Need custom terms or volume pricing?{' '}
+          <a href="mailto:sales@pyro1121.com" class="text-indigo-400 hover:underline">
+            Contact sales
+          </a>
         </p>
       </div>
 
-      <UpgradeModal 
-        isOpen={showUpgradeModal()} 
+      <UpgradeModal
+        isOpen={showUpgradeModal()}
         onClose={() => setShowUpgradeModal(false)}
         initialTier={initialTier()}
       />

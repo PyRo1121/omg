@@ -17,7 +17,9 @@ const HomePage: Component = () => {
   const [loading, setLoading] = createSignal(false);
   const [email, setEmail] = createSignal('');
   const [copied, setCopied] = createSignal(false);
-  const [confetti, setConfetti] = createSignal<Array<{ id: number; left: number; color: string; delay: number }>>([]);
+  const [confetti, setConfetti] = createSignal<
+    Array<{ id: number; left: number; color: string; delay: number }>
+  >([]);
   const [notFound, setNotFound] = createSignal(false);
   const [retryCount, setRetryCount] = createSignal(0);
 
@@ -44,12 +46,14 @@ const HomePage: Component = () => {
   const fetchLicense = async () => {
     const userEmail = email();
     if (!userEmail) return;
-    
+
     setLoading(true);
     setNotFound(false);
-    
+
     try {
-      const res = await fetch(`https://api.pyro1121.com/api/get-license?email=${encodeURIComponent(userEmail)}`);
+      const res = await fetch(
+        `https://api.pyro1121.com/api/get-license?email=${encodeURIComponent(userEmail)}`
+      );
       const data = await res.json();
       if (data.found) {
         setLicenseKey(data.license_key);
@@ -96,9 +100,9 @@ const HomePage: Component = () => {
 
       {/* Confetti */}
       <For each={confetti()}>
-        {(piece) => (
+        {piece => (
           <div
-            class="fixed top-0 w-3 h-3 rounded-full animate-confetti pointer-events-none z-[200]"
+            class="animate-confetti pointer-events-none fixed top-0 z-[200] h-3 w-3 rounded-full"
             style={{
               left: `${piece.left}%`,
               background: piece.color,
@@ -112,37 +116,54 @@ const HomePage: Component = () => {
       <Show when={showSuccess()}>
         <div class="fixed inset-0 z-[100] flex items-center justify-center p-4">
           <div class="absolute inset-0 bg-black/80 backdrop-blur-md" onClick={handleClose} />
-          <div class="relative bg-gradient-to-b from-slate-800 to-slate-900 border border-slate-700/50 rounded-3xl max-w-lg w-full p-8 shadow-2xl">
+          <div class="relative w-full max-w-lg rounded-3xl border border-slate-700/50 bg-gradient-to-b from-slate-800 to-slate-900 p-8 shadow-2xl">
             <button
               onClick={handleClose}
               class="absolute top-4 right-4 text-slate-400 hover:text-white"
             >
-              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+              <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  stroke-width="2"
+                  d="M6 18L18 6M6 6l12 12"
+                />
               </svg>
             </button>
 
             <Show when={!licenseKey()}>
               <div class="text-center">
-                <div class="w-20 h-20 mx-auto mb-6 bg-gradient-to-br from-green-400 to-emerald-500 rounded-full flex items-center justify-center">
-                  <svg class="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                <div class="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-gradient-to-br from-green-400 to-emerald-500">
+                  <svg
+                    class="h-10 w-10 text-white"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M5 13l4 4L19 7"
+                    />
                   </svg>
                 </div>
-                <h2 class="text-3xl font-bold text-white mb-2">Payment Successful!</h2>
-                <p class="text-slate-400 mb-6">Thank you for your purchase. Enter your email to retrieve your license key.</p>
+                <h2 class="mb-2 text-3xl font-bold text-white">Payment Successful!</h2>
+                <p class="mb-6 text-slate-400">
+                  Thank you for your purchase. Enter your email to retrieve your license key.
+                </p>
 
                 <input
                   type="email"
                   value={email()}
-                  onInput={(e) => setEmail(e.currentTarget.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && fetchLicense()}
+                  onInput={e => setEmail(e.currentTarget.value)}
+                  onKeyPress={e => e.key === 'Enter' && fetchLicense()}
                   placeholder="Enter your email"
-                  class="w-full px-4 py-3 bg-slate-800 border border-slate-600 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 mb-4"
+                  class="mb-4 w-full rounded-xl border border-slate-600 bg-slate-800 px-4 py-3 text-white placeholder-slate-500 focus:border-indigo-500 focus:outline-none"
                 />
 
                 <Show when={notFound()}>
-                  <p class="text-amber-400 text-sm mb-4">
+                  <p class="mb-4 text-sm text-amber-400">
                     License not found yet. It may take a moment to process.
                     {retryCount() > 0 && ` (Attempt ${retryCount()})`}
                   </p>
@@ -151,7 +172,7 @@ const HomePage: Component = () => {
                 <button
                   onClick={fetchLicense}
                   disabled={loading() || !email()}
-                  class="w-full py-3 bg-gradient-to-r from-indigo-500 to-purple-500 hover:from-indigo-400 hover:to-purple-400 disabled:from-slate-600 disabled:to-slate-600 text-white font-semibold rounded-xl transition-all"
+                  class="w-full rounded-xl bg-gradient-to-r from-indigo-500 to-purple-500 py-3 font-semibold text-white transition-all hover:from-indigo-400 hover:to-purple-400 disabled:from-slate-600 disabled:to-slate-600"
                 >
                   {loading() ? 'Checking...' : 'Get License Key'}
                 </button>
@@ -160,44 +181,72 @@ const HomePage: Component = () => {
 
             <Show when={licenseKey()}>
               <div class="text-center">
-                <div class="w-20 h-20 mx-auto mb-6 bg-gradient-to-br from-indigo-400 to-purple-500 rounded-full flex items-center justify-center">
-                  <svg class="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+                <div class="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-gradient-to-br from-indigo-400 to-purple-500">
+                  <svg
+                    class="h-10 w-10 text-white"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"
+                    />
                   </svg>
                 </div>
-                <h2 class="text-3xl font-bold text-white mb-2">Your License Key</h2>
-                <p class="text-slate-400 mb-2">
-                  <span class="capitalize font-semibold text-indigo-400">{tier()}</span> Plan Activated
+                <h2 class="mb-2 text-3xl font-bold text-white">Your License Key</h2>
+                <p class="mb-2 text-slate-400">
+                  <span class="font-semibold text-indigo-400 capitalize">{tier()}</span> Plan
+                  Activated
                 </p>
 
-                <div class="bg-slate-800 rounded-xl p-4 mb-6">
-                  <code class="text-green-400 font-mono text-sm break-all">{licenseKey()}</code>
+                <div class="mb-6 rounded-xl bg-slate-800 p-4">
+                  <code class="font-mono text-sm break-all text-green-400">{licenseKey()}</code>
                 </div>
 
                 <button
                   onClick={() => copyToClipboard(licenseKey()!)}
-                  class="w-full py-3 bg-slate-700 hover:bg-slate-600 text-white font-semibold rounded-xl transition-all flex items-center justify-center gap-2 mb-4"
+                  class="mb-4 flex w-full items-center justify-center gap-2 rounded-xl bg-slate-700 py-3 font-semibold text-white transition-all hover:bg-slate-600"
                 >
                   {copied() ? (
                     <>
-                      <svg class="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                      <svg
+                        class="h-5 w-5 text-green-400"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          stroke-width="2"
+                          d="M5 13l4 4L19 7"
+                        />
                       </svg>
                       Copied!
                     </>
                   ) : (
                     <>
-                      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                      <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          stroke-width="2"
+                          d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+                        />
                       </svg>
                       Copy to Clipboard
                     </>
                   )}
                 </button>
 
-                <div class="bg-slate-800/50 rounded-xl p-4 text-left">
-                  <p class="text-slate-300 text-sm mb-2">Activate your license:</p>
-                  <code class="text-cyan-400 font-mono text-xs">omg license activate {licenseKey()}</code>
+                <div class="rounded-xl bg-slate-800/50 p-4 text-left">
+                  <p class="mb-2 text-sm text-slate-300">Activate your license:</p>
+                  <code class="font-mono text-xs text-cyan-400">
+                    omg license activate {licenseKey()}
+                  </code>
                 </div>
               </div>
             </Show>

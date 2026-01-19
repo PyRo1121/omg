@@ -1,327 +1,429 @@
 import { Component, createSignal, createEffect, Show, For, onMount } from 'solid-js';
 import { A } from '@solidjs/router';
+import * as api from '../lib/api';
+import { TeamAnalytics } from '../components/dashboard/TeamAnalytics';
+import { AdminDashboard } from '../components/dashboard/AdminDashboard';
+import {
+  BarChart3,
+  Monitor,
+  Users,
+  Lock,
+  CreditCard,
+  Crown,
+  Clock,
+  Terminal,
+  Flame,
+} from '../components/ui/Icons';
 
-interface LicenseInfo {
-  license_key: string;
-  tier: string;
-  expires_at: string;
-  status: string;
-  used_seats?: number;
-  max_seats?: number;
-  machines?: Machine[];
-  usage?: UsageStats;
-}
-
-interface Machine {
-  id: string;
-  hostname: string;
-  last_seen: string;
-  os: string;
-}
-
-interface UsageStats {
-  queries_today: number;
-  queries_this_month: number;
-  sbom_generated: number;
-  vulnerabilities_found: number;
-  time_saved_ms: number;
-  total_commands: number;
-  current_streak: number;
-  longest_streak: number;
-  achievements: string[];
-}
-
-interface Achievement {
-  id: string;
-  emoji: string;
-  name: string;
-  description: string;
-  unlocked?: boolean;
-}
-
-const ALL_ACHIEVEMENTS: Achievement[] = [
-  { id: 'FirstStep', emoji: '🚀', name: 'First Step', description: 'Executed your first command' },
-  { id: 'Centurion', emoji: '💯', name: 'Centurion', description: 'Executed 100 commands' },
-  { id: 'PowerUser', emoji: '⚡', name: 'Power User', description: 'Executed 1,000 commands' },
-  { id: 'Legend', emoji: '🏆', name: 'Legend', description: 'Executed 10,000 commands' },
-  { id: 'MinuteSaver', emoji: '⏱️', name: 'Minute Saver', description: 'Saved 1 minute of time' },
-  { id: 'HourSaver', emoji: '⏰', name: 'Hour Saver', description: 'Saved 1 hour of time' },
-  { id: 'DaySaver', emoji: '📅', name: 'Day Saver', description: 'Saved 24 hours of time' },
-  { id: 'WeekStreak', emoji: '🔥', name: 'Week Streak', description: 'Used OMG for 7 days straight' },
-  { id: 'MonthStreak', emoji: '💎', name: 'Month Streak', description: 'Used OMG for 30 days straight' },
-  { id: 'Polyglot', emoji: '🌐', name: 'Polyglot', description: 'Used all 7 built-in runtimes' },
-  { id: 'SecurityFirst', emoji: '🛡️', name: 'Security First', description: 'Generated your first SBOM' },
-  { id: 'BugHunter', emoji: '🐛', name: 'Bug Hunter', description: 'Found and addressed vulnerabilities' },
-];
-
-const formatTimeSaved = (ms: number): string => {
-  if (ms < 1000) return `${ms}ms`;
-  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
-  if (ms < 3600000) return `${(ms / 60000).toFixed(1)}min`;
-  if (ms < 86400000) return `${(ms / 3600000).toFixed(1)}hr`;
-  return `${(ms / 86400000).toFixed(1)} days`;
-};
-
-const API_BASE = 'https://api.pyro1121.com';
+type View = 'login' | 'verify' | 'dashboard';
+type Tab = 'overview' | 'machines' | 'team' | 'security' | 'billing' | 'admin';
 
 const DashboardPage: Component = () => {
+  // Auth state
+  const [view, setView] = createSignal<View>('login');
   const [email, setEmail] = createSignal('');
-  const [licenseKey, setLicenseKey] = createSignal('');
+  const [otpCode, setOtpCode] = createSignal('');
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal('');
-  const [license, setLicense] = createSignal<LicenseInfo | null>(null);
-  const [view, setView] = createSignal<'login' | 'register' | 'dashboard'>('login');
-  const [actionLoading, setActionLoading] = createSignal(false);
-  const [actionMessage, setActionMessage] = createSignal('');
-  const [copied, setCopied] = createSignal(false);
-  const [activeTab, setActiveTab] = createSignal<'overview' | 'usage' | 'security' | 'settings'>('overview');
 
-  // Check for stored session on mount
-  onMount(() => {
-    const storedEmail = localStorage.getItem('omg_email');
-    const storedKey = localStorage.getItem('omg_license_key');
-    if (storedEmail && storedKey) {
-      setEmail(storedEmail);
-      setLicenseKey(storedKey);
-      fetchLicenseWithKey(storedEmail, storedKey);
+  // Dashboard state
+  const [dashboard, setDashboard] = createSignal<api.DashboardData | null>(null);
+  const [activeTab, setActiveTab] = createSignal<Tab>('overview');
+  const [sessions, setSessions] = createSignal<api.Session[]>([]);
+  const [auditLog, setAuditLog] = createSignal<api.AuditLogEntry[]>([]);
+  const [copied, setCopied] = createSignal(false);
+  const [actionMessage, setActionMessage] = createSignal('');
+
+  // Admin state
+  const [adminData, setAdminData] = createSignal<api.AdminOverview | null>(null);
+  const [adminUsers, setAdminUsers] = createSignal<api.AdminUser[]>([]);
+  const [adminActivity, setAdminActivity] = createSignal<api.AdminActivity[]>([]);
+  const [adminHealth, setAdminHealth] = createSignal<api.AdminHealth | null>(null);
+  const [adminSearch, setAdminSearch] = createSignal('');
+  const [adminPage, setAdminPage] = createSignal(1);
+  const [adminTotalPages, setAdminTotalPages] = createSignal(1);
+  const [selectedUser, setSelectedUser] = createSignal<string | null>(null);
+  const [userDetail, setUserDetail] = createSignal<api.AdminUserDetail | null>(null);
+  const [userDetailTab, setUserDetailTab] = createSignal<
+    'overview' | 'usage' | 'billing' | 'activity'
+  >('overview');
+  const [adminRevenue, setAdminRevenue] = createSignal<api.AdminRevenue | null>(null);
+  const [adminCohorts, setAdminCohorts] = createSignal<api.AdminCohorts | null>(null);
+  const [adminAuditLog, setAdminAuditLog] = createSignal<api.AdminAuditLogResponse | null>(null);
+  const [adminAnalytics, setAdminAnalytics] = createSignal<api.AdminAnalytics | null>(null);
+  const [_adminTab, _setAdminTab] = createSignal<'overview' | 'users' | 'revenue' | 'audit'>(
+    'overview'
+  );
+
+  // Team state
+  const [teamData, setTeamData] = createSignal<api.TeamData | null>(null);
+
+  // Check for existing session on mount
+  onMount(async () => {
+    const token = api.getSessionToken();
+    if (token) {
+      try {
+        const result = await api.verifySession(token);
+        if (result.valid && result.user) {
+          await loadDashboard();
+          setView('dashboard');
+        } else {
+          api.clearSession();
+        }
+      } catch {
+        api.clearSession();
+      }
     }
   });
 
-  const fetchLicenseWithKey = async (userEmail: string, key: string) => {
+  // Load dashboard data
+  const loadDashboard = async () => {
+    try {
+      const data = await api.getDashboard();
+      setDashboard(data);
+    } catch (e) {
+      if (e instanceof api.ApiError && e.status === 401) {
+        api.clearSession();
+        setView('login');
+      }
+      console.error('Failed to load dashboard:', e);
+    }
+  };
+
+  // Send OTP code
+  const handleSendCode = async () => {
+    const userEmail = email().trim().toLowerCase();
+    if (!userEmail || !userEmail.includes('@')) {
+      setError('Please enter a valid email address');
+      return;
+    }
+
     setLoading(true);
     setError('');
+
     try {
-      const res = await fetch(`${API_BASE}/api/get-license?email=${encodeURIComponent(userEmail)}`);
-      const data = await res.json();
-      if (data.found) {
-        setLicense({
-          license_key: data.license_key,
-          tier: data.tier,
-          expires_at: data.expires_at,
-          status: data.status,
-          used_seats: data.used_seats,
-          max_seats: data.max_seats,
-          usage: data.usage,
-        });
-        setLicenseKey(data.license_key);
-        setView('dashboard');
-        localStorage.setItem('omg_email', userEmail);
-        localStorage.setItem('omg_license_key', data.license_key);
+      const result = await api.sendCode(userEmail);
+      if (result.success) {
+        setView('verify');
       } else {
-        localStorage.removeItem('omg_email');
-        localStorage.removeItem('omg_license_key');
+        setError(result.error || 'Failed to send code');
       }
     } catch (e) {
-      console.error(e);
+      setError(e instanceof api.ApiError ? e.message : 'Failed to connect');
     }
+
     setLoading(false);
   };
 
-  const fetchLicense = async () => {
-    const userEmail = email();
-    if (!userEmail) {
-      setError('Please enter your email');
+  // Verify OTP code
+  const handleVerifyCode = async () => {
+    const code = otpCode().trim();
+    if (code.length !== 6) {
+      setError('Please enter the 6-digit code');
       return;
     }
+
     setLoading(true);
     setError('');
+
     try {
-      const res = await fetch(`${API_BASE}/api/get-license?email=${encodeURIComponent(userEmail)}`);
-      const data = await res.json();
-      if (data.found) {
-        setLicense({
-          license_key: data.license_key,
-          tier: data.tier,
-          expires_at: data.expires_at,
-          status: data.status,
-          used_seats: data.used_seats,
-          max_seats: data.max_seats,
-          usage: data.usage,
-        });
-        setLicenseKey(data.license_key);
+      const result = await api.verifyCode(email(), code);
+      if (result.success && result.token) {
+        api.setSessionToken(result.token);
+        await loadDashboard();
         setView('dashboard');
-        localStorage.setItem('omg_email', userEmail);
-        localStorage.setItem('omg_license_key', data.license_key);
       } else {
-        setError('No license found for this email. Check your email or create a free account.');
+        setError(result.error || 'Invalid code');
       }
     } catch (e) {
-      setError('Failed to connect to license server. Please try again.');
+      setError(e instanceof api.ApiError ? e.message : 'Verification failed');
     }
+
     setLoading(false);
   };
 
-  const registerFreeAccount = async () => {
-    const userEmail = email();
-    if (!userEmail) {
-      setError('Please enter your email');
-      return;
-    }
-    setLoading(true);
-    setError('');
-    try {
-      const res = await fetch(`${API_BASE}/api/register-free`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: userEmail }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        setLicense({
-          license_key: data.license_key,
-          tier: 'free',
-          expires_at: 'Never',
-          status: 'active',
-          usage: data.usage,
-        });
-        setLicenseKey(data.license_key);
-        setView('dashboard');
-        localStorage.setItem('omg_email', userEmail);
-        localStorage.setItem('omg_license_key', data.license_key);
-      } else {
-        setError(data.error || 'Registration failed. Please try again.');
-      }
-    } catch (e) {
-      setError('Failed to connect to server. Please try again.');
-    }
-    setLoading(false);
+  // Logout
+  const handleLogout = async () => {
+    await api.logout();
+    setDashboard(null);
+    setEmail('');
+    setOtpCode('');
+    setView('login');
   };
 
-  const refreshLicense = async () => {
-    setActionLoading(true);
-    setActionMessage('');
-    try {
-      const res = await fetch(`${API_BASE}/api/refresh-license`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ license_key: licenseKey() }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        setLicense(prev => prev ? { ...prev, ...data.license } : null);
-        setActionMessage('License refreshed successfully!');
-      } else {
-        setActionMessage(data.error || 'Failed to refresh license');
-      }
-    } catch (e) {
-      setActionMessage('Failed to connect to server');
-    }
-    setActionLoading(false);
-    setTimeout(() => setActionMessage(''), 3000);
-  };
-
-  const regenerateLicense = async () => {
-    if (!confirm('This will invalidate your current license key. All machines will need to re-activate. Continue?')) {
-      return;
-    }
-    setActionLoading(true);
-    setActionMessage('');
-    try {
-      const res = await fetch(`${API_BASE}/api/regenerate-license`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: email(), old_license_key: licenseKey() }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        setLicense(prev => prev ? { ...prev, license_key: data.new_license_key } : null);
-        setLicenseKey(data.new_license_key);
-        localStorage.setItem('omg_license_key', data.new_license_key);
-        setActionMessage('New license key generated!');
-      } else {
-        setActionMessage(data.error || 'Failed to regenerate license');
-      }
-    } catch (e) {
-      setActionMessage('Failed to connect to server');
-    }
-    setActionLoading(false);
-  };
-
-  const openBillingPortal = async () => {
-    setActionLoading(true);
-    try {
-      const res = await fetch(`${API_BASE}/api/billing-portal`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: email() }),
-      });
-      const data = await res.json();
-      if (data.success && data.url) {
-        window.location.href = data.url;
-      } else {
-        setActionMessage(data.error || 'Failed to open billing portal');
-      }
-    } catch (e) {
-      setActionMessage('Failed to connect to server');
-    }
-    setActionLoading(false);
-  };
-
+  // Copy to clipboard
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const logout = () => {
-    setView('login');
-    setLicense(null);
-    setEmail('');
-    setLicenseKey('');
-    setError('');
-    localStorage.removeItem('omg_email');
-    localStorage.removeItem('omg_license_key');
+  // Regenerate license
+  const handleRegenerateLicense = async () => {
+    if (
+      !confirm(
+        'This will invalidate your current license key. All machines will need to re-activate. Continue?'
+      )
+    ) {
+      return;
+    }
+
+    try {
+      const result = await api.regenerateLicense();
+      if (result.success) {
+        setActionMessage(`New key: ${result.license_key}`);
+        await loadDashboard();
+      }
+    } catch (_e) {
+      setActionMessage('Failed to regenerate license');
+    }
+    setTimeout(() => setActionMessage(''), 5000);
   };
 
-  const getTierColor = (tier: string) => {
-    switch (tier.toLowerCase()) {
-      case 'pro': return 'from-indigo-500 to-blue-500';
-      case 'team': return 'from-purple-500 to-pink-500';
-      case 'enterprise': return 'from-amber-500 to-orange-500';
-      default: return 'from-emerald-500 to-teal-500';
+  // Revoke machine
+  const handleRevokeMachine = async (machineId: string) => {
+    if (!confirm('Revoke access for this machine?')) return;
+
+    try {
+      await api.revokeMachine(machineId);
+      await loadDashboard();
+      setActionMessage('Machine revoked');
+    } catch (_e) {
+      setActionMessage('Failed to revoke machine');
+    }
+    setTimeout(() => setActionMessage(''), 3000);
+  };
+
+  // Load sessions
+  const loadSessions = async () => {
+    try {
+      const result = await api.getSessions();
+      setSessions(result.sessions);
+    } catch (_e) {
+      // Session loading failed silently
     }
   };
 
-  const getTierBadgeColor = (tier: string) => {
-    switch (tier.toLowerCase()) {
-      case 'pro': return 'bg-indigo-500/20 text-indigo-400 border-indigo-500/30';
-      case 'team': return 'bg-purple-500/20 text-purple-400 border-purple-500/30';
-      case 'enterprise': return 'bg-amber-500/20 text-amber-400 border-amber-500/30';
-      default: return 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30';
+  // Revoke session
+  const handleRevokeSession = async (sessionId: string) => {
+    try {
+      await api.revokeSession(sessionId);
+      await loadSessions();
+      setActionMessage('Session revoked');
+    } catch (_e) {
+      setActionMessage('Failed to revoke session');
+    }
+    setTimeout(() => setActionMessage(''), 3000);
+  };
+
+  // Load audit log
+  const loadAuditLog = async () => {
+    try {
+      const result = await api.getAuditLog();
+      setAuditLog(result.logs);
+    } catch (_e) {
+      setAuditLog([]);
     }
   };
 
-  const formatDate = (dateStr: string) => {
-    if (!dateStr || dateStr === 'Never') return 'Never';
-    const date = new Date(dateStr);
-    return date.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  // Open billing portal
+  const handleBillingPortal = async () => {
+    const d = dashboard();
+    if (!d) return;
+
+    try {
+      const result = await api.openBillingPortal(d.user.email);
+      if (result.url) {
+        window.location.href = result.url;
+      }
+    } catch (_e) {
+      setActionMessage('Failed to open billing portal');
+      setTimeout(() => setActionMessage(''), 3000);
+    }
   };
+
+  // Load admin data
+  const loadAdminData = async () => {
+    try {
+      const [dashboardData, usersData, activityData, healthData, revenueData, cohortsData, analyticsData] =
+        await Promise.all([
+          api.getAdminDashboard(),
+          api.getAdminUsers(adminPage(), 50, adminSearch()),
+          api.getAdminActivity(),
+          api.getAdminHealth(),
+          api.getAdminRevenue(),
+          api.getAdminCohorts(),
+          api.getAdminAnalytics().catch(() => null),
+        ]);
+      setAdminData(dashboardData);
+      setAdminUsers(usersData.users);
+      setAdminTotalPages(usersData.pagination.pages);
+      setAdminActivity(activityData.activity);
+      setAdminHealth(healthData);
+      setAdminRevenue(revenueData);
+      setAdminCohorts(cohortsData);
+      setAdminAnalytics(analyticsData);
+    } catch (_e) {
+      // Admin data loading failed
+    }
+  };
+
+  // Load admin audit log
+  const _loadAdminAuditLog = async (page = 1) => {
+    try {
+      const data = await api.getAdminAuditLog(page, 50);
+      setAdminAuditLog(data);
+    } catch (_e) {
+      // Audit log loading failed
+    }
+  };
+
+  // Export data with auth header
+  const handleExport = async (type: 'users' | 'usage' | 'audit') => {
+    const token = api.getSessionToken();
+    if (!token) return;
+
+    let url: string;
+    switch (type) {
+      case 'users':
+        url = api.getAdminExportUsersUrl();
+        break;
+      case 'usage':
+        url = api.getAdminExportUsageUrl(30);
+        break;
+      case 'audit':
+        url = api.getAdminExportAuditUrl(30);
+        break;
+    }
+
+    try {
+      const response = await fetch(url, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) throw new Error('Export failed');
+
+      const blob = await response.blob();
+      const filename =
+        response.headers.get('Content-Disposition')?.match(/filename="(.+)"/)?.[1] ||
+        `omg-${type}-export.${type === 'users' ? 'csv' : 'json'}`;
+
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(a.href);
+
+      setActionMessage(`${type.charAt(0).toUpperCase() + type.slice(1)} exported successfully`);
+    } catch (_e) {
+      setActionMessage('Export failed');
+    }
+    setTimeout(() => setActionMessage(''), 3000);
+  };
+
+  // Load admin user detail
+  const loadUserDetail = async (userId: string) => {
+    try {
+      const detail = await api.getAdminUserDetail(userId);
+      setUserDetail(detail);
+      setSelectedUser(userId);
+    } catch (e) {
+      console.error('Failed to load user detail:', e);
+    }
+  };
+
+  // Update user from admin panel
+  const handleAdminUpdateUser = async (
+    userId: string,
+    updates: { tier?: string; max_seats?: number; status?: string }
+  ) => {
+    try {
+      await api.updateAdminUser(userId, updates);
+      setActionMessage('User updated successfully');
+      await loadAdminData();
+      if (selectedUser() === userId) {
+        await loadUserDetail(userId);
+      }
+    } catch (e) {
+      setActionMessage(e instanceof api.ApiError ? e.message : 'Failed to update user');
+    }
+    setTimeout(() => setActionMessage(''), 3000);
+  };
+
+  // Load team data
+  const loadTeamData = async () => {
+    try {
+      const data = await api.getTeamMembers();
+      setTeamData(data);
+    } catch (e) {
+      console.error('Failed to load team data:', e);
+    }
+  };
+
+  // Revoke team member
+  const handleRevokeTeamMember = async (machineId: string) => {
+    if (!confirm('Revoke access for this team member?')) return;
+    try {
+      await api.revokeTeamMember(machineId);
+      setActionMessage('Team member access revoked');
+      await loadTeamData();
+    } catch (e) {
+      setActionMessage(e instanceof api.ApiError ? e.message : 'Failed to revoke');
+    }
+    setTimeout(() => setActionMessage(''), 3000);
+  };
+
+  // Load tab data when switching
+  createEffect(() => {
+    const tab = activeTab();
+    if (tab === 'security') {
+      loadSessions();
+      loadAuditLog();
+    } else if (tab === 'team') {
+      loadTeamData();
+    } else if (tab === 'admin' && dashboard()?.is_admin) {
+      loadAdminData();
+    }
+  });
 
   return (
-    <div class="min-h-screen bg-[#0a0a1a]">
-      {/* Background Effects */}
-      <div class="fixed inset-0 overflow-hidden pointer-events-none">
-        <div class="absolute top-0 left-1/4 w-96 h-96 bg-indigo-500/10 rounded-full blur-3xl" />
-        <div class="absolute bottom-0 right-1/4 w-96 h-96 bg-purple-500/10 rounded-full blur-3xl" />
-        <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-cyan-500/5 rounded-full blur-3xl" />
+    <div class="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
+      {/* Background effects */}
+      <div class="pointer-events-none fixed inset-0 overflow-hidden">
+        <div class="absolute top-0 left-1/4 h-96 w-96 rounded-full bg-indigo-500/10 blur-3xl" />
+        <div class="absolute right-1/4 bottom-0 h-96 w-96 rounded-full bg-purple-500/10 blur-3xl" />
       </div>
 
       {/* Header */}
-      <header class="relative z-10 border-b border-white/5 bg-[#0f0f23]/80 backdrop-blur-xl">
-        <div class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-          <A href="/" class="flex items-center gap-3 hover:opacity-80 transition-opacity">
-            <img src="/favicon.svg" alt="OMG" class="w-8 h-8 rounded-lg" />
+      <header class="relative z-10 border-b border-slate-800/50 backdrop-blur-sm">
+        <div class="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
+          <A href="/" class="group flex items-center gap-3">
+            <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 shadow-lg shadow-indigo-500/25 transition-shadow group-hover:shadow-indigo-500/40">
+              <span class="text-lg font-bold text-white">⚡</span>
+            </div>
             <span class="text-xl font-bold text-white">OMG</span>
           </A>
-          <Show when={view() === 'dashboard'}>
+
+          <Show when={view() === 'dashboard' && dashboard()}>
             <div class="flex items-center gap-4">
-              <span class="text-slate-400 text-sm hidden sm:block">{email()}</span>
+              <div class="hidden text-right sm:block">
+                <div class="text-sm font-medium text-white">
+                  {dashboard()!.user.name || dashboard()!.user.email}
+                </div>
+                <div class="text-xs text-slate-400">
+                  {dashboard()!.license.tier.toUpperCase()} Plan
+                </div>
+              </div>
               <button
-                onClick={logout}
-                class="flex items-center gap-2 px-4 py-2 text-slate-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-all text-sm"
+                onClick={handleLogout}
+                class="flex items-center gap-2 rounded-lg px-4 py-2 text-sm text-slate-400 transition-all hover:bg-slate-800 hover:text-white"
               >
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"
+                  />
                 </svg>
                 Sign Out
               </button>
@@ -330,418 +432,1285 @@ const DashboardPage: Component = () => {
         </div>
       </header>
 
-      <main class="relative z-10 max-w-7xl mx-auto px-6 py-12">
-        {/* Login/Register View */}
-        <Show when={view() !== 'dashboard'}>
-          <div class="max-w-md mx-auto">
-            <div class="text-center mb-10">
-              <h1 class="text-4xl font-bold text-white mb-3">
-                {view() === 'login' ? 'Welcome Back' : 'Get Started Free'}
-              </h1>
-              <p class="text-slate-400">
-                {view() === 'login' 
-                  ? 'Sign in to access your OMG dashboard' 
-                  : 'Create a free account to track your productivity'}
-              </p>
+      <main class="relative z-10 mx-auto max-w-7xl px-6 py-8">
+        {/* Login View */}
+        <Show when={view() === 'login'}>
+          <div class="mx-auto mt-16 max-w-md">
+            <div class="mb-8 text-center">
+              <h1 class="mb-2 text-3xl font-bold text-white">Welcome to OMG</h1>
+              <p class="text-slate-400">Sign in to access your dashboard</p>
             </div>
 
-            <div class="bg-slate-900/50 border border-slate-800 rounded-2xl p-8 backdrop-blur-sm">
+            <div class="rounded-2xl border border-slate-800 bg-slate-900/50 p-8 backdrop-blur-sm">
               <div class="space-y-6">
                 <div>
-                  <label class="block text-sm font-medium text-slate-300 mb-2">Email Address</label>
+                  <label class="mb-2 block text-sm font-medium text-slate-300">Email Address</label>
                   <input
                     type="email"
                     value={email()}
-                    onInput={(e) => setEmail(e.currentTarget.value)}
-                    onKeyPress={(e) => e.key === 'Enter' && (view() === 'login' ? fetchLicense() : registerFreeAccount())}
-                    placeholder="you@company.com"
-                    class="w-full px-4 py-3 bg-slate-800/50 border border-slate-700 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition-all"
+                    onInput={e => setEmail(e.currentTarget.value)}
+                    onKeyPress={e => e.key === 'Enter' && handleSendCode()}
+                    placeholder="you@example.com"
+                    class="w-full rounded-xl border border-slate-700 bg-slate-800/50 px-4 py-3 text-white placeholder-slate-500 transition-all focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 focus:outline-none"
                   />
                 </div>
 
                 <Show when={error()}>
-                  <div class="flex items-start gap-3 p-4 bg-red-500/10 border border-red-500/30 rounded-xl">
-                    <svg class="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                    <p class="text-red-400 text-sm">{error()}</p>
+                  <div class="rounded-xl border border-red-500/30 bg-red-500/10 p-4">
+                    <p class="text-sm text-red-400">{error()}</p>
                   </div>
                 </Show>
 
                 <button
-                  onClick={view() === 'login' ? fetchLicense : registerFreeAccount}
-                  disabled={loading() || !email()}
-                  class={`w-full py-4 font-semibold rounded-xl transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed ${
-                    view() === 'login'
-                      ? 'bg-gradient-to-r from-indigo-500 to-blue-500 hover:from-indigo-400 hover:to-blue-400 text-white'
-                      : 'bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-white'
-                  }`}
+                  onClick={handleSendCode}
+                  disabled={loading()}
+                  class="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-indigo-500 to-purple-500 py-3 font-semibold text-white transition-all hover:from-indigo-400 hover:to-purple-400 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {loading() ? (
-                    <>
-                      <svg class="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
-                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
-                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                      </svg>
-                      {view() === 'login' ? 'Signing in...' : 'Creating account...'}
-                    </>
+                    <svg class="h-5 w-5 animate-spin" fill="none" viewBox="0 0 24 24">
+                      <circle
+                        class="opacity-25"
+                        cx="12"
+                        cy="12"
+                        r="10"
+                        stroke="currentColor"
+                        stroke-width="4"
+                      />
+                      <path
+                        class="opacity-75"
+                        fill="currentColor"
+                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                      />
+                    </svg>
                   ) : (
-                    view() === 'login' ? 'Sign In' : 'Create Free Account'
+                    <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        stroke-width="2"
+                        d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
+                      />
+                    </svg>
                   )}
+                  Send Verification Code
                 </button>
 
-                <div class="text-center">
+                <p class="text-center text-xs text-slate-500">
+                  We'll send a one-time code to verify your email
+                </p>
+              </div>
+            </div>
+          </div>
+        </Show>
+
+        {/* Verify View */}
+        <Show when={view() === 'verify'}>
+          <div class="mx-auto mt-16 max-w-md">
+            <div class="mb-8 text-center">
+              <div class="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-500">
+                <svg
+                  class="h-8 w-8 text-white"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
+                  />
+                </svg>
+              </div>
+              <h1 class="mb-2 text-3xl font-bold text-white">Check Your Email</h1>
+              <p class="text-slate-400">
+                We sent a code to <span class="font-medium text-white">{email()}</span>
+              </p>
+            </div>
+
+            <div class="rounded-2xl border border-slate-800 bg-slate-900/50 p-8 backdrop-blur-sm">
+              <div class="space-y-6">
+                <div>
+                  <label class="mb-2 block text-sm font-medium text-slate-300">
+                    Verification Code
+                  </label>
+                  <input
+                    type="text"
+                    value={otpCode()}
+                    onInput={e => setOtpCode(e.currentTarget.value.replace(/\D/g, '').slice(0, 6))}
+                    onKeyPress={e => e.key === 'Enter' && handleVerifyCode()}
+                    placeholder="000000"
+                    maxLength={6}
+                    class="w-full rounded-xl border border-slate-700 bg-slate-800/50 px-4 py-4 text-center font-mono text-2xl tracking-[0.5em] text-white placeholder-slate-600 transition-all focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 focus:outline-none"
+                  />
+                </div>
+
+                <Show when={error()}>
+                  <div class="rounded-xl border border-red-500/30 bg-red-500/10 p-4">
+                    <p class="text-sm text-red-400">{error()}</p>
+                  </div>
+                </Show>
+
+                <button
+                  onClick={handleVerifyCode}
+                  disabled={loading() || otpCode().length !== 6}
+                  class="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-indigo-500 to-purple-500 py-3 font-semibold text-white transition-all hover:from-indigo-400 hover:to-purple-400 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {loading() ? (
+                    <svg class="h-5 w-5 animate-spin" fill="none" viewBox="0 0 24 24">
+                      <circle
+                        class="opacity-25"
+                        cx="12"
+                        cy="12"
+                        r="10"
+                        stroke="currentColor"
+                        stroke-width="4"
+                      />
+                      <path
+                        class="opacity-75"
+                        fill="currentColor"
+                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                      />
+                    </svg>
+                  ) : (
+                    <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        stroke-width="2"
+                        d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
+                      />
+                    </svg>
+                  )}
+                  Verify Code
+                </button>
+
+                <div class="flex items-center justify-between text-sm">
                   <button
-                    onClick={() => { setView(view() === 'login' ? 'register' : 'login'); setError(''); }}
-                    class="text-indigo-400 hover:text-indigo-300 text-sm transition-colors"
+                    onClick={() => {
+                      setView('login');
+                      setOtpCode('');
+                      setError('');
+                    }}
+                    class="text-slate-400 transition-colors hover:text-white"
                   >
-                    {view() === 'login' ? "Don't have an account? Create one free" : 'Already have an account? Sign in'}
+                    ← Change email
+                  </button>
+                  <button
+                    onClick={handleSendCode}
+                    disabled={loading()}
+                    class="text-indigo-400 transition-colors hover:text-indigo-300"
+                  >
+                    Resend code
                   </button>
                 </div>
               </div>
             </div>
-
-            <Show when={view() === 'register'}>
-              <div class="mt-8 grid grid-cols-2 gap-4">
-                <div class="bg-slate-900/30 border border-slate-800 rounded-xl p-4 text-center">
-                  <div class="text-2xl mb-1">📊</div>
-                  <div class="text-sm text-white font-medium">Usage Analytics</div>
-                  <div class="text-xs text-slate-500">Track your productivity</div>
-                </div>
-                <div class="bg-slate-900/30 border border-slate-800 rounded-xl p-4 text-center">
-                  <div class="text-2xl mb-1">⏱️</div>
-                  <div class="text-sm text-white font-medium">Time Saved</div>
-                  <div class="text-xs text-slate-500">See your efficiency gains</div>
-                </div>
-                <div class="bg-slate-900/30 border border-slate-800 rounded-xl p-4 text-center">
-                  <div class="text-2xl mb-1">🏆</div>
-                  <div class="text-sm text-white font-medium">Achievements</div>
-                  <div class="text-xs text-slate-500">Unlock badges & rewards</div>
-                </div>
-                <div class="bg-slate-900/30 border border-slate-800 rounded-xl p-4 text-center">
-                  <div class="text-2xl mb-1">🔥</div>
-                  <div class="text-sm text-white font-medium">Streaks</div>
-                  <div class="text-xs text-slate-500">Build daily habits</div>
-                </div>
-              </div>
-            </Show>
           </div>
         </Show>
 
         {/* Dashboard View */}
-        <Show when={view() === 'dashboard' && license()}>
-          <div class="space-y-8">
-            {/* Welcome Header */}
-            <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-              <div>
-                <h1 class="text-3xl font-bold text-white mb-1">Dashboard</h1>
-                <p class="text-slate-400">Welcome back! Here's your OMG overview.</p>
-              </div>
-              <div class="flex items-center gap-3">
-                <div class={`px-4 py-2 rounded-full border ${getTierBadgeColor(license()!.tier)}`}>
-                  <span class="font-semibold uppercase text-sm">{license()!.tier}</span>
-                </div>
-                <Show when={license()!.tier.toLowerCase() === 'free'}>
-                  <A href="/#pricing" class="px-4 py-2 bg-gradient-to-r from-indigo-500 to-purple-500 hover:from-indigo-400 hover:to-purple-400 text-white font-medium rounded-full text-sm transition-all">
-                    Upgrade to Pro
-                  </A>
+        <Show when={view() === 'dashboard' && dashboard()}>
+          {(() => {
+            const d = dashboard()!;
+            return (
+              <div class="space-y-8">
+                {/* Action Message */}
+                <Show when={actionMessage()}>
+                  <div class="animate-in slide-in-from-right fixed top-20 right-6 z-50 rounded-xl border border-slate-700 bg-slate-800 p-4 shadow-xl">
+                    <p class="text-sm text-white">{actionMessage()}</p>
+                  </div>
                 </Show>
-              </div>
-            </div>
 
-            {/* Stats Grid */}
-            <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
-              <div class="bg-gradient-to-br from-emerald-500/10 to-teal-500/10 border border-emerald-500/20 rounded-2xl p-6">
-                <div class="flex items-center gap-3 mb-3">
-                  <div class="p-2 bg-emerald-500/20 rounded-lg">
-                    <svg class="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
+                {/* Header */}
+                <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <h1 class="text-2xl font-bold text-white">Dashboard</h1>
+                    <p class="text-slate-400">
+                      Welcome back, {d.user.name || d.user.email.split('@')[0]}
+                    </p>
                   </div>
-                  <span class="text-slate-400 text-sm">Time Saved</span>
-                </div>
-                <div class="text-3xl font-bold text-white">
-                  {license()!.usage?.time_saved_ms ? formatTimeSaved(license()!.usage!.time_saved_ms) : '0s'}
-                </div>
-                <div class="text-emerald-400 text-sm mt-1">vs manual operations</div>
-              </div>
-
-              <div class="bg-gradient-to-br from-cyan-500/10 to-blue-500/10 border border-cyan-500/20 rounded-2xl p-6">
-                <div class="flex items-center gap-3 mb-3">
-                  <div class="p-2 bg-cyan-500/20 rounded-lg">
-                    <svg class="w-5 h-5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-                    </svg>
-                  </div>
-                  <span class="text-slate-400 text-sm">Total Commands</span>
-                </div>
-                <div class="text-3xl font-bold text-white">
-                  {(license()!.usage?.total_commands || 0).toLocaleString()}
-                </div>
-                <div class="text-cyan-400 text-sm mt-1">lifetime executions</div>
-              </div>
-
-              <div class="bg-gradient-to-br from-orange-500/10 to-amber-500/10 border border-orange-500/20 rounded-2xl p-6">
-                <div class="flex items-center gap-3 mb-3">
-                  <div class="p-2 bg-orange-500/20 rounded-lg">
-                    <span class="text-lg">🔥</span>
-                  </div>
-                  <span class="text-slate-400 text-sm">Current Streak</span>
-                </div>
-                <div class="text-3xl font-bold text-white">
-                  {license()!.usage?.current_streak || 0} days
-                </div>
-                <div class="text-orange-400 text-sm mt-1">
-                  Best: {license()!.usage?.longest_streak || 0} days
-                </div>
-              </div>
-
-              <div class="bg-gradient-to-br from-indigo-500/10 to-purple-500/10 border border-indigo-500/20 rounded-2xl p-6">
-                <div class="flex items-center gap-3 mb-3">
-                  <div class="p-2 bg-indigo-500/20 rounded-lg">
-                    <svg class="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
-                    </svg>
-                  </div>
-                  <span class="text-slate-400 text-sm">Today</span>
-                </div>
-                <div class="text-3xl font-bold text-white">
-                  {license()!.usage?.queries_today || 0}
-                </div>
-                <div class="text-indigo-400 text-sm mt-1">commands run</div>
-              </div>
-            </div>
-
-            {/* Main Content Grid */}
-            <div class="grid lg:grid-cols-3 gap-6">
-              {/* License Card */}
-              <div class="lg:col-span-2 space-y-6">
-                {/* License Key Section */}
-                <div class="bg-slate-900/50 border border-slate-800 rounded-2xl p-6 backdrop-blur-sm">
-                  <div class="flex items-center justify-between mb-4">
-                    <h2 class="text-lg font-semibold text-white flex items-center gap-2">
-                      <svg class="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
-                      </svg>
-                      License Key
-                    </h2>
-                    <button
-                      onClick={() => copyToClipboard(licenseKey())}
-                      class="flex items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded-lg text-sm text-slate-300 hover:text-white transition-all"
+                  <div class="flex items-center gap-3">
+                    <span
+                      class={`rounded-full border px-4 py-2 text-sm font-semibold uppercase ${api.getTierBadgeColor(d.license.tier)}`}
                     >
-                      {copied() ? (
-                        <>
-                          <svg class="w-4 h-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-                          </svg>
-                          Copied!
-                        </>
-                      ) : (
-                        <>
-                          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                          </svg>
-                          Copy
-                        </>
-                      )}
-                    </button>
-                  </div>
-                  <code class="block text-green-400 font-mono text-sm break-all bg-slate-950 p-4 rounded-xl border border-slate-800">
-                    {licenseKey()}
-                  </code>
-                  <div class="mt-4 p-4 bg-slate-800/50 rounded-xl">
-                    <p class="text-slate-400 text-sm mb-2">Activate on a new machine:</p>
-                    <code class="text-cyan-400 font-mono text-sm">omg license activate {licenseKey()}</code>
+                      {d.license.tier}
+                    </span>
+                    <Show when={d.license.tier === 'free'}>
+                      <A
+                        href="/#pricing"
+                        class="rounded-full bg-gradient-to-r from-indigo-500 to-purple-500 px-4 py-2 text-sm font-medium text-white transition-all hover:from-indigo-400 hover:to-purple-400"
+                      >
+                        Upgrade
+                      </A>
+                    </Show>
                   </div>
                 </div>
 
-                {/* Achievements Section */}
-                <div class="bg-slate-900/50 border border-slate-800 rounded-2xl p-6 backdrop-blur-sm">
-                  <h2 class="text-lg font-semibold text-white flex items-center gap-2 mb-4">
-                    <span class="text-xl">🏆</span>
-                    Achievements
-                    <span class="text-sm font-normal text-slate-500">
-                      ({license()!.usage?.achievements?.length || 0}/{ALL_ACHIEVEMENTS.length})
-                    </span>
-                  </h2>
-                  <div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
-                    <For each={ALL_ACHIEVEMENTS}>
-                      {(achievement) => {
-                        const unlocked = license()!.usage?.achievements?.includes(achievement.id);
-                        return (
+                {/* Tabs */}
+                <div class="flex w-fit flex-wrap gap-1 rounded-xl bg-slate-800/50 p-1">
+                  <For each={[
+                    { id: 'overview' as const, label: 'Overview', Icon: BarChart3 },
+                    { id: 'machines' as const, label: 'Machines', Icon: Monitor },
+                    ...(d.license.tier === 'team' || d.license.tier === 'enterprise'
+                      ? [{ id: 'team' as const, label: 'Team', Icon: Users }]
+                      : []),
+                    { id: 'security' as const, label: 'Security', Icon: Lock },
+                    { id: 'billing' as const, label: 'Billing', Icon: CreditCard },
+                  ]}>{tab => (
+                    <button
+                      onClick={() => setActiveTab(tab.id as Tab)}
+                      class={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-all ${
+                        activeTab() === tab.id
+                          ? 'bg-slate-700 text-white'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      <tab.Icon size={16} />
+                      {tab.label}
+                    </button>
+                  )}</For>
+                  {/* Admin tab - only visible to admin */}
+                  <Show when={d.is_admin}>
+                    <button
+                      onClick={() => setActiveTab('admin')}
+                      class={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-all ${
+                        activeTab() === 'admin'
+                          ? 'bg-gradient-to-r from-red-600 to-orange-600 text-white'
+                          : 'border border-red-500/30 text-red-400 hover:text-red-300'
+                      }`}
+                    >
+                      <Crown size={16} />
+                      Admin
+                    </button>
+                  </Show>
+                </div>
+
+                {/* Overview Tab */}
+                <Show when={activeTab() === 'overview'}>
+                  <div class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
+                    {/* Stats Cards */}
+                    <div class="rounded-2xl border border-emerald-500/20 bg-gradient-to-br from-emerald-500/10 to-teal-500/10 p-6">
+                      <div class="mb-3 flex items-center gap-3">
+                        <div class="rounded-lg bg-emerald-500/20 p-2">
+                          <Clock size={20} class="text-emerald-400" />
+                        </div>
+                        <span class="text-sm text-slate-400">Time Saved</span>
+                      </div>
+                      <div class="text-3xl font-bold text-white">
+                        {api.formatTimeSaved(d.usage.total_time_saved_ms)}
+                      </div>
+                    </div>
+
+                    <div class="rounded-2xl border border-cyan-500/20 bg-gradient-to-br from-cyan-500/10 to-blue-500/10 p-6">
+                      <div class="mb-3 flex items-center gap-3">
+                        <div class="rounded-lg bg-cyan-500/20 p-2">
+                          <Terminal size={20} class="text-cyan-400" />
+                        </div>
+                        <span class="text-sm text-slate-400">Commands Run</span>
+                      </div>
+                      <div class="text-3xl font-bold text-white">
+                        {d.usage.total_commands.toLocaleString()}
+                      </div>
+                    </div>
+
+                    <div class="rounded-2xl border border-orange-500/20 bg-gradient-to-br from-orange-500/10 to-amber-500/10 p-6">
+                      <div class="mb-3 flex items-center gap-3">
+                        <div class="rounded-lg bg-orange-500/20 p-2">
+                          <Flame size={20} class="text-orange-400" />
+                        </div>
+                        <span class="text-sm text-slate-400">Current Streak</span>
+                      </div>
+                      <div class="text-3xl font-bold text-white">{d.usage.current_streak} days</div>
+                    </div>
+
+                    <div class="rounded-2xl border border-purple-500/20 bg-gradient-to-br from-purple-500/10 to-pink-500/10 p-6">
+                      <div class="mb-3 flex items-center gap-3">
+                        <div class="rounded-lg bg-purple-500/20 p-2">
+                          <Monitor size={20} class="text-purple-400" />
+                        </div>
+                        <span class="text-sm text-slate-400">Active Machines</span>
+                      </div>
+                      <div class="text-3xl font-bold text-white">
+                        {d.machines.length} / {d.license.max_machines}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Usage Activity Chart */}
+                  <div class="rounded-2xl border border-slate-800 bg-slate-900/50 p-6">
+                    <div class="mb-6 flex items-center justify-between">
+                      <h3 class="text-lg font-semibold text-white">Activity (Last 14 Days)</h3>
+                      <div class="flex items-center gap-4 text-xs">
+                        <div class="flex items-center gap-2">
+                          <div class="h-3 w-3 rounded-full bg-indigo-500" />
+                          <span class="text-slate-400">Commands</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                          <div class="h-3 w-3 rounded-full bg-emerald-500" />
+                          <span class="text-slate-400">Time Saved</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="flex h-40 items-end gap-1">
+                      <For
+                        each={
+                          d.usage.daily.length > 0
+                            ? d.usage.daily
+                            : Array(14).fill({ date: '', commands_run: 0, time_saved_ms: 0 })
+                        }
+                      >
+                        {(day, _i) => {
+                          const maxCommands = Math.max(
+                            ...d.usage.daily.map(d => d.commands_run || 0),
+                            1
+                          );
+                          const height = day.commands_run
+                            ? Math.max((day.commands_run / maxCommands) * 100, 5)
+                            : 5;
+                          return (
+                            <div class="group relative flex flex-1 flex-col items-center gap-1">
+                              <div
+                                class="w-full rounded-t-sm bg-gradient-to-t from-indigo-600 to-indigo-400 transition-all hover:from-indigo-500 hover:to-indigo-300"
+                                style={{ height: `${height}%`, 'min-height': '4px' }}
+                              />
+                              <span class="w-full truncate text-center text-[10px] text-slate-500">
+                                {day.date
+                                  ? new Date(day.date)
+                                      .toLocaleDateString('en-US', { weekday: 'short' })
+                                      .slice(0, 2)
+                                  : ''}
+                              </span>
+                              <Show when={day.commands_run > 0}>
+                                <div class="pointer-events-none absolute bottom-full left-1/2 z-10 mb-2 -translate-x-1/2 rounded bg-slate-800 px-2 py-1 text-xs whitespace-nowrap text-white opacity-0 transition-opacity group-hover:opacity-100">
+                                  {day.commands_run} commands
+                                  <br />
+                                  {api.formatTimeSaved(day.time_saved_ms)} saved
+                                </div>
+                              </Show>
+                            </div>
+                          );
+                        }}
+                      </For>
+                    </div>
+                  </div>
+
+                  {/* Detailed Stats */}
+                  <div class="grid grid-cols-2 gap-4 md:grid-cols-4">
+                    <div class="rounded-xl border border-slate-800 bg-slate-900/50 p-4">
+                      <div class="mb-1 text-xs text-slate-400">Packages Installed</div>
+                      <div class="text-xl font-bold text-white">
+                        {d.usage.total_packages_installed.toLocaleString()}
+                      </div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800 bg-slate-900/50 p-4">
+                      <div class="mb-1 text-xs text-slate-400">Searches</div>
+                      <div class="text-xl font-bold text-white">
+                        {d.usage.total_packages_searched.toLocaleString()}
+                      </div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800 bg-slate-900/50 p-4">
+                      <div class="mb-1 text-xs text-slate-400">Runtime Switches</div>
+                      <div class="text-xl font-bold text-white">
+                        {d.usage.total_runtimes_switched.toLocaleString()}
+                      </div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800 bg-slate-900/50 p-4">
+                      <div class="mb-1 text-xs text-slate-400">Longest Streak</div>
+                      <div class="text-xl font-bold text-white">{d.usage.longest_streak} days</div>
+                    </div>
+                  </div>
+
+                  {/* License Key */}
+                  <div class="rounded-2xl border border-slate-800 bg-slate-900/50 p-6">
+                    <h3 class="mb-4 text-lg font-semibold text-white">License Key</h3>
+                    <div class="flex items-center gap-4">
+                      <code class="flex-1 overflow-x-auto rounded-xl bg-slate-800 px-4 py-3 font-mono text-sm text-slate-300">
+                        {d.license.license_key}
+                      </code>
+                      <button
+                        onClick={() => copyToClipboard(d.license.license_key)}
+                        class="rounded-xl bg-slate-800 px-4 py-3 transition-colors hover:bg-slate-700"
+                      >
+                        {copied() ? '✓' : '📋'}
+                      </button>
+                    </div>
+                    <p class="mt-3 text-sm text-slate-500">
+                      Activate with:{' '}
+                      <code class="text-indigo-400">
+                        omg license activate {d.license.license_key}
+                      </code>
+                    </p>
+                  </div>
+
+                  {/* Achievements */}
+                  <div class="rounded-2xl border border-slate-800 bg-slate-900/50 p-6">
+                    <h3 class="mb-4 text-lg font-semibold text-white">Achievements</h3>
+                    <div class="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
+                      <For each={d.achievements}>
+                        {achievement => (
                           <div
-                            class={`relative group p-3 rounded-xl text-center transition-all cursor-help ${
-                              unlocked
-                                ? 'bg-gradient-to-br from-indigo-500/20 to-purple-500/20 border border-indigo-500/30'
-                                : 'bg-slate-800/30 border border-slate-700/30 opacity-40'
+                            class={`rounded-xl p-4 text-center transition-all ${
+                              achievement.unlocked
+                                ? 'border border-slate-700 bg-slate-800'
+                                : 'border border-slate-800 bg-slate-800/30 opacity-40'
                             }`}
-                            title={`${achievement.name}: ${achievement.description}`}
+                            title={achievement.description}
                           >
-                            <div class={`text-2xl ${unlocked ? '' : 'grayscale'}`}>{achievement.emoji}</div>
-                            <div class={`text-xs mt-1 truncate ${unlocked ? 'text-slate-300' : 'text-slate-500'}`}>
+                            <div class="mb-2 text-2xl">{achievement.emoji}</div>
+                            <div class="truncate text-xs font-medium text-white">
                               {achievement.name}
                             </div>
-                            {/* Tooltip */}
-                            <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-left w-48 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10 pointer-events-none">
-                              <div class="font-medium text-white mb-1">{achievement.name}</div>
-                              <div class="text-slate-400">{achievement.description}</div>
-                              <div class={`mt-1 ${unlocked ? 'text-green-400' : 'text-slate-500'}`}>
-                                {unlocked ? '✓ Unlocked' : '🔒 Locked'}
+                          </div>
+                        )}
+                      </For>
+                    </div>
+                  </div>
+                </Show>
+
+                {/* Machines Tab */}
+                <Show when={activeTab() === 'machines'}>
+                  <div class="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/50">
+                    <div class="flex items-center justify-between border-b border-slate-800 p-6">
+                      <h3 class="text-lg font-semibold text-white">Active Machines</h3>
+                      <span class="text-sm text-slate-400">
+                        {d.machines.length} / {d.license.max_machines} slots used
+                      </span>
+                    </div>
+                    <Show
+                      when={d.machines.length > 0}
+                      fallback={
+                        <div class="p-12 text-center">
+                          <div class="mb-4 text-4xl">💻</div>
+                          <p class="text-slate-400">No machines activated yet</p>
+                          <p class="mt-2 text-sm text-slate-500">
+                            Run <code class="text-indigo-400">omg license activate</code> to get
+                            started
+                          </p>
+                        </div>
+                      }
+                    >
+                      <div class="divide-y divide-slate-800">
+                        <For each={d.machines}>
+                          {machine => (
+                            <div class="flex items-center justify-between p-4 transition-colors hover:bg-slate-800/30">
+                              <div class="flex items-center gap-4">
+                                <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-800">
+                                  <span class="text-xl">💻</span>
+                                </div>
+                                <div>
+                                  <div class="font-medium text-white">
+                                    {machine.hostname || machine.machine_id.slice(0, 8)}
+                                  </div>
+                                  <div class="text-sm text-slate-500">
+                                    {machine.os} • Last seen{' '}
+                                    {api.formatRelativeTime(machine.last_seen_at)}
+                                  </div>
+                                </div>
+                              </div>
+                              <button
+                                onClick={() => handleRevokeMachine(machine.id)}
+                                class="rounded-lg px-3 py-1.5 text-sm text-red-400 transition-colors hover:bg-red-500/10 hover:text-red-300"
+                              >
+                                Revoke
+                              </button>
+                            </div>
+                          )}
+                        </For>
+                      </div>
+                    </Show>
+                  </div>
+
+                  {/* Regenerate License */}
+                  <div class="rounded-2xl border border-slate-800 bg-slate-900/50 p-6">
+                    <h3 class="mb-2 text-lg font-semibold text-white">Regenerate License Key</h3>
+                    <p class="mb-4 text-sm text-slate-400">
+                      Generate a new license key. This will invalidate your current key and require
+                      all machines to re-activate.
+                    </p>
+                    <button
+                      onClick={handleRegenerateLicense}
+                      class="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-2 text-sm text-red-400 transition-colors hover:bg-red-500/20"
+                    >
+                      Regenerate Key
+                    </button>
+                  </div>
+                </Show>
+
+                {/* Team Tab - Enhanced Analytics */}
+                <Show when={activeTab() === 'team'}>
+                  <TeamAnalytics
+                    teamData={teamData()}
+                    licenseKey={d.license.license_key}
+                    onRevoke={handleRevokeTeamMember}
+                    onRefresh={loadTeamData}
+                  />
+                </Show>
+
+                {/* Security Tab */}
+                <Show when={activeTab() === 'security'}>
+                  {/* Active Sessions */}
+                  <div class="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/50">
+                    <div class="border-b border-slate-800 p-6">
+                      <h3 class="text-lg font-semibold text-white">Active Sessions</h3>
+                    </div>
+                    <div class="divide-y divide-slate-800">
+                      <For each={sessions()}>
+                        {session => (
+                          <div class="flex items-center justify-between p-4 transition-colors hover:bg-slate-800/30">
+                            <div class="flex items-center gap-4">
+                              <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-800">
+                                <span class="text-xl">🌐</span>
+                              </div>
+                              <div>
+                                <div class="flex items-center gap-2 font-medium text-white">
+                                  {session.ip_address || 'Unknown IP'}
+                                  {session.is_current && (
+                                    <span class="rounded-full bg-emerald-500/20 px-2 py-0.5 text-xs text-emerald-400">
+                                      Current
+                                    </span>
+                                  )}
+                                </div>
+                                <div class="max-w-md truncate text-sm text-slate-500">
+                                  {session.user_agent?.slice(0, 60) || 'Unknown device'}
+                                </div>
+                              </div>
+                            </div>
+                            <Show when={!session.is_current}>
+                              <button
+                                onClick={() => handleRevokeSession(session.id)}
+                                class="rounded-lg px-3 py-1.5 text-sm text-red-400 transition-colors hover:bg-red-500/10 hover:text-red-300"
+                              >
+                                Revoke
+                              </button>
+                            </Show>
+                          </div>
+                        )}
+                      </For>
+                    </div>
+                  </div>
+
+                  {/* Audit Log (Team+ only) */}
+                  <Show when={['team', 'enterprise'].includes(d.license.tier)}>
+                    <div class="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/50">
+                      <div class="border-b border-slate-800 p-6">
+                        <h3 class="text-lg font-semibold text-white">Audit Log</h3>
+                      </div>
+                      <Show
+                        when={auditLog().length > 0}
+                        fallback={
+                          <div class="p-8 text-center text-slate-400">No audit events yet</div>
+                        }
+                      >
+                        <div class="max-h-96 divide-y divide-slate-800 overflow-y-auto">
+                          <For each={auditLog()}>
+                            {entry => (
+                              <div class="flex items-center justify-between p-4 text-sm">
+                                <div>
+                                  <span class="text-white">{entry.action}</span>
+                                  <Show when={entry.resource_type}>
+                                    <span class="text-slate-500"> on {entry.resource_type}</span>
+                                  </Show>
+                                </div>
+                                <div class="text-slate-500">
+                                  {api.formatRelativeTime(entry.created_at)}
+                                </div>
+                              </div>
+                            )}
+                          </For>
+                        </div>
+                      </Show>
+                    </div>
+                  </Show>
+                </Show>
+
+                {/* Billing Tab */}
+                <Show when={activeTab() === 'billing'}>
+                  {/* Current Plan */}
+                  <div class="rounded-2xl border border-slate-800 bg-slate-900/50 p-6">
+                    <div class="mb-6 flex items-center justify-between">
+                      <div>
+                        <h3 class="text-lg font-semibold text-white">Current Plan</h3>
+                        <p class="text-sm text-slate-400">
+                          {d.license.tier === 'free'
+                            ? 'Free forever'
+                            : d.subscription
+                              ? `Renews ${api.formatDate(d.subscription.current_period_end)}`
+                              : 'Active'}
+                        </p>
+                      </div>
+                      <span
+                        class={`rounded-full border px-4 py-2 text-lg font-bold uppercase ${api.getTierBadgeColor(d.license.tier)}`}
+                      >
+                        {d.license.tier}
+                      </span>
+                    </div>
+
+                    <div class="flex gap-3">
+                      <Show when={d.license.tier === 'free'}>
+                        <A
+                          href="/#pricing"
+                          class="rounded-lg bg-gradient-to-r from-indigo-500 to-purple-500 px-4 py-2 font-medium text-white transition-all hover:from-indigo-400 hover:to-purple-400"
+                        >
+                          Upgrade Plan
+                        </A>
+                      </Show>
+                      <Show when={d.license.tier !== 'free'}>
+                        <button
+                          onClick={handleBillingPortal}
+                          class="rounded-lg bg-slate-800 px-4 py-2 text-white transition-colors hover:bg-slate-700"
+                        >
+                          Manage Subscription
+                        </button>
+                      </Show>
+                    </div>
+                  </div>
+
+                  {/* Invoices */}
+                  <Show when={d.invoices.length > 0}>
+                    <div class="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/50">
+                      <div class="border-b border-slate-800 p-6">
+                        <h3 class="text-lg font-semibold text-white">Billing History</h3>
+                      </div>
+                      <div class="divide-y divide-slate-800">
+                        <For each={d.invoices}>
+                          {invoice => (
+                            <div class="flex items-center justify-between p-4">
+                              <div>
+                                <div class="font-medium text-white">
+                                  ${(invoice.amount_cents / 100).toFixed(2)}{' '}
+                                  {invoice.currency.toUpperCase()}
+                                </div>
+                                <div class="text-sm text-slate-500">
+                                  {api.formatDate(invoice.created_at)}
+                                </div>
+                              </div>
+                              <div class="flex items-center gap-3">
+                                <span
+                                  class={`rounded px-2 py-1 text-xs ${
+                                    invoice.status === 'paid'
+                                      ? 'bg-emerald-500/20 text-emerald-400'
+                                      : 'bg-slate-700 text-slate-400'
+                                  }`}
+                                >
+                                  {invoice.status}
+                                </span>
+                                <Show when={invoice.invoice_pdf}>
+                                  <a
+                                    href={invoice.invoice_pdf!}
+                                    target="_blank"
+                                    class="text-sm text-indigo-400 hover:text-indigo-300"
+                                  >
+                                    PDF
+                                  </a>
+                                </Show>
+                              </div>
+                            </div>
+                          )}
+                        </For>
+                      </div>
+                    </div>
+                  </Show>
+                </Show>
+
+                {/* Admin Tab - Enhanced Dashboard */}
+                <Show when={activeTab() === 'admin' && d.is_admin}>
+                  <div class="space-y-6">
+                    <AdminDashboard
+                      adminData={adminData()}
+                      adminUsers={adminUsers()}
+                      adminHealth={adminHealth()}
+                      adminRevenue={adminRevenue()}
+                      adminCohorts={adminCohorts()}
+                      adminActivity={adminActivity()}
+                      adminAuditLog={adminAuditLog()}
+                      adminAnalytics={adminAnalytics()}
+                      onRefresh={loadAdminData}
+                      onUserClick={loadUserDetail}
+                      onExport={handleExport}
+                      onSearch={(query) => {
+                        setAdminSearch(query);
+                        setAdminPage(1);
+                        loadAdminData();
+                      }}
+                      onPageChange={(page) => {
+                        setAdminPage(page);
+                        loadAdminData();
+                      }}
+                      currentPage={adminPage()}
+                      totalPages={adminTotalPages()}
+                      searchQuery={adminSearch()}
+                    />
+
+                    {/* Enhanced User Detail Modal */}
+                    <Show when={selectedUser() && userDetail()}>
+                      {(() => {
+                        const detail = userDetail()!;
+                        return (
+                          <div
+                            class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+                            onClick={() => {
+                              setSelectedUser(null);
+                              setUserDetailTab('overview');
+                            }}
+                          >
+                            <div
+                              class="flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl"
+                              onClick={e => e.stopPropagation()}
+                            >
+                              {/* Header */}
+                              <div class="flex items-center justify-between border-b border-slate-800 bg-slate-900/80 p-6">
+                                <div class="flex items-center gap-4">
+                                  <div class="flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 text-xl font-bold text-white">
+                                    {detail.user.email.charAt(0).toUpperCase()}
+                                  </div>
+                                  <div>
+                                    <h3 class="text-lg font-semibold text-white">
+                                      {detail.user.email}
+                                    </h3>
+                                    <div class="flex items-center gap-2 text-sm text-slate-400">
+                                      <span>Joined {detail.user.created_at_relative}</span>
+                                      {detail.engagement.is_power_user && (
+                                        <span class="rounded-full bg-amber-500/20 px-2 py-0.5 text-xs text-amber-400">
+                                          ⚡ Power User
+                                        </span>
+                                      )}
+                                      {detail.engagement.is_at_risk && (
+                                        <span class="rounded-full bg-red-500/20 px-2 py-0.5 text-xs text-red-400">
+                                          ⚠️ At Risk
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                                <button
+                                  onClick={() => {
+                                    setSelectedUser(null);
+                                    setUserDetailTab('overview');
+                                  }}
+                                  class="rounded-lg p-2 text-slate-400 transition-colors hover:bg-slate-800 hover:text-white"
+                                >
+                                  ✕
+                                </button>
+                              </div>
+
+                              {/* Tabs */}
+                              <div class="flex gap-1 border-b border-slate-800 bg-slate-900/50 px-6">
+                                <For
+                                  each={
+                                    [
+                                      { id: 'overview', label: 'Overview', icon: '📊' },
+                                      { id: 'usage', label: 'Usage', icon: '📈' },
+                                      { id: 'billing', label: 'Billing', icon: '💳' },
+                                      { id: 'activity', label: 'Activity', icon: '📋' },
+                                    ] as const
+                                  }
+                                >
+                                  {tab => (
+                                    <button
+                                      onClick={() => setUserDetailTab(tab.id)}
+                                      class={`flex items-center gap-2 border-b-2 px-4 py-3 text-sm font-medium transition-colors ${
+                                        userDetailTab() === tab.id
+                                          ? 'border-indigo-500 text-white'
+                                          : 'border-transparent text-slate-400 hover:text-white'
+                                      }`}
+                                    >
+                                      <span>{tab.icon}</span>
+                                      {tab.label}
+                                    </button>
+                                  )}
+                                </For>
+                              </div>
+
+                              {/* Content */}
+                              <div class="flex-1 overflow-y-auto p-6">
+                                {/* Overview Tab */}
+                                <Show when={userDetailTab() === 'overview'}>
+                                  <div class="space-y-6">
+                                    {/* Key Metrics */}
+                                    <div class="grid grid-cols-4 gap-4">
+                                      <div class="rounded-xl bg-slate-800/50 p-4">
+                                        <div class="text-2xl font-bold text-white">
+                                          {(
+                                            detail.usage.summary?.total_commands || 0
+                                          ).toLocaleString()}
+                                        </div>
+                                        <div class="text-sm text-slate-400">Total Commands</div>
+                                      </div>
+                                      <div class="rounded-xl bg-slate-800/50 p-4">
+                                        <div class="text-2xl font-bold text-emerald-400">
+                                          {Math.round(
+                                            (detail.usage.summary?.total_time_saved_ms || 0) / 60000
+                                          )}
+                                          m
+                                        </div>
+                                        <div class="text-sm text-slate-400">Time Saved</div>
+                                      </div>
+                                      <div class="rounded-xl bg-slate-800/50 p-4">
+                                        <div class="text-2xl font-bold text-indigo-400">
+                                          {detail.engagement.active_days_last_30d}
+                                        </div>
+                                        <div class="text-sm text-slate-400">Active Days (30d)</div>
+                                      </div>
+                                      <div class="rounded-xl bg-slate-800/50 p-4">
+                                        <div class="text-2xl font-bold text-amber-400">
+                                          ${detail.ltv.total_paid.toFixed(2)}
+                                        </div>
+                                        <div class="text-sm text-slate-400">Lifetime Value</div>
+                                      </div>
+                                    </div>
+
+                                    {/* License & Machines */}
+                                    <div class="grid grid-cols-2 gap-6">
+                                      <div class="rounded-xl border border-slate-800 bg-slate-800/30 p-4">
+                                        <h4 class="mb-3 font-medium text-white">License</h4>
+                                        <div class="space-y-2 text-sm">
+                                          <div class="flex justify-between">
+                                            <span class="text-slate-400">Key</span>
+                                            <span class="font-mono text-white">
+                                              {detail.license?.license_key.slice(0, 8)}...
+                                            </span>
+                                          </div>
+                                          <div class="flex justify-between">
+                                            <span class="text-slate-400">Tier</span>
+                                            <span
+                                              class={`rounded-full px-2 py-0.5 text-xs font-medium ${api.getTierBadgeColor(detail.license?.tier || 'free')}`}
+                                            >
+                                              {(detail.license?.tier || 'free').toUpperCase()}
+                                            </span>
+                                          </div>
+                                          <div class="flex justify-between">
+                                            <span class="text-slate-400">Status</span>
+                                            <span
+                                              class={`text-xs ${detail.license?.status === 'active' ? 'text-emerald-400' : 'text-red-400'}`}
+                                            >
+                                              {detail.license?.status || 'active'}
+                                            </span>
+                                          </div>
+                                          <div class="flex justify-between">
+                                            <span class="text-slate-400">Max Seats</span>
+                                            <span class="text-white">
+                                              {detail.license?.max_seats || 1}
+                                            </span>
+                                          </div>
+                                        </div>
+                                      </div>
+
+                                      <div class="rounded-xl border border-slate-800 bg-slate-800/30 p-4">
+                                        <h4 class="mb-3 font-medium text-white">
+                                          Machines ({detail.machines.length})
+                                        </h4>
+                                        <div class="max-h-40 space-y-2 overflow-y-auto">
+                                          <For each={detail.machines}>
+                                            {machine => (
+                                              <div class="flex items-center justify-between rounded-lg bg-slate-800 p-2 text-sm">
+                                                <div>
+                                                  <div class="text-white">
+                                                    {machine.hostname || machine.machine_id}
+                                                  </div>
+                                                  <div class="text-xs text-slate-500">
+                                                    {machine.os} • v{machine.omg_version}
+                                                  </div>
+                                                </div>
+                                                <div
+                                                  class={`h-2 w-2 rounded-full ${machine.is_active ? 'bg-emerald-400' : 'bg-slate-600'}`}
+                                                />
+                                              </div>
+                                            )}
+                                          </For>
+                                          <Show when={detail.machines.length === 0}>
+                                            <div class="text-sm text-slate-500">
+                                              No machines activated
+                                            </div>
+                                          </Show>
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    {/* Achievements */}
+                                    <Show when={detail.achievements.length > 0}>
+                                      <div class="rounded-xl border border-slate-800 bg-slate-800/30 p-4">
+                                        <h4 class="mb-3 font-medium text-white">Achievements</h4>
+                                        <div class="flex flex-wrap gap-2">
+                                          <For each={detail.achievements}>
+                                            {ach => (
+                                              <span class="rounded-full bg-indigo-500/20 px-3 py-1 text-sm text-indigo-300">
+                                                {ach.achievement_id}
+                                              </span>
+                                            )}
+                                          </For>
+                                        </div>
+                                      </div>
+                                    </Show>
+
+                                    {/* Quick Actions */}
+                                    <div class="flex gap-3">
+                                      <select
+                                        value={detail.license?.tier || 'free'}
+                                        onChange={e =>
+                                          handleAdminUpdateUser(detail.user.id, {
+                                            tier: e.currentTarget.value,
+                                          })
+                                        }
+                                        class="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white"
+                                      >
+                                        <option value="free">Free</option>
+                                        <option value="pro">Pro</option>
+                                        <option value="team">Team</option>
+                                        <option value="enterprise">Enterprise</option>
+                                      </select>
+                                      <button
+                                        onClick={() =>
+                                          handleAdminUpdateUser(detail.user.id, {
+                                            status:
+                                              detail.license?.status === 'active'
+                                                ? 'suspended'
+                                                : 'active',
+                                          })
+                                        }
+                                        class={`rounded-lg px-4 py-2 text-sm font-medium ${
+                                          detail.license?.status === 'active'
+                                            ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30'
+                                            : 'bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30'
+                                        }`}
+                                      >
+                                        {detail.license?.status === 'active'
+                                          ? 'Suspend User'
+                                          : 'Activate User'}
+                                      </button>
+                                      <Show when={detail.stripe}>
+                                        <a
+                                          href={`https://dashboard.stripe.com/customers/${detail.stripe?.customer.id}`}
+                                          target="_blank"
+                                          class="rounded-lg bg-indigo-500/20 px-4 py-2 text-sm font-medium text-indigo-400 hover:bg-indigo-500/30"
+                                        >
+                                          View in Stripe →
+                                        </a>
+                                      </Show>
+                                    </div>
+                                  </div>
+                                </Show>
+
+                                {/* Usage Tab */}
+                                <Show when={userDetailTab() === 'usage'}>
+                                  <div class="space-y-6">
+                                    <div class="grid grid-cols-3 gap-4">
+                                      <div class="rounded-xl bg-slate-800/50 p-4">
+                                        <div class="text-2xl font-bold text-white">
+                                          {detail.engagement.commands_last_7d.toLocaleString()}
+                                        </div>
+                                        <div class="text-sm text-slate-400">Commands (7 days)</div>
+                                      </div>
+                                      <div class="rounded-xl bg-slate-800/50 p-4">
+                                        <div class="text-2xl font-bold text-white">
+                                          {detail.engagement.commands_last_30d.toLocaleString()}
+                                        </div>
+                                        <div class="text-sm text-slate-400">Commands (30 days)</div>
+                                      </div>
+                                      <div class="rounded-xl bg-slate-800/50 p-4">
+                                        <div class="text-2xl font-bold text-white">
+                                          {detail.engagement.avg_daily_commands}
+                                        </div>
+                                        <div class="text-sm text-slate-400">Avg Daily</div>
+                                      </div>
+                                    </div>
+
+                                    {/* Usage Chart (Simple bar representation) */}
+                                    <div class="rounded-xl border border-slate-800 bg-slate-800/30 p-4">
+                                      <h4 class="mb-4 font-medium text-white">
+                                        Daily Usage (Last 30 Days)
+                                      </h4>
+                                      <div class="flex h-32 items-end gap-1">
+                                        <For each={detail.usage.daily.slice(0, 30).reverse()}>
+                                          {day => {
+                                            const maxCommands = Math.max(
+                                              ...detail.usage.daily.map(d => d.commands_run || 1)
+                                            );
+                                            const height = Math.max(
+                                              4,
+                                              ((day.commands_run || 0) / maxCommands) * 100
+                                            );
+                                            return (
+                                              <div
+                                                class="flex-1 rounded-t bg-indigo-500 transition-all hover:bg-indigo-400"
+                                                style={{ height: `${height}%` }}
+                                                title={`${day.date}: ${day.commands_run} commands`}
+                                              />
+                                            );
+                                          }}
+                                        </For>
+                                      </div>
+                                    </div>
+
+                                    {/* Usage Summary */}
+                                    <div class="rounded-xl border border-slate-800 bg-slate-800/30 p-4">
+                                      <h4 class="mb-3 font-medium text-white">Usage Summary</h4>
+                                      <div class="grid grid-cols-2 gap-4 text-sm">
+                                        <div class="flex justify-between">
+                                          <span class="text-slate-400">Total Packages Installed</span>
+                                          <span class="text-white">
+                                            {(
+                                              detail.usage.summary?.total_packages || 0
+                                            ).toLocaleString()}
+                                          </span>
+                                        </div>
+                                        <div class="flex justify-between">
+                                          <span class="text-slate-400">Total Searches</span>
+                                          <span class="text-white">
+                                            {(
+                                              detail.usage.summary?.total_searches || 0
+                                            ).toLocaleString()}
+                                          </span>
+                                        </div>
+                                        <div class="flex justify-between">
+                                          <span class="text-slate-400">Active Days</span>
+                                          <span class="text-white">
+                                            {detail.usage.summary?.active_days || 0}
+                                          </span>
+                                        </div>
+                                        <div class="flex justify-between">
+                                          <span class="text-slate-400">First Active</span>
+                                          <span class="text-white">
+                                            {detail.usage.summary?.first_active || 'Never'}
+                                          </span>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </Show>
+
+                                {/* Billing Tab */}
+                                <Show when={userDetailTab() === 'billing'}>
+                                  <div class="space-y-6">
+                                    <Show
+                                      when={detail.stripe}
+                                      fallback={
+                                        <div class="rounded-xl border border-slate-800 bg-slate-800/30 p-8 text-center">
+                                          <div class="mb-2 text-4xl">💳</div>
+                                          <div class="text-lg font-medium text-white">
+                                            No Stripe Customer
+                                          </div>
+                                          <div class="text-sm text-slate-400">
+                                            This user hasn't made any purchases yet
+                                          </div>
+                                        </div>
+                                      }
+                                    >
+                                      {/* Stripe Overview */}
+                                      <div class="grid grid-cols-3 gap-4">
+                                        <div class="rounded-xl bg-slate-800/50 p-4">
+                                          <div class="text-2xl font-bold text-emerald-400">
+                                            ${(detail.stripe?.total_spent || 0).toFixed(2)}
+                                          </div>
+                                          <div class="text-sm text-slate-400">Total Spent</div>
+                                        </div>
+                                        <div class="rounded-xl bg-slate-800/50 p-4">
+                                          <div class="text-2xl font-bold text-white">
+                                            {detail.stripe?.subscriptions.length || 0}
+                                          </div>
+                                          <div class="text-sm text-slate-400">Subscriptions</div>
+                                        </div>
+                                        <div class="rounded-xl bg-slate-800/50 p-4">
+                                          <div class="text-2xl font-bold text-white">
+                                            {detail.stripe?.invoices.length || 0}
+                                          </div>
+                                          <div class="text-sm text-slate-400">Invoices</div>
+                                        </div>
+                                      </div>
+
+                                      {/* Subscriptions */}
+                                      <div class="rounded-xl border border-slate-800 bg-slate-800/30 p-4">
+                                        <h4 class="mb-3 font-medium text-white">Subscriptions</h4>
+                                        <div class="space-y-2">
+                                          <For each={detail.stripe?.subscriptions || []}>
+                                            {sub => (
+                                              <div class="flex items-center justify-between rounded-lg bg-slate-800 p-3">
+                                                <div>
+                                                  <div class="text-white">
+                                                    {sub.plan?.nickname || 'Subscription'}
+                                                  </div>
+                                                  <div class="text-xs text-slate-400">
+                                                    $
+                                                    {((sub.plan?.unit_amount || 0) / 100).toFixed(2)}
+                                                    /{sub.plan?.interval || 'month'}
+                                                  </div>
+                                                </div>
+                                                <span
+                                                  class={`rounded-full px-2 py-1 text-xs ${
+                                                    sub.status === 'active'
+                                                      ? 'bg-emerald-500/20 text-emerald-400'
+                                                      : sub.status === 'canceled'
+                                                        ? 'bg-red-500/20 text-red-400'
+                                                        : 'bg-amber-500/20 text-amber-400'
+                                                  }`}
+                                                >
+                                                  {sub.status}
+                                                </span>
+                                              </div>
+                                            )}
+                                          </For>
+                                          <Show when={!detail.stripe?.subscriptions.length}>
+                                            <div class="text-sm text-slate-500">
+                                              No active subscriptions
+                                            </div>
+                                          </Show>
+                                        </div>
+                                      </div>
+
+                                      {/* Payment Methods */}
+                                      <div class="rounded-xl border border-slate-800 bg-slate-800/30 p-4">
+                                        <h4 class="mb-3 font-medium text-white">Payment Methods</h4>
+                                        <div class="space-y-2">
+                                          <For each={detail.stripe?.payment_methods || []}>
+                                            {pm => (
+                                              <div class="flex items-center gap-3 rounded-lg bg-slate-800 p-3">
+                                                <span class="text-2xl">💳</span>
+                                                <div>
+                                                  <div class="text-white">
+                                                    {pm.card?.brand?.toUpperCase()} ••••{' '}
+                                                    {pm.card?.last4}
+                                                  </div>
+                                                  <div class="text-xs text-slate-400">
+                                                    Expires {pm.card?.exp_month}/{pm.card?.exp_year}
+                                                  </div>
+                                                </div>
+                                              </div>
+                                            )}
+                                          </For>
+                                          <Show when={!detail.stripe?.payment_methods.length}>
+                                            <div class="text-sm text-slate-500">
+                                              No payment methods
+                                            </div>
+                                          </Show>
+                                        </div>
+                                      </div>
+
+                                      {/* Recent Invoices */}
+                                      <div class="rounded-xl border border-slate-800 bg-slate-800/30 p-4">
+                                        <h4 class="mb-3 font-medium text-white">Recent Invoices</h4>
+                                        <div class="space-y-2">
+                                          <For each={detail.stripe?.invoices.slice(0, 5) || []}>
+                                            {inv => (
+                                              <div class="flex items-center justify-between rounded-lg bg-slate-800 p-3">
+                                                <div>
+                                                  <div class="text-white">{inv.number}</div>
+                                                  <div class="text-xs text-slate-400">
+                                                    ${(inv.amount_paid / 100).toFixed(2)}
+                                                  </div>
+                                                </div>
+                                                <div class="flex items-center gap-2">
+                                                  <span
+                                                    class={`rounded-full px-2 py-1 text-xs ${
+                                                      inv.status === 'paid'
+                                                        ? 'bg-emerald-500/20 text-emerald-400'
+                                                        : 'bg-amber-500/20 text-amber-400'
+                                                    }`}
+                                                  >
+                                                    {inv.status}
+                                                  </span>
+                                                  <a
+                                                    href={inv.hosted_invoice_url}
+                                                    target="_blank"
+                                                    class="text-indigo-400 hover:text-indigo-300"
+                                                  >
+                                                    View →
+                                                  </a>
+                                                </div>
+                                              </div>
+                                            )}
+                                          </For>
+                                        </div>
+                                      </div>
+                                    </Show>
+                                  </div>
+                                </Show>
+
+                                {/* Activity Tab */}
+                                <Show when={userDetailTab() === 'activity'}>
+                                  <div class="space-y-6">
+                                    {/* Sessions */}
+                                    <div class="rounded-xl border border-slate-800 bg-slate-800/30 p-4">
+                                      <h4 class="mb-3 font-medium text-white">
+                                        Active Sessions ({detail.sessions.length})
+                                      </h4>
+                                      <div class="space-y-2">
+                                        <For each={detail.sessions}>
+                                          {session => (
+                                            <div class="flex items-center justify-between rounded-lg bg-slate-800 p-3 text-sm">
+                                              <div>
+                                                <div class="text-white">{session.ip_address}</div>
+                                                <div class="max-w-md truncate text-xs text-slate-400">
+                                                  {session.user_agent}
+                                                </div>
+                                              </div>
+                                              <div class="text-xs text-slate-500">
+                                                {api.formatRelativeTime(session.created_at)}
+                                              </div>
+                                            </div>
+                                          )}
+                                        </For>
+                                      </div>
+                                    </div>
+
+                                    {/* Audit Log */}
+                                    <div class="rounded-xl border border-slate-800 bg-slate-800/30 p-4">
+                                      <h4 class="mb-3 font-medium text-white">Audit Log</h4>
+                                      <div class="max-h-80 space-y-2 overflow-y-auto">
+                                        <For each={detail.audit_log.slice(0, 50)}>
+                                          {log => (
+                                            <div class="flex items-center justify-between rounded-lg bg-slate-800 p-3 text-sm">
+                                              <div>
+                                                <div class="text-white">{log.action}</div>
+                                                <div class="text-xs text-slate-400">
+                                                  {log.resource_type && `${log.resource_type}`}
+                                                  {log.ip_address && ` • ${log.ip_address}`}
+                                                </div>
+                                              </div>
+                                              <div class="text-xs text-slate-500">
+                                                {api.formatRelativeTime(log.created_at)}
+                                              </div>
+                                            </div>
+                                          )}
+                                        </For>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </Show>
                               </div>
                             </div>
                           </div>
                         );
-                      }}
-                    </For>
-                  </div>
-                </div>
-
-                {/* Security Stats (Pro+ only) */}
-                <Show when={license()!.tier.toLowerCase() !== 'free'}>
-                  <div class="bg-slate-900/50 border border-slate-800 rounded-2xl p-6 backdrop-blur-sm">
-                    <h2 class="text-lg font-semibold text-white flex items-center gap-2 mb-4">
-                      <span class="text-xl">🛡️</span>
-                      Security Overview
-                    </h2>
-                    <div class="grid grid-cols-2 gap-4">
-                      <div class="bg-slate-800/50 rounded-xl p-4">
-                        <div class="text-3xl font-bold text-green-400">{license()!.usage?.sbom_generated || 0}</div>
-                        <div class="text-sm text-slate-400 mt-1">SBOMs Generated</div>
-                      </div>
-                      <div class="bg-slate-800/50 rounded-xl p-4">
-                        <div class="text-3xl font-bold text-amber-400">{license()!.usage?.vulnerabilities_found || 0}</div>
-                        <div class="text-sm text-slate-400 mt-1">Vulnerabilities Found</div>
-                      </div>
-                    </div>
+                      })()}
+                    </Show>
                   </div>
                 </Show>
               </div>
-
-              {/* Sidebar */}
-              <div class="space-y-6">
-                {/* Account Status */}
-                <div class={`bg-gradient-to-br ${getTierColor(license()!.tier)} p-[1px] rounded-2xl`}>
-                  <div class="bg-slate-900 rounded-2xl p-6">
-                    <div class="flex items-center gap-3 mb-4">
-                      <div class="w-12 h-12 bg-gradient-to-br from-slate-700 to-slate-800 rounded-full flex items-center justify-center text-xl">
-                        {email().charAt(0).toUpperCase()}
-                      </div>
-                      <div>
-                        <div class="text-white font-medium truncate max-w-[150px]">{email()}</div>
-                        <div class={`text-sm ${license()!.status === 'active' ? 'text-green-400' : 'text-red-400'}`}>
-                          {license()!.status === 'active' ? '● Active' : '○ Inactive'}
-                        </div>
-                      </div>
-                    </div>
-                    <div class="space-y-3 text-sm">
-                      <div class="flex justify-between">
-                        <span class="text-slate-400">Plan</span>
-                        <span class="text-white font-medium capitalize">{license()!.tier}</span>
-                      </div>
-                      <div class="flex justify-between">
-                        <span class="text-slate-400">Expires</span>
-                        <span class="text-white">{formatDate(license()!.expires_at)}</span>
-                      </div>
-                      <Show when={license()!.max_seats}>
-                        <div class="flex justify-between">
-                          <span class="text-slate-400">Seats</span>
-                          <span class="text-white">{license()!.used_seats || 0} / {license()!.max_seats}</span>
-                        </div>
-                      </Show>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Quick Actions */}
-                <div class="bg-slate-900/50 border border-slate-800 rounded-2xl p-6 backdrop-blur-sm">
-                  <h3 class="text-white font-semibold mb-4">Quick Actions</h3>
-                  <div class="space-y-3">
-                    <button
-                      onClick={refreshLicense}
-                      disabled={actionLoading()}
-                      class="w-full flex items-center gap-3 px-4 py-3 bg-slate-800/50 hover:bg-slate-700/50 border border-slate-700 rounded-xl text-white transition-all disabled:opacity-50"
-                    >
-                      <svg class={`w-5 h-5 text-cyan-400 ${actionLoading() ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                      </svg>
-                      Refresh License
-                    </button>
-                    <button
-                      onClick={openBillingPortal}
-                      disabled={actionLoading()}
-                      class="w-full flex items-center gap-3 px-4 py-3 bg-slate-800/50 hover:bg-slate-700/50 border border-slate-700 rounded-xl text-white transition-all disabled:opacity-50"
-                    >
-                      <svg class="w-5 h-5 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
-                      </svg>
-                      Manage Billing
-                    </button>
-                    <button
-                      onClick={regenerateLicense}
-                      disabled={actionLoading()}
-                      class="w-full flex items-center gap-3 px-4 py-3 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 rounded-xl text-amber-400 transition-all disabled:opacity-50"
-                    >
-                      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                      </svg>
-                      Regenerate Key
-                    </button>
-                  </div>
-                </div>
-
-                {/* Action Message */}
-                <Show when={actionMessage()}>
-                  <div class={`p-4 rounded-xl text-sm ${
-                    actionMessage().includes('success') || actionMessage().includes('generated')
-                      ? 'bg-green-500/10 border border-green-500/30 text-green-400'
-                      : 'bg-amber-500/10 border border-amber-500/30 text-amber-400'
-                  }`}>
-                    {actionMessage()}
-                  </div>
-                </Show>
-
-                {/* Help */}
-                <div class="bg-slate-900/30 border border-slate-800 rounded-2xl p-6">
-                  <h3 class="text-white font-semibold mb-3 flex items-center gap-2">
-                    <svg class="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                    Need Help?
-                  </h3>
-                  <ul class="text-sm text-slate-400 space-y-2">
-                    <li>
-                      <a href="https://github.com/PyRo1121/omg/wiki" class="hover:text-white transition-colors">
-                        📚 Documentation
-                      </a>
-                    </li>
-                    <li>
-                      <a href="https://github.com/PyRo1121/omg/issues" class="hover:text-white transition-colors">
-                        🐛 Report an Issue
-                      </a>
-                    </li>
-                    <li>
-                      <a href="mailto:support@pyro1121.com" class="hover:text-white transition-colors">
-                        ✉️ Contact Support
-                      </a>
-                    </li>
-                  </ul>
-                </div>
-              </div>
-            </div>
-          </div>
+            );
+          })()}
         </Show>
       </main>
 
       {/* Footer */}
-      <footer class="relative z-10 border-t border-white/5 mt-20">
-        <div class="max-w-7xl mx-auto px-6 py-8 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div class="text-slate-500 text-sm">
-            © {new Date().getFullYear()} OMG Package Manager. All rights reserved.
-          </div>
+      <footer class="relative z-10 mt-16 border-t border-slate-800/50">
+        <div class="mx-auto flex max-w-7xl flex-col items-center justify-between gap-4 px-6 py-8 sm:flex-row">
+          <p class="text-sm text-slate-500">© 2026 OMG Package Manager. All rights reserved.</p>
           <div class="flex items-center gap-6 text-sm">
-            <A href="/" class="text-slate-400 hover:text-white transition-colors">Home</A>
-            <a href="https://github.com/PyRo1121/omg" class="text-slate-400 hover:text-white transition-colors">GitHub</a>
-            <a href="mailto:support@pyro1121.com" class="text-slate-400 hover:text-white transition-colors">Support</a>
+            <A href="/" class="text-slate-400 transition-colors hover:text-white">
+              Home
+            </A>
+            <a
+              href="https://github.com/pyro1121/omg"
+              target="_blank"
+              class="text-slate-400 transition-colors hover:text-white"
+            >
+              GitHub
+            </a>
+            <a
+              href="mailto:support@pyro1121.com"
+              class="text-slate-400 transition-colors hover:text-white"
+            >
+              Support
+            </a>
           </div>
         </div>
       </footer>

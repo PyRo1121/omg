@@ -373,8 +373,24 @@ pub fn remove_license() -> Result<()> {
 
 /// Validate a license key against the API
 pub async fn validate_license(key: &str) -> Result<LicenseResponse> {
+    validate_license_with_user(key, None, None).await
+}
+
+/// Validate a license key with optional user info for team identification
+pub async fn validate_license_with_user(
+    key: &str,
+    user_name: Option<&str>,
+    user_email: Option<&str>,
+) -> Result<LicenseResponse> {
     let machine_id = get_machine_id();
-    let url = format!("{LICENSE_API_URL}?key={key}&machine_id={machine_id}");
+    let mut url = format!("{LICENSE_API_URL}?key={key}&machine_id={machine_id}");
+    
+    if let Some(name) = user_name {
+        url.push_str(&format!("&user_name={}", urlencoding::encode(name)));
+    }
+    if let Some(email) = user_email {
+        url.push_str(&format!("&user_email={}", urlencoding::encode(email)));
+    }
 
     let response = reqwest::Client::new()
         .get(&url)
@@ -393,7 +409,16 @@ pub async fn validate_license(key: &str) -> Result<LicenseResponse> {
 
 /// Activate a license key
 pub async fn activate(key: &str) -> Result<StoredLicense> {
-    let response = validate_license(key).await?;
+    activate_with_user(key, None, None).await
+}
+
+/// Activate a license key with user info for team identification
+pub async fn activate_with_user(
+    key: &str,
+    user_name: Option<&str>,
+    user_email: Option<&str>,
+) -> Result<StoredLicense> {
+    let response = validate_license_with_user(key, user_name, user_email).await?;
 
     if !response.valid {
         anyhow::bail!(

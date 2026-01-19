@@ -56,6 +56,25 @@ CREATE TABLE IF NOT EXISTS install_details (
   backend TEXT
 );
 
+CREATE TABLE IF NOT EXISTS auth_codes (
+  id TEXT PRIMARY KEY,
+  email TEXT NOT NULL,
+  code TEXT NOT NULL,
+  expires_at DATETIME NOT NULL,
+  used INTEGER DEFAULT 0,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+  id TEXT PRIMARY KEY,
+  email TEXT NOT NULL,
+  token TEXT UNIQUE NOT NULL,
+  expires_at DATETIME NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE INDEX IF NOT EXISTS idx_licenses_key ON licenses(license_key);
 CREATE INDEX IF NOT EXISTS idx_customers_stripe ON customers(stripe_customer_id);
 CREATE INDEX IF NOT EXISTS idx_usage_license ON usage(license_key);
+CREATE INDEX IF NOT EXISTS idx_auth_codes_email ON auth_codes(email);
+CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token);
