@@ -634,6 +634,7 @@ fn sync_databases_blocking() -> Result<()> {
     Ok(())
 }
 
+#[allow(dead_code)]
 fn map_sync_package(pkg: &rust_apt::Package<'_>) -> SyncPackage {
     let summary = pkg
         .candidate()
@@ -642,6 +643,7 @@ fn map_sync_package(pkg: &rust_apt::Package<'_>) -> SyncPackage {
     map_sync_package_with_summary(pkg, &summary)
 }
 
+#[allow(dead_code)]
 fn map_sync_package_with_summary(pkg: &rust_apt::Package<'_>, summary: &str) -> SyncPackage {
     let version = pkg
         .candidate()
@@ -659,6 +661,7 @@ fn map_sync_package_with_summary(pkg: &rust_apt::Package<'_>, summary: &str) -> 
     }
 }
 
+#[allow(dead_code)]
 fn map_local_package(pkg: &rust_apt::Package<'_>) -> LocalPackage {
     let version = pkg
         .installed()
@@ -683,6 +686,7 @@ fn map_local_package(pkg: &rust_apt::Package<'_>) -> LocalPackage {
     }
 }
 
+#[allow(dead_code)]
 fn collect_depends(version: &rust_apt::Version<'_>) -> Vec<String> {
     let mut depends = Vec::new();
     if let Some(deps) = version.dependencies() {

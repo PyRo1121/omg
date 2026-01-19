@@ -432,6 +432,7 @@ impl PackageIndex {
 }
 
 #[cfg(feature = "debian")]
+#[allow(dead_code)]
 fn collect_depends(version: rust_apt::Version<'_>) -> Vec<String> {
     let mut depends = Vec::new();
     if let Some(deps) = version.dependencies() {

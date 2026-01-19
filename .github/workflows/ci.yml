@@ -3,19 +3,8 @@ name: CI
 on:
   push:
     branches: [main]
-    paths:
-      - 'src/**'
-      - 'tests/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - '.github/workflows/ci.yml'
   pull_request:
     branches: [main]
-    paths:
-      - 'src/**'
-      - 'tests/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
   workflow_dispatch:
 
 concurrency:
@@ -24,55 +13,57 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  CARGO_INCREMENTAL: 0
   RUSTFLAGS: "-D warnings"
 
 jobs:
   # ════════════════════════════════════════════════════════════════════════════
-  # FAST CHECKS (parallel, < 1 min)
+  # QUICK CHECKS
   # ════════════════════════════════════════════════════════════════════════════
 
-  fmt:
-    name: Format
+  lint:
+    name: "Lint & Format"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: rustup component add rustfmt
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
       - run: cargo fmt --all -- --check
-
-  typos:
-    name: Typos
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
       - uses: crate-ci/typos@master
         with:
           config: ./_typos.toml
 
   # ════════════════════════════════════════════════════════════════════════════
-  # ARCH BUILD (self-hosted)
+  # ARCH LINUX BUILD & TEST
   # ════════════════════════════════════════════════════════════════════════════
 
   arch:
-    name: "Arch (check + clippy + test)"
-    runs-on: self-hosted
-    env:
-      CARGO_HOME: ${{ github.workspace }}/.cargo
+    name: "Arch Linux"
+    runs-on: ubuntu-latest
+    container: archlinux:latest
     steps:
-      - uses: actions/checkout@v4
-        with:
-          clean: true
-
-      - name: Setup Cargo
+      - name: Install Dependencies
         run: |
-          mkdir -p $CARGO_HOME/bin
-          ln -sf ~/.cargo/bin/* $CARGO_HOME/bin/ 2>/dev/null || true
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm base-devel git rust cargo pkgconf openssl libarchive clang
 
-      - name: Clean stale state
-        run: rm -rf target/debug/.fingerprint 2>/dev/null || true
+      - uses: actions/checkout@v4
 
-      - name: Check
-        run: cargo check --all-targets
+      - name: Git safe directory
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: arch-${{ hashFiles('Cargo.lock') }}
+          restore-keys: arch-
+
+      - name: Build
+        run: cargo build --release
 
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
@@ -81,14 +72,14 @@ jobs:
         run: cargo test --lib
 
   # ════════════════════════════════════════════════════════════════════════════
-  # DEBIAN BUILD (container)
+  # DEBIAN BUILD & TEST
   # ════════════════════════════════════════════════════════════════════════════
 
   debian:
-    name: "Debian Build"
+    name: "Debian 12"
     runs-on: ubuntu-latest
     container:
-      image: debian:bookworm-slim
+      image: debian:bookworm
       options: --user root
     env:
       HOME: /root
@@ -97,9 +88,7 @@ jobs:
       - name: Install Dependencies
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends \
-            ca-certificates curl git build-essential pkg-config \
-            libssl-dev clang libapt-pkg-dev cmake
+          apt-get install -y curl git build-essential pkg-config libssl-dev libapt-pkg-dev clang cmake
           rm -rf /var/lib/apt/lists/*
 
       - uses: actions/checkout@v4
@@ -110,15 +99,14 @@ jobs:
       - name: Install Rust
         run: |
           curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+          echo "/root/.cargo/bin" >> $GITHUB_PATH
 
-      - name: Cache cargo
+      - name: Cache
         uses: actions/cache@v4
         with:
           path: |
-            /root/.cargo/registry/index
-            /root/.cargo/registry/cache
-            /root/.cargo/git/db
+            /root/.cargo/registry
+            /root/.cargo/git
             target
           key: debian-${{ hashFiles('Cargo.lock') }}
           restore-keys: debian-
@@ -134,11 +122,11 @@ jobs:
           cargo test --no-default-features --features debian --lib
 
   # ════════════════════════════════════════════════════════════════════════════
-  # UBUNTU BUILD (native runner - fast)
+  # UBUNTU BUILD & TEST (native - fastest)
   # ════════════════════════════════════════════════════════════════════════════
 
   ubuntu:
-    name: "Ubuntu Build"
+    name: "Ubuntu 24.04"
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -147,16 +135,13 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libapt-pkg-dev pkg-config libssl-dev clang cmake
 
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
 
-      - name: Cache cargo
+      - name: Cache
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
+            ~/.cargo/registry
+            ~/.cargo/git
             target
           key: ubuntu-${{ hashFiles('Cargo.lock') }}
           restore-keys: ubuntu-
@@ -168,22 +153,22 @@ jobs:
         run: cargo test --no-default-features --features debian --lib
 
   # ════════════════════════════════════════════════════════════════════════════
-  # SUCCESS GATE
+  # REQUIRED STATUS CHECK
   # ════════════════════════════════════════════════════════════════════════════
 
-  ci-success:
-    name: CI Success
+  ci:
+    name: CI
     runs-on: ubuntu-latest
-    needs: [fmt, arch, debian, ubuntu]
+    needs: [lint, arch, debian, ubuntu]
     if: always()
     steps:
-      - name: Verify
+      - name: Check Results
         run: |
-          if [[ "${{ needs.fmt.result }}" != "success" ]] || \
+          if [[ "${{ needs.lint.result }}" != "success" ]] || \
              [[ "${{ needs.arch.result }}" != "success" ]] || \
              [[ "${{ needs.debian.result }}" != "success" ]] || \
              [[ "${{ needs.ubuntu.result }}" != "success" ]]; then
-            echo "❌ One or more required jobs failed"
+            echo "❌ CI failed"
             exit 1
           fi
-          echo "✅ All CI jobs passed!"
+          echo "✅ All checks passed!"
