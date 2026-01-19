@@ -58,6 +58,7 @@ pub async fn complete(_shell: &str, current: &str, last: &str, full: Option<&str
                 return Ok(());
             }
             // Try daemon for package list
+            #[allow(unused_mut)]
             let mut names = if use_debian_backend() {
                 #[cfg(feature = "debian")]
                 {
