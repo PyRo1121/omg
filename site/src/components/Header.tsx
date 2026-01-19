@@ -33,11 +33,11 @@ const Header: Component = () => {
       <header class="pointer-events-auto fixed top-0 right-0 left-0 z-50 border-b border-white/5 bg-[#0f0f23]/80 backdrop-blur-lg">
         <nav class="relative mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
           <a href="/" class="flex items-center gap-3" aria-label="OMG Package Manager - Home">
-            <div class="flex h-8 w-8 items-center justify-center">
+            <div class="flex h-8 w-8 items-center justify-center overflow-hidden rounded-lg">
               <img
-                src="/favicon.svg"
+                src="/logo-globe.png"
                 alt="OMG Package Manager Logo - Fastest Linux Package Manager"
-                class="h-8 w-8 rounded-lg"
+                class="h-8 w-8 object-cover"
                 width="32"
                 height="32"
               />

@@ -72,12 +72,10 @@ impl DaemonStartup {
 }
 
 /// Wizard state
-#[allow(dead_code)]
 struct WizardState {
     shell: Option<Shell>,
     daemon_startup: DaemonStartup,
     capture_env: bool,
-    current_step: usize,
 }
 
 impl Default for WizardState {
@@ -86,7 +84,6 @@ impl Default for WizardState {
             shell: None,
             daemon_startup: DaemonStartup::OnShellInit,
             capture_env: true,
-            current_step: 0,
         }
     }
 }
@@ -305,7 +302,7 @@ fn select_shell(stdout: &mut io::Stdout) -> Result<Shell> {
                 }
                 KeyCode::Char('q') => {
                     terminal::disable_raw_mode()?;
-                    std::process::exit(0);
+                    anyhow::bail!("Setup cancelled");
                 }
                 _ => {}
             }
@@ -379,7 +376,7 @@ fn select_daemon_startup(stdout: &mut io::Stdout) -> Result<DaemonStartup> {
                 }
                 KeyCode::Char('q') => {
                     terminal::disable_raw_mode()?;
-                    std::process::exit(0);
+                    anyhow::bail!("Setup cancelled");
                 }
                 _ => {}
             }
@@ -456,7 +453,7 @@ fn confirm_env_capture(stdout: &mut io::Stdout) -> Result<bool> {
                 }
                 KeyCode::Char('q') => {
                     terminal::disable_raw_mode()?;
-                    std::process::exit(0);
+                    anyhow::bail!("Setup cancelled");
                 }
                 _ => {}
             }

@@ -15,8 +15,13 @@ use omg_lib::cli::runtimes;
 use omg_lib::cli::security;
 use omg_lib::cli::tool;
 use omg_lib::cli::{
-    Cli, Commands, ContainerCommands, EnvCommands, LicenseCommands, TeamCommands, ToolCommands,
+    CiCommands, Cli, Commands, ContainerCommands, EnterpriseCommands, EnterprisePolicyCommands,
+    EnvCommands, FleetCommands, GoldenPathCommands, LicenseCommands, MigrateCommands,
+    NotifyCommands, ServerCommands, SnapshotCommands, TeamCommands, TeamRoleCommands, ToolCommands,
     commands,
+};
+use omg_lib::cli::{
+    blame, ci, diff, enterprise, fleet, migrate, outdated, pin, size, snapshot, why,
 };
 use omg_lib::core::{RuntimeBackend, elevate_if_needed, is_root, task_runner};
 use omg_lib::hooks;
@@ -318,6 +323,76 @@ async fn async_main() -> Result<()> {
                 TeamCommands::Members => {
                     team::members()?;
                 }
+                TeamCommands::Dashboard => {
+                    team::dashboard()?;
+                }
+                TeamCommands::Invite { email, role } => {
+                    team::invite(email.as_deref(), &role)?;
+                }
+                TeamCommands::Roles { command: role_cmd } => match role_cmd {
+                    TeamRoleCommands::List => {
+                        team::roles::list()?;
+                    }
+                    TeamRoleCommands::Assign { member, role } => {
+                        team::roles::assign(&member, &role)?;
+                    }
+                    TeamRoleCommands::Remove { member } => {
+                        team::roles::remove(&member)?;
+                    }
+                },
+                TeamCommands::Propose { message } => {
+                    team::propose(&message)?;
+                }
+                TeamCommands::Review {
+                    id,
+                    approve,
+                    request_changes,
+                } => {
+                    team::review(id, approve, request_changes.as_deref())?;
+                }
+                TeamCommands::GoldenPath { command: gp_cmd } => match gp_cmd {
+                    GoldenPathCommands::Create {
+                        name,
+                        node,
+                        python,
+                        packages,
+                    } => {
+                        team::golden_path::create(
+                            &name,
+                            node.as_deref(),
+                            python.as_deref(),
+                            packages.as_deref(),
+                        )?;
+                    }
+                    GoldenPathCommands::List => {
+                        team::golden_path::list()?;
+                    }
+                    GoldenPathCommands::Delete { name } => {
+                        team::golden_path::delete(&name)?;
+                    }
+                },
+                TeamCommands::Compliance { export, enforce } => {
+                    team::compliance(export.as_deref(), enforce)?;
+                }
+                TeamCommands::Activity { days } => {
+                    team::activity(days)?;
+                }
+                TeamCommands::Notify {
+                    command: notify_cmd,
+                } => match notify_cmd {
+                    NotifyCommands::Add { notify_type, url } => {
+                        team::notify::add(&notify_type, &url)?;
+                    }
+                    NotifyCommands::List => {
+                        team::notify::list()?;
+                    }
+                    NotifyCommands::Remove { id } => {
+                        team::notify::remove(&id)?;
+                    }
+                    NotifyCommands::Test { id } => {
+                        team::notify::test(&id)?;
+                    }
+                },
             }
         }
         Commands::Container { command } => {
@@ -403,6 +478,118 @@ async fn async_main() -> Result<()> {
                 omg_lib::cli::init::run_interactive(skip_shell, skip_daemon).await?;
             }
         }
+        // New commands
+        Commands::Why { package, reverse } => {
+            why::run(&package, reverse)?;
+        }
+        Commands::Outdated { security, json } => {
+            outdated::run(security, json)?;
+        }
+        Commands::Pin {
+            target,
+            unpin,
+            list,
+        } => {
+            pin::run(&target, unpin, list)?;
+        }
+        Commands::Size { tree, limit } => {
+            size::run(tree.as_deref(), limit)?;
+        }
+        Commands::Blame { package } => {
+            blame::run(&package)?;
+        }
+        Commands::Diff { from, to } => {
+            diff::run(from.as_deref(), &to).await?;
+        }
+        Commands::Snapshot { command } => match command {
+            SnapshotCommands::Create { message } => {
+                snapshot::create(message).await?;
+            }
+            SnapshotCommands::List => {
+                snapshot::list()?;
+            }
+            SnapshotCommands::Restore { id, dry_run } => {
+                snapshot::restore(&id, dry_run).await?;
+            }
+            SnapshotCommands::Delete { id } => {
+                snapshot::delete(&id)?;
+            }
+        },
+        Commands::Ci { command } => match command {
+            CiCommands::Init { provider } => {
+                ci::init(&provider)?;
+            }
+            CiCommands::Validate => {
+                ci::validate().await?;
+            }
+            CiCommands::Cache => {
+                ci::cache()?;
+            }
+        },
+        Commands::Migrate { command } => match command {
+            MigrateCommands::Export { output } => {
+                migrate::export(&output).await?;
+            }
+            MigrateCommands::Import { manifest, dry_run } => {
+                migrate::import(&manifest, dry_run)?;
+            }
+        },
+        Commands::Fleet { command } => match command {
+            FleetCommands::Status => {
+                fleet::status()?;
+            }
+            FleetCommands::Push { team, message } => {
+                fleet::push(team.as_deref(), message.as_deref())?;
+            }
+            FleetCommands::Remediate { dry_run, confirm } => {
+                fleet::remediate(dry_run, confirm)?;
+            }
+        },
+        Commands::Enterprise { command } => match command {
+            EnterpriseCommands::Reports {
+                report_type,
+                format,
+            } => {
+                enterprise::reports(&report_type, &format)?;
+            }
+            EnterpriseCommands::Policy {
+                command: policy_cmd,
+            } => match policy_cmd {
+                EnterprisePolicyCommands::Set { scope, rule } => {
+                    enterprise::policy::set(&scope, &rule)?;
+                }
+                EnterprisePolicyCommands::Show { scope } => {
+                    enterprise::policy::show(scope.as_deref())?;
+                }
+                EnterprisePolicyCommands::Inherit { from, to } => {
+                    enterprise::policy::inherit(&from, &to)?;
+                }
+            },
+            EnterpriseCommands::AuditExport {
+                format,
+                period,
+                output,
+            } => {
+                enterprise::audit_export(&format, period.as_deref(), &output)?;
+            }
+            EnterpriseCommands::LicenseScan { export } => {
+                enterprise::license_scan(export.as_deref())?;
+            }
+            EnterpriseCommands::Server {
+                command: server_cmd,
+            } => match server_cmd {
+                ServerCommands::Init {
+                    license,
+                    storage,
+                    domain,
+                } => {
+                    enterprise::server::init(&license, &storage, &domain)?;
+                }
+                ServerCommands::Mirror { upstream } => {
+                    enterprise::server::mirror(&upstream)?;
+                }
+            },
+        },
     }
 
     // Track command execution for analytics

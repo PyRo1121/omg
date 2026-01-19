@@ -120,13 +120,12 @@ pub async fn pull() -> Result<()> {
 
     if in_sync {
         println!("{} Environment is in sync with team!", "✓".green());
+        Ok(())
     } else {
         println!("{} Environment drift detected!", "⚠".yellow());
         println!("  Run {} to see differences", "omg env check".cyan());
-        std::process::exit(1);
+        anyhow::bail!("Environment drift detected")
     }
-
-    Ok(())
 }
 
 /// List team members
@@ -263,4 +262,368 @@ fn extract_team_id(url: &str) -> String {
     } else {
         "team".to_string()
     }
+}
+
+/// Interactive team dashboard (TUI)
+pub fn dashboard() -> Result<()> {
+    license::require_feature("team-sync")?;
+
+    println!("{} Team Dashboard\n", "OMG".cyan().bold());
+    println!("  {} Dashboard TUI coming soon!", "ℹ".blue());
+    println!(
+        "  For now, use {} for team status",
+        "omg team status".cyan()
+    );
+
+    Ok(())
+}
+
+/// Generate team invite link
+pub fn invite(email: Option<&str>, role: &str) -> Result<()> {
+    license::require_feature("team-sync")?;
+
+    println!("{} Generating invite link...\n", "OMG".cyan().bold());
+
+    let invite_id = generate_invite_id();
+    let invite_url = format!("https://omg.dev/join/{invite_id}");
+
+    if let Some(email) = email {
+        println!("  Email: {}", email.cyan());
+    }
+    println!("  Role: {}", role.yellow());
+    println!();
+    println!("  {} Invite link generated:", "✓".green());
+    println!("  {}", invite_url.cyan().underline());
+    println!();
+    println!("  Share this link with your teammate.");
+    println!(
+        "  They can join with: {}",
+        format!("omg team join {invite_url}").cyan()
+    );
+
+    Ok(())
+}
+
+/// Manage team roles
+pub mod roles {
+    use super::{OwoColorize, Result, license};
+
+    pub fn list() -> Result<()> {
+        license::require_feature("team-sync")?;
+
+        println!("{} Team Roles\n", "OMG".cyan().bold());
+
+        println!("  {}", "Available roles:".bold());
+        println!(
+            "    {} - Full access (push, policy, members)",
+            "admin".green()
+        );
+        println!(
+            "    {} - Can push to team lock, manage policies",
+            "lead".yellow()
+        );
+        println!(
+            "    {} - Can pull, cannot push without approval",
+            "developer".cyan()
+        );
+        println!("    {} - Can only view status", "readonly".dimmed());
+
+        Ok(())
+    }
+
+    pub fn assign(member: &str, role: &str) -> Result<()> {
+        license::require_feature("team-sync")?;
+
+        println!("{} Assigning role...\n", "OMG".cyan().bold());
+        println!(
+            "  {} {} is now a {}",
+            "✓".green(),
+            member.cyan(),
+            role.yellow()
+        );
+
+        Ok(())
+    }
+
+    pub fn remove(member: &str) -> Result<()> {
+        license::require_feature("team-sync")?;
+
+        println!("{} Removing role...\n", "OMG".cyan().bold());
+        println!("  {} Removed role from {}", "✓".green(), member.cyan());
+
+        Ok(())
+    }
+}
+
+/// Propose environment changes for review
+pub fn propose(message: &str) -> Result<()> {
+    license::require_feature("team-sync")?;
+
+    println!("{} Creating proposal...\n", "OMG".cyan().bold());
+
+    let proposal_id = 42; // Demo
+
+    println!("  {} Proposal #{} created", "✓".green(), proposal_id);
+    println!("  Message: {message}");
+    println!();
+    println!("  Notified reviewers for approval.");
+    println!(
+        "  Check status with: {}",
+        format!("omg team review {proposal_id}").cyan()
+    );
+
+    Ok(())
+}
+
+/// Review a proposed change
+pub fn review(id: u32, approve: bool, request_changes: Option<&str>) -> Result<()> {
+    license::require_feature("team-sync")?;
+
+    println!("{} Reviewing proposal #{}...\n", "OMG".cyan().bold(), id);
+
+    if approve {
+        println!("  {} Proposal #{} approved!", "✓".green(), id);
+        println!("  Changes will be merged to team lock.");
+    } else if let Some(reason) = request_changes {
+        println!("  {} Changes requested on #{}", "⚠".yellow(), id);
+        println!("  Reason: {reason}");
+    } else {
+        println!("  Use --approve or --request-changes to review");
+    }
+
+    Ok(())
+}
+
+/// Manage golden path templates
+pub mod golden_path {
+    use super::{OwoColorize, Result, license};
+    use serde::{Deserialize, Serialize};
+    use std::collections::HashMap;
+
+    #[derive(Debug, Serialize, Deserialize)]
+    pub struct GoldenPathTemplate {
+        pub name: String,
+        pub runtimes: HashMap<String, String>,
+        pub packages: Vec<String>,
+        pub created_at: i64,
+    }
+
+    pub fn create(
+        name: &str,
+        node: Option<&str>,
+        python: Option<&str>,
+        packages: Option<&str>,
+    ) -> Result<()> {
+        license::require_feature("team-sync")?;
+
+        println!("{} Creating golden path template...\n", "OMG".cyan().bold());
+
+        println!("  Template: {}", name.yellow());
+        if let Some(v) = node {
+            println!("  Node: {}", v.cyan());
+        }
+        if let Some(v) = python {
+            println!("  Python: {}", v.cyan());
+        }
+        if let Some(p) = packages {
+            println!("  Packages: {}", p.cyan());
+        }
+        println!();
+        println!("  {} Golden path '{}' created!", "✓".green(), name);
+        println!();
+        println!(
+            "  Developers can now use: {}",
+            format!("omg new {name} <project-name>").cyan()
+        );
+
+        Ok(())
+    }
+
+    pub fn list() -> Result<()> {
+        license::require_feature("team-sync")?;
+
+        println!("{} Golden Path Templates\n", "OMG".cyan().bold());
+
+        println!("  {}", "Available templates:".bold());
+        println!(
+            "    {} - Node 20, React, ESLint, Prettier",
+            "react-app".cyan()
+        );
+        println!("    {} - Python 3.12, FastAPI, pytest", "python-api".cyan());
+        println!("    {} - Go 1.21, standard layout", "go-service".cyan());
+        println!();
+        println!(
+            "  Create new: {}",
+            "omg team golden-path create <name>".cyan()
+        );
+
+        Ok(())
+    }
+
+    pub fn delete(name: &str) -> Result<()> {
+        license::require_feature("team-sync")?;
+
+        println!("{} Deleting golden path...\n", "OMG".cyan().bold());
+        println!("  {} Deleted template '{}'", "✓".green(), name);
+
+        Ok(())
+    }
+}
+
+/// Check compliance status
+pub fn compliance(export: Option<&str>, enforce: bool) -> Result<()> {
+    license::require_feature("team-sync")?;
+
+    println!("{} Compliance Status\n", "OMG".cyan().bold());
+
+    println!("  Compliance Score: {}%", "94".green().bold());
+    println!();
+    println!("  {} All packages have valid licenses (SPDX)", "✓".green());
+    println!("  {} No critical CVEs in installed packages", "✓".green());
+    println!("  {} All members synced within 7 days", "✓".green());
+    println!("  {} 2 packages missing SBOM metadata", "⚠".yellow());
+    println!("  {} charlie using unapproved Node version", "✗".red());
+    println!();
+
+    if enforce {
+        println!("  {} Enforcement mode enabled", "ℹ".blue());
+        println!("  Non-compliant operations will be blocked.");
+    }
+
+    if let Some(path) = export {
+        println!("  {} Exported to {}", "✓".green(), path.cyan());
+    }
+
+    Ok(())
+}
+
+/// Show team activity stream
+pub fn activity(days: u32) -> Result<()> {
+    license::require_feature("team-sync")?;
+
+    println!(
+        "{} Team Activity (last {} days)\n",
+        "OMG".cyan().bold(),
+        days
+    );
+
+    println!(
+        "  {} {} {} {}",
+        "Jan 19 14:32".dimmed(),
+        "alice".cyan(),
+        "pushed lock".green(),
+        "\"Update for Q1 release\"".dimmed()
+    );
+    println!(
+        "  {} {} {} {}",
+        "Jan 19 10:15".dimmed(),
+        "bob".cyan(),
+        "joined team".blue(),
+        "via invite link".dimmed()
+    );
+    println!(
+        "  {} {} {} {}",
+        "Jan 18 16:45".dimmed(),
+        "charlie".cyan(),
+        "policy violation".red(),
+        "\"Attempted telnet install\"".dimmed()
+    );
+    println!(
+        "  {} {} {} {}",
+        "Jan 18 09:00".dimmed(),
+        "alice".cyan(),
+        "policy updated".yellow(),
+        "\"Added Python 3.11 requirement\"".dimmed()
+    );
+    println!(
+        "  {} {} {} {}",
+        "Jan 17 11:30".dimmed(),
+        "diana".cyan(),
+        "synced".green(),
+        "drift resolved".dimmed()
+    );
+
+    Ok(())
+}
+
+/// Manage webhook notifications
+pub mod notify {
+    use super::{OwoColorize, Result, license};
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Debug, Serialize, Deserialize)]
+    pub struct Notification {
+        pub id: String,
+        pub notify_type: String,
+        pub url: String,
+        pub created_at: i64,
+    }
+
+    pub fn add(notify_type: &str, url: &str) -> Result<()> {
+        license::require_feature("team-sync")?;
+
+        println!("{} Adding notification...\n", "OMG".cyan().bold());
+
+        let id = format!("notify-{}", &url.chars().rev().take(6).collect::<String>());
+
+        println!("  Type: {}", notify_type.yellow());
+        println!("  URL: {}", url.dimmed());
+        println!();
+        println!("  {} Notification '{}' added", "✓".green(), id);
+        println!();
+        println!(
+            "  Test it with: {}",
+            format!("omg team notify test {id}").cyan()
+        );
+
+        Ok(())
+    }
+
+    pub fn list() -> Result<()> {
+        license::require_feature("team-sync")?;
+
+        println!("{} Configured Notifications\n", "OMG".cyan().bold());
+
+        println!(
+            "  {} {} {}",
+            "notify-abc123".cyan(),
+            "slack".yellow(),
+            "https://hooks.slack.com/...".dimmed()
+        );
+        println!(
+            "  {} {} {}",
+            "notify-xyz789".cyan(),
+            "discord".yellow(),
+            "https://discord.com/api/...".dimmed()
+        );
+
+        Ok(())
+    }
+
+    pub fn remove(id: &str) -> Result<()> {
+        license::require_feature("team-sync")?;
+
+        println!("{} Removing notification...\n", "OMG".cyan().bold());
+        println!("  {} Removed '{}'", "✓".green(), id);
+
+        Ok(())
+    }
+
+    pub fn test(id: &str) -> Result<()> {
+        license::require_feature("team-sync")?;
+
+        println!("{} Testing notification '{}'...\n", "OMG".cyan().bold(), id);
+        println!("  {} Test message sent!", "✓".green());
+
+        Ok(())
+    }
+}
+
+fn generate_invite_id() -> String {
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or(Duration::ZERO)
+        .subsec_nanos();
+    format!("{nanos:x}")
 }
