@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-const USAGE_SYNC_API: &str = "https://api.pyro1121.com/api/usage-sync";
+const USAGE_SYNC_API: &str = "https://api.pyro1121.com/api/report-usage";
 
 /// Time saved per operation (in milliseconds)
 /// Based on benchmark comparisons vs traditional tools
@@ -336,26 +336,47 @@ impl UsageStats {
         sorted
     }
 
-    /// Check if sync is needed (every 5 minutes)
+    /// Check if sync is needed (every 30 seconds for real-time dashboard)
     #[must_use]
     pub fn needs_sync(&self) -> bool {
         let now = jiff::Timestamp::now().as_second();
-        now - self.last_sync > 300 // 5 minutes
+        now - self.last_sync > 30 // 30 seconds for near real-time updates
+    }
+
+    /// Check if immediate sync is needed (for important events)
+    #[must_use]
+    pub fn needs_immediate_sync(&self) -> bool {
+        // Sync immediately after first command, achievements, or milestones
+        self.total_commands == 1
+            || self.total_commands % 100 == 0
+            || (self.time_saved_ms >= 60_000 && self.last_sync == 0)
     }
 
     /// Sync usage stats to API (async)
     pub async fn sync(&mut self, license_key: &str) -> Result<()> {
+        // Get machine info for richer telemetry
+        let machine_id = crate::core::license::get_machine_id();
+        let hostname = std::fs::read_to_string("/etc/hostname")
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default();
+
+        // Calculate incremental usage since last sync
         let payload = serde_json::json!({
             "license_key": license_key,
-            "stats": {
-                "total_commands": self.total_commands,
-                "commands": self.commands,
-                "time_saved_ms": self.time_saved_ms,
-                "queries_today": self.queries_today,
-                "queries_this_month": self.queries_this_month,
-                "sbom_generated": self.sbom_generated,
-                "vulnerabilities_found": self.vulnerabilities_found,
-            }
+            "machine_id": machine_id,
+            "hostname": hostname,
+            "os": std::env::consts::OS,
+            "arch": std::env::consts::ARCH,
+            "omg_version": env!("CARGO_PKG_VERSION"),
+            "commands_run": self.queries_today,
+            "packages_installed": self.commands.get("install").copied().unwrap_or(0),
+            "packages_searched": self.commands.get("search").copied().unwrap_or(0),
+            "runtimes_switched": self.commands.get("runtime_switch").copied().unwrap_or(0),
+            "sbom_generated": self.sbom_generated,
+            "vulnerabilities_found": self.vulnerabilities_found,
+            "time_saved_ms": self.time_saved_ms,
+            "current_streak": self.current_streak,
+            "achievements": self.achievements,
         });
 
         let client = reqwest::Client::new();
@@ -414,7 +435,7 @@ pub fn maybe_sync_background() {
     // Only sync if we have a license
     if let Some(license) = crate::core::license::load_license() {
         let stats = UsageStats::load();
-        if stats.needs_sync() {
+        if stats.needs_sync() || stats.needs_immediate_sync() {
             // Spawn background task
             tokio::spawn(async move {
                 let mut stats = UsageStats::load();
@@ -422,6 +443,37 @@ pub fn maybe_sync_background() {
                     tracing::debug!("Usage sync failed: {e}");
                 }
             });
+        }
+    }
+}
+
+/// Force immediate sync (for important events like achievements)
+pub fn force_sync_background() {
+    if let Some(license) = crate::core::license::load_license() {
+        tokio::spawn(async move {
+            let mut stats = UsageStats::load();
+            if let Err(e) = stats.sync(&license.key).await {
+                tracing::debug!("Force sync failed: {e}");
+            }
+        });
+    }
+}
+
+/// Track and sync immediately (for real-time dashboard updates)
+pub fn track_and_sync(command: &str, time_saved_ms: u64) {
+    let mut stats = UsageStats::load();
+    stats.record_command(command, time_saved_ms);
+    maybe_sync_background();
+}
+
+/// Sync usage now (awaitable, for end of CLI commands)
+pub async fn sync_usage_now() {
+    if let Some(license) = crate::core::license::load_license() {
+        let mut stats = UsageStats::load();
+        if stats.needs_sync() || stats.needs_immediate_sync() || stats.total_commands > 0 {
+            if let Err(e) = stats.sync(&license.key).await {
+                tracing::debug!("Usage sync failed: {e}");
+            }
         }
     }
 }

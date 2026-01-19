@@ -2,16 +2,38 @@
 
 use anyhow::Result;
 use owo_colors::OwoColorize;
+use std::io::{self, Write};
 
 use crate::core::license::{
     self, ENTERPRISE_FEATURES, FREE_FEATURES, Feature, PRO_FEATURES, TEAM_FEATURES, Tier,
 };
 
+/// Prompt for user input
+fn prompt(message: &str) -> String {
+    print!("{}", message);
+    io::stdout().flush().unwrap();
+    let mut input = String::new();
+    io::stdin().read_line(&mut input).unwrap();
+    input.trim().to_string()
+}
+
 /// Activate a license key
 pub async fn activate(key: &str) -> Result<()> {
-    println!("{} Activating license...", "OMG".cyan().bold());
+    println!("{} Activating license...\n", "OMG".cyan().bold());
+    
+    // Prompt for user identification (for team management)
+    println!("  {} For team licenses, please provide your info so your manager", "📋".cyan());
+    println!("     can identify you in the dashboard. Press Enter to skip.\n");
+    
+    let user_name = prompt("  Your name (optional): ");
+    let user_email = prompt("  Your email (optional): ");
+    
+    let user_name_opt = if user_name.is_empty() { None } else { Some(user_name.as_str()) };
+    let user_email_opt = if user_email.is_empty() { None } else { Some(user_email.as_str()) };
+    
+    println!("\n  Validating license...");
 
-    match license::activate(key).await {
+    match license::activate_with_user(key, user_name_opt, user_email_opt).await {
         Ok(stored) => {
             let tier = stored.tier_enum();
             println!("\n{} License activated successfully!\n", "✓".green());

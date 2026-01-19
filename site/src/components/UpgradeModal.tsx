@@ -36,7 +36,7 @@ const TIERS = {
   },
 };
 
-const UpgradeModal: Component<UpgradeModalProps> = (props) => {
+const UpgradeModal: Component<UpgradeModalProps> = props => {
   const [step, setStep] = createSignal<'select' | 'details' | 'processing'>('select');
   const [selectedTier, setSelectedTier] = createSignal<'pro' | 'team'>(props.initialTier || 'pro');
   const [email, setEmail] = createSignal('');
@@ -68,15 +68,15 @@ const UpgradeModal: Component<UpgradeModalProps> = (props) => {
       const res = await fetch('https://api.pyro1121.com/api/create-checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          email: email(), 
+        body: JSON.stringify({
+          email: email(),
           priceId: tier.priceId,
           name: name() || undefined,
         }),
       });
 
       const data = await res.json();
-      
+
       if (data.url) {
         // Small delay for animation
         setTimeout(() => {
@@ -86,7 +86,7 @@ const UpgradeModal: Component<UpgradeModalProps> = (props) => {
         setError(data.error || 'Failed to create checkout session');
         setStep('details');
       }
-    } catch (e) {
+    } catch (_e) {
       setError('Network error. Please try again.');
       setStep('details');
     } finally {
@@ -104,95 +104,132 @@ const UpgradeModal: Component<UpgradeModalProps> = (props) => {
 
   return (
     <Show when={props.isOpen}>
-      <div 
+      <div
         class="fixed inset-0 z-50 flex items-center justify-center p-4"
-        onClick={(e) => e.target === e.currentTarget && handleClose()}
+        onClick={e => e.target === e.currentTarget && handleClose()}
       >
         {/* Backdrop */}
-        <div class="absolute inset-0 bg-black/80 backdrop-blur-md animate-fade-in" />
-        
+        <div class="animate-fade-in absolute inset-0 bg-black/80 backdrop-blur-md" />
+
         {/* Modal */}
-        <div class="relative bg-gradient-to-b from-slate-800 to-slate-900 border border-slate-700/50 rounded-3xl max-w-4xl w-full shadow-2xl shadow-black/50 animate-scale-in overflow-hidden">
+        <div class="animate-scale-in relative w-full max-w-4xl overflow-hidden rounded-3xl border border-slate-700/50 bg-gradient-to-b from-slate-800 to-slate-900 shadow-2xl shadow-black/50">
           {/* Glow effect */}
-          <div class="absolute -top-40 -right-40 w-80 h-80 bg-indigo-500/20 rounded-full blur-3xl pointer-events-none" />
-          <div class="absolute -bottom-40 -left-40 w-80 h-80 bg-purple-500/20 rounded-full blur-3xl pointer-events-none" />
-          
+          <div class="pointer-events-none absolute -top-40 -right-40 h-80 w-80 rounded-full bg-indigo-500/20 blur-3xl" />
+          <div class="pointer-events-none absolute -bottom-40 -left-40 h-80 w-80 rounded-full bg-purple-500/20 blur-3xl" />
+
           {/* Close button */}
           <button
             onClick={handleClose}
-            class="absolute top-4 right-4 z-10 p-2 text-slate-400 hover:text-white hover:bg-slate-700/50 rounded-full transition-all"
+            class="absolute top-4 right-4 z-10 rounded-full p-2 text-slate-400 transition-all hover:bg-slate-700/50 hover:text-white"
           >
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M6 18L18 6M6 6l12 12"
+              />
             </svg>
           </button>
 
           <div class="relative p-8">
             {/* Step 1: Tier Selection */}
             <Show when={step() === 'select'}>
-              <div class="text-center mb-8">
-                <div class="inline-flex items-center gap-2 px-4 py-2 bg-indigo-500/10 border border-indigo-500/30 rounded-full text-indigo-400 text-sm font-medium mb-4">
-                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+              <div class="mb-8 text-center">
+                <div class="mb-4 inline-flex items-center gap-2 rounded-full border border-indigo-500/30 bg-indigo-500/10 px-4 py-2 text-sm font-medium text-indigo-400">
+                  <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M13 10V3L4 14h7v7l9-11h-7z"
+                    />
                   </svg>
                   Upgrade Your Experience
                 </div>
-                <h2 class="text-3xl font-bold text-white mb-2">Choose Your Plan</h2>
+                <h2 class="mb-2 text-3xl font-bold text-white">Choose Your Plan</h2>
                 <p class="text-slate-400">Unlock powerful features for your development workflow</p>
               </div>
 
-              <div class="grid md:grid-cols-2 gap-6">
-                <For each={(['pro', 'team'] as const)}>
-                  {(tierKey) => {
+              <div class="grid gap-6 md:grid-cols-2">
+                <For each={['pro', 'team'] as const}>
+                  {tierKey => {
                     const tier = TIERS[tierKey];
                     const isTeam = tierKey === 'team';
                     return (
                       <button
                         onClick={() => handleTierSelect(tierKey)}
-                        class={`relative group text-left p-6 rounded-2xl border-2 transition-all duration-300 hover:scale-[1.02] ${
-                          isTeam 
-                            ? 'border-purple-500/50 bg-purple-500/5 hover:border-purple-400 hover:bg-purple-500/10' 
+                        class={`group relative rounded-2xl border-2 p-6 text-left transition-all duration-300 hover:scale-[1.02] ${
+                          isTeam
+                            ? 'border-purple-500/50 bg-purple-500/5 hover:border-purple-400 hover:bg-purple-500/10'
                             : 'border-slate-600/50 bg-slate-800/50 hover:border-indigo-400 hover:bg-indigo-500/10'
                         }`}
                       >
                         {isTeam && (
                           <div class="absolute -top-3 left-6">
-                            <span class="px-3 py-1 bg-gradient-to-r from-purple-500 to-pink-500 text-white text-xs font-bold rounded-full shadow-lg">
+                            <span class="rounded-full bg-gradient-to-r from-purple-500 to-pink-500 px-3 py-1 text-xs font-bold text-white shadow-lg">
                               BEST VALUE
                             </span>
                           </div>
                         )}
-                        
-                        <div class="flex items-start justify-between mb-4">
+
+                        <div class="mb-4 flex items-start justify-between">
                           <div>
-                            <h3 class="text-xl font-bold text-white mb-1">{tier.name}</h3>
+                            <h3 class="mb-1 text-xl font-bold text-white">{tier.name}</h3>
                             <p class="text-sm text-slate-400">{tier.description}</p>
                           </div>
-                          <div class={`p-3 rounded-xl ${isTeam ? 'bg-purple-500/20' : 'bg-indigo-500/20'}`}>
-                            <svg class={`w-6 h-6 ${isTeam ? 'text-purple-400' : 'text-indigo-400'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <div
+                            class={`rounded-xl p-3 ${isTeam ? 'bg-purple-500/20' : 'bg-indigo-500/20'}`}
+                          >
+                            <svg
+                              class={`h-6 w-6 ${isTeam ? 'text-purple-400' : 'text-indigo-400'}`}
+                              fill="none"
+                              stroke="currentColor"
+                              viewBox="0 0 24 24"
+                            >
                               {isTeam ? (
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                                <path
+                                  stroke-linecap="round"
+                                  stroke-linejoin="round"
+                                  stroke-width="2"
+                                  d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"
+                                />
                               ) : (
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                                <path
+                                  stroke-linecap="round"
+                                  stroke-linejoin="round"
+                                  stroke-width="2"
+                                  d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
+                                />
                               )}
                             </svg>
                           </div>
                         </div>
 
-                        <div class="flex items-baseline gap-1 mb-6">
+                        <div class="mb-6 flex items-baseline gap-1">
                           <span class="text-4xl font-bold text-white">${tier.price}</span>
                           <span class="text-slate-400">/month</span>
                         </div>
 
-                        <ul class="space-y-3 mb-6">
+                        <ul class="mb-6 space-y-3">
                           <For each={tier.features.slice(0, 4)}>
-                            {(feature) => (
+                            {feature => (
                               <li class="flex items-start gap-3">
-                                <svg class={`w-5 h-5 mt-0.5 flex-shrink-0 ${isTeam ? 'text-purple-400' : 'text-green-400'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                                <svg
+                                  class={`mt-0.5 h-5 w-5 flex-shrink-0 ${isTeam ? 'text-purple-400' : 'text-green-400'}`}
+                                  fill="none"
+                                  stroke="currentColor"
+                                  viewBox="0 0 24 24"
+                                >
+                                  <path
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    stroke-width="2"
+                                    d="M5 13l4 4L19 7"
+                                  />
                                 </svg>
                                 <div>
-                                  <span class="text-white font-medium">{feature.name}</span>
+                                  <span class="font-medium text-white">{feature.name}</span>
                                   <p class="text-xs text-slate-500">{feature.description}</p>
                                 </div>
                               </li>
@@ -200,14 +237,26 @@ const UpgradeModal: Component<UpgradeModalProps> = (props) => {
                           </For>
                         </ul>
 
-                        <div class={`flex items-center justify-center gap-2 py-3 rounded-xl font-semibold transition-all ${
-                          isTeam 
-                            ? 'bg-purple-500 text-white group-hover:bg-purple-400' 
-                            : 'bg-indigo-500 text-white group-hover:bg-indigo-400'
-                        }`}>
+                        <div
+                          class={`flex items-center justify-center gap-2 rounded-xl py-3 font-semibold transition-all ${
+                            isTeam
+                              ? 'bg-purple-500 text-white group-hover:bg-purple-400'
+                              : 'bg-indigo-500 text-white group-hover:bg-indigo-400'
+                          }`}
+                        >
                           Select {tier.name}
-                          <svg class="w-4 h-4 group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+                          <svg
+                            class="h-4 w-4 transition-transform group-hover:translate-x-1"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                              stroke-width="2"
+                              d="M9 5l7 7-7 7"
+                            />
                           </svg>
                         </div>
                       </button>
@@ -216,7 +265,7 @@ const UpgradeModal: Component<UpgradeModalProps> = (props) => {
                 </For>
               </div>
 
-              <p class="text-center text-slate-500 text-sm mt-6">
+              <p class="mt-6 text-center text-sm text-slate-500">
                 All plans include a 14-day money-back guarantee
               </p>
             </Show>
@@ -225,60 +274,79 @@ const UpgradeModal: Component<UpgradeModalProps> = (props) => {
             <Show when={step() === 'details'}>
               <button
                 onClick={handleBack}
-                class="flex items-center gap-2 text-slate-400 hover:text-white transition-colors mb-6"
+                class="mb-6 flex items-center gap-2 text-slate-400 transition-colors hover:text-white"
               >
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M15 19l-7-7 7-7"
+                  />
                 </svg>
                 Back to plans
               </button>
 
-              <div class="grid md:grid-cols-2 gap-8">
+              <div class="grid gap-8 md:grid-cols-2">
                 {/* Left: Form */}
                 <div>
                   <div class="mb-6">
-                    <div class={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium ${
-                      selectedTier() === 'team' 
-                        ? 'bg-purple-500/20 text-purple-400' 
-                        : 'bg-indigo-500/20 text-indigo-400'
-                    }`}>
+                    <div
+                      class={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-medium ${
+                        selectedTier() === 'team'
+                          ? 'bg-purple-500/20 text-purple-400'
+                          : 'bg-indigo-500/20 text-indigo-400'
+                      }`}
+                    >
                       {TIERS[selectedTier()].name} Plan
                     </div>
-                    <h2 class="text-2xl font-bold text-white mt-3 mb-1">Complete Your Upgrade</h2>
-                    <p class="text-slate-400 text-sm">Enter your details to continue to secure checkout</p>
+                    <h2 class="mt-3 mb-1 text-2xl font-bold text-white">Complete Your Upgrade</h2>
+                    <p class="text-sm text-slate-400">
+                      Enter your details to continue to secure checkout
+                    </p>
                   </div>
 
                   <div class="space-y-4">
                     <div>
-                      <label class="block text-sm font-medium text-slate-300 mb-2">
+                      <label class="mb-2 block text-sm font-medium text-slate-300">
                         Email Address <span class="text-red-400">*</span>
                       </label>
                       <input
                         type="email"
                         value={email()}
-                        onInput={(e) => setEmail(e.currentTarget.value)}
+                        onInput={e => setEmail(e.currentTarget.value)}
                         placeholder="you@company.com"
-                        class="w-full px-4 py-3 bg-slate-900/50 border border-slate-600 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition-all"
+                        class="w-full rounded-xl border border-slate-600 bg-slate-900/50 px-4 py-3 text-white placeholder-slate-500 transition-all focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 focus:outline-none"
                       />
                     </div>
 
                     <div>
-                      <label class="block text-sm font-medium text-slate-300 mb-2">
+                      <label class="mb-2 block text-sm font-medium text-slate-300">
                         Full Name <span class="text-slate-500">(optional)</span>
                       </label>
                       <input
                         type="text"
                         value={name()}
-                        onInput={(e) => setName(e.currentTarget.value)}
+                        onInput={e => setName(e.currentTarget.value)}
                         placeholder="John Doe"
-                        class="w-full px-4 py-3 bg-slate-900/50 border border-slate-600 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition-all"
+                        class="w-full rounded-xl border border-slate-600 bg-slate-900/50 px-4 py-3 text-white placeholder-slate-500 transition-all focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 focus:outline-none"
                       />
                     </div>
 
                     <Show when={error()}>
-                      <div class="flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400 text-sm">
-                        <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      <div class="flex items-center gap-2 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-400">
+                        <svg
+                          class="h-4 w-4 flex-shrink-0"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            stroke-width="2"
+                            d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                          />
                         </svg>
                         {error()}
                       </div>
@@ -287,25 +355,46 @@ const UpgradeModal: Component<UpgradeModalProps> = (props) => {
                     <button
                       onClick={handleCheckout}
                       disabled={isLoading()}
-                      class={`w-full py-4 rounded-xl font-semibold text-white transition-all flex items-center justify-center gap-2 ${
+                      class={`flex w-full items-center justify-center gap-2 rounded-xl py-4 font-semibold text-white transition-all ${
                         selectedTier() === 'team'
                           ? 'bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-400 hover:to-pink-400'
                           : 'bg-gradient-to-r from-indigo-500 to-blue-500 hover:from-indigo-400 hover:to-blue-400'
-                      } disabled:opacity-50 disabled:cursor-not-allowed`}
+                      } disabled:cursor-not-allowed disabled:opacity-50`}
                     >
                       {isLoading() ? (
                         <>
-                          <svg class="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
-                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
-                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                          <svg class="h-5 w-5 animate-spin" fill="none" viewBox="0 0 24 24">
+                            <circle
+                              class="opacity-25"
+                              cx="12"
+                              cy="12"
+                              r="10"
+                              stroke="currentColor"
+                              stroke-width="4"
+                            />
+                            <path
+                              class="opacity-75"
+                              fill="currentColor"
+                              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                            />
                           </svg>
                           Processing...
                         </>
                       ) : (
                         <>
                           Continue to Checkout
-                          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+                          <svg
+                            class="h-4 w-4"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                              stroke-width="2"
+                              d="M9 5l7 7-7 7"
+                            />
                           </svg>
                         </>
                       )}
@@ -313,14 +402,24 @@ const UpgradeModal: Component<UpgradeModalProps> = (props) => {
 
                     <div class="flex items-center justify-center gap-4 text-xs text-slate-500">
                       <div class="flex items-center gap-1">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                        <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            stroke-width="2"
+                            d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
+                          />
                         </svg>
                         Secure checkout
                       </div>
                       <div class="flex items-center gap-1">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+                        <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            stroke-width="2"
+                            d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"
+                          />
                         </svg>
                         Powered by Stripe
                       </div>
@@ -329,25 +428,35 @@ const UpgradeModal: Component<UpgradeModalProps> = (props) => {
                 </div>
 
                 {/* Right: Order Summary */}
-                <div class="bg-slate-800/50 rounded-2xl p-6 border border-slate-700/50">
-                  <h3 class="text-lg font-semibold text-white mb-4">Order Summary</h3>
-                  
-                  <div class="flex items-center justify-between py-4 border-b border-slate-700">
+                <div class="rounded-2xl border border-slate-700/50 bg-slate-800/50 p-6">
+                  <h3 class="mb-4 text-lg font-semibold text-white">Order Summary</h3>
+
+                  <div class="flex items-center justify-between border-b border-slate-700 py-4">
                     <div>
-                      <p class="text-white font-medium">OMG {TIERS[selectedTier()].name}</p>
+                      <p class="font-medium text-white">OMG {TIERS[selectedTier()].name}</p>
                       <p class="text-sm text-slate-400">Monthly subscription</p>
                     </div>
                     <p class="text-xl font-bold text-white">${TIERS[selectedTier()].price}</p>
                   </div>
 
-                  <div class="py-4 border-b border-slate-700">
-                    <p class="text-sm text-slate-400 mb-3">What's included:</p>
+                  <div class="border-b border-slate-700 py-4">
+                    <p class="mb-3 text-sm text-slate-400">What's included:</p>
                     <ul class="space-y-2">
                       <For each={TIERS[selectedTier()].features}>
-                        {(feature) => (
+                        {feature => (
                           <li class="flex items-center gap-2 text-sm text-slate-300">
-                            <svg class="w-4 h-4 text-green-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                            <svg
+                              class="h-4 w-4 flex-shrink-0 text-green-400"
+                              fill="none"
+                              stroke="currentColor"
+                              viewBox="0 0 24 24"
+                            >
+                              <path
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                stroke-width="2"
+                                d="M5 13l4 4L19 7"
+                              />
                             </svg>
                             {feature.name}
                           </li>
@@ -358,13 +467,21 @@ const UpgradeModal: Component<UpgradeModalProps> = (props) => {
 
                   <div class="flex items-center justify-between pt-4">
                     <p class="text-slate-400">Total today</p>
-                    <p class="text-2xl font-bold text-white">${TIERS[selectedTier()].price}<span class="text-sm text-slate-400 font-normal">/mo</span></p>
+                    <p class="text-2xl font-bold text-white">
+                      ${TIERS[selectedTier()].price}
+                      <span class="text-sm font-normal text-slate-400">/mo</span>
+                    </p>
                   </div>
 
-                  <div class="mt-4 p-3 bg-green-500/10 border border-green-500/30 rounded-xl">
-                    <p class="text-sm text-green-400 flex items-center gap-2">
-                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  <div class="mt-4 rounded-xl border border-green-500/30 bg-green-500/10 p-3">
+                    <p class="flex items-center gap-2 text-sm text-green-400">
+                      <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          stroke-width="2"
+                          d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+                        />
                       </svg>
                       14-day money-back guarantee
                     </p>
@@ -375,12 +492,12 @@ const UpgradeModal: Component<UpgradeModalProps> = (props) => {
 
             {/* Step 3: Processing */}
             <Show when={step() === 'processing'}>
-              <div class="text-center py-12">
-                <div class="relative w-20 h-20 mx-auto mb-6">
+              <div class="py-12 text-center">
+                <div class="relative mx-auto mb-6 h-20 w-20">
                   <div class="absolute inset-0 rounded-full border-4 border-slate-700" />
-                  <div class="absolute inset-0 rounded-full border-4 border-indigo-500 border-t-transparent animate-spin" />
+                  <div class="absolute inset-0 animate-spin rounded-full border-4 border-indigo-500 border-t-transparent" />
                 </div>
-                <h2 class="text-2xl font-bold text-white mb-2">Preparing Checkout</h2>
+                <h2 class="mb-2 text-2xl font-bold text-white">Preparing Checkout</h2>
                 <p class="text-slate-400">Redirecting you to secure payment...</p>
               </div>
             </Show>

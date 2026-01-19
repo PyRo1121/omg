@@ -1,0 +1,758 @@
+// API Client for OMG Dashboard
+// All authenticated requests include Bearer token
+
+const API_BASE = 'https://api.pyro1121.com';
+
+// Get stored session token
+export function getSessionToken(): string | null {
+  return localStorage.getItem('omg_session_token');
+}
+
+// Set session token
+export function setSessionToken(token: string): void {
+  localStorage.setItem('omg_session_token', token);
+}
+
+// Clear session
+export function clearSession(): void {
+  localStorage.removeItem('omg_session_token');
+}
+
+// API request helper with auth
+async function apiRequest<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  const token = getSessionToken();
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...((options.headers as Record<string, string>) || {}),
+  };
+
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  const response = await fetch(`${API_BASE}${endpoint}`, {
+    ...options,
+    headers,
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new ApiError(data.error || 'Request failed', response.status);
+  }
+
+  return data as T;
+}
+
+// Custom error class
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public status: number
+  ) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
+// ============================================
+// Auth API
+// ============================================
+
+export interface SendCodeResponse {
+  success: boolean;
+  message?: string;
+  error?: string;
+}
+
+export async function sendCode(email: string): Promise<SendCodeResponse> {
+  return apiRequest('/api/auth/send-code', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  });
+}
+
+export interface VerifyCodeResponse {
+  success: boolean;
+  token?: string;
+  expires_at?: string;
+  user?: {
+    id: string;
+    email: string;
+    name: string | null;
+  };
+  error?: string;
+}
+
+export async function verifyCode(email: string, code: string): Promise<VerifyCodeResponse> {
+  return apiRequest('/api/auth/verify-code', {
+    method: 'POST',
+    body: JSON.stringify({ email, code }),
+  });
+}
+
+export interface VerifySessionResponse {
+  valid: boolean;
+  user?: User;
+  expires_at?: string;
+}
+
+export async function verifySession(token: string): Promise<VerifySessionResponse> {
+  return apiRequest('/api/auth/verify-session', {
+    method: 'POST',
+    body: JSON.stringify({ token }),
+  });
+}
+
+export async function logout(): Promise<void> {
+  const token = getSessionToken();
+  if (token) {
+    await apiRequest('/api/auth/logout', {
+      method: 'POST',
+      body: JSON.stringify({ token }),
+    });
+  }
+  clearSession();
+}
+
+// ============================================
+// Dashboard API
+// ============================================
+
+export interface User {
+  id: string;
+  email: string;
+  name: string | null;
+  avatar_url: string | null;
+  created_at: string;
+}
+
+export interface License {
+  id: string;
+  license_key: string;
+  tier: 'free' | 'pro' | 'team' | 'enterprise';
+  status: 'active' | 'suspended' | 'cancelled' | 'expired';
+  max_machines: number;
+  expires_at: string | null;
+  features: string[];
+}
+
+export interface Machine {
+  id: string;
+  machine_id: string;
+  hostname: string | null;
+  os: string | null;
+  arch: string | null;
+  omg_version: string | null;
+  last_seen_at: string;
+  first_seen_at: string;
+  is_active: number;
+}
+
+export interface UsageStats {
+  total_commands: number;
+  total_packages_installed: number;
+  total_packages_searched: number;
+  total_runtimes_switched: number;
+  total_sbom_generated: number;
+  total_vulnerabilities_found: number;
+  total_time_saved_ms: number;
+  current_streak: number;
+  longest_streak: number;
+  daily: Array<{
+    date: string;
+    commands_run: number;
+    time_saved_ms: number;
+  }>;
+}
+
+export interface Achievement {
+  id: string;
+  emoji: string;
+  name: string;
+  description: string;
+  unlocked: boolean;
+  unlocked_at?: string;
+}
+
+export interface Subscription {
+  status: string;
+  current_period_end: string;
+  cancel_at_period_end: number;
+}
+
+export interface Invoice {
+  id: string;
+  amount_cents: number;
+  currency: string;
+  status: string;
+  invoice_url: string | null;
+  invoice_pdf: string | null;
+  period_start: string;
+  period_end: string;
+  created_at: string;
+}
+
+export interface Session {
+  id: string;
+  ip_address: string | null;
+  user_agent: string | null;
+  created_at: string;
+  expires_at: string;
+  is_current: boolean;
+}
+
+export interface AuditLogEntry {
+  id: string;
+  action: string;
+  resource_type: string | null;
+  resource_id: string | null;
+  ip_address: string | null;
+  created_at: string;
+}
+
+export interface DashboardData {
+  user: User;
+  license: License;
+  machines: Machine[];
+  usage: UsageStats;
+  achievements: Achievement[];
+  subscription: Subscription | null;
+  invoices: Invoice[];
+  is_admin?: boolean;
+}
+
+export async function getDashboard(): Promise<DashboardData> {
+  return apiRequest('/api/dashboard');
+}
+
+export async function updateProfile(name: string): Promise<{ success: boolean }> {
+  return apiRequest('/api/user/profile', {
+    method: 'PUT',
+    body: JSON.stringify({ name }),
+  });
+}
+
+export async function regenerateLicense(): Promise<{
+  success: boolean;
+  license_key: string;
+  message: string;
+}> {
+  return apiRequest('/api/license/regenerate', {
+    method: 'POST',
+  });
+}
+
+export async function revokeMachine(machineId: string): Promise<{ success: boolean }> {
+  return apiRequest('/api/machines/revoke', {
+    method: 'POST',
+    body: JSON.stringify({ machine_id: machineId }),
+  });
+}
+
+export async function getSessions(): Promise<{ sessions: Session[] }> {
+  return apiRequest('/api/sessions');
+}
+
+export async function revokeSession(sessionId: string): Promise<{ success: boolean }> {
+  return apiRequest('/api/sessions/revoke', {
+    method: 'POST',
+    body: JSON.stringify({ session_id: sessionId }),
+  });
+}
+
+export async function getAuditLog(): Promise<{ logs: AuditLogEntry[] }> {
+  return apiRequest('/api/audit-log');
+}
+
+// ============================================
+// Team Management API (Team+ tiers only)
+// ============================================
+
+export interface TeamMember {
+  id: string;
+  machine_id: string;
+  hostname: string | null;
+  os: string | null;
+  arch: string | null;
+  omg_version: string | null;
+  user_name: string | null;
+  user_email: string | null;
+  is_active: boolean;
+  first_seen_at: string;
+  last_seen_at: string;
+  total_commands: number;
+  total_packages: number;
+  total_time_saved_ms: number;
+  commands_last_7d: number;
+  last_active: string | null;
+}
+
+export interface TeamData {
+  license: {
+    tier: string;
+    max_seats: number;
+    status: string;
+  };
+  members: TeamMember[];
+  daily_usage: Array<{
+    date: string;
+    machine_id: string;
+    commands_run: number;
+    time_saved_ms: number;
+  }>;
+  totals: {
+    total_machines: number;
+    active_machines: number;
+    total_commands: number;
+    total_time_saved_ms: number;
+  };
+}
+
+export async function getTeamMembers(): Promise<TeamData> {
+  return apiRequest('/api/team/members');
+}
+
+export async function revokeTeamMember(machineId: string): Promise<{ success: boolean }> {
+  return apiRequest('/api/team/revoke', {
+    method: 'POST',
+    body: JSON.stringify({ machine_id: machineId }),
+  });
+}
+
+export async function createCheckout(email: string, priceId: string): Promise<{ url: string }> {
+  return apiRequest('/api/billing/checkout', {
+    method: 'POST',
+    body: JSON.stringify({ email, priceId }),
+  });
+}
+
+export async function openBillingPortal(email: string): Promise<{ success: boolean; url: string }> {
+  return apiRequest('/api/billing/portal', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  });
+}
+
+// ============================================
+// Admin API (only accessible to admin user)
+// ============================================
+
+export interface AdminOverview {
+  overview: {
+    total_users: number;
+    active_licenses: number;
+    active_machines: number;
+    total_installs: number;
+    total_commands: number;
+    mrr: number;
+    tiers: {
+      free: number;
+      pro: number;
+      team: number;
+      enterprise: number;
+    };
+  };
+  tiers: Array<{ tier: string; count: number }>;
+  usage: {
+    total_commands: number;
+    total_packages_installed: number;
+    total_searches: number;
+    total_time_saved_ms: number;
+  };
+  daily_active_users: Array<{ date: string; active_users: number; commands: number }>;
+  recent_signups: Array<{ date: string; count: number }>;
+  installs_by_platform: Array<{ platform: string; count: number }>;
+  installs_by_version: Array<{ version: string; count: number }>;
+  subscriptions: Array<{ status: string; count: number }>;
+}
+
+export interface AdminUser {
+  id: string;
+  email: string;
+  company: string | null;
+  customer_tier: string;
+  created_at: string;
+  license_key: string;
+  tier: string;
+  status: string;
+  max_seats: number;
+  machine_count: number;
+  machines_count: number;
+  total_commands: number;
+  last_active: string | null;
+}
+
+export interface AdminUsersResponse {
+  users: AdminUser[];
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    pages: number;
+  };
+}
+
+export interface AdminActivity {
+  id: string;
+  type: 'signup' | 'activation' | 'install' | 'upgrade' | 'command' | 'login';
+  description: string;
+  user_id: string;
+  user_email?: string;
+  email?: string;
+  hostname?: string;
+  platform?: string;
+  version?: string;
+  timestamp: string;
+  created_at: string;
+}
+
+export interface AdminHealth {
+  active_users_today: number;
+  active_users_week: number;
+  commands_today: number;
+  new_users_today: number;
+  installs_today: number;
+  timestamp: string;
+}
+
+export async function getAdminDashboard(): Promise<AdminOverview> {
+  return apiRequest('/api/admin/dashboard');
+}
+
+// Comprehensive analytics data
+export interface AdminAnalytics {
+  dau: number;
+  wau: number;
+  mau: number;
+  events_today: number;
+  retention_rate: number;
+  commands_by_type: Array<{ command: string; count: number }>;
+  features_by_usage: Array<{ feature: string; count: number }>;
+  errors_by_type: Array<{ error_type: string; count: number }>;
+  dau_trend: Array<{ date: string; active_users: number }>;
+  commands_trend: Array<{ date: string; commands: number }>;
+  sessions_trend: Array<{ date: string; sessions: number }>;
+  performance: Record<string, { p50: number; p95: number; p99: number; count: number }>;
+  version_distribution: Array<{ version: string; count: number }>;
+  platform_distribution: Array<{ platform: string; count: number }>;
+  // Gold-tier analytics
+  funnel: {
+    installs: number;
+    activated: number;
+    first_command: number;
+    engaged_7d: number;
+    power_users: number;
+  };
+  cohorts: Array<{ cohort_week: string; users: number; active_this_week: number }>;
+  stage_distribution: Array<{ stage: string; count: number }>;
+  geo_distribution: Array<{ timezone: string; users: number }>;
+  churn_risk: {
+    at_risk_users: number;
+  };
+  growth: {
+    new_users_7d: number;
+    new_users_prev_7d: number;
+    growth_rate: number;
+    new_paid_7d: number;
+  };
+}
+
+export async function getAdminAnalytics(): Promise<AdminAnalytics> {
+  return apiRequest('/api/admin/analytics');
+}
+
+export async function getAdminUsers(
+  page = 1,
+  limit = 50,
+  search = ''
+): Promise<AdminUsersResponse> {
+  const params = new URLSearchParams({ page: page.toString(), limit: limit.toString() });
+  if (search) params.set('search', search);
+  return apiRequest(`/api/admin/users?${params}`);
+}
+
+// Rich user detail response with Stripe integration
+export interface AdminUserDetail {
+  request_id: string;
+  user: {
+    id: string;
+    email: string;
+    company: string | null;
+    stripe_customer_id: string | null;
+    tier: string;
+    created_at: string;
+    created_at_relative: string;
+  };
+  license: {
+    id: string;
+    license_key: string;
+    tier: string;
+    status: string;
+    max_seats: number;
+    expires_at: string | null;
+  } | null;
+  machines: Array<{
+    id: string;
+    machine_id: string;
+    hostname: string;
+    os: string;
+    arch: string;
+    omg_version: string;
+    is_active: boolean;
+    first_seen_at: string;
+    last_seen_at: string;
+  }>;
+  usage: {
+    daily: Array<{
+      date: string;
+      commands_run: number;
+      packages_installed: number;
+      time_saved_ms: number;
+    }>;
+    summary: {
+      total_commands: number;
+      total_packages: number;
+      total_searches: number;
+      total_time_saved_ms: number;
+      active_days: number;
+      first_active: string | null;
+      last_active: string | null;
+    } | null;
+  };
+  engagement: {
+    commands_last_7d: number;
+    commands_last_30d: number;
+    active_days_last_30d: number;
+    avg_daily_commands: number;
+    is_power_user: boolean;
+    is_at_risk: boolean;
+  };
+  ltv: {
+    total_paid: number;
+    invoice_count: number;
+    months_subscribed: number;
+  };
+  sessions: Array<{
+    id: string;
+    ip_address: string;
+    user_agent: string;
+    created_at: string;
+    expires_at: string;
+  }>;
+  audit_log: Array<{
+    id: string;
+    action: string;
+    resource_type: string | null;
+    ip_address: string | null;
+    created_at: string;
+    metadata: string | null;
+  }>;
+  achievements: Array<{
+    achievement_id: string;
+    unlocked_at: string;
+  }>;
+  subscription: {
+    id: string;
+    status: string;
+    stripe_subscription_id: string | null;
+    current_period_end: string | null;
+    cancel_at_period_end: boolean;
+  } | null;
+  invoices: Array<{
+    id: string;
+    amount_cents: number;
+    status: string;
+    created_at: string;
+  }>;
+  stripe: {
+    customer: {
+      id: string;
+      email: string;
+      balance: number;
+      delinquent: boolean;
+    };
+    subscriptions: Array<{
+      id: string;
+      status: string;
+      current_period_end: number;
+      cancel_at_period_end: boolean;
+      plan: { nickname: string; unit_amount: number; interval: string } | null;
+    }>;
+    payment_methods: Array<{
+      id: string;
+      type: string;
+      card: { brand: string; last4: string; exp_month: number; exp_year: number } | null;
+    }>;
+    invoices: Array<{
+      id: string;
+      number: string;
+      status: string;
+      amount_paid: number;
+      hosted_invoice_url: string;
+      invoice_pdf: string;
+    }>;
+    total_spent: number;
+  } | null;
+}
+
+export async function getAdminUserDetail(userId: string): Promise<AdminUserDetail> {
+  return apiRequest(`/api/admin/user?id=${userId}`);
+}
+
+export async function updateAdminUser(
+  userId: string,
+  updates: { tier?: string; max_seats?: number; status?: string }
+): Promise<{ success: boolean }> {
+  return apiRequest('/api/admin/user', {
+    method: 'PUT',
+    body: JSON.stringify({ user_id: userId, ...updates }),
+  });
+}
+
+export async function getAdminActivity(): Promise<{ activity: AdminActivity[] }> {
+  return apiRequest('/api/admin/activity');
+}
+
+export async function getAdminHealth(): Promise<AdminHealth> {
+  return apiRequest('/api/admin/health');
+}
+
+// Advanced Analytics
+export interface AdminCohorts {
+  request_id: string;
+  cohorts: Array<{ 
+    month: string;
+    users: number;
+    retained: number;
+    retention_rate: number;
+    cohort_week?: string; 
+    weeks_since_signup?: number; 
+    active_users?: number;
+  }>;
+  cohort_sizes: Array<{ cohort_week: string; size: number }>;
+}
+
+export interface AdminRevenue {
+  request_id: string;
+  mrr: number;
+  arr: number;
+  total_revenue: number;
+  paying_customers: number;
+  arpu: number;
+  monthly: Array<{ month: string; revenue: number; new_subscriptions: number }>;
+  monthly_revenue: Array<{ month: string; revenue: number; transactions: number }>;
+  revenue_by_tier: Array<{ tier: string; total_revenue: number; customers: number }>;
+  churn: { churned_30d: number; active: number; rate: string };
+  ltv_by_tier: Array<{ tier: string; avg_ltv: number; max_ltv: number }>;
+}
+
+export interface AdminAuditLogResponse {
+  request_id: string;
+  logs: Array<{
+    id: string;
+    user_id: string;
+    user_email: string;
+    action: string;
+    resource_type: string | null;
+    resource_id: string | null;
+    ip_address: string | null;
+    metadata: string | null;
+    created_at: string;
+  }>;
+  action_types: Array<{ action: string; count: number }>;
+  pagination: { page: number; limit: number; total: number; pages: number };
+}
+
+export async function getAdminCohorts(): Promise<AdminCohorts> {
+  return apiRequest('/api/admin/cohorts');
+}
+
+export async function getAdminRevenue(): Promise<AdminRevenue> {
+  return apiRequest('/api/admin/revenue');
+}
+
+export async function getAdminAuditLog(
+  page = 1,
+  limit = 50,
+  action = ''
+): Promise<AdminAuditLogResponse> {
+  const params = new URLSearchParams({ page: page.toString(), limit: limit.toString() });
+  if (action) params.set('action', action);
+  return apiRequest(`/api/admin/audit-log?${params}`);
+}
+
+// Data Export (returns download URLs)
+export function getAdminExportUsersUrl(): string {
+  return `${API_BASE}/api/admin/export/users`;
+}
+
+export function getAdminExportUsageUrl(days = 30): string {
+  return `${API_BASE}/api/admin/export/usage?days=${days}`;
+}
+
+export function getAdminExportAuditUrl(days = 30): string {
+  return `${API_BASE}/api/admin/export/audit?days=${days}`;
+}
+
+// ============================================
+// Helpers
+// ============================================
+
+export function formatTimeSaved(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+  if (ms < 3600000) return `${(ms / 60000).toFixed(1)}min`;
+  if (ms < 86400000) return `${(ms / 3600000).toFixed(1)}hr`;
+  return `${(ms / 86400000).toFixed(1)} days`;
+}
+
+export function formatDate(dateStr: string): string {
+  return new Date(dateStr).toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  });
+}
+
+export function formatRelativeTime(dateStr: string): string {
+  const date = new Date(dateStr);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMs / 3600000);
+  const diffDays = Math.floor(diffMs / 86400000);
+
+  if (diffMins < 1) return 'Just now';
+  if (diffMins < 60) return `${diffMins}m ago`;
+  if (diffHours < 24) return `${diffHours}h ago`;
+  if (diffDays < 7) return `${diffDays}d ago`;
+  return formatDate(dateStr);
+}
+
+export function getTierColor(tier: string): string {
+  switch (tier) {
+    case 'pro':
+      return 'from-indigo-500 to-blue-500';
+    case 'team':
+      return 'from-purple-500 to-pink-500';
+    case 'enterprise':
+      return 'from-amber-500 to-orange-500';
+    default:
+      return 'from-emerald-500 to-teal-500';
+  }
+}
+
+export function getTierBadgeColor(tier: string): string {
+  switch (tier) {
+    case 'pro':
+      return 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30';
+    case 'team':
+      return 'bg-purple-500/20 text-purple-300 border-purple-500/30';
+    case 'enterprise':
+      return 'bg-amber-500/20 text-amber-300 border-amber-500/30';
+    default:
+      return 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30';
+  }
+}

@@ -103,6 +103,9 @@ fn main() -> Result<()> {
 /// This eliminates the overhead of creating a new runtime for each command
 #[allow(clippy::too_many_lines)]
 async fn async_main() -> Result<()> {
+    // Start analytics timer
+    let cmd_start = omg_lib::core::analytics::start_timer();
+
     // Initialize tracing
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -390,6 +393,21 @@ async fn async_main() -> Result<()> {
             commands::stats()?;
         }
     }
+
+    // Track command execution for analytics
+    let cmd_duration = omg_lib::core::analytics::end_timer(cmd_start);
+    let cmd_name = std::env::args().nth(1).unwrap_or_default();
+    let subcmd = std::env::args().nth(2);
+    omg_lib::core::analytics::track_command(&cmd_name, subcmd.as_deref(), cmd_duration, true);
+
+    // Send heartbeat if needed
+    omg_lib::core::analytics::maybe_heartbeat();
+
+    // Sync usage to dashboard (wait briefly to ensure it completes)
+    omg_lib::core::usage::sync_usage_now().await;
+
+    // Flush analytics events
+    omg_lib::core::analytics::maybe_flush().await;
 
     Ok(())
 }

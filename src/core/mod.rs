@@ -1,5 +1,6 @@
 //! Core module - shared types, database, and utilities
 
+pub mod analytics;
 pub mod archive;
 pub mod client;
 pub mod completion;

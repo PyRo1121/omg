@@ -1,4 +1,4 @@
-@import "tailwindcss";
+@import 'tailwindcss';
 
 :root {
   --color-primary: #6366f1;
@@ -20,13 +20,18 @@ html {
 
 body {
   margin: 0;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-family:
+    'Inter',
+    -apple-system,
+    BlinkMacSystemFont,
+    sans-serif;
   background: var(--color-bg);
   color: var(--color-text);
   line-height: 1.6;
 }
 
-code, pre {
+code,
+pre {
   font-family: 'JetBrains Mono', monospace;
 }
 
@@ -50,14 +55,20 @@ code, pre {
   padding: 1px;
   border-radius: 1rem;
   background: linear-gradient(135deg, #6366f1, #22d3ee, #a855f7);
-  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
   -webkit-mask-composite: xor;
   mask-composite: exclude;
 }
 
 .glow {
-  box-shadow: 0 0 60px rgba(99, 102, 241, 0.3), 0 0 100px rgba(34, 211, 238, 0.2);
+  box-shadow:
+    0 0 60px rgba(99, 102, 241, 0.3),
+    0 0 100px rgba(34, 211, 238, 0.2);
 }
 
 .terminal {
@@ -80,9 +91,15 @@ code, pre {
   border-radius: 50%;
 }
 
-.terminal-dot.red { background: #f38ba8; }
-.terminal-dot.yellow { background: #f9e2af; }
-.terminal-dot.green { background: #a6e3a1; }
+.terminal-dot.red {
+  background: #f38ba8;
+}
+.terminal-dot.yellow {
+  background: #f9e2af;
+}
+.terminal-dot.green {
+  background: #a6e3a1;
+}
 
 .terminal-body {
   padding: 1.5rem;
@@ -198,8 +215,13 @@ code, pre {
 }
 
 @keyframes float {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-10px); }
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
 }
 
 .float-animation {
@@ -207,8 +229,13 @@ code, pre {
 }
 
 @keyframes pulse-glow {
-  0%, 100% { box-shadow: 0 0 20px rgba(99, 102, 241, 0.3); }
-  50% { box-shadow: 0 0 40px rgba(99, 102, 241, 0.6); }
+  0%,
+  100% {
+    box-shadow: 0 0 20px rgba(99, 102, 241, 0.3);
+  }
+  50% {
+    box-shadow: 0 0 40px rgba(99, 102, 241, 0.6);
+  }
 }
 
 .pulse-glow {
@@ -216,8 +243,15 @@ code, pre {
 }
 
 @keyframes pulse-slow {
-  0%, 100% { opacity: 0.3; transform: scale(1); }
-  50% { opacity: 0.6; transform: scale(1.1); }
+  0%,
+  100% {
+    opacity: 0.3;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.6;
+    transform: scale(1.1);
+  }
 }
 
 .animate-pulse-slow {
@@ -225,8 +259,13 @@ code, pre {
 }
 
 @keyframes bounce-slow {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-8px); }
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
 }
 
 .animate-bounce-slow {
@@ -234,7 +273,7 @@ code, pre {
 }
 
 .glow-strong {
-  box-shadow: 
+  box-shadow:
     0 0 20px rgba(99, 102, 241, 0.3),
     0 0 40px rgba(99, 102, 241, 0.2),
     0 0 60px rgba(34, 211, 238, 0.1),
@@ -272,24 +311,34 @@ code, pre {
 
 /* Modal Animations */
 @keyframes fade-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 @keyframes scale-in {
-  from { 
-    opacity: 0; 
-    transform: scale(0.95) translateY(10px); 
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(10px);
   }
-  to { 
-    opacity: 1; 
-    transform: scale(1) translateY(0); 
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
   }
 }
 
 @keyframes confetti-fall {
-  0% { transform: translateY(-100%) rotate(0deg); opacity: 1; }
-  100% { transform: translateY(100vh) rotate(720deg); opacity: 0; }
+  0% {
+    transform: translateY(-100%) rotate(0deg);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(100vh) rotate(720deg);
+    opacity: 0;
+  }
 }
 
 .animate-fade-in {
