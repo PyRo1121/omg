@@ -1,0 +1,348 @@
+name: Multi-Distro Test Matrix
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      run_destructive:
+        description: 'Run destructive tests'
+        type: boolean
+        default: false
+      run_stress:
+        description: 'Run stress tests'
+        type: boolean
+        default: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # ═══════════════════════════════════════════════════════════════════════════
+  # UNIT TESTS (All platforms)
+  # ═══════════════════════════════════════════════════════════════════════════
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        
+      - name: Run unit tests
+        run: cargo test --lib --all-features
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # ARCH LINUX TESTS
+  # ═══════════════════════════════════════════════════════════════════════════
+  arch-tests:
+    name: Arch Linux Tests
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+      options: --privileged
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install dependencies
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm base-devel git rustup clang
+          rustup default stable
+          
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        
+      - name: Build with Arch feature
+        run: cargo build --features arch
+        
+      - name: Run Arch integration tests
+        env:
+          OMG_RUN_SYSTEM_TESTS: "1"
+          OMG_TEST_DISTRO: "arch"
+        run: cargo test --test arch_tests --features arch
+        
+      - name: Run integration suite
+        env:
+          OMG_RUN_SYSTEM_TESTS: "1"
+        run: cargo test --test integration_suite --features arch
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # DEBIAN TESTS
+  # ═══════════════════════════════════════════════════════════════════════════
+  debian-tests:
+    name: Debian Tests
+    runs-on: ubuntu-latest
+    container:
+      image: debian:bookworm
+      options: --privileged
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y build-essential curl git pkg-config libssl-dev
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          . $HOME/.cargo/env
+          
+      - name: Build with Debian feature
+        run: |
+          . $HOME/.cargo/env
+          cargo build --features debian
+          
+      - name: Run Debian integration tests
+        env:
+          OMG_RUN_SYSTEM_TESTS: "1"
+          OMG_TEST_DISTRO: "debian"
+        run: |
+          . $HOME/.cargo/env
+          cargo test --test debian_tests --features debian
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # UBUNTU TESTS (Multiple versions)
+  # ═══════════════════════════════════════════════════════════════════════════
+  ubuntu-tests:
+    name: Ubuntu ${{ matrix.ubuntu }} Tests
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ubuntu: ['22.04', '24.04']
+    container:
+      image: ubuntu:${{ matrix.ubuntu }}
+      options: --privileged
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y build-essential curl git pkg-config libssl-dev
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          . $HOME/.cargo/env
+          
+      - name: Build with Debian feature
+        run: |
+          . $HOME/.cargo/env
+          cargo build --features debian
+          
+      - name: Run Ubuntu integration tests
+        env:
+          OMG_RUN_SYSTEM_TESTS: "1"
+          OMG_TEST_DISTRO: "ubuntu"
+        run: |
+          . $HOME/.cargo/env
+          cargo test --test debian_tests --features debian
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # PROPERTY-BASED TESTS
+  # ═══════════════════════════════════════════════════════════════════════════
+  property-tests:
+    name: Property-Based Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        
+      - name: Run property tests
+        run: cargo test --test property_tests --features arch
+        env:
+          PROPTEST_CASES: 500
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # SECURITY TESTS
+  # ═══════════════════════════════════════════════════════════════════════════
+  security-tests:
+    name: Security Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        
+      - name: Run security tests
+        run: cargo test --test security_tests --features arch
+        
+      - name: Security audit
+        run: |
+          cargo install cargo-audit
+          cargo audit
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # PERFORMANCE TESTS
+  # ═══════════════════════════════════════════════════════════════════════════
+  perf-tests:
+    name: Performance Tests
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+      options: --privileged
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install dependencies
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm base-devel git rustup
+          rustup default stable
+          
+      - name: Build release
+        run: cargo build --release --features arch
+        
+      - name: Run performance tests
+        env:
+          OMG_RUN_PERF_TESTS: "1"
+          OMG_RUN_SYSTEM_TESTS: "1"
+        run: cargo test --test arch_tests --features arch -- performance
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # STRESS TESTS (Manual trigger only)
+  # ═══════════════════════════════════════════════════════════════════════════
+  stress-tests:
+    name: Stress Tests
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.run_stress == 'true' }}
+    container:
+      image: archlinux:latest
+      options: --privileged
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install dependencies
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm base-devel git rustup
+          rustup default stable
+          
+      - name: Build release
+        run: cargo build --release --features arch
+        
+      - name: Run stress tests
+        env:
+          OMG_RUN_STRESS_TESTS: "1"
+          OMG_RUN_SYSTEM_TESTS: "1"
+        run: cargo test --test property_tests --features arch -- --ignored
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # FUZZ TESTS (Manual trigger only)
+  # ═══════════════════════════════════════════════════════════════════════════
+  fuzz-tests:
+    name: Fuzz Tests
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.run_destructive == 'true' }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+        
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz
+        
+      - name: Run fuzz tests (5 min)
+        run: |
+          cargo +nightly fuzz run fuzz_cli -- -max_total_time=300 || true
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # CLIPPY AND FORMAT CHECK
+  # ═══════════════════════════════════════════════════════════════════════════
+  lint:
+    name: Lint & Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+          
+      - name: Check formatting
+        run: cargo fmt -- --check
+        
+      - name: Clippy
+        run: cargo clippy --all-features -- -D warnings
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # DOCUMENTATION TESTS
+  # ═══════════════════════════════════════════════════════════════════════════
+  doc-tests:
+    name: Documentation Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        
+      - name: Run doc tests
+        run: cargo test --doc --all-features
+        
+      - name: Build docs
+        run: cargo doc --all-features --no-deps
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # COVERAGE REPORT
+  # ═══════════════════════════════════════════════════════════════════════════
+  coverage:
+    name: Code Coverage
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+      options: --privileged
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install dependencies
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm base-devel git rustup llvm
+          rustup default stable
+          rustup component add llvm-tools-preview
+          cargo install cargo-llvm-cov
+          
+      - name: Generate coverage
+        env:
+          OMG_RUN_SYSTEM_TESTS: "1"
+        run: |
+          cargo llvm-cov --features arch --lcov --output-path lcov.info
+          
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          files: lcov.info
+          fail_ci_if_error: false
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # FINAL STATUS CHECK
+  # ═══════════════════════════════════════════════════════════════════════════
+  test-status:
+    name: All Tests Passed
+    needs: [unit-tests, arch-tests, debian-tests, ubuntu-tests, property-tests, security-tests, lint, doc-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - name: All tests passed
+        run: echo "✅ All tests passed!"

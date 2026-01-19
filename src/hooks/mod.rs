@@ -315,6 +315,13 @@ pub fn build_path_additions<S: std::hash::BuildHasher>(
                 None => continue,
             },
             "rust" => {
+                // Skip if rustup is installed - let rustup manage Rust
+                let rustup_cargo = dirs::home_dir()
+                    .map(|h| h.join(".cargo/bin/rustc"))
+                    .filter(|p| p.exists());
+                if rustup_cargo.is_some() {
+                    continue;
+                }
                 let toolchain = RustToolchainSpec::parse(version)
                     .ok()
                     .map_or_else(|| version.clone(), |spec| spec.name());

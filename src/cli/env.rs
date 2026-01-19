@@ -32,7 +32,7 @@ pub async fn check() -> Result<()> {
     report.print();
 
     if report.has_drift {
-        std::process::exit(1);
+        anyhow::bail!("Environment drift detected")
     }
 
     Ok(())

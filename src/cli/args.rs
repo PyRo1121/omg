@@ -79,6 +79,80 @@ pub enum Commands {
         package: String,
     },
 
+    /// Explain why a package is installed (dependency chain)
+    Why {
+        /// Package name to explain
+        package: String,
+        /// Show reverse dependencies (what depends on this)
+        #[arg(short, long)]
+        reverse: bool,
+    },
+
+    /// Show what packages would be updated
+    Outdated {
+        /// Show security updates only
+        #[arg(short, long)]
+        security: bool,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Pin a package to prevent updates
+    Pin {
+        /// Package or runtime to pin (e.g., "node@20.10.0" or "gcc")
+        target: String,
+        /// Unpin instead of pin
+        #[arg(short, long)]
+        unpin: bool,
+        /// List all pins
+        #[arg(short, long)]
+        list: bool,
+    },
+
+    /// Show disk usage by packages
+    Size {
+        /// Show dependency tree for a specific package
+        #[arg(short, long)]
+        tree: Option<String>,
+        /// Number of top packages to show
+        #[arg(short, long, default_value = "20")]
+        limit: usize,
+    },
+
+    /// Show when and why a package was installed
+    Blame {
+        /// Package name
+        package: String,
+    },
+
+    /// Compare two environment lock files
+    Diff {
+        /// First lock file (default: current environment)
+        #[arg(short, long)]
+        from: Option<String>,
+        /// Second lock file to compare against
+        to: String,
+    },
+
+    /// Create or restore environment snapshots
+    Snapshot {
+        #[command(subcommand)]
+        command: SnapshotCommands,
+    },
+
+    /// Generate CI/CD configuration
+    Ci {
+        #[command(subcommand)]
+        command: CiCommands,
+    },
+
+    /// Cross-distro migration tools
+    Migrate {
+        #[command(subcommand)]
+        command: MigrateCommands,
+    },
+
     /// Clean up orphan packages and caches
     Clean {
         /// Remove orphan packages (dependencies no longer needed)
@@ -269,6 +343,18 @@ pub enum Commands {
         command: LicenseCommands,
     },
 
+    /// Fleet management for enterprise (multi-machine)
+    Fleet {
+        #[command(subcommand)]
+        command: FleetCommands,
+    },
+
+    /// Enterprise features (reports, policies, compliance)
+    Enterprise {
+        #[command(subcommand)]
+        command: EnterpriseCommands,
+    },
+
     /// View package transaction history
     History {
         /// Number of entries to show
@@ -364,6 +450,129 @@ pub enum TeamCommands {
     Pull,
     /// List team members and their sync status
     Members,
+    /// Interactive team dashboard (TUI)
+    Dashboard,
+    /// Generate team invite link
+    Invite {
+        /// Email address for the invite
+        #[arg(short, long)]
+        email: Option<String>,
+        /// Role for the invitee (admin, lead, developer, readonly)
+        #[arg(short, long, default_value = "developer")]
+        role: String,
+    },
+    /// Manage team roles and permissions
+    Roles {
+        #[command(subcommand)]
+        command: TeamRoleCommands,
+    },
+    /// Propose environment changes for review
+    Propose {
+        /// Description of the proposed change
+        message: String,
+    },
+    /// Review a proposed change
+    Review {
+        /// Proposal ID
+        id: u32,
+        /// Approve the proposal
+        #[arg(long)]
+        approve: bool,
+        /// Request changes
+        #[arg(long)]
+        request_changes: Option<String>,
+    },
+    /// Manage golden path templates
+    GoldenPath {
+        #[command(subcommand)]
+        command: GoldenPathCommands,
+    },
+    /// Check compliance status
+    Compliance {
+        /// Export compliance report
+        #[arg(long)]
+        export: Option<String>,
+        /// Enforce compliance (block non-compliant operations)
+        #[arg(long)]
+        enforce: bool,
+    },
+    /// Show team activity stream
+    Activity {
+        /// Number of days to show
+        #[arg(short, long, default_value = "7")]
+        days: u32,
+    },
+    /// Manage webhook notifications
+    Notify {
+        #[command(subcommand)]
+        command: NotifyCommands,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum TeamRoleCommands {
+    /// List all roles
+    List,
+    /// Assign a role to a member
+    Assign {
+        /// Member username or email
+        member: String,
+        /// Role to assign (admin, lead, developer, readonly)
+        role: String,
+    },
+    /// Remove a role from a member
+    Remove {
+        /// Member username or email
+        member: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum GoldenPathCommands {
+    /// Create a new golden path template
+    Create {
+        /// Template name
+        name: String,
+        /// Node version requirement
+        #[arg(long)]
+        node: Option<String>,
+        /// Python version requirement
+        #[arg(long)]
+        python: Option<String>,
+        /// Additional packages to include
+        #[arg(long)]
+        packages: Option<String>,
+    },
+    /// List available golden path templates
+    List,
+    /// Delete a golden path template
+    Delete {
+        /// Template name
+        name: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum NotifyCommands {
+    /// Add a webhook notification
+    Add {
+        /// Notification type (slack, discord, webhook)
+        notify_type: String,
+        /// Webhook URL
+        url: String,
+    },
+    /// List configured notifications
+    List,
+    /// Remove a notification
+    Remove {
+        /// Notification ID
+        id: String,
+    },
+    /// Test a notification
+    Test {
+        /// Notification ID (or "all")
+        id: String,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -483,6 +692,176 @@ pub enum AuditCommands {
     Slsa {
         /// Package file to verify
         package: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum SnapshotCommands {
+    /// Create a new snapshot
+    Create {
+        /// Description for the snapshot
+        #[arg(short, long)]
+        message: Option<String>,
+    },
+    /// List all snapshots
+    List,
+    /// Restore a snapshot
+    Restore {
+        /// Snapshot ID to restore
+        id: String,
+        /// Dry run - show what would change
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Delete a snapshot
+    Delete {
+        /// Snapshot ID to delete
+        id: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum CiCommands {
+    /// Initialize CI configuration for a provider
+    Init {
+        /// CI provider (github, gitlab, circleci)
+        provider: String,
+    },
+    /// Validate current environment matches CI expectations
+    Validate,
+    /// Generate cache manifest for CI
+    Cache,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum MigrateCommands {
+    /// Export current environment to a portable manifest
+    Export {
+        /// Output file path
+        #[arg(short, long, default_value = "omg-manifest.json")]
+        output: String,
+    },
+    /// Import environment from a manifest (with package mapping)
+    Import {
+        /// Manifest file to import
+        manifest: String,
+        /// Dry run - show what would be installed
+        #[arg(long)]
+        dry_run: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum FleetCommands {
+    /// Show fleet status across all machines
+    Status,
+    /// Push configuration to fleet
+    Push {
+        /// Target team (or all)
+        #[arg(short, long)]
+        team: Option<String>,
+        /// Message describing the push
+        #[arg(short, long)]
+        message: Option<String>,
+    },
+    /// Auto-remediate drift across fleet
+    Remediate {
+        /// Dry run - show what would change
+        #[arg(long)]
+        dry_run: bool,
+        /// Require confirmation
+        #[arg(long)]
+        confirm: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum EnterpriseCommands {
+    /// Generate executive reports
+    Reports {
+        /// Report type (monthly, quarterly, custom)
+        #[arg(short, long, default_value = "monthly")]
+        report_type: String,
+        /// Output format (pdf, html, json)
+        #[arg(short, long, default_value = "pdf")]
+        format: String,
+    },
+    /// Manage hierarchical policies
+    Policy {
+        #[command(subcommand)]
+        command: EnterprisePolicyCommands,
+    },
+    /// Export audit evidence for compliance
+    AuditExport {
+        /// Compliance framework (soc2, iso27001, fedramp, hipaa, pci-dss)
+        #[arg(short, long, default_value = "soc2")]
+        format: String,
+        /// Time period (e.g., "2025-Q4")
+        #[arg(short, long)]
+        period: Option<String>,
+        /// Output directory
+        #[arg(short, long, default_value = "audit-evidence")]
+        output: String,
+    },
+    /// Scan for license compliance issues
+    LicenseScan {
+        /// Export format (spdx, csv, json)
+        #[arg(long)]
+        export: Option<String>,
+    },
+    /// Initialize self-hosted/air-gapped server
+    Server {
+        #[command(subcommand)]
+        command: ServerCommands,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum EnterprisePolicyCommands {
+    /// Set a policy rule
+    Set {
+        /// Scope (org, team:<name>, project)
+        #[arg(short, long)]
+        scope: String,
+        /// Rule to set
+        rule: String,
+    },
+    /// Show current policies
+    Show {
+        /// Scope to show
+        #[arg(short, long)]
+        scope: Option<String>,
+    },
+    /// Inherit policies from parent scope
+    Inherit {
+        /// Source scope
+        #[arg(long)]
+        from: String,
+        /// Target scope
+        #[arg(long)]
+        to: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ServerCommands {
+    /// Initialize a self-hosted OMG server
+    Init {
+        /// License key
+        #[arg(short, long)]
+        license: String,
+        /// Storage path
+        #[arg(short, long)]
+        storage: String,
+        /// Domain for the server
+        #[arg(short, long)]
+        domain: String,
+    },
+    /// Sync/mirror packages from upstream
+    Mirror {
+        /// Upstream registry URL
+        #[arg(long, default_value = "https://registry.omg.dev")]
+        upstream: String,
     },
 }
 

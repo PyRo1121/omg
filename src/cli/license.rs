@@ -11,9 +11,9 @@ use crate::core::license::{
 /// Prompt for user input
 fn prompt(message: &str) -> String {
     print!("{message}");
-    io::stdout().flush().unwrap();
+    let _ = io::stdout().flush();
     let mut input = String::new();
-    io::stdin().read_line(&mut input).unwrap();
+    let _ = io::stdin().read_line(&mut input);
     input.trim().to_string()
 }
 
