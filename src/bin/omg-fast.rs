@@ -12,6 +12,9 @@
 //!   omg-fast s <query>    # search packages
 //!   omg-fast i <package>  # package info
 
+// Allow pedantic lints that are too strict for this minimal binary
+#![allow(clippy::cast_possible_truncation)] // IPC message lengths are bounded
+
 use std::fs::File;
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;

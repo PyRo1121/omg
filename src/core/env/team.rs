@@ -224,7 +224,7 @@ impl TeamWorkspace {
         let lock_path = self.root.join("omg.lock");
         let lock_hash = if lock_path.exists() {
             let lock = EnvironmentState::load(&lock_path)?;
-            lock.hash.clone()
+            lock.hash
         } else {
             String::new()
         };
@@ -234,7 +234,7 @@ impl TeamWorkspace {
         let member = TeamMember {
             id: config.member_id.clone(),
             name: whoami::realname().unwrap_or_else(|_| "Unknown".to_string()),
-            env_hash: current_env.hash.clone(),
+            env_hash: current_env.hash,
             last_sync: jiff::Timestamp::now().as_second(),
             in_sync,
             drift_summary: if in_sync {

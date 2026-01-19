@@ -19,6 +19,9 @@
 //!   OMG_RUN_DESTRUCTIVE_TESTS=1 cargo test --test integration_suite --features arch
 
 #![allow(unused_variables)]
+#![allow(clippy::doc_markdown)] // Test file doc comments don't need strict formatting
+#![allow(clippy::missing_panics_doc)] // Test functions are expected to panic
+#![allow(clippy::missing_errors_doc)] // Test helpers don't need docs
 
 use std::env;
 use std::fs::{self, File};
@@ -1633,8 +1636,8 @@ mod pacman_database {
         let (success, stdout, _) = run_omg(&["explicit"]);
         assert!(success, "Explicit should succeed");
 
-        let lines: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
-        assert!(lines.len() > 1, "Should list explicitly installed packages");
+        let line_count = stdout.lines().filter(|l| !l.is_empty()).count();
+        assert!(line_count > 1, "Should list explicitly installed packages");
     }
 }
 
