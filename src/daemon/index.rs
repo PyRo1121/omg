@@ -6,7 +6,7 @@
 //! Supports index preloading from persistent cache for <10ms cold starts.
 
 use ahash::AHashMap;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use memchr::memmem;
 use nucleo_matcher::Utf32String;
 use parking_lot::RwLock;
