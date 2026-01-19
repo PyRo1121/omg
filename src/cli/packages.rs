@@ -1,7 +1,11 @@
 use anyhow::Result;
+#[cfg(feature = "arch")]
 use dialoguer::{Confirm, MultiSelect, theme::ColorfulTheme};
+#[cfg(not(feature = "arch"))]
+use dialoguer::{MultiSelect, theme::ColorfulTheme};
 #[cfg(feature = "arch")]
 use futures::StreamExt;
+#[cfg(feature = "arch")]
 use owo_colors::OwoColorize;
 
 use crate::cli::style;
@@ -10,6 +14,7 @@ use crate::core::client::DaemonClient;
 use crate::core::completion::CompletionEngine;
 #[cfg(feature = "debian")]
 use crate::core::env::distro::is_debian_like;
+#[cfg(feature = "arch")]
 use crate::core::history::{HistoryManager, PackageChange, TransactionType};
 use crate::core::security::SecurityPolicy;
 use crate::daemon::protocol::{Request, ResponseResult};
@@ -137,9 +142,9 @@ pub async fn search(query: &str, detailed: bool, interactive: bool) -> Result<()
     let mut aur_packages_basic: Option<Vec<crate::core::Package>> = None;
     // Debian doesn't use AUR, but variables must exist for code structure
     #[cfg(not(feature = "arch"))]
-    let mut aur_packages_detailed: Option<Vec<crate::core::Package>> = None;
+    let aur_packages_detailed: Option<Vec<crate::core::Package>> = None;
     #[cfg(not(feature = "arch"))]
-    let mut aur_packages_basic: Option<Vec<crate::core::Package>> = None;
+    let aur_packages_basic: Option<Vec<crate::core::Package>> = None;
 
     let mut daemon_used = false;
     if !use_debian_backend() {

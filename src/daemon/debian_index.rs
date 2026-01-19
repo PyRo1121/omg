@@ -173,8 +173,6 @@ impl DebianIndexState {
 
     /// Rebuild index from /var/lib/apt/lists/*_Packages files
     pub fn rebuild_index(&self) -> Result<()> {
-        use debian_packaging::repository::release::ReleaseFile;
-
         let lists_dir = Path::new("/var/lib/apt/lists");
         if !lists_dir.exists() {
             anyhow::bail!("APT lists directory not found: {:?}", lists_dir);
@@ -216,6 +214,7 @@ impl DebianIndexState {
 
     /// Parse a single Packages file using debian-packaging crate
     fn parse_packages_file(&self, path: &Path, index: &mut DebianPackageIndex) -> Result<()> {
+        #[allow(unused_imports)]
         use debian_packaging::control::ControlParagraph;
 
         let content = fs::read_to_string(path)?;
