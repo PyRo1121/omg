@@ -941,7 +941,7 @@ These options work with all commands:
 
 ## 📚 See Also
 
-- [Quick Start Guide](./quickstart.md)
+- [Introduction](/)
 - [Configuration](./configuration.md)
 - [Runtime Management](./runtimes.md)
 - [Security & Compliance](./security.md)

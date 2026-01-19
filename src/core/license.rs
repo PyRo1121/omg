@@ -384,7 +384,7 @@ pub async fn validate_license_with_user(
 ) -> Result<LicenseResponse> {
     let machine_id = get_machine_id();
     let mut url = format!("{LICENSE_API_URL}?key={key}&machine_id={machine_id}");
-    
+
     if let Some(name) = user_name {
         url.push_str(&format!("&user_name={}", urlencoding::encode(name)));
     }

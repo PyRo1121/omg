@@ -36,12 +36,12 @@ jobs:
       - name: Build
         run: |
           . $HOME/.cargo/env
-          cargo build --release --features debian
+          cargo build --release --no-default-features --features debian
 
       - name: Run tests
         run: |
           . $HOME/.cargo/env
-          cargo test --features debian
+          cargo test --no-default-features --features debian
 
       - name: Run smoke test
         run: |
@@ -74,10 +74,10 @@ jobs:
           restore-keys: ubuntu-cargo-
 
       - name: Build
-        run: cargo build --release --features debian
+        run: cargo build --release --no-default-features --features debian
 
       - name: Run tests
-        run: cargo test --features debian
+        run: cargo test --no-default-features --features debian
 
       - name: Run smoke test
         run: |

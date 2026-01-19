@@ -166,5 +166,5 @@ cat .nvmrc
 ## Next Steps
 
 - [Runtime Management](/runtimes) — Full runtime documentation
-- [Shell Integration](/cli#shell-integration) — Hook configuration
+- [CLI Reference](/cli) — Full command documentation
 - [Workflows](/workflows) — Team environment sync
