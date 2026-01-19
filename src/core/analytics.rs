@@ -645,7 +645,10 @@ mod tests {
 
     #[test]
     fn test_event_queue() {
-        let mut queue = EventQueue::default();
+        let mut queue = EventQueue {
+            events: Vec::new(),
+            last_flush: jiff::Timestamp::now().as_second(), // Set to now to avoid time-based flush
+        };
         assert!(!queue.needs_flush());
 
         // Add events
