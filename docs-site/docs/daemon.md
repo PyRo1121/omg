@@ -444,11 +444,11 @@ Future enhancements may include:
 ### Bottleneck Analysis
 
 Current performance characteristics:
-- **IPC Latency**: <0.1ms for cached operations
-- **Search Performance**: <1ms for official packages
+- **IPC Latency**: &lt;0.1ms for cached operations
+- **Search Performance**: &lt;1ms for official packages
 - **AUR Queries**: 50-200ms depending on network
 - **Memory Allocation**: Minimal after warmup
-- **CPU Usage**: <1% idle, spikes during searches
+- **CPU Usage**: &lt;1% idle, spikes during searches
 
 ## Scaling Considerations
 

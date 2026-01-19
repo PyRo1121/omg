@@ -433,7 +433,7 @@ Version switching is optimized for speed:
 - **Zero-copy Probing**: Direct filesystem reads
 - **Lazy Loading**: Load runtimes on demand
 - **Shared Storage**: Common directories for all runtimes
-- **Minimal Overhead**: <1MB per runtime
+- **Minimal Overhead**: &lt;1MB per runtime
 
 ### Download Optimization
 

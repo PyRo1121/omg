@@ -911,10 +911,10 @@ omg-fast <subcommand>
 | Subcommand | Description | Latency |
 |------------|-------------|---------|
 | `status` | System status | 3ms |
-| `ec` | Explicit count | <1ms |
-| `tc` | Total count | <1ms |
-| `uc` | Updates count | <1ms |
-| `oc` | Orphan count | <1ms |
+| `ec` | Explicit count | &lt;1ms |
+| `tc` | Total count | &lt;1ms |
+| `uc` | Updates count | &lt;1ms |
+| `oc` | Orphan count | &lt;1ms |
 
 **Examples:**
 ```bash

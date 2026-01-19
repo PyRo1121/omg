@@ -79,7 +79,7 @@ Commands::Search { query, detailed, interactive } => {
 ```
 
 Fast path characteristics:
-- **Latency**: <10ms for cached searches
+- **Latency**: &lt;10ms for cached searches
 - **No Tokio**: Direct function calls
 - **Daemon IPC**: Uses sync client for sub-millisecond calls
 - **Fallback**: Async only when cache miss
@@ -459,9 +459,9 @@ fn test_search_performance() {
 ```
 
 Benchmarks:
-- **Search**: <10ms cached, <100ms uncached
-- **Info**: <5ms local, <200ms AUR
-- **Status**: <5ms via daemon
+- **Search**: &lt;10ms cached, &lt;100ms uncached
+- **Info**: &lt;5ms local, &lt;200ms AUR
+- **Status**: &lt;5ms via daemon
 - **Install**: Depends on package size
 
 ## Future Enhancements
