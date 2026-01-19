@@ -17,40 +17,57 @@ env:
 
 jobs:
   # ════════════════════════════════════════════════════════════════════════════
-  # QUICK CHECKS
+  # 1. QUALITY & SECURITY GATES
   # ════════════════════════════════════════════════════════════════════════════
-
   lint:
-    name: "Lint & Format"
+    name: "Qual & Sec"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - run: cargo fmt --all -- --check
-      - uses: crate-ci/typos@master
+      
+      - name: Formatting
+        run: cargo fmt --all -- --check
+      
+      - name: Spell Check
+        uses: crate-ci/typos@master
         with:
           config: ./_typos.toml
 
-  # ════════════════════════════════════════════════════════════════════════════
-  # ARCH LINUX BUILD & TEST
-  # ════════════════════════════════════════════════════════════════════════════
+      - name: License & Advisory Audit
+        uses: embarkstudios/cargo-deny-action@v2
+        with:
+          command: check
+          arguments: --all-features
 
+      - name: Unused Dependencies
+        run: |
+          curl -L https://github.com/bnjbvr/cargo-machete/releases/latest/download/cargo-machete-x86_64-unknown-linux-musl.tar.gz | tar xz
+          chmod +x cargo-machete
+          ./cargo-machete || true  # Advisory only, don't fail CI
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # 2. ARCH LINUX (Full System Integration)
+  # ════════════════════════════════════════════════════════════════════════════
   arch:
-    name: "Arch Linux"
+    name: "Arch (Full)"
     runs-on: ubuntu-latest
     container: archlinux:latest
     steps:
-      - name: Install Dependencies
+      - name: Bootstrap System
         run: |
           pacman -Syu --noconfirm
           pacman -S --noconfirm base-devel git rust cargo pkgconf openssl libarchive clang
-
+      
       - uses: actions/checkout@v4
-
-      - name: Git safe directory
+      - name: Git Ownership fix
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Rust Version
+        id: rust-version
+        run: echo "version=$(rustc --version | cut -d' ' -f2)" >> $GITHUB_OUTPUT
 
       - name: Cache
         uses: actions/cache@v4
@@ -59,24 +76,26 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: arch-${{ hashFiles('Cargo.lock') }}
-          restore-keys: arch-
+          key: arch-${{ steps.rust-version.outputs.version }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: arch-${{ steps.rust-version.outputs.version }}-
 
       - name: Build
-        run: cargo build --release
+        run: cargo build --release --features arch
+
+      - name: Sync Databases
+        run: ./target/release/omg sync
 
       - name: Clippy
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --all-targets --features arch -- -D warnings
 
-      - name: Test
-        run: cargo test --lib
+      - name: Run Integration Tests
+        run: OMG_RUN_SYSTEM_TESTS=1 cargo test --test integration_suite --features arch
 
   # ════════════════════════════════════════════════════════════════════════════
-  # DEBIAN BUILD & TEST
+  # 3. COMPATIBILITY (Debian/Ubuntu)
   # ════════════════════════════════════════════════════════════════════════════
-
   debian:
-    name: "Debian 12"
+    name: "Debian Build"
     runs-on: ubuntu-latest
     container:
       image: debian:bookworm
@@ -90,10 +109,9 @@ jobs:
           apt-get update
           apt-get install -y curl git build-essential pkg-config libssl-dev libapt-pkg-dev clang cmake
           rm -rf /var/lib/apt/lists/*
-
+      
       - uses: actions/checkout@v4
-
-      - name: Git safe directory
+      - name: Git Ownership fix
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Install Rust
@@ -111,31 +129,22 @@ jobs:
           key: debian-${{ hashFiles('Cargo.lock') }}
           restore-keys: debian-
 
-      - name: Build
+      - name: Build & Test
         run: |
           . /root/.cargo/env
           cargo build --release --no-default-features --features debian
-
-      - name: Test
-        run: |
-          . /root/.cargo/env
           cargo test --no-default-features --features debian --lib
 
-  # ════════════════════════════════════════════════════════════════════════════
-  # UBUNTU BUILD & TEST (native - fastest)
-  # ════════════════════════════════════════════════════════════════════════════
-
   ubuntu:
-    name: "Ubuntu 24.04"
+    name: "Ubuntu Build"
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-
       - name: Install Dependencies
         run: sudo apt-get update && sudo apt-get install -y libapt-pkg-dev pkg-config libssl-dev clang cmake
-
+      
       - uses: dtolnay/rust-toolchain@stable
-
+      
       - name: Cache
         uses: actions/cache@v4
         with:
@@ -146,29 +155,51 @@ jobs:
           key: ubuntu-${{ hashFiles('Cargo.lock') }}
           restore-keys: ubuntu-
 
-      - name: Build
-        run: cargo build --release --no-default-features --features debian
-
-      - name: Test
-        run: cargo test --no-default-features --features debian --lib
+      - name: Build & Test
+        run: |
+          cargo build --release --no-default-features --features debian
+          cargo test --no-default-features --features debian --lib
 
   # ════════════════════════════════════════════════════════════════════════════
-  # REQUIRED STATUS CHECK
+  # 4. DOCUMENTATION SYNC
   # ════════════════════════════════════════════════════════════════════════════
+  docs:
+    name: "Docs Sync"
+    runs-on: ubuntu-latest
+    needs: [lint, arch, debian, ubuntu]
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Sync to Wiki
+        run: |
+          chmod +x scripts/sync-wiki.sh
+          ./scripts/sync-wiki.sh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  ci:
-    name: CI
+  # ════════════════════════════════════════════════════════════════════════════
+  # 5. FINAL GATE
+  # ════════════════════════════════════════════════════════════════════════════
+  ci-success:
+    name: "✅ CI"
     runs-on: ubuntu-latest
     needs: [lint, arch, debian, ubuntu]
     if: always()
     steps:
       - name: Check Results
         run: |
+          echo "🔍 Checking job results..."
+          echo "  lint:   ${{ needs.lint.result }}"
+          echo "  arch:   ${{ needs.arch.result }}"
+          echo "  debian: ${{ needs.debian.result }}"
+          echo "  ubuntu: ${{ needs.ubuntu.result }}"
           if [[ "${{ needs.lint.result }}" != "success" ]] || \
              [[ "${{ needs.arch.result }}" != "success" ]] || \
              [[ "${{ needs.debian.result }}" != "success" ]] || \
              [[ "${{ needs.ubuntu.result }}" != "success" ]]; then
-            echo "❌ CI failed"
+            echo "❌ One or more jobs failed"
             exit 1
           fi
-          echo "✅ All checks passed!"
+          echo "✅ All jobs passed!"
