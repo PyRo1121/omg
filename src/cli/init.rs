@@ -22,7 +22,7 @@ pub enum Shell {
 }
 
 impl Shell {
-    fn name(&self) -> &'static str {
+    fn name(self) -> &'static str {
         match self {
             Shell::Zsh => "zsh",
             Shell::Bash => "bash",
@@ -30,7 +30,7 @@ impl Shell {
         }
     }
 
-    fn config_file(&self) -> &'static str {
+    fn config_file(self) -> &'static str {
         match self {
             Shell::Zsh => "~/.zshrc",
             Shell::Bash => "~/.bashrc",
@@ -38,7 +38,7 @@ impl Shell {
         }
     }
 
-    fn hook_command(&self) -> String {
+    fn hook_command(self) -> String {
         match self {
             Shell::Zsh => r#"eval "$(omg hook zsh)""#.to_string(),
             Shell::Bash => r#"eval "$(omg hook bash)""#.to_string(),
@@ -61,7 +61,7 @@ pub enum DaemonStartup {
 }
 
 impl DaemonStartup {
-    fn name(&self) -> &'static str {
+    fn name(self) -> &'static str {
         match self {
             DaemonStartup::OnShellInit => "On shell init (fastest)",
             DaemonStartup::OnDemand => "On first OMG command",
