@@ -1,0 +1,110 @@
+name: Benchmark
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'benchmark.sh'
+  schedule:
+    # Run weekly on Sunday at midnight
+    - cron: '0 0 * * 0'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  benchmark:
+    name: Run Benchmarks
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+
+    steps:
+      - name: Install Dependencies
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm base-devel git rust cargo pkgconf openssl libarchive clang bc yay
+
+      - uses: actions/checkout@v4
+
+      - name: Git safe directory
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Build Release
+        run: cargo build --release --features arch
+
+      - name: Run Benchmarks
+        id: bench
+        run: |
+          chmod +x benchmark.sh
+          ./benchmark.sh 2>&1 | tee benchmark_output.txt
+          
+          # Extract key metrics for badge
+          SEARCH_TIME=$(grep -A1 "search" benchmark_report.md | tail -1 | awk -F'|' '{print $3}' | tr -d ' ms')
+          echo "search_time=${SEARCH_TIME}" >> $GITHUB_OUTPUT
+          
+          # Calculate speedup
+          PACMAN_TIME=$(grep -A1 "search" benchmark_report.md | tail -1 | awk -F'|' '{print $4}' | tr -d ' ms')
+          if [ -n "$SEARCH_TIME" ] && [ -n "$PACMAN_TIME" ] && [ "$SEARCH_TIME" != "0" ]; then
+            SPEEDUP=$(echo "scale=0; $PACMAN_TIME / $SEARCH_TIME" | bc)
+            echo "speedup=${SPEEDUP}x" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Generate Badge JSON
+        run: |
+          SPEEDUP="${{ steps.bench.outputs.speedup }}"
+          SEARCH_TIME="${{ steps.bench.outputs.search_time }}"
+          
+          # Create badge JSON for shields.io endpoint
+          cat > benchmark-badge.json << EOF
+          {
+            "schemaVersion": 1,
+            "label": "search",
+            "message": "${SEARCH_TIME}ms (${SPEEDUP} faster)",
+            "color": "brightgreen"
+          }
+          EOF
+          
+          cat benchmark-badge.json
+
+      - name: Upload Benchmark Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-report
+          path: |
+            benchmark_report.md
+            benchmark-badge.json
+          retention-days: 90
+
+      - name: Update Benchmark Results
+        if: github.ref == 'refs/heads/main'
+        run: |
+          # Create benchmarks directory if it doesn't exist
+          mkdir -p benchmarks
+          
+          # Save timestamped report
+          TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+          cp benchmark_report.md "benchmarks/report_${TIMESTAMP}.md"
+          cp benchmark_report.md benchmarks/latest.md
+          cp benchmark-badge.json benchmarks/badge.json
+          
+          # Create summary JSON for API
+          cat > benchmarks/summary.json << EOF
+          {
+            "timestamp": "$(date -Iseconds)",
+            "search_ms": ${{ steps.bench.outputs.search_time }},
+            "speedup": "${{ steps.bench.outputs.speedup }}",
+            "commit": "${{ github.sha }}"
+          }
+          EOF
+
+      - name: Commit Benchmark Results
+        if: github.ref == 'refs/heads/main'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add benchmarks/
+          git diff --staged --quiet || git commit -m "Update benchmark results [skip ci]"
+          git push || echo "Nothing to push"
