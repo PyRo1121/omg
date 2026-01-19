@@ -5,44 +5,131 @@ on:
     tags:
       - 'v*'
 
+# Only one release at a time
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
-  build-release:
-    name: Build Release
+  # ════════════════════════════════════════════════════════════════════════════
+  # Build Release Artifacts
+  # ════════════════════════════════════════════════════════════════════════════
+
+  build-arch:
+    name: "Build (Arch x86_64)"
     runs-on: ubuntu-latest
     container:
       image: archlinux:latest
-    permissions:
-      contents: write
     steps:
-      - name: Install System Dependencies
+      - name: Install Dependencies
         run: |
           pacman -Syu --noconfirm
-          pacman -S --noconfirm base-devel git rust cargo pkgconf openssl libarchive clang nodejs
+          pacman -S --noconfirm base-devel git rust cargo pkgconf openssl libarchive clang
 
       - uses: actions/checkout@v4
-      
+
       - name: Fix git ownership
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
-      - name: Build Release Artifacts
+      - name: Build Release
         run: |
-          chmod +x ./release.sh
-          AUTO_BUMP_VERSION=0 ./release.sh
+          export RUSTFLAGS="-C target-cpu=x86-64-v2"
+          cargo build --release --features arch
 
-      - name: Locate Artifacts
-        id: artifacts
+      - name: Package Artifacts
         run: |
           VERSION=$(awk -F'"' '/^version =/ {print $2; exit}' Cargo.toml)
-          ARCHIVE=$(ls dist/omg-v${VERSION}-*.tar.gz | head -n1)
-          echo "archive=${ARCHIVE}" >> $GITHUB_OUTPUT
-          echo "checksum=${ARCHIVE}.sha256" >> $GITHUB_OUTPUT
+          ARCH="x86_64-unknown-linux-gnu"
+          mkdir -p "omg-v${VERSION}-${ARCH}"
+          cp target/release/omg "omg-v${VERSION}-${ARCH}/"
+          cp target/release/omgd "omg-v${VERSION}-${ARCH}/" 2>/dev/null || true
+          cp target/release/omg-fast "omg-v${VERSION}-${ARCH}/" 2>/dev/null || true
+          cp README.md LICENSE "omg-v${VERSION}-${ARCH}/"
+          tar -czvf "omg-v${VERSION}-${ARCH}.tar.gz" "omg-v${VERSION}-${ARCH}"
+          sha256sum "omg-v${VERSION}-${ARCH}.tar.gz" > "omg-v${VERSION}-${ARCH}.tar.gz.sha256"
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: arch-x86_64
+          path: omg-v*.tar.gz*
+
+  build-debian:
+    name: "Build (Debian x86_64)"
+    runs-on: ubuntu-latest
+    container:
+      image: debian:bookworm
+    steps:
+      - name: Install Dependencies
+        run: |
+          apt-get update
+          apt-get install -y build-essential pkg-config libssl-dev libapt-pkg-dev clang git curl cmake
+
+      - uses: actions/checkout@v4
+
+      - name: Fix git ownership
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Install Rust
+        run: |
+          curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+          . "$HOME/.cargo/env"
+
+      - name: Build Release
+        run: |
+          . "$HOME/.cargo/env"
+          cargo build --release --no-default-features --features debian
+
+      - name: Package Artifacts
+        run: |
+          VERSION=$(awk -F'"' '/^version =/ {print $2; exit}' Cargo.toml)
+          ARCH="x86_64-unknown-linux-gnu-debian"
+          mkdir -p "omg-v${VERSION}-${ARCH}"
+          cp target/release/omg "omg-v${VERSION}-${ARCH}/"
+          cp target/release/omgd "omg-v${VERSION}-${ARCH}/" 2>/dev/null || true
+          cp README.md LICENSE "omg-v${VERSION}-${ARCH}/"
+          tar -czvf "omg-v${VERSION}-${ARCH}.tar.gz" "omg-v${VERSION}-${ARCH}"
+          sha256sum "omg-v${VERSION}-${ARCH}.tar.gz" > "omg-v${VERSION}-${ARCH}.tar.gz.sha256"
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: debian-x86_64
+          path: omg-v*.tar.gz*
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # Create GitHub Release
+  # ════════════════════════════════════════════════════════════════════════════
+
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs: [build-arch, build-debian]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release files
+        run: |
+          mkdir -p release
+          find artifacts -name "*.tar.gz*" -exec cp {} release/ \;
+          ls -la release/
 
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
-          files: |
-            ${{ steps.artifacts.outputs.archive }}
-            ${{ steps.artifacts.outputs.checksum }}
+          files: release/*
           generate_release_notes: true
           draft: false
-          prerelease: false
+          prerelease: ${{ contains(github.ref, '-rc') || contains(github.ref, '-beta') || contains(github.ref, '-alpha') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

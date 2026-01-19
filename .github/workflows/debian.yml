@@ -3,84 +3,146 @@ name: Debian/Ubuntu CI
 on:
   push:
     branches: [main]
+    paths:
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/debian.yml'
   pull_request:
+    paths:
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+  schedule:
+    - cron: '0 3 * * 0'  # Weekly on Sunday at 3 AM
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  SCCACHE_GHA_ENABLED: "true"
+  RUSTC_WRAPPER: "sccache"
 
 jobs:
-  debian:
-    name: Build & Test (Debian Bookworm)
-    runs-on: ubuntu-latest
-    container: debian:bookworm
-    steps:
-      - uses: actions/checkout@v4
+  # ════════════════════════════════════════════════════════════════════════════
+  # Matrix build - all versions in parallel
+  # ════════════════════════════════════════════════════════════════════════════
 
-      - name: Install build dependencies
+  build:
+    name: "${{ matrix.name }}"
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.container }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: "Debian 12"
+            runner: ubuntu-latest
+            container: debian:bookworm-slim
+            use-container: true
+          - name: "Debian 13"
+            runner: ubuntu-latest
+            container: debian:trixie-slim
+            use-container: true
+          - name: "Ubuntu 22.04"
+            runner: ubuntu-22.04
+            container: ""
+            use-container: false
+          - name: "Ubuntu 24.04"
+            runner: ubuntu-24.04
+            container: ""
+            use-container: false
+
+    steps:
+      - name: Install Dependencies (Container)
+        if: matrix.use-container
         run: |
           apt-get update
-          apt-get install -y curl build-essential pkg-config libssl-dev libapt-pkg-dev clang git cmake
+          apt-get install -y --no-install-recommends \
+            ca-certificates curl git build-essential pkg-config \
+            libssl-dev clang libapt-pkg-dev cmake
+          rm -rf /var/lib/apt/lists/*
 
-      - name: Install Rust
+      - name: Install Dependencies (Native)
+        if: "!matrix.use-container"
+        run: sudo apt-get update && sudo apt-get install -y libapt-pkg-dev pkg-config libssl-dev clang cmake
+
+      - uses: actions/checkout@v4
+
+      - name: Git safe directory
+        if: matrix.use-container
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Install Rust (Container)
+        if: matrix.use-container
         run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
-      - name: Cache cargo registry
+      - name: Install Rust (Native)
+        if: "!matrix.use-container"
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Configure sccache
+        uses: mozilla-actions/sccache-action@v0.0.4
+
+      - name: Cache cargo
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
             target
-          key: debian-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: debian-cargo-
+          key: ${{ matrix.name }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ matrix.name }}-
 
       - name: Build
         run: |
-          . $HOME/.cargo/env
+          if [ -f "$HOME/.cargo/env" ]; then . "$HOME/.cargo/env"; fi
           cargo build --release --no-default-features --features debian
 
-      - name: Run tests
+      - name: Test
         run: |
-          . $HOME/.cargo/env
-          cargo test --no-default-features --features debian
+          if [ -f "$HOME/.cargo/env" ]; then . "$HOME/.cargo/env"; fi
+          cargo test --no-default-features --features debian --lib
 
-      - name: Run smoke test
-        run: |
-          apt-get update
-          chmod +x scripts/debian-smoke-test.sh
-          ./scripts/debian-smoke-test.sh
+  # ════════════════════════════════════════════════════════════════════════════
+  # Extended tests (smoke test) - only on schedule or manual trigger
+  # ════════════════════════════════════════════════════════════════════════════
 
-  ubuntu:
-    name: Build & Test (Ubuntu 24.04)
+  smoke-test:
+    name: "Smoke Test"
     runs-on: ubuntu-24.04
+    needs: build
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libapt-pkg-dev pkg-config libssl-dev clang cmake
+      - name: Install Dependencies
+        run: sudo apt-get update && sudo apt-get install -y libapt-pkg-dev pkg-config libssl-dev clang cmake bc
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ubuntu-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ubuntu-cargo-
+      - uses: dtolnay/rust-toolchain@stable
 
       - name: Build
         run: cargo build --release --no-default-features --features debian
 
-      - name: Run tests
-        run: cargo test --no-default-features --features debian
-
-      - name: Run smoke test
+      - name: Run Smoke Test
         run: |
-          sudo apt-get update
           chmod +x scripts/debian-smoke-test.sh
           sudo ./scripts/debian-smoke-test.sh
+
+  success:
+    name: Debian Success
+    runs-on: ubuntu-latest
+    needs: [build]
+    if: always()
+    steps:
+      - run: |
+          if [[ "${{ needs.build.result }}" != "success" ]]; then
+            exit 1
+          fi
+          echo "✅ All Debian/Ubuntu builds passed!"

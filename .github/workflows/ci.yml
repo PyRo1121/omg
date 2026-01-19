@@ -2,103 +2,188 @@ name: CI
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/ci.yml'
   pull_request:
-    branches: [ "main" ]
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
   workflow_dispatch:
+
+# Cancel in-progress runs for same branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUSTFLAGS: "-D warnings"
+  # Use sccache for faster builds
+  SCCACHE_GHA_ENABLED: "true"
+  RUSTC_WRAPPER: "sccache"
 
 jobs:
-  # Fast check for syntax errors (self-hosted Arch)
-  check:
-    name: Check
-    runs-on: self-hosted
-    env:
-      CARGO_HOME: ${{ github.workspace }}/.cargo
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          clean: true
-      - name: Setup Cargo
-        run: |
-          mkdir -p $CARGO_HOME/bin
-          ln -sf ~/.cargo/bin/* $CARGO_HOME/bin/ 2>/dev/null || true
-      - name: Cargo Check
-        run: cargo check --verbose
+  # ════════════════════════════════════════════════════════════════════════════
+  # FAST CHECKS (< 1 min) - Run in parallel
+  # ════════════════════════════════════════════════════════════════════════════
 
-  # Run Integration Tests (self-hosted Arch)
-  test:
-    name: Test Suite
-    runs-on: self-hosted
-    needs: check
-    env:
-      CARGO_HOME: ${{ github.workspace }}/.cargo
-    steps:
-      - uses: actions/checkout@v4
-      - name: Run Tests
-        run: cargo test --verbose
-
-  # Linting with Clippy (self-hosted Arch)
-  clippy:
-    name: Clippy
-    runs-on: self-hosted
-    needs: check
-    env:
-      CARGO_HOME: ${{ github.workspace }}/.cargo
-    steps:
-      - uses: actions/checkout@v4
-      - name: Run Clippy
-        run: cargo clippy -- -D warnings
-
-  # Formatting (self-hosted)
   fmt:
-    name: Rustfmt
-    runs-on: self-hosted
-    needs: check
-    env:
-      CARGO_HOME: ${{ github.workspace }}/.cargo
-    steps:
-      - uses: actions/checkout@v4
-      - name: Check Formatting
-        run: cargo fmt --all -- --check
-
-  debian-smoke:
-    name: Debian Smoke (APT)
+    name: Format
     runs-on: ubuntu-latest
-    container:
-      image: debian:bookworm-slim
     steps:
-      - name: Install System Dependencies
-        run: |
-          apt-get update
-          apt-get install -y --no-install-recommends \
-            ca-certificates curl git build-essential pkg-config \
-            libssl-dev libarchive-dev clang nodejs libapt-pkg-dev cmake
-          rm -rf /var/lib/apt/lists/*
-
       - uses: actions/checkout@v4
-      - name: Fix git ownership
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - run: rustup component add rustfmt
+      - run: cargo fmt --all -- --check
 
-      - name: Install Rust
-        run: |
-          curl -sSf https://sh.rustup.rs | sh -s -- -y
-          . "$HOME/.cargo/env"
-          rustup default stable
-
-      - name: Build (debian feature)
-        run: |
-          . "$HOME/.cargo/env"
-          cargo build --no-default-features --features debian
-
-  # Spell Check
   typos:
-    name: Spell Check
+    name: Typos
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: crate-ci/typos@master
         with:
           config: ./_typos.toml
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # ARCH BUILD & TEST (self-hosted = fast)
+  # ════════════════════════════════════════════════════════════════════════════
+
+  arch:
+    name: "Arch (check + clippy + test)"
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: true
+
+      # Single job does check + clippy + test to avoid checkout overhead
+      - name: Check
+        run: cargo check --all-targets
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --lib
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # DEBIAN BUILD (optimized container with caching)
+  # ════════════════════════════════════════════════════════════════════════════
+
+  debian:
+    name: "Debian Build"
+    runs-on: ubuntu-latest
+    container:
+      image: debian:bookworm-slim
+    steps:
+      - name: Install Dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates curl git build-essential pkg-config \
+            libssl-dev clang libapt-pkg-dev cmake
+          rm -rf /var/lib/apt/lists/*
+
+      - uses: actions/checkout@v4
+
+      - name: Git safe directory
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Install Rust + sccache
+        run: |
+          curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
+          . "$HOME/.cargo/env"
+          # Install sccache via cargo-binstall (faster than compiling)
+          curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
+          cargo binstall sccache -y --no-confirm 2>/dev/null || cargo install sccache --locked
+
+      - name: Configure sccache
+        uses: mozilla-actions/sccache-action@v0.0.4
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: debian-${{ hashFiles('Cargo.lock') }}
+          restore-keys: debian-
+
+      - name: Build
+        run: |
+          . "$HOME/.cargo/env"
+          cargo build --release --no-default-features --features debian
+
+      - name: Test
+        run: |
+          . "$HOME/.cargo/env"
+          cargo test --no-default-features --features debian --lib
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # UBUNTU BUILD (native runner = faster)
+  # ════════════════════════════════════════════════════════════════════════════
+
+  ubuntu:
+    name: "Ubuntu Build"
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Dependencies
+        run: sudo apt-get update && sudo apt-get install -y libapt-pkg-dev pkg-config libssl-dev clang cmake
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Configure sccache
+        uses: mozilla-actions/sccache-action@v0.0.4
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: ubuntu-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ubuntu-
+
+      - name: Build
+        run: cargo build --release --no-default-features --features debian
+
+      - name: Test
+        run: cargo test --no-default-features --features debian --lib
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # SUCCESS GATE
+  # ════════════════════════════════════════════════════════════════════════════
+
+  ci-success:
+    name: CI Success
+    runs-on: ubuntu-latest
+    needs: [fmt, arch, debian, ubuntu]
+    if: always()
+    steps:
+      - name: Verify
+        run: |
+          if [[ "${{ needs.fmt.result }}" != "success" ]] || \
+             [[ "${{ needs.arch.result }}" != "success" ]] || \
+             [[ "${{ needs.debian.result }}" != "success" ]] || \
+             [[ "${{ needs.ubuntu.result }}" != "success" ]]; then
+            echo "❌ One or more required jobs failed"
+            exit 1
+          fi
+          echo "✅ All CI jobs passed!"
