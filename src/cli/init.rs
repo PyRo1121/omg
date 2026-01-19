@@ -92,14 +92,15 @@ impl Default for WizardState {
 }
 
 /// Run the interactive setup wizard
-pub async fn run_interactive(
-    skip_shell: bool,
-    skip_daemon: bool,
-) -> Result<()> {
+pub async fn run_interactive(skip_shell: bool, skip_daemon: bool) -> Result<()> {
     let mut stdout = io::stdout();
 
     // Clear screen and show welcome
-    execute!(stdout, terminal::Clear(ClearType::All), cursor::MoveTo(0, 0))?;
+    execute!(
+        stdout,
+        terminal::Clear(ClearType::All),
+        cursor::MoveTo(0, 0)
+    )?;
 
     print_header(&mut stdout)?;
     println!();
@@ -234,7 +235,9 @@ fn detect_current_shell() -> Option<Shell> {
 fn select_shell(stdout: &mut io::Stdout) -> Result<Shell> {
     let detected = detect_current_shell();
     let shells = [Shell::Zsh, Shell::Bash, Shell::Fish];
-    let mut selected = detected.map(|s| shells.iter().position(|x| *x == s).unwrap_or(0)).unwrap_or(0);
+    let mut selected = detected
+        .map(|s| shells.iter().position(|x| *x == s).unwrap_or(0))
+        .unwrap_or(0);
 
     execute!(
         stdout,
@@ -260,7 +263,11 @@ fn select_shell(stdout: &mut io::Stdout) -> Result<Shell> {
         // Clear and redraw options
         for (i, shell) in shells.iter().enumerate() {
             let prefix = if i == selected { "  ▸ " } else { "    " };
-            let suffix = if Some(*shell) == detected { " (detected)" } else { "" };
+            let suffix = if Some(*shell) == detected {
+                " (detected)"
+            } else {
+                ""
+            };
 
             if i == selected {
                 execute!(
@@ -409,10 +416,17 @@ fn confirm_env_capture(stdout: &mut io::Stdout) -> Result<bool> {
     terminal::enable_raw_mode()?;
 
     loop {
-        let labels = ["  ▸ Yes, capture my environment", "    No, I'll do it later"];
+        let labels = [
+            "  ▸ Yes, capture my environment",
+            "    No, I'll do it later",
+        ];
         for (i, _label) in labels.iter().enumerate() {
             let display = if i == 0 {
-                if selected == 0 { "  ▸ Yes, capture my environment" } else { "    Yes, capture my environment" }
+                if selected == 0 {
+                    "  ▸ Yes, capture my environment"
+                } else {
+                    "    Yes, capture my environment"
+                }
             } else if selected == 1 {
                 "  ▸ No, I'll do it later"
             } else {
@@ -526,9 +540,7 @@ fn configure_daemon_startup(stdout: &mut io::Stdout, startup: DaemonStartup) -> 
         }
         DaemonStartup::OnDemand => {
             // Start daemon now
-            let _ = Command::new("omg")
-                .args(["daemon"])
-                .spawn();
+            let _ = Command::new("omg").args(["daemon"]).spawn();
             execute!(
                 stdout,
                 SetForegroundColor(Color::Green),
