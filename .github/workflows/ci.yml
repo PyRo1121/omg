@@ -18,7 +18,6 @@ on:
       - 'Cargo.lock'
   workflow_dispatch:
 
-# Cancel in-progress runs for same branch
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -27,13 +26,10 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
   RUSTFLAGS: "-D warnings"
-  # Use sccache for faster builds
-  SCCACHE_GHA_ENABLED: "true"
-  RUSTC_WRAPPER: "sccache"
 
 jobs:
   # ════════════════════════════════════════════════════════════════════════════
-  # FAST CHECKS (< 1 min) - Run in parallel
+  # FAST CHECKS (parallel, < 1 min)
   # ════════════════════════════════════════════════════════════════════════════
 
   fmt:
@@ -54,18 +50,27 @@ jobs:
           config: ./_typos.toml
 
   # ════════════════════════════════════════════════════════════════════════════
-  # ARCH BUILD & TEST (self-hosted = fast)
+  # ARCH BUILD (self-hosted)
   # ════════════════════════════════════════════════════════════════════════════
 
   arch:
     name: "Arch (check + clippy + test)"
     runs-on: self-hosted
+    env:
+      CARGO_HOME: ${{ github.workspace }}/.cargo
     steps:
       - uses: actions/checkout@v4
         with:
           clean: true
 
-      # Single job does check + clippy + test to avoid checkout overhead
+      - name: Setup Cargo
+        run: |
+          mkdir -p $CARGO_HOME/bin
+          ln -sf ~/.cargo/bin/* $CARGO_HOME/bin/ 2>/dev/null || true
+
+      - name: Clean stale state
+        run: rm -rf target/debug/.fingerprint 2>/dev/null || true
+
       - name: Check
         run: cargo check --all-targets
 
@@ -76,7 +81,7 @@ jobs:
         run: cargo test --lib
 
   # ════════════════════════════════════════════════════════════════════════════
-  # DEBIAN BUILD (optimized container with caching)
+  # DEBIAN BUILD (container)
   # ════════════════════════════════════════════════════════════════════════════
 
   debian:
@@ -84,6 +89,10 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: debian:bookworm-slim
+      options: --user root
+    env:
+      HOME: /root
+      CARGO_HOME: /root/.cargo
     steps:
       - name: Install Dependencies
         run: |
@@ -98,40 +107,34 @@ jobs:
       - name: Git safe directory
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
-      - name: Install Rust + sccache
+      - name: Install Rust
         run: |
           curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
-          . "$HOME/.cargo/env"
-          # Install sccache via cargo-binstall (faster than compiling)
-          curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
-          cargo binstall sccache -y --no-confirm 2>/dev/null || cargo install sccache --locked
-
-      - name: Configure sccache
-        uses: mozilla-actions/sccache-action@v0.0.4
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
       - name: Cache cargo
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
+            /root/.cargo/registry/index
+            /root/.cargo/registry/cache
+            /root/.cargo/git/db
             target
           key: debian-${{ hashFiles('Cargo.lock') }}
           restore-keys: debian-
 
       - name: Build
         run: |
-          . "$HOME/.cargo/env"
+          . /root/.cargo/env
           cargo build --release --no-default-features --features debian
 
       - name: Test
         run: |
-          . "$HOME/.cargo/env"
+          . /root/.cargo/env
           cargo test --no-default-features --features debian --lib
 
   # ════════════════════════════════════════════════════════════════════════════
-  # UBUNTU BUILD (native runner = faster)
+  # UBUNTU BUILD (native runner - fast)
   # ════════════════════════════════════════════════════════════════════════════
 
   ubuntu:
@@ -146,9 +149,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-
-      - name: Configure sccache
-        uses: mozilla-actions/sccache-action@v0.0.4
 
       - name: Cache cargo
         uses: actions/cache@v4

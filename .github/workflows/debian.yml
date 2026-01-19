@@ -14,7 +14,7 @@ on:
       - 'Cargo.toml'
       - 'Cargo.lock'
   schedule:
-    - cron: '0 3 * * 0'  # Weekly on Sunday at 3 AM
+    - cron: '0 3 * * 0'  # Weekly on Sunday
   workflow_dispatch:
 
 concurrency:
@@ -23,42 +23,32 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  SCCACHE_GHA_ENABLED: "true"
-  RUSTC_WRAPPER: "sccache"
 
 jobs:
   # ════════════════════════════════════════════════════════════════════════════
-  # Matrix build - all versions in parallel
+  # Debian Container Builds
   # ════════════════════════════════════════════════════════════════════════════
 
-  build:
-    name: "${{ matrix.name }}"
-    runs-on: ${{ matrix.runner }}
-    container: ${{ matrix.container }}
+  debian:
+    name: "Debian ${{ matrix.version }}"
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ matrix.image }}
+      options: --user root
+    env:
+      HOME: /root
+      CARGO_HOME: /root/.cargo
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name: "Debian 12"
-            runner: ubuntu-latest
-            container: debian:bookworm-slim
-            use-container: true
-          - name: "Debian 13"
-            runner: ubuntu-latest
-            container: debian:trixie-slim
-            use-container: true
-          - name: "Ubuntu 22.04"
-            runner: ubuntu-22.04
-            container: ""
-            use-container: false
-          - name: "Ubuntu 24.04"
-            runner: ubuntu-24.04
-            container: ""
-            use-container: false
+          - version: "12 (Bookworm)"
+            image: "debian:bookworm-slim"
+          - version: "13 (Trixie)"
+            image: "debian:trixie-slim"
 
     steps:
-      - name: Install Dependencies (Container)
-        if: matrix.use-container
+      - name: Install Dependencies
         run: |
           apt-get update
           apt-get install -y --no-install-recommends \
@@ -66,28 +56,60 @@ jobs:
             libssl-dev clang libapt-pkg-dev cmake
           rm -rf /var/lib/apt/lists/*
 
-      - name: Install Dependencies (Native)
-        if: "!matrix.use-container"
-        run: sudo apt-get update && sudo apt-get install -y libapt-pkg-dev pkg-config libssl-dev clang cmake
-
       - uses: actions/checkout@v4
 
       - name: Git safe directory
-        if: matrix.use-container
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
-      - name: Install Rust (Container)
-        if: matrix.use-container
+      - name: Install Rust
         run: |
           curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+          echo "/root/.cargo/bin" >> $GITHUB_PATH
 
-      - name: Install Rust (Native)
-        if: "!matrix.use-container"
-        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            /root/.cargo/registry/index
+            /root/.cargo/registry/cache
+            /root/.cargo/git/db
+            target
+          key: ${{ matrix.image }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ matrix.image }}-
 
-      - name: Configure sccache
-        uses: mozilla-actions/sccache-action@v0.0.4
+      - name: Build
+        run: |
+          . /root/.cargo/env
+          cargo build --release --no-default-features --features debian
+
+      - name: Test
+        run: |
+          . /root/.cargo/env
+          cargo test --no-default-features --features debian --lib
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # Ubuntu Native Builds (faster)
+  # ════════════════════════════════════════════════════════════════════════════
+
+  ubuntu:
+    name: "Ubuntu ${{ matrix.version }}"
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - version: "22.04"
+            runner: "ubuntu-22.04"
+          - version: "24.04"
+            runner: "ubuntu-24.04"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Dependencies
+        run: sudo apt-get update && sudo apt-get install -y libapt-pkg-dev pkg-config libssl-dev clang cmake
+
+      - uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -97,27 +119,23 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             target
-          key: ${{ matrix.name }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: ${{ matrix.name }}-
+          key: ${{ matrix.runner }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ matrix.runner }}-
 
       - name: Build
-        run: |
-          if [ -f "$HOME/.cargo/env" ]; then . "$HOME/.cargo/env"; fi
-          cargo build --release --no-default-features --features debian
+        run: cargo build --release --no-default-features --features debian
 
       - name: Test
-        run: |
-          if [ -f "$HOME/.cargo/env" ]; then . "$HOME/.cargo/env"; fi
-          cargo test --no-default-features --features debian --lib
+        run: cargo test --no-default-features --features debian --lib
 
   # ════════════════════════════════════════════════════════════════════════════
-  # Extended tests (smoke test) - only on schedule or manual trigger
+  # Smoke Test (weekly/manual only)
   # ════════════════════════════════════════════════════════════════════════════
 
   smoke-test:
     name: "Smoke Test"
     runs-on: ubuntu-24.04
-    needs: build
+    needs: [debian, ubuntu]
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
@@ -135,14 +153,19 @@ jobs:
           chmod +x scripts/debian-smoke-test.sh
           sudo ./scripts/debian-smoke-test.sh
 
+  # ════════════════════════════════════════════════════════════════════════════
+  # Success Gate
+  # ════════════════════════════════════════════════════════════════════════════
+
   success:
     name: Debian Success
     runs-on: ubuntu-latest
-    needs: [build]
+    needs: [debian, ubuntu]
     if: always()
     steps:
       - run: |
-          if [[ "${{ needs.build.result }}" != "success" ]]; then
+          if [[ "${{ needs.debian.result }}" != "success" ]] || \
+             [[ "${{ needs.ubuntu.result }}" != "success" ]]; then
             exit 1
           fi
           echo "✅ All Debian/Ubuntu builds passed!"
