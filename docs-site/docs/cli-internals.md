@@ -1,8 +1,7 @@
 ---
 title: CLI Internals
-sidebar_label: CLI Internals
-sidebar_position: 24
-description: CLI implementation details and optimization strategies
+sidebar_position: 35
+description: CLI implementation details and optimization
 ---
 
 # CLI Internals

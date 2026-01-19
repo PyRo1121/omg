@@ -1,7 +1,6 @@
 ---
 title: Caching & Indexing
-sidebar_label: Cache
-sidebar_position: 21
+sidebar_position: 32
 description: In-memory and persistent caching strategies
 ---
 

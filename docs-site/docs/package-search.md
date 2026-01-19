@@ -1,7 +1,6 @@
 ---
-title: Package Search Flow
-sidebar_label: Package Search
-sidebar_position: 23
+title: Package Search
+sidebar_position: 34
 description: Search indexing and ranking algorithms
 ---
 

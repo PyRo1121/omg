@@ -1,7 +1,6 @@
 ---
 title: Daemon Internals
-sidebar_label: Daemon
-sidebar_position: 20
+sidebar_position: 31
 description: Background service lifecycle, IPC, and state management
 ---
 

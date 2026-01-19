@@ -1,8 +1,7 @@
 ---
 title: Runtime Management
-sidebar_label: Runtimes
 sidebar_position: 11
-description: Managing Node.js, Python, Go, Rust, Ruby, Java, and Bun runtimes
+description: Managing Node.js, Python, Go, Rust, Ruby, Java, and Bun
 ---
 
 # Runtime Management

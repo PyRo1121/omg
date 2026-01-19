@@ -1,7 +1,6 @@
 ---
 title: IPC Protocol
-sidebar_label: IPC
-sidebar_position: 22
+sidebar_position: 33
 description: Binary protocol for CLI-daemon communication
 ---
 
