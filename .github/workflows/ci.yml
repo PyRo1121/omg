@@ -136,6 +136,20 @@ jobs:
           cargo build --release --no-default-features --features debian
           cargo test --no-default-features --features debian --lib
 
+      - name: Smoke Test
+        run: |
+          . /root/.cargo/env
+          apt-get update && apt-get install -y bc
+          echo "Testing omg sync..."
+          ./target/release/omg sync
+          echo "Testing omg search..."
+          ./target/release/omg search vim | head -5
+          echo "Testing omg info..."
+          ./target/release/omg info curl
+          echo "Testing omg status..."
+          ./target/release/omg status
+          echo "✓ Debian smoke tests passed!"
+
   ubuntu:
     name: "Ubuntu Build"
     runs-on: ubuntu-24.04
@@ -160,6 +174,19 @@ jobs:
         run: |
           cargo build --release --no-default-features --features debian
           cargo test --no-default-features --features debian --lib
+
+      - name: Smoke Test
+        run: |
+          sudo apt-get install -y bc
+          echo "Testing omg sync..."
+          ./target/release/omg sync
+          echo "Testing omg search..."
+          ./target/release/omg search vim | head -5
+          echo "Testing omg info..."
+          ./target/release/omg info curl
+          echo "Testing omg status..."
+          ./target/release/omg status
+          echo "✓ Ubuntu smoke tests passed!"
 
   # ════════════════════════════════════════════════════════════════════════════
   # 4. DOCUMENTATION SYNC
