@@ -7,6 +7,7 @@ pub mod commands;
 pub mod container;
 pub mod doctor;
 pub mod env;
+pub mod init;
 pub mod license;
 pub mod new;
 pub mod packages;
