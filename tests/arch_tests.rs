@@ -63,7 +63,7 @@ mod pacman_integration {
         let result = run_omg(&["search", "^linux$"]);
         // Should handle regex-like patterns
         assert!(
-            !result.stderr_contains("panic"),
+            !result.stderr_contains("panicked at"),
             "Should not panic on regex"
         );
     }
@@ -90,7 +90,7 @@ mod pacman_integration {
         // A package that exists but might not be installed
         let result = run_omg(&["info", "firefox"]);
         // Should succeed whether installed or not
-        assert!(!result.stderr_contains("panic"), "Should not panic");
+        assert!(!result.stderr_contains("panicked at"), "Should not panic");
     }
 
     #[test]
@@ -152,7 +152,7 @@ mod pacman_integration {
 
         let result = run_omg(&["update", "--check"]);
         // Should work without making changes
-        assert!(!result.stderr_contains("panic"), "Should not panic");
+        assert!(!result.stderr_contains("panicked at"), "Should not panic");
     }
 
     #[test]
@@ -267,7 +267,7 @@ mod alpm_direct {
         // Why command uses ALPM for dependency tracking
         let result = run_omg(&["why", "glibc"]);
         // Should show what depends on glibc
-        assert!(!result.stderr_contains("panic"), "Should not panic");
+        assert!(!result.stderr_contains("panicked at"), "Should not panic");
     }
 
     #[test]
@@ -301,7 +301,7 @@ mod new_features {
 
         let result = run_omg(&["why", "bash"]);
         // Should explain why bash is installed
-        assert!(!result.stderr_contains("panic"), "Should not panic");
+        assert!(!result.stderr_contains("panicked at"), "Should not panic");
     }
 
     #[test]
@@ -311,7 +311,7 @@ mod new_features {
 
         let result = run_omg(&["why", "glibc", "--reverse"]);
         // Should show what depends on glibc
-        assert!(!result.stderr_contains("panic"), "Should not panic");
+        assert!(!result.stderr_contains("panicked at"), "Should not panic");
     }
 
     #[test]
@@ -321,7 +321,7 @@ mod new_features {
 
         let result = run_omg(&["outdated"]);
         // Should list outdated packages or indicate none
-        assert!(!result.stderr_contains("panic"), "Should not panic");
+        assert!(!result.stderr_contains("panicked at"), "Should not panic");
     }
 
     #[test]
@@ -331,7 +331,7 @@ mod new_features {
 
         let result = run_omg(&["outdated", "--security"]);
         // Should filter to security updates
-        assert!(!result.stderr_contains("panic"), "Should not panic");
+        assert!(!result.stderr_contains("panicked at"), "Should not panic");
     }
 
     #[test]
@@ -351,7 +351,7 @@ mod new_features {
         let project = TestProject::new();
         let result = project.run(&["pin", "--list"]);
         // Should show pins or indicate none
-        assert!(!result.stderr_contains("panic"), "Should not panic");
+        assert!(!result.stderr_contains("panicked at"), "Should not panic");
     }
 
     #[test]
@@ -359,7 +359,7 @@ mod new_features {
         let project = TestProject::new();
         let result = project.run(&["pin", "node@20.10.0"]);
         // Should pin or explain how
-        assert!(!result.stderr_contains("panic"), "Should not panic");
+        assert!(!result.stderr_contains("panicked at"), "Should not panic");
     }
 
     #[test]
@@ -391,7 +391,7 @@ mod new_features {
 
         let result = run_omg(&["size", "--tree", "pacman"]);
         // Should show dependency tree with sizes
-        assert!(!result.stderr_contains("panic"), "Should not panic");
+        assert!(!result.stderr_contains("panicked at"), "Should not panic");
     }
 
     #[test]
@@ -401,7 +401,7 @@ mod new_features {
 
         let result = run_omg(&["blame", "pacman"]);
         // Should show install history
-        assert!(!result.stderr_contains("panic"), "Should not panic");
+        assert!(!result.stderr_contains("panicked at"), "Should not panic");
     }
 
     #[test]
@@ -411,7 +411,7 @@ mod new_features {
 
         let result = project.run(&["diff", "omg.lock"]);
         // Should compare against current state
-        assert!(!result.stderr_contains("panic"), "Should not panic");
+        assert!(!result.stderr_contains("panicked at"), "Should not panic");
     }
 
     #[test]
@@ -419,7 +419,7 @@ mod new_features {
         let project = TestProject::new();
         let result = project.run(&["snapshot", "create"]);
         // Should create a snapshot
-        assert!(!result.stderr_contains("panic"), "Should not panic");
+        assert!(!result.stderr_contains("panicked at"), "Should not panic");
     }
 
     #[test]
@@ -434,7 +434,7 @@ mod new_features {
         let project = TestProject::new();
         let result = project.run(&["ci", "init", "--provider", "github"]);
         // Should generate GitHub Actions config
-        assert!(!result.stderr_contains("panic"), "Should not panic");
+        assert!(!result.stderr_contains("panicked at"), "Should not panic");
     }
 
     #[test]
@@ -442,7 +442,7 @@ mod new_features {
         let project = TestProject::new();
         let result = project.run(&["migrate", "export", "--output", "manifest.toml"]);
         // Should export manifest
-        assert!(!result.stderr_contains("panic"), "Should not panic");
+        assert!(!result.stderr_contains("panicked at"), "Should not panic");
     }
 }
 
@@ -538,7 +538,7 @@ mod security {
         let project = TestProject::new();
         let result = project.run(&["audit", "sbom", "--output", "sbom.json"]);
         // Should generate SBOM or indicate requirements
-        assert!(!result.stderr_contains("panic"), "Should not panic");
+        assert!(!result.stderr_contains("panicked at"), "Should not panic");
     }
 
     #[test]
@@ -548,7 +548,7 @@ mod security {
 
         let result = project.run(&["audit", "secrets"]);
         // Should detect secrets or indicate no issues
-        assert!(!result.stderr_contains("panic"), "Should not panic");
+        assert!(!result.stderr_contains("panicked at"), "Should not panic");
     }
 
     #[test]
@@ -558,7 +558,7 @@ mod security {
 
         let result = project.run(&["audit", "policy"]);
         // Should show policy status
-        assert!(!result.stderr_contains("panic"), "Should not panic");
+        assert!(!result.stderr_contains("panicked at"), "Should not panic");
     }
 
     #[test]
@@ -595,7 +595,7 @@ mod security {
             );
             // Should not panic
             assert!(
-                !result.stderr_contains("panic"),
+                !result.stderr_contains("panicked at"),
                 "Should not panic on: {input}"
             );
         }
@@ -615,7 +615,7 @@ mod edge_cases {
             let result = run_omg(&["search", input]);
             // Should handle gracefully (not crash)
             assert!(
-                !result.stderr_contains("panic"),
+                !result.stderr_contains("panicked at"),
                 "Should handle unicode: {input}"
             );
         }
@@ -626,7 +626,7 @@ mod edge_cases {
         let long_query = validation::very_long_input(10000);
         let result = run_omg(&["search", &long_query]);
         // Should handle without crashing
-        assert!(!result.stderr_contains("panic"), "Should handle long input");
+        assert!(!result.stderr_contains("panicked at"), "Should handle long input");
     }
 
     #[test]
@@ -635,7 +635,7 @@ mod edge_cases {
             let result = run_omg(&["search", input]);
             // Should handle gracefully
             assert!(
-                !result.stderr_contains("panic"),
+                !result.stderr_contains("panicked at"),
                 "Should handle empty input"
             );
         }
@@ -694,7 +694,7 @@ mod edge_cases {
         let result = run_omg_with_env(&["status"], &[("HOME", "")]);
         // Should handle gracefully
         assert!(
-            !result.stderr_contains("panic"),
+            !result.stderr_contains("panicked at"),
             "Should handle missing HOME"
         );
     }
@@ -724,12 +724,12 @@ mod integration_scenarios {
         // 3. Check environment
         let result = project.run(&["env", "check"]);
         // Should work
-        assert!(!result.stderr_contains("panic"));
+        assert!(!result.stderr_contains("panicked at"));
 
         // 4. Create snapshot
         let result = project.run(&["snapshot", "create", "--message", "Initial"]);
         // Should work
-        assert!(!result.stderr_contains("panic"));
+        assert!(!result.stderr_contains("panicked at"));
     }
 
     #[test]
@@ -749,7 +749,7 @@ mod integration_scenarios {
             // Dev2 checks for drift
             let result = dev2.run(&["env", "check"]);
             // Should detect same or report drift
-            assert!(!result.stderr_contains("panic"));
+            assert!(!result.stderr_contains("panicked at"));
         }
     }
 
@@ -761,9 +761,9 @@ mod integration_scenarios {
         // Run full security audit workflow
         let result = run_omg(&["audit"]);
         // Should produce audit output
-        assert!(!result.stderr_contains("panic"));
+        assert!(!result.stderr_contains("panicked at"));
 
         let result = run_omg(&["audit", "policy"]);
-        assert!(!result.stderr_contains("panic"));
+        assert!(!result.stderr_contains("panicked at"));
     }
 }

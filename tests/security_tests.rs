@@ -466,8 +466,10 @@ mod sbom_compliance {
         let project = TestProject::new();
         let result = project.run(&["audit", "sbom", "--output", "sbom.json"]);
 
-        // Should create SBOM or report requirements
-        assert!(!result.stderr.contains("panic"));
+        // Should create SBOM or report error gracefully (not panic)
+        // Allow exit code != 0 for unimplemented features, but no panics
+        let has_panic = result.stderr.contains("panicked at");
+        assert!(!has_panic, "Command panicked: {}", result.stderr);
     }
 
     #[test]
@@ -475,7 +477,8 @@ mod sbom_compliance {
         let project = TestProject::new();
         let result = project.run(&["audit", "sbom", "--output", "sbom.spdx"]);
 
-        assert!(!result.stderr.contains("panic"));
+        let has_panic = result.stderr.contains("panicked at");
+        assert!(!has_panic, "Command panicked: {}", result.stderr);
     }
 
     #[test]
@@ -483,7 +486,8 @@ mod sbom_compliance {
         let project = TestProject::new();
         let result = project.run(&["audit", "sbom", "--output", "sbom.cdx.json"]);
 
-        assert!(!result.stderr.contains("panic"));
+        let has_panic = result.stderr.contains("panicked at");
+        assert!(!has_panic, "Command panicked: {}", result.stderr);
     }
 
     #[test]
@@ -510,7 +514,8 @@ mod sbom_compliance {
     #[test]
     fn test_audit_log() {
         let result = run_omg(&["audit", "log"]);
-        assert!(!result.stderr.contains("panic"));
+        let has_panic = result.stderr.contains("panicked at");
+        assert!(!has_panic, "Command panicked: {}", result.stderr);
     }
 
     #[test]

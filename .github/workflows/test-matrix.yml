@@ -104,7 +104,7 @@ jobs:
       - name: Build with Debian feature
         run: |
           . $HOME/.cargo/env
-          cargo build --features debian
+          cargo build --no-default-features --features debian
           
       - name: Run Debian integration tests
         env:
@@ -112,7 +112,7 @@ jobs:
           OMG_TEST_DISTRO: "debian"
         run: |
           . $HOME/.cargo/env
-          cargo test --test debian_tests --features debian
+          cargo test --test debian_tests --no-default-features --features debian
 
   # ═══════════════════════════════════════════════════════════════════════════
   # UBUNTU TESTS (Multiple versions)
@@ -141,7 +141,7 @@ jobs:
       - name: Build with Debian feature
         run: |
           . $HOME/.cargo/env
-          cargo build --features debian
+          cargo build --no-default-features --features debian
           
       - name: Run Ubuntu integration tests
         env:
@@ -149,7 +149,7 @@ jobs:
           OMG_TEST_DISTRO: "ubuntu"
         run: |
           . $HOME/.cargo/env
-          cargo test --test debian_tests --features debian
+          cargo test --test debian_tests --no-default-features --features debian
 
   # ═══════════════════════════════════════════════════════════════════════════
   # PROPERTY-BASED TESTS

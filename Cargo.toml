@@ -1,6 +1,6 @@
 [package]
 name = "omg"
-version = "0.1.74"
+version = "0.1.75"
 edition = "2024"
 rust-version = "1.92"
 description = "The Fastest Unified Package Manager for Arch Linux + All Language Runtimes"
@@ -70,9 +70,9 @@ tokio-util = { version = "0.7.18", features = ["io", "codec"] }
 # Archives + compression (PURE RUST - no C deps)
 tar = "0.4.44"
 flate2 = { version = "1.1.8", default-features = false, features = [
-    "rust_backend",
-] } # miniz_oxide
-lz4_flex = "0.12" # Pure Rust LZ4 for Ubuntu Packages files
+    "zlib-rs",
+] } # zlib-rs is ~30% faster than miniz_oxide
+lz4_flex = { version = "0.12", default-features = false } # Performance mode (~20% faster)
 zip = { version = "2.4.2", default-features = false, features = [
     "deflate",
     "time",
