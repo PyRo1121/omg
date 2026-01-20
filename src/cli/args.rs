@@ -619,7 +619,7 @@ pub enum ContainerCommands {
         #[arg(short, long, value_name = "KEY=VALUE")]
         env: Vec<String>,
         /// Volume mounts (host:container)
-        #[arg(short, long, value_name = "HOST:CONTAINER")]
+        #[arg(long, value_name = "HOST:CONTAINER")]
         volume: Vec<String>,
         /// Working directory inside container
         #[arg(short, long)]
@@ -637,7 +637,7 @@ pub enum ContainerCommands {
         #[arg(short, long, value_name = "KEY=VALUE")]
         env: Vec<String>,
         /// Additional volume mounts (host:container)
-        #[arg(short, long, value_name = "HOST:CONTAINER")]
+        #[arg(long, value_name = "HOST:CONTAINER")]
         volume: Vec<String>,
     },
     /// Build a container image
