@@ -98,10 +98,19 @@ fn main() -> Result<()> {
     }
 
     // Normal path with tokio runtime (current_thread for faster startup)
-    tokio::runtime::Builder::new_current_thread()
+    let result = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?
-        .block_on(async_main())
+        .block_on(async_main());
+
+    // Handle errors with helpful suggestions
+    if let Err(ref err) = result {
+        if let Some(suggestion) = omg_lib::core::error::suggest_for_anyhow(err) {
+            eprintln!("\n💡 {suggestion}");
+        }
+    }
+
+    result
 }
 
 /// Main entry point - uses single tokio runtime for all async operations
@@ -263,13 +272,21 @@ async fn async_main() -> Result<()> {
             task,
             args,
             runtime_backend,
+            watch,
+            parallel,
         } => {
             let backend = runtime_backend
                 .as_deref()
                 .map(str::parse::<RuntimeBackend>)
                 .transpose()
                 .map_err(|err| anyhow::anyhow!(err))?;
-            task_runner::run_task(&task, &args, backend)?;
+            if watch {
+                task_runner::run_task_watch(&task, &args, backend).await?;
+            } else if parallel {
+                task_runner::run_tasks_parallel(&task, &args, backend).await?;
+            } else {
+                task_runner::run_task(&task, &args, backend)?;
+            }
         }
         Commands::New { stack, name } => {
             new::run(&stack, &name)?;
@@ -283,6 +300,15 @@ async fn async_main() -> Result<()> {
             }
             ToolCommands::Remove { name } => {
                 tool::remove(&name)?;
+            }
+            ToolCommands::Update { name } => {
+                tool::update(&name).await?;
+            }
+            ToolCommands::Search { query } => {
+                tool::search(&query)?;
+            }
+            ToolCommands::Registry => {
+                tool::registry()?;
             }
         },
         Commands::Env { command } => match command {

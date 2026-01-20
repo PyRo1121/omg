@@ -7,7 +7,7 @@ pub mod completion;
 pub mod container;
 mod database;
 pub mod env;
-mod error;
+pub mod error;
 pub mod fast_status;
 pub mod history;
 pub mod http;

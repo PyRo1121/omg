@@ -913,3 +913,139 @@ fn mise_runtime_bin_path(runtime: &str, version: &str) -> Option<PathBuf> {
         None
     }
 }
+
+/// Run a task in watch mode - re-run on file changes
+pub async fn run_task_watch(
+    task_name: &str,
+    extra_args: &[String],
+    backend_override: Option<RuntimeBackend>,
+) -> Result<()> {
+    use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
+    use std::sync::mpsc::channel;
+    use std::time::Duration;
+
+    println!(
+        "{} Watch mode: {} (Ctrl+C to stop)\n",
+        "OMG".cyan().bold(),
+        task_name.white().bold()
+    );
+
+    // Initial run
+    let _ = run_task(task_name, extra_args, backend_override);
+
+    // Set up file watcher
+    let (tx, rx) = channel();
+    let mut watcher = RecommendedWatcher::new(
+        move |res| {
+            if let Ok(event) = res {
+                let _ = tx.send(event);
+            }
+        },
+        Config::default().with_poll_interval(Duration::from_millis(500)),
+    )?;
+
+    let current_dir = std::env::current_dir()?;
+
+    // Watch common source directories
+    let watch_dirs = ["src", "lib", "app", "pages", "components", "tests", "."];
+    for dir in watch_dirs {
+        let path = current_dir.join(dir);
+        if path.exists() {
+            let _ = watcher.watch(&path, RecursiveMode::Recursive);
+        }
+    }
+
+    println!(
+        "  {} Watching for changes...\n",
+        "→".dimmed()
+    );
+
+    // Debounce: wait for changes, then re-run
+    let debounce = Duration::from_millis(300);
+    let mut last_run = std::time::Instant::now();
+
+    loop {
+        match rx.recv_timeout(Duration::from_secs(1)) {
+            Ok(_event) => {
+                // Debounce multiple rapid events
+                if last_run.elapsed() < debounce {
+                    continue;
+                }
+                last_run = std::time::Instant::now();
+
+                println!(
+                    "\n{} File changed, re-running {}...\n",
+                    "→".yellow(),
+                    task_name.cyan()
+                );
+                let _ = run_task(task_name, extra_args, backend_override);
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                // No events, continue watching
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                break;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Run multiple tasks in parallel (comma-separated task names)
+pub async fn run_tasks_parallel(
+    tasks_str: &str,
+    extra_args: &[String],
+    backend_override: Option<RuntimeBackend>,
+) -> Result<()> {
+    let task_names: Vec<&str> = tasks_str.split(',').map(str::trim).collect();
+
+    if task_names.len() == 1 {
+        // Single task, just run normally
+        return run_task(tasks_str, extra_args, backend_override).map_err(Into::into);
+    }
+
+    println!(
+        "{} Running {} tasks in parallel: {}\n",
+        "OMG".cyan().bold(),
+        task_names.len(),
+        task_names.join(", ").white().bold()
+    );
+
+    let handles: Vec<_> = task_names
+        .into_iter()
+        .map(|task_name| {
+            let task = task_name.to_string();
+            let args = extra_args.to_vec();
+            let backend = backend_override;
+            tokio::spawn(async move {
+                let result = run_task(&task, &args, backend);
+                (task, result)
+            })
+        })
+        .collect();
+
+    let mut all_success = true;
+    for handle in handles {
+        match handle.await {
+            Ok((task, Ok(()))) => {
+                println!("  {} Task '{}' completed", "✓".green(), task);
+            }
+            Ok((task, Err(e))) => {
+                println!("  {} Task '{}' failed: {}", "✗".red(), task, e);
+                all_success = false;
+            }
+            Err(e) => {
+                println!("  {} Task panicked: {}", "✗".red(), e);
+                all_success = false;
+            }
+        }
+    }
+
+    if all_success {
+        println!("\n{}", "All tasks completed successfully!".green());
+        Ok(())
+    } else {
+        anyhow::bail!("Some tasks failed")
+    }
+}

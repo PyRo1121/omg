@@ -296,6 +296,14 @@ pub enum Commands {
         /// Runtime backend (native, mise, native-then-mise)
         #[arg(long)]
         runtime_backend: Option<String>,
+
+        /// Watch mode: re-run task on file changes
+        #[arg(short, long)]
+        watch: bool,
+
+        /// Run multiple tasks in parallel (comma-separated)
+        #[arg(short, long)]
+        parallel: bool,
     },
 
     /// Create a new project from a template
@@ -425,6 +433,18 @@ pub enum ToolCommands {
     List,
     /// Remove a tool
     Remove { name: String },
+    /// Update an installed tool to latest version
+    Update {
+        /// Tool name (or 'all' to update everything)
+        name: String,
+    },
+    /// Search for tools in the registry
+    Search {
+        /// Search query
+        query: String,
+    },
+    /// Show available tools in the registry
+    Registry,
 }
 
 #[derive(Subcommand, Debug)]

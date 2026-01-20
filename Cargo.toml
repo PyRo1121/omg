@@ -106,6 +106,9 @@ console = "0.16.2"
 # Interactive prompts
 dialoguer = "0.12.0"
 
+# File watching
+notify = "7.0"
+
 # Configuration
 home = "0.5.12"
 
