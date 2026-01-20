@@ -9,8 +9,10 @@ use futures::StreamExt;
 use owo_colors::OwoColorize;
 
 use crate::cli::style;
+#[cfg(feature = "arch")]
 use crate::core::Database;
 use crate::core::client::DaemonClient;
+#[cfg(feature = "arch")]
 use crate::core::completion::CompletionEngine;
 #[cfg(feature = "debian")]
 use crate::core::env::distro::is_debian_like;
