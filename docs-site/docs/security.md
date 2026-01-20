@@ -84,23 +84,23 @@ When you run a full system audit (`omg audit`), OMG employs a massively parallel
 
 ## PGP Verification
 
-### Implementation
+### Native Performance
 
-OMG uses the industry-leading **Sequoia PGP** library for all cryptographic operations. Unlike many tools that rely on subprocess calls to `gpg`, OMG performs verification natively in Rust for maximum security and speed.
+OMG performs all cryptographic operations natively. Unlike tools that rely on external binary calls, OMG integrates directly with cryptographic logic to perform verification with maximum speed and security.
 
-- **Pure Rust Backend**: No dependency on external PGP binaries or OpenSSL.
-- **System Keyring**: Automatically uses the official Arch Linux keyring located at `/usr/share/pacman/keyrings/archlinux.gpg`.
-- **Post-Quantum Ready**: Designed to support future quantum-resistant algorithms.
+- **Direct System Integration**: No dependency on external security binaries.
+- **Keyring Awareness**: Automatically leverages official system keyrings for seamless verification.
+- **Modern Standards**: Built to support advanced and future-proof cryptographic algorithms.
 
-### Verification Pipeline
+### Verification Lifecycle
 
-When verifying a package, OMG performs a rigorous 5-step process:
+When verifying a package, OMG follows a rigorous multi-step process:
 
-1. **Signature Parsing**: Extracts cryptographic packets from the detached signature file.
-2. **Hash Calculation**: Computes the SHA-256 hash of the package file using the algorithm specified in the signature.
-3. **Certificate Matching**: Searches the system keyring for the specific public key used to sign the package.
-4. **Cryptographic Validation**: Uses the public key and calculated hash to verify the mathematical validity of the signature.
-5. **Trust Assessment**: Validates that the signing certificate is trusted, active, and has not expired.
+1.  **Extract**: Retrieves cryptographic signatures from package artifacts.
+2.  **Calculate**: Computes integrity hashes using modern secure algorithms.
+3.  **Match**: Identifies the correct public keys within the system keyring.
+4.  **Validate**: Performs the mathematical validation of the signature against the calculated hash.
+5.  **Assess**: Confirms the signing authority is trusted and the certificate is current.
 
 
 ## SLSA Provenance

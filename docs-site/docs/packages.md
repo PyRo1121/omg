@@ -95,32 +95,14 @@ omg install visual-studio-code-bin
 omg install --asdeps libfoo
 ```
 
-### Installation Flow
+### Installation Lifecycle
 
-1. **Security Grade Assignment**
-   - LOCKED: Core packages with SLSA + PGP
-   - VERIFIED: Official packages with PGP signatures
-   - COMMUNITY: AUR packages
-   - RISK: Known vulnerabilities
-
-2. **Policy Enforcement**
-   - Check against `policy.toml`
-   - May block based on grade, AUR, or license
-
-3. **Dependency Resolution**
-   - Official packages via libalpm
-   - AUR dependencies built first
-
-4. **Download & Verify**
-   - PGP signatures verified
-   - Checksums validated
-
-5. **Installation**
-   - Official: pacman integration
-   - AUR: makepkg + pacman -U
-
-6. **History Recording**
-   - Transaction logged to history.json
+1.  **Security Analysis**: Every package is evaluated against the system's security criteria and assigned a grade.
+2.  **Policy Validation**: The system checks the package against defined rules, ensuring it meets organizational or user-set standards.
+3.  **Conflict Resolution**: Dependencies are mapped and resolved, ensuring that all required components are available.
+4.  **Download & Integrity**: Artifacts are retrieved over secure channels and verified using cryptographic signatures and hashes.
+5.  **Integration**: Official packages are integrated through the system backend, while custom sources are prepared and deployed efficiently.
+6.  **Audit Recording**: The entire transaction is logged to the history database for future reference or rollback.
 
 ### AUR Build Options
 
