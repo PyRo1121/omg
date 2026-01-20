@@ -1,3 +1,9 @@
+---
+title: Quick Start
+sidebar_position: 2
+description: Get started with OMG in 5 minutes
+---
+
 # Quick Start Guide
 
 Get up and running with OMG in under 5 minutes.

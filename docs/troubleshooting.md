@@ -1,3 +1,9 @@
+---
+title: Troubleshooting
+sidebar_position: 50
+description: Common issues and solutions
+---
+
 # Troubleshooting Guide
 
 **Common Issues and Solutions for OMG**

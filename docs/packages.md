@@ -1,3 +1,9 @@
+---
+title: Package Management
+sidebar_position: 10
+description: Search, install, update, and remove packages
+---
+
 # Package Management
 
 **Complete Guide to Searching, Installing, and Managing Packages**

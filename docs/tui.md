@@ -1,3 +1,9 @@
+---
+title: TUI Dashboard
+sidebar_position: 23
+description: Interactive terminal dashboard for system monitoring
+---
+
 # TUI Dashboard
 
 **Real-Time System Monitoring and Management**

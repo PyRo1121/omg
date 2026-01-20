@@ -1,3 +1,9 @@
+---
+title: Shell Integration
+sidebar_position: 12
+description: Hooks, completions, and PATH management
+---
+
 # Shell Integration
 
 **Hooks, Completions, and PATH Management**

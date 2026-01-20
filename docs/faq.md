@@ -1,3 +1,9 @@
+---
+title: FAQ
+sidebar_position: 51
+description: Frequently asked questions
+---
+
 # Frequently Asked Questions
 
 **Common Questions About OMG**

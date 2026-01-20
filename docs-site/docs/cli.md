@@ -46,10 +46,8 @@ omg search <query> [OPTIONS]
 **Options:**
 | Option | Short | Description |
 |--------|-------|-------------|
+| `--detailed` | `-d` | Show detailed AUR info (votes, popularity) |
 | `--interactive` | `-i` | Interactive mode — select packages to install |
-| `--limit <N>` | `-l` | Maximum results (default: 20) |
-| `--aur` | `-a` | Search AUR only |
-| `--official` | `-o` | Search official repos only |
 
 **Examples:**
 ```bash
@@ -59,14 +57,8 @@ omg search firefox
 # Interactive search (select to install)
 omg search browser -i
 
-# Limit results
-omg search vim --limit 50
-
-# Search AUR only
-omg search -a spotify
-
-# Search official repos only
-omg search -o linux
+# Detailed search with AUR votes/popularity
+omg search spotify -d
 ```
 
 **Performance:**
@@ -86,8 +78,7 @@ omg install <packages...> [OPTIONS]
 **Options:**
 | Option | Short | Description |
 |--------|-------|-------------|
-| `--asdeps` | | Install as dependency |
-| `--confirm` | | Skip confirmation prompt |
+| `--yes` | `-y` | Skip confirmation prompt |
 
 **Examples:**
 ```bash
@@ -100,8 +91,8 @@ omg install firefox chromium brave-bin
 # Install AUR package
 omg install visual-studio-code-bin
 
-# Install as dependency
-omg install --asdeps libfoo
+# Skip confirmation
+omg install neovim -y
 ```
 
 **Security:**
