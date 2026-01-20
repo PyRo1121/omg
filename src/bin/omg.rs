@@ -29,18 +29,33 @@ use omg_lib::hooks;
 
 // Using system allocator (pure Rust - no C dependency)
 
+fn has_help_flag(args: &[String]) -> bool {
+    args.iter().any(|a| a == "--help" || a == "-h")
+}
+
 /// Ultra-fast path for explicit --count (bypasses tokio entirely)
 /// This shaves ~2ms by avoiding runtime initialization
 fn try_fast_explicit_count() -> bool {
     let args: Vec<_> = std::env::args().collect();
+
+    if has_help_flag(&args) {
+        return false;
+    }
+
     // Check for "omg explicit --count" or "omg explicit -c"
     if args.len() >= 2
         && args[1] == "explicit"
         && args.iter().any(|a| a == "--count" || a == "-c")
-        && let Some(count) = omg_lib::core::fast_status::FastStatus::read_explicit_count()
     {
-        println!("{count}");
-        return true;
+        // Try fast path first
+        if let Some(count) = omg_lib::core::fast_status::FastStatus::read_explicit_count() {
+            println!("{count}");
+            return true;
+        }
+        // Fallback to sync path
+        if packages::explicit_sync(true).is_ok() {
+            return true;
+        }
     }
     false
 }
@@ -49,6 +64,11 @@ fn try_fast_explicit_count() -> bool {
 /// This shaves ~2ms by avoiding runtime initialization
 fn try_fast_search() -> bool {
     let args: Vec<_> = std::env::args().collect();
+
+    if has_help_flag(&args) {
+        return false;
+    }
+
     // Check for "omg search <query>" or "omg s <query>" (simple search, no flags)
     if args.len() == 3 && (args[1] == "search" || args[1] == "s") {
         let query = &args[2];
@@ -67,6 +87,11 @@ fn try_fast_search() -> bool {
 /// Ultra-fast path for simple info (bypasses tokio entirely)
 fn try_fast_info() -> bool {
     let args: Vec<_> = std::env::args().collect();
+
+    if has_help_flag(&args) {
+        return false;
+    }
+
     // Check for "omg info <package>" (simple info, no flags)
     if args.len() == 3 && args[1] == "info" {
         let package = &args[2];
@@ -85,6 +110,11 @@ fn try_fast_info() -> bool {
 /// Ultra-fast path for completions (bypasses tokio entirely)
 fn try_fast_completions() -> Result<bool> {
     let args: Vec<_> = std::env::args().collect();
+
+    if has_help_flag(&args) {
+        return Ok(false);
+    }
+
     // Check for "omg completions <shell>" or "omg completions <shell> --stdout"
     if args.len() >= 3 && args[1] == "completions" {
         let shell = &args[2];
@@ -114,6 +144,114 @@ fn try_fast_completions() -> Result<bool> {
     Ok(false)
 }
 
+/// Ultra-fast path for which command (bypasses tokio entirely)
+fn try_fast_which() -> bool {
+    let args: Vec<_> = std::env::args().collect();
+
+    if has_help_flag(&args) {
+        return false;
+    }
+
+    // Check for "omg which <runtime>" (simple which, no flags)
+    if args.len() == 3 && args[1] == "which" {
+        let runtime = &args[2];
+        // Skip if runtime looks like a flag
+        if runtime.starts_with('-') {
+            return false;
+        }
+
+        if let Some(version) = runtimes::resolve_active_version(runtime) {
+            println!("{runtime} {version}");
+        } else {
+            println!("{runtime}: no version set (check .tool-versions, .nvmrc, etc.)");
+        }
+        return true;
+    }
+    false
+}
+
+/// Ultra-fast path for list command (bypasses tokio entirely)
+fn try_fast_list() -> bool {
+    let args: Vec<_> = std::env::args().collect();
+
+    if has_help_flag(&args) {
+        return false;
+    }
+
+    // Check for "omg list" or "omg list <runtime>" (no --available)
+    if args.len() >= 2 && (args[1] == "list" || args[1] == "ls") {
+        // If --available or -a is present, we need tokio
+        if args.iter().any(|a| a == "--available" || a == "-a") {
+            return false;
+        }
+
+        let runtime = if args.len() == 3 {
+            let rt = &args[2];
+            if rt.starts_with('-') {
+                None
+            } else {
+                Some(rt.as_str())
+            }
+        } else {
+            None
+        };
+
+        // Use sync path directly
+        if runtimes::list_versions_sync(runtime).is_ok() {
+            return true;
+        }
+    }
+    false
+}
+
+/// Ultra-fast path for status command (bypasses tokio entirely)
+fn try_fast_status() -> bool {
+    let args: Vec<_> = std::env::args().collect();
+
+    if has_help_flag(&args) {
+        return false;
+    }
+
+    if args.len() == 2 && args[1] == "status" {
+        if commands::status_sync().is_ok() {
+            return true;
+        }
+    }
+    false
+}
+
+/// Ultra-fast path for hook commands (bypasses tokio entirely)
+fn try_fast_hooks() -> bool {
+    let args: Vec<_> = std::env::args().collect();
+
+    if has_help_flag(&args) {
+        return false;
+    }
+
+    if args.len() >= 2 {
+        match args[1].as_str() {
+            "hook" => {
+                if args.len() == 3 {
+                    let shell = &args[2];
+                    if hooks::print_hook(shell).is_ok() {
+                        return true;
+                    }
+                }
+            }
+            "hook-env" => {
+                if args.len() >= 3 {
+                    let shell = args.iter().find(|a| !a.starts_with('-') && *a != "hook-env").map(String::as_str).unwrap_or("");
+                    if hooks::hook_env(shell).is_ok() {
+                        return true;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
 fn main() -> Result<()> {
     // ULTRA FAST PATH: explicit --count without tokio
     if try_fast_explicit_count() {
@@ -132,6 +270,26 @@ fn main() -> Result<()> {
 
     // ULTRA FAST PATH: completions without tokio
     if try_fast_completions()? {
+        return Ok(());
+    }
+
+    // ULTRA FAST PATH: which command without tokio
+    if try_fast_which() {
+        return Ok(());
+    }
+
+    // ULTRA FAST PATH: list command (local only) without tokio
+    if try_fast_list() {
+        return Ok(());
+    }
+
+    // ULTRA FAST PATH: status command without tokio
+    if try_fast_status() {
+        return Ok(());
+    }
+
+    // ULTRA FAST PATH: hook/hook-env without tokio
+    if try_fast_hooks() {
         return Ok(());
     }
 
