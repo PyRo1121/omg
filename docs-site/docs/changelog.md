@@ -167,6 +167,6 @@ None at this time.
 
 ## Contributing
 
-See [CONTRIBUTING.md](../CONTRIBUTING.md) for contribution guidelines.
+See the CONTRIBUTING.md file in the repository root for contribution guidelines.
 
 Report issues at [GitHub Issues](https://github.com/PyRo1121/omg/issues).

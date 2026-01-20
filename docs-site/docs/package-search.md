@@ -14,7 +14,7 @@ When you type `omg search <query>`, the system executes a multi-stage pipeline t
 
 ### 1. Instant Cache Check
 First, the daemon checks its internal high-speed memory cache.
-- **Latency**: <0.1ms
+- **Latency**: &lt;0.1ms
 - **Hit Rate**: Over 80% for common queries
 - **Freshness**: Cache is automatically invalidated every 5 minutes to ensure results stay current.
 
@@ -39,8 +39,8 @@ Finally, results from all sources are merged, ranked, and presented in a unified
 
 | Stage | Data Source | Latency | Benefit |
 |-------|-------------|---------|---------|
-| **Cache** | System RAM | <0.1ms | Instant repeated queries |
-| **Official Index** | Local SSD/RAM | <1ms | Blazing fast primary search |
+| **Cache** | System RAM | &lt;0.1ms | Instant repeated queries |
+| **Official Index** | Local SSD/RAM | &lt;1ms | Blazing fast primary search |
 | **AUR RPC** | Network | 50-200ms | Millions of packages available |
 
 ---
