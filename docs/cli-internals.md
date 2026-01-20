@@ -34,17 +34,12 @@ fn main() -> Result<()> {
 
 ### Memory Optimization
 
-The CLI uses mimalloc for improved performance:
-```rust
-#[cfg(not(target_env = "msvc"))]
-#[global_allocator]
-static GLOBAL: MiMalloc = MiMalloc;
-```
+The CLI uses the system allocator (pure Rust, no C dependencies):
 
 Benefits:
-- **Faster Allocations**: 1.5-2x faster than default allocator
-- **Better Cache Locality**: Improved memory access patterns
-- **Reduced Fragmentation**: Better for long-running processes
+- **Pure Rust**: No external allocator dependencies
+- **Simpler Builds**: Reduced compilation complexity
+- **Good Performance**: Modern system allocators are highly optimized
 
 ## Command Execution Model
 
@@ -373,10 +368,10 @@ Configuration options:
 
 ### Colored Output
 
-The CLI uses `colored` for user-friendly output:
+The CLI uses `owo-colors` for user-friendly output:
 
 ```rust
-use colored::*;
+use owo_colors::OwoColorize;
 use omg_lib::cli::style;
 
 println!("{} Package installed", style::success("✓"));

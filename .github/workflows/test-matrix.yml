@@ -3,8 +3,20 @@ name: Multi-Distro Test Matrix
 on:
   push:
     branches: [main, develop]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/**'
   pull_request:
     branches: [main]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/**'
   workflow_dispatch:
     inputs:
       run_destructive:
@@ -16,9 +28,17 @@ on:
         type: boolean
         default: false
 
+# Cancel in-progress runs when a new commit is pushed
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  # Enable sccache for faster builds
+  SCCACHE_GHA_ENABLED: "true"
+  RUSTC_WRAPPER: "sccache"
 
 jobs:
   # ═══════════════════════════════════════════════════════════════════════════
@@ -36,11 +56,16 @@ jobs:
       - name: Install dependencies
         run: |
           pacman -Syu --noconfirm
-          pacman -S --noconfirm base-devel git rustup clang
+          pacman -S --noconfirm base-devel git rustup clang sccache
           rustup default stable
+      
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.4
         
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "arch-stable"
         
       - name: Run unit tests
         run: cargo test --lib --features arch
@@ -61,11 +86,16 @@ jobs:
       - name: Install dependencies
         run: |
           pacman -Syu --noconfirm
-          pacman -S --noconfirm base-devel git rustup clang
+          pacman -S --noconfirm base-devel git rustup clang sccache
           rustup default stable
+      
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.4
           
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "arch-stable"
         
       - name: Build with Arch feature
         run: cargo build --features arch
@@ -166,11 +196,16 @@ jobs:
       - name: Install dependencies
         run: |
           pacman -Syu --noconfirm
-          pacman -S --noconfirm base-devel git rustup clang
+          pacman -S --noconfirm base-devel git rustup clang sccache
           rustup default stable
+      
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.4
         
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "arch-stable"
         
       - name: Run property tests
         run: cargo test --test property_tests --features arch -- --test-threads=1
@@ -193,11 +228,16 @@ jobs:
       - name: Install dependencies
         run: |
           pacman -Syu --noconfirm
-          pacman -S --noconfirm base-devel git rustup clang
+          pacman -S --noconfirm base-devel git rustup clang sccache
           rustup default stable
+      
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.4
         
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "arch-stable"
         
       - name: Run security tests
         run: cargo test --test security_tests --features arch
@@ -225,8 +265,16 @@ jobs:
       - name: Install dependencies
         run: |
           pacman -Syu --noconfirm
-          pacman -S --noconfirm base-devel git rustup clang
+          pacman -S --noconfirm base-devel git rustup clang sccache
           rustup default stable
+      
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.4
+          
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "arch-stable"
           
       - name: Build release
         run: cargo build --release --features arch
@@ -301,9 +349,17 @@ jobs:
       - name: Install dependencies
         run: |
           pacman -Syu --noconfirm
-          pacman -S --noconfirm base-devel git rustup clang
+          pacman -S --noconfirm base-devel git rustup clang sccache
           rustup default stable
           rustup component add rustfmt clippy
+      
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.4
+          
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "arch-stable"
           
       - name: Check formatting
         run: cargo fmt -- --check
@@ -326,8 +382,16 @@ jobs:
       - name: Install dependencies
         run: |
           pacman -Syu --noconfirm
-          pacman -S --noconfirm base-devel git rustup clang
+          pacman -S --noconfirm base-devel git rustup clang sccache
           rustup default stable
+      
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.4
+        
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "arch-stable"
         
       - name: Run doc tests
         run: cargo test --doc --features arch
@@ -351,10 +415,20 @@ jobs:
       - name: Install dependencies
         run: |
           pacman -Syu --noconfirm
-          pacman -S --noconfirm base-devel git rustup llvm clang
+          pacman -S --noconfirm base-devel git rustup llvm clang sccache
           rustup default stable
           rustup component add llvm-tools-preview
-          cargo install cargo-llvm-cov
+      
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.4
+        
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "arch-stable"
+          
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
           
       - name: Generate coverage
         env:

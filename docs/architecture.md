@@ -109,7 +109,29 @@ src/
 │   ├── mod.rs           # CLI module root
 │   ├── args.rs          # Command definitions (clap)
 │   ├── commands.rs      # Command implementations
-│   ├── containers.rs    # Container commands
+│   ├── packages.rs      # Package search/install/remove
+│   ├── runtimes.rs      # Runtime management commands
+│   ├── container.rs     # Container commands
+│   ├── security.rs      # Security audit commands
+│   ├── tool.rs          # Cross-ecosystem binary manager
+│   ├── env.rs           # Environment management
+│   ├── team.rs          # Team collaboration
+│   ├── doctor.rs        # System health checks
+│   ├── license.rs       # License management
+│   ├── new.rs           # Project scaffolding
+│   ├── init.rs          # Initialize projects
+│   ├── migrate.rs       # Migration from other tools
+│   ├── snapshot.rs      # System snapshots
+│   ├── outdated.rs      # Check for updates
+│   ├── pin.rs           # Pin package versions
+│   ├── size.rs          # Package size analysis
+│   ├── why.rs           # Dependency analysis
+│   ├── blame.rs         # Package attribution
+│   ├── diff.rs          # Diff operations
+│   ├── ci.rs            # CI/CD integration
+│   ├── enterprise.rs    # Enterprise features
+│   ├── fleet.rs         # Fleet management
+│   ├── style.rs         # Output styling
 │   ├── tui/             # TUI dashboard
 │   │   ├── mod.rs
 │   │   ├── app.rs
@@ -118,11 +140,28 @@ src/
 ├── core/
 │   ├── mod.rs           # Core module root
 │   ├── types.rs         # Common types
-│   ├── errors.rs        # Error definitions
+│   ├── error.rs         # Error definitions
 │   ├── database.rs      # redb wrapper
+│   ├── paths.rs         # File system paths
 │   ├── archive.rs       # Archive extraction
 │   ├── client.rs        # HTTP client
+│   ├── http.rs          # HTTP protocol handling
 │   ├── history.rs       # Transaction history
+│   ├── privilege.rs     # Privilege escalation
+│   ├── completion.rs    # Shell completion generation
+│   ├── container.rs     # Container utilities
+│   ├── fast_status.rs   # Fast status file I/O
+│   ├── sysinfo.rs       # System information
+│   ├── task_runner.rs   # Task runner utilities
+│   ├── license.rs       # License handling
+│   ├── usage.rs         # Usage statistics
+│   ├── telemetry.rs     # Anonymous telemetry
+│   ├── analytics.rs     # Analytics tracking
+│   ├── env/             # Environment utilities
+│   │   ├── mod.rs
+│   │   ├── distro.rs    # Distro detection
+│   │   ├── fingerprint.rs # System fingerprinting
+│   │   └── team.rs      # Team environment
 │   ├── security/        # Security features
 │   │   ├── mod.rs
 │   │   ├── audit.rs
@@ -130,7 +169,8 @@ src/
 │   │   ├── sbom.rs
 │   │   ├── secrets.rs
 │   │   ├── slsa.rs
-│   │   └── vuln.rs
+│   │   ├── policy.rs
+│   │   └── vulnerability.rs
 │   └── ...
 ├── daemon/
 │   ├── mod.rs           # Daemon module root
@@ -153,9 +193,17 @@ src/
 │   └── mise.rs          # Mise integration
 ├── package_managers/
 │   ├── mod.rs           # Package manager root
-│   ├── alpm/            # Arch (libalpm)
-│   ├── aur/             # AUR client
-│   └── apt/             # Debian (rust-apt)
+│   ├── traits.rs        # Common traits
+│   ├── types.rs         # Shared types
+│   ├── official.rs      # Official repo backend
+│   ├── alpm_direct.rs   # Direct libalpm operations
+│   ├── alpm_ops.rs      # ALPM transaction operations
+│   ├── alpm_worker.rs   # ALPM async worker
+│   ├── pacman_db.rs     # Pacman database parsing
+│   ├── aur.rs           # AUR HTTP client
+│   ├── pkgbuild.rs      # PKGBUILD parsing
+│   ├── apt.rs           # Debian/Ubuntu apt integration
+│   └── parallel_sync.rs # Parallel repository sync
 ├── hooks/
 │   └── mod.rs           # Shell hooks
 ├── shims/
