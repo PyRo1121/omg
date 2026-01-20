@@ -47,6 +47,7 @@ pub fn status() -> Result<()> {
 }
 
 /// Run a command in a container
+#[allow(clippy::too_many_arguments)] // Container config has many options
 pub fn run(
     image: &str,
     command: &[String],

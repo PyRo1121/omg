@@ -915,6 +915,7 @@ fn mise_runtime_bin_path(runtime: &str, version: &str) -> Option<PathBuf> {
 }
 
 /// Run a task in watch mode - re-run on file changes
+#[allow(clippy::unused_async)] // Async for API consistency with other task functions
 pub async fn run_task_watch(
     task_name: &str,
     extra_args: &[String],
@@ -1002,7 +1003,7 @@ pub async fn run_tasks_parallel(
 
     if task_names.len() == 1 {
         // Single task, just run normally
-        return run_task(tasks_str, extra_args, backend_override).map_err(Into::into);
+        return run_task(tasks_str, extra_args, backend_override);
     }
 
     println!(
