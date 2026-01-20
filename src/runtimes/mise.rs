@@ -46,12 +46,15 @@ impl MiseManager {
             return true;
         }
 
-        // Fall back to system mise
-        Command::new("mise")
-            .arg("--version")
-            .output()
-            .map(|out| out.status.success())
-            .unwrap_or(false)
+        static AVAILABLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *AVAILABLE.get_or_init(|| {
+            // Fall back to system mise
+            Command::new("mise")
+                .arg("--version")
+                .output()
+                .map(|out| out.status.success())
+                .unwrap_or(false)
+        })
     }
 
     /// Get the path to the mise binary (bundled or system)

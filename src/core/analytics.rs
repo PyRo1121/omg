@@ -256,7 +256,7 @@ pub fn queue_event(
 
 /// Track a command execution
 pub fn track_command(command: &str, subcommand: Option<&str>, duration_ms: u64, success: bool) {
-    if !is_enabled() {
+    if !is_enabled() || crate::core::paths::test_mode() {
         return;
     }
 
@@ -419,7 +419,7 @@ pub async fn flush_events() -> Result<()> {
 
 /// Flush events if queue is ready
 pub async fn maybe_flush() {
-    if !is_enabled() {
+    if !is_enabled() || crate::core::paths::test_mode() {
         return;
     }
 

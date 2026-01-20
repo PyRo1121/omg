@@ -37,9 +37,16 @@ struct InstallMarker {
 /// Check if telemetry is opted out
 #[must_use]
 pub fn is_telemetry_opt_out() -> bool {
+    if crate::core::paths::test_mode() {
+        return true;
+    }
+
     matches!(
         std::env::var("OMG_TELEMETRY").as_deref(),
         Ok("0" | "false" | "FALSE" | "off" | "OFF")
+    ) || matches!(
+        std::env::var("OMG_DISABLE_TELEMETRY").as_deref(),
+        Ok("1" | "true" | "TRUE")
     )
 }
 

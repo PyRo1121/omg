@@ -226,7 +226,113 @@ fn mise_list_all() -> Result<()> {
 }
 
 /// List installed versions - PURE NATIVE (no external tools)
+pub fn list_versions_sync(runtime: Option<&str>) -> Result<()> {
+    if let Some(rt) = runtime {
+        println!("{} {} versions:\n", "OMG".cyan().bold(), rt.green());
+
+        match rt.to_lowercase().as_str() {
+            "node" | "nodejs" => {
+                let mgr = NodeManager::new();
+                let current = mgr.current_version();
+                for v in mgr.list_installed().unwrap_or_default() {
+                    let marker = if Some(&v) == current.as_ref() { "→" } else { " " };
+                    println!("  {} {}", marker.green(), v);
+                }
+            }
+            "python" => {
+                let mgr = PythonManager::new();
+                let current = mgr.current_version();
+                for v in mgr.list_installed().unwrap_or_default() {
+                    let marker = if Some(&v) == current.as_ref() { "→" } else { " " };
+                    println!("  {} {}", marker.green(), v);
+                }
+            }
+            "rust" => {
+                let mgr = RustManager::new();
+                let current = mgr.current_version();
+                for v in mgr.list_installed().unwrap_or_default() {
+                    let marker = if Some(&v) == current.as_ref() { "→" } else { " " };
+                    println!("  {} {}", marker.green(), v);
+                }
+            }
+            "go" | "golang" => {
+                let mgr = GoManager::new();
+                let current = mgr.current_version();
+                for v in mgr.list_installed().unwrap_or_default() {
+                    let marker = if Some(&v) == current.as_ref() { "→" } else { " " };
+                    println!("  {} {}", marker.green(), v);
+                }
+            }
+            "ruby" => {
+                let mgr = RubyManager::new();
+                let current = mgr.current_version();
+                for v in mgr.list_installed().unwrap_or_default() {
+                    let marker = if Some(&v) == current.as_ref() { "→" } else { " " };
+                    println!("  {} {}", marker.green(), v);
+                }
+            }
+            "java" | "jdk" => {
+                let mgr = JavaManager::new();
+                let current = mgr.current_version();
+                for v in mgr.list_installed().unwrap_or_default() {
+                    let marker = if Some(&v) == current.as_ref() { "→" } else { " " };
+                    println!("  {} {}", marker.green(), v);
+                }
+            }
+            "bun" | "bunjs" => {
+                let mgr = BunManager::new();
+                let current = mgr.current_version();
+                for v in mgr.list_installed().unwrap_or_default() {
+                    let marker = if Some(&v) == current.as_ref() { "→" } else { " " };
+                    println!("  {} {}", marker.green(), v);
+                }
+            }
+            _ => {
+                // For mise runtimes, we still use Command::new which is sync
+                mise_list_versions(rt, false)?;
+            }
+        }
+    } else {
+        // List all installed runtimes
+        println!("{} Installed runtime versions:\n", "OMG".cyan().bold());
+
+        if let Some(v) = NodeManager::new().current_version() {
+            println!("  {} Node.js {}", "●".green(), v);
+        }
+        if let Some(v) = PythonManager::new().current_version() {
+            println!("  {} Python {}", "●".green(), v);
+        }
+        if let Some(v) = RustManager::new().current_version() {
+            println!("  {} Rust {}", "●".green(), v);
+        }
+        if let Some(v) = GoManager::new().current_version() {
+            println!("  {} Go {}", "●".green(), v);
+        }
+        if let Some(v) = RubyManager::new().current_version() {
+            println!("  {} Ruby {}", "●".green(), v);
+        }
+        if let Some(v) = JavaManager::new().current_version() {
+            println!("  {} Java {}", "●".green(), v);
+        }
+        if let Some(v) = BunManager::new().current_version() {
+            println!("  {} Bun {}", "●".green(), v);
+        }
+
+        if MISE.is_available() {
+            println!("\n{} Mise runtimes:\n", "OMG".cyan().bold());
+            mise_list_all()?;
+        }
+    }
+
+    Ok(())
+}
+
+/// List installed versions - PURE NATIVE (no external tools)
 pub async fn list_versions(runtime: Option<&str>, available: bool) -> Result<()> {
+    if !available {
+        return list_versions_sync(runtime);
+    }
+
     if let Some(rt) = runtime {
         println!("{} {} versions:\n", "OMG".cyan().bold(), rt.green());
 

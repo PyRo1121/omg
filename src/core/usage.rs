@@ -468,6 +468,9 @@ pub fn track_and_sync(command: &str, time_saved_ms: u64) {
 
 /// Sync usage now (awaitable, for end of CLI commands)
 pub async fn sync_usage_now() {
+    if crate::core::paths::test_mode() {
+        return;
+    }
     if let Some(license) = crate::core::license::load_license() {
         let mut stats = UsageStats::load();
         if (stats.needs_sync() || stats.needs_immediate_sync() || stats.total_commands > 0)

@@ -27,13 +27,17 @@ pub fn search_sync_cli(query: &str, detailed: bool, interactive: bool) -> Result
     let start = std::time::Instant::now();
 
     // 1. Try Daemon first (ULTRA FAST - <1ms)
-    if let Ok(mut client) = DaemonClient::connect_sync()
-        && let Ok(ResponseResult::Search(res)) = client.call_sync(&Request::Search {
+    let daemon_res = if let Ok(mut client) = DaemonClient::connect_sync() {
+        client.call_sync(&Request::Search {
             id: 0,
             query: query.to_string(),
             limit: Some(50),
-        })
-    {
+        }).ok()
+    } else {
+        None
+    };
+
+    if let Some(ResponseResult::Search(res)) = daemon_res {
         let sync_time = start.elapsed();
 
         if res.packages.is_empty() {
@@ -80,6 +84,48 @@ pub fn search_sync_cli(query: &str, detailed: bool, interactive: bool) -> Result
         crate::core::usage::track_search();
 
         return Ok(true);
+    }
+
+    // 2. Fallback to local search if daemon is not available (mostly for tests)
+    #[cfg(feature = "arch")]
+    {
+        if let Ok(official_packages) = search_sync(query) {
+            if official_packages.is_empty() {
+                return Ok(false);
+            }
+
+            let sync_time = start.elapsed();
+            let mut stdout = std::io::BufWriter::new(std::io::stdout());
+            use std::io::Write;
+
+            writeln!(
+                stdout,
+                "{} {} results ({:.1}ms)\n",
+                style::header("OMG"),
+                official_packages.len(),
+                sync_time.as_secs_f64() * 1000.0
+            )?;
+
+            writeln!(stdout, "{}", style::header("Official Repositories"))?;
+            for pkg in official_packages.iter().take(20) {
+                let installed = if pkg.installed {
+                    style::dim(" [installed]")
+                } else {
+                    String::new()
+                };
+                writeln!(
+                    stdout,
+                    "  {} {} ({}) - {}{}",
+                    style::package(&pkg.name),
+                    style::version(&pkg.version.to_string()),
+                    style::info(&pkg.repo),
+                    style::dim(&truncate(&pkg.description, 50)),
+                    installed
+                )?;
+            }
+            stdout.flush()?;
+            return Ok(true);
+        }
     }
 
     Ok(false)
