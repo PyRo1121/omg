@@ -714,7 +714,7 @@ pub enum AuditCommands {
     Scan,
     /// Generate Software Bill of Materials (SBOM) in `CycloneDX` format
     Sbom {
-        /// Output file path (default: ~/.local/share/omg/sbom/sbom-<timestamp>.json)
+        /// Output file path (default: ~/.local/share/omg/sbom/sbom-`<timestamp>`.json)
         #[arg(short, long)]
         output: Option<String>,
         /// Include vulnerability data in SBOM
@@ -872,7 +872,7 @@ pub enum EnterpriseCommands {
 pub enum EnterprisePolicyCommands {
     /// Set a policy rule
     Set {
-        /// Scope (org, team:<name>, project)
+        /// Scope (org, team:`<name>`, project)
         #[arg(short, long)]
         scope: String,
         /// Rule to set

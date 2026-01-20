@@ -9,8 +9,8 @@
 //!   omg-fast oc           # orphan count
 //!   omg-fast uc           # updates count
 //!   omg-fast status       # full status display
-//!   omg-fast s <query>    # search packages
-//!   omg-fast i <package>  # package info
+//!   omg-fast s `<query>`    # search packages
+//!   omg-fast i `<package>`  # package info
 
 // Allow pedantic lints that are too strict for this minimal binary
 #![allow(clippy::cast_possible_truncation)] // IPC message lengths are bounded
