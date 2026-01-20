@@ -1,0 +1,49 @@
+name: "CodeQL"
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  schedule:
+    - cron: '34 18 * * 1'
+
+jobs:
+  analyze:
+    name: Analyze
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [ 'actions', 'rust' ]
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Initialize CodeQL
+      uses: github/codeql-action/init@v3
+      with:
+        languages: ${{ matrix.language }}
+        build-mode: ${{ matrix.language == 'rust' && 'manual' || 'autobuild' }}
+
+    - name: Install dependencies (Arch/Rust)
+      if: matrix.language == 'rust'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libalpm-dev libdbus-1-dev pkg-config
+
+    - name: Build (Manual for Rust)
+      if: matrix.language == 'rust'
+      run: |
+        cargo build --verbose
+
+    - name: Perform CodeQL Analysis
+      uses: github/codeql-action/analyze@v3
+      with:
+        category: "/language:${{matrix.language}}"
