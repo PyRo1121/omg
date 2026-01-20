@@ -25,21 +25,21 @@ proptest! {
     fn prop_search_never_crashes(query in "[^\x00]*") {
         let result = run_omg(&["search", &query]);
         // Should never panic - may fail gracefully
-        prop_assert!(!result.stderr.contains("panic"));
+        prop_assert!(!result.stderr.contains("panicked at"));
     }
 
     /// Any string input to info should not crash
     #[test]
     fn prop_info_never_crashes(package in "[a-zA-Z0-9_-]{1,100}") {
         let result = run_omg(&["info", &package]);
-        prop_assert!(!result.stderr.contains("panic"));
+        prop_assert!(!result.stderr.contains("panicked at"));
     }
 
     /// Version strings should be handled gracefully
     #[test]
     fn prop_version_strings_handled(version in "[0-9]{1,3}(\\.[0-9]{1,3}){0,3}") {
         let result = run_omg(&["use", "node", &version]);
-        prop_assert!(!result.stderr.contains("panic"));
+        prop_assert!(!result.stderr.contains("panicked at"));
     }
 
     /// Path inputs should not allow traversal
@@ -63,7 +63,7 @@ proptest! {
     ) {
         let input = format!("{word}{meta}{word}");
         let result = run_omg(&["search", &input]);
-        prop_assert!(!result.stderr.contains("panic"));
+        prop_assert!(!result.stderr.contains("panicked at"));
         // Should not execute injected commands
         prop_assert!(!result.stdout.contains("root:"));
     }
@@ -80,7 +80,7 @@ proptest! {
     ) {
         let result1 = run_omg(&["which", runtime]);
         // Should not crash on any variant
-        prop_assert!(!result1.stderr.contains("panic"));
+        prop_assert!(!result1.stderr.contains("panicked at"));
     }
 
     /// Environment variables in input should not be expanded
@@ -88,7 +88,7 @@ proptest! {
     fn prop_no_env_expansion(var_name in "[A-Z]{3,10}") {
         let input = format!("${{{var_name}}}");
         let result = run_omg(&["search", &input]);
-        prop_assert!(!result.stderr.contains("panic"));
+        prop_assert!(!result.stderr.contains("panicked at"));
         // Verify env var wasn't expanded
         if let Ok(val) = std::env::var(&var_name) {
             prop_assert!(!result.stdout.contains(&val));
@@ -99,7 +99,7 @@ proptest! {
     #[test]
     fn prop_unicode_safe(s in "\\PC{1,50}") {
         let result = run_omg(&["search", &s]);
-        prop_assert!(!result.stderr.contains("panic"));
+        prop_assert!(!result.stderr.contains("panicked at"));
     }
 
     /// Very long inputs should be handled gracefully
@@ -107,7 +107,7 @@ proptest! {
     fn prop_long_input_handled(len in 100usize..10000) {
         let long_input: String = "a".repeat(len);
         let result = run_omg(&["search", &long_input]);
-        prop_assert!(!result.stderr.contains("panic"));
+        prop_assert!(!result.stderr.contains("panicked at"));
     }
 
     // Note: Null byte tests removed - std::process::Command rejects null bytes in args
@@ -130,7 +130,7 @@ proptest! {
     ) {
         let version = format!("{major}.{minor}.{patch}");
         let result = run_omg(&["use", "node", &version]);
-        prop_assert!(!result.stderr.contains("panic"));
+        prop_assert!(!result.stderr.contains("panicked at"));
     }
 
     /// Partial versions should be handled
@@ -142,8 +142,8 @@ proptest! {
         let result1 = run_omg(&["use", "node", &v1]);
         let result2 = run_omg(&["use", "node", &v2]);
 
-        prop_assert!(!result1.stderr.contains("panic"));
-        prop_assert!(!result2.stderr.contains("panic"));
+        prop_assert!(!result1.stderr.contains("panicked at"));
+        prop_assert!(!result2.stderr.contains("panicked at"));
     }
 
     /// Version aliases should work
@@ -152,7 +152,7 @@ proptest! {
         alias in prop::sample::select(vec!["lts", "latest", "stable", "current", "lts/*", "lts/iron"])
     ) {
         let result = run_omg(&["use", "node", alias]);
-        prop_assert!(!result.stderr.contains("panic"));
+        prop_assert!(!result.stderr.contains("panicked at"));
     }
 
     /// Version with v prefix should work
@@ -160,7 +160,7 @@ proptest! {
     fn prop_v_prefix_versions(major in 0u32..30, minor in 0u32..30, patch in 0u32..30) {
         let version = format!("v{major}.{minor}.{patch}");
         let result = run_omg(&["use", "node", &version]);
-        prop_assert!(!result.stderr.contains("panic"));
+        prop_assert!(!result.stderr.contains("panicked at"));
     }
 }
 
@@ -181,7 +181,7 @@ proptest! {
         project.create_dir(&path);
 
         let result = run_omg_in_dir(&["status"], &project.path().join(&path));
-        prop_assert!(!result.stderr.contains("panic"));
+        prop_assert!(!result.stderr.contains("panicked at"));
     }
 
     /// Symlink cycles should be detected
@@ -197,7 +197,7 @@ proptest! {
         }
 
         let result = run_omg_in_dir(&["status"], &current);
-        prop_assert!(!result.stderr.contains("panic"));
+        prop_assert!(!result.stderr.contains("panicked at"));
     }
 }
 
@@ -216,7 +216,7 @@ proptest! {
 
         let result = project.run(&["env", "check"]);
         // May fail, but should not panic
-        prop_assert!(!result.stderr.contains("panic"));
+        prop_assert!(!result.stderr.contains("panicked at"));
     }
 
     /// Valid TOML with wrong schema should be handled
@@ -230,7 +230,7 @@ proptest! {
         project.create_file("omg.lock", &content);
 
         let result = project.run(&["env", "check"]);
-        prop_assert!(!result.stderr.contains("panic"));
+        prop_assert!(!result.stderr.contains("panicked at"));
     }
 
     /// .tool-versions parsing should be robust
@@ -244,7 +244,7 @@ proptest! {
         project.create_file(".tool-versions", &content);
 
         let result = project.run(&["status"]);
-        prop_assert!(!result.stderr.contains("panic"));
+        prop_assert!(!result.stderr.contains("panicked at"));
     }
 
     /// .nvmrc parsing should handle various formats
@@ -261,7 +261,7 @@ proptest! {
         project.create_file(".nvmrc", &content);
 
         let result = project.run(&["use", "node"]);
-        prop_assert!(!result.stderr.contains("panic"));
+        prop_assert!(!result.stderr.contains("panicked at"));
     }
 }
 
@@ -309,7 +309,7 @@ proptest! {
 
         for handle in handles {
             let result = handle.join().unwrap();
-            prop_assert!(!result.stderr.contains("panic"));
+            prop_assert!(!result.stderr.contains("panicked at"));
         }
     }
 
@@ -329,7 +329,7 @@ proptest! {
 
         for handle in handles {
             let result = handle.join().unwrap();
-            prop_assert!(!result.stderr.contains("panic"));
+            prop_assert!(!result.stderr.contains("panicked at"));
         }
     }
 }
@@ -371,7 +371,7 @@ mod fuzz {
         for args in test_args {
             let result = run_omg(&args);
             assert!(
-                !result.stderr.contains("panic"),
+                !result.stderr.contains("panicked at"),
                 "Panic with args: {:?}",
                 args
             );
@@ -402,7 +402,7 @@ mod fuzz {
             let result = project.run(&["env", "check"]);
 
             assert!(
-                !result.stderr.contains("panic"),
+                !result.stderr.contains("panicked at"),
                 "Panic with content length: {}",
                 content.len()
             );
@@ -443,7 +443,7 @@ mod fuzz {
         for version in boundary_versions {
             let result = run_omg(&["use", "node", version]);
             assert!(
-                !result.stderr.contains("panic"),
+                !result.stderr.contains("panicked at"),
                 "Panic with version: {}",
                 version
             );
@@ -462,7 +462,7 @@ mod regression {
     #[test]
     fn regression_empty_string_search() {
         let result = run_omg(&["search", ""]);
-        assert!(!result.stderr.contains("panic"));
+        assert!(!result.stderr.contains("panicked at"));
     }
 
     // Note: Null byte test removed - std::process::Command rejects null bytes
@@ -479,7 +479,7 @@ mod regression {
 
         let full_path = project.path().join(&deep_path);
         let result = run_omg_in_dir(&["status"], &full_path);
-        assert!(!result.stderr.contains("panic"));
+        assert!(!result.stderr.contains("panicked at"));
     }
 
     #[test]
@@ -490,7 +490,7 @@ mod regression {
             if project.create_dir(special).exists() {
                 let result = run_omg_in_dir(&["status"], &project.path().join(special));
                 assert!(
-                    !result.stderr.contains("panic"),
+                    !result.stderr.contains("panicked at"),
                     "Panic with path: {}",
                     special
                 );
@@ -513,7 +513,7 @@ mod regression {
 
         for handle in handles {
             let result = handle.join().unwrap();
-            assert!(!result.stderr.contains("panic"));
+            assert!(!result.stderr.contains("panicked at"));
         }
     }
 }
