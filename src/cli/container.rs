@@ -7,6 +7,35 @@ use crate::core::container::{
     ContainerConfig, ContainerManager, ContainerRuntime, detect_runtime, dev_container_config,
 };
 
+/// Parse environment variables from KEY=VALUE format
+fn parse_env_vars(env: &[String]) -> Vec<(String, String)> {
+    env.iter()
+        .filter_map(|e| {
+            let parts: Vec<&str> = e.splitn(2, '=').collect();
+            if parts.len() == 2 {
+                Some((parts[0].to_string(), parts[1].to_string()))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// Parse volume mounts from host:container format
+fn parse_volumes(volumes: &[String]) -> Vec<(String, String)> {
+    volumes
+        .iter()
+        .filter_map(|v| {
+            let parts: Vec<&str> = v.splitn(2, ':').collect();
+            if parts.len() == 2 {
+                Some((parts[0].to_string(), parts[1].to_string()))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
 /// Show container runtime status
 pub fn status() -> Result<()> {
     println!("{} Container Status\n", "OMG".cyan().bold());
@@ -66,31 +95,8 @@ pub fn run(
         image.cyan()
     );
 
-    // Parse env vars (KEY=VALUE)
-    let env_pairs: Vec<(String, String)> = env
-        .iter()
-        .filter_map(|e| {
-            let parts: Vec<&str> = e.splitn(2, '=').collect();
-            if parts.len() == 2 {
-                Some((parts[0].to_string(), parts[1].to_string()))
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    // Parse volume mounts (host:container)
-    let volume_pairs: Vec<(String, String)> = volumes
-        .iter()
-        .filter_map(|v| {
-            let parts: Vec<&str> = v.splitn(2, ':').collect();
-            if parts.len() == 2 {
-                Some((parts[0].to_string(), parts[1].to_string()))
-            } else {
-                None
-            }
-        })
-        .collect();
+    let env_pairs = parse_env_vars(env);
+    let volume_pairs = parse_volumes(volumes);
 
     let config = ContainerConfig {
         image: image.to_string(),
@@ -123,31 +129,8 @@ pub fn shell(
     let manager = ContainerManager::new()?;
     let cwd = std::env::current_dir()?;
 
-    // Parse env vars
-    let mut env_pairs: Vec<(String, String)> = env
-        .iter()
-        .filter_map(|e| {
-            let parts: Vec<&str> = e.splitn(2, '=').collect();
-            if parts.len() == 2 {
-                Some((parts[0].to_string(), parts[1].to_string()))
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    // Parse additional volume mounts
-    let mut volume_pairs: Vec<(String, String)> = volumes
-        .iter()
-        .filter_map(|v| {
-            let parts: Vec<&str> = v.splitn(2, ':').collect();
-            if parts.len() == 2 {
-                Some((parts[0].to_string(), parts[1].to_string()))
-            } else {
-                None
-            }
-        })
-        .collect();
+    let mut env_pairs = parse_env_vars(env);
+    let mut volume_pairs = parse_volumes(volumes);
 
     let mut config = if let Some(img) = image {
         ContainerConfig {
@@ -216,7 +199,14 @@ pub fn build(
         tag.cyan()
     );
 
-    manager.build_with_options(&dockerfile_path, tag, &cwd, no_cache, build_args, target.as_deref())?;
+    manager.build_with_options(
+        &dockerfile_path,
+        tag,
+        &cwd,
+        no_cache,
+        build_args,
+        target.as_deref(),
+    )?;
 
     println!("{} Image built successfully!", "✓".green());
 

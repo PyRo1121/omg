@@ -318,9 +318,9 @@ pub fn build_path_additions<S: std::hash::BuildHasher>(
                 // Skip if rustup is installed - let rustup manage Rust
                 // Check for both rustc and cargo to be thorough
                 let home = dirs::home_dir();
-                let has_rustup = home.as_ref()
-                    .map(|h| h.join(".cargo/bin/rustc").exists() || h.join(".rustup").exists())
-                    .unwrap_or(false);
+                let has_rustup = home.as_ref().is_some_and(|h| {
+                    h.join(".cargo/bin/rustc").exists() || h.join(".rustup").exists()
+                });
                 if has_rustup {
                     // Rustup is installed, don't add OMG-managed Rust to PATH
                     continue;

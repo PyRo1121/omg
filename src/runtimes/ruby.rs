@@ -1,17 +1,24 @@
 //! Native Ruby runtime manager - PURE RUST
 //!
-//! Downloads pre-built Ruby binaries from ruby-lang.org releases.
+//! Downloads pre-built Ruby binaries from ruby-builder.
+//!
+//! Features:
+//! - Pre-built binaries (no compilation required)
+//! - Compatible with Ubuntu/Debian glibc
 
 use anyhow::{Context, Result};
-use flate2::read::GzDecoder;
-use indicatif::{ProgressBar, ProgressStyle};
 use owo_colors::OwoColorize;
 use serde::Deserialize;
-use std::fs::{self, File};
+use std::fs;
 use std::path::PathBuf;
-use tar::Archive;
 
+use super::common::{
+    download_with_progress, extract_tar_gz, get_current_version, list_installed_versions,
+    normalize_version, print_already_installed, print_installed, print_using, set_current_version,
+    version_cmp,
+};
 use crate::core::http::download_client;
+
 const RUBY_PREBUILT_URL: &str = "https://github.com/ruby/ruby-builder/releases/download";
 const RUBY_VERSIONS_URL: &str = "https://api.github.com/repos/ruby/ruby-builder/releases";
 
@@ -97,37 +104,22 @@ impl RubyManager {
     }
 
     pub fn list_installed(&self) -> Result<Vec<String>> {
-        if !self.versions_dir.exists() {
-            return Ok(Vec::new());
-        }
-
-        let mut versions = Vec::new();
-        for entry in fs::read_dir(&self.versions_dir)? {
-            let entry = entry?;
-            let name = entry.file_name().to_string_lossy().to_string();
-            if name != "current" && entry.file_type()?.is_dir() {
-                versions.push(name);
-            }
-        }
-        versions.sort_by(|a, b| version_cmp(b, a));
-        Ok(versions)
+        list_installed_versions(&self.versions_dir)
     }
 
     #[must_use]
     pub fn current_version(&self) -> Option<String> {
-        fs::read_link(&self.current_link)
-            .ok()
-            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+        get_current_version(&self.versions_dir)
     }
 
     /// Install Ruby - PURE RUST, NO SUBPROCESS
     pub async fn install(&self, version: &str) -> Result<()> {
-        let version = version.trim_start_matches('v');
-        let version_dir = self.versions_dir.join(version);
+        let version = normalize_version(version);
+        let version_dir = self.versions_dir.join(&version);
 
         if version_dir.exists() {
-            println!("{} Ruby {} is already installed", "✓".green(), version);
-            return self.use_version(version);
+            print_already_installed("Ruby", &version);
+            return self.use_version(&version);
         }
 
         println!(
@@ -146,42 +138,15 @@ impl RubyManager {
         println!("{} Downloading pre-built Ruby {}...", "→".blue(), version);
         let download_path = self.versions_dir.join(&filename);
 
-        match self.download_file(&url, &download_path).await {
+        match download_with_progress(&self.client, &url, &download_path, None).await {
             Ok(()) => {
-                // PURE RUST EXTRACTION
                 println!("{} Extracting (pure Rust)...", "→".blue());
-
-                let file = File::open(&download_path)?;
-                let decoder = GzDecoder::new(file);
-                let mut archive = Archive::new(decoder);
-
-                for entry in archive.entries()? {
-                    let mut entry = entry?;
-                    let path = entry.path()?;
-
-                    // Strip first component (ruby-X.X.X/)
-                    let stripped: PathBuf = path.components().skip(1).collect();
-                    if stripped.as_os_str().is_empty() {
-                        continue;
-                    }
-
-                    let dest_path = version_dir.join(&stripped);
-
-                    if let Some(parent) = dest_path.parent() {
-                        fs::create_dir_all(parent)?;
-                    }
-
-                    if entry.header().entry_type().is_dir() {
-                        fs::create_dir_all(&dest_path)?;
-                    } else {
-                        entry.unpack(&dest_path)?;
-                    }
-                }
+                extract_tar_gz(&download_path, &version_dir, 1)?;
 
                 let _ = fs::remove_file(&download_path);
 
-                println!("{} Ruby {} installed!", "✓".green(), version);
-                self.use_version(version)?;
+                print_installed("Ruby", &version);
+                self.use_version(&version)?;
             }
             Err(e) => {
                 println!(
@@ -190,7 +155,7 @@ impl RubyManager {
                     version,
                     e
                 );
-                println!("  Try a different version (3.3.0, 3.2.2, 3.1.4, etc.)");
+                println!("  Try: omg list ruby --available");
                 return Err(e);
             }
         }
@@ -198,69 +163,18 @@ impl RubyManager {
         Ok(())
     }
 
-    #[allow(clippy::expect_used)]
-    async fn download_file(&self, url: &str, path: &PathBuf) -> Result<()> {
-        let response =
-            self.client.get(url).send().await.with_context(|| {
-                format!("Failed to download from {url}. Check your connection.")
-            })?;
-
-        if !response.status().is_success() {
-            anyhow::bail!(
-                "✗ Download Error: Server returned {} for {}",
-                response.status(),
-                url
-            );
-        }
-
-        let total = response.content_length().unwrap_or(0);
-        let pb = ProgressBar::new(total);
-        pb.set_style(
-            ProgressStyle::default_bar()
-                .template("{spinner:.green} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")
-                .expect("valid template")
-                .progress_chars("█▓▒░"),
-        );
-
-        let bytes = response
-            .bytes()
-            .await
-            .context("Failed to read download stream")?;
-        pb.set_position(bytes.len() as u64);
-        tokio::fs::write(path, &bytes)
-            .await
-            .with_context(|| format!("Failed to write to {}. Check disk space.", path.display()))?;
-        pb.finish_and_clear();
-        Ok(())
-    }
-
+    /// Switch to a specific version
     pub fn use_version(&self, version: &str) -> Result<()> {
-        let version = version.trim_start_matches('v');
-        let version_dir = self.versions_dir.join(version);
-
-        if !version_dir.exists() {
-            anyhow::bail!("Ruby {version} is not installed");
-        }
-
-        if self.current_link.exists() {
-            fs::remove_file(&self.current_link)?;
-        }
-
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(&version_dir, &self.current_link)?;
-
-        println!("{} Now using Ruby {}", "✓".green(), version);
-        println!(
-            "  Add to PATH: {}",
-            self.bin_dir().display().to_string().dimmed()
-        );
-
+        let version = normalize_version(version);
+        set_current_version(&self.versions_dir, &version)?;
+        print_using("Ruby", &version, &self.bin_dir());
         Ok(())
     }
 
+    /// Uninstall a version
     pub fn uninstall(&self, version: &str) -> Result<()> {
-        let version = version.trim_start_matches('v');
-        let version_dir = self.versions_dir.join(version);
+        let version = normalize_version(version);
+        let version_dir = self.versions_dir.join(&version);
 
         if !version_dir.exists() {
             println!("{} Ruby {} is not installed", "→".dimmed(), version);
@@ -285,16 +199,13 @@ impl Default for RubyManager {
     }
 }
 
-fn version_cmp(a: &str, b: &str) -> std::cmp::Ordering {
-    let a_parts: Vec<u32> = a.split('.').filter_map(|p| p.parse().ok()).collect();
-    let b_parts: Vec<u32> = b.split('.').filter_map(|p| p.parse().ok()).collect();
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    for i in 0..3 {
-        let a_part = a_parts.get(i).unwrap_or(&0);
-        let b_part = b_parts.get(i).unwrap_or(&0);
-        if a_part != b_part {
-            return a_part.cmp(b_part);
-        }
+    #[test]
+    fn test_ruby_manager_new() {
+        let mgr = RubyManager::new();
+        assert!(mgr.versions_dir.ends_with("ruby"));
     }
-    std::cmp::Ordering::Equal
 }

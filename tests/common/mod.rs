@@ -41,6 +41,7 @@ pub fn init_test_env() {
 /// Test configuration flags
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct TestConfig {
     pub run_system_tests: bool,
     pub run_network_tests: bool,
@@ -82,29 +83,29 @@ impl Default for TestConfig {
 #[allow(dead_code)]
 impl TestConfig {
     pub fn skip_if_no_system(&self, test_name: &str) -> bool {
-        if !self.run_system_tests {
+        if self.run_system_tests {
+            false
+        } else {
             eprintln!("⏭️  Skipping {test_name} (set OMG_RUN_SYSTEM_TESTS=1)");
             true
-        } else {
-            false
         }
     }
 
     pub fn skip_if_no_network(&self, test_name: &str) -> bool {
-        if !self.run_network_tests {
+        if self.run_network_tests {
+            false
+        } else {
             eprintln!("⏭️  Skipping {test_name} (set OMG_RUN_NETWORK_TESTS=1)");
             true
-        } else {
-            false
         }
     }
 
     pub fn skip_if_no_destructive(&self, test_name: &str) -> bool {
-        if !self.run_destructive_tests {
+        if self.run_destructive_tests {
+            false
+        } else {
             eprintln!("⏭️  Skipping {test_name} (set OMG_RUN_DESTRUCTIVE_TESTS=1)");
             true
-        } else {
-            false
         }
     }
 

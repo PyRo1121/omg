@@ -103,7 +103,7 @@ pub fn count(n: usize) -> String {
 #[must_use]
 pub fn size(bytes: u64) -> String {
     if bytes < 1024 {
-        format!("{} B", bytes)
+        format!("{bytes} B")
     } else if bytes < 1024 * 1024 {
         format!("{:.1} KB", bytes as f64 / 1024.0)
     } else if bytes < 1024 * 1024 * 1024 {
@@ -117,13 +117,13 @@ pub fn size(bytes: u64) -> String {
 #[must_use]
 pub fn duration(ms: u64) -> String {
     if ms < 1000 {
-        format!("{}ms", ms)
+        format!("{ms}ms")
     } else if ms < 60_000 {
         format!("{:.1}s", ms as f64 / 1000.0)
     } else {
         let mins = ms / 60_000;
         let secs = (ms % 60_000) / 1000;
-        format!("{}m {}s", mins, secs)
+        format!("{mins}m {secs}s")
     }
 }
 
@@ -169,7 +169,9 @@ pub fn download_bar(total: u64, filename: &str) -> ProgressBar {
     let pb = ProgressBar::new(total);
     pb.set_style(
         ProgressStyle::default_bar()
-            .template("{msg}\n  [{bar:50.green/dim}] {bytes}/{total_bytes} ({bytes_per_sec}, {eta})")
+            .template(
+                "{msg}\n  [{bar:50.green/dim}] {bytes}/{total_bytes} ({bytes_per_sec}, {eta})",
+            )
             .expect("static template")
             .progress_chars("━━╸"),
     );

@@ -1733,12 +1733,10 @@ mod regression_tests {
             "Should not panic when listing explicit packages"
         );
         if success {
-            let package_count = stdout.lines().filter(|l| !l.trim().is_empty()).count();
             // CI containers may have very few explicit packages
-            assert!(
-                package_count >= 0,
-                "Should parse local packages without error"
-            );
+            // Just verify we can parse the output
+            let _package_count = stdout.lines().filter(|l| !l.trim().is_empty()).count();
+            // If we reached here, parsing succeeded
         }
     }
 

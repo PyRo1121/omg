@@ -372,8 +372,7 @@ mod fuzz {
             let result = run_omg(&args);
             assert!(
                 !result.stderr.contains("panicked at"),
-                "Panic with args: {:?}",
-                args
+                "Panic with args: {args:?}"
             );
         }
     }
@@ -444,8 +443,7 @@ mod fuzz {
             let result = run_omg(&["use", "node", version]);
             assert!(
                 !result.stderr.contains("panicked at"),
-                "Panic with version: {}",
-                version
+                "Panic with version: {version}"
             );
         }
     }
@@ -491,8 +489,7 @@ mod regression {
                 let result = run_omg_in_dir(&["status"], &project.path().join(special));
                 assert!(
                     !result.stderr.contains("panicked at"),
-                    "Panic with path: {}",
-                    special
+                    "Panic with path: {special}"
                 );
             }
         }

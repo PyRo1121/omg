@@ -384,7 +384,11 @@ impl ContainerManager {
                 }
                 "go" => {
                     dockerfile.push_str("# Install Go\n");
-                    let go_ver = if *version == "latest" { "1.22" } else { version };
+                    let go_ver = if *version == "latest" {
+                        "1.22"
+                    } else {
+                        version
+                    };
                     dockerfile.push_str("ENV GO_VERSION=");
                     dockerfile.push_str(go_ver);
                     dockerfile.push('\n');
@@ -404,7 +408,8 @@ impl ContainerManager {
                 }
                 "java" => {
                     dockerfile.push_str("# Install Java\n");
-                    dockerfile.push_str("RUN apt-get update && apt-get install -y default-jdk \\\n");
+                    dockerfile
+                        .push_str("RUN apt-get update && apt-get install -y default-jdk \\\n");
                     dockerfile.push_str("    && rm -rf /var/lib/apt/lists/*\n\n");
                 }
                 _ => {

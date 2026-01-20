@@ -168,17 +168,48 @@ impl CompletionEngine {
 #[must_use]
 pub fn get_command_completions(partial: &str) -> Vec<String> {
     let commands = vec![
-        "search", "install", "remove", "update", "info", "why", "outdated",
-        "pin", "size", "blame", "diff", "snapshot", "ci", "migrate", "clean",
-        "explicit", "sync", "use", "list", "hook", "run", "new", "tool",
-        "env", "team", "container", "license", "fleet", "enterprise",
-        "history", "rollback", "dash", "stats", "init", "doctor", "audit",
+        "search",
+        "install",
+        "remove",
+        "update",
+        "info",
+        "why",
+        "outdated",
+        "pin",
+        "size",
+        "blame",
+        "diff",
+        "snapshot",
+        "ci",
+        "migrate",
+        "clean",
+        "explicit",
+        "sync",
+        "use",
+        "list",
+        "hook",
+        "run",
+        "new",
+        "tool",
+        "env",
+        "team",
+        "container",
+        "license",
+        "fleet",
+        "enterprise",
+        "history",
+        "rollback",
+        "dash",
+        "stats",
+        "init",
+        "doctor",
+        "audit",
     ];
-    
+
     if partial.is_empty() {
         return commands.into_iter().map(String::from).collect();
     }
-    
+
     let partial_lower = partial.to_lowercase();
     commands
         .into_iter()
@@ -191,11 +222,11 @@ pub fn get_command_completions(partial: &str) -> Vec<String> {
 #[must_use]
 pub fn get_runtime_completions(partial: &str) -> Vec<String> {
     let runtimes = vec!["node", "python", "rust", "go", "ruby", "java", "bun"];
-    
+
     if partial.is_empty() {
         return runtimes.into_iter().map(String::from).collect();
     }
-    
+
     let partial_lower = partial.to_lowercase();
     runtimes
         .into_iter()
@@ -208,11 +239,11 @@ pub fn get_runtime_completions(partial: &str) -> Vec<String> {
 #[must_use]
 pub fn get_tool_completions(partial: &str) -> Vec<String> {
     let tools = crate::cli::tool::registry_tool_names();
-    
+
     if partial.is_empty() {
         return tools;
     }
-    
+
     let partial_lower = partial.to_lowercase();
     tools
         .into_iter()
@@ -224,14 +255,13 @@ pub fn get_tool_completions(partial: &str) -> Vec<String> {
 #[must_use]
 pub fn get_container_completions(partial: &str) -> Vec<String> {
     let subcommands = vec![
-        "status", "run", "shell", "build", "list", "images", 
-        "pull", "stop", "exec", "init",
+        "status", "run", "shell", "build", "list", "images", "pull", "stop", "exec", "init",
     ];
-    
+
     if partial.is_empty() {
         return subcommands.into_iter().map(String::from).collect();
     }
-    
+
     let partial_lower = partial.to_lowercase();
     subcommands
         .into_iter()
@@ -244,11 +274,11 @@ pub fn get_container_completions(partial: &str) -> Vec<String> {
 #[must_use]
 pub fn get_env_completions(partial: &str) -> Vec<String> {
     let subcommands = vec!["capture", "check", "share", "sync"];
-    
+
     if partial.is_empty() {
         return subcommands.into_iter().map(String::from).collect();
     }
-    
+
     let partial_lower = partial.to_lowercase();
     subcommands
         .into_iter()
@@ -288,13 +318,13 @@ mod tests {
         let results = engine.fuzzy_match("", candidates.clone());
         assert_eq!(results, candidates);
     }
-    
+
     #[test]
     fn command_completions_work() {
         let results = get_command_completions("ins");
         assert!(results.contains(&"install".to_string()));
     }
-    
+
     #[test]
     fn runtime_completions_work() {
         let results = get_runtime_completions("no");

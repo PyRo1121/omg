@@ -1,17 +1,24 @@
 //! Native Java runtime manager - PURE RUST
 //!
-//! Downloads JDK from Eclipse Adoptium.
+//! Downloads JDK from Eclipse Adoptium (Temurin).
+//!
+//! Features:
+//! - Official Eclipse Adoptium builds
+//! - LTS version detection
+//! - `JAVA_HOME` auto-configuration
 
 use anyhow::{Context, Result};
-use flate2::read::GzDecoder;
-use indicatif::{ProgressBar, ProgressStyle};
 use owo_colors::OwoColorize;
 use serde::Deserialize;
-use std::fs::{self, File};
+use std::fs;
 use std::path::PathBuf;
-use tar::Archive;
 
+use super::common::{
+    download_with_progress, extract_tar_gz, get_current_version, list_installed_versions,
+    print_already_installed, print_installed, set_current_version,
+};
 use crate::core::http::download_client;
+
 const ADOPTIUM_API: &str = "https://api.adoptium.net/v3";
 
 #[derive(Debug, Deserialize)]
@@ -101,27 +108,12 @@ impl JavaManager {
     }
 
     pub fn list_installed(&self) -> Result<Vec<String>> {
-        if !self.versions_dir.exists() {
-            return Ok(Vec::new());
-        }
-
-        let mut versions = Vec::new();
-        for entry in fs::read_dir(&self.versions_dir)? {
-            let entry = entry?;
-            let name = entry.file_name().to_string_lossy().to_string();
-            if name != "current" && entry.file_type()?.is_dir() {
-                versions.push(name);
-            }
-        }
-        versions.sort_by(|a, b| b.cmp(a));
-        Ok(versions)
+        list_installed_versions(&self.versions_dir)
     }
 
     #[must_use]
     pub fn current_version(&self) -> Option<String> {
-        fs::read_link(&self.current_link)
-            .ok()
-            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+        get_current_version(&self.versions_dir)
     }
 
     /// Install Java - PURE RUST, NO SUBPROCESS
@@ -129,7 +121,7 @@ impl JavaManager {
         let version_dir = self.versions_dir.join(version);
 
         if version_dir.exists() {
-            println!("{} Java {} is already installed", "✓".green(), version);
+            print_already_installed("Java", version);
             return self.use_version(version);
         }
 
@@ -162,110 +154,48 @@ impl JavaManager {
             .await
             .context("Failed to parse JDK data")?;
 
-        let binary = binaries
-            .first()
-            .ok_or_else(|| anyhow::anyhow!("No JDK {version} found for {arch}"))?;
+        let binary = binaries.first().ok_or_else(|| {
+            anyhow::anyhow!("No JDK {version} found for {arch}. Try: omg list java --available")
+        })?;
 
         fs::create_dir_all(&self.versions_dir)?;
 
         println!("{} Downloading {}...", "→".blue(), binary.package.name);
         let download_path = self.versions_dir.join(&binary.package.name);
-        self.download_file(&binary.package.link, &download_path)
-            .await?;
+        download_with_progress(&self.client, &binary.package.link, &download_path, None).await?;
 
-        // PURE RUST EXTRACTION
         println!("{} Extracting (pure Rust)...", "→".blue());
-
-        let file = File::open(&download_path)?;
-        let decoder = GzDecoder::new(file);
-        let mut archive = Archive::new(decoder);
-
-        // Extract with stripping top-level directory
-        for entry in archive.entries()? {
-            let mut entry = entry?;
-            let path = entry.path()?;
-
-            let stripped: PathBuf = path.components().skip(1).collect();
-            if stripped.as_os_str().is_empty() {
-                continue;
-            }
-
-            let dest_path = version_dir.join(&stripped);
-
-            if let Some(parent) = dest_path.parent() {
-                fs::create_dir_all(parent)?;
-            }
-
-            if entry.header().entry_type().is_dir() {
-                fs::create_dir_all(&dest_path)?;
-            } else {
-                entry.unpack(&dest_path)?;
-            }
-        }
+        extract_tar_gz(&download_path, &version_dir, 1)?;
 
         let _ = fs::remove_file(&download_path);
 
-        println!("{} Java {} installed!", "✓".green(), version);
+        print_installed("Java", version);
         self.use_version(version)?;
 
         Ok(())
     }
 
-    #[allow(clippy::expect_used)]
-    async fn download_file(&self, url: &str, path: &PathBuf) -> Result<()> {
-        let response =
-            self.client.get(url).send().await.with_context(|| {
-                format!("Failed to download from {url}. Check your connection.")
-            })?;
-
-        let total = response.content_length().unwrap_or(0);
-        let pb = ProgressBar::new(total);
-        pb.set_style(
-            ProgressStyle::default_bar()
-                .template("{spinner:.green} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")
-                .expect("valid template")
-                .progress_chars("█▓▒░"),
-        );
-
-        let bytes = response
-            .bytes()
-            .await
-            .context("Failed to read download stream")?;
-        pb.set_position(bytes.len() as u64);
-        tokio::fs::write(path, &bytes)
-            .await
-            .with_context(|| format!("Failed to write to {}. Check disk space.", path.display()))?;
-        pb.finish_and_clear();
-        Ok(())
-    }
-
+    /// Switch to a specific version
     pub fn use_version(&self, version: &str) -> Result<()> {
         let version_dir = self.versions_dir.join(version);
-
-        if !version_dir.exists() {
-            anyhow::bail!("Java {version} is not installed");
-        }
-
-        if self.current_link.exists() {
-            fs::remove_file(&self.current_link)?;
-        }
-
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(&version_dir, &self.current_link)?;
+        set_current_version(&self.versions_dir, version)?;
 
         println!("{} Now using Java {}", "✓".green(), version);
         println!(
-            "  Set JAVA_HOME: {}",
+            "  {} {}",
+            "JAVA_HOME:".dimmed(),
             version_dir.display().to_string().dimmed()
         );
         println!(
-            "  Add to PATH: {}",
+            "  {} {}",
+            "PATH:".dimmed(),
             self.bin_dir().display().to_string().dimmed()
         );
 
         Ok(())
     }
 
+    /// Uninstall a version
     pub fn uninstall(&self, version: &str) -> Result<()> {
         let version_dir = self.versions_dir.join(version);
 
@@ -289,5 +219,16 @@ impl JavaManager {
 impl Default for JavaManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_java_manager_new() {
+        let mgr = JavaManager::new();
+        assert!(mgr.versions_dir.ends_with("java"));
     }
 }

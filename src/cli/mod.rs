@@ -13,6 +13,7 @@ pub mod enterprise;
 pub mod env;
 pub mod fleet;
 pub mod init;
+#[cfg(feature = "license")]
 pub mod license;
 pub mod migrate;
 pub mod new;
@@ -31,7 +32,8 @@ pub mod why;
 
 pub use args::{
     AuditCommands, CiCommands, Cli, Commands, ContainerCommands, EnterpriseCommands,
-    EnterprisePolicyCommands, EnvCommands, FleetCommands, GoldenPathCommands, LicenseCommands,
-    MigrateCommands, NotifyCommands, ServerCommands, SnapshotCommands, TeamCommands,
-    TeamRoleCommands, ToolCommands,
+    EnterprisePolicyCommands, EnvCommands, FleetCommands, GoldenPathCommands, MigrateCommands,
+    NotifyCommands, ServerCommands, SnapshotCommands, TeamCommands, TeamRoleCommands, ToolCommands,
 };
+#[cfg(feature = "license")]
+pub use args::LicenseCommands;

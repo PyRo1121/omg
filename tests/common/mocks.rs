@@ -181,8 +181,7 @@ impl MockRuntimeManager {
             .lock()
             .unwrap()
             .get(runtime)
-            .map(|v| v.contains(&version.to_string()))
-            .unwrap_or(false)
+            .is_some_and(|v| v.contains(&version.to_string()))
     }
 }
 

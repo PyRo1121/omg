@@ -1,17 +1,25 @@
 //! Native Python runtime manager - PURE RUST
 //!
 //! Downloads pre-built Python binaries from python-build-standalone.
+//!
+//! Features:
+//! - Pre-built binaries (no compilation required)
+//! - Automatic version detection
+//! - Virtual environment support
 
 use anyhow::{Context, Result};
-use flate2::read::GzDecoder;
-use indicatif::{ProgressBar, ProgressStyle};
 use owo_colors::OwoColorize;
 use serde::Deserialize;
-use std::fs::{self, File};
+use std::fs;
 use std::path::PathBuf;
-use tar::Archive;
 
+use super::common::{
+    download_with_progress, extract_tar_gz, get_current_version, list_installed_versions,
+    normalize_version, print_already_installed, print_installed, print_using, set_current_version,
+    version_cmp,
+};
 use crate::core::http::download_client;
+
 const PBS_RELEASES_URL: &str =
     "https://api.github.com/repos/indygreg/python-build-standalone/releases";
 
@@ -136,37 +144,22 @@ impl PythonManager {
     }
 
     pub fn list_installed(&self) -> Result<Vec<String>> {
-        if !self.versions_dir.exists() {
-            return Ok(Vec::new());
-        }
-
-        let mut versions = Vec::new();
-        for entry in fs::read_dir(&self.versions_dir)? {
-            let entry = entry?;
-            let name = entry.file_name().to_string_lossy().to_string();
-            if name != "current" && entry.file_type()?.is_dir() {
-                versions.push(name);
-            }
-        }
-        versions.sort_by(|a, b| version_cmp(b, a));
-        Ok(versions)
+        list_installed_versions(&self.versions_dir)
     }
 
     #[must_use]
     pub fn current_version(&self) -> Option<String> {
-        fs::read_link(&self.current_link)
-            .ok()
-            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+        get_current_version(&self.versions_dir)
     }
 
     /// Install Python - PURE RUST, NO SUBPROCESS
     pub async fn install(&self, version: &str) -> Result<()> {
-        let version = version.trim_start_matches('v');
-        let version_dir = self.versions_dir.join(version);
+        let version = normalize_version(version);
+        let version_dir = self.versions_dir.join(&version);
 
         if version_dir.exists() {
-            println!("{} Python {} is already installed", "✓".green(), version);
-            return self.use_version(version);
+            print_already_installed("Python", &version);
+            return self.use_version(&version);
         }
 
         println!(
@@ -186,6 +179,7 @@ impl PythonManager {
         let releases: Vec<GithubRelease> = self
             .client
             .get(PBS_RELEASES_URL)
+            .header("User-Agent", "omg-package-manager")
             .send()
             .await
             .context("Failed to fetch Python releases")?
@@ -215,108 +209,38 @@ impl PythonManager {
         }
 
         let url = download_url.ok_or_else(|| {
-            anyhow::anyhow!("Python {version} not found in python-build-standalone releases")
+            anyhow::anyhow!("Python {version} not found. Try: omg list python --available")
         })?;
 
         fs::create_dir_all(&self.versions_dir)?;
 
         println!("{} Downloading {}...", "→".blue(), asset_name);
         let download_path = self.versions_dir.join(&asset_name);
-        self.download_file(&url, &download_path).await?;
+        download_with_progress(&self.client, &url, &download_path, None).await?;
 
-        // PURE RUST EXTRACTION
         println!("{} Extracting (pure Rust)...", "→".blue());
-
-        let file = File::open(&download_path)?;
-        let decoder = GzDecoder::new(file);
-        let mut archive = Archive::new(decoder);
-
-        // Extract with stripping python/ prefix
-        for entry in archive.entries()? {
-            let mut entry = entry?;
-            let path = entry.path()?;
-
-            let stripped: PathBuf = path.components().skip(1).collect();
-            if stripped.as_os_str().is_empty() {
-                continue;
-            }
-
-            let dest_path = version_dir.join(&stripped);
-
-            if let Some(parent) = dest_path.parent() {
-                fs::create_dir_all(parent)?;
-            }
-
-            if entry.header().entry_type().is_dir() {
-                fs::create_dir_all(&dest_path)?;
-            } else {
-                entry.unpack(&dest_path)?;
-            }
-        }
+        extract_tar_gz(&download_path, &version_dir, 1)?;
 
         let _ = fs::remove_file(&download_path);
 
-        println!("{} Python {} installed!", "✓".green(), version);
-        self.use_version(version)?;
+        print_installed("Python", &version);
+        self.use_version(&version)?;
 
         Ok(())
     }
 
-    #[allow(clippy::expect_used)]
-    async fn download_file(&self, url: &str, path: &PathBuf) -> Result<()> {
-        let response =
-            self.client.get(url).send().await.with_context(|| {
-                format!("Failed to download from {url}. Check your connection.")
-            })?;
-
-        let total = response.content_length().unwrap_or(0);
-        let pb = ProgressBar::new(total);
-        pb.set_style(
-            ProgressStyle::default_bar()
-                .template("{spinner:.green} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")
-                .expect("valid template")
-                .progress_chars("█▓▒░"),
-        );
-
-        let bytes = response
-            .bytes()
-            .await
-            .context("Failed to read download stream")?;
-        pb.set_position(bytes.len() as u64);
-        tokio::fs::write(path, &bytes)
-            .await
-            .with_context(|| format!("Failed to write to {}. Check disk space.", path.display()))?;
-        pb.finish_and_clear();
-        Ok(())
-    }
-
+    /// Switch to a specific version
     pub fn use_version(&self, version: &str) -> Result<()> {
-        let version = version.trim_start_matches('v');
-        let version_dir = self.versions_dir.join(version);
-
-        if !version_dir.exists() {
-            anyhow::bail!("Python {version} is not installed");
-        }
-
-        if self.current_link.exists() {
-            fs::remove_file(&self.current_link)?;
-        }
-
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(&version_dir, &self.current_link)?;
-
-        println!("{} Now using Python {}", "✓".green(), version);
-        println!(
-            "  Add to PATH: {}",
-            self.bin_dir().display().to_string().dimmed()
-        );
-
+        let version = normalize_version(version);
+        set_current_version(&self.versions_dir, &version)?;
+        print_using("Python", &version, &self.bin_dir());
         Ok(())
     }
 
+    /// Uninstall a version
     pub fn uninstall(&self, version: &str) -> Result<()> {
-        let version = version.trim_start_matches('v');
-        let version_dir = self.versions_dir.join(version);
+        let version = normalize_version(version);
+        let version_dir = self.versions_dir.join(&version);
 
         if !version_dir.exists() {
             println!("{} Python {} is not installed", "→".dimmed(), version);
@@ -341,16 +265,35 @@ impl Default for PythonManager {
     }
 }
 
-fn version_cmp(a: &str, b: &str) -> std::cmp::Ordering {
-    let a_parts: Vec<u32> = a.split('.').filter_map(|p| p.parse().ok()).collect();
-    let b_parts: Vec<u32> = b.split('.').filter_map(|p| p.parse().ok()).collect();
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    for i in 0..3 {
-        let a_part = a_parts.get(i).unwrap_or(&0);
-        let b_part = b_parts.get(i).unwrap_or(&0);
-        if a_part != b_part {
-            return a_part.cmp(b_part);
-        }
+    #[test]
+    fn test_python_manager_new() {
+        let mgr = PythonManager::new();
+        assert!(mgr.versions_dir.ends_with("python"));
     }
-    std::cmp::Ordering::Equal
+
+    #[test]
+    fn test_extract_cpython_version() {
+        assert_eq!(
+            PythonManager::extract_cpython_version(
+                "cpython-3.12.0+20231002-x86_64-unknown-linux-gnu-install_only.tar.gz"
+            ),
+            Some("3.12.0".to_string())
+        );
+        assert_eq!(
+            PythonManager::extract_cpython_version("cpython-3.11.5-x86_64.tar.gz"),
+            Some("3.11.5".to_string())
+        );
+    }
+
+    #[test]
+    fn test_is_semver_like() {
+        assert!(PythonManager::is_semver_like("3.12.0"));
+        assert!(PythonManager::is_semver_like("3.11.5"));
+        assert!(!PythonManager::is_semver_like("3.12"));
+        assert!(!PythonManager::is_semver_like("3"));
+    }
 }
