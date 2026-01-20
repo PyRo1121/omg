@@ -41,88 +41,50 @@ where
     }
 }
 
-fn ensure_python_runtime(version: &str) -> Result<String> {
-    let normalized = version.trim_start_matches('v');
-    let manager = crate::runtimes::PythonManager::new();
-    let installed = manager.list_installed().unwrap_or_default();
-    if installed.iter().any(|v| v == normalized) {
-        return Ok(normalized.to_string());
-    }
+/// Generic runtime installation helper - DRY implementation for all runtimes
+///
+/// Handles version normalization, installation check, and interactive prompting.
+macro_rules! ensure_runtime_impl {
+    ($runtime_name:expr, $normalized:expr, $manager:expr) => {{
+        let normalized = $normalized;
+        let installed = $manager.list_installed().unwrap_or_default();
 
-    let prompt = format!("Python '{normalized}' is missing. Install now?");
-    if Confirm::with_theme(&ColorfulTheme::default())
-        .with_prompt(prompt)
-        .default(true)
-        .interact()?
-    {
-        run_async(manager.install(normalized))?;
-        Ok(normalized.to_string())
-    } else {
-        anyhow::bail!("Python setup cancelled");
-    }
+        if installed.iter().any(|v| v == &normalized) {
+            return Ok(normalized);
+        }
+
+        let prompt = format!("{} '{}' is missing. Install now?", $runtime_name, normalized);
+        if Confirm::with_theme(&ColorfulTheme::default())
+            .with_prompt(prompt)
+            .default(true)
+            .interact()?
+        {
+            run_async($manager.install(&normalized))?;
+            Ok(normalized)
+        } else {
+            anyhow::bail!("{} setup cancelled", $runtime_name)
+        }
+    }};
+}
+
+fn ensure_python_runtime(version: &str) -> Result<String> {
+    let manager = crate::runtimes::PythonManager::new();
+    ensure_runtime_impl!("Python", version.trim_start_matches('v').to_string(), manager)
 }
 
 fn ensure_go_runtime(version: &str) -> Result<String> {
-    let normalized = version.trim_start_matches('v');
     let manager = crate::runtimes::GoManager::new();
-    let installed = manager.list_installed().unwrap_or_default();
-    if installed.iter().any(|v| v == normalized) {
-        return Ok(normalized.to_string());
-    }
-
-    let prompt = format!("Go '{normalized}' is missing. Install now?");
-    if Confirm::with_theme(&ColorfulTheme::default())
-        .with_prompt(prompt)
-        .default(true)
-        .interact()?
-    {
-        run_async(manager.install(normalized))?;
-        Ok(normalized.to_string())
-    } else {
-        anyhow::bail!("Go setup cancelled");
-    }
+    ensure_runtime_impl!("Go", version.trim_start_matches('v').to_string(), manager)
 }
 
 fn ensure_ruby_runtime(version: &str) -> Result<String> {
-    let normalized = version.trim_start_matches('v');
     let manager = crate::runtimes::RubyManager::new();
-    let installed = manager.list_installed().unwrap_or_default();
-    if installed.iter().any(|v| v == normalized) {
-        return Ok(normalized.to_string());
-    }
-
-    let prompt = format!("Ruby '{normalized}' is missing. Install now?");
-    if Confirm::with_theme(&ColorfulTheme::default())
-        .with_prompt(prompt)
-        .default(true)
-        .interact()?
-    {
-        run_async(manager.install(normalized))?;
-        Ok(normalized.to_string())
-    } else {
-        anyhow::bail!("Ruby setup cancelled");
-    }
+    ensure_runtime_impl!("Ruby", version.trim_start_matches('v').to_string(), manager)
 }
 
 fn ensure_java_runtime(version: &str) -> Result<String> {
-    let normalized = version.trim();
     let manager = crate::runtimes::JavaManager::new();
-    let installed = manager.list_installed().unwrap_or_default();
-    if installed.iter().any(|v| v == normalized) {
-        return Ok(normalized.to_string());
-    }
-
-    let prompt = format!("Java '{normalized}' is missing. Install now?");
-    if Confirm::with_theme(&ColorfulTheme::default())
-        .with_prompt(prompt)
-        .default(true)
-        .interact()?
-    {
-        run_async(manager.install(normalized))?;
-        Ok(normalized.to_string())
-    } else {
-        anyhow::bail!("Java setup cancelled");
-    }
+    ensure_runtime_impl!("Java", version.trim().to_string(), manager)
 }
 
 fn detect_js_package_manager(current_dir: &std::path::Path) -> Option<String> {
@@ -579,29 +541,22 @@ fn execute_process(
     let settings = Settings::load()?;
     let backend = backend_override.unwrap_or(settings.runtime_backend);
     if backend != RuntimeBackend::Mise {
-        if let Some(node_version) = versions.get("node").cloned() {
-            let resolved = ensure_node_runtime(&node_version)?;
-            versions.insert("node".to_string(), resolved);
-        }
-        if let Some(bun_version) = versions.get("bun").cloned() {
-            let resolved = ensure_bun_runtime(&bun_version)?;
-            versions.insert("bun".to_string(), resolved);
-        }
-        if let Some(python_version) = versions.get("python").cloned() {
-            let resolved = ensure_python_runtime(&python_version)?;
-            versions.insert("python".to_string(), resolved);
-        }
-        if let Some(go_version) = versions.get("go").cloned() {
-            let resolved = ensure_go_runtime(&go_version)?;
-            versions.insert("go".to_string(), resolved);
-        }
-        if let Some(ruby_version) = versions.get("ruby").cloned() {
-            let resolved = ensure_ruby_runtime(&ruby_version)?;
-            versions.insert("ruby".to_string(), resolved);
-        }
-        if let Some(java_version) = versions.get("java").cloned() {
-            let resolved = ensure_java_runtime(&java_version)?;
-            versions.insert("java".to_string(), resolved);
+        // Resolve all required runtimes - uses generic ensure_runtime helper
+        // Note: Sequential processing required since ensure_* may prompt for user confirmation
+        let runtime_resolvers: &[(&str, fn(&str) -> Result<String>)] = &[
+            ("node", ensure_node_runtime),
+            ("bun", ensure_bun_runtime),
+            ("python", ensure_python_runtime),
+            ("go", ensure_go_runtime),
+            ("ruby", ensure_ruby_runtime),
+            ("java", ensure_java_runtime),
+        ];
+
+        for (runtime_name, resolver) in runtime_resolvers {
+            if let Some(version) = versions.get(*runtime_name).cloned() {
+                let resolved = resolver(&version)?;
+                versions.insert((*runtime_name).to_string(), resolved);
+            }
         }
     }
     let mut path_additions = match backend {
@@ -956,10 +911,7 @@ pub async fn run_task_watch(
         }
     }
 
-    println!(
-        "  {} Watching for changes...\n",
-        "→".dimmed()
-    );
+    println!("  {} Watching for changes...\n", "→".dimmed());
 
     // Debounce: wait for changes, then re-run
     let debounce = Duration::from_millis(300);

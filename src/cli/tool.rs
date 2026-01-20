@@ -12,7 +12,12 @@ use crate::cli::style;
 /// Format: (name, source, description, category)
 const TOOL_REGISTRY: &[(&str, &str, &str, &str)] = &[
     // System tools (pacman)
-    ("ripgrep", "pacman:ripgrep", "Ultra-fast regex search tool", "search"),
+    (
+        "ripgrep",
+        "pacman:ripgrep",
+        "Ultra-fast regex search tool",
+        "search",
+    ),
     ("rg", "pacman:ripgrep", "Alias for ripgrep", "search"),
     ("fd", "pacman:fd", "Fast find alternative", "search"),
     ("fzf", "pacman:fzf", "Fuzzy finder", "search"),
@@ -20,44 +25,109 @@ const TOOL_REGISTRY: &[(&str, &str, &str, &str)] = &[
     ("yq", "pacman:yq", "YAML processor", "data"),
     ("bat", "pacman:bat", "Cat with syntax highlighting", "files"),
     ("eza", "pacman:eza", "Modern ls replacement", "files"),
-    ("zoxide", "pacman:zoxide", "Smarter cd command", "navigation"),
+    (
+        "zoxide",
+        "pacman:zoxide",
+        "Smarter cd command",
+        "navigation",
+    ),
     ("delta", "pacman:git-delta", "Better git diffs", "git"),
     ("lazygit", "pacman:lazygit", "Terminal UI for git", "git"),
-    ("htop", "pacman:htop", "Interactive process viewer", "system"),
+    (
+        "htop",
+        "pacman:htop",
+        "Interactive process viewer",
+        "system",
+    ),
     ("btop", "pacman:btop", "Resource monitor", "system"),
     ("dust", "pacman:dust", "Disk usage analyzer", "system"),
     ("duf", "pacman:duf", "Disk usage/free utility", "system"),
     ("procs", "pacman:procs", "Modern ps replacement", "system"),
-    ("hyperfine", "pacman:hyperfine", "Command benchmarking", "dev"),
+    (
+        "hyperfine",
+        "pacman:hyperfine",
+        "Command benchmarking",
+        "dev",
+    ),
     ("tokei", "pacman:tokei", "Code statistics", "dev"),
     ("just", "pacman:just", "Command runner", "dev"),
     ("watchexec", "pacman:watchexec", "File watcher", "dev"),
     // Node.js tools (npm)
     ("tldr", "npm:tldr", "Simplified man pages", "docs"),
     ("serve", "npm:serve", "Static file server", "web"),
-    ("http-server", "npm:http-server", "Simple HTTP server", "web"),
+    (
+        "http-server",
+        "npm:http-server",
+        "Simple HTTP server",
+        "web",
+    ),
     ("yarn", "npm:yarn", "Package manager", "node"),
     ("pnpm", "npm:pnpm", "Fast package manager", "node"),
     ("tsx", "npm:tsx", "TypeScript execute", "node"),
     ("nodemon", "npm:nodemon", "Node.js auto-restart", "node"),
     ("prettier", "npm:prettier", "Code formatter", "formatting"),
     ("eslint", "npm:eslint", "JavaScript linter", "linting"),
-    ("typescript", "npm:typescript", "TypeScript compiler", "node"),
+    (
+        "typescript",
+        "npm:typescript",
+        "TypeScript compiler",
+        "node",
+    ),
     ("turbo", "npm:turbo", "Monorepo build system", "node"),
     ("vercel", "npm:vercel", "Vercel CLI", "deploy"),
     ("netlify-cli", "npm:netlify-cli", "Netlify CLI", "deploy"),
-    ("wrangler", "npm:wrangler", "Cloudflare Workers CLI", "deploy"),
+    (
+        "wrangler",
+        "npm:wrangler",
+        "Cloudflare Workers CLI",
+        "deploy",
+    ),
     // Rust tools (cargo)
-    ("cargo-watch", "cargo:cargo-watch", "Watch and rebuild", "rust"),
-    ("cargo-edit", "cargo:cargo-edit", "Cargo add/rm/upgrade", "rust"),
-    ("cargo-expand", "cargo:cargo-expand", "Macro expansion", "rust"),
-    ("cargo-nextest", "cargo:cargo-nextest", "Fast test runner", "rust"),
-    ("cargo-audit", "cargo:cargo-audit", "Security audits", "rust"),
-    ("cargo-outdated", "cargo:cargo-outdated", "Check outdated deps", "rust"),
+    (
+        "cargo-watch",
+        "cargo:cargo-watch",
+        "Watch and rebuild",
+        "rust",
+    ),
+    (
+        "cargo-edit",
+        "cargo:cargo-edit",
+        "Cargo add/rm/upgrade",
+        "rust",
+    ),
+    (
+        "cargo-expand",
+        "cargo:cargo-expand",
+        "Macro expansion",
+        "rust",
+    ),
+    (
+        "cargo-nextest",
+        "cargo:cargo-nextest",
+        "Fast test runner",
+        "rust",
+    ),
+    (
+        "cargo-audit",
+        "cargo:cargo-audit",
+        "Security audits",
+        "rust",
+    ),
+    (
+        "cargo-outdated",
+        "cargo:cargo-outdated",
+        "Check outdated deps",
+        "rust",
+    ),
     ("diesel", "cargo:diesel_cli", "Diesel ORM CLI", "rust"),
     ("sqlx", "cargo:sqlx-cli", "SQLx CLI", "rust"),
     ("bacon", "cargo:bacon", "Background code checker", "rust"),
-    ("sccache", "cargo:sccache", "Shared compilation cache", "rust"),
+    (
+        "sccache",
+        "cargo:sccache",
+        "Shared compilation cache",
+        "rust",
+    ),
     // Python tools (pip)
     ("yt-dlp", "pip:yt-dlp", "Video downloader", "media"),
     ("glances", "pip:glances", "System monitor", "system"),
@@ -69,12 +139,37 @@ const TOOL_REGISTRY: &[(&str, &str, &str, &str)] = &[
     ("pipx", "pip:pipx", "Install Python apps", "python"),
     ("rich-cli", "pip:rich-cli", "Rich text in terminal", "cli"),
     // Go tools
-    ("hey", "go:github.com/rakyll/hey", "HTTP load generator", "web"),
-    ("dive", "go:github.com/wagoodman/dive", "Docker image explorer", "docker"),
-    ("lazydocker", "go:github.com/jesseduffield/lazydocker", "Docker TUI", "docker"),
-    ("glow", "go:github.com/charmbracelet/glow", "Markdown renderer", "docs"),
+    (
+        "hey",
+        "go:github.com/rakyll/hey",
+        "HTTP load generator",
+        "web",
+    ),
+    (
+        "dive",
+        "go:github.com/wagoodman/dive",
+        "Docker image explorer",
+        "docker",
+    ),
+    (
+        "lazydocker",
+        "go:github.com/jesseduffield/lazydocker",
+        "Docker TUI",
+        "docker",
+    ),
+    (
+        "glow",
+        "go:github.com/charmbracelet/glow",
+        "Markdown renderer",
+        "docs",
+    ),
     ("air", "go:github.com/cosmtrek/air", "Go live reload", "go"),
-    ("golangci-lint", "go:github.com/golangci/golangci-lint/cmd/golangci-lint", "Go linter", "go"),
+    (
+        "golangci-lint",
+        "go:github.com/golangci/golangci-lint/cmd/golangci-lint",
+        "Go linter",
+        "go",
+    ),
 ];
 
 #[must_use]
@@ -201,48 +296,47 @@ async fn install_managed(
         }
         "npm" => {
             // npm install --prefix <dir> <pkg>
+            let install_path = install_dir
+                .to_str()
+                .context("Install directory path contains invalid UTF-8")?;
             let status = Command::new("npm")
-                .args([
-                    "install",
-                    "--prefix",
-                    install_dir.to_str().unwrap_or("."),
-                    pkg,
-                ])
+                .args(["install", "--prefix", install_path, pkg])
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null()) // Silence noisy npm
                 .status()?;
 
             if !status.success() {
                 pb.finish_and_clear();
-                anyhow::bail!("NPM install failed");
+                anyhow::bail!("NPM install of '{pkg}' failed. Try: npm install -g {pkg}");
             }
         }
         "cargo" => {
             // cargo install --root <dir> <pkg>
+            let install_path = install_dir
+                .to_str()
+                .context("Install directory path contains invalid UTF-8")?;
             let status = Command::new("cargo")
-                .args([
-                    "install",
-                    "--root",
-                    install_dir.to_str().unwrap_or("."),
-                    pkg,
-                ])
+                .args(["install", "--root", install_path, pkg])
                 .stdout(std::process::Stdio::null()) // Cargo is noisy
                 .status()?;
 
             if !status.success() {
                 pb.finish_and_clear();
-                anyhow::bail!("Cargo install failed");
+                anyhow::bail!("Cargo install of '{pkg}' failed. Try: cargo install {pkg}");
             }
         }
         "pip" => {
             // 1. Create venv
+            let install_path = install_dir
+                .to_str()
+                .context("Install directory path contains invalid UTF-8")?;
             let status_venv = Command::new("python")
-                .args(["-m", "venv", install_dir.to_str().unwrap_or(".")])
+                .args(["-m", "venv", install_path])
                 .status()?;
 
             if !status_venv.success() {
                 pb.finish_and_clear();
-                anyhow::bail!("Failed to create python venv");
+                anyhow::bail!("Failed to create python venv at '{install_path}'");
             }
 
             // 2. Install into venv
@@ -254,7 +348,7 @@ async fn install_managed(
 
             if !status_install.success() {
                 pb.finish_and_clear();
-                anyhow::bail!("Pip install failed");
+                anyhow::bail!("Pip install of '{pkg}' failed. Try: pip install {pkg}");
             }
         }
         "go" => {
@@ -278,10 +372,10 @@ async fn install_managed(
 
             if !status.success() {
                 pb.finish_and_clear();
-                anyhow::bail!("Go install failed");
+                anyhow::bail!("Go install of '{pkg}' failed. Try: go install {target}");
             }
         }
-        _ => anyhow::bail!("Unknown manager"),
+        _ => anyhow::bail!("Unknown package manager '{manager}'. Supported: npm, cargo, pip, go, pacman"),
     }
 
     pb.finish_and_clear();
@@ -459,12 +553,17 @@ pub async fn update(name: &str) -> Result<()> {
             return Ok(());
         }
         for tool in installed {
-            println!("\n{} Updating {}...", style::dim("→"), style::package(&tool));
+            println!(
+                "\n{} Updating {}...",
+                style::dim("→"),
+                style::package(&tool)
+            );
             // Re-install to update
             if let Some((_, source, _, _)) = TOOL_REGISTRY.iter().find(|(k, _, _, _)| *k == tool)
-                && let Some((manager, pkg)) = source.split_once(':') {
-                    let _ = install_managed(manager, pkg, &tool, &tools_dir, &bin_dir).await;
-                }
+                && let Some((manager, pkg)) = source.split_once(':')
+            {
+                let _ = install_managed(manager, pkg, &tool, &tools_dir, &bin_dir).await;
+            }
         }
         println!("\n{}", style::success("All tools updated!"));
         return Ok(());
@@ -492,7 +591,11 @@ pub async fn update(name: &str) -> Result<()> {
 
 /// Search for tools in the registry
 pub fn search(query: &str) -> Result<()> {
-    println!("{} Searching for '{}'...\n", style::header("OMG Tool"), query);
+    println!(
+        "{} Searching for '{}'...\n",
+        style::header("OMG Tool"),
+        query
+    );
 
     let query_lower = query.to_lowercase();
     let matches: Vec<_> = TOOL_REGISTRY
@@ -546,7 +649,11 @@ pub fn registry() -> Result<()> {
 
     for category in sorted_cats {
         let tools = &categories[category];
-        println!("  {} {}", style::info(&format!("[{category}]")), style::dim(&format!("({} tools)", tools.len())));
+        println!(
+            "  {} {}",
+            style::info(&format!("[{category}]")),
+            style::dim(&format!("({} tools)", tools.len()))
+        );
         for (name, source, desc) in tools {
             let manager = source.split(':').next().unwrap_or("?");
             println!(

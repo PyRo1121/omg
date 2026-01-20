@@ -200,8 +200,7 @@ mod input_validation {
             let result = run_omg(&["search", payload]);
             assert!(
                 !result.stderr.contains("panic"),
-                "Unicode crash via: {:?}",
-                payload
+                "Unicode crash via: {payload:?}"
             );
         }
     }
@@ -435,9 +434,9 @@ allowed_licenses = ["MIT", "Apache-2.0", "BSD-3-Clause"]
     fn test_policy_require_pgp() {
         let project = TestProject::new();
         project.with_security_policy(
-            r#"
+            r"
 require_pgp = true
-"#,
+",
         );
 
         let result = project.run(&["audit", "policy"]);
@@ -649,12 +648,11 @@ mod privilege_tests {
         ];
 
         for args in safe_commands {
-            let result = run_omg(&args.to_vec());
+            let result = run_omg(&args.clone());
             // Should work without sudo
             assert!(
                 result.success || !result.stderr.contains("root"),
-                "Command {:?} unnecessarily requires root",
-                args
+                "Command {args:?} unnecessarily requires root"
             );
         }
     }

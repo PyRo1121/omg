@@ -16,10 +16,11 @@ use omg_lib::cli::security;
 use omg_lib::cli::tool;
 use omg_lib::cli::{
     CiCommands, Cli, Commands, ContainerCommands, EnterpriseCommands, EnterprisePolicyCommands,
-    EnvCommands, FleetCommands, GoldenPathCommands, LicenseCommands, MigrateCommands,
-    NotifyCommands, ServerCommands, SnapshotCommands, TeamCommands, TeamRoleCommands, ToolCommands,
-    commands,
+    EnvCommands, FleetCommands, GoldenPathCommands, MigrateCommands, NotifyCommands,
+    ServerCommands, SnapshotCommands, TeamCommands, TeamRoleCommands, ToolCommands, commands,
 };
+#[cfg(feature = "license")]
+use omg_lib::cli::LicenseCommands;
 use omg_lib::cli::{
     blame, ci, diff, enterprise, fleet, migrate, outdated, pin, size, snapshot, why,
 };
@@ -437,12 +438,32 @@ async fn async_main() -> Result<()> {
                     volume,
                     workdir,
                 } => {
-                    container::run(&image, &cmd, name, detach, interactive, &env, &volume, workdir)?;
+                    container::run(
+                        &image,
+                        &cmd,
+                        name,
+                        detach,
+                        interactive,
+                        &env,
+                        &volume,
+                        workdir,
+                    )?;
                 }
-                ContainerCommands::Shell { image, workdir, env, volume } => {
+                ContainerCommands::Shell {
+                    image,
+                    workdir,
+                    env,
+                    volume,
+                } => {
                     container::shell(image, workdir, &env, &volume)?;
                 }
-                ContainerCommands::Build { dockerfile, tag, no_cache, build_arg, target } => {
+                ContainerCommands::Build {
+                    dockerfile,
+                    tag,
+                    no_cache,
+                    build_arg,
+                    target,
+                } => {
                     container::build(dockerfile, &tag, no_cache, &build_arg, &target)?;
                 }
                 ContainerCommands::List => {
@@ -468,6 +489,7 @@ async fn async_main() -> Result<()> {
                 }
             }
         }
+        #[cfg(feature = "license")]
         Commands::License { command } => {
             use omg_lib::cli::license;
             match command {

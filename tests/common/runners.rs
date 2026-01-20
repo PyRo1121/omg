@@ -131,9 +131,9 @@ impl TestRunner {
             } else {
                 "❌ FAIL"
             };
-            println!("{} {} ({:?})", status, result.name, result.duration);
+            println!("{status} {} ({:?})", result.name, result.duration);
             if let Some(ref err) = result.error {
-                println!("       Error: {}", err);
+                println!("       Error: {err}");
             }
         }
 
@@ -214,7 +214,7 @@ impl StressRunner {
 
         let total: Duration = durations.iter().sum();
         let count = durations.len();
-        let avg = total / count as u32;
+        let avg = total / u32::try_from(count).unwrap_or(1);
 
         let min = durations.first().copied().unwrap_or_default();
         let max = durations.last().copied().unwrap_or_default();
@@ -312,7 +312,7 @@ impl BenchmarkRunner {
         durations.sort();
         let total: Duration = durations.iter().sum();
         let count = durations.len();
-        let avg = total / count as u32;
+        let avg = total / u32::try_from(count).unwrap_or(1);
         let min = durations.first().copied().unwrap_or_default();
         let max = durations.last().copied().unwrap_or_default();
 
@@ -354,7 +354,7 @@ impl BenchmarkResult {
 mod num_cpus {
     pub fn get() -> usize {
         std::thread::available_parallelism()
-            .map(|n| n.get())
+            .map(std::num::NonZero::get)
             .unwrap_or(4)
     }
 }

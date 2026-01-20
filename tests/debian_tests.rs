@@ -2,12 +2,11 @@
 //!
 //! Enterprise-grade test coverage for Debian and Ubuntu package management.
 //!
-//! Run: cargo test --test debian_tests --features debian
-//! With system tests: OMG_RUN_SYSTEM_TESTS=1 cargo test --test debian_tests --features debian
-//! On Ubuntu: OMG_TEST_DISTRO=ubuntu cargo test --test debian_tests --features debian
+//! Run: `cargo test --test debian_tests --features debian`
+//! With system tests: `OMG_RUN_SYSTEM_TESTS=1 cargo test --test debian_tests --features debian`
+//! On Ubuntu: `OMG_TEST_DISTRO=ubuntu cargo test --test debian_tests --features debian`
 
 #![cfg(feature = "debian")]
-#![allow(clippy::doc_markdown)]
 
 mod common;
 

@@ -346,6 +346,7 @@ pub enum Commands {
     },
 
     /// License management (activate, status, deactivate)
+    #[cfg(feature = "license")]
     License {
         #[command(subcommand)]
         command: LicenseCommands,
@@ -688,6 +689,7 @@ pub enum ContainerCommands {
     },
 }
 
+#[cfg(feature = "license")]
 #[derive(Subcommand, Debug)]
 pub enum LicenseCommands {
     /// Activate a license key

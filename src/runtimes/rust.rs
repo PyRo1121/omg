@@ -1,10 +1,16 @@
 //! Native Rust toolchain manager - PURE RUST, NO RUSTUP
 //!
 //! Downloads Rust toolchains directly from static.rust-lang.org
+//!
+//! Features:
+//! - Full toolchain management (stable, beta, nightly, dated)
+//! - Component installation (rustfmt, clippy, rust-src, etc.)
+//! - Cross-compilation target support
+//! - Profile-based installation (minimal, default, complete)
+//! - rust-toolchain.toml support
 
 use anyhow::{Context, Result};
 use flate2::read::GzDecoder;
-use indicatif::{ProgressBar, ProgressStyle};
 use owo_colors::OwoColorize;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -12,7 +18,12 @@ use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use tar::Archive;
 
+use super::common::{
+    download_with_progress, get_current_version, list_installed_versions, print_already_installed,
+    print_installed, print_using, set_current_version,
+};
 use crate::core::http::download_client;
+
 const RUST_DIST_URL: &str = "https://static.rust-lang.org/dist";
 const RUST_MANIFEST_PREFIX: &str = "channel-rust";
 const RUST_METADATA_FILE: &str = ".omg-toolchain.toml";
@@ -139,28 +150,12 @@ impl RustManager {
     }
 
     pub fn list_installed(&self) -> Result<Vec<String>> {
-        if !self.versions_dir.exists() {
-            return Ok(Vec::new());
-        }
-
-        let mut versions = Vec::new();
-        for entry in fs::read_dir(&self.versions_dir)? {
-            let entry = entry?;
-            let name = entry.file_name().to_string_lossy().to_string();
-            if name != "current" && entry.file_type()?.is_dir() {
-                versions.push(name);
-            }
-        }
-        versions.sort();
-        versions.reverse();
-        Ok(versions)
+        list_installed_versions(&self.versions_dir)
     }
 
     #[must_use]
     pub fn current_version(&self) -> Option<String> {
-        fs::read_link(&self.current_link)
-            .ok()
-            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+        get_current_version(&self.versions_dir)
     }
 
     /// Install Rust - PURE RUST, NO SUBPROCESS
@@ -169,14 +164,14 @@ impl RustManager {
         let version_dir = self.toolchain_dir(&toolchain);
 
         if version_dir.exists() {
-            println!("{} Rust {} is already installed", "✓".green(), version);
+            print_already_installed("Rust", &toolchain.name());
             return self.use_version(version);
         }
 
         println!(
             "{} Installing Rust {}...\n",
             "OMG".cyan().bold(),
-            version.yellow()
+            toolchain.name().yellow()
         );
 
         self.install_with_profile(&toolchain, "default", &[], &[])
@@ -308,83 +303,37 @@ impl RustManager {
         Ok(())
     }
 
-    #[allow(clippy::expect_used)]
-    async fn download_file(&self, url: &str, path: &PathBuf) -> Result<()> {
-        let response =
-            self.client.get(url).send().await.with_context(|| {
-                format!("Failed to download from {url}. Check your connection.")
-            })?;
-
-        if !response.status().is_success() {
-            anyhow::bail!(
-                "✗ Download Error: Server returned {} for {}",
-                response.status(),
-                url
-            );
-        }
-
-        let total = response.content_length().unwrap_or(0);
-        let pb = ProgressBar::new(total);
-        pb.set_style(
-            ProgressStyle::default_bar()
-                .template("{spinner:.green} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")
-                .expect("valid template")
-                .progress_chars("█▓▒░"),
-        );
-
-        let bytes = response
-            .bytes()
-            .await
-            .context("Failed to read download stream")?;
-        pb.set_position(bytes.len() as u64);
-        tokio::fs::write(path, &bytes)
-            .await
-            .with_context(|| format!("Failed to write to {}. Check disk space.", path.display()))?;
-        pb.finish_and_clear();
-        Ok(())
-    }
-
+    /// Switch to a specific version
     pub fn use_version(&self, version: &str) -> Result<()> {
         let toolchain = RustToolchainSpec::parse(version)?;
-        let version_dir = self.toolchain_dir(&toolchain);
-
-        if !version_dir.exists() {
-            anyhow::bail!("Rust {version} is not installed");
-        }
-
-        if self.current_link.exists() {
-            fs::remove_file(&self.current_link)?;
-        }
-
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(&version_dir, &self.current_link)?;
-
-        println!("{} Now using Rust {}", "✓".green(), version);
-        println!(
-            "  Add to PATH: {}",
-            self.bin_dir().display().to_string().dimmed()
-        );
-
+        let toolchain_name = toolchain.name();
+        set_current_version(&self.versions_dir, &toolchain_name)?;
+        print_using("Rust", &toolchain_name, &self.bin_dir());
         Ok(())
     }
 
+    /// Uninstall a version
     pub fn uninstall(&self, version: &str) -> Result<()> {
         let toolchain = RustToolchainSpec::parse(version)?;
         let version_dir = self.toolchain_dir(&toolchain);
 
         if !version_dir.exists() {
-            println!("{} Rust {} is not installed", "→".dimmed(), version);
+            println!(
+                "{} Rust {} is not installed",
+                "→".dimmed(),
+                toolchain.name()
+            );
             return Ok(());
         }
 
         if let Some(current) = self.current_version()
-            && current == version
+            && current == toolchain.name()
         {
             let _ = fs::remove_file(&self.current_link);
         }
 
         fs::remove_dir_all(&version_dir)?;
-        println!("{} Rust {} uninstalled", "✓".green(), version);
+        println!("{} Rust {} uninstalled", "✓".green(), toolchain.name());
         Ok(())
     }
 }
@@ -447,7 +396,7 @@ impl RustManager {
         }
         Self::write_metadata(&version_dir, &metadata)?;
 
-        println!("{} Rust {} installed!", "✓".green(), toolchain.name());
+        print_installed("Rust", &toolchain.name());
 
         Ok(())
     }
@@ -506,7 +455,7 @@ impl RustManager {
             .ok_or_else(|| anyhow::anyhow!("Invalid download URL for {component}"))?;
         let download_path = self.versions_dir.join(filename);
 
-        self.download_file(&url, &download_path).await?;
+        download_with_progress(&self.client, &url, &download_path, None).await?;
         println!("{} Extracting {}...", "→".blue(), component);
         Self::extract_component(
             &download_path,
@@ -698,4 +647,62 @@ fn manifest_component_url(manifest: &toml::Value, component: &str, target: &str)
         .ok_or_else(|| anyhow::anyhow!("No download URL for {component} on {target}"))?;
 
     Ok(url.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_rust_manager_new() {
+        let mgr = RustManager::new();
+        assert!(mgr.versions_dir.ends_with("rust"));
+    }
+
+    #[test]
+    fn test_toolchain_spec_parse_stable() {
+        let spec = RustToolchainSpec::parse("stable").unwrap();
+        assert_eq!(spec.channel, "stable");
+        assert!(spec.date.is_none());
+    }
+
+    #[test]
+    fn test_toolchain_spec_parse_nightly() {
+        let spec = RustToolchainSpec::parse("nightly").unwrap();
+        assert_eq!(spec.channel, "nightly");
+        assert!(spec.date.is_none());
+    }
+
+    #[test]
+    fn test_toolchain_spec_parse_dated() {
+        let spec = RustToolchainSpec::parse("nightly-2024-01-15").unwrap();
+        assert_eq!(spec.channel, "nightly");
+        assert_eq!(spec.date, Some("2024-01-15".to_string()));
+    }
+
+    #[test]
+    fn test_toolchain_spec_name() {
+        let spec = RustToolchainSpec::parse("stable").unwrap();
+        let name = spec.name();
+        assert!(name.starts_with("stable-"));
+        assert!(name.contains("linux"));
+    }
+
+    #[test]
+    fn test_profile_components() {
+        let minimal = profile_components("minimal").unwrap();
+        assert!(minimal.contains(&"rustc".to_string()));
+        assert!(minimal.contains(&"cargo".to_string()));
+        assert!(!minimal.contains(&"clippy".to_string()));
+
+        let default = profile_components("default").unwrap();
+        assert!(default.contains(&"clippy".to_string()));
+        assert!(default.contains(&"rustfmt".to_string()));
+    }
+
+    #[test]
+    fn test_default_host_triple() {
+        let triple = default_host_triple().unwrap();
+        assert!(triple.contains("linux"));
+    }
 }

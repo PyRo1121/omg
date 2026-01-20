@@ -58,10 +58,10 @@ pub mod version_files {
     pub const PYTHON_VERSION_SIMPLE: &str = "3.11.0";
     pub const PYTHON_VERSION_MAJOR_MINOR: &str = "3.11";
 
-    pub const TOOL_VERSIONS_MULTI: &str = r#"nodejs 20.10.0
+    pub const TOOL_VERSIONS_MULTI: &str = r"nodejs 20.10.0
 python 3.11.0
 ruby 3.2.0
-golang 1.21"#;
+golang 1.21";
 
     pub const MISE_TOML_SIMPLE: &str = r#"[tools]
 node = "20.10.0"
@@ -89,14 +89,14 @@ components = ["rustfmt", "clippy"]
 "#;
 
     pub const GO_MOD_SIMPLE: &str = "module test\n\ngo 1.21";
-    pub const GO_MOD_WITH_DEPS: &str = r#"module test
+    pub const GO_MOD_WITH_DEPS: &str = r"module test
 
 go 1.21
 
 require (
     github.com/gin-gonic/gin v1.9.0
 )
-"#;
+";
 
     pub const PACKAGE_JSON_WITH_ENGINES: &str = r#"{
   "name": "test-project",
@@ -200,7 +200,7 @@ global = ["typescript", "eslint", "prettier"]
 
 /// CI/CD fixtures
 pub mod ci {
-    pub const GITHUB_ACTIONS: &str = r#"name: CI
+    pub const GITHUB_ACTIONS: &str = r"name: CI
 
 on:
   push:
@@ -213,9 +213,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install OMG
         run: curl -fsSL https://omg.dev/install.sh | sh
-"#;
+";
 
-    pub const GITLAB_CI: &str = r#"stages:
+    pub const GITLAB_CI: &str = r"stages:
   - build
   - test
 
@@ -224,7 +224,7 @@ build:
   script:
     - omg env sync omg.lock
     - omg run build
-"#;
+";
 }
 
 /// Input validation test cases
@@ -309,10 +309,10 @@ requires-python = ">=3.11"
     /// Monorepo with multiple runtimes
     pub struct Monorepo;
     impl Monorepo {
-        pub const TOOL_VERSIONS: &'static str = r#"nodejs 20.10.0
+        pub const TOOL_VERSIONS: &'static str = r"nodejs 20.10.0
 python 3.11.0
 ruby 3.2.0
 golang 1.21
-"#;
+";
     }
 }

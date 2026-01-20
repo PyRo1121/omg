@@ -1,16 +1,25 @@
 //! Native Node.js runtime manager
 //!
 //! Downloads and manages Node.js versions - PURE RUST, NO SUBPROCESS.
+//!
+//! Features:
+//! - Automatic LTS detection
+//! - Checksum verification (SHASUMS256.txt)
+//! - Pure Rust XZ extraction
+//! - Version aliasing (latest, lts, lts/iron, etc.)
 
 use anyhow::{Context, Result};
-use indicatif::{ProgressBar, ProgressStyle};
 use owo_colors::OwoColorize;
 use serde::Deserialize;
-use std::fs::{self, File};
+use std::fs;
 use std::path::PathBuf;
-use tar::Archive;
 
+use super::common::{
+    download_with_progress, extract_tar_xz, get_current_version, list_installed_versions,
+    normalize_version, print_already_installed, print_installed, print_using, set_current_version,
+};
 use crate::core::http::download_client;
+
 const NODE_DIST_URL: &str = "https://nodejs.org/dist";
 
 /// Node.js version info from nodejs.org
@@ -60,27 +69,12 @@ impl NodeManager {
     }
 
     pub fn list_installed(&self) -> Result<Vec<String>> {
-        if !self.versions_dir.exists() {
-            return Ok(Vec::new());
-        }
-
-        let mut versions = Vec::new();
-        for entry in fs::read_dir(&self.versions_dir)? {
-            let entry = entry?;
-            let name = entry.file_name().to_string_lossy().to_string();
-            if name != "current" && entry.file_type()?.is_dir() {
-                versions.push(name);
-            }
-        }
-        versions.sort_by(|a, b| version_cmp(b, a));
-        Ok(versions)
+        list_installed_versions(&self.versions_dir)
     }
 
     #[must_use]
     pub fn current_version(&self) -> Option<String> {
-        fs::read_link(&self.current_link)
-            .ok()
-            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+        get_current_version(&self.versions_dir)
     }
 
     /// Resolve version alias (latest, lts) to actual version number
@@ -114,8 +108,8 @@ impl NodeManager {
         let version_dir = self.versions_dir.join(&version);
 
         if version_dir.exists() {
-            println!("{} Node.js {} is already installed", "✓".green(), version);
-            return Ok(());
+            print_already_installed("Node.js", &version);
+            return self.use_version(&version);
         }
 
         println!(
@@ -135,112 +129,46 @@ impl NodeManager {
 
         fs::create_dir_all(&self.versions_dir)?;
 
+        // Fetch checksum for verification
+        let checksum = self.fetch_checksum(&version, &filename).await.ok();
+
         println!("{} Downloading {}...", "→".blue(), filename);
         let download_path = self.versions_dir.join(&filename);
-        self.download_file(&url, &download_path).await?;
+        download_with_progress(&self.client, &url, &download_path, checksum.as_deref()).await?;
 
-        // PURE RUST EXTRACTION - NO SUBPROCESS
         println!("{} Extracting (pure Rust)...", "→".blue());
-
-        let file = File::open(&download_path)
-            .with_context(|| format!("Failed to open: {}", download_path.display()))?;
-
-        // Pure Rust XZ decompression with lzma-rs
-        use std::io::BufReader;
-        let mut decompressed = Vec::new();
-        lzma_rs::xz_decompress(&mut BufReader::new(file), &mut decompressed)
-            .with_context(|| "Failed to decompress XZ archive")?;
-
-        let mut archive = Archive::new(decompressed.as_slice());
-
-        // Extract with stripping top-level directory
-        for entry in archive.entries()? {
-            let mut entry = entry?;
-            let path = entry.path()?;
-
-            // Strip first component (node-v22.0.0-linux-x64/)
-            let stripped: PathBuf = path.components().skip(1).collect();
-            if stripped.as_os_str().is_empty() {
-                continue;
-            }
-
-            let dest_path = version_dir.join(&stripped);
-
-            if let Some(parent) = dest_path.parent() {
-                fs::create_dir_all(parent)?;
-            }
-
-            if entry.header().entry_type().is_dir() {
-                fs::create_dir_all(&dest_path)?;
-            } else {
-                entry.unpack(&dest_path)?;
-            }
-        }
+        extract_tar_xz(&download_path, &version_dir, 1)?;
 
         let _ = fs::remove_file(&download_path);
 
-        println!("{} Node.js {} installed!", "✓".green(), version);
+        print_installed("Node.js", &version);
         self.use_version(&version)?;
 
         Ok(())
     }
 
-    /// Download a file with progress bar
-    #[allow(clippy::expect_used)]
-    async fn download_file(&self, url: &str, path: &PathBuf) -> Result<()> {
-        let response =
-            self.client.get(url).send().await.with_context(|| {
-                format!("Failed to download from {url}. Check your connection.")
-            })?;
+    /// Fetch SHA256 checksum from nodejs.org
+    async fn fetch_checksum(&self, version: &str, filename: &str) -> Result<String> {
+        let url = format!("{NODE_DIST_URL}/v{version}/SHASUMS256.txt");
+        let response = self.client.get(&url).send().await?;
+        let text = response.text().await?;
 
-        let total_size = response.content_length().unwrap_or(0);
+        for line in text.lines() {
+            if line.ends_with(filename)
+                && let Some(hash) = line.split_whitespace().next()
+            {
+                return Ok(hash.to_string());
+            }
+        }
 
-        let pb = ProgressBar::new(total_size);
-        pb.set_style(
-            ProgressStyle::default_bar()
-                .template("{spinner:.green} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")
-                .expect("valid template")
-                .progress_chars("█▓▒░"),
-        );
-
-        let bytes = response
-            .bytes()
-            .await
-            .context("Failed to read download stream")?;
-        pb.set_position(bytes.len() as u64);
-
-        tokio::fs::write(path, &bytes)
-            .await
-            .with_context(|| format!("Failed to write to {}. Check disk space.", path.display()))?;
-
-        pb.finish_and_clear();
-        Ok(())
+        anyhow::bail!("Checksum not found for {filename}")
     }
 
     /// Switch to a specific version
     pub fn use_version(&self, version: &str) -> Result<()> {
         let version = normalize_version(version);
-        let version_dir = self.versions_dir.join(&version);
-
-        if !version_dir.exists() {
-            anyhow::bail!("Node.js {version} is not installed. Run: omg install node@{version}");
-        }
-
-        // Remove existing symlink
-        if self.current_link.exists() {
-            std::fs::remove_file(&self.current_link)?;
-        }
-
-        // Create new symlink
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(&version_dir, &self.current_link)?;
-
-        println!("{} Now using Node.js {}", "✓".green(), version);
-        println!(
-            "  Add to PATH: {}",
-            self.bin_dir().display().to_string().dimmed()
-        );
-
+        set_current_version(&self.versions_dir, &version)?;
+        print_using("Node.js", &version, &self.bin_dir());
         Ok(())
     }
 
@@ -275,32 +203,39 @@ impl Default for NodeManager {
     }
 }
 
-/// Normalize version string (remove leading 'v' if present)
-fn normalize_version(version: &str) -> String {
-    version.trim_start_matches('v').to_string()
-}
-
-/// Compare version strings
-fn version_cmp(a: &str, b: &str) -> std::cmp::Ordering {
-    let a_parts: Vec<u32> = a.split('.').filter_map(|p| p.parse().ok()).collect();
-    let b_parts: Vec<u32> = b.split('.').filter_map(|p| p.parse().ok()).collect();
-
-    for i in 0..3 {
-        let a_part = a_parts.get(i).unwrap_or(&0);
-        let b_part = b_parts.get(i).unwrap_or(&0);
-        if a_part != b_part {
-            return a_part.cmp(b_part);
-        }
-    }
-
-    std::cmp::Ordering::Equal
-}
-
 /// Get LTS version name if applicable
 #[must_use]
 pub fn get_lts_name(version: &NodeVersion) -> Option<String> {
     match &version.lts {
         serde_json::Value::String(s) => Some(s.clone()),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_node_manager_new() {
+        let mgr = NodeManager::new();
+        assert!(mgr.versions_dir.ends_with("node"));
+    }
+
+    #[test]
+    fn test_get_lts_name() {
+        let lts_version = NodeVersion {
+            version: "v20.0.0".to_string(),
+            date: "2024-01-01".to_string(),
+            lts: serde_json::Value::String("Iron".to_string()),
+        };
+        assert_eq!(get_lts_name(&lts_version), Some("Iron".to_string()));
+
+        let non_lts = NodeVersion {
+            version: "v21.0.0".to_string(),
+            date: "2024-01-01".to_string(),
+            lts: serde_json::Value::Bool(false),
+        };
+        assert_eq!(get_lts_name(&non_lts), None);
     }
 }

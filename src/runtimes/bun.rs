@@ -1,15 +1,24 @@
 //! Native Bun runtime manager - PURE RUST
 //!
 //! Downloads and manages Bun versions from GitHub.
+//!
+//! Features:
+//! - Fast JavaScript/TypeScript runtime
+//! - Pre-built binaries from GitHub releases
+//! - Version aliasing (latest)
 
 use anyhow::{Context, Result};
-use indicatif::{ProgressBar, ProgressStyle};
 use owo_colors::OwoColorize;
 use serde::Deserialize;
-use std::fs::{self, File};
+use std::fs;
 use std::path::PathBuf;
 
+use super::common::{
+    download_with_progress, extract_zip, get_current_version, list_installed_versions,
+    normalize_version, print_already_installed, print_installed, print_using, set_current_version,
+};
 use crate::core::http::download_client;
+
 const BUN_RELEASES_URL: &str = "https://github.com/oven-sh/bun/releases/download";
 const BUN_API_URL: &str = "https://api.github.com/repos/oven-sh/bun/releases";
 
@@ -87,32 +96,17 @@ impl BunManager {
     }
 
     pub fn list_installed(&self) -> Result<Vec<String>> {
-        if !self.versions_dir.exists() {
-            return Ok(Vec::new());
-        }
-
-        let mut versions = Vec::new();
-        for entry in fs::read_dir(&self.versions_dir)? {
-            let entry = entry?;
-            let name = entry.file_name().to_string_lossy().to_string();
-            if name != "current" && entry.file_type()?.is_dir() {
-                versions.push(name);
-            }
-        }
-        versions.sort_by(|a, b| version_cmp(b, a));
-        Ok(versions)
+        list_installed_versions(&self.versions_dir)
     }
 
     #[must_use]
     pub fn current_version(&self) -> Option<String> {
-        fs::read_link(&self.current_link)
-            .ok()
-            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+        get_current_version(&self.versions_dir)
     }
 
     /// Resolve Bun alias (latest) to a concrete version
     pub async fn resolve_alias(&self, alias: &str) -> Result<String> {
-        let alias = alias.trim_start_matches('v');
+        let alias = normalize_version(alias);
         if alias == "latest" {
             let versions = self.list_available().await?;
             if let Some(v) = versions.first() {
@@ -120,8 +114,7 @@ impl BunManager {
             }
             anyhow::bail!("No Bun versions found upstream");
         }
-
-        Ok(alias.to_string())
+        Ok(alias)
     }
 
     /// Install Bun - PURE RUST, NO SUBPROCESS
@@ -130,7 +123,7 @@ impl BunManager {
         let version_dir = self.versions_dir.join(&version);
 
         if version_dir.exists() {
-            println!("{} Bun {} is already installed", "✓".green(), version);
+            print_already_installed("Bun", &version);
             return self.use_version(&version);
         }
 
@@ -153,123 +146,31 @@ impl BunManager {
 
         println!("{} Downloading Bun v{}...", "→".blue(), version);
         let download_path = self.versions_dir.join(&filename);
-        self.download_file(&url, &download_path).await?;
+        download_with_progress(&self.client, &url, &download_path, None).await?;
 
-        // PURE RUST ZIP EXTRACTION
         println!("{} Extracting (pure Rust)...", "→".blue());
-
-        let file = File::open(&download_path)?;
-        let mut archive = zip::ZipArchive::new(file)?;
-
-        fs::create_dir_all(&version_dir)?;
-
-        for i in 0..archive.len() {
-            let mut file = archive.by_index(i)?;
-            let outpath = match file.enclosed_name() {
-                Some(path) => {
-                    // Strip first component (bun-linux-x64/)
-                    let stripped: PathBuf = path.components().skip(1).collect();
-                    if stripped.as_os_str().is_empty() {
-                        continue;
-                    }
-                    version_dir.join(stripped)
-                }
-                None => continue,
-            };
-
-            if file.is_dir() {
-                fs::create_dir_all(&outpath)?;
-            } else {
-                if let Some(p) = outpath.parent()
-                    && !p.exists()
-                {
-                    fs::create_dir_all(p)?;
-                }
-                let mut outfile = File::create(&outpath)?;
-                std::io::copy(&mut file, &mut outfile)?;
-            }
-
-            // Set permissions
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                if let Some(mode) = file.unix_mode() {
-                    fs::set_permissions(&outpath, fs::Permissions::from_mode(mode))?;
-                }
-            }
-        }
+        extract_zip(&download_path, &version_dir, 1)?;
 
         let _ = fs::remove_file(&download_path);
 
-        println!("{} Bun {} installed!", "✓".green(), version);
+        print_installed("Bun", &version);
         self.use_version(&version)?;
 
         Ok(())
     }
 
-    #[allow(clippy::expect_used)]
-    async fn download_file(&self, url: &str, path: &PathBuf) -> Result<()> {
-        let response =
-            self.client.get(url).send().await.with_context(|| {
-                format!("Failed to download from {url}. Check your connection.")
-            })?;
-
-        if !response.status().is_success() {
-            anyhow::bail!(
-                "✗ Download Error: Server returned {} for {}",
-                response.status(),
-                url
-            );
-        }
-
-        let total = response.content_length().unwrap_or(0);
-        let pb = ProgressBar::new(total);
-        pb.set_style(
-            ProgressStyle::default_bar()
-                .template("{spinner:.green} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")
-                .expect("valid template")
-                .progress_chars("█▓▒░"),
-        );
-
-        let bytes = response
-            .bytes()
-            .await
-            .context("Failed to read download stream")?;
-        pb.set_position(bytes.len() as u64);
-        tokio::fs::write(path, &bytes)
-            .await
-            .with_context(|| format!("Failed to write to {}. Check disk space.", path.display()))?;
-        pb.finish_and_clear();
-        Ok(())
-    }
-
+    /// Switch to a specific version
     pub fn use_version(&self, version: &str) -> Result<()> {
-        let version = version.trim_start_matches('v');
-        let version_dir = self.versions_dir.join(version);
-
-        if !version_dir.exists() {
-            anyhow::bail!("Bun {version} is not installed");
-        }
-
-        if self.current_link.exists() {
-            fs::remove_file(&self.current_link)?;
-        }
-
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(&version_dir, &self.current_link)?;
-
-        println!("{} Now using Bun {}", "✓".green(), version);
-        println!(
-            "  Add to PATH: {}",
-            self.bin_dir().display().to_string().dimmed()
-        );
-
+        let version = normalize_version(version);
+        set_current_version(&self.versions_dir, &version)?;
+        print_using("Bun", &version, &self.bin_dir());
         Ok(())
     }
 
+    /// Uninstall a version
     pub fn uninstall(&self, version: &str) -> Result<()> {
-        let version = version.trim_start_matches('v');
-        let version_dir = self.versions_dir.join(version);
+        let version = normalize_version(version);
+        let version_dir = self.versions_dir.join(&version);
 
         if !version_dir.exists() {
             println!("{} Bun {} is not installed", "→".dimmed(), version);
@@ -294,16 +195,13 @@ impl Default for BunManager {
     }
 }
 
-fn version_cmp(a: &str, b: &str) -> std::cmp::Ordering {
-    let a_parts: Vec<u32> = a.split('.').filter_map(|p| p.parse().ok()).collect();
-    let b_parts: Vec<u32> = b.split('.').filter_map(|p| p.parse().ok()).collect();
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    for i in 0..3 {
-        let a_part = a_parts.get(i).unwrap_or(&0);
-        let b_part = b_parts.get(i).unwrap_or(&0);
-        if a_part != b_part {
-            return a_part.cmp(b_part);
-        }
+    #[test]
+    fn test_bun_manager_new() {
+        let mgr = BunManager::new();
+        assert!(mgr.versions_dir.ends_with("bun"));
     }
-    std::cmp::Ordering::Equal
 }

@@ -121,3 +121,74 @@ pub fn test_mode() -> bool {
         Ok("1" | "true" | "TRUE")
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_data_dir_returns_path() {
+        let path = data_dir();
+        assert!(!path.as_os_str().is_empty());
+    }
+
+    #[test]
+    fn test_config_dir_returns_path() {
+        let path = config_dir();
+        assert!(!path.as_os_str().is_empty());
+    }
+
+    #[test]
+    fn test_cache_dir_returns_path() {
+        let path = cache_dir();
+        assert!(!path.as_os_str().is_empty());
+    }
+
+    #[test]
+    fn test_socket_path_returns_path() {
+        let path = socket_path();
+        assert!(path.to_string_lossy().contains("omg.sock"));
+    }
+
+    #[test]
+    fn test_fast_status_path_derives_from_socket() {
+        let status = fast_status_path();
+        assert!(status.to_string_lossy().contains("omg.status"));
+    }
+
+    #[test]
+    fn test_installed_marker_in_data_dir() {
+        let marker = installed_marker_path();
+        assert!(marker.to_string_lossy().contains(".installed"));
+    }
+
+    #[test]
+    fn test_pacman_root_default() {
+        let root = pacman_root();
+        assert!(root.to_string_lossy().starts_with('/'));
+    }
+
+    #[test]
+    fn test_pacman_db_dir_under_root() {
+        let db = pacman_db_dir();
+        assert!(db.to_string_lossy().contains("pacman"));
+    }
+
+    #[test]
+    fn test_pacman_sync_dir_under_db() {
+        let sync = pacman_sync_dir();
+        assert!(sync.to_string_lossy().contains("sync"));
+    }
+
+    #[test]
+    fn test_pacman_local_dir_under_db() {
+        let local = pacman_local_dir();
+        assert!(local.to_string_lossy().contains("local"));
+    }
+
+    #[test]
+    fn test_pacman_cache_dir() {
+        let cache = pacman_cache_dir();
+        assert!(cache.to_string_lossy().contains("cache"));
+    }
+}

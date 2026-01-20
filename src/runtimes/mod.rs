@@ -5,6 +5,7 @@ use crate::core::paths;
 pub static DATA_DIR: std::sync::LazyLock<PathBuf> = std::sync::LazyLock::new(paths::data_dir);
 
 pub mod bun;
+pub mod common;
 pub mod go;
 pub mod java;
 mod manager;

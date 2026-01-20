@@ -43,39 +43,35 @@ impl OmgError {
     #[must_use]
     pub fn suggestion(&self) -> Option<&'static str> {
         match self {
-            Self::PackageNotFound(_) => Some(
-                "Try: omg search <query> to find available packages",
-            ),
-            Self::VersionNotFound { runtime, .. } => {
-                match runtime.as_str() {
-                    "node" => Some("Try: omg list node --available to see available versions"),
-                    "python" => Some("Try: omg list python --available to see available versions"),
-                    "go" => Some("Try: omg list go --available to see available versions"),
-                    "rust" => Some("Try: omg list rust --available to see available versions"),
-                    "bun" => Some("Try: omg list bun --available to see available versions"),
-                    "ruby" => Some("Try: omg list ruby --available to see available versions"),
-                    "java" => Some("Try: omg list java --available to see available versions"),
-                    _ => Some("Try: omg list <runtime> --available to see available versions"),
-                }
+            Self::PackageNotFound(_) => Some("Try: omg search <query> to find available packages"),
+            Self::VersionNotFound { runtime, .. } => match runtime.as_str() {
+                "node" => Some("Try: omg list node --available to see available versions"),
+                "python" => Some("Try: omg list python --available to see available versions"),
+                "go" => Some("Try: omg list go --available to see available versions"),
+                "rust" => Some("Try: omg list rust --available to see available versions"),
+                "bun" => Some("Try: omg list bun --available to see available versions"),
+                "ruby" => Some("Try: omg list ruby --available to see available versions"),
+                "java" => Some("Try: omg list java --available to see available versions"),
+                _ => Some("Try: omg list <runtime> --available to see available versions"),
+            },
+            Self::UnsupportedRuntime(_) => {
+                Some("Supported runtimes: node, python, go, rust, ruby, java, bun")
             }
-            Self::UnsupportedRuntime(_) => Some(
-                "Supported runtimes: node, python, go, rust, ruby, java, bun",
-            ),
             Self::DaemonNotRunning => Some(
                 "Start the daemon with: omgd start\nOr run without daemon: omg --no-daemon <command>",
             ),
-            Self::PermissionDenied(_) => Some(
-                "Try running with sudo, or check file/directory permissions",
-            ),
+            Self::PermissionDenied(_) => {
+                Some("Try running with sudo, or check file/directory permissions")
+            }
             Self::NetworkError(_) => Some(
                 "Check your internet connection and try again.\nIf behind a proxy, set HTTP_PROXY/HTTPS_PROXY",
             ),
             Self::ConfigError(_) => Some(
                 "Check ~/.config/omg/config.toml for syntax errors.\nReset with: rm ~/.config/omg/config.toml",
             ),
-            Self::DatabaseError(_) => Some(
-                "Database may be corrupted. Try: rm -rf ~/.local/share/omg/db && omg sync",
-            ),
+            Self::DatabaseError(_) => {
+                Some("Database may be corrupted. Try: rm -rf ~/.local/share/omg/db && omg sync")
+            }
             Self::IoError(_) | Self::Other(_) => None,
         }
     }
@@ -94,7 +90,7 @@ pub fn format_error_with_suggestion(err: &OmgError) -> String {
 /// Common error suggestions for anyhow errors
 pub fn suggest_for_anyhow(err: &anyhow::Error) -> Option<&'static str> {
     let msg = err.to_string().to_lowercase();
-    
+
     if msg.contains("package not found") || msg.contains("no such package") {
         return Some("Try: omg search <query> to find available packages");
     }
@@ -116,6 +112,68 @@ pub fn suggest_for_anyhow(err: &anyhow::Error) -> Option<&'static str> {
     if msg.contains("no such file") || msg.contains("file not found") {
         return Some("Check that the file path is correct and the file exists");
     }
-    
+
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_package_not_found_suggestion() {
+        let err = OmgError::PackageNotFound("foo".to_string());
+        assert!(err.suggestion().is_some());
+        assert!(err.suggestion().unwrap().contains("search"));
+    }
+
+    #[test]
+    fn test_version_not_found_suggestion() {
+        let err = OmgError::VersionNotFound {
+            runtime: "node".to_string(),
+            version: "99.0.0".to_string(),
+        };
+        assert!(err.suggestion().is_some());
+        assert!(err.suggestion().unwrap().contains("node"));
+    }
+
+    #[test]
+    fn test_unsupported_runtime_suggestion() {
+        let err = OmgError::UnsupportedRuntime("unknown".to_string());
+        assert!(err.suggestion().is_some());
+        assert!(err.suggestion().unwrap().contains("node"));
+    }
+
+    #[test]
+    fn test_daemon_not_running_suggestion() {
+        let err = OmgError::DaemonNotRunning;
+        assert!(err.suggestion().is_some());
+        assert!(err.suggestion().unwrap().contains("omgd"));
+    }
+
+    #[test]
+    fn test_format_error_with_suggestion() {
+        let err = OmgError::PackageNotFound("test".to_string());
+        let formatted = format_error_with_suggestion(&err);
+        assert!(formatted.contains("Error:"));
+        assert!(formatted.contains("💡"));
+    }
+
+    #[test]
+    fn test_suggest_for_anyhow_permission() {
+        let err = anyhow::anyhow!("permission denied: /etc/foo");
+        assert!(suggest_for_anyhow(&err).is_some());
+    }
+
+    #[test]
+    fn test_suggest_for_anyhow_network() {
+        let err = anyhow::anyhow!("connection refused");
+        assert!(suggest_for_anyhow(&err).is_some());
+    }
+
+    #[test]
+    fn test_suggest_for_anyhow_none() {
+        let err = anyhow::anyhow!("some random error");
+        assert!(suggest_for_anyhow(&err).is_none());
+    }
 }

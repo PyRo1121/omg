@@ -200,7 +200,7 @@ opt-level = 0
 debug = true
 
 [features]
-default = ["arch"]
+default = ["arch", "license"]
 arch = [
     "alpm",
     "alpm-types",
@@ -211,3 +211,4 @@ arch = [
 ]
 pgp = ["sequoia-openpgp"] # Optional PGP verification (requires Rust 1.80+)
 debian = ["rust-apt", "debian-packaging", "rkyv", "winnow", "gzp", "ar"]
+license = [] # Enable license/subscription features (Pro, Team, Enterprise tiers)
