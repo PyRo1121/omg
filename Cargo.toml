@@ -88,7 +88,7 @@ ruzstd = "0.8.2" # Pure Rust zstd decoder (replaces zstd)
 
 # Memory management
 parking_lot = "0.12.5"
-dashmap = "=5.4.0"
+dashmap = "5.4.0"
 moka = { version = "0.12", features = ["sync"] }
 memchr = "2.7"                                   # SIMD-accelerated string search
 

@@ -58,5 +58,5 @@ Safety is a first-class citizen in OMG's runtime management:
 OMG is designed to be the fastest runtime manager in the industry:
 - **Switching Latency**: ~100μs (single atomic symlink update)
 - **Detection Lag**: Zero (uses an optimized, zero-allocation directory probe)
-- **Memory Footprint**: <1MB baseline per runtime
+- **Memory Footprint**: &lt;1MB baseline per runtime
 - **Sync Downloads**: High-speed, parallel downloading of multiple runtimes

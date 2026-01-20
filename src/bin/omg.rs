@@ -406,14 +406,18 @@ async fn async_main() -> Result<()> {
                     command: cmd,
                     name,
                     detach,
+                    interactive,
+                    env,
+                    volume,
+                    workdir,
                 } => {
-                    container::run(&image, &cmd, name, detach)?;
+                    container::run(&image, &cmd, name, detach, interactive, &env, &volume, workdir)?;
                 }
-                ContainerCommands::Shell { image } => {
-                    container::shell(image)?;
+                ContainerCommands::Shell { image, workdir, env, volume } => {
+                    container::shell(image, workdir, &env, &volume)?;
                 }
-                ContainerCommands::Build { dockerfile, tag } => {
-                    container::build(dockerfile, &tag)?;
+                ContainerCommands::Build { dockerfile, tag, no_cache, build_arg, target } => {
+                    container::build(dockerfile, &tag, no_cache, &build_arg, target)?;
                 }
                 ContainerCommands::List => {
                     container::list()?;

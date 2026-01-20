@@ -56,6 +56,6 @@ The daemon is designed for 100% uptime with graceful degradation:
 
 ### Performance Profile
 - **Baseline Memory**: ~40MB (including full repository index)
-- **Idle CPU**: <1%
+- **Idle CPU**: &lt;1%
 - **IPC Latency**: ~100μs
-- **Recovery Time**: <1s from cold start
+- **Recovery Time**: &lt;1s from cold start
