@@ -2,6 +2,7 @@
 
 use anyhow::Result;
 use owo_colors::OwoColorize;
+#[cfg(feature = "arch")]
 use std::collections::{HashMap, HashSet, VecDeque};
 
 /// Explain why a package is installed
