@@ -461,11 +461,10 @@ pub async fn update(name: &str) -> Result<()> {
         for tool in installed {
             println!("\n{} Updating {}...", style::dim("→"), style::package(&tool));
             // Re-install to update
-            if let Some((_, source, _, _)) = TOOL_REGISTRY.iter().find(|(k, _, _, _)| *k == tool) {
-                if let Some((manager, pkg)) = source.split_once(':') {
+            if let Some((_, source, _, _)) = TOOL_REGISTRY.iter().find(|(k, _, _, _)| *k == tool)
+                && let Some((manager, pkg)) = source.split_once(':') {
                     let _ = install_managed(manager, pkg, &tool, &tools_dir, &bin_dir).await;
                 }
-            }
         }
         println!("\n{}", style::success("All tools updated!"));
         return Ok(());
@@ -517,10 +516,10 @@ pub fn search(query: &str) -> Result<()> {
         println!(
             "  {} {} {}",
             style::package(name),
-            style::dim(&format!("[{}]", category)),
-            style::dim(&format!("via {}", manager))
+            style::dim(&format!("[{category}]")),
+            style::dim(&format!("via {manager}"))
         );
-        println!("    {}\n", desc);
+        println!("    {desc}\n");
     }
 
     println!("Install with: omg tool install <name>");
@@ -547,13 +546,13 @@ pub fn registry() -> Result<()> {
 
     for category in sorted_cats {
         let tools = &categories[category];
-        println!("  {} {}", style::info(&format!("[{}]", category)), style::dim(&format!("({} tools)", tools.len())));
+        println!("  {} {}", style::info(&format!("[{category}]")), style::dim(&format!("({} tools)", tools.len())));
         for (name, source, desc) in tools {
             let manager = source.split(':').next().unwrap_or("?");
             println!(
                 "    {} {} - {}",
                 style::package(name),
-                style::dim(&format!("({})", manager)),
+                style::dim(&format!("({manager})")),
                 desc
             );
         }

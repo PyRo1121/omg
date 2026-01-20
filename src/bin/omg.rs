@@ -104,10 +104,10 @@ fn main() -> Result<()> {
         .block_on(async_main());
 
     // Handle errors with helpful suggestions
-    if let Err(ref err) = result {
-        if let Some(suggestion) = omg_lib::core::error::suggest_for_anyhow(err) {
-            eprintln!("\n💡 {suggestion}");
-        }
+    if let Err(ref err) = result
+        && let Some(suggestion) = omg_lib::core::error::suggest_for_anyhow(err)
+    {
+        eprintln!("\n💡 {suggestion}");
     }
 
     result
