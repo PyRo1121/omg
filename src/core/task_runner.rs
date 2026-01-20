@@ -53,7 +53,10 @@ macro_rules! ensure_runtime_impl {
             return Ok(normalized);
         }
 
-        let prompt = format!("{} '{}' is missing. Install now?", $runtime_name, normalized);
+        let prompt = format!(
+            "{} '{}' is missing. Install now?",
+            $runtime_name, normalized
+        );
         if Confirm::with_theme(&ColorfulTheme::default())
             .with_prompt(prompt)
             .default(true)
@@ -69,7 +72,11 @@ macro_rules! ensure_runtime_impl {
 
 fn ensure_python_runtime(version: &str) -> Result<String> {
     let manager = crate::runtimes::PythonManager::new();
-    ensure_runtime_impl!("Python", version.trim_start_matches('v').to_string(), manager)
+    ensure_runtime_impl!(
+        "Python",
+        version.trim_start_matches('v').to_string(),
+        manager
+    )
 }
 
 fn ensure_go_runtime(version: &str) -> Result<String> {

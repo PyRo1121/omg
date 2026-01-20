@@ -375,7 +375,9 @@ async fn install_managed(
                 anyhow::bail!("Go install of '{pkg}' failed. Try: go install {target}");
             }
         }
-        _ => anyhow::bail!("Unknown package manager '{manager}'. Supported: npm, cargo, pip, go, pacman"),
+        _ => anyhow::bail!(
+            "Unknown package manager '{manager}'. Supported: npm, cargo, pip, go, pacman"
+        ),
     }
 
     pb.finish_and_clear();

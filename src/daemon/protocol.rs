@@ -4,7 +4,7 @@
 //! Uses serde integration to avoid recursion limit issues with recursive types.
 //!
 //! Optimizations:
-//! - Box<Vec<T>> for recursive types to break derive recursion
+//! - `Box<Vec<T>>` for recursive types to break derive recursion
 //! - Minimal struct sizes for cache efficiency
 
 use serde::{Deserialize, Serialize};

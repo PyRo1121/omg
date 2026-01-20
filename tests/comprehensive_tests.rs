@@ -500,10 +500,13 @@ mod cli_status {
     #[test]
     fn test_status_with_cargo_toml() {
         let project = TestProject::new();
-        project.create_file("Cargo.toml", r#"[package]
+        project.create_file(
+            "Cargo.toml",
+            r#"[package]
 name = "test"
 version = "0.1.0"
-"#);
+"#,
+        );
         let result = project.run(&["status"]);
         assert!(!result.stderr_contains("panicked"));
     }
@@ -511,10 +514,13 @@ version = "0.1.0"
     #[test]
     fn test_status_with_pyproject() {
         let project = TestProject::new();
-        project.create_file("pyproject.toml", r#"[project]
+        project.create_file(
+            "pyproject.toml",
+            r#"[project]
 name = "test"
 version = "0.1.0"
-"#);
+"#,
+        );
         let result = project.run(&["status"]);
         assert!(!result.stderr_contains("panicked"));
     }
@@ -752,12 +758,15 @@ mod cli_run {
     #[test]
     fn test_run_with_package_json() {
         let project = TestProject::new();
-        project.create_file("package.json", r#"{
+        project.create_file(
+            "package.json",
+            r#"{
             "name": "test",
             "scripts": {
                 "test": "echo hello"
             }
-        }"#);
+        }"#,
+        );
         let result = project.run(&["run", "--list"]);
         assert!(!result.stderr_contains("panicked"));
     }
@@ -1000,7 +1009,10 @@ mod file_handling {
     #[test]
     fn test_deeply_nested_directory() {
         let project = TestProject::new();
-        let deep_path = (0..50).map(|i| format!("dir{i}")).collect::<Vec<_>>().join("/");
+        let deep_path = (0..50)
+            .map(|i| format!("dir{i}"))
+            .collect::<Vec<_>>()
+            .join("/");
         project.create_dir(&deep_path);
         let result = project.run(&["status"]);
         assert!(!result.stderr_contains("panicked"));

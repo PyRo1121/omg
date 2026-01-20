@@ -30,10 +30,10 @@ pub mod tool;
 pub mod tui;
 pub mod why;
 
+#[cfg(feature = "license")]
+pub use args::LicenseCommands;
 pub use args::{
     AuditCommands, CiCommands, Cli, Commands, ContainerCommands, EnterpriseCommands,
     EnterprisePolicyCommands, EnvCommands, FleetCommands, GoldenPathCommands, MigrateCommands,
     NotifyCommands, ServerCommands, SnapshotCommands, TeamCommands, TeamRoleCommands, ToolCommands,
 };
-#[cfg(feature = "license")]
-pub use args::LicenseCommands;

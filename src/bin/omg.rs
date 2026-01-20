@@ -7,6 +7,8 @@
 use anyhow::Result;
 use clap::Parser;
 
+#[cfg(feature = "license")]
+use omg_lib::cli::LicenseCommands;
 use omg_lib::cli::doctor;
 use omg_lib::cli::env;
 use omg_lib::cli::new;
@@ -19,8 +21,6 @@ use omg_lib::cli::{
     EnvCommands, FleetCommands, GoldenPathCommands, MigrateCommands, NotifyCommands,
     ServerCommands, SnapshotCommands, TeamCommands, TeamRoleCommands, ToolCommands, commands,
 };
-#[cfg(feature = "license")]
-use omg_lib::cli::LicenseCommands;
 use omg_lib::cli::{
     blame, ci, diff, enterprise, fleet, migrate, outdated, pin, size, snapshot, why,
 };
