@@ -30,7 +30,7 @@ pub struct BuildRecommendation {
     pub enable_ccache: bool,
     /// Whether to enable sccache
     pub enable_sccache: bool,
-    /// Whether to disable secure_makepkg for speed
+    /// Whether to disable `secure_makepkg` for speed
     pub disable_secure_makepkg: bool,
     /// Recommended build concurrency
     pub build_concurrency: usize,
@@ -143,10 +143,10 @@ fn detect_ram_gb() -> f64 {
             if line.starts_with("MemTotal:") {
                 // Format: "MemTotal:       16384000 kB"
                 let parts: Vec<&str> = line.split_whitespace().collect();
-                if let Some(kb_str) = parts.get(1) {
-                    if let Ok(kb) = kb_str.parse::<u64>() {
-                        return kb as f64 / 1_048_576.0; // kB to GB
-                    }
+                if let Some(kb_str) = parts.get(1)
+                    && let Ok(kb) = kb_str.parse::<u64>()
+                {
+                    return kb as f64 / 1_048_576.0; // kB to GB
                 }
             }
         }
