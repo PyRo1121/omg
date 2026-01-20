@@ -82,6 +82,38 @@ fn try_fast_info() -> bool {
     false
 }
 
+/// Ultra-fast path for completions (bypasses tokio entirely)
+fn try_fast_completions() -> Result<bool> {
+    let args: Vec<_> = std::env::args().collect();
+    // Check for "omg completions <shell>" or "omg completions <shell> --stdout"
+    if args.len() >= 3 && args[1] == "completions" {
+        let shell = &args[2];
+        // Skip if shell looks like a flag
+        if shell.starts_with('-') {
+            return Ok(false);
+        }
+
+        let stdout = args.iter().any(|a| a == "--stdout");
+
+        // We can only do this fast if it's one of the shells that uses include_str!
+        // or if we don't mind building the Command object once without tokio.
+        // For Bash, Zsh, Fish, it's instant.
+        match shell.to_lowercase().as_str() {
+            "bash" | "zsh" | "fish" => {
+                hooks::completions::generate_completions(shell, stdout)?;
+                return Ok(true);
+            }
+            _ => {
+                // For other shells, we'll let it fall through to the normal path
+                // since they need Cli::command() which is slow anyway,
+                // or we could implement it here too.
+                return Ok(false);
+            }
+        }
+    }
+    Ok(false)
+}
+
 fn main() -> Result<()> {
     // ULTRA FAST PATH: explicit --count without tokio
     if try_fast_explicit_count() {
@@ -95,6 +127,11 @@ fn main() -> Result<()> {
 
     // ULTRA FAST PATH: simple info without tokio
     if try_fast_info() {
+        return Ok(());
+    }
+
+    // ULTRA FAST PATH: completions without tokio
+    if try_fast_completions()? {
         return Ok(());
     }
 
