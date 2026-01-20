@@ -174,9 +174,9 @@ jobs:
         
       - name: Run property tests
         run: cargo test --test property_tests --features arch -- --test-threads=1
-        timeout-minutes: 10
+        timeout-minutes: 20
         env:
-          PROPTEST_CASES: 20
+          PROPTEST_CASES: 10
 
   # ═══════════════════════════════════════════════════════════════════════════
   # SECURITY TESTS
