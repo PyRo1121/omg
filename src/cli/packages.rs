@@ -1670,6 +1670,7 @@ fn display_package_info(info: &crate::package_managers::types::PackageInfo) {
 }
 
 /// Fuzzy match candidate for "Did you mean?"
+#[cfg(feature = "arch")]
 fn fuzzy_suggest(query: &str) -> Option<String> {
     // 1. Get all names (Fast from local package DB)
     let names = if use_debian_backend() {

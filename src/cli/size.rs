@@ -335,8 +335,3 @@ fn get_cache_size() -> Result<i64> {
 
     Ok(total)
 }
-
-#[cfg(not(feature = "arch"))]
-fn get_cache_size() -> Result<i64> {
-    Ok(0)
-}
