@@ -52,6 +52,39 @@ cp target/release/omg ~/.local/bin/
 
 ---
 
+## 🔒 Privacy & Telemetry
+
+### Does OMG collect any data?
+
+By default, OMG collects **anonymous** usage data to improve the product:
+- One-time install ping (random UUID, version, platform)
+- Command usage statistics
+- Error reports
+
+**No personal data, package names, or file contents are ever collected.**
+
+### How do I opt out of telemetry?
+
+**During installation:**
+```bash
+curl -fsSL https://... | OMG_NO_TELEMETRY=1 bash
+```
+
+**After installation:**
+```bash
+# Add to your shell config
+export OMG_TELEMETRY=0
+```
+
+### Where is data sent?
+
+Data is sent to `api.pyro1121.com`. The telemetry endpoint only accepts:
+- Install counts (for GitHub badge)
+- Anonymous command usage patterns
+- Error reports with stack traces (no user data)
+
+---
+
 ## ⚡ Performance
 
 ### How is OMG so fast?

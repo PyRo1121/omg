@@ -64,160 +64,18 @@ This document provides a high-level overview of OMG's architecture, component in
 
 ## 📦 Binary Components
 
-OMG ships as three binaries, all built from the same Rust library:
+OMG is distributed as a unified set of three specialized binaries, all statically linked for maximum portability and zero dependencies.
 
-| Binary | Purpose | Size |
-|--------|---------|------|
-| `omg` | Main CLI interface | ~15MB |
-| `omgd` | Persistent daemon | ~15MB |
-| `omg-fast` | Ultra-fast status queries | ~5MB |
+### omg (The CLI)
+The primary user interface. It is designed for human interaction, providing rich colored output, progress bars, and interactive TUI elements. It handles argument parsing, security policy enforcement, and communicates with the background daemon via a high-performance Unix socket.
 
-### omg (CLI)
+### omgd (The Daemon)
+The "brain" of the system. It runs as a lightweight background service that maintains an in-memory index of all system packages and language runtimes. It handles heavy lifting like background vulnerability scanning, metadata indexing, and complex dependency resolution.
 
-The main user-facing binary:
-- Parses commands via clap derive macros
-- Communicates with daemon via Unix socket IPC
-- Falls back to direct operations if daemon unavailable
-- Spawns tokio runtime for async operations
+### omg-fast (The Prompt Optimizer)
+A specialized, ultra-lightweight binary specifically for shell prompts. It skips all network and IPC logic, reading system status directly from a pre-computed binary file to achieve sub-millisecond response times.
 
-**Source:** `src/bin/omg.rs`, `src/cli/`
 
-### omgd (Daemon)
-
-The background service:
-- Maintains in-memory package index
-- Handles IPC requests from CLI
-- Runs background refresh workers
-- Persists status to binary file and redb
-
-**Source:** `src/bin/omgd.rs`, `src/daemon/`
-
-### omg-fast
-
-Specialized ultra-fast queries:
-- Reads binary status file directly
-- Sub-millisecond response times
-- Used for shell prompts
-
-**Source:** `src/bin/omg-fast.rs`
-
----
-
-## 🗂️ Library Organization
-
-```
-src/
-├── bin/
-│   ├── omg.rs           # CLI entry point
-│   ├── omgd.rs          # Daemon entry point
-│   └── omg-fast.rs      # Fast query entry point
-├── cli/
-│   ├── mod.rs           # CLI module root
-│   ├── args.rs          # Command definitions (clap)
-│   ├── commands.rs      # Command implementations
-│   ├── packages.rs      # Package search/install/remove
-│   ├── runtimes.rs      # Runtime management commands
-│   ├── container.rs     # Container commands
-│   ├── security.rs      # Security audit commands
-│   ├── tool.rs          # Cross-ecosystem binary manager
-│   ├── env.rs           # Environment management
-│   ├── team.rs          # Team collaboration
-│   ├── doctor.rs        # System health checks
-│   ├── license.rs       # License management
-│   ├── new.rs           # Project scaffolding
-│   ├── init.rs          # Initialize projects
-│   ├── migrate.rs       # Migration from other tools
-│   ├── snapshot.rs      # System snapshots
-│   ├── outdated.rs      # Check for updates
-│   ├── pin.rs           # Pin package versions
-│   ├── size.rs          # Package size analysis
-│   ├── why.rs           # Dependency analysis
-│   ├── blame.rs         # Package attribution
-│   ├── diff.rs          # Diff operations
-│   ├── ci.rs            # CI/CD integration
-│   ├── enterprise.rs    # Enterprise features
-│   ├── fleet.rs         # Fleet management
-│   ├── style.rs         # Output styling
-│   ├── tui/             # TUI dashboard
-│   │   ├── mod.rs
-│   │   ├── app.rs
-│   │   └── ui.rs
-│   └── ...
-├── core/
-│   ├── mod.rs           # Core module root
-│   ├── types.rs         # Common types
-│   ├── error.rs         # Error definitions
-│   ├── database.rs      # redb wrapper
-│   ├── paths.rs         # File system paths
-│   ├── archive.rs       # Archive extraction
-│   ├── client.rs        # HTTP client
-│   ├── http.rs          # HTTP protocol handling
-│   ├── history.rs       # Transaction history
-│   ├── privilege.rs     # Privilege escalation
-│   ├── completion.rs    # Shell completion generation
-│   ├── container.rs     # Container utilities
-│   ├── fast_status.rs   # Fast status file I/O
-│   ├── sysinfo.rs       # System information
-│   ├── task_runner.rs   # Task runner utilities
-│   ├── license.rs       # License handling
-│   ├── usage.rs         # Usage statistics
-│   ├── telemetry.rs     # Anonymous telemetry
-│   ├── analytics.rs     # Analytics tracking
-│   ├── env/             # Environment utilities
-│   │   ├── mod.rs
-│   │   ├── distro.rs    # Distro detection
-│   │   ├── fingerprint.rs # System fingerprinting
-│   │   └── team.rs      # Team environment
-│   ├── security/        # Security features
-│   │   ├── mod.rs
-│   │   ├── audit.rs
-│   │   ├── pgp.rs
-│   │   ├── sbom.rs
-│   │   ├── secrets.rs
-│   │   ├── slsa.rs
-│   │   ├── policy.rs
-│   │   └── vulnerability.rs
-│   └── ...
-├── daemon/
-│   ├── mod.rs           # Daemon module root
-│   ├── server.rs        # Server loop
-│   ├── handlers.rs      # Request handlers
-│   ├── protocol.rs      # IPC protocol types
-│   ├── cache.rs         # Cache management
-│   ├── db.rs            # Persistence
-│   └── index.rs         # Package index
-├── runtimes/
-│   ├── mod.rs           # Runtime module root
-│   ├── manager.rs       # RuntimeManager trait
-│   ├── node.rs          # Node.js manager
-│   ├── python.rs        # Python manager
-│   ├── rust.rs          # Rust manager
-│   ├── go.rs            # Go manager
-│   ├── ruby.rs          # Ruby manager
-│   ├── java.rs          # Java manager
-│   ├── bun.rs           # Bun manager
-│   └── mise.rs          # Mise integration
-├── package_managers/
-│   ├── mod.rs           # Package manager root
-│   ├── traits.rs        # Common traits
-│   ├── types.rs         # Shared types
-│   ├── official.rs      # Official repo backend
-│   ├── alpm_direct.rs   # Direct libalpm operations
-│   ├── alpm_ops.rs      # ALPM transaction operations
-│   ├── alpm_worker.rs   # ALPM async worker
-│   ├── pacman_db.rs     # Pacman database parsing
-│   ├── aur.rs           # AUR HTTP client
-│   ├── pkgbuild.rs      # PKGBUILD parsing
-│   ├── apt.rs           # Debian/Ubuntu apt integration
-│   └── parallel_sync.rs # Parallel repository sync
-├── hooks/
-│   └── mod.rs           # Shell hooks
-├── shims/
-│   └── mod.rs           # Shim generation
-├── config/
-│   └── mod.rs           # Configuration
-└── lib.rs               # Library root
-```
 
 ---
 
@@ -301,40 +159,16 @@ User: omg use node 20.10.0
 
 ## 💾 Caching Strategy
 
-### Three-Tier Caching
+OMG uses a multi-tier caching architecture to eliminate the latency typically associated with package managers.
 
-| Tier | Technology | TTL | Purpose |
-|------|------------|-----|---------|
-| L1 | moka (in-memory) | 5 min | Hot request cache |
-| L2 | Binary status file | - | Shell prompt queries |
-| L3 | redb (persistent) | - | Across daemon restarts |
+### 1. In-Memory (moka)
+The hottest data (recent searches, package details, system status) is kept in a concurrent, high-performance memory cache. This allows multiple CLI instances to share results instantly without hitting the disk.
 
-### moka Cache
+### 2. Persistent (redb)
+Data that should survive a reboot is stored in `redb`, an ACID-compliant embedded database. This includes your transaction history, audit logs, and pre-computed package indices.
 
-High-performance concurrent cache:
-- 1000 entry limit (configurable)
-- 5-minute TTL
-- LRU eviction
-
-**Cached data:**
-- Search results
-- Package info
-- System status
-- Explicit package list
-
-### Binary Status File
-
-Fixed-format binary file for ultra-fast reads:
-- Location: `$XDG_RUNTIME_DIR/omg.status`
-- Format: 4x u32 (total, explicit, orphans, updates)
-- Updated every 300 seconds
-
-### redb Persistence
-
-ACID-compliant embedded database:
-- Location: `~/.local/share/omg/cache.redb`
-- Stores: System status
-- Auto-compacts on write
+### 3. Binary Status
+A specialized 16-byte binary file is maintained by the daemon to store your system's "vital signs" (update counts, error status). This is what enables `omg-fast` to power your shell prompt without any noticeable lag.
 
 ---
 
@@ -372,52 +206,15 @@ pub enum Response {
 
 ---
 
-## 🔧 Runtime Management
+## 🔧 Runtime Management Architecture
 
-### RuntimeManager Trait
-
-All runtime managers implement:
-
-```rust
-#[async_trait]
-pub trait RuntimeManager: Send + Sync {
-    fn runtime(&self) -> Runtime;
-    async fn list_available(&self) -> Result<Vec<String>>;
-    fn list_installed(&self) -> Result<Vec<RuntimeVersion>>;
-    async fn install(&self, version: &str) -> Result<()>;
-    fn uninstall(&self, version: &str) -> Result<()>;
-    fn use_version(&self, version: &str) -> Result<()>;
-}
-```
+OMG unifies language runtimes under a single "Runtime Manager" interface. This allows every language—whether it's Node.js, Rust, or Java—to behave identically from a user's perspective.
 
 ### Version Storage
-
-```
-~/.local/share/omg/versions/
-├── node/
-│   ├── 18.17.0/
-│   │   └── bin/
-│   │       ├── node
-│   │       ├── npm
-│   │       └── npx
-│   ├── 20.10.0/
-│   │   └── bin/...
-│   └── current → 20.10.0
-├── python/
-│   ├── 3.11.0/
-│   ├── 3.12.0/
-│   └── current → 3.12.0
-└── ...
-```
+All runtimes are stored in your home directory (`~/.local/share/omg/versions`), ensuring you never need `sudo` to switch a Node.js version and your system-wide packages remain untouched.
 
 ### Resolution Strategy
-
-```
-native-then-mise (default):
-    1. Check native managers (Node, Python, Go, Rust, Ruby, Java, Bun)
-    2. Fall back to mise for unsupported runtimes
-    3. Auto-download mise if needed
-```
+By default, OMG uses a "native-then-mise" strategy. It prefers its own highly optimized native managers for common languages but can seamlessly fall back to the `mise` ecosystem for more obscure runtimes, giving you the best of both worlds.
 
 ---
 
