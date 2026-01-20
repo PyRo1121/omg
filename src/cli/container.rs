@@ -47,7 +47,16 @@ pub fn status() -> Result<()> {
 }
 
 /// Run a command in a container
-pub fn run(image: &str, command: &[String], name: Option<String>, detach: bool) -> Result<()> {
+pub fn run(
+    image: &str,
+    command: &[String],
+    name: Option<String>,
+    detach: bool,
+    interactive: bool,
+    env: &[String],
+    volumes: &[String],
+    workdir: Option<String>,
+) -> Result<()> {
     let manager = ContainerManager::new()?;
 
     println!(
@@ -56,11 +65,40 @@ pub fn run(image: &str, command: &[String], name: Option<String>, detach: bool) 
         image.cyan()
     );
 
+    // Parse env vars (KEY=VALUE)
+    let env_pairs: Vec<(String, String)> = env
+        .iter()
+        .filter_map(|e| {
+            let parts: Vec<&str> = e.splitn(2, '=').collect();
+            if parts.len() == 2 {
+                Some((parts[0].to_string(), parts[1].to_string()))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // Parse volume mounts (host:container)
+    let volume_pairs: Vec<(String, String)> = volumes
+        .iter()
+        .filter_map(|v| {
+            let parts: Vec<&str> = v.splitn(2, ':').collect();
+            if parts.len() == 2 {
+                Some((parts[0].to_string(), parts[1].to_string()))
+            } else {
+                None
+            }
+        })
+        .collect();
+
     let config = ContainerConfig {
         image: image.to_string(),
         name,
-        interactive: !detach,
+        interactive: interactive || !detach,
         rm: !detach,
+        env: env_pairs,
+        volumes: volume_pairs,
+        workdir,
         ..Default::default()
     };
 
@@ -75,11 +113,42 @@ pub fn run(image: &str, command: &[String], name: Option<String>, detach: bool) 
 }
 
 /// Start an interactive shell in a container
-pub fn shell(image: Option<String>) -> Result<()> {
+pub fn shell(
+    image: Option<String>,
+    workdir: Option<String>,
+    env: &[String],
+    volumes: &[String],
+) -> Result<()> {
     let manager = ContainerManager::new()?;
     let cwd = std::env::current_dir()?;
 
-    let config = if let Some(img) = image {
+    // Parse env vars
+    let mut env_pairs: Vec<(String, String)> = env
+        .iter()
+        .filter_map(|e| {
+            let parts: Vec<&str> = e.splitn(2, '=').collect();
+            if parts.len() == 2 {
+                Some((parts[0].to_string(), parts[1].to_string()))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // Parse additional volume mounts
+    let mut volume_pairs: Vec<(String, String)> = volumes
+        .iter()
+        .filter_map(|v| {
+            let parts: Vec<&str> = v.splitn(2, ':').collect();
+            if parts.len() == 2 {
+                Some((parts[0].to_string(), parts[1].to_string()))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    let mut config = if let Some(img) = image {
         ContainerConfig {
             image: img,
             ..dev_container_config(&cwd)
@@ -88,12 +157,27 @@ pub fn shell(image: Option<String>) -> Result<()> {
         dev_container_config(&cwd)
     };
 
+    // Merge env and volumes
+    config.env.append(&mut env_pairs);
+    config.volumes.append(&mut volume_pairs);
+
+    // Override workdir if specified
+    if workdir.is_some() {
+        config.workdir = workdir;
+    }
+
     println!(
         "{} Starting shell in {} container...",
         "OMG".cyan().bold(),
         config.image.cyan()
     );
     println!("  Mounting: {} → /app", cwd.display().dimmed());
+    if !config.env.is_empty() {
+        println!("  Environment: {} var(s)", config.env.len());
+    }
+    if config.volumes.len() > 1 {
+        println!("  Additional mounts: {}", config.volumes.len() - 1);
+    }
 
     let exit_code = manager.shell(&config)?;
 
@@ -105,7 +189,13 @@ pub fn shell(image: Option<String>) -> Result<()> {
 }
 
 /// Build a container image
-pub fn build(dockerfile: Option<String>, tag: &str) -> Result<()> {
+pub fn build(
+    dockerfile: Option<String>,
+    tag: &str,
+    no_cache: bool,
+    build_args: &[String],
+    target: Option<String>,
+) -> Result<()> {
     let manager = ContainerManager::new()?;
     let cwd = std::env::current_dir()?;
 
@@ -114,7 +204,7 @@ pub fn build(dockerfile: Option<String>, tag: &str) -> Result<()> {
 
     if !dockerfile_path.exists() {
         anyhow::bail!(
-            "Dockerfile not found: {}. Use --dockerfile to specify a path.",
+            "Dockerfile not found: {}. Use -f/--dockerfile to specify a path.",
             dockerfile_path.display()
         );
     }
@@ -125,7 +215,7 @@ pub fn build(dockerfile: Option<String>, tag: &str) -> Result<()> {
         tag.cyan()
     );
 
-    manager.build(&dockerfile_path, tag, &cwd)?;
+    manager.build_with_options(&dockerfile_path, tag, &cwd, no_cache, build_args, target.as_deref())?;
 
     println!("{} Image built successfully!", "✓".green());
 

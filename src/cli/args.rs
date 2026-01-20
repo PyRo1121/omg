@@ -592,21 +592,51 @@ pub enum ContainerCommands {
         /// Run in background (detached)
         #[arg(short, long)]
         detach: bool,
+        /// Run interactively with TTY
+        #[arg(short, long)]
+        interactive: bool,
+        /// Environment variables (KEY=VALUE)
+        #[arg(short, long, value_name = "KEY=VALUE")]
+        env: Vec<String>,
+        /// Volume mounts (host:container)
+        #[arg(short, long, value_name = "HOST:CONTAINER")]
+        volume: Vec<String>,
+        /// Working directory inside container
+        #[arg(short, long)]
+        workdir: Option<String>,
     },
     /// Start an interactive shell in a container
     Shell {
         /// Container image (default: ubuntu:24.04 with project mounted)
         #[arg(short, long)]
         image: Option<String>,
+        /// Working directory inside container
+        #[arg(short, long)]
+        workdir: Option<String>,
+        /// Environment variables (KEY=VALUE)
+        #[arg(short, long, value_name = "KEY=VALUE")]
+        env: Vec<String>,
+        /// Additional volume mounts (host:container)
+        #[arg(short, long, value_name = "HOST:CONTAINER")]
+        volume: Vec<String>,
     },
     /// Build a container image
     Build {
         /// Path to Dockerfile
-        #[arg(short, long)]
+        #[arg(short = 'f', long)]
         dockerfile: Option<String>,
         /// Image tag
         #[arg(short, long, default_value = "omg-dev:latest")]
         tag: String,
+        /// Disable build cache
+        #[arg(long)]
+        no_cache: bool,
+        /// Build arguments (KEY=VALUE)
+        #[arg(long, value_name = "KEY=VALUE")]
+        build_arg: Vec<String>,
+        /// Target build stage
+        #[arg(long)]
+        target: Option<String>,
     },
     /// List running containers
     List,

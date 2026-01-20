@@ -187,10 +187,36 @@ impl ContainerManager {
 
     /// Build a container image from a Dockerfile
     pub fn build(&self, dockerfile: &Path, tag: &str, context: &Path) -> Result<()> {
+        self.build_with_options(dockerfile, tag, context, false, &[], None)
+    }
+
+    /// Build a container image with advanced options
+    pub fn build_with_options(
+        &self,
+        dockerfile: &Path,
+        tag: &str,
+        context: &Path,
+        no_cache: bool,
+        build_args: &[String],
+        target: Option<&str>,
+    ) -> Result<()> {
         let mut cmd = Command::new(self.runtime.command());
         cmd.arg("build");
         cmd.args(["-f", &dockerfile.display().to_string()]);
         cmd.args(["-t", tag]);
+
+        if no_cache {
+            cmd.arg("--no-cache");
+        }
+
+        for arg in build_args {
+            cmd.args(["--build-arg", arg]);
+        }
+
+        if let Some(t) = target {
+            cmd.args(["--target", t]);
+        }
+
         cmd.arg(context.display().to_string());
 
         let status = cmd.status().context("Failed to build container")?;
@@ -312,23 +338,85 @@ impl ContainerManager {
         dockerfile.push_str("# OMG Development Environment\n");
         dockerfile.push_str("LABEL maintainer=\"OMG Team\"\n\n");
 
-        // Install common dependencies
+        // Install common dependencies based on base image
         if base_image.contains("ubuntu") || base_image.contains("debian") {
             dockerfile.push_str("RUN apt-get update && apt-get install -y \\\n");
-            dockerfile.push_str("    curl wget git build-essential \\\n");
+            dockerfile.push_str("    curl wget git build-essential ca-certificates \\\n");
             dockerfile.push_str("    && rm -rf /var/lib/apt/lists/*\n\n");
         } else if base_image.contains("arch") {
             dockerfile.push_str("RUN pacman -Syu --noconfirm && pacman -S --noconfirm \\\n");
             dockerfile.push_str("    curl wget git base-devel\n\n");
+        } else if base_image.contains("alpine") {
+            dockerfile.push_str("RUN apk add --no-cache \\\n");
+            dockerfile.push_str("    curl wget git build-base\n\n");
         }
 
-        // Add runtime version comments
+        // Install runtimes
         for (runtime, version) in runtimes {
-            use std::fmt::Write as _;
-            let _ = writeln!(dockerfile, "# {runtime}: {version}");
+            match *runtime {
+                "node" => {
+                    dockerfile.push_str("# Install Node.js\n");
+                    dockerfile.push_str("ENV NODE_VERSION=");
+                    dockerfile.push_str(if *version == "lts" { "20" } else { version });
+                    dockerfile.push_str("\n");
+                    dockerfile.push_str("RUN curl -fsSL https://deb.nodesource.com/setup_${NODE_VERSION}.x | bash - \\\n");
+                    dockerfile.push_str("    && apt-get install -y nodejs \\\n");
+                    dockerfile.push_str("    && rm -rf /var/lib/apt/lists/*\n\n");
+                }
+                "python" => {
+                    dockerfile.push_str("# Install Python\n");
+                    dockerfile.push_str("ENV PYTHON_VERSION=");
+                    dockerfile.push_str(version);
+                    dockerfile.push_str("\n");
+                    dockerfile.push_str("RUN apt-get update && apt-get install -y \\\n");
+                    dockerfile.push_str("    python3 python3-pip python3-venv \\\n");
+                    dockerfile.push_str("    && rm -rf /var/lib/apt/lists/* \\\n");
+                    dockerfile.push_str("    && ln -sf /usr/bin/python3 /usr/bin/python\n\n");
+                }
+                "rust" => {
+                    dockerfile.push_str("# Install Rust\n");
+                    dockerfile.push_str("ENV RUSTUP_HOME=/usr/local/rustup \\\n");
+                    dockerfile.push_str("    CARGO_HOME=/usr/local/cargo \\\n");
+                    dockerfile.push_str("    PATH=/usr/local/cargo/bin:$PATH\n");
+                    dockerfile.push_str("RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain ");
+                    dockerfile.push_str(version);
+                    dockerfile.push_str("\n\n");
+                }
+                "go" => {
+                    dockerfile.push_str("# Install Go\n");
+                    let go_ver = if *version == "latest" { "1.22" } else { version };
+                    dockerfile.push_str("ENV GO_VERSION=");
+                    dockerfile.push_str(go_ver);
+                    dockerfile.push_str("\n");
+                    dockerfile.push_str("RUN curl -fsSL https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz | tar -C /usr/local -xzf - \\\n");
+                    dockerfile.push_str("    && ln -sf /usr/local/go/bin/go /usr/local/bin/go\n");
+                    dockerfile.push_str("ENV PATH=$PATH:/usr/local/go/bin\n\n");
+                }
+                "bun" => {
+                    dockerfile.push_str("# Install Bun\n");
+                    dockerfile.push_str("RUN curl -fsSL https://bun.sh/install | bash\n");
+                    dockerfile.push_str("ENV PATH=$PATH:/root/.bun/bin\n\n");
+                }
+                "ruby" => {
+                    dockerfile.push_str("# Install Ruby\n");
+                    dockerfile.push_str("RUN apt-get update && apt-get install -y ruby-full \\\n");
+                    dockerfile.push_str("    && rm -rf /var/lib/apt/lists/*\n\n");
+                }
+                "java" => {
+                    dockerfile.push_str("# Install Java\n");
+                    dockerfile.push_str("RUN apt-get update && apt-get install -y default-jdk \\\n");
+                    dockerfile.push_str("    && rm -rf /var/lib/apt/lists/*\n\n");
+                }
+                _ => {
+                    use std::fmt::Write as _;
+                    let _ = writeln!(dockerfile, "# TODO: Install {runtime} {version}");
+                }
+            }
         }
 
-        dockerfile.push_str("\nWORKDIR /app\n");
+        dockerfile.push_str("WORKDIR /app\n\n");
+        dockerfile.push_str("# Copy project files\n");
+        dockerfile.push_str("COPY . .\n\n");
         dockerfile.push_str("CMD [\"/bin/bash\"]\n");
 
         dockerfile

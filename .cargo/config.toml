@@ -1,5 +1,4 @@
 [build]
-# Workaround for Rust 1.92 check-cfg bug
 rustflags = []
 
 [target.x86_64-unknown-linux-gnu]
