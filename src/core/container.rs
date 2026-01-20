@@ -403,13 +403,29 @@ impl ContainerManager {
                 }
                 "java" => {
                     dockerfile.push_str("# Install Java\n");
-                    dockerfile
-                        .push_str("RUN apt-get update && apt-get install -y default-jdk \\\n");
+                    let java_pkg = if *version == "latest" || *version == "lts" || version.is_empty()
+                    {
+                        "default-jdk".to_string()
+                    } else if version.chars().all(|c| c.is_ascii_digit()) {
+                        format!("openjdk-{version}-jdk")
+                    } else {
+                        (*version).to_string()
+                    };
+                    dockerfile.push_str("RUN apt-get update && apt-get install -y ");
+                    dockerfile.push_str(&java_pkg);
+                    dockerfile.push_str(" \\\n");
                     dockerfile.push_str("    && rm -rf /var/lib/apt/lists/*\n\n");
                 }
                 "ruby" => {
                     dockerfile.push_str("# Install Ruby\n");
-                    dockerfile.push_str("RUN apt-get update && apt-get install -y ruby-full \\\n");
+                    let ruby_pkg = if *version == "latest" || version.is_empty() {
+                        "ruby-full".to_string()
+                    } else {
+                        format!("ruby{version}")
+                    };
+                    dockerfile.push_str("RUN apt-get update && apt-get install -y ");
+                    dockerfile.push_str(&ruby_pkg);
+                    dockerfile.push_str(" \\\n");
                     dockerfile.push_str("    && rm -rf /var/lib/apt/lists/*\n\n");
                 }
                 _ => {

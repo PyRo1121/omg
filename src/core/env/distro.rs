@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::fs;
+use std::sync::OnceLock;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Distro {
@@ -12,25 +13,28 @@ pub enum Distro {
 }
 
 pub fn detect_distro() -> Distro {
-    let data = fs::read_to_string("/etc/os-release").ok();
-    let map = data.as_deref().map(parse_os_release).unwrap_or_default();
+    static DISTRO: OnceLock<Distro> = OnceLock::new();
+    *DISTRO.get_or_init(|| {
+        let data = fs::read_to_string("/etc/os-release").ok();
+        let map = data.as_deref().map(parse_os_release).unwrap_or_default();
 
-    let id = map.get("ID").map(String::as_str).unwrap_or_default();
-    let id_like = map.get("ID_LIKE").map(String::as_str).unwrap_or_default();
+        let id = map.get("ID").map(String::as_str).unwrap_or_default();
+        let id_like = map.get("ID_LIKE").map(String::as_str).unwrap_or_default();
 
-    if is_like(id, id_like, "arch") {
-        return Distro::Arch;
-    }
+        if is_like(id, id_like, "arch") {
+            return Distro::Arch;
+        }
 
-    if id == "ubuntu" {
-        return Distro::Ubuntu;
-    }
+        if id == "ubuntu" {
+            return Distro::Ubuntu;
+        }
 
-    if id == "debian" || is_like(id, id_like, "debian") {
-        return Distro::Debian;
-    }
+        if id == "debian" || is_like(id, id_like, "debian") {
+            return Distro::Debian;
+        }
 
-    Distro::Unknown
+        Distro::Unknown
+    })
 }
 
 pub fn is_arch_like() -> bool {
