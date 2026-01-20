@@ -316,10 +316,13 @@ pub fn build_path_additions<S: std::hash::BuildHasher>(
             },
             "rust" => {
                 // Skip if rustup is installed - let rustup manage Rust
-                let rustup_cargo = dirs::home_dir()
-                    .map(|h| h.join(".cargo/bin/rustc"))
-                    .filter(|p| p.exists());
-                if rustup_cargo.is_some() {
+                // Check for both rustc and cargo to be thorough
+                let home = dirs::home_dir();
+                let has_rustup = home.as_ref()
+                    .map(|h| h.join(".cargo/bin/rustc").exists() || h.join(".rustup").exists())
+                    .unwrap_or(false);
+                if has_rustup {
+                    // Rustup is installed, don't add OMG-managed Rust to PATH
                     continue;
                 }
                 let toolchain = RustToolchainSpec::parse(version)
