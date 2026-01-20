@@ -1,10 +1,16 @@
+---
+title: Changelog
+sidebar_position: 99
+description: Version history and release notes
+---
+
 # Changelog
 
 **Version History and Release Notes**
 
 ---
 
-## [Unreleased]
+## [0.1.75] - 2026-01-19
 
 ### Added
 - Interactive TUI dashboard (`omg dash`)
@@ -16,17 +22,25 @@
 - SLSA provenance verification via Sigstore/Rekor
 - Team collaboration features (`omg team` commands)
 - Container integration (`omg container` commands)
-- Ultra-fast shell functions for prompts (`omg-ec`, `omg-tc`, etc.)
+- Ultra-fast shell functions for prompts (`omg-fast ec`, `omg-fast tc`, etc.)
+- Fleet management for enterprise (`omg fleet`)
+- Enterprise features (`omg enterprise`)
+- CI/CD configuration generation (`omg ci`)
+- Cross-distro migration tools (`omg migrate`)
+- Environment snapshots (`omg snapshot`)
 - Comprehensive documentation rewrite
 
 ### Changed
 - Improved shell hook performance
 - Enhanced Nucleo-based fuzzy matching
 - Updated Sequoia-OpenPGP to PQC-ready version
+- Optimized CI/CD pipeline with sccache and shared caching
 
 ### Fixed
 - Removed unused `rustsec` dependency
 - Cleaned up dead code in runtime manager
+- Fixed panic detection in CI tests
+- Fixed Debian/Ubuntu builds with `--no-default-features`
 
 ---
 

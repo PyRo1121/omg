@@ -1,3 +1,9 @@
+---
+title: Workflows
+sidebar_position: 40
+description: Common workflows and recipes
+---
+
 # Workflows & Recipes
 
 **Common Patterns and Best Practices for OMG**

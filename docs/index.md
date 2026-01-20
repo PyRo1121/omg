@@ -1,3 +1,9 @@
+---
+title: Introduction
+sidebar_position: 1
+description: The complete guide to the fastest unified package manager
+---
+
 # OMG Documentation
 
 ## The Problem Every Developer Knows

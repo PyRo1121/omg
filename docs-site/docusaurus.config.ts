@@ -146,8 +146,15 @@ const config: Config = {
     },
     prism: {
       theme: prismThemes.github,
-      darkTheme: prismThemes.dracula,
-      additionalLanguages: ['bash', 'toml', 'rust', 'json'],
+      darkTheme: prismThemes.vsDark,
+      additionalLanguages: ['bash', 'toml', 'rust', 'json', 'typescript', 'python', 'go'],
+      magicComments: [
+        {
+          className: 'theme-code-block-highlighted-line',
+          line: 'highlight-next-line',
+          block: { start: 'highlight-start', end: 'highlight-end' },
+        },
+      ],
     },
   } satisfies Preset.ThemeConfig,
 };

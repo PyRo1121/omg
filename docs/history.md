@@ -1,3 +1,9 @@
+---
+title: History & Rollback
+sidebar_position: 24
+description: Transaction history and system rollback
+---
+
 # History & Rollback
 
 OMG maintains a transaction history log that tracks package operations, enabling review of past changes and rollback to previous states.

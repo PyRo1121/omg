@@ -1,3 +1,9 @@
+---
+title: Team Collaboration
+sidebar_position: 21
+description: Environment lockfiles, drift detection, and team sync
+---
+
 # Team Collaboration
 
 **Environment Sharing, Drift Detection, and Team Sync**

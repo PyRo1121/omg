@@ -1,3 +1,9 @@
+---
+title: Configuration
+sidebar_position: 4
+description: Configuration files, paths, and policy settings
+---
+
 # Configuration & Policy
 
 **Complete Configuration Guide for OMG**
