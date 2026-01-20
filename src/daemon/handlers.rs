@@ -8,8 +8,7 @@ use super::protocol::{
     DetailedPackageInfo, ExplicitResult, Request, RequestId, Response, ResponseResult,
     SearchResult, SecurityAuditResult, StatusResult, Vulnerability, error_codes,
 };
-#[cfg(feature = "debian")]
-use crate::core::env::distro::is_debian_like;
+use crate::core::env::distro::use_debian_backend;
 
 #[cfg(feature = "arch")]
 use crate::package_managers::{
@@ -22,18 +21,6 @@ use parking_lot::RwLock;
 use crate::package_managers::{
     apt_get_sync_pkg_info, apt_get_system_status, apt_list_explicit, apt_list_installed_fast,
 };
-
-fn use_debian_backend() -> bool {
-    #[cfg(feature = "debian")]
-    {
-        return is_debian_like();
-    }
-
-    #[cfg(not(feature = "debian"))]
-    {
-        false
-    }
-}
 
 /// Daemon state shared across handlers
 pub struct DaemonState {

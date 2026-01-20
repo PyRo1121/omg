@@ -41,6 +41,19 @@ pub fn is_debian_like() -> bool {
     matches!(detect_distro(), Distro::Debian | Distro::Ubuntu)
 }
 
+/// Check if we should use Debian backend based on current distro and features
+pub fn use_debian_backend() -> bool {
+    #[cfg(feature = "debian")]
+    {
+        return is_debian_like();
+    }
+
+    #[cfg(not(feature = "debian"))]
+    {
+        false
+    }
+}
+
 fn is_like(id: &str, id_like: &str, needle: &str) -> bool {
     id == needle
         || id_like

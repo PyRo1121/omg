@@ -1,20 +1,6 @@
 //! Common utilities for package operations
 
-#[cfg(feature = "debian")]
-use crate::core::env::distro::is_debian_like;
-
-/// Check if we should use Debian backend
-pub fn use_debian_backend() -> bool {
-    #[cfg(feature = "debian")]
-    {
-        return is_debian_like();
-    }
-
-    #[cfg(not(feature = "debian"))]
-    {
-        false
-    }
-}
+pub use crate::core::env::distro::use_debian_backend;
 
 /// Truncate string to max length with ellipsis
 pub fn truncate(s: &str, max: usize) -> String {

@@ -12,24 +12,10 @@ use crate::core::paths;
 use crate::package_managers::PackageManager;
 
 use crate::cli::style;
+use crate::core::env::distro::use_debian_backend;
 
 #[cfg(feature = "arch")]
 use crate::package_managers::get_system_status;
-
-#[cfg(feature = "debian")]
-use crate::package_managers::{apt_get_system_status, apt_list_all_package_names};
-
-fn use_debian_backend() -> bool {
-    #[cfg(feature = "debian")]
-    {
-        return is_debian_like();
-    }
-
-    #[cfg(not(feature = "debian"))]
-    {
-        false
-    }
-}
 
 // Re-export moved commands
 pub use super::env::{capture as env_capture, check as env_check, share as env_share};
