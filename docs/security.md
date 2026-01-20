@@ -82,11 +82,9 @@ When you run a full system audit (`omg audit`), OMG employs a massively parallel
 2. **Concurrent Execution**: Each chunk is scanned in parallel using all available CPU cores.
 3. **Aggregation**: The results are merged, filtered by severity (CVSS >= 7.0 for high severity), and presented in a unified report.
 
-## PGP Verification
+## Native PGP Verification
 
-### Native Performance
-
-OMG performs all cryptographic operations natively. Unlike tools that rely on external binary calls, OMG integrates directly with cryptographic logic to perform verification with maximum speed and security.
+OMG performs all cryptographic operations natively using a thread-safe implementation. Unlike standard managers that call an external binary (which is slow and difficult to parallelize), OMG leverages native logic to verify signatures for dozens of packages in parallel across all available CPU cores without process-spawning overhead.
 
 - **Direct System Integration**: No dependency on external security binaries.
 - **Keyring Awareness**: Automatically leverages official system keyrings for seamless verification.
@@ -138,25 +136,24 @@ Key policy options:
 
 The policy engine acts as a gatekeeper for every operation. Before a package is installed or updated, OMG checks it against your policy rules. If a package is banned, has too low a grade, or violates license requirements, the operation is blocked with a detailed explanation of the violation.
 
-### Security Grading Logic
+## Security Grading Logic
 
-The grading system uses a hierarchical check to determine a package's safety level:
+The grading system uses a strictly hierarchical check to determine a package's safety level:
 
-1. **Vulnerability Check**: If a package has any known CVEs, it is immediately graded as **Risk**.
-2. **Core System Check**: High-impact packages like `kernel` or `glibc` that meet SLSA and PGP standards are graded as **Locked**.
-3. **Official Signature**: Packages from official repos with valid PGP signatures are graded as **Verified**.
-4. **Community Check**: AUR packages with valid checksums but no signatures are graded as **Community**.
+1.  **Risk Assessment**: If a package has any known vulnerabilities in the security databases, it is immediately graded as **Risk**, regardless of its source or signature.
+2.  **Core Integrity**: Packages that form the system's foundation (such as the kernel or core libraries) are graded as **Locked** if they meet both the SLSA Level 3 provenance and official PGP standards.
+3.  **Official Verification**: Packages from official repositories that carry a valid PGP signature from a trusted maintainer are graded as **Verified**.
+4.  **Community Standards**: Packages from the AUR or third-party sources that provide valid checksums but lack official cryptographic signatures are graded as **Community**.
 
+## Verification Pipeline
 
-## Secure Operations
+When a package is integrated into the system, it passes through a rigorous 5-stage native verification process:
 
-### Package Installation Security
-
-1. **Signature Verification**: PGP signatures verified before installation
-2. **Checksum Validation**: SHA256 hashes match expected values
-3. **Vulnerability Check**: Scan for known CVEs
-4. **Policy Compliance**: Enforce organization policies
-5. **Sandboxed Builds**: AUR builds in isolated environment
+*   **Extraction**: Cryptographic signatures are retrieved from detached signature artifacts.
+*   **Integrity Calculation**: A streaming hash is computed using secure modern algorithms to ensure the file matches the expected byte sequence.
+*   **Key Identification**: The system keyring is searched for the specific public key associated with the signature.
+*   **Mathematical Validation**: The public key and calculated hash are used to perform a native cryptographic validation of the signature.
+*   **Trust Evaluation**: The system confirms the signing certificate is active, trusted by the root authority, and has not expired.
 
 ### Network Security
 

@@ -49,18 +49,23 @@ OMG automatically:
 
 ### Running Tasks
 
-Tasks are the primary way to interact with your project's lifecycle.
+Tasks allow you to interact with your project's lifecycle without needing to remember ecosystem-specific commands.
 
-- **Named Task**: Run a specific action defined in your project.
-- **Custom Arguments**: Pass additional flags or parameters to the underlying task.
-- **Discovery**: View all available actions supported by your current project type.
+*   **Action Execution**: Run named tasks defined in your project configuration (e.g., `dev`, `test`, `build`).
+*   **Dynamic Discovery**: View all tasks supported by your current project type.
+*   **Parameter Passing**: Forward custom flags and arguments directly to the underlying tool.
 
 ### How Tasks Are Resolved
 
-1.  **Project Identification**: The system analyzes the current directory for supported configuration patterns.
-2.  **Action Discovery**: It reads the available scripts or targets from the project definition.
-3.  **Pattern Matching**: The requested task name is matched against the discovered actions.
-4.  **Active Execution**: The task is launched within the correctly configured runtime environment.
+The system uses a sophisticated 11-tier discovery engine to determine the correct execution path:
+
+1.  **Project Identification**: The system performs a breadth-first search for configuration patterns across 11 distinct project types, including Rust (Cargo), Node.js/Bun, Python (Poetry/Pipenv), Java (Maven/Gradle), PHP (Composer), and Deno.
+2.  **Runtime Activation**: Before execution, the system detects and activates the required runtime version from files like `.nvmrc` or `rust-toolchain.toml`.
+3.  **Manager Selection**: For multi-manager ecosystems (like JavaScript), the system follows a strict priority logic:
+    *   Explicit `packageManager` field in the configuration.
+    *   Lockfile detection (prioritizing modern alternatives like `bun.lockb` or `pnpm-lock.yaml`).
+    *   System default (falling back to standard managers if no preference is found).
+4.  **Task Matching**: Discovered scripts or targets are matched against the user request and executed within the optimized environment.
 
 ---
 
