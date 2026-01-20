@@ -57,7 +57,7 @@ futures = "0.3.31"
 # Serialization
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
-toml = "0.8.23"
+toml = "0.9.11"
 bitcode = { version = "0.6", features = ["serde"] }
 
 # HTTP client
@@ -75,7 +75,7 @@ flate2 = { version = "1.1.8", default-features = false, features = [
 lz4_flex = { version = "0.12", default-features = false, features = [
     "frame",
 ] } # Frame format + perf mode
-zip = { version = "2.4.2", default-features = false, features = [
+zip = { version = "7.1.0", default-features = false, features = [
     "deflate",
     "time",
 ] }
@@ -88,7 +88,7 @@ ruzstd = "0.8.2" # Pure Rust zstd decoder (replaces zstd)
 
 # Memory management
 parking_lot = "0.12.5"
-dashmap = "5.5"
+dashmap = "6.1"
 moka = { version = "0.12", features = ["sync"] }
 memchr = "2.7"                                   # SIMD-accelerated string search
 
@@ -171,14 +171,14 @@ whoami = "2.0.2"
 urlencoding = "2.1.3"
 
 [dev-dependencies]
-criterion = { version = "0.6", features = ["html_reports"] }
+criterion = { version = "0.8", features = ["html_reports"] }
 tempfile = "3.24"
 assert_cmd = "2.1"
 predicates = "3.1"
 pprof = { version = "0.15", features = ["flamegraph"] }
-cargo-audit = "0.21"                                         # Security vulnerability auditing
+cargo-audit = "0.22"                                         # Security vulnerability auditing
 proptest = "1.4"                                             # Property-based testing
-rand = "0.8"                                                 # Random generation for fuzz tests
+rand = "0.9"                                                 # Random generation for fuzz tests
 serde_json = "1.0"                                           # JSON parsing for test assertions
 
 [profile.release]
