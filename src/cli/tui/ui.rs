@@ -790,7 +790,7 @@ fn draw_packages(f: &mut Frame, area: Rect, app: &App) {
     )
     .header(header)
     .block(styled_block(" Packages"))
-    .row_highlight_style(Style::default().bg(colors::BG_HIGHLIGHT));
+    .highlight_style(Style::default().bg(colors::BG_HIGHLIGHT));
 
     f.render_widget(table, *list_area);
 }
