@@ -9,32 +9,79 @@ use std::process::Command;
 use crate::cli::style;
 
 /// Tool registry - maps common tool names to their optimal installation source
-const TOOL_REGISTRY: &[(&str, &str)] = &[
-    ("ripgrep", "pacman:ripgrep"),
-    ("rg", "pacman:ripgrep"),
-    ("fd", "pacman:fd"),
-    ("jq", "pacman:jq"),
-    ("bat", "pacman:bat"),
-    ("tldr", "npm:tldr"), // NPM version is often more up to date/standard
-    ("serve", "npm:serve"),
-    ("http-server", "npm:http-server"),
-    ("yarn", "npm:yarn"),
-    ("pnpm", "npm:pnpm"),
-    ("cargo-watch", "cargo:cargo-watch"),
-    ("diesel", "cargo:diesel_cli"),
-    ("sqlx", "cargo:sqlx-cli"),
-    ("yt-dlp", "pip:yt-dlp"),
-    ("glances", "pip:glances"),
-    ("httpie", "pip:httpie"),
-    ("hey", "go:github.com/rakyll/hey"),
-    ("dive", "go:github.com/wagoodman/dive"),
+/// Format: (name, source, description, category)
+const TOOL_REGISTRY: &[(&str, &str, &str, &str)] = &[
+    // System tools (pacman)
+    ("ripgrep", "pacman:ripgrep", "Ultra-fast regex search tool", "search"),
+    ("rg", "pacman:ripgrep", "Alias for ripgrep", "search"),
+    ("fd", "pacman:fd", "Fast find alternative", "search"),
+    ("fzf", "pacman:fzf", "Fuzzy finder", "search"),
+    ("jq", "pacman:jq", "JSON processor", "data"),
+    ("yq", "pacman:yq", "YAML processor", "data"),
+    ("bat", "pacman:bat", "Cat with syntax highlighting", "files"),
+    ("eza", "pacman:eza", "Modern ls replacement", "files"),
+    ("zoxide", "pacman:zoxide", "Smarter cd command", "navigation"),
+    ("delta", "pacman:git-delta", "Better git diffs", "git"),
+    ("lazygit", "pacman:lazygit", "Terminal UI for git", "git"),
+    ("htop", "pacman:htop", "Interactive process viewer", "system"),
+    ("btop", "pacman:btop", "Resource monitor", "system"),
+    ("dust", "pacman:dust", "Disk usage analyzer", "system"),
+    ("duf", "pacman:duf", "Disk usage/free utility", "system"),
+    ("procs", "pacman:procs", "Modern ps replacement", "system"),
+    ("hyperfine", "pacman:hyperfine", "Command benchmarking", "dev"),
+    ("tokei", "pacman:tokei", "Code statistics", "dev"),
+    ("just", "pacman:just", "Command runner", "dev"),
+    ("watchexec", "pacman:watchexec", "File watcher", "dev"),
+    // Node.js tools (npm)
+    ("tldr", "npm:tldr", "Simplified man pages", "docs"),
+    ("serve", "npm:serve", "Static file server", "web"),
+    ("http-server", "npm:http-server", "Simple HTTP server", "web"),
+    ("yarn", "npm:yarn", "Package manager", "node"),
+    ("pnpm", "npm:pnpm", "Fast package manager", "node"),
+    ("tsx", "npm:tsx", "TypeScript execute", "node"),
+    ("nodemon", "npm:nodemon", "Node.js auto-restart", "node"),
+    ("prettier", "npm:prettier", "Code formatter", "formatting"),
+    ("eslint", "npm:eslint", "JavaScript linter", "linting"),
+    ("typescript", "npm:typescript", "TypeScript compiler", "node"),
+    ("turbo", "npm:turbo", "Monorepo build system", "node"),
+    ("vercel", "npm:vercel", "Vercel CLI", "deploy"),
+    ("netlify-cli", "npm:netlify-cli", "Netlify CLI", "deploy"),
+    ("wrangler", "npm:wrangler", "Cloudflare Workers CLI", "deploy"),
+    // Rust tools (cargo)
+    ("cargo-watch", "cargo:cargo-watch", "Watch and rebuild", "rust"),
+    ("cargo-edit", "cargo:cargo-edit", "Cargo add/rm/upgrade", "rust"),
+    ("cargo-expand", "cargo:cargo-expand", "Macro expansion", "rust"),
+    ("cargo-nextest", "cargo:cargo-nextest", "Fast test runner", "rust"),
+    ("cargo-audit", "cargo:cargo-audit", "Security audits", "rust"),
+    ("cargo-outdated", "cargo:cargo-outdated", "Check outdated deps", "rust"),
+    ("diesel", "cargo:diesel_cli", "Diesel ORM CLI", "rust"),
+    ("sqlx", "cargo:sqlx-cli", "SQLx CLI", "rust"),
+    ("bacon", "cargo:bacon", "Background code checker", "rust"),
+    ("sccache", "cargo:sccache", "Shared compilation cache", "rust"),
+    // Python tools (pip)
+    ("yt-dlp", "pip:yt-dlp", "Video downloader", "media"),
+    ("glances", "pip:glances", "System monitor", "system"),
+    ("httpie", "pip:httpie", "HTTP client", "web"),
+    ("black", "pip:black", "Python formatter", "python"),
+    ("ruff", "pip:ruff", "Fast Python linter", "python"),
+    ("mypy", "pip:mypy", "Python type checker", "python"),
+    ("poetry", "pip:poetry", "Python packaging", "python"),
+    ("pipx", "pip:pipx", "Install Python apps", "python"),
+    ("rich-cli", "pip:rich-cli", "Rich text in terminal", "cli"),
+    // Go tools
+    ("hey", "go:github.com/rakyll/hey", "HTTP load generator", "web"),
+    ("dive", "go:github.com/wagoodman/dive", "Docker image explorer", "docker"),
+    ("lazydocker", "go:github.com/jesseduffield/lazydocker", "Docker TUI", "docker"),
+    ("glow", "go:github.com/charmbracelet/glow", "Markdown renderer", "docs"),
+    ("air", "go:github.com/cosmtrek/air", "Go live reload", "go"),
+    ("golangci-lint", "go:github.com/golangci/golangci-lint/cmd/golangci-lint", "Go linter", "go"),
 ];
 
 #[must_use]
 pub fn registry_tool_names() -> Vec<String> {
     TOOL_REGISTRY
         .iter()
-        .map(|(name, _)| (*name).to_string())
+        .map(|(name, _, _, _)| (*name).to_string())
         .collect()
 }
 
@@ -86,7 +133,7 @@ pub async fn install(name: &str) -> Result<()> {
     fs::create_dir_all(&bin_dir)?;
 
     // 1. Check Registry
-    if let Some((_, source)) = TOOL_REGISTRY.iter().find(|(k, _)| *k == name) {
+    if let Some((_, source, desc, _)) = TOOL_REGISTRY.iter().find(|(k, _, _, _)| *k == name) {
         let Some((manager, pkg)) = source.split_once(':') else {
             anyhow::bail!("Invalid registry format for {name}");
         };
@@ -96,6 +143,7 @@ pub async fn install(name: &str) -> Result<()> {
             style::package(pkg),
             style::info(manager)
         );
+        println!("  {} {}", style::dim("→"), desc);
         return install_managed(manager, pkg, name, &tools_dir, &bin_dir).await;
     }
 
@@ -396,5 +444,123 @@ pub fn remove(name: &str) -> Result<()> {
     }
 
     println!("\n{}", style::success("Removal complete"));
+    Ok(())
+}
+
+/// Update an installed tool to latest version
+pub async fn update(name: &str) -> Result<()> {
+    let (tools_dir, bin_dir) = get_dirs();
+
+    if name == "all" {
+        println!("{} Updating all tools...\n", style::header("OMG Tool"));
+        let installed = installed_tool_names();
+        if installed.is_empty() {
+            println!("{}", style::dim("No tools installed."));
+            return Ok(());
+        }
+        for tool in installed {
+            println!("\n{} Updating {}...", style::dim("→"), style::package(&tool));
+            // Re-install to update
+            if let Some((_, source, _, _)) = TOOL_REGISTRY.iter().find(|(k, _, _, _)| *k == tool) {
+                if let Some((manager, pkg)) = source.split_once(':') {
+                    let _ = install_managed(manager, pkg, &tool, &tools_dir, &bin_dir).await;
+                }
+            }
+        }
+        println!("\n{}", style::success("All tools updated!"));
+        return Ok(());
+    }
+
+    println!(
+        "{} Updating tool '{}'...",
+        style::header("OMG Tool"),
+        style::package(name)
+    );
+
+    // Find the tool in registry or installed
+    if let Some((_, source, _, _)) = TOOL_REGISTRY.iter().find(|(k, _, _, _)| *k == name) {
+        let Some((manager, pkg)) = source.split_once(':') else {
+            anyhow::bail!("Invalid registry format for {name}");
+        };
+        install_managed(manager, pkg, name, &tools_dir, &bin_dir).await?;
+        println!("\n{}", style::success("Update complete!"));
+    } else {
+        anyhow::bail!("Tool '{name}' not found in registry. Cannot determine update source.");
+    }
+
+    Ok(())
+}
+
+/// Search for tools in the registry
+pub fn search(query: &str) -> Result<()> {
+    println!("{} Searching for '{}'...\n", style::header("OMG Tool"), query);
+
+    let query_lower = query.to_lowercase();
+    let matches: Vec<_> = TOOL_REGISTRY
+        .iter()
+        .filter(|(name, _, desc, category)| {
+            name.to_lowercase().contains(&query_lower)
+                || desc.to_lowercase().contains(&query_lower)
+                || category.to_lowercase().contains(&query_lower)
+        })
+        .collect();
+
+    if matches.is_empty() {
+        println!("{}", style::dim("No tools found matching your query."));
+        println!("\nTry: omg tool registry  # to see all available tools");
+        return Ok(());
+    }
+
+    println!("  Found {} tools:\n", matches.len());
+    for (name, source, desc, category) in matches {
+        let manager = source.split(':').next().unwrap_or("unknown");
+        println!(
+            "  {} {} {}",
+            style::package(name),
+            style::dim(&format!("[{}]", category)),
+            style::dim(&format!("via {}", manager))
+        );
+        println!("    {}\n", desc);
+    }
+
+    println!("Install with: omg tool install <name>");
+    Ok(())
+}
+
+/// Show all available tools in the registry
+pub fn registry() -> Result<()> {
+    println!("{} Tool Registry\n", style::header("OMG"));
+
+    // Group by category
+    let mut categories: std::collections::HashMap<&str, Vec<(&str, &str, &str)>> =
+        std::collections::HashMap::new();
+
+    for (name, source, desc, category) in TOOL_REGISTRY {
+        categories
+            .entry(*category)
+            .or_default()
+            .push((*name, *source, *desc));
+    }
+
+    let mut sorted_cats: Vec<_> = categories.keys().collect();
+    sorted_cats.sort();
+
+    for category in sorted_cats {
+        let tools = &categories[category];
+        println!("  {} {}", style::info(&format!("[{}]", category)), style::dim(&format!("({} tools)", tools.len())));
+        for (name, source, desc) in tools {
+            let manager = source.split(':').next().unwrap_or("?");
+            println!(
+                "    {} {} - {}",
+                style::package(name),
+                style::dim(&format!("({})", manager)),
+                desc
+            );
+        }
+        println!();
+    }
+
+    println!("Total: {} tools available", TOOL_REGISTRY.len());
+    println!("\nInstall with: omg tool install <name>");
     Ok(())
 }
