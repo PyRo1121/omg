@@ -30,7 +30,7 @@ jobs:
       uses: github/codeql-action/init@v3
       with:
         languages: ${{ matrix.language }}
-        build-mode: ${{ matrix.language == 'rust' && 'manual' || 'autobuild' }}
+        build-mode: ${{ matrix.language == 'rust' && 'none' || 'autobuild' }}
 
     - name: Install dependencies (Arch/Rust)
       if: matrix.language == 'rust'
