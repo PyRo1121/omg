@@ -35,20 +35,6 @@ OMG follows the XDG Base Directory Specification with sensible fallbacks.
 | **History** | Transaction history | `~/.local/share/omg/history.json` |
 | **Audit** | Audit log | `~/.local/share/omg/audit/audit.jsonl` |
 
-### Runtime Files
-
-| File | Purpose | Default Path |
-|------|---------|--------------|
-| **Socket** | Daemon IPC | `$XDG_RUNTIME_DIR/omg.sock` or `/tmp/omg.sock` |
-| **Status** | Fast status cache | `$XDG_RUNTIME_DIR/omg.status` |
-| **PID** | Daemon PID | `$XDG_RUNTIME_DIR/omgd.pid` |
-
-### Project Files
-
-| File | Purpose |
-|------|---------|
-| **omg.lock** | Environment lockfile (in project root) |
-
 ---
 
 ## ⚙️ General Configuration (config.toml)
@@ -69,18 +55,16 @@ The main configuration file controls daemon behavior, runtime settings, and feat
 shims_enabled = false
 
 # Override data directory (default: ~/.local/share/omg)
-# Uncomment to customize:
 # data_dir = "/custom/path/omg"
 
 # Override socket path (default: $XDG_RUNTIME_DIR/omg.sock)
-# Uncomment to customize:
 # socket_path = "/run/user/1000/omg.sock"
 
 # Default shell for hooks and completions
 # Options: "zsh", "bash", "fish"
 default_shell = "zsh"
 
-# Automatically check for OMG updates (default: false)
+# Automatically check for runtime updates on install (default: false)
 auto_update = false
 
 # Runtime backend preference
@@ -92,62 +76,46 @@ runtime_backend = "native-then-mise"
 # ═══════════════════════════════════════════════════════════════════════════
 
 [aur]
+# Build method: "bubblewrap" (secure), "chroot", or "native" (default)
+build_method = "native"
+
 # Number of parallel AUR builds
 build_concurrency = 8
 
+# Require interactive PKGBUILD review before building (default: false)
+review_pkgbuild = false
+
+# Use stricter makepkg flags (cleanbuild/verifysource) (default: true)
+secure_makepkg = true
+
+# Allow native builds without sandboxing (default: true)
+allow_unsafe_builds = true
+
+# Use AUR metadata archive for bulk update checks (default: true)
+use_metadata_archive = true
+
+# Metadata archive cache TTL in seconds (default: 300)
+metadata_cache_ttl_secs = 300
+
 # MAKEFLAGS for building (passed to makepkg)
-makeflags = "-j8"
+# makeflags = "-j8"
 
 # Custom package destination (built packages stored here)
-pkgdest = "/home/user/.cache/omg/pkgdest"
+# pkgdest = "/home/user/.cache/omg/pkgdest"
 
 # Custom source destination (sources downloaded here)
-srcdest = "/home/user/.cache/omg/srcdest"
+# srcdest = "/home/user/.cache/omg/srcdest"
 
-# Cache built packages for faster rebuilds
+# Cache built packages for faster rebuilds (default: true)
 cache_builds = true
 
-# Enable ccache for faster C/C++ builds
+# Enable ccache for faster C/C++ builds (default: false)
 enable_ccache = false
-ccache_dir = "/home/user/.cache/ccache"
+# ccache_dir = "/home/user/.cache/ccache"
 
-# Enable sccache for faster Rust builds
+# Enable sccache for faster Rust builds (default: false)
 enable_sccache = false
-sccache_dir = "/home/user/.cache/sccache"
-
-# Build method: "standard" (makepkg) or "containerized" (isolated)
-build_method = "standard"
-
-# ═══════════════════════════════════════════════════════════════════════════
-# DAEMON SETTINGS
-# ═══════════════════════════════════════════════════════════════════════════
-
-[daemon]
-# Background refresh interval (seconds)
-refresh_interval = 300
-
-# Maximum cached search results
-max_cache_entries = 1000
-
-# Cache TTL for search results (seconds)
-cache_ttl = 300
-
-# ═══════════════════════════════════════════════════════════════════════════
-# NETWORK SETTINGS
-# ═══════════════════════════════════════════════════════════════════════════
-
-[network]
-# Request timeout for AUR/runtime APIs (seconds)
-timeout = 30
-
-# Enable parallel downloads
-parallel_downloads = true
-
-# Maximum concurrent downloads
-max_parallel = 5
-
-# Custom user agent
-# user_agent = "omg/0.1.0"
+# sccache_dir = "/home/user/.cache/sccache"
 ```
 
 ### Setting Descriptions
@@ -160,29 +128,21 @@ max_parallel = 5
 | `data_dir` | string | `~/.local/share/omg` | Override data directory |
 | `socket_path` | string | XDG runtime | Override socket path |
 | `default_shell` | string | `"zsh"` | Default shell for hooks |
-| `auto_update` | bool | `false` | Auto-check for OMG updates |
+| `auto_update` | bool | `false` | Auto-check for updates |
 | `runtime_backend` | string | `"native-then-mise"` | Runtime resolution strategy |
 
 #### AUR Settings
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| `build_concurrency` | int | `8` | Parallel AUR builds |
-| `makeflags` | string | `"-j8"` | makepkg flags |
-| `pkgdest` | string | | Custom package output |
-| `srcdest` | string | | Custom source directory |
+| `build_method` | string | `"native"` | Build isolation method (`bubblewrap`, `chroot`, `native`) |
+| `build_concurrency` | int | CPU count | Parallel AUR builds |
+| `review_pkgbuild` | bool | `false` | Require manual PKGBUILD review |
+| `secure_makepkg` | bool | `true` | Use cleanbuild/verifysource |
+| `use_metadata_archive`| bool | `true` | Use bulk metadata for fast updates |
 | `cache_builds` | bool | `true` | Cache built packages |
-| `enable_ccache` | bool | `false` | Use ccache |
-| `enable_sccache` | bool | `false` | Use sccache |
-| `build_method` | string | `"standard"` | Build isolation method |
-
-#### Daemon Settings
-
-| Setting | Type | Default | Description |
-|---------|------|---------|-------------|
-| `refresh_interval` | int | `300` | Status refresh interval (seconds) |
-| `max_cache_entries` | int | `1000` | Maximum cache entries |
-| `cache_ttl` | int | `300` | Cache TTL (seconds) |
+| `enable_ccache` | bool | `false` | Use ccache for C/C++ |
+| `enable_sccache` | bool | `false` | Use sccache for Rust |
 
 ---
 

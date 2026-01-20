@@ -16,17 +16,20 @@ This guide documents every OMG command with detailed explanations, examples, and
 
 | Category | Commands |
 |----------|----------|
-| **Package Management** | `search`, `install`, `remove`, `update`, `info`, `clean`, `explicit`, `sync` |
+| **Package Management** | `search`, `install`, `remove`, `update`, `info`, `clean`, `explicit`, `sync`, `why`, `outdated`, `pin`, `size`, `blame` |
 | **Runtime Management** | `use`, `list`, `which` |
-| **Shell Integration** | `hook`, `hook-env`, `completions` |
+| **Shell Integration** | `hook`, `completions` |
 | **Security & Audit** | `audit`, `status`, `doctor` |
 | **Task Runner** | `run` |
-| **Project Management** | `new`, `tool` |
-| **Team Collaboration** | `env`, `team` |
+| **Project Management** | `new`, `tool`, `init` |
+| **Environment & Snapshots** | `env`, `snapshot`, `diff` |
+| **Team Collaboration** | `team` |
 | **Container Management** | `container` |
+| **CI/CD & Migration** | `ci`, `migrate` |
 | **History & Rollback** | `history`, `rollback` |
 | **Dashboard** | `dash`, `stats` |
-| **License & Daemon** | `license`, `daemon` |
+| **Configuration** | `config`, `daemon`, `license` |
+| **Enterprise** | `fleet`, `enterprise` |
 
 ---
 
@@ -270,6 +273,144 @@ omg sync
 # Sync databases
 omg sync
 ```
+
+---
+
+### omg why
+
+Explain why a package is installed by showing its dependency chain.
+
+```bash
+omg why <package> [OPTIONS]
+```
+
+**Options:**
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--reverse` | `-r` | Show what depends on this package |
+
+**Examples:**
+```bash
+# See why a package is installed
+omg why libxcb
+
+# See what depends on a package
+omg why openssl --reverse
+```
+
+**Output includes:**
+- Dependency chain from explicit packages
+- Whether safe to remove
+- Number of dependents
+
+---
+
+### omg outdated
+
+Show packages with available updates.
+
+```bash
+omg outdated [OPTIONS]
+```
+
+**Options:**
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--security` | `-s` | Show only security updates |
+| `--json` | | Output as JSON |
+
+**Examples:**
+```bash
+# List all outdated packages
+omg outdated
+
+# Show only security updates
+omg outdated --security
+
+# Machine-readable output
+omg outdated --json
+```
+
+---
+
+### omg pin
+
+Pin packages to prevent updates.
+
+```bash
+omg pin <target> [OPTIONS]
+```
+
+**Options:**
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--unpin` | `-u` | Remove pin |
+| `--list` | `-l` | List all pins |
+
+**Examples:**
+```bash
+# Pin a system package
+omg pin gcc
+
+# Pin a runtime version
+omg pin node@20.10.0
+
+# List all pins
+omg pin --list
+
+# Remove a pin
+omg pin gcc --unpin
+```
+
+---
+
+### omg size
+
+Show disk usage by packages.
+
+```bash
+omg size [OPTIONS]
+```
+
+**Options:**
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--tree <package>` | `-t` | Show dependency tree for package |
+| `--limit <N>` | `-l` | Number of packages to show (default: 20) |
+
+**Examples:**
+```bash
+# Show largest packages
+omg size
+
+# Show top 50 packages
+omg size --limit 50
+
+# Show dependency tree for a package
+omg size --tree firefox
+```
+
+---
+
+### omg blame
+
+Show when and why a package was installed.
+
+```bash
+omg blame <package>
+```
+
+**Examples:**
+```bash
+# See installation history for a package
+omg blame firefox
+```
+
+**Output includes:**
+- Installation date/time
+- Whether installed explicitly or as dependency
+- Which package pulled it in (if dependency)
+- Transaction ID
 
 ---
 
@@ -659,6 +800,137 @@ omg tool remove ripgrep
 
 ---
 
+### omg init
+
+Interactive first-run setup wizard.
+
+```bash
+omg init [OPTIONS]
+```
+
+**Options:**
+| Option | Description |
+|--------|-------------|
+| `--defaults` | Use defaults, no prompts |
+| `--skip-shell` | Skip shell hook setup |
+| `--skip-daemon` | Skip daemon setup |
+
+**Examples:**
+```bash
+# Interactive setup
+omg init
+
+# Non-interactive with defaults
+omg init --defaults
+
+# Skip shell configuration
+omg init --skip-shell
+```
+
+**Setup includes:**
+1. Shell detection and hook installation
+2. Daemon startup preference
+3. Initial environment capture
+4. Completion installation
+
+---
+
+### omg config
+
+Get or set configuration values.
+
+```bash
+omg config [key] [value]
+```
+
+**Examples:**
+```bash
+# List all configuration
+omg config
+
+# Get a specific value
+omg config data_dir
+
+# Set a value
+omg config default_shell zsh
+```
+
+**Configuration options:**
+- `data_dir` — Data directory path
+- `socket` — Daemon socket path
+- `default_shell` — Default shell for hooks
+- `telemetry` — Enable/disable telemetry
+
+---
+
+## 📸 Environment & Snapshots
+
+### omg snapshot
+
+Create and restore environment snapshots.
+
+```bash
+omg snapshot <SUBCOMMAND>
+```
+
+**Subcommands:**
+| Subcommand | Description |
+|------------|-------------|
+| `create` | Create a new snapshot |
+| `list` | List all snapshots |
+| `restore <id>` | Restore a snapshot |
+| `delete <id>` | Delete a snapshot |
+
+**Examples:**
+```bash
+# Create snapshot with message
+omg snapshot create -m "Before major upgrade"
+
+# List snapshots
+omg snapshot list
+
+# Preview restore
+omg snapshot restore abc123 --dry-run
+
+# Restore snapshot
+omg snapshot restore abc123
+
+# Delete old snapshot
+omg snapshot delete abc123
+```
+
+---
+
+### omg diff
+
+Compare two environment lock files.
+
+```bash
+omg diff [OPTIONS] <to>
+```
+
+**Options:**
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--from <file>` | `-f` | First file (default: current environment) |
+
+**Examples:**
+```bash
+# Compare current env to a lock file
+omg diff teammate-omg.lock
+
+# Compare two lock files
+omg diff --from old.lock new.lock
+```
+
+**Output shows:**
+- Packages added
+- Packages removed
+- Version changes
+- Runtime differences
+
+---
+
 ## 🤝 Team Collaboration
 
 ### omg env
@@ -712,11 +984,20 @@ omg team <SUBCOMMAND>
 | `push` | Push local environment to team |
 | `pull` | Pull team environment |
 | `members` | List team members |
+| `dashboard` | Interactive team TUI |
+| `invite` | Generate invite link |
+| `roles` | Manage roles and permissions |
+| `propose` | Propose environment changes |
+| `review` | Review proposed changes |
+| `golden-path` | Manage setup templates |
+| `compliance` | Check compliance status |
+| `activity` | View team activity stream |
+| `notify` | Manage webhook notifications |
 
 **Examples:**
 ```bash
 # Initialize team workspace
-omg team init mycompany/frontend
+omg team init mycompany/frontend --name "Frontend Team"
 
 # Join existing team
 omg team join https://github.com/mycompany/env-config
@@ -732,7 +1013,30 @@ omg team pull
 
 # List members
 omg team members
+
+# Generate invite
+omg team invite --email new@company.com --role developer
+
+# Propose a change
+omg team propose "Add Node.js 22 for new features"
+
+# Review proposals
+omg team review 42 --approve
+
+# Create golden path template
+omg team golden-path create frontend-setup --node 20 --packages "eslint prettier"
+
+# Check compliance
+omg team compliance --export json
+
+# View activity
+omg team activity --days 30
+
+# Add Slack notification
+omg team notify add slack https://hooks.slack.com/xxx
 ```
+
+**Roles:** admin, lead, developer, readonly
 
 ---
 
@@ -783,6 +1087,165 @@ omg container list
 # Stop container
 omg container stop mycontainer
 ```
+
+---
+
+## 🔄 CI/CD & Migration
+
+### omg ci
+
+Generate CI/CD configuration for your project.
+
+```bash
+omg ci <SUBCOMMAND>
+```
+
+**Subcommands:**
+| Subcommand | Description |
+|------------|-------------|
+| `init <provider>` | Generate CI config (github, gitlab, circleci) |
+| `validate` | Validate environment matches CI expectations |
+| `cache` | Show recommended cache paths |
+
+**Examples:**
+```bash
+# Generate GitHub Actions workflow
+omg ci init github
+
+# Generate GitLab CI config
+omg ci init gitlab
+
+# Validate CI environment
+omg ci validate
+
+# Get cache paths for CI
+omg ci cache
+```
+
+**Generated config includes:**
+- OMG installation step
+- Cache configuration keyed to `omg.lock`
+- Environment validation
+- Task execution via `omg run`
+
+---
+
+### omg migrate
+
+Cross-distro migration tools.
+
+```bash
+omg migrate <SUBCOMMAND>
+```
+
+**Subcommands:**
+| Subcommand | Description |
+|------------|-------------|
+| `export` | Export environment to portable manifest |
+| `import <file>` | Import from manifest |
+
+**Examples:**
+```bash
+# Export current environment
+omg migrate export -o my-setup.json
+
+# Preview import
+omg migrate import my-setup.json --dry-run
+
+# Import and install
+omg migrate import my-setup.json
+```
+
+**Manifest includes:**
+- All installed packages with versions
+- Runtime versions
+- Configuration settings
+- Automatic package name mapping between distros
+
+---
+
+## 🏢 Enterprise Features
+
+### omg fleet
+
+Fleet management for multi-machine environments.
+
+```bash
+omg fleet <SUBCOMMAND>
+```
+
+**Subcommands:**
+| Subcommand | Description |
+|------------|-------------|
+| `status` | Show fleet health across machines |
+| `push` | Push configuration to fleet |
+| `remediate` | Auto-fix drift across fleet |
+
+**Examples:**
+```bash
+# View fleet status
+omg fleet status
+
+# Push config to all machines
+omg fleet push -m "Security update"
+
+# Push to specific team
+omg fleet push --team frontend
+
+# Preview remediation
+omg fleet remediate --dry-run
+
+# Apply remediation with confirmation
+omg fleet remediate --confirm
+```
+
+**Status shows:**
+- Compliance percentage
+- Machines by state (compliant, drifted, offline)
+- Team breakdown
+
+---
+
+### omg enterprise
+
+Enterprise administration features.
+
+```bash
+omg enterprise <SUBCOMMAND>
+```
+
+**Subcommands:**
+| Subcommand | Description |
+|------------|-------------|
+| `reports` | Generate executive reports |
+| `policy` | Manage hierarchical policies |
+| `audit-export` | Export compliance evidence |
+| `license-scan` | Scan for license compliance |
+| `server` | Self-hosted server management |
+
+**Examples:**
+```bash
+# Generate monthly report
+omg enterprise reports --type monthly --format pdf
+
+# Export SOC2 compliance evidence
+omg enterprise audit-export --format soc2 --period 2025-Q4
+
+# Scan for license issues
+omg enterprise license-scan --export spdx
+
+# Set organization policy
+omg enterprise policy set --scope org "require_pgp=true"
+
+# Show current policies
+omg enterprise policy show
+
+# Initialize self-hosted server
+omg enterprise server init --license KEY --domain pkg.company.com --storage /data
+```
+
+**Report types:** monthly, quarterly, custom
+**Compliance frameworks:** soc2, iso27001, fedramp, hipaa, pci-dss
 
 ---
 
@@ -910,10 +1373,10 @@ omg-fast <subcommand>
 | Subcommand | Description | Latency |
 |------------|-------------|---------|
 | `status` | System status | 3ms |
-| `ec` | Explicit count | &lt;1ms |
-| `tc` | Total count | &lt;1ms |
-| `uc` | Updates count | &lt;1ms |
-| `oc` | Orphan count | &lt;1ms |
+| `ec` | Explicit count | `<1ms` |
+| `tc` | Total count | `<1ms` |
+| `uc` | Updates count | `<1ms` |
+| `oc` | Orphan count | `<1ms` |
 
 **Examples:**
 ```bash

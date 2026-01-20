@@ -193,7 +193,7 @@ version = "3.12"
 ```json
 {
   "engines": {
-    "node": ">=18 &lt;21",
+    "node": ">=18 <21",
     "bun": ">=1.0"
   },
   "volta": {
@@ -275,7 +275,7 @@ end
 
 | Method | Latency | Use Case |
 |--------|---------|----------|
-| `omg-ec` (cached) | &lt;1μs | Prompts |
+| `omg-ec` (cached) | <1μs | Prompts |
 | `omg-explicit-count` (fresh) | ~1ms | Scripts |
 | `omg explicit --count` | ~1.2ms | Commands |
 | `pacman -Qq \| wc -l` | ~14ms | Fallback |
@@ -538,7 +538,7 @@ omg status
 
 # 2. Check hook-env timing
 time omg hook-env -s zsh
-# Should be &lt;10ms
+# Should be <10ms
 
 # 3. If slow, the daemon may be down
 omg daemon

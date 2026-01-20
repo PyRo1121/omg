@@ -6,408 +6,280 @@ description: Get started with OMG in 5 minutes
 
 # Quick Start Guide
 
-**Get up and running with OMG in 5 minutes**
-
-This guide will walk you through installing OMG, setting up shell integration, and running your first commands.
+Get up and running with OMG in under 5 minutes.
 
 ---
 
-## 📋 Prerequisites
+## Install OMG
 
-Before installing OMG, ensure you have:
-
-| Requirement | Details |
-|-------------|---------|
-| **Operating System** | Arch Linux, Manjaro, EndeavourOS, or Debian/Ubuntu 22.04+ |
-| **Rust** | 1.92+ (for building from source) |
-| **Base packages** | `git`, `curl`, `tar`, `sudo` |
-| **For Arch** | Access to libalpm (comes with pacman) |
-| **For Debian** | `libapt-pkg-dev` (for building with debian feature) |
-
----
-
-## 🚀 Installation
-
-### Option 1: One-Line Installer (Recommended)
-
-The easiest way to install OMG:
+### One-Line Install (Recommended)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
+curl -fsSL https://pyro1121.com/install.sh | bash
 ```
 
-This script will:
-1. Clone the repository
-2. Build the release binary
-3. Install to `~/.local/bin/`
-4. Configure shell integration
-5. Install shell completions
+This installs the `omg`, `omgd`, and `omg-fast` binaries to `~/.local/bin/`.
 
-### Option 2: Build from Source
-
-For complete control over the build:
+### Build from Source
 
 ```bash
-# Clone the repository
 git clone https://github.com/PyRo1121/omg.git
 cd omg
-
-# Build release binary (with Arch Linux support)
 cargo build --release
-
-# Build with Debian/Ubuntu support (requires libapt-pkg-dev)
-# cargo build --release --features debian
-
-# Install binaries
-cp target/release/omg ~/.local/bin/
-cp target/release/omgd ~/.local/bin/
-cp target/release/omg-fast ~/.local/bin/
-
-# Ensure ~/.local/bin is in your PATH
-echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
+cp target/release/{omg,omgd,omg-fast} ~/.local/bin/
 ```
 
-### Option 3: AUR (Arch Linux)
+### From AUR (Arch Linux)
 
 ```bash
-# Using yay
 yay -S omg-bin
-
-# Or using paru
-paru -S omg-bin
 ```
 
 ---
 
-## 🔧 Initial Setup
+## Set Up Your Shell
 
-### 1. Start the Daemon
+Add the OMG hook to your shell config. This enables automatic runtime version switching when you enter project directories.
 
-The daemon provides ultra-fast cached responses:
-
-```bash
-# Start in background (default)
-omg daemon
-
-# Or run in foreground for debugging
-omgd --foreground
-```
-
-> **Tip**: Add `omg daemon` to your system startup for persistent caching.
-
-### 2. Configure Shell Integration
-
-Add the shell hook to your shell configuration:
-
-**Zsh** (`~/.zshrc`):
+**Zsh** — Add to `~/.zshrc`:
 ```bash
 eval "$(omg hook zsh)"
 ```
 
-**Bash** (`~/.bashrc`):
+**Bash** — Add to `~/.bashrc`:
 ```bash
 eval "$(omg hook bash)"
 ```
 
-**Fish** (`~/.config/fish/config.fish`):
+**Fish** — Add to `~/.config/fish/config.fish`:
 ```fish
 omg hook fish | source
 ```
 
-Restart your shell or source the config:
+Then restart your shell:
 ```bash
-source ~/.zshrc  # or ~/.bashrc
-```
-
-### 3. Install Completions
-
-Install shell completions for an enhanced experience:
-
-```bash
-# For Zsh
-omg completions zsh > ~/.zsh/completions/_omg
-
-# For Bash
-omg completions bash > /etc/bash_completion.d/omg
-
-# For Fish
-omg completions fish > ~/.config/fish/completions/omg.fish
-```
-
-### 4. Verify Installation
-
-```bash
-# Check OMG version
-omg --version
-
-# Check system status
-omg status
-
-# Run diagnostics
-omg doctor
+exec $SHELL
 ```
 
 ---
 
-## 🎯 Your First Commands
-
-### Package Management
+## Verify It Works
 
 ```bash
-# Search for packages (official repos + AUR)
-omg search vim
+omg --version    # Should print version
+omg status       # Shows system overview
+omg doctor       # Checks everything is configured correctly
+```
 
-# Interactive search (select packages to install)
-omg search vim -i
+---
 
-# Install a package
+## Your First 60 Seconds with OMG
+
+### Search for a Package
+
+```bash
+omg search neovim
+```
+
+Notice how fast that was? With the daemon running, searches return in ~6ms.
+
+### Install Something
+
+```bash
 omg install neovim
-
-# Get package info
-omg info firefox
-
-# Update all packages
-omg update
-
-# List explicitly installed packages
-omg explicit
-
-# Remove a package
-omg remove package-name
-
-# Remove with dependencies
-omg remove package-name -r
 ```
 
-### Runtime Management
+OMG automatically detects whether a package is in the official repos or AUR and handles it appropriately.
+
+### Switch Node.js Versions
 
 ```bash
-# List available Node.js versions
-omg list node --available
-
-# Install and use Node.js 20
-omg use node 20.10.0
-
-# Check which version is active
-omg which node
-
-# Install Python 3.12
-omg use python 3.12.0
-
-# Use Rust stable
-omg use rust stable
-
-# Install Deno (via built-in mise)
-omg use deno 1.40.0
+omg use node 20
 ```
 
-### Task Runner
+If Node.js 20 isn't installed, OMG downloads and installs it automatically. Then it sets it as your active version.
+
+### Check What's Active
 
 ```bash
-# Run project tasks (auto-detects package.json, Cargo.toml, etc.)
+omg which node     # Shows active Node.js version
+omg list node      # Shows all installed Node.js versions
+```
+
+### Run a Project
+
+Navigate to any project directory and:
+
+```bash
 omg run dev
-
-# Run with arguments
-omg run test -- --watch
-
-# List available tasks
-omg run --list
 ```
 
-### System Health
+OMG detects your project type (package.json, Cargo.toml, Makefile, etc.) and runs the appropriate command with the correct runtime version.
+
+---
+
+## Common Workflows
+
+### Managing System Packages
 
 ```bash
-# Full system status
-omg status
+omg search <query>        # Find packages
+omg search <query> -i     # Interactive mode — select packages to install
+omg install <packages>    # Install packages
+omg remove <package>      # Remove a package
+omg remove <package> -r   # Remove with unused dependencies
+omg update                # Update all packages
+omg update --check        # Check for updates without installing
+```
 
-# Run diagnostics
-omg doctor
+### Managing Language Runtimes
 
-# Security audit
-omg audit
+```bash
+# Node.js
+omg use node 20           # Install and use Node.js 20
+omg use node lts          # Use latest LTS version
 
-# View usage statistics
-omg stats
+# Python
+omg use python 3.12       # Install and use Python 3.12
+
+# Rust
+omg use rust stable       # Use stable Rust
+omg use rust nightly      # Use nightly Rust
+
+# Others
+omg use go 1.22           # Go
+omg use ruby 3.3          # Ruby
+omg use java 21           # Java
+omg use bun 1.0           # Bun
+
+# List what's installed
+omg list                  # All runtimes
+omg list node             # Just Node.js versions
+omg list node --available # Versions available for download
+```
+
+### Sharing Your Environment
+
+```bash
+# Capture your current environment to a lockfile
+omg env capture
+
+# Check if your environment matches the lockfile
+omg env check
+
+# Share your environment (uploads to GitHub Gist)
+export GITHUB_TOKEN=your_token
+omg env share
+
+# Sync someone else's environment
+omg env sync https://gist.github.com/user/abc123
+```
+
+### Running Security Checks
+
+```bash
+omg audit                 # Scan for vulnerabilities
+omg audit sbom            # Generate software bill of materials
+omg audit secrets         # Scan for leaked credentials
 ```
 
 ---
 
-## 🖥️ Interactive Dashboard
+## Enable the Daemon (Recommended)
 
-Launch the real-time TUI dashboard:
+The daemon keeps a package index in memory, making searches 22x faster. Start it with:
+
+```bash
+omg daemon
+```
+
+The daemon runs in the background. To have it start automatically, you can:
+
+1. **Add to shell init** — The shell hook can start it automatically
+2. **Use systemd** — Create a user service (see [Configuration](./configuration.md))
+3. **Start manually** — Run `omg daemon` when you need it
+
+Without the daemon, OMG still works — it just falls back to direct package manager queries.
+
+---
+
+## Project Setup
+
+When you enter a project directory, OMG automatically detects version files and switches runtimes:
+
+| File | Runtime |
+|------|---------|
+| `.nvmrc` or `.node-version` | Node.js |
+| `.python-version` | Python |
+| `.ruby-version` | Ruby |
+| `.go-version` | Go |
+| `.java-version` | Java |
+| `rust-toolchain.toml` | Rust |
+| `.tool-versions` | Any (mise format) |
+
+Create a version file in your project:
+
+```bash
+echo "20.10.0" > .nvmrc
+```
+
+Now whenever you `cd` into this directory, OMG automatically switches to Node.js 20.10.0.
+
+---
+
+## Interactive Dashboard
+
+Launch the full-screen dashboard:
 
 ```bash
 omg dash
 ```
 
-| Key | Action |
-|-----|--------|
-| `q` | Quit |
-| `r` | Refresh |
-| `Tab` | Switch views |
+Navigate with:
+- `Tab` — Switch between views
+- `r` — Refresh
+- `q` — Quit
+
+The dashboard shows packages, runtimes, security alerts, and system activity in real time.
 
 ---
 
-## 📁 Directory Structure
+## Getting Help
 
-After installation, OMG uses these directories:
+```bash
+omg --help              # General help
+omg <command> --help    # Help for specific command
+omg doctor              # Diagnose issues
+```
 
-| Path | Purpose |
+---
+
+## What's Next?
+
+Now that you're set up:
+
+- **[CLI Reference](./cli.md)** — Every command explained in detail
+- **[Runtime Management](./runtimes.md)** — Deep dive into managing language runtimes
+- **[Team Collaboration](./team.md)** — Share environments with your team
+- **[Security](./security.md)** — Vulnerability scanning and compliance
+
+---
+
+## Quick Reference
+
+| Task | Command |
 |------|---------|
-| `~/.local/bin/omg` | Main binary |
-| `~/.local/bin/omgd` | Daemon binary |
-| `~/.local/share/omg/` | Data directory (runtimes, cache) |
-| `~/.local/share/omg/versions/` | Installed runtime versions |
-| `~/.config/omg/config.toml` | Configuration file |
-| `~/.config/omg/policy.toml` | Security policy |
-| `$XDG_RUNTIME_DIR/omg.sock` | Daemon socket |
+| Search packages | `omg search <query>` |
+| Install package | `omg install <package>` |
+| Remove package | `omg remove <package>` |
+| Update all | `omg update` |
+| Use runtime | `omg use <runtime> <version>` |
+| List runtimes | `omg list` |
+| Run task | `omg run <task>` |
+| System status | `omg status` |
+| Security scan | `omg audit` |
+| Dashboard | `omg dash` |
 
 ---
 
-## ⚡ Performance Tips
-
-### Enable the Daemon
-
-The daemon provides 10-100x faster responses for repeated queries:
-
-```bash
-# Start daemon (runs in background)
-omg daemon
-
-# Add to systemd for persistence
-# See configuration docs for systemd service file
-```
-
-### Use Ultra-Fast Queries
-
-For shell prompts and scripts, use the ultra-fast binary:
-
-```bash
-# Get package counts in sub-millisecond
-omg-fast ec    # Explicit count
-omg-fast tc    # Total count
-omg-fast uc    # Updates count
-omg-fast oc    # Orphan count
-```
-
-### Shell Prompt Integration
-
-Add package counts to your prompt (sub-microsecond with caching):
-
-```bash
-# In your shell prompt (Zsh)
-PROMPT='$(omg-ec) packages %~$ '
-```
-
----
-
-## 🔐 Security Quick Start
-
-### Run a Security Audit
-
-```bash
-# Scan for vulnerabilities
-omg audit
-
-# Generate SBOM
-omg audit sbom
-
-# Check for leaked secrets
-omg audit secrets
-
-# View audit log
-omg audit log
-```
-
-### Configure Security Policy
-
-Create `~/.config/omg/policy.toml`:
-
-```toml
-minimum_grade = "Verified"
-allow_aur = true
-require_pgp = false
-banned_packages = []
-```
-
----
-
-## 🤝 Team Collaboration
-
-### Share Your Environment
-
-```bash
-# Capture current environment to omg.lock
-omg env capture
-
-# Share via GitHub Gist
-export GITHUB_TOKEN=your_token
-omg env share
-
-# Teammate syncs your environment
-omg env sync https://gist.github.com/...
-```
-
-### Check for Drift
-
-```bash
-omg env check
-```
-
----
-
-## 🐛 Troubleshooting
-
-### Daemon Won't Start
-
-```bash
-# Check if socket exists
-ls -la $XDG_RUNTIME_DIR/omg.sock
-
-# Remove stale socket
-rm $XDG_RUNTIME_DIR/omg.sock
-
-# Start in foreground to see errors
-omgd --foreground
-```
-
-### Shell Hook Not Working
-
-```bash
-# Verify hook is installed
-grep "omg hook" ~/.zshrc
-
-# Test hook output
-omg hook zsh
-
-# Restart shell
-exec zsh
-```
-
-### Slow Performance
-
-```bash
-# Ensure daemon is running
-omg status
-
-# Check cache health
-omg doctor
-
-# Clear and rebuild cache
-omg clean
-```
-
----
-
-## 📚 Next Steps
-
-Now that you're set up, explore these guides:
-
-1. **[CLI Reference](./cli.md)** — Complete command documentation
-2. **[Runtime Management](./runtimes.md)** — Multi-language environment setup
-3. **[Security & Compliance](./security.md)** — Enterprise security features
-4. **[Configuration](./configuration.md)** — Customize OMG for your workflow
-
----
-
-**Need Help?** Run `omg doctor` for diagnostics or visit the [Troubleshooting Guide](./troubleshooting.md).
+**Having trouble?** Run `omg doctor` or check the [Troubleshooting Guide](./troubleshooting.md).
