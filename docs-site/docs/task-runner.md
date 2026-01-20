@@ -55,23 +55,18 @@ OMG automatically:
 
 ### Running Tasks
 
-```bash
-# Run a named task
-omg run dev
+Tasks are the primary way to interact with your project's lifecycle.
 
-# Run with arguments
-omg run test -- --watch --verbose
-
-# List available tasks
-omg run --list
-```
+- **Named Task**: Run a specific action defined in your project.
+- **Custom Arguments**: Pass additional flags or parameters to the underlying task.
+- **Discovery**: View all available actions supported by your current project type.
 
 ### How Tasks Are Resolved
 
-1. **Check for project file** in current directory
-2. **Read available scripts/targets** from that file
-3. **Match task name** to available scripts
-4. **Execute** with detected runtime
+1.  **Project Identification**: The system analyzes the current directory for supported configuration patterns.
+2.  **Action Discovery**: It reads the available scripts or targets from the project definition.
+3.  **Pattern Matching**: The requested task name is matched against the discovered actions.
+4.  **Active Execution**: The task is launched within the correctly configured runtime environment.
 
 ---
 

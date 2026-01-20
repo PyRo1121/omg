@@ -21,6 +21,53 @@ This document provides a high-level overview of OMG's architecture, component in
 │                    ┌───────────┴───────────┐                            │
 │                    ▼                       ▼                            │
 │              ┌──────────┐           ┌──────────────┐                    │
+│              │ Primary  │           │ Speed-Light  │                    │
+│              │ CLI      │           │ Optimizer    │                    │
+│              └────┬─────┘           └──────┬───────┘                    │
+│                   │                        │                            │
+│                   │    Private Interface   │ Direct state read          │
+│                   ▼                        ▼                            │
+│              ┌────────────────────────────────────┐                     │
+│              │           System Daemon            │                     │
+│              │  ┌──────────────────────────────┐  │                     │
+│              │  │      Instant Access Layer    │  │                     │
+│              │  │  ┌─────────┐ ┌────────────┐  │  │                     │
+│              │  │  │  Active  │ │  Global    │  │  │                     │
+│              │  │  │  Cache   │ │  Index     │  │  │                     │
+│              │  │  └─────────┘ └────────────┘  │  │                     │
+│              │  └──────────────────────────────┘  │                     │
+│              │  ┌──────────────────────────────┐  │                     │
+│              │  │      Persistence Layer       │  │                     │
+│              │  │  ┌─────────┐ ┌────────────┐  │  │                     │
+│              │  │  │ Durable │ │ Binary     │  │  │                     │
+│              │  │  │ Storage │ │ Status     │  │  │                     │
+│              │  │  └─────────┘ └────────────┘  │  │                     │
+│              │  └──────────────────────────────┘  │                     │
+│              └────────────────┬───────────────────┘                     │
+│                               │                                         │
+│         ┌─────────────────────┼─────────────────────┐                   │
+│         │                     │                     │                   │
+│         ▼                     ▼                     ▼                   │
+│  ┌─────────────┐      ┌─────────────┐      ┌─────────────┐             │
+│  │   Arch      │      │   Debian    │      │   Cloud     │             │
+│  │   Handler   │      │   Handler   │      │   Sources   │             │
+│  │  (Native)   │      │  (Native)   │      │   (HTTPS)   │             │
+│  └─────────────┘      └─────────────┘      └─────────────┘             │
+│         │                     │                     │                   │
+│         ▼                     ▼                     ▼                   │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                    Operating System                              │   │
+│  │    Package DBs        Local Files        Remote Registries       │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│                              USER                                        │
+│                                │                                         │
+│                    ┌───────────┴───────────┐                            │
+│                    ▼                       ▼                            │
+│              ┌──────────┐           ┌──────────────┐                    │
 │              │ omg CLI  │           │ omg-fast CLI │                    │
 │              └────┬─────┘           └──────┬───────┘                    │
 │                   │                        │                            │
@@ -168,7 +215,7 @@ The hottest data (recent searches, package details, system status) is kept in a 
 Data that should survive a reboot is stored in `redb`, an ACID-compliant embedded database. This includes your transaction history, audit logs, and pre-computed package indices.
 
 ### 3. Binary Status
-A specialized 16-byte binary file is maintained by the daemon to store your system's "vital signs" (update counts, error status). This is what enables `omg-fast` to power your shell prompt without any noticeable lag.
+A specialized binary status file is maintained by the daemon to store your system's "vital signs" (update counts, error status). This is what enables `omg-fast` to power your shell prompt with zero-allocation, zero-IPC reads.
 
 ---
 
@@ -177,32 +224,26 @@ A specialized 16-byte binary file is maintained by the daemon to store your syst
 ### Transport
 
 - **Socket:** Unix Domain Socket
-- **Framing:** Length-Delimited (4-byte prefix)
-- **Serialization:** bincode
+- **Framing:** Length-Delimited via `LengthDelimitedCodec`
+- **Serialization:** `bitcode` (high-performance binary serialization)
 
 ### Message Types
 
-```rust
-pub enum Request {
-    Search { id: u32, query: String, limit: usize },
-    Info { id: u32, name: String },
-    Status { id: u32 },
-    Security { id: u32, package: Option<String> },
-    CacheClear { id: u32 },
-    ExplicitList { id: u32 },
-}
+The protocol supports a wide range of structured requests and responses:
 
-pub enum Response {
-    Success { id: u32, result: ResponseResult },
-    Error { id: u32, message: String },
-}
-```
+*   **Search**: Query for packages with optional limits.
+*   **Info**: Retrieve detailed metadata for a specific package.
+*   **Status**: Get the current system "vital signs" (package counts, updates).
+*   **SecurityAudit**: Trigger a vulnerability scan across installed packages.
+*   **Batch**: Combine multiple requests into a single IPC round-trip for maximum efficiency.
+*   **Explicit**: List packages installed by the user.
+*   **System Controls**: Commands for cache management, pings, and health checks.
 
 ### Performance
 
-- Serialization: ~10μs
-- Round-trip: ~100μs (cached), ~1ms (fresh)
-- Max message size: 16MB
+- **Serialization Latency**: ~10μs
+- **Round-trip Time**: ~100μs for cached data, ~1ms for fresh queries.
+- **Efficiency**: Batching allows the system to process multiple operations in a single kernel context switch.
 
 ---
 
