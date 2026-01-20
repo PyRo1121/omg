@@ -212,10 +212,8 @@ fn try_fast_status() -> bool {
         return false;
     }
 
-    if args.len() == 2 && args[1] == "status" {
-        if commands::status_sync().is_ok() {
-            return true;
-        }
+    if args.len() == 2 && args[1] == "status" && commands::status_sync().is_ok() {
+        return true;
     }
     false
 }
