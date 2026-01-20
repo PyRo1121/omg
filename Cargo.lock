@@ -1329,9 +1329,9 @@ checksum = "c2459377285ad874054d797f3ccebf984978aa39129f6eafde5cdc8315b612f8"
 
 [[package]]
 name = "convert_case"
-version = "0.10.0"
+version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "633458d4ef8c78b72454de2d54fd6ab2e60f9e02be22f3c6104cdc8a4e0fceb9"
+checksum = "bb402b8d4c85569410425650ce3eddc7d698ed96d39a73f941b08fb63082f1e7"
 dependencies = [
  "unicode-segmentation",
 ]
@@ -1515,7 +1515,7 @@ checksum = "d8b9f2e4c67f833b660cdb0a3523065869fb35570177239812ed4c905aeff87b"
 dependencies = [
  "bitflags 2.10.0",
  "crossterm_winapi",
- "derive_more 2.1.1",
+ "derive_more 2.0.0",
  "document-features",
  "mio",
  "parking_lot",
@@ -1961,11 +1961,11 @@ dependencies = [
 
 [[package]]
 name = "derive_more"
-version = "2.1.1"
+version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d751e9e49156b02b44f9c1815bcb94b984cdcc4396ecc32521c739452808b134"
+checksum = "71158d5e914dec8a242751a3fc516b03ed3e6772ce9de79e1aeea6420663cad4"
 dependencies = [
- "derive_more-impl 2.1.1",
+ "derive_more-impl 2.0.0",
 ]
 
 [[package]]
@@ -1982,14 +1982,13 @@ dependencies = [
 
 [[package]]
 name = "derive_more-impl"
-version = "2.1.1"
+version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "799a97264921d8623a957f6c3b9011f3b5492f557bbb7a5a19b7fa6d06ba8dcb"
+checksum = "9e04e066e440d7973a852a3acdc25b0ae712bb6d311755fbf773d6a4518b2226"
 dependencies = [
  "convert_case",
  "proc-macro2",
  "quote",
- "rustc_version",
  "syn 2.0.114",
 ]
 

@@ -124,7 +124,7 @@ mod apt_integration {
 
         let result = run_omg(&["update", "--check"]);
         // Should work without making changes
-        assert!(!result.stderr_contains("panic"), "Should not panic");
+        assert!(!result.stderr_contains("panicked at"), "Should not panic");
     }
 
     #[test]
@@ -251,7 +251,7 @@ mod dpkg_direct {
 
         let result = run_omg(&["why", "libc6"]);
         // Should show what depends on libc6
-        assert!(!result.stderr_contains("panic"), "Should not panic");
+        assert!(!result.stderr_contains("panicked at"), "Should not panic");
     }
 
     #[test]
@@ -298,7 +298,7 @@ mod rust_apt {
         require_system_tests!();
 
         let result = run_omg(&["why", "apt"]);
-        assert!(!result.stderr_contains("panic"), "Should not panic");
+        assert!(!result.stderr_contains("panicked at"), "Should not panic");
     }
 }
 
@@ -314,7 +314,7 @@ mod new_features {
         require_system_tests!();
 
         let result = run_omg(&["why", "bash"]);
-        assert!(!result.stderr_contains("panic"), "Should not panic");
+        assert!(!result.stderr_contains("panicked at"), "Should not panic");
     }
 
     #[test]
@@ -322,7 +322,7 @@ mod new_features {
         require_system_tests!();
 
         let result = run_omg(&["why", "libc6", "--reverse"]);
-        assert!(!result.stderr_contains("panic"), "Should not panic");
+        assert!(!result.stderr_contains("panicked at"), "Should not panic");
     }
 
     #[test]
@@ -330,7 +330,7 @@ mod new_features {
         require_system_tests!();
 
         let result = run_omg(&["outdated"]);
-        assert!(!result.stderr_contains("panic"), "Should not panic");
+        assert!(!result.stderr_contains("panicked at"), "Should not panic");
     }
 
     #[test]
@@ -338,7 +338,7 @@ mod new_features {
         require_system_tests!();
 
         let result = run_omg(&["outdated", "--security"]);
-        assert!(!result.stderr_contains("panic"), "Should not panic");
+        assert!(!result.stderr_contains("panicked at"), "Should not panic");
     }
 
     #[test]
@@ -355,14 +355,14 @@ mod new_features {
     fn test_pin_list() {
         let project = TestProject::new();
         let result = project.run(&["pin", "--list"]);
-        assert!(!result.stderr_contains("panic"), "Should not panic");
+        assert!(!result.stderr_contains("panicked at"), "Should not panic");
     }
 
     #[test]
     fn test_pin_package() {
         let project = TestProject::new();
         let result = project.run(&["pin", "node@20.10.0"]);
-        assert!(!result.stderr_contains("panic"), "Should not panic");
+        assert!(!result.stderr_contains("panicked at"), "Should not panic");
     }
 
     #[test]
@@ -386,7 +386,7 @@ mod new_features {
         require_system_tests!();
 
         let result = run_omg(&["blame", "apt"]);
-        assert!(!result.stderr_contains("panic"), "Should not panic");
+        assert!(!result.stderr_contains("panicked at"), "Should not panic");
     }
 
     #[test]
@@ -395,14 +395,14 @@ mod new_features {
         project.with_omg_lock(locks::VALID_LOCK);
 
         let result = project.run(&["diff", "omg.lock"]);
-        assert!(!result.stderr_contains("panic"), "Should not panic");
+        assert!(!result.stderr_contains("panicked at"), "Should not panic");
     }
 
     #[test]
     fn test_snapshot_create() {
         let project = TestProject::new();
         let result = project.run(&["snapshot", "create"]);
-        assert!(!result.stderr_contains("panic"), "Should not panic");
+        assert!(!result.stderr_contains("panicked at"), "Should not panic");
     }
 
     #[test]
@@ -416,14 +416,14 @@ mod new_features {
     fn test_ci_init_github() {
         let project = TestProject::new();
         let result = project.run(&["ci", "init", "--provider", "github"]);
-        assert!(!result.stderr_contains("panic"), "Should not panic");
+        assert!(!result.stderr_contains("panicked at"), "Should not panic");
     }
 
     #[test]
     fn test_migrate_export() {
         let project = TestProject::new();
         let result = project.run(&["migrate", "export", "--output", "manifest.toml"]);
-        assert!(!result.stderr_contains("panic"), "Should not panic");
+        assert!(!result.stderr_contains("panicked at"), "Should not panic");
     }
 }
 
@@ -511,7 +511,7 @@ mod security {
 
         let project = TestProject::new();
         let result = project.run(&["audit", "sbom", "--output", "sbom.json"]);
-        assert!(!result.stderr_contains("panic"), "Should not panic");
+        assert!(!result.stderr_contains("panicked at"), "Should not panic");
     }
 
     #[test]
@@ -520,7 +520,7 @@ mod security {
         project.create_file("config.txt", "AWS_SECRET_KEY=AKIAIOSFODNN7EXAMPLE");
 
         let result = project.run(&["audit", "secrets"]);
-        assert!(!result.stderr_contains("panic"), "Should not panic");
+        assert!(!result.stderr_contains("panicked at"), "Should not panic");
     }
 
     #[test]
@@ -559,7 +559,7 @@ mod security {
 
         // OMG should respect GPG verification
         let result = run_omg(&["audit", "policy"]);
-        assert!(!result.stderr_contains("panic"), "Should not panic");
+        assert!(!result.stderr_contains("panicked at"), "Should not panic");
     }
 }
 
@@ -575,7 +575,7 @@ mod edge_cases {
         for input in validation::UNICODE_INPUTS {
             let result = run_omg(&["search", input]);
             assert!(
-                !result.stderr_contains("panic"),
+                !result.stderr_contains("panicked at"),
                 "Should handle unicode: {input}"
             );
         }
@@ -585,7 +585,10 @@ mod edge_cases {
     fn test_very_long_query() {
         let long_query = validation::very_long_input(10000);
         let result = run_omg(&["search", &long_query]);
-        assert!(!result.stderr_contains("panic"), "Should handle long input");
+        assert!(
+            !result.stderr_contains("panicked at"),
+            "Should handle long input"
+        );
     }
 
     #[test]
@@ -593,7 +596,7 @@ mod edge_cases {
         for input in validation::EMPTY_INPUTS {
             let result = run_omg(&["search", input]);
             assert!(
-                !result.stderr_contains("panic"),
+                !result.stderr_contains("panicked at"),
                 "Should handle empty input"
             );
         }
@@ -689,7 +692,7 @@ curl = "8.5.0"
 
         let result = project.run(&["migrate", "import", "--dry-run", "manifest.toml"]);
         // Should show what would be installed without doing it
-        assert!(!result.stderr_contains("panic"), "Should not panic");
+        assert!(!result.stderr_contains("panicked at"), "Should not panic");
     }
 
     #[test]
@@ -698,7 +701,7 @@ curl = "8.5.0"
         // e.g., python3-pip vs python-pip
         let project = TestProject::new();
         let result = project.run(&["migrate", "export", "--output", "test.toml"]);
-        assert!(!result.stderr_contains("panic"), "Should not panic");
+        assert!(!result.stderr_contains("panicked at"), "Should not panic");
     }
 }
 
@@ -725,11 +728,11 @@ mod integration_scenarios {
 
         // 3. Check environment
         let result = project.run(&["env", "check"]);
-        assert!(!result.stderr_contains("panic"));
+        assert!(!result.stderr_contains("panicked at"));
 
         // 4. Create snapshot
         let result = project.run(&["snapshot", "create", "--message", "Initial"]);
-        assert!(!result.stderr_contains("panic"));
+        assert!(!result.stderr_contains("panicked at"));
     }
 
     #[test]
@@ -749,7 +752,7 @@ mod integration_scenarios {
 
             // Dry run import on "Ubuntu"
             let result = ubuntu_project.run(&["migrate", "import", "--dry-run", "manifest.toml"]);
-            assert!(!result.stderr_contains("panic"));
+            assert!(!result.stderr_contains("panicked at"));
         }
     }
 
@@ -769,7 +772,7 @@ mod integration_scenarios {
 
             // Dev2 checks for drift
             let result = dev2.run(&["env", "check"]);
-            assert!(!result.stderr_contains("panic"));
+            assert!(!result.stderr_contains("panicked at"));
         }
     }
 
@@ -782,15 +785,15 @@ mod integration_scenarios {
         // CI would run these steps:
         // 1. Validate environment against lock
         let result = project.run(&["ci", "validate"]);
-        assert!(!result.stderr_contains("panic"));
+        assert!(!result.stderr_contains("panicked at"));
 
         // 2. Check for drift
         let result = project.run(&["env", "check"]);
-        assert!(!result.stderr_contains("panic"));
+        assert!(!result.stderr_contains("panicked at"));
 
         // 3. Run security audit
         let result = project.run(&["audit"]);
-        assert!(!result.stderr_contains("panic"));
+        assert!(!result.stderr_contains("panicked at"));
     }
 }
 
