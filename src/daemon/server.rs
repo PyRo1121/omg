@@ -6,26 +6,30 @@ use anyhow::Result;
 use futures::sink::SinkExt;
 use futures::stream::StreamExt;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::net::UnixListener;
-use tokio::sync::broadcast;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
+use tokio_util::sync::CancellationToken;
 
 use super::handlers::{DaemonState, handle_request};
-use super::protocol::Request;
+use super::protocol::{Request, Response, error_codes};
 #[cfg(feature = "debian")]
 use crate::core::env::distro::is_debian_like;
 
 #[cfg(feature = "debian")]
 use crate::package_managers::apt_get_system_status;
 
+/// Request handling timeout (30 seconds should be sufficient for most operations)
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Run the daemon server
 pub async fn run(listener: UnixListener) -> Result<()> {
     let state = Arc::new(DaemonState::new());
-    let (shutdown_tx, _) = broadcast::channel::<()>(1);
+    let shutdown_token = CancellationToken::new();
 
     // START BACKGROUND WORKER
     let state_worker = Arc::clone(&state);
-    let mut shutdown_worker = shutdown_tx.subscribe();
+    let worker_token = shutdown_token.child_token();
 
     fn use_debian_backend() -> bool {
         #[cfg(feature = "debian")]
@@ -188,7 +192,7 @@ pub async fn run(listener: UnixListener) -> Result<()> {
                         tracing::debug!("Status cache refreshed (CVEs: {})", vuln_count);
                     }
                 }
-                _ = shutdown_worker.recv() => {
+                () = worker_token.cancelled() => {
                     tracing::info!("Background worker shutting down");
                     break;
                 }
@@ -203,7 +207,7 @@ pub async fn run(listener: UnixListener) -> Result<()> {
             result = listener.accept() => {
                 let (stream, _addr) = result?;
                 let state = Arc::clone(&state);
-                let mut shutdown_rx = shutdown_tx.subscribe();
+                let client_token = shutdown_token.child_token();
 
                 tokio::spawn(async move {
                     tokio::select! {
@@ -212,7 +216,7 @@ pub async fn run(listener: UnixListener) -> Result<()> {
                                 tracing::error!("Client error: {}", e);
                             }
                         }
-                        _ = shutdown_rx.recv() => {
+                        () = client_token.cancelled() => {
                             tracing::debug!("Client connection closed due to shutdown");
                         }
                     }
@@ -221,7 +225,7 @@ pub async fn run(listener: UnixListener) -> Result<()> {
 
             _ = tokio::signal::ctrl_c() => {
                 tracing::info!("Shutdown signal received, cleaning up...");
-                let _ = shutdown_tx.send(());
+                shutdown_token.cancel();
                 break;
             }
         }
@@ -242,9 +246,24 @@ async fn handle_client(stream: tokio::net::UnixStream, state: Arc<DaemonState>) 
 
         // Decode request
         let request: Request = bitcode::deserialize(&bytes)?;
+        let request_id = request.id();
 
-        // Handle request
-        let response = handle_request(Arc::clone(&state), request).await;
+        // Handle request with timeout to prevent hung clients
+        let response = if let Ok(response) = tokio::time::timeout(
+            REQUEST_TIMEOUT,
+            handle_request(Arc::clone(&state), request),
+        )
+        .await
+        {
+            response
+        } else {
+            tracing::warn!("Request {} timed out after {:?}", request_id, REQUEST_TIMEOUT);
+            Response::Error {
+                id: request_id,
+                code: error_codes::INTERNAL_ERROR,
+                message: format!("Request timed out after {} seconds", REQUEST_TIMEOUT.as_secs()),
+            }
+        };
 
         // Encode and send response
         let response_bytes = bitcode::serialize(&response)?;

@@ -583,7 +583,7 @@ async fn async_main() -> Result<()> {
                 migrate::export(&output).await?;
             }
             MigrateCommands::Import { manifest, dry_run } => {
-                migrate::import(&manifest, dry_run)?;
+                migrate::import(&manifest, dry_run).await?;
             }
         },
         Commands::Fleet { command } => match command {

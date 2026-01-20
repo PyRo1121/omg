@@ -2,6 +2,7 @@ use anyhow::Result;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use std::sync::LazyLock;
 
 /// Types of secrets that can be detected
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -91,14 +92,216 @@ impl std::fmt::Display for SecretSeverity {
 /// Pattern definition for secret detection
 struct SecretPattern {
     secret_type: SecretType,
-    pattern: Regex,
+    pattern: &'static Regex,
     severity: SecretSeverity,
 }
 
+// Static regex patterns compiled once at first use
+static RE_AWS_ACCESS_KEY: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(AKIA[0-9A-Z]{16})").expect("valid AWS access key regex")
+});
+
+static RE_AWS_SECRET_KEY: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?i)aws[_-]?secret[_-]?access[_-]?key['"]?\s*[:=]\s*['"]?([A-Za-z0-9/+=]{40})"#)
+        .expect("valid AWS secret key regex")
+});
+
+static RE_GITHUB_TOKEN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(ghp_[a-zA-Z0-9]{36}|github_pat_[a-zA-Z0-9]{22}_[a-zA-Z0-9]{59}|gho_[a-zA-Z0-9]{36}|ghu_[a-zA-Z0-9]{36}|ghs_[a-zA-Z0-9]{36}|ghr_[a-zA-Z0-9]{36})")
+        .expect("valid GitHub token regex")
+});
+
+static RE_GITLAB_TOKEN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(glpat-[a-zA-Z0-9\-]{20,})").expect("valid GitLab token regex")
+});
+
+static RE_SLACK_TOKEN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(xox[baprs]-[0-9]{10,13}-[0-9]{10,13}[a-zA-Z0-9-]*)")
+        .expect("valid Slack token regex")
+});
+
+static RE_SLACK_WEBHOOK: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"https://hooks\.slack\.com/services/T[a-zA-Z0-9_]+/B[a-zA-Z0-9_]+/[a-zA-Z0-9_]+")
+        .expect("valid Slack webhook regex")
+});
+
+static RE_PRIVATE_KEY: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----")
+        .expect("valid private key regex")
+});
+
+static RE_JWT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"eyJ[a-zA-Z0-9_-]*\.eyJ[a-zA-Z0-9_-]*\.[a-zA-Z0-9_-]*")
+        .expect("valid JWT token regex")
+});
+
+static RE_GOOGLE_API_KEY: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"AIza[0-9A-Za-z\-_]{35}").expect("valid Google API key regex")
+});
+
+static RE_STRIPE_KEY: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(sk_live_[0-9a-zA-Z]{24}|rk_live_[0-9a-zA-Z]{24})")
+        .expect("valid Stripe key regex")
+});
+
+static RE_TWILIO_KEY: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"SK[0-9a-fA-F]{32}").expect("valid Twilio key regex")
+});
+
+static RE_SENDGRID_KEY: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"SG\.[a-zA-Z0-9_-]{22}\.[a-zA-Z0-9_-]{43}").expect("valid SendGrid key regex")
+});
+
+static RE_NPM_TOKEN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"npm_[a-zA-Z0-9]{36}").expect("valid NPM token regex")
+});
+
+static RE_PYPI_TOKEN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"pypi-AgEIcHlwaS5vcmc[A-Za-z0-9\-_]{50,}").expect("valid PyPI token regex")
+});
+
+static RE_DOCKER_HUB_TOKEN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"dckr_pat_[a-zA-Z0-9_-]{27}").expect("valid Docker Hub token regex")
+});
+
+static RE_HEROKU_API_KEY: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?i)heroku[_-]?api[_-]?key['"]?\s*[:=]\s*['"]?([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})"#)
+        .expect("valid Heroku API key regex")
+});
+
+static RE_DIGITALOCEAN_TOKEN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"dop_v1_[a-f0-9]{64}").expect("valid DigitalOcean token regex")
+});
+
+static RE_GENERIC_API_KEY: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?i)(api[_-]?key|apikey)['"]?\s*[:=]\s*['"]?([a-zA-Z0-9_-]{20,})"#)
+        .expect("valid generic API key regex")
+});
+
+static RE_GENERIC_PASSWORD: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?i)(password|passwd|pwd)['"]?\s*[:=]\s*['"]?([^\s'"]{8,})"#)
+        .expect("valid generic password regex")
+});
+
+/// Static list of all secret patterns
+static PATTERNS: LazyLock<Vec<SecretPattern>> = LazyLock::new(|| {
+    vec![
+        // AWS
+        SecretPattern {
+            secret_type: SecretType::AwsAccessKey,
+            pattern: &RE_AWS_ACCESS_KEY,
+            severity: SecretSeverity::Critical,
+        },
+        SecretPattern {
+            secret_type: SecretType::AwsSecretKey,
+            pattern: &RE_AWS_SECRET_KEY,
+            severity: SecretSeverity::Critical,
+        },
+        // GitHub
+        SecretPattern {
+            secret_type: SecretType::GithubToken,
+            pattern: &RE_GITHUB_TOKEN,
+            severity: SecretSeverity::Critical,
+        },
+        // GitLab
+        SecretPattern {
+            secret_type: SecretType::GitlabToken,
+            pattern: &RE_GITLAB_TOKEN,
+            severity: SecretSeverity::Critical,
+        },
+        // Slack
+        SecretPattern {
+            secret_type: SecretType::SlackToken,
+            pattern: &RE_SLACK_TOKEN,
+            severity: SecretSeverity::High,
+        },
+        SecretPattern {
+            secret_type: SecretType::SlackWebhook,
+            pattern: &RE_SLACK_WEBHOOK,
+            severity: SecretSeverity::High,
+        },
+        // Private Keys
+        SecretPattern {
+            secret_type: SecretType::PrivateKey,
+            pattern: &RE_PRIVATE_KEY,
+            severity: SecretSeverity::Critical,
+        },
+        // JWT
+        SecretPattern {
+            secret_type: SecretType::JwtToken,
+            pattern: &RE_JWT,
+            severity: SecretSeverity::Medium,
+        },
+        // Google
+        SecretPattern {
+            secret_type: SecretType::GoogleApiKey,
+            pattern: &RE_GOOGLE_API_KEY,
+            severity: SecretSeverity::High,
+        },
+        // Stripe
+        SecretPattern {
+            secret_type: SecretType::StripeKey,
+            pattern: &RE_STRIPE_KEY,
+            severity: SecretSeverity::Critical,
+        },
+        // Twilio
+        SecretPattern {
+            secret_type: SecretType::TwilioKey,
+            pattern: &RE_TWILIO_KEY,
+            severity: SecretSeverity::High,
+        },
+        // SendGrid
+        SecretPattern {
+            secret_type: SecretType::SendgridKey,
+            pattern: &RE_SENDGRID_KEY,
+            severity: SecretSeverity::High,
+        },
+        // NPM
+        SecretPattern {
+            secret_type: SecretType::NpmToken,
+            pattern: &RE_NPM_TOKEN,
+            severity: SecretSeverity::High,
+        },
+        // PyPI
+        SecretPattern {
+            secret_type: SecretType::PypiToken,
+            pattern: &RE_PYPI_TOKEN,
+            severity: SecretSeverity::High,
+        },
+        // Docker Hub
+        SecretPattern {
+            secret_type: SecretType::DockerHubToken,
+            pattern: &RE_DOCKER_HUB_TOKEN,
+            severity: SecretSeverity::High,
+        },
+        // Heroku
+        SecretPattern {
+            secret_type: SecretType::HerokuApiKey,
+            pattern: &RE_HEROKU_API_KEY,
+            severity: SecretSeverity::High,
+        },
+        // DigitalOcean
+        SecretPattern {
+            secret_type: SecretType::DigitalOceanToken,
+            pattern: &RE_DIGITALOCEAN_TOKEN,
+            severity: SecretSeverity::High,
+        },
+        // Generic patterns (lower priority)
+        SecretPattern {
+            secret_type: SecretType::GenericApiKey,
+            pattern: &RE_GENERIC_API_KEY,
+            severity: SecretSeverity::Medium,
+        },
+        SecretPattern {
+            secret_type: SecretType::GenericPassword,
+            pattern: &RE_GENERIC_PASSWORD,
+            severity: SecretSeverity::Medium,
+        },
+    ]
+});
+
 /// Secret scanner for detecting leaked credentials
-pub struct SecretScanner {
-    patterns: Vec<SecretPattern>,
-}
+pub struct SecretScanner;
 
 impl Default for SecretScanner {
     fn default() -> Self {
@@ -107,122 +310,9 @@ impl Default for SecretScanner {
 }
 
 impl SecretScanner {
+    #[must_use]
     pub fn new() -> Self {
-        let patterns = vec![
-            // AWS
-            SecretPattern {
-                secret_type: SecretType::AwsAccessKey,
-                pattern: Regex::new(r"(AKIA[0-9A-Z]{16})").unwrap(),
-                severity: SecretSeverity::Critical,
-            },
-            SecretPattern {
-                secret_type: SecretType::AwsSecretKey,
-                pattern: Regex::new(r#"(?i)aws[_-]?secret[_-]?access[_-]?key['"]?\s*[:=]\s*['"]?([A-Za-z0-9/+=]{40})"#).unwrap(),
-                severity: SecretSeverity::Critical,
-            },
-            // GitHub
-            SecretPattern {
-                secret_type: SecretType::GithubToken,
-                pattern: Regex::new(r"(ghp_[a-zA-Z0-9]{36}|github_pat_[a-zA-Z0-9]{22}_[a-zA-Z0-9]{59}|gho_[a-zA-Z0-9]{36}|ghu_[a-zA-Z0-9]{36}|ghs_[a-zA-Z0-9]{36}|ghr_[a-zA-Z0-9]{36})").unwrap(),
-                severity: SecretSeverity::Critical,
-            },
-            // GitLab
-            SecretPattern {
-                secret_type: SecretType::GitlabToken,
-                pattern: Regex::new(r"(glpat-[a-zA-Z0-9\-]{20,})").unwrap(),
-                severity: SecretSeverity::Critical,
-            },
-            // Slack
-            SecretPattern {
-                secret_type: SecretType::SlackToken,
-                pattern: Regex::new(r"(xox[baprs]-[0-9]{10,13}-[0-9]{10,13}[a-zA-Z0-9-]*)").unwrap(),
-                severity: SecretSeverity::High,
-            },
-            SecretPattern {
-                secret_type: SecretType::SlackWebhook,
-                pattern: Regex::new(r"https://hooks\.slack\.com/services/T[a-zA-Z0-9_]+/B[a-zA-Z0-9_]+/[a-zA-Z0-9_]+").unwrap(),
-                severity: SecretSeverity::High,
-            },
-            // Private Keys
-            SecretPattern {
-                secret_type: SecretType::PrivateKey,
-                pattern: Regex::new(r"-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----").unwrap(),
-                severity: SecretSeverity::Critical,
-            },
-            // JWT
-            SecretPattern {
-                secret_type: SecretType::JwtToken,
-                pattern: Regex::new(r"eyJ[a-zA-Z0-9_-]*\.eyJ[a-zA-Z0-9_-]*\.[a-zA-Z0-9_-]*").unwrap(),
-                severity: SecretSeverity::Medium,
-            },
-            // Google
-            SecretPattern {
-                secret_type: SecretType::GoogleApiKey,
-                pattern: Regex::new(r"AIza[0-9A-Za-z\-_]{35}").unwrap(),
-                severity: SecretSeverity::High,
-            },
-            // Stripe
-            SecretPattern {
-                secret_type: SecretType::StripeKey,
-                pattern: Regex::new(r"(sk_live_[0-9a-zA-Z]{24}|rk_live_[0-9a-zA-Z]{24})").unwrap(),
-                severity: SecretSeverity::Critical,
-            },
-            // Twilio
-            SecretPattern {
-                secret_type: SecretType::TwilioKey,
-                pattern: Regex::new(r"SK[0-9a-fA-F]{32}").unwrap(),
-                severity: SecretSeverity::High,
-            },
-            // SendGrid
-            SecretPattern {
-                secret_type: SecretType::SendgridKey,
-                pattern: Regex::new(r"SG\.[a-zA-Z0-9_-]{22}\.[a-zA-Z0-9_-]{43}").unwrap(),
-                severity: SecretSeverity::High,
-            },
-            // NPM
-            SecretPattern {
-                secret_type: SecretType::NpmToken,
-                pattern: Regex::new(r"npm_[a-zA-Z0-9]{36}").unwrap(),
-                severity: SecretSeverity::High,
-            },
-            // PyPI
-            SecretPattern {
-                secret_type: SecretType::PypiToken,
-                pattern: Regex::new(r"pypi-AgEIcHlwaS5vcmc[A-Za-z0-9\-_]{50,}").unwrap(),
-                severity: SecretSeverity::High,
-            },
-            // Docker Hub
-            SecretPattern {
-                secret_type: SecretType::DockerHubToken,
-                pattern: Regex::new(r"dckr_pat_[a-zA-Z0-9_-]{27}").unwrap(),
-                severity: SecretSeverity::High,
-            },
-            // Heroku
-            SecretPattern {
-                secret_type: SecretType::HerokuApiKey,
-                pattern: Regex::new(r#"(?i)heroku[_-]?api[_-]?key['"]?\s*[:=]\s*['"]?([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})"#).unwrap(),
-                severity: SecretSeverity::High,
-            },
-            // DigitalOcean
-            SecretPattern {
-                secret_type: SecretType::DigitalOceanToken,
-                pattern: Regex::new(r"dop_v1_[a-f0-9]{64}").unwrap(),
-                severity: SecretSeverity::High,
-            },
-            // Generic patterns (lower priority)
-            SecretPattern {
-                secret_type: SecretType::GenericApiKey,
-                pattern: Regex::new(r#"(?i)(api[_-]?key|apikey)['"]?\s*[:=]\s*['"]?([a-zA-Z0-9_-]{20,})"#).unwrap(),
-                severity: SecretSeverity::Medium,
-            },
-            SecretPattern {
-                secret_type: SecretType::GenericPassword,
-                pattern: Regex::new(r#"(?i)(password|passwd|pwd)['"]?\s*[:=]\s*['"]?([^\s'"]{8,})"#).unwrap(),
-                severity: SecretSeverity::Medium,
-            },
-        ];
-
-        Self { patterns }
+        Self
     }
 
     /// Scan a file for secrets
@@ -238,7 +328,7 @@ impl SecretScanner {
         let mut findings = Vec::new();
 
         for (line_num, line) in content.lines().enumerate() {
-            for pattern in &self.patterns {
+            for pattern in PATTERNS.iter() {
                 if let Some(captures) = pattern.pattern.captures(line) {
                     let matched = captures.get(0).map_or("", |m| m.as_str());
 
