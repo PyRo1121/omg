@@ -417,7 +417,7 @@ async fn async_main() -> Result<()> {
                     container::shell(image, workdir, &env, &volume)?;
                 }
                 ContainerCommands::Build { dockerfile, tag, no_cache, build_arg, target } => {
-                    container::build(dockerfile, &tag, no_cache, &build_arg, target)?;
+                    container::build(dockerfile, &tag, no_cache, &build_arg, &target)?;
                 }
                 ContainerCommands::List => {
                     container::list()?;
