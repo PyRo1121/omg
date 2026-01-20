@@ -120,7 +120,7 @@ The primary user interface. It is designed for human interaction, providing rich
 The "brain" of the system. It runs as a lightweight background service that maintains an in-memory index of all system packages and language runtimes. It handles heavy lifting like background vulnerability scanning, metadata indexing, and complex dependency resolution.
 
 ### omg-fast (The Prompt Optimizer)
-A specialized, ultra-lightweight binary specifically for shell prompts. It skips all network and IPC logic, reading system status directly from a pre-computed binary file to achieve sub-millisecond response times.
+A specialized, ultra-lightweight binary specifically for shell prompts. It achieves sub-millisecond response times by reading a fixed-size binary snapshot of the system's "vital signs" directly from the filesystem. This optimization bypasses the entire IPC and network stack, acting like a shared-memory interface for instant prompt updates.
 
 
 

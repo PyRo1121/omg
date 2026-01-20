@@ -6,7 +6,7 @@ description: In-memory and persistent caching strategies
 
 # Caching & Indexing
 
-OMG's performance is driven by a sophisticated, three-tiered caching architecture. This multi-layered approach ensures that data is stored in the most efficient location based on its frequency of use and durability requirements.
+OMG's performance is driven by a sophisticated, three-tiered persistence architecture. This multi-layered approach ensures that data is stored in the most efficient location based on its frequency of use and durability requirements.
 
 ## 🧠 Tier 1: In-Memory (Hot Cache)
 
@@ -17,36 +17,22 @@ The "Hot" layer uses a high-performance, concurrent memory cache designed for su
 - **Eviction Strategy**: Uses an intelligent Least Recently Used (LRU) policy to stay within memory limits.
 - **Latency**: < 0.1ms
 
-| Cache Type | Typical Capacity | TTL (Time-to-Live) |
-|------------|------------------|--------------------|
-| **Search Queries** | 1,000 entries | 5 Minutes |
-| **Package Details**| 1,000 entries | 5 Minutes |
-| **System Status**  | 1 entry | 30 Seconds |
-
 ---
 
 ## 💾 Tier 2: Persistent Storage (Cold Cache)
 
-For data that must survive reboots or daemon restarts, OMG uses an embedded, ACID-compliant database.
+For data that must survive reboots or daemon restarts, OMG uses an embedded, ACID-compliant database. This ensures that even in the event of a system crash or power loss, your transaction history and security logs remain uncorrupted.
 
 - **Technology**: A pure-Rust, transactional atomic database.
-- **Durability**: Ensures your transaction history and audit logs are never lost, even in the event of a system crash.
+- **Durability**: Guaranteed data integrity through atomic commits.
 - **Location**: Stored locally in `~/.local/share/omg/cache.redb`.
 - **Latency**: < 5ms (disk-dependent)
 
 ---
 
-## 🔍 Tier 3: The Optimized Package Index
+## 🔍 Tier 3: Binary Snapshot Layer
 
-The core of OMG's search capability is a custom-built package index designed for ultra-fast fuzzy searching across tens of thousands of items.
-
-### High-Speed Indexing
-Upon startup, the daemon builds a structured index from your system's package databases (ALPM or APT). This index is kept entirely in memory for the duration of the daemon's life.
-
-### Intelligent Search Algorithm
-1. **Prefix Fast Path**: For 1-2 character queries, the engine uses a pre-computed prefix index for instantaneous results.
-2. **Parallel Fuzzy Search**: For longer queries, the engine parallelizes the search across all available CPU cores using the **Nucleo** fuzzy matching algorithm.
-3. **Keyword Enrichment**: Each entry is indexed by both its name and its description, allowing you to find tools even when you only know what they do, not what they are called.
+A specialized binary snapshot file is maintained by the daemon to store your system's "vital signs" (update counts, error status). This is what enables `omg-fast` to power your shell prompt with zero-allocation, zero-IPC reads, achieving instantaneous updates.
 
 ---
 
