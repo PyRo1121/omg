@@ -626,7 +626,10 @@ mod edge_cases {
         let long_query = validation::very_long_input(10000);
         let result = run_omg(&["search", &long_query]);
         // Should handle without crashing
-        assert!(!result.stderr_contains("panicked at"), "Should handle long input");
+        assert!(
+            !result.stderr_contains("panicked at"),
+            "Should handle long input"
+        );
     }
 
     #[test]

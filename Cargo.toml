@@ -72,7 +72,9 @@ tar = "0.4.44"
 flate2 = { version = "1.1.8", default-features = false, features = [
     "zlib-rs",
 ] } # zlib-rs is ~30% faster than miniz_oxide
-lz4_flex = { version = "0.12", default-features = false } # Performance mode (~20% faster)
+lz4_flex = { version = "0.12", default-features = false, features = [
+    "frame",
+] } # Frame format + perf mode
 zip = { version = "2.4.2", default-features = false, features = [
     "deflate",
     "time",
