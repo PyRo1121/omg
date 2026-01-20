@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 
+use crate::core::env::distro::detect_distro;
 use crate::core::env::fingerprint::EnvironmentState;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -30,7 +31,7 @@ pub async fn export(output: &str) -> Result<()> {
     println!("{} Exporting environment...\n", "OMG".cyan().bold());
 
     let state = EnvironmentState::capture().await?;
-    let distro = detect_distro();
+    let distro = format!("{:?}", detect_distro()).to_lowercase();
 
     let mut packages = Vec::new();
     for pkg_name in &state.packages {
@@ -76,7 +77,7 @@ pub async fn import(manifest_path: &str, dry_run: bool) -> Result<()> {
     let content = fs::read_to_string(manifest_path)?;
     let manifest: MigrationManifest = serde_json::from_str(&content)?;
 
-    let target_distro = detect_distro();
+    let target_distro = format!("{:?}", detect_distro()).to_lowercase();
 
     println!(
         "  Source: {} → Target: {}",
@@ -172,21 +173,6 @@ pub async fn import(manifest_path: &str, dry_run: bool) -> Result<()> {
     println!("  Some packages may need manual installation - check the unmapped list above.");
 
     Ok(())
-}
-
-fn detect_distro() -> String {
-    if let Ok(content) = fs::read_to_string("/etc/os-release") {
-        for line in content.lines() {
-            if line.starts_with("ID=") {
-                return line
-                    .strip_prefix("ID=")
-                    .unwrap_or("unknown")
-                    .trim_matches('"')
-                    .to_string();
-            }
-        }
-    }
-    "unknown".to_string()
 }
 
 fn create_package_mapping(name: &str) -> PackageMapping {

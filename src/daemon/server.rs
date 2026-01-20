@@ -13,8 +13,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::handlers::{DaemonState, handle_request};
 use super::protocol::{Request, Response, error_codes};
-#[cfg(feature = "debian")]
-use crate::core::env::distro::is_debian_like;
+use crate::core::env::distro::use_debian_backend;
 
 #[cfg(feature = "debian")]
 use crate::package_managers::apt_get_system_status;
@@ -30,18 +29,6 @@ pub async fn run(listener: UnixListener) -> Result<()> {
     // START BACKGROUND WORKER
     let state_worker = Arc::clone(&state);
     let worker_token = shutdown_token.child_token();
-
-    fn use_debian_backend() -> bool {
-        #[cfg(feature = "debian")]
-        {
-            return is_debian_like();
-        }
-
-        #[cfg(not(feature = "debian"))]
-        {
-            false
-        }
-    }
 
     tokio::spawn(async move {
         tracing::info!("Background status worker started");
