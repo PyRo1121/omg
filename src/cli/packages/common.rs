@@ -61,9 +61,9 @@ pub fn log_transaction(
     changes: Vec<crate::core::history::PackageChange>,
     success: bool,
 ) {
-    if !changes.is_empty() {
-        if let Ok(history) = crate::core::history::HistoryManager::new() {
-            let _ = history.add_transaction(ty, changes, success);
-        }
+    if !changes.is_empty()
+        && let Ok(history) = crate::core::history::HistoryManager::new()
+    {
+        let _ = history.add_transaction(ty, changes, success);
     }
 }
