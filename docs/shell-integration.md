@@ -275,7 +275,7 @@ end
 
 | Method | Latency | Use Case |
 |--------|---------|----------|
-| `omg-ec` (cached) | <1μs | Prompts |
+| `omg-ec` (cached) | &lt;1μs | Prompts |
 | `omg-explicit-count` (fresh) | ~1ms | Scripts |
 | `omg explicit --count` | ~1.2ms | Commands |
 | `pacman -Qq \| wc -l` | ~14ms | Fallback |
@@ -538,7 +538,7 @@ omg status
 
 # 2. Check hook-env timing
 time omg hook-env -s zsh
-# Should be <10ms
+# Should be under 10ms
 
 # 3. If slow, the daemon may be down
 omg daemon
