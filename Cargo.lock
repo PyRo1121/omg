@@ -4628,9 +4628,6 @@ name = "lz4_flex"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ab6473172471198271ff72e9379150e9dfd70d8e533e0752a27e515b48dd375e"
-dependencies = [
- "twox-hash",
-]
 
 [[package]]
 name = "lzma-rs"
@@ -5034,7 +5031,7 @@ dependencies = [
 
 [[package]]
 name = "omg"
-version = "0.1.74"
+version = "0.1.75"
 dependencies = [
  "ahash",
  "alpm",

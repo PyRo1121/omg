@@ -13,6 +13,9 @@ use crossterm::{
 use std::io::{self, Write};
 use std::process::Command;
 
+use crate::config::Settings;
+use crate::core::sysinfo::{BuildRecommendation, SystemInfo};
+
 /// Shell options for hook installation
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Shell {
@@ -75,6 +78,7 @@ impl DaemonStartup {
 struct WizardState {
     shell: Option<Shell>,
     daemon_startup: DaemonStartup,
+    build_config: Option<BuildRecommendation>,
     capture_env: bool,
 }
 
@@ -83,6 +87,7 @@ impl Default for WizardState {
         Self {
             shell: None,
             daemon_startup: DaemonStartup::OnShellInit,
+            build_config: None,
             capture_env: true,
         }
     }
@@ -116,7 +121,11 @@ pub async fn run_interactive(skip_shell: bool, skip_daemon: bool) -> Result<()> 
         println!();
     }
 
-    // Step 3: Environment capture
+    // Step 3: Build optimization
+    state.build_config = Some(select_build_config(&mut stdout)?);
+    println!();
+
+    // Step 4: Environment capture
     state.capture_env = confirm_env_capture(&mut stdout)?;
     println!();
 
@@ -140,6 +149,11 @@ pub async fn run_interactive(skip_shell: bool, skip_daemon: bool) -> Result<()> 
 
     // Configure daemon startup
     configure_daemon_startup(&mut stdout, state.daemon_startup)?;
+
+    // Apply build configuration
+    if let Some(ref config) = state.build_config {
+        apply_build_config(&mut stdout, config)?;
+    }
 
     // Capture environment
     if state.capture_env {
@@ -386,6 +400,179 @@ fn select_daemon_startup(stdout: &mut io::Stdout) -> Result<DaemonStartup> {
     }
 }
 
+fn select_build_config(stdout: &mut io::Stdout) -> Result<BuildRecommendation> {
+    let sysinfo = SystemInfo::detect();
+    let recommendation = sysinfo.recommend();
+
+    execute!(
+        stdout,
+        SetForegroundColor(Color::Cyan),
+        Print("Step 3/4: "),
+        ResetColor,
+        Print("Build Performance Settings\n")
+    )?;
+    execute!(
+        stdout,
+        SetForegroundColor(Color::DarkGrey),
+        Print(format!(
+            "  (detected: {} cores, {:.0}GB RAM)\n",
+            sysinfo.cpu_cores, sysinfo.ram_gb
+        )),
+        ResetColor
+    )?;
+    println!();
+
+    // Show detected tools
+    let tools_status = format!(
+        "  Tools: ccache {} | sccache {} | distcc {}",
+        if sysinfo.ccache_available {
+            "✓"
+        } else {
+            "✗"
+        },
+        if sysinfo.sccache_available {
+            "✓"
+        } else {
+            "✗"
+        },
+        if sysinfo.distcc_available {
+            "✓"
+        } else {
+            "✗"
+        }
+    );
+    execute!(
+        stdout,
+        SetForegroundColor(Color::DarkGrey),
+        Print(format!("{tools_status}\n")),
+        ResetColor
+    )?;
+    println!();
+
+    // Show recommendations
+    println!("  Recommended settings:");
+    for explanation in &recommendation.explanation {
+        execute!(
+            stdout,
+            Print("    "),
+            SetForegroundColor(Color::Green),
+            Print("•"),
+            ResetColor,
+            Print(format!(" {explanation}\n"))
+        )?;
+    }
+    println!();
+
+    // Confirm
+    let options = [true, false];
+    let mut selected = 0;
+
+    terminal::enable_raw_mode()?;
+
+    loop {
+        let labels = ["  ▸ Apply recommended settings", "    Skip (use defaults)"];
+        for (i, _) in labels.iter().enumerate() {
+            let display = if i == 0 {
+                if selected == 0 {
+                    "  ▸ Apply recommended settings"
+                } else {
+                    "    Apply recommended settings"
+                }
+            } else if selected == 1 {
+                "  ▸ Skip (use defaults)"
+            } else {
+                "    Skip (use defaults)"
+            };
+
+            if i == selected {
+                execute!(
+                    stdout,
+                    SetForegroundColor(Color::Green),
+                    Print(format!("{display}\n")),
+                    ResetColor
+                )?;
+            } else {
+                execute!(stdout, Print(format!("{display}\n")))?;
+            }
+        }
+
+        stdout.flush()?;
+
+        if let Event::Key(key) = event::read()? {
+            if key.kind != KeyEventKind::Press {
+                continue;
+            }
+            match key.code {
+                KeyCode::Up | KeyCode::Down => {
+                    selected = 1 - selected;
+                }
+                KeyCode::Enter => {
+                    terminal::disable_raw_mode()?;
+                    return Ok(if options[selected] {
+                        recommendation
+                    } else {
+                        // Return default (no optimizations)
+                        BuildRecommendation {
+                            makeflags: String::new(),
+                            enable_ccache: false,
+                            enable_sccache: false,
+                            disable_secure_makepkg: false,
+                            build_concurrency: 1,
+                            explanation: Vec::new(),
+                        }
+                    });
+                }
+                KeyCode::Char('q') => {
+                    terminal::disable_raw_mode()?;
+                    anyhow::bail!("Setup cancelled");
+                }
+                _ => {}
+            }
+        }
+
+        execute!(stdout, cursor::MoveUp(2))?;
+    }
+}
+
+fn apply_build_config(stdout: &mut io::Stdout, config: &BuildRecommendation) -> Result<()> {
+    execute!(
+        stdout,
+        Print("  "),
+        SetForegroundColor(Color::Blue),
+        Print("→"),
+        ResetColor,
+        Print(" Applying build settings...")
+    )?;
+
+    let mut settings = Settings::load().unwrap_or_default();
+
+    if !config.makeflags.is_empty() {
+        settings.aur.makeflags = Some(config.makeflags.clone());
+    }
+    settings.aur.enable_ccache = config.enable_ccache;
+    settings.aur.enable_sccache = config.enable_sccache;
+    settings.aur.secure_makepkg = !config.disable_secure_makepkg;
+    settings.aur.build_concurrency = config.build_concurrency;
+
+    if let Err(e) = settings.save() {
+        execute!(
+            stdout,
+            SetForegroundColor(Color::Yellow),
+            Print(format!(" (failed: {e})\n")),
+            ResetColor
+        )?;
+    } else {
+        execute!(
+            stdout,
+            SetForegroundColor(Color::Green),
+            Print(" ✓\n"),
+            ResetColor
+        )?;
+    }
+
+    Ok(())
+}
+
 fn confirm_env_capture(stdout: &mut io::Stdout) -> Result<bool> {
     let options = [true, false];
     let mut selected = 0;
@@ -393,7 +580,7 @@ fn confirm_env_capture(stdout: &mut io::Stdout) -> Result<bool> {
     execute!(
         stdout,
         SetForegroundColor(Color::Cyan),
-        Print("Step 3/3: "),
+        Print("Step 4/4: "),
         ResetColor,
         Print("Capture initial environment to omg.lock?\n")
     )?;

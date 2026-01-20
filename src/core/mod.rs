@@ -15,6 +15,7 @@ pub mod license;
 pub mod paths;
 pub mod privilege;
 pub mod security;
+pub mod sysinfo;
 pub mod task_runner;
 pub mod telemetry;
 mod types;
