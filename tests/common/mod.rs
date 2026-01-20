@@ -19,6 +19,10 @@ use std::time::{Duration, Instant};
 
 use tempfile::TempDir;
 
+// Re-export serial_test for use in test files
+#[allow(unused_imports)]
+pub use serial_test::serial;
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // TEST CONFIGURATION
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -26,14 +30,23 @@ use tempfile::TempDir;
 static INIT: Once = Once::new();
 
 /// Initialize test environment (called once per test run)
+///
+/// Note: Environment variables are set once at initialization. Tests that need
+/// to modify environment variables should use the `#[serial]` attribute from
+/// the `serial_test` crate to prevent data races.
 pub fn init_test_env() {
     INIT.call_once(|| {
-        // Set up test-specific environment
-        // SAFETY: Test environment setup, no concurrent access at this point
+        // Environment variable setup happens once before parallel tests start.
+        // This is safe because Once::call_once blocks other threads until completion,
+        // and the env vars we set here are only read (not modified) by tests.
+        //
+        // Tests that need to modify env vars should use #[serial] attribute.
+        // SAFETY: We are in a single-threaded context during initialization (guaranteed by Once),
+        // or effectively so for the purposes of setting these global env vars before tests run.
         unsafe {
-            env::set_var("OMG_TEST_MODE", "1");
-            env::set_var("OMG_DISABLE_TELEMETRY", "1");
-            env::set_var("OMG_LOG_LEVEL", "warn");
+            std::env::set_var("OMG_TEST_MODE", "1");
+            std::env::set_var("OMG_DISABLE_TELEMETRY", "1");
+            std::env::set_var("OMG_LOG_LEVEL", "warn");
         }
     });
 }

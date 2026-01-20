@@ -401,15 +401,15 @@ impl ContainerManager {
                     dockerfile.push_str("RUN curl -fsSL https://bun.sh/install | bash\n");
                     dockerfile.push_str("ENV PATH=$PATH:/root/.bun/bin\n\n");
                 }
-                "ruby" => {
-                    dockerfile.push_str("# Install Ruby\n");
-                    dockerfile.push_str("RUN apt-get update && apt-get install -y ruby-full \\\n");
-                    dockerfile.push_str("    && rm -rf /var/lib/apt/lists/*\n\n");
-                }
                 "java" => {
                     dockerfile.push_str("# Install Java\n");
                     dockerfile
                         .push_str("RUN apt-get update && apt-get install -y default-jdk \\\n");
+                    dockerfile.push_str("    && rm -rf /var/lib/apt/lists/*\n\n");
+                }
+                "ruby" => {
+                    dockerfile.push_str("# Install Ruby\n");
+                    dockerfile.push_str("RUN apt-get update && apt-get install -y ruby-full \\\n");
                     dockerfile.push_str("    && rm -rf /var/lib/apt/lists/*\n\n");
                 }
                 _ => {

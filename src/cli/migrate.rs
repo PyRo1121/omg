@@ -66,7 +66,7 @@ pub async fn export(output: &str) -> Result<()> {
 }
 
 /// Import environment from manifest with package mapping
-pub fn import(manifest_path: &str, dry_run: bool) -> Result<()> {
+pub async fn import(manifest_path: &str, dry_run: bool) -> Result<()> {
     println!(
         "{} {} manifest...\n",
         "OMG".cyan().bold(),
@@ -90,6 +90,7 @@ pub fn import(manifest_path: &str, dry_run: bool) -> Result<()> {
 
     let mut mapped = 0;
     let mut unmapped = Vec::new();
+    let mut to_install = Vec::new();
 
     for pkg in &manifest.packages {
         let target_pkg = map_package(&pkg.original_name, &manifest.source_distro, &target_distro);
@@ -103,6 +104,7 @@ pub fn import(manifest_path: &str, dry_run: bool) -> Result<()> {
                     target.cyan()
                 );
             }
+            to_install.push(target);
             mapped += 1;
         } else {
             unmapped.push(&pkg.original_name);
@@ -151,7 +153,18 @@ pub fn import(manifest_path: &str, dry_run: bool) -> Result<()> {
     // Install runtimes
     for (runtime, version) in &manifest.runtimes {
         println!("    Installing {runtime} {version}...");
-        // Would call: crate::cli::runtimes::use_version(runtime, Some(version)).await?;
+        if let Err(e) = crate::cli::runtimes::use_version(runtime, Some(version)).await {
+            println!("      {} Failed to install {runtime}: {e}", "✗".red());
+        }
+    }
+
+    // Install packages
+    if !to_install.is_empty() {
+        println!();
+        println!("    Installing {} packages...", to_install.len());
+        if let Err(e) = crate::cli::packages::install(&to_install, true).await {
+            println!("      {} Package installation failed: {e}", "✗".red());
+        }
     }
 
     println!();
@@ -247,11 +260,64 @@ fn map_package(name: &str, from: &str, to: &str) -> Option<String> {
         ("arch", "debian" | "ubuntu") => arch_to_debian
             .get(name)
             .map(std::string::ToString::to_string)
-            .or(Some(name.to_string())),
+            .or_else(|| Some(name.to_string())),
         ("debian" | "ubuntu", "arch") => debian_to_arch
             .get(name)
             .map(std::string::ToString::to_string)
-            .or(Some(name.to_string())),
+            .or_else(|| Some(name.to_string())),
         _ => Some(name.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_categorize_package() {
+        assert_eq!(categorize_package("libc6"), "library");
+        assert_eq!(categorize_package("libssl-dev"), "library"); // contains lib
+        assert_eq!(categorize_package("python3-dev"), "development");
+        assert_eq!(categorize_package("gcc-docs"), "documentation");
+        assert_eq!(categorize_package("firefox"), "application");
+    }
+
+    #[test]
+    fn test_get_alternatives() {
+        let alts = get_alternatives("vim");
+        assert!(alts.contains(&"neovim".to_string()));
+        assert!(alts.contains(&"vim".to_string()));
+
+        let empty = get_alternatives("nonexistent-pkg-123");
+        assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn test_map_package() {
+        // Arch to Debian
+        assert_eq!(
+            map_package("base-devel", "arch", "debian"),
+            Some("build-essential".to_string())
+        );
+        assert_eq!(
+            map_package("python", "arch", "ubuntu"),
+            Some("python3".to_string())
+        );
+
+        // Debian to Arch
+        assert_eq!(
+            map_package("build-essential", "debian", "arch"),
+            Some("base-devel".to_string())
+        );
+        assert_eq!(
+            map_package("python3", "ubuntu", "arch"),
+            Some("python".to_string())
+        );
+
+        // No mapping (identity)
+        assert_eq!(
+            map_package("my-custom-pkg", "arch", "debian"),
+            Some("my-custom-pkg".to_string())
+        );
     }
 }

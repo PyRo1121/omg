@@ -56,7 +56,9 @@ impl FastStatus {
     pub fn write_to_file(&self, path: &Path) -> std::io::Result<()> {
         let tmp_path = path.with_extension("tmp");
 
-        // Write as raw bytes
+        // SAFETY: FastStatus is a #[repr(C)] POD struct with fixed layout and no padding
+        // between fields that could contain uninitialized bytes. transmute_copy is sound
+        // because Self has a well-defined byte representation.
         let bytes: [u8; std::mem::size_of::<Self>()] = unsafe { std::mem::transmute_copy(self) };
 
         let mut file = File::create(&tmp_path)?;
@@ -74,7 +76,9 @@ impl FastStatus {
         let mut bytes = [0u8; std::mem::size_of::<Self>()];
         file.read_exact(&mut bytes).ok()?;
 
-        // Validate magic
+        // SAFETY: FastStatus is a #[repr(C)] POD struct. The byte array has the exact
+        // size of Self and was read from a file that was written by write_to_file().
+        // We validate magic and version immediately after to catch corrupted data.
         let status: Self = unsafe { std::mem::transmute(bytes) };
         if status.magic != MAGIC || status.version != VERSION {
             return None;

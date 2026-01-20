@@ -14,6 +14,7 @@ static MISE: LazyLock<MiseManager> = LazyLock::new(MiseManager::new);
 
 pub fn resolve_active_version(runtime: &str) -> Option<String> {
     let versions = crate::hooks::get_active_versions();
+
     if let Some(version) = versions.get(&runtime.to_lowercase()) {
         return Some(version.clone());
     }
