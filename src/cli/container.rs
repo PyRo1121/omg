@@ -194,7 +194,7 @@ pub fn build(
     tag: &str,
     no_cache: bool,
     build_args: &[String],
-    target: Option<String>,
+    target: &Option<String>,
 ) -> Result<()> {
     let manager = ContainerManager::new()?;
     let cwd = std::env::current_dir()?;

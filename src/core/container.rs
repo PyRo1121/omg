@@ -358,7 +358,7 @@ impl ContainerManager {
                     dockerfile.push_str("# Install Node.js\n");
                     dockerfile.push_str("ENV NODE_VERSION=");
                     dockerfile.push_str(if *version == "lts" { "20" } else { version });
-                    dockerfile.push_str("\n");
+                    dockerfile.push('\n');
                     dockerfile.push_str("RUN curl -fsSL https://deb.nodesource.com/setup_${NODE_VERSION}.x | bash - \\\n");
                     dockerfile.push_str("    && apt-get install -y nodejs \\\n");
                     dockerfile.push_str("    && rm -rf /var/lib/apt/lists/*\n\n");
@@ -367,7 +367,7 @@ impl ContainerManager {
                     dockerfile.push_str("# Install Python\n");
                     dockerfile.push_str("ENV PYTHON_VERSION=");
                     dockerfile.push_str(version);
-                    dockerfile.push_str("\n");
+                    dockerfile.push('\n');
                     dockerfile.push_str("RUN apt-get update && apt-get install -y \\\n");
                     dockerfile.push_str("    python3 python3-pip python3-venv \\\n");
                     dockerfile.push_str("    && rm -rf /var/lib/apt/lists/* \\\n");
@@ -387,7 +387,7 @@ impl ContainerManager {
                     let go_ver = if *version == "latest" { "1.22" } else { version };
                     dockerfile.push_str("ENV GO_VERSION=");
                     dockerfile.push_str(go_ver);
-                    dockerfile.push_str("\n");
+                    dockerfile.push('\n');
                     dockerfile.push_str("RUN curl -fsSL https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz | tar -C /usr/local -xzf - \\\n");
                     dockerfile.push_str("    && ln -sf /usr/local/go/bin/go /usr/local/bin/go\n");
                     dockerfile.push_str("ENV PATH=$PATH:/usr/local/go/bin\n\n");
