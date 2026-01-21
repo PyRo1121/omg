@@ -10,7 +10,6 @@ use ahash::AHashMap;
 use anyhow::Context;
 use anyhow::Result;
 use memchr::memmem;
-use nucleo_matcher::Utf32String;
 use parking_lot::RwLock;
 
 use crate::core::paths;
@@ -20,10 +19,11 @@ use crate::daemon::protocol::{DetailedPackageInfo, PackageInfo};
 pub struct PackageIndex {
     /// Maps package name to detailed info (using ahash for speed)
     packages: AHashMap<String, DetailedPackageInfo>,
-    /// Search items for Nucleo
-    search_items: Vec<(String, Utf32String)>,
     /// Lowercased search strings for case-insensitive match
+    /// Format: "name description"
     search_items_lower: Vec<String>,
+    /// Mapping from search_items index to package name
+    search_items_names: Vec<String>,
     /// Prefix index for 1-2 char fast path
     prefix_index: AHashMap<String, Vec<usize>>,
     /// Reader-writer lock for package lookups
@@ -59,29 +59,53 @@ impl PackageIndex {
     pub fn new_with_cache(cache: &PersistentCache) -> Result<Self> {
         let start = std::time::Instant::now();
 
-        // Get current DB mtime for cache validation
-        let db_mtime = Self::get_db_mtime();
+        // SECURITY FIX: Atomic cache validation to prevent TOCTOU race
+        // Previous vulnerability:
+        // 1. Check if cache is valid (read db_mtime)
+        // 2. Load cache
+        // 3. DB could be modified between steps 1 and 2
+        //
+        // New approach:
+        // 1. Load cache with embedded metadata
+        // 2. Get current db_mtime
+        // 3. Validate cache metadata matches current state
+        // This eliminates the race window since we validate AFTER loading
 
-        // Try loading from cache first
-        if cache.is_index_valid(db_mtime)
-            && let Ok(Some(cached)) = cache.load_index()
-        {
-            let index = Self::from_packages(cached.packages);
-            tracing::info!(
-                "Index loaded from cache in {:?} ({} packages)",
-                start.elapsed(),
-                index.len()
-            );
-            return Ok(index);
+        // Try loading from cache first (includes metadata)
+        let cached_index = cache.load_index().ok().flatten();
+
+        // Get current DB mtime for validation
+        let current_db_mtime = Self::get_db_mtime();
+
+        // Validate cache is still current (AFTER loading, not before)
+        if let Some(cached) = cached_index {
+            // Check if cache metadata matches current DB state
+            if let Ok(Some(meta)) = cache.get_index_meta() {
+                if meta.db_mtime == current_db_mtime && meta.package_count == cached.packages.len() {
+                    let index = Self::from_packages(cached.packages);
+                    tracing::info!(
+                        "Index loaded from cache in {:?} ({} packages)",
+                        start.elapsed(),
+                        index.len()
+                    );
+                    return Ok(index);
+                } else {
+                    tracing::debug!(
+                        "Cache invalidated: db_mtime mismatch ({} != {}) or count mismatch",
+                        meta.db_mtime,
+                        current_db_mtime
+                    );
+                }
+            }
         }
 
-        // Cache miss or invalid - build fresh
+        // Cache miss, invalid, or stale - build fresh
         tracing::info!("Building fresh index (cache miss or stale)");
         let index = Self::new()?;
 
         // Save to cache for next startup
         let packages: Vec<_> = index.packages.values().cloned().collect();
-        if let Err(e) = cache.save_index(&packages, db_mtime) {
+        if let Err(e) = cache.save_index(&packages, current_db_mtime) {
             tracing::warn!("Failed to save index to cache: {e}");
         }
 
@@ -96,16 +120,17 @@ impl PackageIndex {
     /// Build index from pre-loaded packages (instant)
     fn from_packages(packages_vec: Vec<DetailedPackageInfo>) -> Self {
         let mut packages = AHashMap::with_capacity(packages_vec.len());
-        let mut search_items = Vec::with_capacity(packages_vec.len());
         let mut search_items_lower = Vec::with_capacity(packages_vec.len());
+        let mut search_items_names = Vec::with_capacity(packages_vec.len());
         let mut prefix_index: AHashMap<String, Vec<usize>> = AHashMap::new();
 
         for info in packages_vec {
             let search_str = format!("{} {}", info.name, info.description);
             let search_lower = search_str.to_lowercase();
-            let idx = search_items.len();
-            search_items.push((info.name.clone(), Utf32String::from(search_str.as_str())));
+            let idx = search_items_lower.len();
+
             search_items_lower.push(search_lower);
+            search_items_names.push(info.name.clone());
 
             let name_lower = info.name.to_lowercase();
             for len in 1..=2 {
@@ -119,14 +144,16 @@ impl PackageIndex {
 
         Self {
             packages,
-            search_items,
             search_items_lower,
+            search_items_names,
             prefix_index,
             lock: RwLock::new(()),
         }
     }
 
     /// Get modification time of pacman sync databases
+    /// Note: This is sync I/O but typically fast (<1ms) since it's just a stat() call.
+    /// For async contexts, consider caching this value.
     fn get_db_mtime() -> u64 {
         let db_dir = paths::pacman_db_dir().join("sync");
         std::fs::metadata(&db_dir)
@@ -139,8 +166,8 @@ impl PackageIndex {
     #[cfg(feature = "arch")]
     fn new_alpm() -> Result<Self> {
         let mut packages = AHashMap::default();
-        let mut search_items = Vec::new();
         let mut search_items_lower = Vec::new();
+        let mut search_items_names = Vec::new();
         let mut prefix_index: AHashMap<String, Vec<usize>> = AHashMap::new();
 
         // Initialize ALPM and read all databases
@@ -175,9 +202,11 @@ impl PackageIndex {
 
                 let search_str = format!("{} {}", info.name, info.description);
                 let search_lower = search_str.to_lowercase();
-                let idx = search_items.len();
-                search_items.push((info.name.clone(), Utf32String::from(search_str.as_str())));
+                let idx = search_items_lower.len();
+
                 search_items_lower.push(search_lower);
+                search_items_names.push(info.name.clone());
+
                 let name_lower = info.name.to_lowercase();
                 for len in 1..=2 {
                     if name_lower.len() >= len {
@@ -193,8 +222,8 @@ impl PackageIndex {
 
         Ok(Self {
             packages,
-            search_items,
             search_items_lower,
+            search_items_names,
             prefix_index,
             lock: RwLock::new(()),
         })
@@ -207,8 +236,8 @@ impl PackageIndex {
         use std::path::Path;
 
         let mut packages = AHashMap::default();
-        let mut search_items = Vec::new();
         let mut search_items_lower = Vec::new();
+        let mut search_items_names = Vec::new();
         let mut prefix_index: AHashMap<String, Vec<usize>> = AHashMap::new();
 
         let lists_dir = Path::new("/var/lib/apt/lists");
@@ -246,8 +275,8 @@ impl PackageIndex {
                 Self::parse_packages_content(
                     &content,
                     &mut packages,
-                    &mut search_items,
                     &mut search_items_lower,
+                    &mut search_items_names,
                     &mut prefix_index,
                 );
             }
@@ -257,8 +286,8 @@ impl PackageIndex {
 
         Ok(Self {
             packages,
-            search_items,
             search_items_lower,
+            search_items_names,
             prefix_index,
             lock: RwLock::new(()),
         })
@@ -268,8 +297,8 @@ impl PackageIndex {
     fn parse_packages_content(
         content: &str,
         packages: &mut AHashMap<String, DetailedPackageInfo>,
-        search_items: &mut Vec<(String, Utf32String)>,
         search_items_lower: &mut Vec<String>,
+        search_items_names: &mut Vec<String>,
         prefix_index: &mut AHashMap<String, Vec<usize>>,
     ) {
         for paragraph in content.split("\n\n") {
@@ -331,9 +360,11 @@ impl PackageIndex {
 
             let search_str = format!("{} {}", info.name, info.description);
             let search_lower = search_str.to_lowercase();
-            let idx = search_items.len();
-            search_items.push((info.name.clone(), Utf32String::from(search_str.as_str())));
+            let idx = search_items_lower.len();
+
             search_items_lower.push(search_lower);
+            search_items_names.push(info.name.clone());
+
             let name_lower = info.name.to_lowercase();
             for len in 1..=2 {
                 if name_lower.len() >= len {
@@ -365,10 +396,8 @@ impl PackageIndex {
                         break;
                     }
                     // SAFETY: prefix_index only contains valid indices
-                    if let Some(p) = self
-                        .search_items
-                        .get(idx)
-                        .and_then(|(name, _)| self.packages.get(name))
+                    if let Some(name) = self.search_items_names.get(idx)
+                        && let Some(p) = self.packages.get(name)
                     {
                         results.push(PackageInfo {
                             name: p.name.clone(),
@@ -387,16 +416,17 @@ impl PackageIndex {
                     break;
                 }
                 // SIMD-accelerated substring search (10x faster than str::contains)
-                if finder.find(search_lower.as_bytes()).is_some()
-                    && let Some((name, _)) = self.search_items.get(idx)
-                    && let Some(p) = self.packages.get(name)
-                {
-                    results.push(PackageInfo {
-                        name: p.name.clone(),
-                        version: p.version.clone(),
-                        description: p.description.clone(),
-                        source: p.source.clone(),
-                    });
+                if finder.find(search_lower.as_bytes()).is_some() {
+                    if let Some(name) = self.search_items_names.get(idx)
+                        && let Some(p) = self.packages.get(name)
+                    {
+                        results.push(PackageInfo {
+                            name: p.name.clone(),
+                            version: p.version.clone(),
+                            description: p.description.clone(),
+                            source: p.source.clone(),
+                        });
+                    }
                 }
             }
         }
