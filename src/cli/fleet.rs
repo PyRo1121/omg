@@ -3,26 +3,8 @@
 use anyhow::Result;
 use owo_colors::OwoColorize;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 use crate::core::license;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FleetStatus {
-    pub total_machines: usize,
-    pub compliant: usize,
-    pub drifted: usize,
-    pub offline: usize,
-    pub teams: HashMap<String, TeamFleetStatus>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TeamFleetStatus {
-    pub name: String,
-    pub total: usize,
-    pub compliant: usize,
-    pub compliance_percent: f32,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MachineStatus {
@@ -35,17 +17,35 @@ pub struct MachineStatus {
 }
 
 /// Show fleet status
-pub fn status() -> Result<()> {
+pub async fn status() -> Result<()> {
     license::require_feature("fleet")?;
 
     println!("{} Fleet Status\n", "OMG".cyan().bold());
 
-    // In a real implementation, this would query a central server
-    // For now, show a demo/placeholder
-    let fleet = get_demo_fleet_status();
+    let members = license::fetch_team_members().await?;
+    
+    let total_machines = members.len();
+    let now = jiff::Timestamp::now().as_second();
+    let one_day = 24 * 60 * 60;
+    
+    let active_machines = members.iter().filter(|m| m.is_active).count();
+    let online_machines = members.iter()
+        .filter(|m| {
+            if let Ok(ts) = jiff::Timestamp::from_second(parse_timestamp(&m.last_seen_at)) {
+                now - ts.as_second() < one_day
+            } else {
+                false
+            }
+        })
+        .count();
+    
+    // Compliance logic: machines seen in last 24h are considered compliant for this demo
+    let compliant = online_machines;
+    let drifted = active_machines.saturating_sub(online_machines);
+    let offline = total_machines.saturating_sub(active_machines);
 
-    let compliance_pct = if fleet.total_machines > 0 {
-        (fleet.compliant as f32 / fleet.total_machines as f32) * 100.0
+    let compliance_pct = if total_machines > 0 {
+        (compliant as f32 / total_machines as f32) * 100.0
     } else {
         100.0
     };
@@ -59,58 +59,80 @@ pub fn status() -> Result<()> {
         compliance_pct.to_string().red().to_string()
     };
 
-    println!("  {} {} machines", "Fleet:".bold(), fleet.total_machines);
+    println!("  {} {} machines", "Fleet:".bold(), total_machines);
     println!("  {} {}% {}", "Health:".bold(), health_color, health_bar);
     println!();
     println!(
         "    {} {} compliant",
         "✓".green(),
-        fleet.compliant.to_string().green()
+        compliant.to_string().green()
     );
     println!(
-        "    {} {} with drift",
+        "    {} {} with drift (not seen in 24h)",
         "⚠".yellow(),
-        fleet.drifted.to_string().yellow()
+        drifted.to_string().yellow()
     );
     println!(
-        "    {} {} offline",
+        "    {} {} offline/inactive",
         "○".dimmed(),
-        fleet.offline.to_string().dimmed()
+        offline.to_string().dimmed()
     );
     println!();
 
-    // By team
-    println!("  {}", "By Team:".bold());
-    for (name, team) in &fleet.teams {
-        let pct = format!("{:.0}%", team.compliance_percent);
-        let pct_colored = if team.compliance_percent >= 95.0 {
-            pct.green().to_string()
-        } else if team.compliance_percent >= 80.0 {
-            pct.yellow().to_string()
-        } else {
-            pct.red().to_string()
-        };
-
-        println!(
-            "    {} ({}) - {} compliant",
-            name.cyan(),
-            team.total,
-            pct_colored
-        );
+    if total_machines > 0 {
+        println!("  {}", "Active Machines:".bold());
+        for m in members.iter().filter(|m| m.is_active).take(10) {
+            let hostname = m.hostname.as_deref().unwrap_or(&m.machine_id);
+            let os = m.os.as_deref().unwrap_or("unknown");
+            let ver = m.omg_version.as_deref().unwrap_or("?");
+            println!(
+                "    {} {:<20} {:<10} v{}",
+                "💻".dimmed(),
+                hostname.cyan(),
+                os.dimmed(),
+                ver.dimmed()
+            );
+        }
+        if total_machines > 10 {
+            println!("    ... and {} more", total_machines - 10);
+        }
     }
 
     println!();
     println!(
         "  {} {}",
-        "View details:".dimmed(),
-        "omg fleet status --verbose".cyan()
+        "Manage your fleet at:".dimmed(),
+        "https://pyro1121.com/dashboard".cyan()
     );
 
     Ok(())
 }
 
+fn parse_timestamp(s: &str) -> i64 {
+    use std::str::FromStr;
+    // Simple parser for "YYYY-MM-DD HH:MM:SS" or ISO
+    if let Ok(ts) = jiff::Timestamp::from_str(s) {
+        ts.as_second()
+    } else {
+        0
+    }
+}
+
 /// Push configuration to fleet
 pub fn push(team: Option<&str>, message: Option<&str>) -> Result<()> {
+    if let Some(t) = team {
+        // SECURITY: Validate team identifier
+        if t.chars().any(|c| !c.is_ascii_alphanumeric() && c != '/' && c != '-' && c != '_') {
+            anyhow::bail!("Invalid team identifier");
+        }
+    }
+    if let Some(m) = message {
+        // SECURITY: Validate message
+        if m.len() > 1000 {
+            anyhow::bail!("Push message too long");
+        }
+    }
+
     license::require_feature("fleet")?;
 
     let target = team.unwrap_or("all machines");
@@ -194,58 +216,6 @@ pub fn remediate(dry_run: bool, confirm: bool) -> Result<()> {
     println!("      - test-runner-07 (permission denied)");
 
     Ok(())
-}
-
-fn get_demo_fleet_status() -> FleetStatus {
-    let mut teams = HashMap::new();
-
-    teams.insert(
-        "frontend".to_string(),
-        TeamFleetStatus {
-            name: "Frontend".to_string(),
-            total: 120,
-            compliant: 118,
-            compliance_percent: 98.3,
-        },
-    );
-
-    teams.insert(
-        "backend".to_string(),
-        TeamFleetStatus {
-            name: "Backend".to_string(),
-            total: 180,
-            compliant: 171,
-            compliance_percent: 95.0,
-        },
-    );
-
-    teams.insert(
-        "data".to_string(),
-        TeamFleetStatus {
-            name: "Data".to_string(),
-            total: 87,
-            compliant: 77,
-            compliance_percent: 88.5,
-        },
-    );
-
-    teams.insert(
-        "devops".to_string(),
-        TeamFleetStatus {
-            name: "DevOps".to_string(),
-            total: 100,
-            compliant: 97,
-            compliance_percent: 97.0,
-        },
-    );
-
-    FleetStatus {
-        total_machines: 487,
-        compliant: 463,
-        drifted: 18,
-        offline: 6,
-        teams,
-    }
 }
 
 fn generate_health_bar(pct: f32) -> String {

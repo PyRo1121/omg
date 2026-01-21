@@ -365,6 +365,22 @@ impl DaemonClient {
 
         Ok(results)
     }
+
+    /// Get fuzzy suggestions for a package name
+    pub async fn suggest(&mut self, query: &str, limit: Option<usize>) -> Result<Vec<String>> {
+        let id = self.request_id.fetch_add(1, Ordering::SeqCst);
+        match self
+            .call(Request::Suggest {
+                id,
+                query: query.to_string(),
+                limit,
+            })
+            .await?
+        {
+            ResponseResult::Suggest(res) => Ok(res),
+            _ => anyhow::bail!("Invalid response type"),
+        }
+    }
 }
 
 /// Pooled sync client that automatically returns connection to pool on drop

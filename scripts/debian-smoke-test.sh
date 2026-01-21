@@ -2,6 +2,27 @@
 set -e
 
 OMG="./target/release/omg"
+OMGD="./target/release/omgd"
+
+echo "[OMG] Initial Sync (pre-daemon)..."
+$OMG sync
+
+# Start Daemon for max speed
+echo "Starting OMG Daemon..."
+$OMGD --foreground > /tmp/omgd.log 2>&1 &
+DAEMON_PID=$!
+sleep 5 # Give it time to index everything
+
+cleanup() {
+    kill $DAEMON_PID > /dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+if ! $OMG status > /dev/null 2>&1; then
+    echo "❌ Daemon failed to start"
+    cat /tmp/omgd.log
+    exit 1
+fi
 
 echo "╔══════════════════════════════════════════════════════════════╗"
 echo "║           OMG Debian/Ubuntu Integration Test Suite           ║"
@@ -78,8 +99,23 @@ echo "                    PHASE 4: Status                             "
 echo "════════════════════════════════════════════════════════════════"
 
 echo ""
-echo "[OMG] omg status..."
-time $OMG status
+echo "[OMG] omg status (Standard)..."
+OMG_STATUS_START=$(date +%s.%N)
+$OMG status > /dev/null
+OMG_STATUS_END=$(date +%s.%N)
+OMG_STATUS_TIME=$(echo "$OMG_STATUS_END - $OMG_STATUS_START" | bc)
+echo "OMG status time: ${OMG_STATUS_TIME}s"
+
+echo ""
+echo "[OMG] omg status --fast (Optimized Pure Rust)..."
+OMG_FAST_START=$(date +%s.%N)
+$OMG status --fast > /dev/null
+OMG_FAST_START_END=$(date +%s.%N)
+OMG_FAST_TIME=$(echo "$OMG_FAST_START_END - $OMG_FAST_START" | bc)
+echo "OMG fast status time: ${OMG_FAST_TIME}s"
+
+STATUS_SPEEDUP=$(echo "scale=1; $OMG_STATUS_TIME / $OMG_FAST_TIME" | bc 2>/dev/null || echo "N/A")
+echo ">>> Internal Speedup: ${STATUS_SPEEDUP}x"
 
 echo ""
 echo "════════════════════════════════════════════════════════════════"

@@ -12,7 +12,9 @@ pub mod fast_status;
 pub mod history;
 pub mod http;
 pub mod license;
+pub mod metrics;
 pub mod paths;
+pub mod packages;
 pub mod privilege;
 pub mod security;
 pub mod sysinfo;
@@ -20,7 +22,6 @@ pub mod task_runner;
 pub mod telemetry;
 mod types;
 pub mod usage;
-pub mod validation;
 
 pub use archive::{
     extract_auto, extract_auto_strip, extract_tar_gz, extract_tar_gz_strip, extract_zip,

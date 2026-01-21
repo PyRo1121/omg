@@ -1,9 +1,15 @@
 //! In-memory package cache with LRU eviction
 
 use moka::sync::Cache;
+use std::sync::LazyLock;
 use std::time::Duration;
 
 use super::protocol::{DetailedPackageInfo, PackageInfo, StatusResult};
+
+// Static cache keys to avoid repeated allocations
+static KEY_STATUS: LazyLock<String> = LazyLock::new(|| "status".to_string());
+static KEY_EXPLICIT: LazyLock<String> = LazyLock::new(|| "explicit".to_string());
+static KEY_EXPLICIT_COUNT: LazyLock<String> = LazyLock::new(|| "explicit_count".to_string());
 
 /// LRU cache for package search results
 pub struct PackageCache {
@@ -55,7 +61,7 @@ impl PackageCache {
             .max_capacity(1)
             .time_to_live(status_ttl)
             .build();
-        let explicit_count = Cache::builder().max_capacity(1).time_to_live(ttl).build();
+
         Self {
             cache,
             detailed_cache,
@@ -63,7 +69,7 @@ impl PackageCache {
             max_size,
             system_status,
             explicit_packages,
-            explicit_count,
+            explicit_count: Cache::builder().max_capacity(1).time_to_live(ttl).build(),
         }
     }
 
@@ -71,40 +77,40 @@ impl PackageCache {
     #[inline]
     #[must_use]
     pub fn get_status(&self) -> Option<StatusResult> {
-        self.system_status.get("status")
+        self.system_status.get(&*KEY_STATUS)
     }
 
     /// Update system status cache
     pub fn update_status(&self, result: StatusResult) {
         self.explicit_count
-            .insert("explicit_count".to_string(), result.explicit_packages);
-        self.system_status.insert("status".to_string(), result);
+            .insert(KEY_EXPLICIT_COUNT.clone(), result.explicit_packages);
+        self.system_status.insert(KEY_STATUS.clone(), result);
     }
 
     /// Get cached explicit packages
     pub fn get_explicit(&self) -> Option<Vec<String>> {
-        self.explicit_packages.get("explicit")
+        self.explicit_packages.get(&*KEY_EXPLICIT)
     }
 
     /// Get cached explicit package count
     #[inline]
     #[must_use]
     pub fn get_explicit_count(&self) -> Option<usize> {
-        self.explicit_count.get("explicit_count")
+        self.explicit_count.get(&*KEY_EXPLICIT_COUNT)
     }
 
     /// Update explicit package cache
     pub fn update_explicit(&self, packages: Vec<String>) {
         self.explicit_count
-            .insert("explicit_count".to_string(), packages.len());
+            .insert(KEY_EXPLICIT_COUNT.clone(), packages.len());
         self.explicit_packages
-            .insert("explicit".to_string(), packages);
+            .insert(KEY_EXPLICIT.clone(), packages);
     }
 
     /// Update explicit package count cache
     pub fn update_explicit_count(&self, count: usize) {
         self.explicit_count
-            .insert("explicit_count".to_string(), count);
+            .insert(KEY_EXPLICIT_COUNT.clone(), count);
     }
 
     /// Get cached results for a query
@@ -176,3 +182,7 @@ impl Default for PackageCache {
         Self::new_with_ttls(1000, 300, 30)
     }
 }
+
+#[cfg(test)]
+#[path = "cache_tests.rs"]
+mod tests;

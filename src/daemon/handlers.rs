@@ -1,8 +1,12 @@
 //! Request handlers for the daemon
 
 use std::sync::Arc;
+use std::num::NonZeroU32;
 
 use anyhow::Context;
+use governor::{Quota, RateLimiter};
+use governor::clock::DefaultClock;
+use governor::state::{InMemoryState, NotKeyed};
 
 use super::cache::PackageCache;
 use super::index::PackageIndex;
@@ -10,9 +14,13 @@ use super::protocol::{
     DetailedPackageInfo, ExplicitResult, Request, RequestId, Response, ResponseResult,
     SearchResult, SecurityAuditResult, StatusResult, Vulnerability, error_codes,
 };
-use crate::package_managers::{AurClient, PackageManager, get_package_manager};
+#[cfg(feature = "arch")]
+use crate::package_managers::AurClient;
+use crate::package_managers::{PackageManager, get_package_manager};
 #[cfg(feature = "arch")]
 use crate::package_managers::{alpm_worker::AlpmWorker, search_detailed};
+use crate::core::security::{audit_log, AuditEventType, AuditSeverity};
+use crate::core::metrics::GLOBAL_METRICS;
 use parking_lot::RwLock;
 
 /// Daemon state shared across handlers
@@ -21,11 +29,12 @@ pub struct DaemonState {
     pub persistent: super::db::PersistentCache,
     pub package_manager: Box<dyn PackageManager>,
     #[cfg(feature = "arch")]
-    pub aur: AurClient,
+    pub aur: crate::package_managers::AurClient,
     #[cfg(feature = "arch")]
     pub alpm_worker: AlpmWorker,
     pub index: Arc<PackageIndex>,
     pub runtime_versions: Arc<RwLock<Vec<(String, String)>>>,
+    pub rate_limiter: Arc<RateLimiter<NotKeyed, InMemoryState, DefaultClock>>,
 }
 
 impl DaemonState {
@@ -52,6 +61,10 @@ impl DaemonState {
             tracing::debug!("Pre-warmed status cache from persistent storage");
         }
 
+        // Rate limit: 100 requests per second with burst of 200
+        let quota = Quota::per_second(NonZeroU32::new(100).unwrap()).allow_burst(NonZeroU32::new(200).unwrap());
+        let rate_limiter = Arc::new(RateLimiter::direct(quota));
+
         Ok(Self {
             cache,
             persistent,
@@ -62,6 +75,7 @@ impl DaemonState {
             alpm_worker: AlpmWorker::new(),
             index: Arc::new(index),
             runtime_versions: Arc::new(RwLock::new(Vec::new())),
+            rate_limiter,
         })
     }
 }
@@ -74,16 +88,37 @@ impl Default for DaemonState {
 
 /// Handle an incoming request
 pub async fn handle_request(state: Arc<DaemonState>, request: Request) -> Response {
+    // METRICS: Track total requests handled
+    GLOBAL_METRICS.inc_requests_total();
+
+    // SECURITY: Enforce rate limiting
+    if state.rate_limiter.check().is_err() {
+        tracing::warn!("Rate limit exceeded for request");
+        audit_log(
+            AuditEventType::PolicyViolation,
+            AuditSeverity::Warning,
+            "daemon_handler",
+            "Global rate limit exceeded",
+        );
+        GLOBAL_METRICS.inc_rate_limit_hits();
+        GLOBAL_METRICS.inc_requests_failed();
+        return Response::Error {
+            id: request.id(),
+            code: error_codes::RATE_LIMITED,
+            message: "Rate limit exceeded. Please slow down.".to_string(),
+        };
+    }
+
     match request {
-        Request::Search { id, query, limit } => handle_search(&state, id, query, limit),
+        Request::Search { id, query, limit } => handle_search(state, id, query, limit).await,
         Request::Info { id, package } => handle_info(state, id, package).await,
         Request::Ping { id } => Response::Success {
             id,
             result: ResponseResult::Ping(String::from("pong")),
         },
-        Request::Status { id } => handle_status(&state, id),
-        Request::Explicit { id } => handle_list_explicit(&state, id),
-        Request::ExplicitCount { id } => handle_explicit_count(&state, id),
+        Request::Status { id } => handle_status(state, id).await,
+        Request::Explicit { id } => handle_list_explicit(state, id).await,
+        Request::ExplicitCount { id } => handle_explicit_count(state, id).await,
         Request::SecurityAudit { id } => handle_security_audit(state, id).await,
         Request::CacheStats { id } => {
             let stats = state.cache.stats();
@@ -102,12 +137,84 @@ pub async fn handle_request(state: Arc<DaemonState>, request: Request) -> Respon
                 result: ResponseResult::Message("cleared".to_string()),
             }
         }
+        Request::Metrics { id } => handle_metrics(id),
+        Request::Suggest { id, query, limit } => handle_suggest(state, id, query, limit).await,
         Request::Batch { id, requests } => handle_batch(state, id, *requests).await,
     }
 }
 
-/// Maximum number of requests in a batch to prevent DoS
+/// Maximum number of requests in a batch to prevent `DoS`
 const MAX_BATCH_SIZE: usize = 100;
+/// Maximum concurrency for batch processing
+const BATCH_CONCURRENCY: usize = 16;
+/// Maximum length of search query
+const MAX_QUERY_LENGTH: usize = 500;
+/// Default search limit
+const DEFAULT_SEARCH_LIMIT: usize = 50;
+/// Maximum search limit
+const MAX_SEARCH_LIMIT: usize = 1000;
+/// Concurrency for vulnerability scanning
+const SCAN_CONCURRENCY: usize = 32;
+
+/// Handle metrics request
+fn handle_metrics(id: RequestId) -> Response {
+    let snapshot = GLOBAL_METRICS.snapshot();
+
+    // Map internal metrics snapshot to protocol snapshot
+    // This decouples the internal representation from the wire format
+    let protocol_snapshot = super::protocol::MetricsSnapshot {
+        requests_total: snapshot.requests_total,
+        requests_failed: snapshot.requests_failed,
+        rate_limit_hits: snapshot.rate_limit_hits,
+        validation_failures: snapshot.validation_failures,
+        active_connections: snapshot.active_connections,
+        security_audit_requests: snapshot.security_audit_requests,
+        bytes_received: snapshot.bytes_received,
+        bytes_sent: snapshot.bytes_sent,
+    };
+
+    Response::Success {
+        id,
+        result: ResponseResult::Metrics(protocol_snapshot),
+    }
+}
+
+/// Handle suggest request
+async fn handle_suggest(
+    state: Arc<DaemonState>,
+    id: RequestId,
+    query: String,
+    limit: Option<usize>,
+) -> Response {
+    // SECURITY: Validate query length
+    if query.len() > MAX_QUERY_LENGTH {
+        return Response::Error {
+            id,
+            code: error_codes::INVALID_PARAMS,
+            message: "Query too long".to_string(),
+        };
+    }
+
+    let limit = limit.unwrap_or(10).min(50);
+    let state_clone = Arc::clone(&state);
+
+    // Run fuzzy search in blocking thread
+    let suggestions = tokio::task::spawn_blocking(move || {
+        state_clone.index.suggest(&query, limit)
+    }).await;
+
+    match suggestions {
+        Ok(results) => Response::Success {
+            id,
+            result: ResponseResult::Suggest(results),
+        },
+        Err(e) => Response::Error {
+            id,
+            code: error_codes::INTERNAL_ERROR,
+            message: format!("Suggest task failed: {e}"),
+        },
+    }
+}
 
 /// Handle batch requests - process multiple requests in parallel
 async fn handle_batch(state: Arc<DaemonState>, id: RequestId, requests: Vec<Request>) -> Response {
@@ -115,14 +222,21 @@ async fn handle_batch(state: Arc<DaemonState>, id: RequestId, requests: Vec<Requ
 
     // SECURITY: Limit batch size to prevent resource exhaustion
     if requests.len() > MAX_BATCH_SIZE {
+        let msg = format!(
+            "Batch size {} exceeds maximum of {}",
+            requests.len(),
+            MAX_BATCH_SIZE
+        );
+        audit_log(
+            AuditEventType::PolicyViolation,
+            AuditSeverity::Warning,
+            "daemon_handler",
+            &msg,
+        );
         return Response::Error {
             id,
             code: error_codes::INVALID_PARAMS,
-            message: format!(
-                "Batch size {} exceeds maximum of {}",
-                requests.len(),
-                MAX_BATCH_SIZE
-            ),
+            message: msg,
         };
     }
 
@@ -132,7 +246,7 @@ async fn handle_batch(state: Arc<DaemonState>, id: RequestId, requests: Vec<Requ
             let state = Arc::clone(&state);
             async move { handle_request(state, req).await }
         })
-        .buffer_unordered(16) // Limit concurrency to 16
+        .buffer_unordered(BATCH_CONCURRENCY) // Limit concurrency
         .collect()
         .await;
 
@@ -144,28 +258,38 @@ async fn handle_batch(state: Arc<DaemonState>, id: RequestId, requests: Vec<Requ
 
 /// Handle search request
 #[inline]
-fn handle_search(
-    state: &Arc<DaemonState>,
+async fn handle_search(
+    state: Arc<DaemonState>,
     id: RequestId,
     query: String,
     limit: Option<usize>,
 ) -> Response {
     // SECURITY: Validate search query to prevent injection attacks
     // Allow more flexible search queries but limit length
-    if query.len() > 500 {
+    if query.len() > MAX_QUERY_LENGTH {
+        let msg = format!("Search query too long (max {MAX_QUERY_LENGTH} characters)");
+        audit_log(
+            AuditEventType::PolicyViolation,
+            AuditSeverity::Warning,
+            "daemon_handler",
+            &msg,
+        );
+        GLOBAL_METRICS.inc_validation_failures();
+        GLOBAL_METRICS.inc_requests_failed();
         return Response::Error {
             id,
             code: error_codes::INVALID_PARAMS,
-            message: "Search query too long (max 500 characters)".to_string(),
+            message: msg,
         };
     }
 
-    let limit = limit.unwrap_or(50).min(1000); // Cap limit at 1000 to prevent resource exhaustion
+    let limit = limit.unwrap_or(DEFAULT_SEARCH_LIMIT).min(MAX_SEARCH_LIMIT); // Cap limit to prevent resource exhaustion
 
     // Check cache first
     if let Some(cached) = state.cache.get(&query) {
+        // Avoid intermediate allocation by calculating total from cached length
+        let total = cached.len().min(limit);
         let packages: Vec<_> = cached.into_iter().take(limit).collect();
-        let total = packages.len();
         return Response::Success {
             id,
             result: ResponseResult::Search(SearchResult { packages, total }),
@@ -173,7 +297,24 @@ fn handle_search(
     }
 
     // 1. Instant Official Search (Sub-millisecond)
-    let official = state.index.search(&query, limit);
+    // Run in blocking task to avoid stalling the async runtime during heavy search
+    let state_clone = Arc::clone(&state);
+    let query_clone = query.clone();
+
+    let official = tokio::task::spawn_blocking(move || {
+        state_clone.index.search(&query_clone, limit)
+    }).await;
+
+    let official = match official {
+        Ok(res) => res,
+        Err(e) => {
+            return Response::Error {
+                id,
+                code: error_codes::INTERNAL_ERROR,
+                message: format!("Search task failed: {e}"),
+            };
+        }
+    };
 
     // Cache results and return (clone only for cache, return original)
     let total = official.len();
@@ -192,11 +333,20 @@ fn handle_search(
 #[inline]
 async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) -> Response {
     // SECURITY: Validate package name to prevent command injection
-    if let Err(e) = crate::core::validation::validate_package_name(&package) {
+    if let Err(e) = crate::core::security::validate_package_name(&package) {
+        let msg = format!("Invalid package name: {e}");
+        audit_log(
+            AuditEventType::PolicyViolation,
+            AuditSeverity::Warning,
+            "daemon_handler",
+            &msg,
+        );
+        GLOBAL_METRICS.inc_validation_failures();
+        GLOBAL_METRICS.inc_requests_failed();
         return Response::Error {
             id,
             code: error_codes::INVALID_PARAMS,
-            message: format!("Invalid package name: {e}"),
+            message: msg,
         };
     }
 
@@ -248,30 +398,28 @@ async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) ->
 
     // 4. Try AUR (arch only)
     #[cfg(feature = "arch")]
-    if state.package_manager.name() == "pacman" {
-        if let Ok(details) = search_detailed(&package).await
-            && let Some(pkg) = details.into_iter().find(|p| p.name == package)
-        {
-            let detailed = DetailedPackageInfo {
-                name: pkg.name,
-                version: pkg.version.clone(),
-                description: pkg.description.unwrap_or_default(),
-                url: pkg.url.unwrap_or_default(),
-                size: 0,
-                download_size: 0,
-                repo: "aur".to_string(),
-                depends: pkg.depends.unwrap_or_default(),
-                licenses: pkg.license.unwrap_or_default(),
-                source: "aur".to_string(),
-            };
+    if state.package_manager.name() == "pacman"
+        && let Ok(details) = search_detailed(&package).await
+            && let Some(pkg) = details.into_iter().find(|p| p.name == package) {
+                let detailed = DetailedPackageInfo {
+                    name: pkg.name,
+                    version: pkg.version.clone(),
+                    description: pkg.description.unwrap_or_default(),
+                    url: pkg.url.unwrap_or_default(),
+                    size: 0,
+                    download_size: 0,
+                    repo: "aur".to_string(),
+                    depends: pkg.depends.unwrap_or_default(),
+                    licenses: pkg.license.unwrap_or_default(),
+                    source: "aur".to_string(),
+                };
 
-            state.cache.insert_info(detailed.clone());
-            return Response::Success {
-                id,
-                result: ResponseResult::Info(detailed),
-            };
-        }
-    }
+                state.cache.insert_info(detailed.clone());
+                return Response::Success {
+                    id,
+                    result: ResponseResult::Info(detailed),
+                };
+            }
 
     state.cache.insert_info_miss(&package);
 
@@ -283,7 +431,7 @@ async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) ->
 }
 
 /// Handle status request
-fn handle_status(state: &Arc<DaemonState>, id: RequestId) -> Response {
+async fn handle_status(state: Arc<DaemonState>, id: RequestId) -> Response {
     // 1. Check MEMORY cache first (instant - sub-microsecond)
     if let Some(cached) = state.cache.get_status() {
         return Response::Success {
@@ -293,7 +441,13 @@ fn handle_status(state: &Arc<DaemonState>, id: RequestId) -> Response {
     }
 
     // 2. Check persistent cache (disk - slower)
-    if let Ok(Some(cached)) = state.persistent.get_status() {
+    // Runs in blocking thread to avoid stalling async runtime
+    let state_clone = Arc::clone(&state);
+    let cached_result = tokio::task::spawn_blocking(move || {
+        state_clone.persistent.get_status()
+    }).await;
+
+    if let Ok(Ok(Some(cached))) = cached_result {
         // Promote to memory cache for next hit
         state.cache.update_status(cached.clone());
         return Response::Success {
@@ -302,33 +456,36 @@ fn handle_status(state: &Arc<DaemonState>, id: RequestId) -> Response {
         };
     }
 
-    // 3. Query system backends
-    let pm_name = state.package_manager.name();
+    // 3. Query system backends (Heavy I/O)
+    let state_clone = Arc::clone(&state);
+    let status_result = tokio::task::spawn_blocking(move || {
+        let pm_name = state_clone.package_manager.name();
 
-    let status = if pm_name == "apt" {
-        #[cfg(feature = "debian")]
-        {
-            crate::package_managers::apt_get_system_status()
+        if pm_name == "apt" {
+            #[cfg(feature = "debian")]
+            {
+                crate::package_managers::apt_get_system_status()
+            }
+            #[cfg(not(feature = "debian"))]
+            {
+                Err(anyhow::anyhow!("Debian backend disabled"))
+            }
+        } else if pm_name == "pacman" {
+            #[cfg(feature = "arch")]
+            {
+                crate::package_managers::get_system_status()
+            }
+            #[cfg(not(feature = "arch"))]
+            {
+                Err(anyhow::anyhow!("Arch backend disabled"))
+            }
+        } else {
+            Err(anyhow::anyhow!("Unsupported package manager: {pm_name}"))
         }
-        #[cfg(not(feature = "debian"))]
-        {
-            Err(anyhow::anyhow!("Debian backend disabled"))
-        }
-    } else if pm_name == "pacman" {
-        #[cfg(feature = "arch")]
-        {
-            crate::package_managers::get_system_status()
-        }
-        #[cfg(not(feature = "arch"))]
-        {
-            Err(anyhow::anyhow!("Arch backend disabled"))
-        }
-    } else {
-        Err(anyhow::anyhow!("Unsupported package manager: {}", pm_name))
-    };
+    }).await;
 
-    match status {
-        Ok((total, explicit, orphans, updates)) => {
+    match status_result {
+        Ok(Ok((total, explicit, orphans, updates))) => {
             let res = StatusResult {
                 total_packages: total,
                 explicit_packages: explicit,
@@ -346,16 +503,22 @@ fn handle_status(state: &Arc<DaemonState>, id: RequestId) -> Response {
                 result: ResponseResult::Status(res),
             }
         }
-        Err(e) => Response::Error {
+        Ok(Err(e)) => Response::Error {
             id,
             code: error_codes::INTERNAL_ERROR,
             message: format!("Failed to get system status: {e}"),
+        },
+        Err(e) => Response::Error {
+            id,
+            code: error_codes::INTERNAL_ERROR,
+            message: format!("Status task panicked: {e}"),
         },
     }
 }
 
 /// Handle security audit request
 async fn handle_security_audit(state: Arc<DaemonState>, id: RequestId) -> Response {
+    GLOBAL_METRICS.inc_security_audit_requests();
     use crate::core::security::vulnerability::VulnerabilityScanner;
 
     let scanner = VulnerabilityScanner::new();
@@ -372,7 +535,8 @@ async fn handle_security_audit(state: Arc<DaemonState>, id: RequestId) -> Respon
         }
     };
 
-    let mut vulnerabilities = Vec::new();
+    // OPTIMIZATION: Pre-allocate with expected capacity (assume ~10% hit rate)
+    let mut vulnerabilities = Vec::with_capacity(installed.len() / 10);
     let mut total_vulns = 0;
     let mut high_severity = 0;
 
@@ -383,39 +547,40 @@ async fn handle_security_audit(state: Arc<DaemonState>, id: RequestId) -> Respon
 
     let mut stream = stream::iter(installed)
         .map(|pkg| {
-            let scanner = scanner.clone();
+            let scanner = Arc::clone(&scanner); // Use Arc::clone for clarity
             async move {
-                let name = pkg.name.clone();
-                let version = pkg.version.clone();
+                // Avoid clones by moving pkg if possible, but here we just need name/version
+                let name = pkg.name;
+                let version = pkg.version;
                 let res = scanner.scan_package(&name, &version).await;
                 (name, res)
             }
         })
-        .buffer_unordered(32); // Scan up to 32 packages concurrently
+        .buffer_unordered(SCAN_CONCURRENCY); // Scan up to 32 packages concurrently
 
     while let Some((name, res)) = stream.next().await {
-        if let Ok(vulns) = res
-            && !vulns.is_empty()
-        {
-            let mapped: Vec<Vulnerability> = vulns
-                .into_iter()
-                .map(|v| {
-                    if let Some(score_str) = &v.score
-                        && let Ok(score) = score_str.parse::<f32>()
-                        && score >= 7.0
-                    {
-                        high_severity += 1;
-                    }
-                    Vulnerability {
-                        id: v.id,
-                        summary: v.summary,
-                        score: v.score,
-                    }
-                })
-                .collect();
-            total_vulns += mapped.len();
-            vulnerabilities.push((name, mapped));
+        let Ok(vulns) = res else { continue };
+        if vulns.is_empty() {
+            continue;
         }
+
+        let mapped: Vec<Vulnerability> = vulns
+            .into_iter()
+            .map(|v| {
+                if let Some(score_str) = &v.score
+                    && let Ok(score) = score_str.parse::<f32>()
+                        && score >= 7.0 {
+                            high_severity += 1;
+                        }
+                Vulnerability {
+                    id: v.id,
+                    summary: v.summary,
+                    score: v.score,
+                }
+            })
+            .collect();
+        total_vulns += mapped.len();
+        vulnerabilities.push((name, mapped));
     }
 
     let result = SecurityAuditResult {
@@ -424,6 +589,13 @@ async fn handle_security_audit(state: Arc<DaemonState>, id: RequestId) -> Respon
         vulnerabilities,
     };
 
+    audit_log(
+        AuditEventType::SecurityAudit,
+        AuditSeverity::Info,
+        "daemon_handler",
+        &format!("Security audit completed: {total_vulns} vulnerabilities found ({high_severity} high severity)"),
+    );
+
     Response::Success {
         id,
         result: ResponseResult::SecurityAudit(result),
@@ -431,7 +603,7 @@ async fn handle_security_audit(state: Arc<DaemonState>, id: RequestId) -> Respon
 }
 
 /// Handle list explicit request
-fn handle_list_explicit(state: &Arc<DaemonState>, id: RequestId) -> Response {
+async fn handle_list_explicit(state: Arc<DaemonState>, id: RequestId) -> Response {
     if let Some(cached) = state.cache.get_explicit() {
         return Response::Success {
             id,
@@ -439,47 +611,55 @@ fn handle_list_explicit(state: &Arc<DaemonState>, id: RequestId) -> Response {
         };
     }
 
-    let pm_name = state.package_manager.name();
-    let packages = if pm_name == "apt" {
-        #[cfg(feature = "debian")]
-        {
-            crate::package_managers::apt_list_explicit()
+    let state_clone = Arc::clone(&state);
+    let packages_result = tokio::task::spawn_blocking(move || {
+        let pm_name = state_clone.package_manager.name();
+        if pm_name == "apt" {
+            #[cfg(feature = "debian")]
+            {
+                crate::package_managers::apt_list_explicit()
+            }
+            #[cfg(not(feature = "debian"))]
+            {
+                Err(anyhow::anyhow!("Debian backend disabled"))
+            }
+        } else if pm_name == "pacman" {
+            #[cfg(feature = "arch")]
+            {
+                crate::package_managers::list_explicit_fast()
+            }
+            #[cfg(not(feature = "arch"))]
+            {
+                Err(anyhow::anyhow!("Arch backend disabled"))
+            }
+        } else {
+            Err(anyhow::anyhow!("Unsupported package manager: {pm_name}"))
         }
-        #[cfg(not(feature = "debian"))]
-        {
-            Err(anyhow::anyhow!("Debian backend disabled"))
-        }
-    } else if pm_name == "pacman" {
-        #[cfg(feature = "arch")]
-        {
-            crate::package_managers::list_explicit_fast()
-        }
-        #[cfg(not(feature = "arch"))]
-        {
-            Err(anyhow::anyhow!("Arch backend disabled"))
-        }
-    } else {
-        Err(anyhow::anyhow!("Unsupported package manager: {}", pm_name))
-    };
+    }).await;
 
-    match packages {
-        Ok(packages) => {
+    match packages_result {
+        Ok(Ok(packages)) => {
             state.cache.update_explicit(packages.clone());
             Response::Success {
                 id,
                 result: ResponseResult::Explicit(ExplicitResult { packages }),
             }
         }
-        Err(e) => Response::Error {
+        Ok(Err(e)) => Response::Error {
             id,
             code: error_codes::INTERNAL_ERROR,
             message: format!("Failed to list explicit packages: {e}"),
+        },
+        Err(e) => Response::Error {
+            id,
+            code: error_codes::INTERNAL_ERROR,
+            message: format!("List explicit task panicked: {e}"),
         },
     }
 }
 
 /// Handle explicit package count request
-fn handle_explicit_count(state: &Arc<DaemonState>, id: RequestId) -> Response {
+async fn handle_explicit_count(state: Arc<DaemonState>, id: RequestId) -> Response {
     if let Some(cached) = state.cache.get_explicit_count() {
         return Response::Success {
             id,
@@ -487,41 +667,49 @@ fn handle_explicit_count(state: &Arc<DaemonState>, id: RequestId) -> Response {
         };
     }
 
-    let pm_name = state.package_manager.name();
-    let count = if pm_name == "apt" {
-        #[cfg(feature = "debian")]
-        {
-            crate::package_managers::apt_list_explicit().map(|packages| packages.len())
+    let state_clone = Arc::clone(&state);
+    let count_result = tokio::task::spawn_blocking(move || {
+        let pm_name = state_clone.package_manager.name();
+        if pm_name == "apt" {
+            #[cfg(feature = "debian")]
+            {
+                crate::package_managers::apt_list_explicit().map(|packages| packages.len())
+            }
+            #[cfg(not(feature = "debian"))]
+            {
+                Err(anyhow::anyhow!("Debian backend disabled"))
+            }
+        } else if pm_name == "pacman" {
+            #[cfg(feature = "arch")]
+            {
+                crate::package_managers::list_explicit_fast().map(|packages| packages.len())
+            }
+            #[cfg(not(feature = "arch"))]
+            {
+                Err(anyhow::anyhow!("Arch backend disabled"))
+            }
+        } else {
+            Err(anyhow::anyhow!("Unsupported package manager: {pm_name}"))
         }
-        #[cfg(not(feature = "debian"))]
-        {
-            Err(anyhow::anyhow!("Debian backend disabled"))
-        }
-    } else if pm_name == "pacman" {
-        #[cfg(feature = "arch")]
-        {
-            crate::package_managers::list_explicit_fast().map(|packages| packages.len())
-        }
-        #[cfg(not(feature = "arch"))]
-        {
-            Err(anyhow::anyhow!("Arch backend disabled"))
-        }
-    } else {
-        Err(anyhow::anyhow!("Unsupported package manager: {}", pm_name))
-    };
+    }).await;
 
-    match count {
-        Ok(count) => {
+    match count_result {
+        Ok(Ok(count)) => {
             state.cache.update_explicit_count(count);
             Response::Success {
                 id,
                 result: ResponseResult::ExplicitCount(count),
             }
         }
-        Err(e) => Response::Error {
+        Ok(Err(e)) => Response::Error {
             id,
             code: error_codes::INTERNAL_ERROR,
             message: format!("Failed to count explicit packages: {e}"),
+        },
+        Err(e) => Response::Error {
+            id,
+            code: error_codes::INTERNAL_ERROR,
+            message: format!("Explicit count task panicked: {e}"),
         },
     }
 }

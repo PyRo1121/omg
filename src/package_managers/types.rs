@@ -85,3 +85,11 @@ pub struct PackageInfo {
     pub licenses: Vec<String>,
     pub installed: bool,
 }
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct UpdateInfo {
+    pub name: String,
+    pub old_version: String,
+    pub new_version: String,
+    pub repo: String,
+}

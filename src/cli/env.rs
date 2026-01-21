@@ -64,6 +64,11 @@ struct GistFileResponse {
 
 /// Share environment state to GitHub Gist
 pub async fn share(description: String, public: bool) -> Result<()> {
+    // SECURITY: Validate description
+    if description.len() > 1000 {
+        anyhow::bail!("Description too long");
+    }
+
     if !std::path::Path::new("omg.lock").exists() {
         anyhow::bail!("No omg.lock file found. Run 'omg env capture' first.");
     }
@@ -107,6 +112,11 @@ pub async fn share(description: String, public: bool) -> Result<()> {
 
 /// Sync environment from Gist
 pub async fn sync(url_or_id: String) -> Result<()> {
+    // SECURITY: Basic validation for input
+    if url_or_id.len() > 255 || url_or_id.chars().any(char::is_control) {
+        anyhow::bail!("Invalid Gist URL or ID");
+    }
+
     println!("{} Syncing environment...", "OMG".cyan().bold());
 
     let client = shared_client();

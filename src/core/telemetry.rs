@@ -81,7 +81,7 @@ fn get_backend() -> String {
     #[cfg(feature = "arch")]
     return "arch".to_string();
 
-    #[cfg(feature = "debian")]
+    #[cfg(all(feature = "debian", not(feature = "arch")))]
     return "debian".to_string();
 
     #[cfg(not(any(feature = "arch", feature = "debian")))]

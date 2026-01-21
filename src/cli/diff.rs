@@ -8,6 +8,12 @@ use crate::core::env::fingerprint::EnvironmentState;
 
 /// Compare two environment states
 pub async fn run(from: Option<&str>, to: &str) -> Result<()> {
+    // SECURITY: Validate paths/names
+    if let Some(f) = from {
+        crate::core::security::validate_relative_path(f)?;
+    }
+    crate::core::security::validate_relative_path(to)?;
+
     println!("{} Environment Comparison\n", "OMG".cyan().bold());
 
     // Load the "from" state (current env or specified file)

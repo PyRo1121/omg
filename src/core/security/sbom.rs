@@ -192,7 +192,7 @@ impl SbomGenerator {
         #[cfg(feature = "arch")]
         let installed = crate::package_managers::list_installed_fast()
             .map_err(|e| anyhow::anyhow!("Failed to list packages: {e}"))?;
-        #[cfg(feature = "debian")]
+        #[cfg(all(feature = "debian", not(feature = "arch")))]
         let installed = crate::package_managers::apt_list_installed_fast()
             .map_err(|e| anyhow::anyhow!("Failed to list packages: {e}"))?;
         #[cfg(not(any(feature = "arch", feature = "debian")))]

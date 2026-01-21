@@ -125,6 +125,12 @@ impl ContainerManager {
 
     /// Run a command in a container
     pub fn run(&self, config: &ContainerConfig, command: &[&str]) -> Result<i32> {
+        // SECURITY: Validate image and name to prevent injection
+        crate::core::security::validate_package_name(&config.image)?;
+        if let Some(ref name) = config.name {
+            crate::core::security::validate_package_name(name)?;
+        }
+
         let mut cmd = Command::new(self.runtime.command());
         cmd.arg("run");
 
@@ -156,6 +162,7 @@ impl ContainerManager {
             cmd.args(["-p", &format!("{host}:{container}")]);
         }
 
+        cmd.arg("--");
         cmd.arg(&config.image);
         cmd.args(command);
 
@@ -171,6 +178,9 @@ impl ContainerManager {
 
     /// Execute a command in a running container
     pub fn exec(&self, container: &str, command: &[&str], interactive: bool) -> Result<i32> {
+        // SECURITY: Validate container name
+        crate::core::security::validate_package_name(container)?;
+
         let mut cmd = Command::new(self.runtime.command());
         cmd.arg("exec");
 
@@ -178,6 +188,7 @@ impl ContainerManager {
             cmd.arg("-it");
         }
 
+        cmd.arg("--");
         cmd.arg(container);
         cmd.args(command);
 
@@ -217,6 +228,7 @@ impl ContainerManager {
             cmd.args(["--target", t]);
         }
 
+        cmd.arg("--");
         cmd.arg(context.display().to_string());
 
         let status = cmd.status().context("Failed to build container")?;
@@ -260,8 +272,11 @@ impl ContainerManager {
 
     /// Stop a running container
     pub fn stop(&self, container: &str) -> Result<()> {
+        // SECURITY: Validate container name
+        crate::core::security::validate_package_name(container)?;
+
         let status = Command::new(self.runtime.command())
-            .args(["stop", container])
+            .args(["stop", "--", container])
             .status()
             .context("Failed to stop container")?;
 
@@ -273,12 +288,15 @@ impl ContainerManager {
 
     /// Remove a container
     pub fn remove(&self, container: &str, force: bool) -> Result<()> {
+        // SECURITY: Validate container name
+        crate::core::security::validate_package_name(container)?;
+
         let mut cmd = Command::new(self.runtime.command());
         cmd.arg("rm");
         if force {
             cmd.arg("-f");
         }
-        cmd.arg(container);
+        cmd.args(["--", container]);
 
         let status = cmd.status().context("Failed to remove container")?;
         if !status.success() {
@@ -289,8 +307,11 @@ impl ContainerManager {
 
     /// Pull an image
     pub fn pull(&self, image: &str) -> Result<()> {
+        // SECURITY: Validate image name
+        crate::core::security::validate_package_name(image)?;
+
         let status = Command::new(self.runtime.command())
-            .args(["pull", image])
+            .args(["pull", "--", image])
             .status()
             .context("Failed to pull image")?;
 
@@ -429,8 +450,46 @@ impl ContainerManager {
                     dockerfile.push_str("    && rm -rf /var/lib/apt/lists/*\n\n");
                 }
                 _ => {
-                    use std::fmt::Write as _;
-                    let _ = writeln!(dockerfile, "# TODO: Install {runtime} {version}");
+                    // Attempt to install as system package based on distribution
+                    let pkg = *runtime;
+                    if base_image.contains("ubuntu") || base_image.contains("debian") {
+                        use std::fmt::Write as _;
+                        let _ = writeln!(dockerfile, "# Install {pkg}");
+                        let _ = writeln!(
+                            dockerfile,
+                            "RUN apt-get update && apt-get install -y {pkg} && rm -rf /var/lib/apt/lists/*\n"
+                        );
+                    } else if base_image.contains("arch") {
+                        use std::fmt::Write as _;
+                        let _ = writeln!(dockerfile, "# Install {pkg}");
+                        let _ = writeln!(dockerfile, "RUN pacman -S --noconfirm {pkg}\n");
+                    } else if base_image.contains("alpine") {
+                        use std::fmt::Write as _;
+                        let _ = writeln!(dockerfile, "# Install {pkg}");
+                        let _ = writeln!(dockerfile, "RUN apk add --no-cache {pkg}\n");
+                    } else if base_image.contains("fedora") || base_image.contains("rhel") || base_image.contains("centos") {
+                        use std::fmt::Write as _;
+                        let _ = writeln!(dockerfile, "# Install {pkg}");
+                        let _ = writeln!(dockerfile, "RUN dnf install -y {pkg} && dnf clean all\n");
+                    } else if base_image.contains("opensuse") {
+                        use std::fmt::Write as _;
+                        let _ = writeln!(dockerfile, "# Install {pkg}");
+                        let _ = writeln!(dockerfile, "RUN zypper install -y {pkg} && zypper clean\n");
+                    } else {
+                        use std::fmt::Write as _;
+                        let _ = writeln!(
+                            dockerfile,
+                            "# WARNING: Unknown base image '{base_image}' - package installation not automated"
+                        );
+                        let _ = writeln!(
+                            dockerfile,
+                            "# Please manually install {runtime} {version} using your distribution's package manager"
+                        );
+                        let _ = writeln!(
+                            dockerfile,
+                            "# Supported base images: ubuntu, debian, arch, alpine, fedora, rhel, centos, opensuse\n"
+                        );
+                    }
                 }
             }
         }
@@ -519,5 +578,16 @@ mod tests {
         assert!(dockerfile.contains("FROM ubuntu:24.04"));
         // Check for Node.js installation (new format installs runtimes)
         assert!(dockerfile.contains("Install Node.js") || dockerfile.contains("NODE_VERSION"));
+    }
+
+    #[test]
+    fn test_generate_dockerfile_generic() {
+        let manager = ContainerManager::with_runtime(ContainerRuntime::Docker);
+        // Test generic package installation (e.g. gcc)
+        let dockerfile = manager.generate_dockerfile("ubuntu:24.04", &[("gcc", "latest")]);
+        assert!(dockerfile.contains("apt-get install -y gcc"));
+
+        let dockerfile_arch = manager.generate_dockerfile("archlinux:latest", &[("vim", "latest")]);
+        assert!(dockerfile_arch.contains("pacman -S --noconfirm vim"));
     }
 }

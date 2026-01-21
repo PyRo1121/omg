@@ -87,6 +87,15 @@ pub fn run(
     volumes: &[String],
     workdir: Option<String>,
 ) -> Result<()> {
+    // SECURITY: Validate image name and container name
+    if image.chars().any(|c| c.is_control() || c == ';') {
+        anyhow::bail!("Invalid image name");
+    }
+    if let Some(ref n) = name
+        && n.chars().any(|c| !c.is_ascii_alphanumeric() && c != '-' && c != '_') {
+            anyhow::bail!("Invalid container name");
+        }
+
     let manager = ContainerManager::new()?;
 
     println!(
@@ -180,6 +189,14 @@ pub fn build(
     build_args: &[String],
     target: &Option<String>,
 ) -> Result<()> {
+    // SECURITY: Validate tag and paths
+    if tag.chars().any(|c| c.is_control() || c == ';') {
+        anyhow::bail!("Invalid tag name");
+    }
+    if let Some(ref df) = dockerfile {
+        crate::core::security::validate_relative_path(df)?;
+    }
+
     let manager = ContainerManager::new()?;
     let cwd = std::env::current_dir()?;
 

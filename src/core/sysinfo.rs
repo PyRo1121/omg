@@ -144,10 +144,9 @@ fn detect_ram_gb() -> f64 {
                 // Format: "MemTotal:       16384000 kB"
                 let parts: Vec<&str> = line.split_whitespace().collect();
                 if let Some(kb_str) = parts.get(1)
-                    && let Ok(kb) = kb_str.parse::<u64>()
-                {
-                    return kb as f64 / 1_048_576.0; // kB to GB
-                }
+                    && let Ok(kb) = kb_str.parse::<u64>() {
+                        return kb as f64 / 1_048_576.0; // kB to GB
+                    }
             }
         }
     }
@@ -168,7 +167,7 @@ fn is_tool_available(name: &str) -> bool {
 
     // Fallback to which command
     Command::new("which")
-        .arg(name)
+        .args(["--", name])
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)

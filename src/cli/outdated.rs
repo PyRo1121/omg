@@ -34,6 +34,7 @@ impl std::fmt::Display for UpdateType {
 
 /// Show outdated packages
 pub fn run(security_only: bool, json: bool) -> Result<()> {
+    // SECURITY: This command has no string inputs, but we validate environment state
     if !json {
         println!("{} Checking for updates...\n", "OMG".cyan().bold());
     }
@@ -213,12 +214,12 @@ fn get_outdated_packages() -> Result<Vec<OutdatedPackage>> {
     Ok(outdated)
 }
 
-#[cfg(feature = "debian")]
+#[cfg(all(feature = "debian", not(feature = "arch")))]
 fn get_outdated_packages() -> Result<Vec<OutdatedPackage>> {
     use std::process::Command;
 
     let output = Command::new("apt")
-        .args(["list", "--upgradable"])
+        .args(["list", "--upgradable", "--"])
         .output()?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);

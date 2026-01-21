@@ -7,11 +7,15 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::path::Path;
 
+use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
+
 use crate::core::paths;
 
 /// Fast status structure - fixed size for mmap-friendly reads
+///
+/// Uses zerocopy for safe serialization without unsafe transmute.
 #[repr(C)]
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, FromBytes, IntoBytes, Immutable, KnownLayout)]
 pub struct FastStatus {
     /// Magic number for validation (0x4F4D4753 = "OMGS")
     pub magic: u32,
@@ -56,13 +60,11 @@ impl FastStatus {
     pub fn write_to_file(&self, path: &Path) -> std::io::Result<()> {
         let tmp_path = path.with_extension("tmp");
 
-        // SAFETY: FastStatus is a #[repr(C)] POD struct with fixed layout and no padding
-        // between fields that could contain uninitialized bytes. transmute_copy is sound
-        // because Self has a well-defined byte representation.
-        let bytes: [u8; std::mem::size_of::<Self>()] = unsafe { std::mem::transmute_copy(self) };
+        // Safe serialization using zerocopy - no unsafe needed
+        let bytes = self.as_bytes();
 
         let mut file = File::create(&tmp_path)?;
-        file.write_all(&bytes)?;
+        file.write_all(bytes)?;
         file.sync_all()?;
 
         // Atomic rename
@@ -76,10 +78,8 @@ impl FastStatus {
         let mut bytes = [0u8; std::mem::size_of::<Self>()];
         file.read_exact(&mut bytes).ok()?;
 
-        // SAFETY: FastStatus is a #[repr(C)] POD struct. The byte array has the exact
-        // size of Self and was read from a file that was written by write_to_file().
-        // We validate magic and version immediately after to catch corrupted data.
-        let status: Self = unsafe { std::mem::transmute(bytes) };
+        // Safe deserialization using zerocopy - no unsafe needed
+        let status = Self::read_from_bytes(&bytes).ok()?;
         if status.magic != MAGIC || status.version != VERSION {
             return None;
         }

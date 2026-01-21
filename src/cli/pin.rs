@@ -122,6 +122,9 @@ fn pin_target(config: &mut PinConfig, target: &str) -> Result<()> {
             );
         }
 
+        // SECURITY: Validate version string
+        crate::core::security::validate_version(version)?;
+
         config
             .runtimes
             .insert(runtime.to_string(), version.to_string());
@@ -133,6 +136,9 @@ fn pin_target(config: &mut PinConfig, target: &str) -> Result<()> {
         );
         println!("  This runtime will not be auto-updated.");
     } else {
+        // SECURITY: Validate package name
+        crate::core::security::validate_package_name(target)?;
+
         // Package pin
         let current_version = get_package_version(target)?;
         config
@@ -154,7 +160,11 @@ fn pin_target(config: &mut PinConfig, target: &str) -> Result<()> {
 
 fn unpin_target(config: &mut PinConfig, target: &str) {
     // Check if it's a runtime
-    let runtime_name = target.split('@').next().unwrap_or(target);
+    let (runtime_name, version) = if let Some((r, v)) = target.split_once('@') {
+        (r, Some(v))
+    } else {
+        (target, None)
+    };
 
     if config.runtimes.remove(runtime_name).is_some() {
         println!("{} Unpinned runtime {}", "✓".green(), runtime_name.yellow());
@@ -168,7 +178,13 @@ fn unpin_target(config: &mut PinConfig, target: &str) {
         return;
     }
 
-    println!("{} '{}' is not pinned", "⚠".yellow(), target);
+        if let Some(_v) = version
+            && config.runtimes.remove(runtime_name).is_some()
+        {
+            println!("{} Unpinned runtime {}", "✓".green(), runtime_name.yellow());
+            return;
+        }
+        println!("{} '{}' is not pinned", "⚠".yellow(), target);
 }
 
 #[cfg(feature = "arch")]
@@ -193,12 +209,12 @@ fn get_package_version(name: &str) -> Result<Option<String>> {
     }
 }
 
-#[cfg(feature = "debian")]
+#[cfg(all(feature = "debian", not(feature = "arch")))]
 fn get_package_version(name: &str) -> Result<Option<String>> {
     use std::process::Command;
 
     let output = Command::new("dpkg-query")
-        .args(["-W", "-f=${Version}", name])
+        .args(["-W", "-f=${Version}", "--", name])
         .output()?;
 
     if output.status.success() {
@@ -206,7 +222,7 @@ fn get_package_version(name: &str) -> Result<Option<String>> {
         Ok(Some(version))
     } else {
         // Check if package exists
-        let check = Command::new("apt-cache").args(["show", name]).output()?;
+        let check = Command::new("apt-cache").args(["show", "--", name]).output()?;
 
         if check.status.success() {
             Ok(None) // Exists but not installed

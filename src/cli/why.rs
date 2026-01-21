@@ -7,6 +7,9 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 /// Explain why a package is installed
 pub fn run(package: &str, reverse: bool) -> Result<()> {
+    // SECURITY: Validate package name
+    crate::core::security::validate_package_name(package)?;
+
     println!(
         "{} Analyzing dependencies for {}...\n",
         "OMG".cyan().bold(),
@@ -22,7 +25,7 @@ pub fn run(package: &str, reverse: bool) -> Result<()> {
         }
     }
 
-    #[cfg(feature = "debian")]
+    #[cfg(all(feature = "debian", not(feature = "arch")))]
     {
         if reverse {
             show_reverse_deps_debian(package)?;
@@ -285,13 +288,13 @@ fn show_reverse_deps(package: &str) -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "debian")]
+#[cfg(all(feature = "debian", not(feature = "arch")))]
 fn show_dependency_chain_debian(package: &str) -> Result<()> {
     use std::process::Command;
 
     // Use apt-cache to get dependency info
     let output = Command::new("apt-cache")
-        .args(["depends", package])
+        .args(["depends", "--", package])
         .output()?;
 
     if !output.status.success() {
@@ -315,12 +318,12 @@ fn show_dependency_chain_debian(package: &str) -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "debian")]
+#[cfg(all(feature = "debian", not(feature = "arch")))]
 fn show_reverse_deps_debian(package: &str) -> Result<()> {
     use std::process::Command;
 
     let output = Command::new("apt-cache")
-        .args(["rdepends", package])
+        .args(["rdepends", "--", package])
         .output()?;
 
     if !output.status.success() {

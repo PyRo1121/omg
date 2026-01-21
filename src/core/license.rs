@@ -15,7 +15,7 @@
 //! - Token refreshes every 7 days on validation
 
 use anyhow::{Context, Result};
-use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use jsonwebtoken::{DecodingKey, Validation, decode};
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
 use std::path::PathBuf;
@@ -23,10 +23,8 @@ use std::str::FromStr;
 
 const LICENSE_API_URL: &str = "https://api.pyro1121.com/api/validate-license";
 
-/// Public key for JWT verification (HMAC secret is server-side only)
-/// For offline validation, we embed a verification key
-#[allow(dead_code)]
-const JWT_PUBLIC_KEY: &str = "omg-license-v1"; // Used for basic validation
+/// Key for JWT verification
+const JWT_VERIFICATION_KEY: &[u8] = b"omg-license-v1-secret-key-2026";
 
 /// License tiers (ordered by level)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -103,6 +101,7 @@ pub enum Feature {
     Audit,
     Secrets,
     // Team features
+    Fleet,
     TeamSync,
     TeamConfig,
     AuditLog,
@@ -111,6 +110,9 @@ pub enum Feature {
     Slsa,
     Sso,
     PrioritySupport,
+    EnterpriseReports,
+    AuditExport,
+    LicenseScan,
 }
 
 impl Feature {
@@ -126,9 +128,15 @@ impl Feature {
             // Pro
             Self::Sbom | Self::Audit | Self::Secrets => Tier::Pro,
             // Team
-            Self::TeamSync | Self::TeamConfig | Self::AuditLog => Tier::Team,
+            Self::Fleet | Self::TeamSync | Self::TeamConfig | Self::AuditLog => Tier::Team,
             // Enterprise
-            Self::Policy | Self::Slsa | Self::Sso | Self::PrioritySupport => Tier::Enterprise,
+            Self::Policy
+            | Self::Slsa
+            | Self::Sso
+            | Self::PrioritySupport
+            | Self::EnterpriseReports
+            | Self::AuditExport
+            | Self::LicenseScan => Tier::Enterprise,
         }
     }
 
@@ -144,13 +152,17 @@ impl Feature {
             "sbom" => Some(Self::Sbom),
             "audit" => Some(Self::Audit),
             "secrets" => Some(Self::Secrets),
+            "fleet" => Some(Self::Fleet),
             "team-sync" | "team_sync" => Some(Self::TeamSync),
             "team-config" | "team_config" => Some(Self::TeamConfig),
             "audit-log" | "audit_log" => Some(Self::AuditLog),
-            "policy" => Some(Self::Policy),
+            "policy" | "enterprise-policy" | "enterprise_policy" => Some(Self::Policy),
             "slsa" => Some(Self::Slsa),
             "sso" => Some(Self::Sso),
             "priority-support" | "priority_support" => Some(Self::PrioritySupport),
+            "enterprise-reports" | "enterprise_reports" => Some(Self::EnterpriseReports),
+            "audit-export" | "audit_export" => Some(Self::AuditExport),
+            "license-scan" | "license_scan" => Some(Self::LicenseScan),
             _ => None,
         }
     }
@@ -166,6 +178,7 @@ impl Feature {
             Self::Sbom => "sbom",
             Self::Audit => "audit",
             Self::Secrets => "secrets",
+            Self::Fleet => "fleet",
             Self::TeamSync => "team-sync",
             Self::TeamConfig => "team-config",
             Self::AuditLog => "audit-log",
@@ -173,6 +186,9 @@ impl Feature {
             Self::Slsa => "slsa",
             Self::Sso => "sso",
             Self::PrioritySupport => "priority-support",
+            Self::EnterpriseReports => "enterprise-reports",
+            Self::AuditExport => "audit-export",
+            Self::LicenseScan => "license-scan",
         }
     }
 
@@ -187,6 +203,7 @@ impl Feature {
             Self::Sbom => "SBOM Generation (CycloneDX)",
             Self::Audit => "Vulnerability Scanning",
             Self::Secrets => "Secret Detection",
+            Self::Fleet => "Fleet Management",
             Self::TeamSync => "Team Environment Sync",
             Self::TeamConfig => "Shared Team Configs",
             Self::AuditLog => "Tamper-proof Audit Logs",
@@ -194,6 +211,9 @@ impl Feature {
             Self::Slsa => "SLSA Provenance Verification",
             Self::Sso => "SSO/SAML Integration",
             Self::PrioritySupport => "Priority Support",
+            Self::EnterpriseReports => "Executive Reports",
+            Self::AuditExport => "Compliance Audit Export",
+            Self::LicenseScan => "License Compliance Scan",
         }
     }
 }
@@ -209,13 +229,21 @@ pub const FREE_FEATURES: &[Feature] = &[
 
 pub const PRO_FEATURES: &[Feature] = &[Feature::Sbom, Feature::Audit, Feature::Secrets];
 
-pub const TEAM_FEATURES: &[Feature] = &[Feature::TeamSync, Feature::TeamConfig, Feature::AuditLog];
+pub const TEAM_FEATURES: &[Feature] = &[
+    Feature::Fleet,
+    Feature::TeamSync,
+    Feature::TeamConfig,
+    Feature::AuditLog,
+];
 
 pub const ENTERPRISE_FEATURES: &[Feature] = &[
     Feature::Policy,
     Feature::Slsa,
     Feature::Sso,
     Feature::PrioritySupport,
+    Feature::EnterpriseReports,
+    Feature::AuditExport,
+    Feature::LicenseScan,
 ];
 
 /// License response from the validation API
@@ -256,6 +284,36 @@ pub struct StoredLicense {
     pub machine_id: Option<String>, // Bound machine ID
 }
 
+/// Team member info returned from API
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamMember {
+    pub machine_id: String,
+    pub hostname: Option<String>,
+    pub os: Option<String>,
+    pub arch: Option<String>,
+    pub omg_version: Option<String>,
+    pub last_seen_at: String,
+    pub is_active: bool,
+}
+
+/// Policy rule returned from API
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PolicyRule {
+    pub scope: String,
+    pub rule: String,
+    pub enforced: bool,
+}
+
+/// Audit log entry returned from API
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuditLogEntry {
+    pub action: String,
+    pub resource_type: Option<String>,
+    pub resource_id: Option<String>,
+    pub ip_address: Option<String>,
+    pub created_at: String,
+}
+
 impl StoredLicense {
     #[must_use]
     pub fn tier_enum(&self) -> Tier {
@@ -266,11 +324,9 @@ impl StoredLicense {
     #[must_use]
     pub fn is_token_valid(&self) -> bool {
         if let Some(token) = &self.token
-            && let Some(payload) = decode_jwt_payload(token)
-        {
-            let now = jiff::Timestamp::now().as_second();
-            return payload.exp > now;
-        }
+            && verify_jwt(token).is_some() {
+                return true;
+            }
         false
     }
 
@@ -278,12 +334,11 @@ impl StoredLicense {
     #[must_use]
     pub fn needs_refresh(&self) -> bool {
         if let Some(token) = &self.token
-            && let Some(payload) = decode_jwt_payload(token)
-        {
-            let now = jiff::Timestamp::now().as_second();
-            let one_day = 24 * 60 * 60;
-            return payload.exp - now < one_day;
-        }
+            && let Some(payload) = verify_jwt(token) {
+                let now = jiff::Timestamp::now().as_second();
+                let one_day = 24 * 60 * 60;
+                return payload.exp - now < one_day;
+            }
         true
     }
 }
@@ -326,17 +381,16 @@ fn sha256_hex(data: &[u8]) -> String {
     hex::encode(result)
 }
 
-/// Decode JWT payload without verification (for reading claims)
-fn decode_jwt_payload(token: &str) -> Option<JwtPayload> {
-    let parts: Vec<&str> = token.split('.').collect();
-    if parts.len() != 3 {
-        return None;
-    }
-
-    let payload_b64 = parts[1];
-    let payload_bytes = URL_SAFE_NO_PAD.decode(payload_b64).ok()?;
-    let payload_str = String::from_utf8(payload_bytes).ok()?;
-    serde_json::from_str(&payload_str).ok()
+/// Decode and verify JWT payload
+fn verify_jwt(token: &str) -> Option<JwtPayload> {
+    let mut validation = Validation::new(jsonwebtoken::Algorithm::HS256);
+    validation.validate_exp = true;
+    
+    let key = DecodingKey::from_secret(JWT_VERIFICATION_KEY);
+    
+    decode::<JwtPayload>(token, &key, &validation)
+        .map(|data| data.claims)
+        .ok()
 }
 
 /// Get the license file path
@@ -406,6 +460,190 @@ pub async fn validate_license_with_user(
         .context("Failed to parse license response")?;
 
     Ok(license)
+}
+
+/// Fetch team members associated with this license
+pub async fn fetch_team_members() -> Result<Vec<TeamMember>> {
+    let Some(license) = load_license() else {
+        anyhow::bail!("No license found. Activate with 'omg license activate <key>'");
+    };
+
+    let url = format!("https://api.pyro1121.com/api/license/members?key={}", license.key);
+
+    let response = reqwest::Client::new()
+        .get(&url)
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await
+        .context("Failed to connect to team server")?;
+
+    if !response.status().is_success() {
+        if response.status() == reqwest::StatusCode::FORBIDDEN {
+            anyhow::bail!("Team features require Team or Enterprise tier");
+        }
+        anyhow::bail!("Failed to fetch team members (status: {})", response.status());
+    }
+
+    let members: Vec<TeamMember> = response
+        .json()
+        .await
+        .context("Failed to parse team members response")?;
+
+    Ok(members)
+}
+
+/// Fetch enterprise policies associated with this license
+pub async fn fetch_policies() -> Result<Vec<PolicyRule>> {
+    let Some(license) = load_license() else {
+        anyhow::bail!("No license found. Activate with 'omg license activate <key>'");
+    };
+
+    let url = format!("https://api.pyro1121.com/api/license/policies?key={}", license.key);
+
+    let response = reqwest::Client::new()
+        .get(&url)
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await
+        .context("Failed to connect to policy server")?;
+
+    if !response.status().is_success() {
+        if response.status() == reqwest::StatusCode::FORBIDDEN {
+            anyhow::bail!("Policy features require Enterprise tier");
+        }
+        anyhow::bail!("Failed to fetch policies (status: {})", response.status());
+    }
+
+    let policies: Vec<PolicyRule> = response
+        .json()
+        .await
+        .context("Failed to parse policies response")?;
+
+    Ok(policies)
+}
+
+/// Fetch audit logs associated with this license
+pub async fn fetch_audit_logs() -> Result<Vec<AuditLogEntry>> {
+    let Some(license) = load_license() else {
+        anyhow::bail!("No license found. Activate with 'omg license activate <key>'");
+    };
+
+    let url = format!("https://api.pyro1121.com/api/license/audit?key={}", license.key);
+
+    let response = reqwest::Client::new()
+        .get(&url)
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await
+        .context("Failed to connect to audit server")?;
+
+    if !response.status().is_success() {
+        if response.status() == reqwest::StatusCode::FORBIDDEN {
+            anyhow::bail!("Audit logs require Team or Enterprise tier");
+        }
+        anyhow::bail!("Failed to fetch audit logs (status: {})", response.status());
+    }
+
+    let logs: Vec<AuditLogEntry> = response
+        .json()
+        .await
+        .context("Failed to parse audit logs response")?;
+
+    Ok(logs)
+}
+
+/// Propose an environment change to the team
+pub async fn propose_change(message: &str, state: &serde_json::Value) -> Result<u32> {
+    let Some(license) = load_license() else {
+        anyhow::bail!("No license found. Activate with 'omg license activate <key>'");
+    };
+
+    let url = "https://api.pyro1121.com/api/team/propose";
+
+    let response = reqwest::Client::new()
+        .post(url)
+        .json(&serde_json::json!({
+            "key": license.key,
+            "message": message,
+            "state": state
+        }))
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await
+        .context("Failed to connect to team server")?;
+
+    if !response.status().is_success() {
+        let err: serde_json::Value = response.json().await.unwrap_or_default();
+        anyhow::bail!(
+            "Failed to create proposal: {}",
+            err["error"].as_str().unwrap_or("Unknown error")
+        );
+    }
+
+    let res: serde_json::Value = response
+        .json()
+        .await
+        .context("Failed to parse proposal response")?;
+
+    Ok(res["proposal_id"].as_u64().unwrap_or(0) as u32)
+}
+
+/// Review a team proposal
+pub async fn review_proposal(proposal_id: u32, status: &str) -> Result<()> {
+    let Some(license) = load_license() else {
+        anyhow::bail!("No license found. Activate with 'omg license activate <key>'");
+    };
+
+    let url = "https://api.pyro1121.com/api/team/review";
+
+    let response = reqwest::Client::new()
+        .post(url)
+        .json(&serde_json::json!({
+            "key": license.key,
+            "proposal_id": proposal_id,
+            "status": status
+        }))
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await
+        .context("Failed to connect to team server")?;
+
+    if !response.status().is_success() {
+        let err: serde_json::Value = response.json().await.unwrap_or_default();
+        anyhow::bail!(
+            "Failed to review proposal: {}",
+            err["error"].as_str().unwrap_or("Unknown error")
+        );
+    }
+
+    Ok(())
+}
+
+/// Fetch team proposals
+pub async fn fetch_proposals() -> Result<Vec<serde_json::Value>> {
+    let Some(license) = load_license() else {
+        anyhow::bail!("No license found. Activate with 'omg license activate <key>'");
+    };
+
+    let url = format!("https://api.pyro1121.com/api/team/proposals?key={}", license.key);
+
+    let response = reqwest::Client::new()
+        .get(&url)
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await
+        .context("Failed to connect to team server")?;
+
+    if !response.status().is_success() {
+        anyhow::bail!("Failed to fetch proposals (status: {})", response.status());
+    }
+
+    let proposals: Vec<serde_json::Value> = response
+        .json()
+        .await
+        .context("Failed to parse proposals response")?;
+
+    Ok(proposals)
 }
 
 /// Activate a license key

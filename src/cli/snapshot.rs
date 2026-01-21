@@ -60,6 +60,13 @@ fn save_index(index: &SnapshotIndex) -> Result<()> {
 
 /// Create a new snapshot
 pub async fn create(message: Option<String>) -> Result<()> {
+    if let Some(ref msg) = message {
+        // SECURITY: Validate message length
+        if msg.len() > 1000 {
+            anyhow::bail!("Snapshot message too long");
+        }
+    }
+
     println!("{} Creating snapshot...\n", "OMG".cyan().bold());
 
     let state = EnvironmentState::capture().await?;
@@ -147,7 +154,12 @@ pub fn list() -> Result<()> {
 }
 
 /// Restore a snapshot
-pub async fn restore(id: &str, dry_run: bool) -> Result<()> {
+pub async fn restore(id: &str, dry_run: bool, yes: bool) -> Result<()> {
+    // SECURITY: Validate snapshot ID
+    if id.chars().any(|c| !c.is_ascii_alphanumeric() && c != '-') {
+        anyhow::bail!("Invalid snapshot ID: {id}");
+    }
+
     println!(
         "{} {} snapshot {}\n",
         "OMG".cyan().bold(),
@@ -247,31 +259,41 @@ pub async fn restore(id: &str, dry_run: bool) -> Result<()> {
     // Switch runtimes
     for (runtime, _, target_ver) in &runtime_changes {
         println!("    Switching {runtime} to {target_ver}...");
-        // In a real implementation, call the runtime switch logic
-        // crate::cli::runtimes::use_version(runtime, Some(target_ver)).await?;
+        crate::cli::runtimes::use_version(runtime, Some(target_ver)).await?;
     }
 
-    // Install/remove packages would go here
-    // For safety, we'll just show what would be done
+    // Install/remove packages
     if !to_install.is_empty() || !to_remove.is_empty() {
         println!();
-        println!(
-            "  {} Package changes require manual confirmation:",
-            "⚠".yellow()
-        );
-        if !to_install.is_empty() {
-            let pkgs: Vec<_> = to_install.iter().map(|s| s.as_str()).collect();
+        if !yes {
             println!(
-                "    Install: {}",
-                format!("omg install {}", pkgs.join(" ")).cyan()
+                "  {} Package changes found ({} to install, {} to remove):",
+                "⚠".yellow(),
+                to_install.len(),
+                to_remove.len()
             );
+            
+            let confirm = dialoguer::Confirm::new()
+                .with_prompt("Do you want to apply these package changes?")
+                .default(false)
+                .interact()?;
+                
+            if !confirm {
+                println!("  {} Package changes skipped", "ℹ".blue());
+                return Ok(());
+            }
         }
+
+        if !to_install.is_empty() {
+            let pkgs: Vec<String> = to_install.iter().map(|s| (**s).clone()).collect();
+            println!("    Installing {} packages...", pkgs.len());
+            crate::cli::packages::install(&pkgs, true).await?;
+        }
+
         if !to_remove.is_empty() {
-            let pkgs: Vec<_> = to_remove.iter().map(|s| s.as_str()).collect();
-            println!(
-                "    Remove:  {}",
-                format!("omg remove {}", pkgs.join(" ")).cyan()
-            );
+            let pkgs: Vec<String> = to_remove.iter().map(|s| (**s).clone()).collect();
+            println!("    Removing {} packages...", pkgs.len());
+            crate::cli::packages::remove(&pkgs, false, true).await?;
         }
     }
 
@@ -283,6 +305,11 @@ pub async fn restore(id: &str, dry_run: bool) -> Result<()> {
 
 /// Delete a snapshot
 pub fn delete(id: &str) -> Result<()> {
+    // SECURITY: Validate snapshot ID
+    if id.chars().any(|c| !c.is_ascii_alphanumeric() && c != '-') {
+        anyhow::bail!("Invalid snapshot ID: {id}");
+    }
+
     let snapshot_path = snapshots_dir().join(format!("{id}.json"));
 
     if !snapshot_path.exists() {

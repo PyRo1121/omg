@@ -74,11 +74,9 @@ fn collect_sync_db_paths(sync_dir: &Path) -> Vec<(PathBuf, String)> {
                 .and_then(|n| n.to_str())
                 .map(str::to_string);
             if let Some(name) = name
-                && !["core", "extra", "multilib"].contains(&name.as_str())
-                && path.is_file()
-            {
-                dbs.push((path, name));
-            }
+                && !["core", "extra", "multilib"].contains(&name.as_str()) && path.is_file() {
+                    dbs.push((path, name));
+                }
         }
     }
 
@@ -103,6 +101,7 @@ pub struct SyncDbPackage {
     pub url: String,
     pub arch: String,
     pub repo: String,
+    pub licenses: Vec<String>,
     pub depends: Vec<String>,
     pub makedepends: Vec<String>,
     pub optdepends: Vec<String>,
@@ -123,6 +122,7 @@ impl Default for SyncDbPackage {
             url: String::new(),
             arch: String::new(),
             repo: String::new(),
+            licenses: Vec::new(),
             depends: Vec::new(),
             makedepends: Vec::new(),
             optdepends: Vec::new(),
@@ -140,6 +140,7 @@ pub struct LocalDbPackage {
     pub version: Version,
     pub desc: String,
     pub install_date: String,
+    pub licenses: Vec<String>,
     pub explicit: bool, // Explicitly installed vs dependency
 }
 
@@ -150,6 +151,7 @@ impl Default for LocalDbPackage {
             version: super::types::zero_version(),
             desc: String::new(),
             install_date: String::new(),
+            licenses: Vec::new(),
             explicit: false,
         }
     }
@@ -242,6 +244,7 @@ fn parse_desc_content(content: &str, repo: &str) -> SyncDbPackage {
                 .unwrap_or_default(),
             arch: desc.arch.to_string(),
             repo: repo.to_string(),
+            licenses: desc.license.iter().map(ToString::to_string).collect(),
             depends: desc
                 .dependencies
                 .iter()
@@ -292,6 +295,7 @@ fn parse_desc_content(content: &str, repo: &str) -> SyncDbPackage {
                 .unwrap_or_default(),
             arch: desc.arch.to_string(),
             repo: repo.to_string(),
+            licenses: desc.license.iter().map(ToString::to_string).collect(),
             depends: desc
                 .dependencies
                 .iter()
@@ -372,6 +376,7 @@ fn parse_local_desc(path: &Path) -> Result<LocalDbPackage> {
                 .unwrap_or_else(|_| super::types::zero_version()),
             desc: desc.description.to_string(),
             install_date: desc.installdate.to_string(),
+            licenses: desc.license.iter().map(ToString::to_string).collect(),
             explicit: matches!(desc.reason, alpm_types::PackageInstallReason::Explicit),
         });
     }
@@ -384,6 +389,7 @@ fn parse_local_desc(path: &Path) -> Result<LocalDbPackage> {
                 .unwrap_or_else(|_| super::types::zero_version()),
             desc: desc.description.to_string(),
             install_date: desc.installdate.to_string(),
+            licenses: desc.license.iter().map(ToString::to_string).collect(),
             explicit: matches!(desc.reason, alpm_types::PackageInstallReason::Explicit),
         });
     }
@@ -399,6 +405,7 @@ fn parse_local_desc_manual(content: &str) -> Result<LocalDbPackage> {
     let mut desc = String::new();
     let mut install_date = String::new();
     let mut reason = String::new();
+    let mut licenses = Vec::new();
     let mut current_field: Option<&str> = None;
 
     for line in content.lines() {
@@ -419,6 +426,7 @@ fn parse_local_desc_manual(content: &str) -> Result<LocalDbPackage> {
             Some("%DESC%") => desc = line.to_string(),
             Some("%INSTALLDATE%") => install_date = line.to_string(),
             Some("%REASON%") => reason = line.to_string(),
+            Some("%LICENSE%") => licenses.push(line.to_string()),
             _ => {}
         }
     }
@@ -432,11 +440,28 @@ fn parse_local_desc_manual(content: &str) -> Result<LocalDbPackage> {
         version: Version::from_str(&version).unwrap_or_else(|_| super::types::zero_version()),
         desc,
         install_date,
+        licenses,
         explicit: reason != "1", // 1 = dependency, empty/0 = explicit
     })
 }
 
-/// ULTRA FAST update check - uses global cache (<5ms after first load!)
+pub fn get_detailed_packages() -> Result<Vec<SyncDbPackage>> {
+
+    let sync_dir = paths::pacman_sync_dir();
+
+    ensure_sync_cache_loaded(&sync_dir)?;
+
+    let cache = SYNC_DB_CACHE.read();
+
+    Ok(cache.packages.values().cloned().collect())
+
+}
+
+
+
+/// ULTRA FAST update check
+
+ - uses global cache (<5ms after first load!)
 /// Returns Vec of (name, `old_version`, `new_version`, repo, filename, `download_size`)
 #[instrument]
 pub fn check_updates_cached() -> Result<Vec<(String, Version, Version, String, String, u64)>> {
@@ -456,17 +481,16 @@ pub fn check_updates_cached() -> Result<Vec<(String, Version, Version, String, S
 
     for (name, local_pkg) in &local_cache.packages {
         if let Some(sync_pkg) = sync_cache.packages.get(name)
-            && local_pkg.version < sync_pkg.version
-        {
-            updates.push((
-                name.clone(),
-                local_pkg.version.clone(),
-                sync_pkg.version.clone(),
-                sync_pkg.repo.clone(),
-                sync_pkg.filename.clone(),
-                sync_pkg.csize,
-            ));
-        }
+            && local_pkg.version < sync_pkg.version {
+                updates.push((
+                    name.clone(),
+                    local_pkg.version.clone(),
+                    sync_pkg.version.clone(),
+                    sync_pkg.repo.clone(),
+                    sync_pkg.filename.clone(),
+                    sync_pkg.csize,
+                ));
+            }
     }
 
     Ok(updates)
@@ -512,12 +536,11 @@ fn ensure_sync_cache_loaded(sync_dir: &Path) -> Result<()> {
 
     // Try to load from disk cache first (FAST < 5ms)
     if let Ok(disk_cache) = load_cache_from_disk::<DbCache>("sync_db")
-        && disk_cache.last_modified == Some(current_mtime)
-    {
-        let mut cache = SYNC_DB_CACHE.write();
-        *cache = disk_cache;
-        return Ok(());
-    }
+        && disk_cache.last_modified == Some(current_mtime) {
+            let mut cache = SYNC_DB_CACHE.write();
+            *cache = disk_cache;
+            return Ok(());
+        }
 
     // Cache miss or stale - need to reload/parse
     let packages = load_sync_packages(sync_dir)?;
@@ -546,12 +569,11 @@ fn ensure_local_cache_loaded(local_dir: &Path) -> Result<()> {
 
     // Try to load from disk cache first
     if let Ok(disk_cache) = load_cache_from_disk::<LocalDbCache>("local_db")
-        && disk_cache.last_modified == Some(current_mtime)
-    {
-        let mut cache = LOCAL_DB_CACHE.write();
-        *cache = disk_cache;
-        return Ok(());
-    }
+        && disk_cache.last_modified == Some(current_mtime) {
+            let mut cache = LOCAL_DB_CACHE.write();
+            *cache = disk_cache;
+            return Ok(());
+        }
 
     // Cache miss - reload
     let packages = parse_local_db(local_dir)?;
@@ -575,10 +597,9 @@ fn get_newest_db_mtime(sync_dir: &Path) -> SystemTime {
         for entry in entries.flatten() {
             if let Ok(meta) = entry.metadata()
                 && let Ok(mtime) = meta.modified()
-                && mtime > newest
-            {
-                newest = mtime;
-            }
+                    && mtime > newest {
+                        newest = mtime;
+                    }
         }
     }
 

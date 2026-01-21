@@ -150,6 +150,7 @@ fn mise_tool_version(value: &Value) -> Option<String> {
 ///
 /// Usage: eval "$(omg hook zsh)"
 pub fn print_hook(shell: &str) -> Result<()> {
+    // SECURITY: Validate shell
     let script = match shell.to_lowercase().as_str() {
         "zsh" => ZSH_HOOK,
         "bash" => BASH_HOOK,
@@ -168,6 +169,11 @@ pub fn print_hook(shell: &str) -> Result<()> {
 /// This is the fast path - only outputs changes when version changes.
 /// Target: <10ms execution time
 pub fn hook_env(shell: &str) -> Result<()> {
+    // SECURITY: Validate shell
+    if !["zsh", "bash", "fish"].contains(&shell.to_lowercase().as_str()) {
+        anyhow::bail!("Unsupported shell: {shell}");
+    }
+
     let cwd = std::env::current_dir()?;
 
     // Detect version files in current directory and parents
@@ -234,11 +240,10 @@ pub fn detect_versions(start: &Path) -> HashMap<String, String> {
                     if let Ok(content) = std::fs::read_to_string(&file_path) {
                         for line in content.lines() {
                             if line.contains("channel")
-                                && let Some(version) = line.split('=').nth(1)
-                            {
-                                let v = version.trim().trim_matches('"').trim_matches('\'');
-                                versions.insert((*runtime).to_string(), v.to_string());
-                            }
+                                && let Some(version) = line.split('=').nth(1) {
+                                    let v = version.trim().trim_matches('"').trim_matches('\'');
+                                    versions.insert((*runtime).to_string(), v.to_string());
+                                }
                         }
                     }
                 } else if *filename == "package.json" {
@@ -371,10 +376,9 @@ fn resolve_node_bin_path(data_dir: &Path, version: &str) -> Option<PathBuf> {
     }
 
     if let Some(resolved) = resolve_installed_version_req(&versions_dir, normalized)
-        && let Some(path) = node_version_bin_path(&versions_dir, &resolved)
-    {
-        return Some(path);
-    }
+        && let Some(path) = node_version_bin_path(&versions_dir, &resolved) {
+            return Some(path);
+        }
 
     nvm_node_bin(normalized)
 }
@@ -387,10 +391,9 @@ fn resolve_bun_bin_path(data_dir: &Path, version: &str) -> Option<PathBuf> {
     }
 
     if let Some(resolved) = resolve_installed_version_req(&versions_dir, normalized)
-        && let Some(path) = bun_version_bin_path(&versions_dir, &resolved)
-    {
-        return Some(path);
-    }
+        && let Some(path) = bun_version_bin_path(&versions_dir, &resolved) {
+            return Some(path);
+        }
 
     None
 }
@@ -555,7 +558,7 @@ fn mise_runtime_bin_path(runtime: &str, version: &str) -> Option<PathBuf> {
     };
 
     let output = Command::new("mise")
-        .args(["where", &tool_spec])
+        .args(["where", "--", &tool_spec])
         .output()
         .ok()?;
 

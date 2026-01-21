@@ -39,6 +39,11 @@ pub fn extract_tar_gz_strip(archive_path: &Path, dest_dir: &Path, strip: usize) 
         let mut entry = entry?;
         let path = entry.path()?;
 
+        // SECURITY: Prevent path traversal
+        if path.components().any(|c| matches!(c, std::path::Component::ParentDir | std::path::Component::RootDir)) {
+            anyhow::bail!("Security: Malicious path detected in archive: {}", path.display());
+        }
+
         // Strip N components from path
         let stripped: std::path::PathBuf = path.components().skip(strip).collect();
 
@@ -116,6 +121,11 @@ pub fn extract_zip_strip(archive_path: &Path, dest_dir: &Path, strip: usize) -> 
         let mut file = archive.by_index(i)?;
         let outpath = match file.enclosed_name() {
             Some(path) => {
+                // SECURITY: Prevent path traversal (enclosed_name handles most, but be explicit)
+                if path.components().any(|c| matches!(c, std::path::Component::ParentDir | std::path::Component::RootDir)) {
+                    anyhow::bail!("Security: Malicious path detected in zip archive: {}", path.display());
+                }
+
                 let stripped: std::path::PathBuf = path.components().skip(strip).collect();
                 if stripped.as_os_str().is_empty() {
                     continue;

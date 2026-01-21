@@ -169,10 +169,9 @@ impl GoManager {
         }
 
         if let Some(current) = self.current_version()
-            && current == version
-        {
-            let _ = fs::remove_file(&self.current_link);
-        }
+            && current == version {
+                let _ = fs::remove_file(&self.current_link);
+            }
 
         fs::remove_dir_all(&version_dir)?;
         println!("{} Go {} uninstalled", "✓".green(), version);

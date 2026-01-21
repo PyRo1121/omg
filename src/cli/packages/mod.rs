@@ -18,6 +18,7 @@ mod install;
 pub mod local;
 mod remove;
 mod search;
+mod status;
 mod sync_db;
 mod update;
 
@@ -28,5 +29,6 @@ pub use info::{info, info_aur, info_sync, info_sync_cli};
 pub use install::install;
 pub use remove::remove;
 pub use search::{search, search_sync_cli};
+pub use status::status;
 pub use sync_db::sync_databases as sync;
 pub use update::update;

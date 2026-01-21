@@ -384,7 +384,7 @@ fi
 
         // Stage omg.lock
         Command::new("git")
-            .args(["add", "omg.lock"])
+            .args(["add", "--", "omg.lock"])
             .current_dir(&self.root)
             .output()?;
 

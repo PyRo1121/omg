@@ -32,8 +32,14 @@ pub trait PackageManager: Send + Sync {
     fn list_installed(&self) -> BoxFuture<'static, Result<Vec<Package>>>;
 
     /// Get system status (total, explicit, orphans, updates)
-    fn get_status(&self) -> BoxFuture<'static, Result<(usize, usize, usize, usize)>>;
+    fn get_status(&self, fast: bool) -> BoxFuture<'static, Result<(usize, usize, usize, usize)>>;
 
     /// List explicitly installed package names
     fn list_explicit(&self) -> BoxFuture<'static, Result<Vec<String>>>;
+
+    /// List available updates
+    fn list_updates(&self) -> BoxFuture<'static, Result<Vec<crate::package_managers::types::UpdateInfo>>>;
+
+    /// Check if a specific package is installed
+    fn is_installed(&self, package: &str) -> BoxFuture<'static, bool>;
 }

@@ -6,6 +6,8 @@ use owo_colors::OwoColorize;
 /// Show disk usage analysis
 pub fn run(tree: Option<&str>, limit: usize) -> Result<()> {
     if let Some(package) = tree {
+        // SECURITY: Validate package name
+        crate::core::security::validate_package_name(package)?;
         show_package_tree(package)
     } else {
         show_top_packages(limit)
@@ -142,7 +144,7 @@ fn show_package_tree(package: &str) -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "debian")]
+#[cfg(all(feature = "debian", not(feature = "arch")))]
 fn show_top_packages(limit: usize) -> Result<()> {
     use std::process::Command;
 
@@ -196,7 +198,7 @@ fn show_top_packages(limit: usize) -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "debian")]
+#[cfg(all(feature = "debian", not(feature = "arch")))]
 fn show_package_tree(package: &str) -> Result<()> {
     use std::process::Command;
 
@@ -208,7 +210,7 @@ fn show_package_tree(package: &str) -> Result<()> {
 
     // Get package size
     let output = Command::new("dpkg-query")
-        .args(["-W", "-f=${Installed-Size}", package])
+        .args(["-W", "-f=${Installed-Size}", "--", package])
         .output()?;
 
     if !output.status.success() {
@@ -230,7 +232,7 @@ fn show_package_tree(package: &str) -> Result<()> {
 
     // Get dependencies
     let deps_output = Command::new("apt-cache")
-        .args(["depends", "--installed", package])
+        .args(["depends", "--installed", "--", package])
         .output()?;
 
     let deps_str = String::from_utf8_lossy(&deps_output.stdout);
@@ -240,7 +242,7 @@ fn show_package_tree(package: &str) -> Result<()> {
         if line.trim().starts_with("Depends:") {
             let dep_name = line.trim().strip_prefix("Depends:").unwrap_or("").trim();
             if let Ok(dep_out) = Command::new("dpkg-query")
-                .args(["-W", "-f=${Installed-Size}", dep_name])
+                .args(["-W", "-f=${Installed-Size}", "--", dep_name])
                 .output()
             {
                 if dep_out.status.success() {
@@ -327,10 +329,9 @@ fn get_cache_size() -> Result<i64> {
     let mut total: i64 = 0;
     for entry in fs::read_dir(cache_dir)? {
         if let Ok(entry) = entry
-            && let Ok(meta) = entry.metadata()
-        {
-            total += meta.len().cast_signed();
-        }
+            && let Ok(meta) = entry.metadata() {
+                total += meta.len().cast_signed();
+            }
     }
 
     Ok(total)

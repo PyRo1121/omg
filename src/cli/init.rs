@@ -729,7 +729,7 @@ fn configure_daemon_startup(stdout: &mut io::Stdout, startup: DaemonStartup) -> 
         }
         DaemonStartup::OnDemand => {
             // Start daemon now
-            let _ = Command::new("omg").args(["daemon"]).spawn();
+            let _ = Command::new("omg").args(["daemon", "--"]).spawn();
             execute!(
                 stdout,
                 SetForegroundColor(Color::Green),
@@ -783,10 +783,10 @@ WantedBy=default.target
 
     // Enable and start the service
     let _ = Command::new("systemctl")
-        .args(["--user", "daemon-reload"])
+        .args(["--user", "daemon-reload", "--"])
         .output();
     let _ = Command::new("systemctl")
-        .args(["--user", "enable", "--now", "omgd.service"])
+        .args(["--user", "enable", "--now", "--", "omgd.service"])
         .output();
 
     Ok(())

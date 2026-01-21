@@ -385,28 +385,19 @@ pub async fn flush_events() -> Result<()> {
 
     // Send batch to API
     let client = reqwest::Client::new();
-    let response = client
+    let res = client
         .post(ANALYTICS_API_URL)
         .json(&serde_json::json!({ "events": events }))
         .timeout(std::time::Duration::from_secs(10))
         .send()
         .await;
 
-    match response {
+    match res {
         Ok(resp) if resp.status().is_success() => {
             tracing::debug!("Flushed {} analytics events", events.len());
         }
-        Ok(resp) => {
-            tracing::debug!("Analytics flush failed: {}", resp.status());
-            // Re-queue events on failure
-            let mut queue = EventQueue::load();
-            for event in events {
-                queue.push(event);
-            }
-        }
-        Err(e) => {
-            tracing::debug!("Analytics flush error: {}", e);
-            // Re-queue events on error
+        _ => {
+            // Re-queue on failure for "Gold Tier" reliability
             let mut queue = EventQueue::load();
             for event in events {
                 queue.push(event);
