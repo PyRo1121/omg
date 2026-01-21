@@ -19,6 +19,11 @@ fn prompt(message: &str) -> String {
 
 /// Activate a license key
 pub async fn activate(key: &str) -> Result<()> {
+    // SECURITY: Validate license key format
+    if key.len() > 128 || key.chars().any(|c| !c.is_ascii_alphanumeric() && c != '-') {
+        anyhow::bail!("Invalid license key format");
+    }
+
     println!("{} Activating license...\n", "OMG".cyan().bold());
 
     // Prompt for user identification (for team management)
@@ -183,6 +188,11 @@ pub fn deactivate() -> Result<()> {
 
 /// Check if a specific feature is available
 pub fn check_feature(feature_name: &str) -> Result<()> {
+    // SECURITY: Validate feature name
+    if feature_name.len() > 64 || feature_name.chars().any(|c| !c.is_ascii_alphanumeric() && c != '-') {
+        anyhow::bail!("Invalid feature name");
+    }
+
     let Some(feature) = Feature::from_str(feature_name) else {
         println!("{} Unknown feature '{}'", "✗".red(), feature_name.cyan());
         println!(

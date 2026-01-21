@@ -28,6 +28,9 @@ pub struct PackageMapping {
 
 /// Export current environment to portable manifest
 pub async fn export(output: &str) -> Result<()> {
+    // SECURITY: Validate output path
+    crate::core::security::validate_relative_path(output)?;
+
     println!("{} Exporting environment...\n", "OMG".cyan().bold());
 
     let state = EnvironmentState::capture().await?;
@@ -68,6 +71,9 @@ pub async fn export(output: &str) -> Result<()> {
 
 /// Import environment from manifest with package mapping
 pub async fn import(manifest_path: &str, dry_run: bool) -> Result<()> {
+    // SECURITY: Validate manifest path
+    crate::core::security::validate_relative_path(manifest_path)?;
+
     println!(
         "{} {} manifest...\n",
         "OMG".cyan().bold(),

@@ -51,10 +51,10 @@ fn extract_with_libalpm(path: &Path) -> Result<LocalPackageInfo> {
     Ok(LocalPackageInfo {
         name: pkg.name().to_string(),
         version: pkg.version().to_string(),
-        description: pkg.desc().map(|s| s.to_string()),
-        url: pkg.url().map(|s| s.to_string()),
-        licenses: pkg.licenses().iter().map(|s| s.to_string()).collect(),
-        packager: pkg.packager().map(|s| s.to_string()),
+        description: pkg.desc().map(ToString::to_string),
+        url: pkg.url().map(ToString::to_string),
+        licenses: pkg.licenses().iter().map(ToString::to_string).collect(),
+        packager: pkg.packager().map(ToString::to_string),
     })
 }
 
@@ -66,14 +66,14 @@ fn extract_with_pure_rust(path: &Path) -> Result<LocalPackageInfo> {
     let reader = BufReader::new(file);
 
     // Identify compression by extension
-    let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    let _filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
     // Decoder setup
-    let decoder: Box<dyn Read> = if filename.ends_with(".zst") {
+    let decoder: Box<dyn Read> = if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("zst")) {
         Box::new(ruzstd::decoding::StreamingDecoder::new(reader).context("Failed to init zstd decoder")?)
-    } else if filename.ends_with(".gz") {
+    } else if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("gz")) {
         Box::new(flate2::read::GzDecoder::new(reader))
-    } else if filename.ends_with(".xz") {
+    } else if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("xz")) {
         let mut output = Vec::new();
         lzma_rs::xz_decompress(&mut std::io::BufReader::new(reader), &mut output).context("Failed to decompress xz")?;
         Box::new(std::io::Cursor::new(output))
@@ -99,8 +99,7 @@ fn extract_with_pure_rust(path: &Path) -> Result<LocalPackageInfo> {
             // - Symlinks or special characters
             if path_str.contains("..") || path_str.starts_with('/') {
                 anyhow::bail!(
-                    "Security: Rejecting malicious path in package archive: {}",
-                    path_str
+                    "Security: Rejecting malicious path in package archive: {path_str}"
                 );
             }
 

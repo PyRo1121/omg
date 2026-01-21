@@ -269,6 +269,9 @@ pub fn show_policy() -> Result<()> {
 
 /// Scan for leaked secrets
 pub fn scan_secrets(path: Option<String>) -> Result<()> {
+    // Require Pro tier for secret scanning
+    license::require_feature("secrets")?;
+
     use crate::core::security::SecretScanner;
 
     let scan_path = path.unwrap_or_else(|| ".".to_string());
@@ -356,7 +359,13 @@ pub fn scan_secrets(path: Option<String>) -> Result<()> {
 
 /// Check SLSA provenance for a package
 pub async fn check_slsa(package: &str) -> Result<()> {
+    // Require Enterprise tier for SLSA verification
+    license::require_feature("slsa")?;
+
     use crate::core::security::SlsaVerifier;
+
+    // SECURITY: Validate path
+    crate::core::security::validate_relative_path(package)?;
 
     println!(
         "{} Checking SLSA provenance for {}...\n",

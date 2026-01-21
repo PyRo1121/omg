@@ -7,8 +7,9 @@ use futures::future::{BoxFuture, FutureExt};
 /// Mock package database for testing without real system access
 #[derive(Default, Clone)]
 pub struct MockPackageDb {
-    packages: Arc<Mutex<HashMap<String, MockPackage>>>,
-    installed: Arc<Mutex<Vec<String>>>,
+    pub packages: Arc<Mutex<HashMap<String, MockPackage>>>,
+    pub installed: Arc<Mutex<Vec<String>>>,
+    pub updates: Arc<Mutex<Vec<omg_lib::package_managers::types::UpdateInfo>>>,
 }
 
 #[derive(Clone, Debug)]
@@ -36,6 +37,10 @@ impl MockPackageDb {
 
     pub fn add_package(&self, pkg: MockPackage) {
         self.packages.lock().unwrap().insert(pkg.name.clone(), pkg);
+    }
+
+    pub fn add_update(&self, update: omg_lib::package_managers::types::UpdateInfo) {
+        self.updates.lock().unwrap().push(update);
     }
 
     pub fn install(&self, name: &str) -> Result<(), String> {
@@ -468,6 +473,20 @@ impl omg_lib::package_managers::PackageManager for MockPackageManager {
         async move {
             let installed = db.installed.lock().unwrap().clone();
             Ok(installed)
+        }
+        .boxed()
+    }
+
+    fn list_updates(&self) -> BoxFuture<'static, anyhow::Result<Vec<omg_lib::package_managers::types::UpdateInfo>>> {
+        let db = self.db.clone();
+        async move { Ok(db.updates.lock().unwrap().clone()) }.boxed()
+    }
+
+    fn is_installed(&self, package: &str) -> BoxFuture<'static, bool> {
+        let db = self.db.clone();
+        let package = package.to_string();
+        async move {
+            db.is_installed(&package)
         }
         .boxed()
     }

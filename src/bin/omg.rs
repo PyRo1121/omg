@@ -35,10 +35,8 @@ fn has_help_flag(args: &[String]) -> bool {
 
 /// Ultra-fast path for explicit --count (bypasses tokio entirely)
 /// This shaves ~2ms by avoiding runtime initialization
-fn try_fast_explicit_count() -> bool {
-    let args: Vec<_> = std::env::args().collect();
-
-    if has_help_flag(&args) {
+fn try_fast_explicit_count(args: &[String]) -> bool {
+    if has_help_flag(args) {
         return false;
     }
 
@@ -62,10 +60,8 @@ fn try_fast_explicit_count() -> bool {
 
 /// Ultra-fast path for simple search (bypasses tokio entirely)
 /// This shaves ~2ms by avoiding runtime initialization
-fn try_fast_search() -> bool {
-    let args: Vec<_> = std::env::args().collect();
-
-    if has_help_flag(&args) {
+fn try_fast_search(args: &[String]) -> bool {
+    if has_help_flag(args) {
         return false;
     }
 
@@ -85,10 +81,8 @@ fn try_fast_search() -> bool {
 }
 
 /// Ultra-fast path for simple info (bypasses tokio entirely)
-fn try_fast_info() -> bool {
-    let args: Vec<_> = std::env::args().collect();
-
-    if has_help_flag(&args) {
+fn try_fast_info(args: &[String]) -> bool {
+    if has_help_flag(args) {
         return false;
     }
 
@@ -108,10 +102,8 @@ fn try_fast_info() -> bool {
 }
 
 /// Ultra-fast path for completions (bypasses tokio entirely)
-fn try_fast_completions() -> Result<bool> {
-    let args: Vec<_> = std::env::args().collect();
-
-    if has_help_flag(&args) {
+fn try_fast_completions(args: &[String]) -> Result<bool> {
+    if has_help_flag(args) {
         return Ok(false);
     }
 
@@ -145,10 +137,8 @@ fn try_fast_completions() -> Result<bool> {
 }
 
 /// Ultra-fast path for which command (bypasses tokio entirely)
-fn try_fast_which() -> bool {
-    let args: Vec<_> = std::env::args().collect();
-
-    if has_help_flag(&args) {
+fn try_fast_which(args: &[String]) -> bool {
+    if has_help_flag(args) {
         return false;
     }
 
@@ -171,10 +161,8 @@ fn try_fast_which() -> bool {
 }
 
 /// Ultra-fast path for list command (bypasses tokio entirely)
-fn try_fast_list() -> bool {
-    let args: Vec<_> = std::env::args().collect();
-
-    if has_help_flag(&args) {
+fn try_fast_list(args: &[String]) -> bool {
+    if has_help_flag(args) {
         return false;
     }
 
@@ -205,10 +193,8 @@ fn try_fast_list() -> bool {
 }
 
 /// Ultra-fast path for status command (bypasses tokio entirely)
-fn try_fast_status() -> bool {
-    let args: Vec<_> = std::env::args().collect();
-
-    if has_help_flag(&args) {
+fn try_fast_status(args: &[String]) -> bool {
+    if has_help_flag(args) {
         return false;
     }
 
@@ -219,10 +205,8 @@ fn try_fast_status() -> bool {
 }
 
 /// Ultra-fast path for hook commands (bypasses tokio entirely)
-fn try_fast_hooks() -> bool {
-    let args: Vec<_> = std::env::args().collect();
-
-    if has_help_flag(&args) {
+fn try_fast_hooks(args: &[String]) -> bool {
+    if has_help_flag(args) {
         return false;
     }
 
@@ -251,43 +235,39 @@ fn try_fast_hooks() -> bool {
 }
 
 fn main() -> Result<()> {
-    // ULTRA FAST PATH: explicit --count without tokio
-    if try_fast_explicit_count() {
+    // Collect args once to avoid multiple syscalls/allocations in fast paths
+    let args: Vec<String> = std::env::args().collect();
+
+    // ULTRA FAST PATHS: bypass tokio runtime for common commands
+    if try_fast_explicit_count(&args) {
         return Ok(());
     }
 
-    // ULTRA FAST PATH: simple search without tokio
-    if try_fast_search() {
+    if try_fast_search(&args) {
         return Ok(());
     }
 
-    // ULTRA FAST PATH: simple info without tokio
-    if try_fast_info() {
+    if try_fast_info(&args) {
         return Ok(());
     }
 
-    // ULTRA FAST PATH: completions without tokio
-    if try_fast_completions()? {
+    if try_fast_completions(&args)? {
         return Ok(());
     }
 
-    // ULTRA FAST PATH: which command without tokio
-    if try_fast_which() {
+    if try_fast_which(&args) {
         return Ok(());
     }
 
-    // ULTRA FAST PATH: list command (local only) without tokio
-    if try_fast_list() {
+    if try_fast_list(&args) {
         return Ok(());
     }
 
-    // ULTRA FAST PATH: status command without tokio
-    if try_fast_status() {
+    if try_fast_status(&args) {
         return Ok(());
     }
 
-    // ULTRA FAST PATH: hook/hook-env without tokio
-    if try_fast_hooks() {
+    if try_fast_hooks(&args) {
         return Ok(());
     }
 
@@ -295,14 +275,13 @@ fn main() -> Result<()> {
     let result = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?
-        .block_on(async_main());
+        .block_on(async_main(args));
 
     // Handle errors with helpful suggestions
     if let Err(ref err) = result
-        && let Some(suggestion) = omg_lib::core::error::suggest_for_anyhow(err)
-    {
-        eprintln!("\n💡 {suggestion}");
-    }
+        && let Some(suggestion) = omg_lib::core::error::suggest_for_anyhow(err) {
+            eprintln!("\n💡 {suggestion}");
+        }
 
     result
 }
@@ -310,20 +289,24 @@ fn main() -> Result<()> {
 /// Main entry point - uses single tokio runtime for all async operations
 /// This eliminates the overhead of creating a new runtime for each command
 #[allow(clippy::too_many_lines)]
-async fn async_main() -> Result<()> {
+async fn async_main(args: Vec<String>) -> Result<()> {
     // Start analytics timer
     let cmd_start = omg_lib::core::analytics::start_timer();
 
-    // Initialize tracing
+    // Parse CLI arguments first so we can use them to configure tracing
+    // and other early initialization steps.
+    let cli = Cli::parse_from(&args);
+
+    // Initialize tracing (deferred until after parsing)
+    // Only use full formatting if not a simple command
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
                 .add_directive(tracing::Level::INFO.into()),
         )
         .with_target(false)
+        .with_ansi(console::colors_enabled())
         .init();
-
-    let cli = Cli::parse();
 
     // First-run telemetry (opt-out with OMG_TELEMETRY=0)
     if omg_lib::core::telemetry::is_first_run() && !omg_lib::core::telemetry::is_telemetry_opt_out()
@@ -342,7 +325,7 @@ async fn async_main() -> Result<()> {
 
     if needs_root && !is_root() {
         // Re-execute with sudo - this replaces the current process
-        elevate_if_needed()?;
+        elevate_if_needed(&args)?;
         // Never reaches here
     }
 
@@ -365,11 +348,12 @@ async fn async_main() -> Result<()> {
         Commands::Remove {
             packages: pkgs,
             recursive,
+            yes,
         } => {
-            packages::remove(&pkgs, recursive).await?;
+            packages::remove(&pkgs, recursive, yes).await?;
         }
-        Commands::Update { check } => {
-            packages::update(check).await?;
+        Commands::Update { check, yes } => {
+            packages::update(check, yes).await?;
         }
         Commands::Info { package } => {
             // 1. Try SYNC PATH (Official + Local)
@@ -429,9 +413,8 @@ async fn async_main() -> Result<()> {
         } => {
             commands::complete(&shell, &current, &last, full.as_deref()).await?;
         }
-        Commands::Status => {
-            // PURE SYNC PATH (Sub-10ms)
-            commands::status_sync()?;
+        Commands::Status { fast } => {
+            packages::status(fast).await?;
         }
         Commands::Doctor => {
             doctor::run().await?;
@@ -541,10 +524,10 @@ async fn async_main() -> Result<()> {
                     team::pull().await?;
                 }
                 TeamCommands::Members => {
-                    team::members()?;
+                    team::members().await?;
                 }
                 TeamCommands::Dashboard => {
-                    team::dashboard()?;
+                    team::dashboard().await?;
                 }
                 TeamCommands::Invite { email, role } => {
                     team::invite(email.as_deref(), &role)?;
@@ -561,14 +544,17 @@ async fn async_main() -> Result<()> {
                     }
                 },
                 TeamCommands::Propose { message } => {
-                    team::propose(&message)?;
+                    team::propose(&message).await?;
+                }
+                TeamCommands::Proposals => {
+                    team::list_proposals().await?;
                 }
                 TeamCommands::Review {
                     id,
                     approve,
-                    request_changes,
+                    ..
                 } => {
-                    team::review(id, approve, request_changes.as_deref())?;
+                    team::review(id, approve).await?;
                 }
                 TeamCommands::GoldenPath { command: gp_cmd } => match gp_cmd {
                     GoldenPathCommands::Create {
@@ -595,7 +581,7 @@ async fn async_main() -> Result<()> {
                     team::compliance(export.as_deref(), enforce)?;
                 }
                 TeamCommands::Activity { days } => {
-                    team::activity(days)?;
+                    team::activity(days).await?;
                 }
                 TeamCommands::Notify {
                     command: notify_cmd,
@@ -712,6 +698,9 @@ async fn async_main() -> Result<()> {
         Commands::Stats => {
             commands::stats()?;
         }
+        Commands::Metrics => {
+            commands::metrics().await?;
+        }
         Commands::Init {
             defaults,
             skip_shell,
@@ -753,8 +742,8 @@ async fn async_main() -> Result<()> {
             SnapshotCommands::List => {
                 snapshot::list()?;
             }
-            SnapshotCommands::Restore { id, dry_run } => {
-                snapshot::restore(&id, dry_run).await?;
+            SnapshotCommands::Restore { id, dry_run, yes } => {
+                snapshot::restore(&id, dry_run, yes).await?;
             }
             SnapshotCommands::Delete { id } => {
                 snapshot::delete(&id)?;
@@ -781,7 +770,7 @@ async fn async_main() -> Result<()> {
         },
         Commands::Fleet { command } => match command {
             FleetCommands::Status => {
-                fleet::status()?;
+                fleet::status().await?;
             }
             FleetCommands::Push { team, message } => {
                 fleet::push(team.as_deref(), message.as_deref())?;
@@ -795,7 +784,7 @@ async fn async_main() -> Result<()> {
                 report_type,
                 format,
             } => {
-                enterprise::reports(&report_type, &format)?;
+                enterprise::reports(&report_type, &format).await?;
             }
             EnterpriseCommands::Policy {
                 command: policy_cmd,
@@ -804,7 +793,7 @@ async fn async_main() -> Result<()> {
                     enterprise::policy::set(&scope, &rule)?;
                 }
                 EnterprisePolicyCommands::Show { scope } => {
-                    enterprise::policy::show(scope.as_deref())?;
+                    enterprise::policy::show(scope.as_deref()).await?;
                 }
                 EnterprisePolicyCommands::Inherit { from, to } => {
                     enterprise::policy::inherit(&from, &to)?;
@@ -843,14 +832,12 @@ async fn async_main() -> Result<()> {
     let subcmd = std::env::args().nth(2);
     omg_lib::core::analytics::track_command(&cmd_name, subcmd.as_deref(), cmd_duration, true);
 
-    // Send heartbeat if needed
+    // Send heartbeat and analytics in background (don't block exit)
     omg_lib::core::analytics::maybe_heartbeat();
+    omg_lib::core::analytics::flush_background();
 
-    // Sync usage to dashboard (wait briefly to ensure it completes)
-    omg_lib::core::usage::sync_usage_now().await;
-
-    // Flush analytics events
-    omg_lib::core::analytics::maybe_flush().await;
+    // Sync usage in background (don't block exit)
+    omg_lib::core::usage::maybe_sync_background();
 
     Ok(())
 }

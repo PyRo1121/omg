@@ -8,85 +8,75 @@ use crate::daemon::protocol::{Request, ResponseResult};
 
 use super::common::use_debian_backend;
 
-#[cfg(feature = "debian")]
-use crate::package_managers::apt_list_explicit;
-
 /// List explicitly installed packages (Synchronous)
 pub fn explicit_sync(count: bool) -> Result<()> {
+    // 1. Try Daemon First (Hot Path - ALL DISTROS)
+    if let Ok(mut client) = DaemonClient::connect_sync() {
+        let request = if count {
+            Request::ExplicitCount { id: 0 }
+        } else {
+            Request::Explicit { id: 0 }
+        };
+
+        if let Ok(res) = client.call_sync(&request) {
+            match res {
+                ResponseResult::ExplicitCount(c) => {
+                    println!( "{c}" );
+                    return Ok(());
+                }
+                ResponseResult::Explicit(res) => {
+                    display_explicit_list(res.packages)?;
+                    return Ok(());
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // 2. Fallback to optimized direct parser (Cold Path)
     if use_debian_backend() {
         #[cfg(feature = "debian")]
         {
-            let mut packages = apt_list_explicit().unwrap_or_default();
-            packages.sort();
+            let packages = crate::package_managers::list_explicit_fast().unwrap_or_default();
             if count {
-                println!("{}", packages.len());
+                println!( "{}", packages.len() );
             } else {
-                for pkg in packages {
-                    println!("{}", pkg);
-                }
+                display_explicit_list(packages)?;
             }
             return Ok(());
         }
     }
+
+    // 3. Arch Fallback
     if count {
         // FAST PATH: Read from daemon's status file (zero IPC, sub-ms)
-        if let Some(count) = crate::core::fast_status::FastStatus::read_explicit_count() {
-            println!("{count}");
+        if let Some(c) = crate::core::fast_status::FastStatus::read_explicit_count() {
+            println!( "{c}" );
             return Ok(());
         }
 
-        // Fallback: IPC to daemon
-        let total = DaemonClient::connect_sync()
-            .ok()
-            .and_then(|mut client| {
-                if let Ok(ResponseResult::ExplicitCount(count)) =
-                    client.call_sync(&Request::ExplicitCount { id: 0 })
-                {
-                    Some(count)
-                } else {
-                    None
-                }
-            })
-            .unwrap_or_else(|| {
-                #[cfg(feature = "arch")]
-                {
-                    crate::package_managers::list_explicit_fast()
-                        .map(|pkgs| pkgs.len())
-                        .unwrap_or_default()
-                }
-                #[cfg(not(feature = "arch"))]
-                {
-                    0
-                }
-            });
+        #[cfg(feature = "arch")]
+        {
+            let c = crate::package_managers::list_explicit_fast()
+                .map(|pkgs| pkgs.len())
+                .unwrap_or_default();
+            println!( "{c}" );
+            return Ok(());
+        }
+    }
 
-        println!("{total}");
+    #[cfg(feature = "arch")]
+    {
+        let packages = crate::package_managers::list_explicit_fast().unwrap_or_default();
+        display_explicit_list(packages)?;
         return Ok(());
     }
 
-    // Try daemon first
-    let packages = DaemonClient::connect_sync()
-        .ok()
-        .and_then(|mut client| {
-            if let Ok(ResponseResult::Explicit(res)) =
-                client.call_sync(&Request::Explicit { id: 0 })
-            {
-                Some(res.packages)
-            } else {
-                None
-            }
-        })
-        .unwrap_or_else(|| {
-            #[cfg(feature = "arch")]
-            {
-                crate::package_managers::list_explicit_fast().unwrap_or_default()
-            }
-            #[cfg(not(feature = "arch"))]
-            {
-                Vec::new()
-            }
-        });
+    Ok(())
+}
 
+fn display_explicit_list(mut packages: Vec<String>) -> Result<()> {
+    packages.sort();
     use std::io::Write;
     let mut stdout = std::io::BufWriter::new(std::io::stdout());
 
@@ -97,7 +87,7 @@ pub fn explicit_sync(count: bool) -> Result<()> {
     )?;
 
     for pkg in &packages {
-        writeln!(stdout, "  {}", style::package(pkg))?;
+        writeln!( stdout, "  {}", style::package(pkg) )?;
     }
 
     writeln!(
@@ -112,6 +102,5 @@ pub fn explicit_sync(count: bool) -> Result<()> {
 
 /// List explicitly installed packages (Async fallback)
 pub async fn explicit(count: bool) -> Result<()> {
-    // Just call sync version for now as it's already fast and safe
     explicit_sync(count)
 }

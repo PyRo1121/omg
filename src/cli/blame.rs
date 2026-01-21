@@ -7,6 +7,9 @@ use crate::core::history::{HistoryManager, TransactionType};
 
 /// Show package installation history
 pub fn run(package: &str) -> Result<()> {
+    // SECURITY: Validate package name
+    crate::core::security::validate_package_name(package)?;
+
     println!(
         "{} Package history for {}\n",
         "OMG".cyan().bold(),
@@ -104,12 +107,12 @@ fn get_package_info(package: &str) -> Result<(bool, Option<String>, String)> {
     }
 }
 
-#[cfg(feature = "debian")]
+#[cfg(all(feature = "debian", not(feature = "arch")))]
 fn get_package_info(package: &str) -> Result<(bool, Option<String>, String)> {
     use std::process::Command;
 
     let output = Command::new("dpkg-query")
-        .args(["-W", "-f=${Version}\t${Status}", package])
+        .args(["-W", "-f=${Version}\t${Status}", "--", package])
         .output()?;
 
     if output.status.success() {
@@ -118,7 +121,7 @@ fn get_package_info(package: &str) -> Result<(bool, Option<String>, String)> {
         if parts.len() >= 2 && parts[1].contains("installed") {
             // Check if auto-installed
             let auto_check = Command::new("apt-mark")
-                .args(["showauto", package])
+                .args(["showauto", "--", package])
                 .output()?;
             let is_auto = String::from_utf8_lossy(&auto_check.stdout)
                 .trim()
@@ -183,12 +186,12 @@ fn show_required_by(package: &str) -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "debian")]
+#[cfg(all(feature = "debian", not(feature = "arch")))]
 fn show_required_by(package: &str) -> Result<()> {
     use std::process::Command;
 
     let output = Command::new("apt-cache")
-        .args(["rdepends", "--installed", package])
+        .args(["rdepends", "--installed", "--", package])
         .output()?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);

@@ -26,11 +26,12 @@ mod apt_integration {
     fn test_search_main_repo() {
         require_system_tests!();
 
-        let result = run_omg(&["search", "firefox"]);
+        // In Debian, firefox is often firefox-esr
+        let result = run_omg(&["search", "bash"]);
         result.assert_success();
         assert!(
-            result.stdout_contains("firefox") || result.stdout_contains("Firefox"),
-            "Should find firefox"
+            result.stdout_contains("bash") || result.stdout_contains("Bash"),
+            "Should find bash"
         );
     }
 
@@ -129,12 +130,86 @@ mod apt_integration {
     }
 
     #[test]
-    fn test_clean_options() {
-        let result = run_omg(&["clean", "--help"]);
+    fn test_clean_orphans() {
+        require_system_tests!();
+        require_destructive_tests!();
+        require_debian_like!();
+
+        let result = run_omg(&["clean", "--orphans"]);
+        // Should succeed or report no orphans
+        assert!(result.success || result.stdout_contains("no orphan"), "Should handle clean orphans");
+    }
+
+    #[test]
+    fn test_install_remove_cycle() {
+        require_system_tests!();
+        require_destructive_tests!();
+        require_debian_like!();
+
+        // Ensure database is synced
+        let _ = run_omg(&["sync"]);
+
+        // Use a tiny, harmless package
+        let pkg = "vim-tiny";
+
+        // 1. Install
+        let result = run_omg(&["install", pkg, "-y"]);
+        if !result.success {
+            if result.stderr_contains("permission") || result.stderr_contains("root") {
+                eprintln!("⏭️  Skipping install test: requires root");
+                return;
+            }
+            result.assert_success();
+        }
+
+        // 2. Verify installed
+        let info = run_omg(&["info", pkg]);
+        info.assert_success();
+        assert!(info.stdout_contains("installed") || info.stdout_contains("Status"), "Package should be installed");
+
+        // 3. Remove
+        let result = run_omg(&["remove", pkg, "-y"]);
         result.assert_success();
-        assert!(result.stdout_contains("cache"), "Should have cache option");
+
+        // 4. Verify removed
+        let info = run_omg(&["info", pkg]);
+        assert!(!info.stdout_contains("installed") || info.stdout_contains("not installed"), "Package should be removed");
+    }
+
+    #[test]
+    fn test_why_integration() {
+        require_system_tests!();
+        require_debian_like!();
+
+        let result = run_omg(&["why", "apt"]);
+        result.assert_success();
+        // Should explain why apt is installed (usually 'explicit')
+        assert!(result.stdout_contains("apt") || result.stdout_contains("explicit"), "Should explain why apt is installed");
+    }
+
+    #[test]
+    fn test_size_integration() {
+        require_system_tests!();
+        require_debian_like!();
+
+        let result = run_omg(&["size", "--tree", "apt"]);
+        result.assert_success();
+        assert!(result.stdout_contains("MB") || result.stdout_contains("KB"), "Should show size of apt package");
     }
 }
+
+// Helper macro for both Debian and Ubuntu
+#[macro_export]
+macro_rules! require_debian_like {
+    () => {
+        let config = $crate::common::TestConfig::default();
+        if !config.is_debian() && !config.is_ubuntu() {
+            eprintln!("⏭️  Skipping test: requires Debian or Ubuntu");
+            return;
+        }
+    };
+}
+
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // UBUNTU-SPECIFIC TESTS
@@ -148,7 +223,7 @@ mod ubuntu_specific {
         require_system_tests!();
         require_ubuntu!();
 
-        let result = run_omg(&["search", "ubuntu-desktop"]);
+        let _result = run_omg(&["search", "ubuntu-desktop"]);
         // Ubuntu should have ubuntu-specific packages
     }
 

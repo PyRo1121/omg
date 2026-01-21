@@ -2,11 +2,8 @@
 //!
 //! Uses bitcode for maximum performance (fastest Rust serializer).
 //! Uses serde integration to avoid recursion limit issues with recursive types.
-//!
-//! Optimizations:
-//! - `Box<Vec<T>>` for recursive types to break derive recursion
-//! - Minimal struct sizes for cache efficiency
 
+use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
 use serde::{Deserialize, Serialize};
 
 /// Request ID type
@@ -45,6 +42,16 @@ pub enum Request {
     CacheClear {
         id: RequestId,
     },
+    /// Get system metrics (Prometheus-style)
+    Metrics {
+        id: RequestId,
+    },
+    /// Get fuzzy suggestions for a package name
+    Suggest {
+        id: RequestId,
+        query: String,
+        limit: Option<usize>,
+    },
     /// Batch multiple requests in a single IPC round-trip
     Batch {
         id: RequestId,
@@ -65,6 +72,8 @@ impl Request {
             | Self::Ping { id }
             | Self::CacheStats { id }
             | Self::CacheClear { id }
+            | Self::Metrics { id }
+            | Self::Suggest { id, .. }
             | Self::Batch { id, .. } => *id,
         }
     }
@@ -97,6 +106,8 @@ pub enum ResponseResult {
         size: usize,
         max_size: usize,
     },
+    Metrics(MetricsSnapshot),
+    Suggest(Vec<String>),
     Message(String),
     /// Batch response containing multiple results
     Batch(Box<Vec<Response>>),
@@ -109,23 +120,24 @@ pub mod error_codes {
     pub const INVALID_PARAMS: i32 = -32602;
     pub const INTERNAL_ERROR: i32 = -32603;
     pub const PACKAGE_NOT_FOUND: i32 = -1001;
+    pub const RATE_LIMITED: i32 = -1002;
 }
 
 /// Search result
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Archive, RkyvSerialize, RkyvDeserialize, Debug, Clone, Serialize, Deserialize)]
 pub struct SearchResult {
     pub packages: Vec<PackageInfo>,
     pub total: usize,
 }
 
 /// Explicit packages result
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Archive, RkyvSerialize, RkyvDeserialize, Debug, Clone, Serialize, Deserialize)]
 pub struct ExplicitResult {
     pub packages: Vec<String>,
 }
 
 /// Status result
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Archive, RkyvSerialize, RkyvDeserialize, Debug, Clone, Serialize, Deserialize)]
 pub struct StatusResult {
     pub total_packages: usize,
     pub explicit_packages: usize,
@@ -136,7 +148,7 @@ pub struct StatusResult {
 }
 
 /// Package info for IPC (minimal)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Archive, RkyvSerialize, RkyvDeserialize, Debug, Clone, Serialize, Deserialize)]
 pub struct PackageInfo {
     pub name: String,
     pub version: String,
@@ -145,7 +157,7 @@ pub struct PackageInfo {
 }
 
 /// Detailed package info for IPC
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Archive, RkyvSerialize, RkyvDeserialize, Debug, Clone, Serialize, Deserialize)]
 pub struct DetailedPackageInfo {
     pub name: String,
     pub version: String,
@@ -160,7 +172,7 @@ pub struct DetailedPackageInfo {
 }
 
 /// Vulnerability info for IPC
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Archive, RkyvSerialize, RkyvDeserialize, Debug, Clone, Serialize, Deserialize)]
 pub struct Vulnerability {
     pub id: String,
     pub summary: String,
@@ -168,9 +180,22 @@ pub struct Vulnerability {
 }
 
 /// Security audit result
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Archive, RkyvSerialize, RkyvDeserialize, Debug, Clone, Serialize, Deserialize)]
 pub struct SecurityAuditResult {
     pub total_vulnerabilities: usize,
     pub high_severity: usize,
     pub vulnerabilities: Vec<(String, Vec<Vulnerability>)>,
+}
+
+/// System metrics snapshot
+#[derive(Archive, RkyvSerialize, RkyvDeserialize, Debug, Clone, Serialize, Deserialize)]
+pub struct MetricsSnapshot {
+    pub requests_total: u64,
+    pub requests_failed: u64,
+    pub rate_limit_hits: u64,
+    pub validation_failures: u64,
+    pub active_connections: i64,
+    pub security_audit_requests: u64,
+    pub bytes_received: u64,
+    pub bytes_sent: u64,
 }

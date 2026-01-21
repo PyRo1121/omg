@@ -8,21 +8,16 @@ use anyhow::{Context, Result};
 use redb::{Database, ReadableDatabase, TableDefinition};
 use std::path::Path;
 
+use rkyv::{Archive, Deserialize as RkyvDeserialize, Serialize as RkyvSerialize};
+
 const STATUS_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("status");
 const INDEX_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("package_index");
 const INDEX_META_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("index_meta");
 
 /// Serialized package index for fast loading
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Archive, RkyvSerialize, RkyvDeserialize, serde::Serialize, serde::Deserialize)]
 pub struct SerializedIndex {
     pub packages: Vec<DetailedPackageInfo>,
-    pub timestamp: u64,
-}
-
-/// Borrowing version for serialization (avoids clone)
-#[derive(serde::Serialize)]
-struct SerializedIndexRef<'a> {
-    pub packages: &'a [DetailedPackageInfo],
     pub timestamp: u64,
 }
 
@@ -58,7 +53,13 @@ impl PersistentCache {
 
         match table.get("current")? {
             Some(guard) => {
-                let status: StatusResult = serde_json::from_slice(guard.value())?;
+                // Zero-copy access with validation
+                let bytes = guard.value();
+                let archived = rkyv::access::<rkyv::Archived<StatusResult>, rkyv::rancor::Error>(bytes)
+                    .map_err(|e| anyhow::anyhow!("Validation error: {e}"))?;
+
+                let status: StatusResult = rkyv::deserialize::<StatusResult, rkyv::rancor::Error>(archived)
+                    .map_err(|e| anyhow::anyhow!("Deserialization error: {e}"))?;
                 Ok(Some(status))
             }
             None => Ok(None),
@@ -66,7 +67,8 @@ impl PersistentCache {
     }
 
     pub fn set_status(&self, status: &StatusResult) -> Result<()> {
-        let data = serde_json::to_vec(status)?;
+        let data = rkyv::to_bytes::<rkyv::rancor::Error>(status)
+            .map_err(|e| anyhow::anyhow!("Serialization error: {e}"))?;
         let write_txn = self.db.begin_write()?;
         {
             let mut table = write_txn.open_table(STATUS_TABLE)?;
@@ -87,7 +89,7 @@ impl PersistentCache {
 
         match table.get("meta")? {
             Some(guard) => {
-                let meta: IndexMeta = serde_json::from_slice(guard.value())?;
+                let meta: IndexMeta = bitcode::deserialize(guard.value())?;
                 Ok(Some(meta))
             }
             None => Ok(None),
@@ -106,7 +108,15 @@ impl PersistentCache {
         match table.get("packages")? {
             Some(guard) => {
                 let start = std::time::Instant::now();
-                let index: SerializedIndex = bitcode::deserialize(guard.value())?;
+                let bytes = guard.value();
+
+                // Zero-copy access with validation
+                let archived = rkyv::access::<rkyv::Archived<SerializedIndex>, rkyv::rancor::Error>(bytes)
+                    .map_err(|e| anyhow::anyhow!("Validation error: {e}"))?;
+
+                let index: SerializedIndex = rkyv::deserialize::<SerializedIndex, rkyv::rancor::Error>(archived)
+                    .map_err(|e| anyhow::anyhow!("Deserialization error: {e}"))?;
+
                 tracing::debug!(
                     "Loaded {} packages from cache in {:?}",
                     index.packages.len(),
@@ -125,23 +135,20 @@ impl PersistentCache {
             .map(|d| d.as_secs())
             .unwrap_or(0);
 
-        // OPTIMIZATION: Avoid unnecessary clone by using borrowing struct
-        // Previous: packages.to_vec() cloned 60k+ packages (~12MB allocation)
-        // Now: Serialize directly from &[T] using SerializedIndexRef
-        let index_data = {
-            let index_ref = SerializedIndexRef {
-                packages,
-                timestamp,
-            };
-            bitcode::serialize(&index_ref)?
+        let index = SerializedIndex {
+            packages: packages.to_vec(),
+            timestamp,
         };
+
+        let index_data = rkyv::to_bytes::<rkyv::rancor::Error>(&index)
+            .map_err(|e| anyhow::anyhow!("Serialization error: {e}"))?;
 
         let meta = IndexMeta {
             package_count: packages.len(),
             timestamp,
             db_mtime,
         };
-        let meta_data = serde_json::to_vec(&meta)?;
+        let meta_data = bitcode::serialize(&meta)?;
 
         let write_txn = self.db.begin_write()?;
         {

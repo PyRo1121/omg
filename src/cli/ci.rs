@@ -6,6 +6,12 @@ use std::fs;
 
 /// Initialize CI configuration
 pub fn init(provider: &str) -> Result<()> {
+    // SECURITY: Validate provider
+    let valid_providers = ["github", "gitlab", "circleci"];
+    if !valid_providers.contains(&provider.to_lowercase().as_str()) {
+        anyhow::bail!("Unknown CI provider '{provider}'. Supported: github, gitlab, circleci");
+    }
+
     println!(
         "{} Generating {} CI configuration...\n",
         "OMG".cyan().bold(),

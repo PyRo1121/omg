@@ -101,11 +101,10 @@ fn detect_js_package_manager(current_dir: &std::path::Path) -> Option<String> {
 
     if let Ok(file) = std::fs::File::open(current_dir.join("package.json"))
         && let Ok(pkg) = serde_json::from_reader::<_, PackageJson>(file)
-        && let Some(package_manager) = pkg.package_manager
-        && let Some(name) = parse_package_manager_name(&package_manager)
-    {
-        return Some(name);
-    }
+            && let Some(package_manager) = pkg.package_manager
+                && let Some(name) = parse_package_manager_name(&package_manager) {
+                    return Some(name);
+                }
 
     if current_dir.join("bun.lockb").exists() {
         return Some("bun".to_string());
@@ -177,17 +176,16 @@ pub fn detect_tasks() -> Result<Vec<Task>> {
     if let Some(package_manager) = detect_js_package_manager(&current_dir) {
         if let Ok(file) = std::fs::File::open(current_dir.join("package.json"))
             && let Ok(pkg) = serde_json::from_reader::<_, PackageJson>(file)
-            && let Some(scripts) = pkg.scripts
-        {
-            for (name, _) in scripts {
-                tasks.push(Task {
-                    name: name.clone(),
-                    command: package_manager.clone(),
-                    args: vec!["run".to_string(), name],
-                    source: "package.json".to_string(),
-                });
-            }
-        }
+                && let Some(scripts) = pkg.scripts {
+                    for (name, _) in scripts {
+                        tasks.push(Task {
+                            name: name.clone(),
+                            command: package_manager.clone(),
+                            args: vec!["run".to_string(), name],
+                            source: "package.json".to_string(),
+                        });
+                    }
+                }
 
         tasks.push(Task {
             name: "install".to_string(),
@@ -200,32 +198,30 @@ pub fn detect_tasks() -> Result<Vec<Task>> {
     // 2. Deno (deno.json)
     if let Ok(file) = std::fs::File::open(current_dir.join("deno.json"))
         && let Ok(pkg) = serde_json::from_reader::<_, DenoJson>(file)
-        && let Some(dtasks) = pkg.tasks
-    {
-        for (name, _) in dtasks {
-            tasks.push(Task {
-                name: name.clone(),
-                command: "deno".to_string(),
-                args: vec!["task".to_string(), name],
-                source: "deno.json".to_string(),
-            });
-        }
-    }
+            && let Some(dtasks) = pkg.tasks {
+                for (name, _) in dtasks {
+                    tasks.push(Task {
+                        name: name.clone(),
+                        command: "deno".to_string(),
+                        args: vec!["task".to_string(), name],
+                        source: "deno.json".to_string(),
+                    });
+                }
+            }
 
     // 3. PHP (composer.json)
     if let Ok(file) = std::fs::File::open(current_dir.join("composer.json"))
         && let Ok(pkg) = serde_json::from_reader::<_, ComposerJson>(file)
-        && let Some(scripts) = pkg.scripts
-    {
-        for (name, _) in scripts {
-            tasks.push(Task {
-                name: name.clone(),
-                command: "composer".to_string(),
-                args: vec!["run-script".to_string(), name],
-                source: "composer.json".to_string(),
-            });
-        }
-    }
+            && let Some(scripts) = pkg.scripts {
+                for (name, _) in scripts {
+                    tasks.push(Task {
+                        name: name.clone(),
+                        command: "composer".to_string(),
+                        args: vec!["run-script".to_string(), name],
+                        source: "composer.json".to_string(),
+                    });
+                }
+            }
 
     // 4. Rust (Cargo.toml)
     if current_dir.join("Cargo.toml").exists() {
@@ -242,27 +238,26 @@ pub fn detect_tasks() -> Result<Vec<Task>> {
 
     // 5. Makefile
     if current_dir.join("Makefile").exists()
-        && let Ok(content) = std::fs::read_to_string(current_dir.join("Makefile"))
-    {
-        for line in content.lines() {
-            if let Some(target) = line.split(':').next() {
-                let target = target.trim();
-                if !target.is_empty()
-                    && !target.contains('=')
-                    && !target.contains('.')
-                    && !target.starts_with('#')
-                    && !target.contains('%')
-                {
-                    tasks.push(Task {
-                        name: target.to_string(),
-                        command: "make".to_string(),
-                        args: vec![target.to_string()],
-                        source: "Makefile".to_string(),
-                    });
+        && let Ok(content) = std::fs::read_to_string(current_dir.join("Makefile")) {
+            for line in content.lines() {
+                if let Some(target) = line.split(':').next() {
+                    let target = target.trim();
+                    if !target.is_empty()
+                        && !target.contains('=')
+                        && !target.contains('.')
+                        && !target.starts_with('#')
+                        && !target.contains('%')
+                    {
+                        tasks.push(Task {
+                            name: target.to_string(),
+                            command: "make".to_string(),
+                            args: vec![target.to_string()],
+                            source: "Makefile".to_string(),
+                        });
+                    }
                 }
             }
         }
-    }
 
     // 6. Go (Taskfile)
     if current_dir.join("Taskfile.yml").exists() || current_dir.join("Taskfile.yaml").exists() {
@@ -292,19 +287,18 @@ pub fn detect_tasks() -> Result<Vec<Task>> {
     // 8. Python (Poetry)
     if let Ok(content) = std::fs::read_to_string(current_dir.join("pyproject.toml"))
         && let Ok(proj) = toml::from_str::<PyProject>(&content)
-        && let Some(tool) = proj.tool
-        && let Some(poetry) = tool.poetry
-        && let Some(scripts) = poetry.scripts
-    {
-        for (name, _) in scripts {
-            tasks.push(Task {
-                name: name.clone(),
-                command: "poetry".to_string(),
-                args: vec!["run".to_string(), name],
-                source: "pyproject.toml".to_string(),
-            });
-        }
-    }
+            && let Some(tool) = proj.tool
+                && let Some(poetry) = tool.poetry
+                    && let Some(scripts) = poetry.scripts {
+                        for (name, _) in scripts {
+                            tasks.push(Task {
+                                name: name.clone(),
+                                command: "poetry".to_string(),
+                                args: vec!["run".to_string(), name],
+                                source: "pyproject.toml".to_string(),
+                            });
+                        }
+                    }
 
     // 9. Python (Pipenv)
     if current_dir.join("Pipfile").exists() {
@@ -326,16 +320,15 @@ pub fn detect_tasks() -> Result<Vec<Task>> {
                 if in_scripts
                     && !line.is_empty()
                     && !line.starts_with('#')
-                    && let Some((key, _)) = line.split_once('=')
-                {
-                    let key = key.trim();
-                    tasks.push(Task {
-                        name: key.to_string(),
-                        command: "pipenv".to_string(),
-                        args: vec!["run".to_string(), key.to_string()],
-                        source: "Pipfile".to_string(),
-                    });
-                }
+                    && let Some((key, _)) = line.split_once('=') {
+                        let key = key.trim();
+                        tasks.push(Task {
+                            name: key.to_string(),
+                            command: "pipenv".to_string(),
+                            args: vec!["run".to_string(), key.to_string()],
+                            source: "Pipfile".to_string(),
+                        });
+                    }
             }
         }
     }
@@ -371,6 +364,11 @@ pub fn run_task(
     extra_args: &[String],
     backend_override: Option<RuntimeBackend>,
 ) -> Result<()> {
+    // SECURITY: Validate task name to prevent shell injection or arbitrary command execution via maliciously named tasks
+    if task_name.chars().any(|c| !c.is_ascii_alphanumeric() && c != '-' && c != '_' && c != '.') {
+        anyhow::bail!("Invalid task name: {task_name}");
+    }
+
     let tasks = detect_tasks()?;
 
     // Find the task
@@ -583,6 +581,10 @@ fn execute_process(
     };
 
     let mut command = Command::new(cmd);
+    // SECURITY: Use -- to prevent argument injection if the command supports it
+    // Note: We can't blindly add -- to all commands, but we should ensure 'cmd' itself is safe.
+    crate::core::security::validate_package_name(cmd)?;
+
     command.args(args);
     command.args(extra_args);
 
@@ -601,11 +603,10 @@ fn execute_process(
     }
 
     if !path_additions.is_empty()
-        && let Ok(current_path) = std::env::var("PATH")
-    {
-        let new_path = format!("{}:{}", path_additions.join(":"), current_path);
-        command.env("PATH", new_path);
-    }
+        && let Ok(current_path) = std::env::var("PATH") {
+            let new_path = format!("{}:{}", path_additions.join(":"), current_path);
+            command.env("PATH", new_path);
+        }
 
     let status = command
         .status()
@@ -764,7 +765,7 @@ fn ensure_js_package_manager(command: &str) -> Result<()> {
         .interact()?
     {
         let status = Command::new("corepack")
-            .args(["prepare", &format!("{command}@latest"), "--activate"])
+            .args(["prepare", "--", &format!("{command}@latest"), "--activate"])
             .status()
             .with_context(|| format!("Failed to run corepack for {command}"))?;
         if !status.success() {
@@ -852,7 +853,7 @@ fn mise_runtime_bin_path(runtime: &str, version: &str) -> Option<PathBuf> {
     };
 
     let output = Command::new("mise")
-        .args(["where", &tool_spec])
+        .args(["where", "--", &tool_spec])
         .output()
         .ok()?;
 

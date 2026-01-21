@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use std::process::{Command, Stdio};
 
 #[cfg(feature = "debian")]
-use crate::core::env::distro::is_debian_like;
+use crate::package_managers::{apt_list_all_package_names, apt_get_system_status};
 use crate::core::paths;
 #[cfg(feature = "arch")]
 use crate::package_managers::PackageManager;
@@ -64,7 +64,9 @@ pub async fn complete(_shell: &str, current: &str, last: &str, full: Option<&str
                             .unwrap_or_default()
                     }
                     #[cfg(not(feature = "arch"))]
-                    Vec::new()
+                    {
+                        Vec::new()
+                    }
                 }
             } else {
                 #[cfg(feature = "arch")]
@@ -73,7 +75,9 @@ pub async fn complete(_shell: &str, current: &str, last: &str, full: Option<&str
                         .unwrap_or_default()
                 }
                 #[cfg(not(feature = "arch"))]
-                Vec::new()
+                {
+                    Vec::new()
+                }
             };
 
             // Also include AUR package names (from cache) - Arch only
@@ -145,11 +149,10 @@ pub async fn complete(_shell: &str, current: &str, last: &str, full: Option<&str
                     for entry in entries.flatten() {
                         if let Ok(file_type) = entry.file_type()
                             && file_type.is_dir()
-                            && let Some(name) = entry.file_name().to_str()
-                            && name != "current"
-                        {
-                            installed_versions.push(name.to_string());
-                        }
+                                && let Some(name) = entry.file_name().to_str()
+                                    && name != "current" {
+                                        installed_versions.push(name.to_string());
+                                    }
                     }
                 }
 
@@ -371,6 +374,50 @@ pub fn status_sync() -> Result<()> {
     Ok(())
 }
 
+/// Show system metrics in Prometheus format
+pub async fn metrics() -> Result<()> {
+    let mut client = crate::core::client::DaemonClient::connect().await?;
+
+    match client.call(crate::daemon::protocol::Request::Metrics { id: 0 }).await? {
+        crate::daemon::protocol::ResponseResult::Metrics(snapshot) => {
+            // Output in Prometheus text format
+            println!("# HELP omg_requests_total Total number of requests handled");
+            println!("# TYPE omg_requests_total counter");
+            println!("omg_requests_total {}", snapshot.requests_total);
+
+            println!("# HELP omg_requests_failed_total Total number of failed requests");
+            println!("# TYPE omg_requests_failed_total counter");
+            println!("omg_requests_failed_total {}", snapshot.requests_failed);
+
+            println!("# HELP omg_rate_limit_hits_total Total number of rate limit exceeded events");
+            println!("# TYPE omg_rate_limit_hits_total counter");
+            println!("omg_rate_limit_hits_total {}", snapshot.rate_limit_hits);
+
+            println!("# HELP omg_validation_failures_total Total number of input validation failures");
+            println!("# TYPE omg_validation_failures_total counter");
+            println!("omg_validation_failures_total {}", snapshot.validation_failures);
+
+            println!("# HELP omg_active_connections Number of currently active client connections");
+            println!("# TYPE omg_active_connections gauge");
+            println!("omg_active_connections {}", snapshot.active_connections);
+
+            println!("# HELP omg_security_audit_requests_total Total number of security audits performed");
+            println!("# TYPE omg_security_audit_requests_total counter");
+            println!("omg_security_audit_requests_total {}", snapshot.security_audit_requests);
+
+            println!("# HELP omg_bytes_received_total Total bytes received by daemon");
+            println!("# TYPE omg_bytes_received_total counter");
+            println!("omg_bytes_received_total {}", snapshot.bytes_received);
+
+            println!("# HELP omg_bytes_sent_total Total bytes sent by daemon");
+            println!("# TYPE omg_bytes_sent_total counter");
+            println!("omg_bytes_sent_total {}", snapshot.bytes_sent);
+        }
+        _ => anyhow::bail!("Unexpected response from daemon"),
+    }
+    Ok(())
+}
+
 /// Start the daemon
 pub fn daemon(foreground: bool) -> Result<()> {
     if foreground {
@@ -378,6 +425,7 @@ pub fn daemon(foreground: bool) -> Result<()> {
     } else {
         // Start daemon in background
         let status = Command::new("omgd")
+            .arg("--")
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn();
@@ -392,8 +440,20 @@ pub fn daemon(foreground: bool) -> Result<()> {
 
 /// Get or set configuration
 pub fn config(key: Option<&str>, value: Option<&str>) -> Result<()> {
+    if let Some(k) = key {
+        // SECURITY: Validate config key
+        if k.chars().any(|c| !c.is_ascii_alphanumeric() && c != '.' && c != '_') {
+            anyhow::bail!("Invalid configuration key: {k}");
+        }
+    }
+
     match (key, value) {
         (Some(k), Some(v)) => {
+            // SECURITY: Basic validation for values
+            if v.len() > 1024 {
+                anyhow::bail!("Configuration value too long");
+            }
+
             println!(
                 "{} Setting {} = {}",
                 style::header("OMG"),
@@ -486,6 +546,13 @@ pub fn history(limit: usize) -> Result<()> {
 }
 
 pub async fn rollback(id: Option<String>) -> Result<()> {
+    if let Some(ref r_id) = id {
+        // SECURITY: Validate transaction ID
+        if r_id.chars().any(|c| !c.is_ascii_hexdigit()) {
+            anyhow::bail!("Invalid transaction ID format");
+        }
+    }
+
     let history_mgr = crate::core::history::HistoryManager::new()?;
     let entries = history_mgr.load()?;
 
@@ -537,13 +604,6 @@ pub async fn rollback(id: Option<String>) -> Result<()> {
         style::info(&target.id[..8])
     );
 
-    println!(
-        "{}\n",
-        style::dim(
-            "Note: Full rollback logic is coming in Phase 16.2. Currently, only official packages are supported via downgrade."
-        )
-    );
-
     use dialoguer::{Confirm, theme::ColorfulTheme};
     if !Confirm::with_theme(&ColorfulTheme::default())
         .with_prompt("Proceed with rollback?")
@@ -553,16 +613,13 @@ pub async fn rollback(id: Option<String>) -> Result<()> {
         return Ok(());
     }
 
-    // Skeleton for rollback logic
-    // 1. Identify packages that were changed
-    // 2. For each package, try to install the 'old_version'
+    // Identify packages that were changed and build install list
     let mut to_install = Vec::new();
     for change in &target.changes {
         if let Some(old_ver) = &change.old_version
-            && change.source == "official"
-        {
-            to_install.push(format!("{}={}", change.name, old_ver));
-        }
+            && change.source == "official" {
+                to_install.push(format!("{}={}", change.name, old_ver));
+            }
     }
 
     if to_install.is_empty() {
@@ -575,12 +632,46 @@ pub async fn rollback(id: Option<String>) -> Result<()> {
     } else {
         #[cfg(feature = "arch")]
         {
+            println!("{} Rolling back {} packages...", style::info("→"), to_install.len());
             let pacman = crate::package_managers::OfficialPackageManager::new();
             pacman.install(&to_install).await?;
+            println!("{}", style::success("✓ Rollback completed successfully"));
         }
-        #[cfg(not(feature = "arch"))]
+
+        #[cfg(feature = "debian")]
         {
-            anyhow::bail!("Rollback not implemented for this backend");
+            if crate::core::env::distro::use_debian_backend() {
+                #[cfg(feature = "debian")]
+                {
+                    println!("{} Rolling back {} packages...", style::info("→"), to_install.len());
+                    let apt = crate::package_managers::AptPackageManager::new();
+                    use crate::package_managers::PackageManager as _;
+                    apt.install(&to_install).await?;
+                    println!("{}", style::success("✓ Rollback completed successfully"));
+                }
+
+                #[cfg(not(feature = "debian"))]
+                {
+                    println!("{} Rollback requires APT package installation support.", style::warning("⚠"));
+                    println!("{}", style::dim("To enable full rollback support, rebuild with 'debian' feature."));
+                    println!("{}", style::dim("Alternatively, you can manually install the following packages:"));
+                    for pkg in &to_install {
+                        println!("  apt install {}", style::package(pkg));
+                    }
+                }
+            } else {
+                anyhow::bail!("Rollback is only supported on Arch Linux and Debian/Ubuntu systems");
+            }
+        }
+
+        #[cfg(not(any(feature = "arch", feature = "debian")))]
+        {
+            println!("{} Rollback requires package manager support.", style::warning("⚠"));
+            println!("{}", style::dim("The following packages need to be restored:"));
+            for pkg in &to_install {
+                println!("  {}", style::package(pkg));
+            }
+            anyhow::bail!("Rollback is only supported on Arch Linux and Debian/Ubuntu systems");
         }
     }
 

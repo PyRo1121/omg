@@ -92,10 +92,9 @@ impl PythonManager {
                 if asset.name.contains(arch)
                     && asset.name.contains("linux-gnu")
                     && asset.name.contains("install_only")
-                    && let Some(version) = Self::extract_cpython_version(&asset.name)
-                {
-                    versions.insert(version);
-                }
+                    && let Some(version) = Self::extract_cpython_version(&asset.name) {
+                        versions.insert(version);
+                    }
             }
         }
 
@@ -248,10 +247,9 @@ impl PythonManager {
         }
 
         if let Some(current) = self.current_version()
-            && current == version
-        {
-            let _ = fs::remove_file(&self.current_link);
-        }
+            && current == version {
+                let _ = fs::remove_file(&self.current_link);
+            }
 
         fs::remove_dir_all(&version_dir)?;
         println!("{} Python {} uninstalled", "✓".green(), version);

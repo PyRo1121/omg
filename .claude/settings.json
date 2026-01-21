@@ -1,0 +1,13 @@
+{
+  "enabledPlugins": {
+    "unit-testing@claude-code-workflows": true,
+    "comprehensive-review@claude-code-workflows": true,
+    "systems-programming@claude-code-workflows": true,
+    "agent-orchestration@claude-code-workflows": true,
+    "dependency-management@claude-code-workflows": true,
+    "performance-testing-review@claude-code-workflows": true,
+    "code-review-ai@claude-code-workflows": true,
+    "tdd-workflows@claude-code-workflows": true,
+    "code-documentation@claude-code-workflows": true
+  }
+}

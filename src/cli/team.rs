@@ -8,6 +8,15 @@ use crate::core::license;
 
 /// Initialize a new team workspace
 pub fn init(team_id: &str, name: Option<&str>) -> Result<()> {
+    // SECURITY: Validate team_id
+    if team_id.chars().any(|c| !c.is_ascii_alphanumeric() && c != '/' && c != '-' && c != '_') {
+        anyhow::bail!("Invalid team ID: {team_id}");
+    }
+    if let Some(n) = name
+        && (n.len() > 128 || n.chars().any(char::is_control)) {
+            anyhow::bail!("Invalid team name");
+        }
+
     // Require Team tier for team sync features
     license::require_feature("team-sync")?;
     let cwd = std::env::current_dir()?;
@@ -36,6 +45,14 @@ pub fn init(team_id: &str, name: Option<&str>) -> Result<()> {
 
 /// Join an existing team by setting remote URL
 pub async fn join(remote_url: &str) -> Result<()> {
+    // SECURITY: Basic URL validation
+    if !remote_url.starts_with("https://") {
+        anyhow::bail!("Only HTTPS URLs allowed for security");
+    }
+    if remote_url.len() > 1024 || remote_url.chars().any(char::is_control) {
+        anyhow::bail!("Invalid remote URL");
+    }
+
     // Require Team tier for team sync features
     license::require_feature("team-sync")?;
     let cwd = std::env::current_dir()?;
@@ -129,55 +146,72 @@ pub async fn pull() -> Result<()> {
 }
 
 /// List team members
-pub fn members() -> Result<()> {
-    let cwd = std::env::current_dir()?;
-    let workspace = TeamWorkspace::new(&cwd);
-
-    if !workspace.is_team_workspace() {
-        anyhow::bail!("Not a team workspace. Run 'omg team init <team-id>' first.");
-    }
-
-    let status = workspace.load_status()?;
+pub async fn members() -> Result<()> {
+    // Require Team tier for team features
+    license::require_feature("team-sync")?;
 
     println!("{} Team Members\n", "OMG".cyan().bold());
 
-    println!(
-        "  Team: {} ({})",
-        status.config.name.cyan(),
-        status.config.team_id.dimmed()
-    );
-    println!();
+    let members = license::fetch_team_members().await?;
+    
+    if members.is_empty() {
+        println!("  {} No team members found", "○".dimmed());
+        println!("  Team members appear here once they activate with your license key.");
+        return Ok(());
+    }
 
-    for member in &status.members {
-        let sync_icon = if member.in_sync {
+    let now = jiff::Timestamp::now().as_second();
+    let one_hour = 3600;
+
+    for member in &members {
+        let last_seen_ts = parse_timestamp(&member.last_seen_at);
+        let in_sync = now - last_seen_ts < one_hour;
+        
+        let sync_icon = if in_sync {
             "✓".green().to_string()
         } else {
             "⚠".yellow().to_string()
         };
 
-        let last_sync = format_timestamp(member.last_sync);
+        let hostname = member.hostname.as_deref().unwrap_or(&member.machine_id);
+        let last_sync = format_timestamp(last_seen_ts);
 
         println!(
             "  {} {} {}",
             sync_icon,
-            member.name.bold(),
-            format!("({})", member.id).dimmed()
+            hostname.bold(),
+            format!("({})", &member.machine_id[..8.min(member.machine_id.len())]).dimmed()
         );
-        println!("      Last sync: {}", last_sync.dimmed());
-
-        if let Some(ref drift) = member.drift_summary {
-            println!("      Drift: {}", drift.yellow());
-        }
+        println!("      Last active: {}", last_sync.dimmed());
+        println!("      Platform:    {} {}", 
+            member.os.as_deref().unwrap_or("unknown"),
+            member.arch.as_deref().unwrap_or("")
+        );
     }
+
+    let in_sync_count = members.iter().filter(|m| {
+        let ts = parse_timestamp(&m.last_seen_at);
+        now - ts < one_hour
+    }).count();
 
     println!();
     println!(
-        "  {} in sync, {} out of sync",
-        status.in_sync_count().to_string().green(),
-        status.out_of_sync_count().to_string().yellow()
+        "  {} in sync, {} inactive (>1h)",
+        in_sync_count.to_string().green(),
+        (members.len() - in_sync_count).to_string().yellow()
     );
 
     Ok(())
+}
+
+fn parse_timestamp(s: &str) -> i64 {
+    use std::str::FromStr;
+    // Basic parser for various formats
+    if let Ok(ts) = jiff::Timestamp::from_str(s) {
+        ts.as_second()
+    } else {
+        0
+    }
 }
 
 fn print_status(status: &TeamStatus) {
@@ -251,12 +285,16 @@ fn extract_team_id(url: &str) -> String {
     // e.g., "https://gist.github.com/user/abc123" -> "gist-abc123"
 
     if url.contains("gist.github.com") {
-        let id = url.split('/').next_back().unwrap_or("team");
-        format!("gist-{}", &id[..8.min(id.len())])
+        // Split URL and safely get the last segment
+        let segments: Vec<&str> = url.split('/').collect();
+        let id = segments.last().copied().unwrap_or("team");
+        // Safely take up to 8 characters
+        let short_id = id.chars().take(8).collect::<String>();
+        format!("gist-{short_id}")
     } else if url.contains("github.com") {
         url.trim_end_matches(".git")
             .split("github.com/")
-            .last()
+            .nth(1) // More idiomatic than .last() when we want the element after split
             .unwrap_or("team")
             .to_string()
     } else {
@@ -265,21 +303,23 @@ fn extract_team_id(url: &str) -> String {
 }
 
 /// Interactive team dashboard (TUI)
-pub fn dashboard() -> Result<()> {
+pub async fn dashboard() -> Result<()> {
     license::require_feature("team-sync")?;
-
-    println!("{} Team Dashboard\n", "OMG".cyan().bold());
-    println!("  {} Dashboard TUI coming soon!", "ℹ".blue());
-    println!(
-        "  For now, use {} for team status",
-        "omg team status".cyan()
-    );
-
-    Ok(())
+    crate::cli::tui::run_with_tab(crate::cli::tui::app::Tab::Team).await
 }
 
 /// Generate team invite link
 pub fn invite(email: Option<&str>, role: &str) -> Result<()> {
+    // SECURITY: Validate role and email
+    let valid_roles = ["admin", "lead", "developer", "readonly"];
+    if !valid_roles.contains(&role) {
+        anyhow::bail!("Invalid role: {role}");
+    }
+    if let Some(e) = email
+        && (!e.contains('@') || e.len() > 255) {
+            anyhow::bail!("Invalid email address");
+        }
+
     license::require_feature("team-sync")?;
 
     println!("{} Generating invite link...\n", "OMG".cyan().bold());
@@ -332,6 +372,15 @@ pub mod roles {
     }
 
     pub fn assign(member: &str, role: &str) -> Result<()> {
+        // SECURITY: Validate role and member
+        let valid_roles = ["admin", "lead", "developer", "readonly"];
+        if !valid_roles.contains(&role) {
+            anyhow::bail!("Invalid role: {role}");
+        }
+        if member.len() > 128 || member.chars().any(char::is_control) {
+            anyhow::bail!("Invalid member identifier");
+        }
+
         license::require_feature("team-sync")?;
 
         println!("{} Assigning role...\n", "OMG".cyan().bold());
@@ -356,12 +405,18 @@ pub mod roles {
 }
 
 /// Propose environment changes for review
-pub fn propose(message: &str) -> Result<()> {
+pub async fn propose(message: &str) -> Result<()> {
     license::require_feature("team-sync")?;
 
     println!("{} Creating proposal...\n", "OMG".cyan().bold());
 
-    let proposal_id = 42; // Demo
+    // Capture current environment state for the proposal
+    let state = serde_json::json!({
+        "environment": crate::core::env::fingerprint::EnvironmentState::capture().await?,
+        "packages": crate::package_managers::list_explicit_fast().unwrap_or_default(),
+    });
+
+    let proposal_id = license::propose_change(message, &state).await?;
 
     println!("  {} Proposal #{} created", "✓".green(), proposal_id);
     println!("  Message: {message}");
@@ -375,20 +430,59 @@ pub fn propose(message: &str) -> Result<()> {
     Ok(())
 }
 
-/// Review a proposed change
-pub fn review(id: u32, approve: bool, request_changes: Option<&str>) -> Result<()> {
+/// Review and approve/reject a proposal
+pub async fn review(proposal_id: u32, approve: bool) -> Result<()> {
     license::require_feature("team-sync")?;
 
-    println!("{} Reviewing proposal #{}...\n", "OMG".cyan().bold(), id);
+    let status = if approve { "approved" } else { "rejected" };
+    
+    println!(
+        "{} Reviewing proposal #{} -> {}...\n",
+        "OMG".cyan().bold(),
+        proposal_id,
+        if approve { "APPROVE".green().to_string() } else { "REJECT".red().to_string() }
+    );
 
-    if approve {
-        println!("  {} Proposal #{} approved!", "✓".green(), id);
-        println!("  Changes will be merged to team lock.");
-    } else if let Some(reason) = request_changes {
-        println!("  {} Changes requested on #{}", "⚠".yellow(), id);
-        println!("  Reason: {reason}");
-    } else {
-        println!("  Use --approve or --request-changes to review");
+    license::review_proposal(proposal_id, status).await?;
+
+    println!("  {} Proposal status updated", "✓".green());
+    Ok(())
+}
+
+/// List pending team proposals
+pub async fn list_proposals() -> Result<()> {
+    license::require_feature("team-sync")?;
+
+    println!("{} Team Proposals\n", "OMG".cyan().bold());
+
+    let proposals = license::fetch_proposals().await?;
+
+    if proposals.is_empty() {
+        println!("  {}", "No pending proposals.".dimmed());
+        return Ok(());
+    }
+
+    for p in &proposals {
+        let id = p["id"].as_u64().unwrap_or(0);
+        let status = p["status"].as_str().unwrap_or("pending");
+        let msg = p["message"].as_str().unwrap_or("");
+        let email = p["creator_email"].as_str().unwrap_or("unknown");
+        let date = p["created_at"].as_str().unwrap_or("");
+
+        let status_color = match status {
+            "approved" => status.green().to_string(),
+            "rejected" => status.red().to_string(),
+            _ => status.yellow().to_string(),
+        };
+
+        println!(
+            "  #{} [{}] {} - {}",
+            id.to_string().cyan(),
+            status_color,
+            msg.bold(),
+            email.dimmed()
+        );
+        println!("     Created: {}", date.dimmed());
     }
 
     Ok(())
@@ -414,6 +508,18 @@ pub mod golden_path {
         python: Option<&str>,
         packages: Option<&str>,
     ) -> Result<()> {
+        // SECURITY: Validate all inputs
+        if name.chars().any(|c| !c.is_ascii_alphanumeric() && c != '-') {
+            anyhow::bail!("Invalid template name (alphanumeric and hyphens only)");
+        }
+        if let Some(v) = node { crate::core::security::validate_version(v)?; }
+        if let Some(v) = python { crate::core::security::validate_version(v)?; }
+        if let Some(p) = packages {
+            for pkg in p.split(',') {
+                crate::core::security::validate_package_name(pkg.trim())?;
+            }
+        }
+
         license::require_feature("team-sync")?;
 
         println!("{} Creating golden path template...\n", "OMG".cyan().bold());
@@ -498,7 +604,7 @@ pub fn compliance(export: Option<&str>, enforce: bool) -> Result<()> {
 }
 
 /// Show team activity stream
-pub fn activity(days: u32) -> Result<()> {
+pub async fn activity(days: u32) -> Result<()> {
     license::require_feature("team-sync")?;
 
     println!(
@@ -507,41 +613,31 @@ pub fn activity(days: u32) -> Result<()> {
         days
     );
 
-    println!(
-        "  {} {} {} {}",
-        "Jan 19 14:32".dimmed(),
-        "alice".cyan(),
-        "pushed lock".green(),
-        "\"Update for Q1 release\"".dimmed()
-    );
-    println!(
-        "  {} {} {} {}",
-        "Jan 19 10:15".dimmed(),
-        "bob".cyan(),
-        "joined team".blue(),
-        "via invite link".dimmed()
-    );
-    println!(
-        "  {} {} {} {}",
-        "Jan 18 16:45".dimmed(),
-        "charlie".cyan(),
-        "policy violation".red(),
-        "\"Attempted telnet install\"".dimmed()
-    );
-    println!(
-        "  {} {} {} {}",
-        "Jan 18 09:00".dimmed(),
-        "alice".cyan(),
-        "policy updated".yellow(),
-        "\"Added Python 3.11 requirement\"".dimmed()
-    );
-    println!(
-        "  {} {} {} {}",
-        "Jan 17 11:30".dimmed(),
-        "diana".cyan(),
-        "synced".green(),
-        "drift resolved".dimmed()
-    );
+    let logs = license::fetch_audit_logs().await?;
+    
+    if logs.is_empty() {
+        println!("  {} No recent activity found", "○".dimmed());
+        return Ok(());
+    }
+
+    for log in logs {
+        let timestamp = format_timestamp(parse_timestamp(&log.created_at));
+        let action_color = if log.action.contains("violation") || log.action.contains("revoked") {
+            log.action.red().to_string()
+        } else if log.action.contains("pushed") || log.action.contains("synced") {
+            log.action.green().to_string()
+        } else {
+            log.action.cyan().to_string()
+        };
+
+        println!(
+            "  {} {} {} {}",
+            timestamp.dimmed(),
+            "user".dimmed(), // User info not always available in audit_log query yet
+            action_color,
+            format!("({})", log.resource_type.as_deref().unwrap_or("-")).dimmed()
+        );
+    }
 
     Ok(())
 }
@@ -560,6 +656,15 @@ pub mod notify {
     }
 
     pub fn add(notify_type: &str, url: &str) -> Result<()> {
+        // SECURITY: Validate type and URL
+        let valid_types = ["slack", "discord", "webhook"];
+        if !valid_types.contains(&notify_type) {
+            anyhow::bail!("Invalid notification type: {notify_type}");
+        }
+        if !url.starts_with("https://") || url.len() > 1024 {
+            anyhow::bail!("Invalid or insecure notification URL (HTTPS required)");
+        }
+
         license::require_feature("team-sync")?;
 
         println!("{} Adding notification...\n", "OMG".cyan().bold());

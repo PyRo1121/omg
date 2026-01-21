@@ -217,6 +217,9 @@ fn get_dirs() -> (PathBuf, PathBuf) {
 }
 
 pub async fn install(name: &str) -> Result<()> {
+    // SECURITY: Validate tool name
+    crate::core::security::validate_package_name(name)?;
+
     println!(
         "{} Installing tool '{}'...",
         style::header("OMG Tool"),
@@ -300,7 +303,7 @@ async fn install_managed(
                 .to_str()
                 .context("Install directory path contains invalid UTF-8")?;
             let status = Command::new("npm")
-                .args(["install", "--prefix", install_path, pkg])
+                .args(["install", "--prefix", install_path, "--", pkg])
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null()) // Silence noisy npm
                 .status()?;
@@ -316,7 +319,7 @@ async fn install_managed(
                 .to_str()
                 .context("Install directory path contains invalid UTF-8")?;
             let status = Command::new("cargo")
-                .args(["install", "--root", install_path, pkg])
+                .args(["install", "--root", install_path, "--", pkg])
                 .stdout(std::process::Stdio::null()) // Cargo is noisy
                 .status()?;
 
@@ -331,7 +334,7 @@ async fn install_managed(
                 .to_str()
                 .context("Install directory path contains invalid UTF-8")?;
             let status_venv = Command::new("python")
-                .args(["-m", "venv", install_path])
+                .args(["-m", "venv", "--", install_path])
                 .status()?;
 
             if !status_venv.success() {
@@ -342,7 +345,7 @@ async fn install_managed(
             // 2. Install into venv
             let pip_path = install_dir.join("bin").join("pip");
             let status_install = Command::new(pip_path)
-                .args(["install", pkg])
+                .args(["install", "--", pkg])
                 .stdout(std::process::Stdio::null())
                 .status()?;
 
@@ -365,7 +368,7 @@ async fn install_managed(
 
             let status = Command::new("go")
                 .arg("install")
-                .arg(&target)
+                .args(["--", &target])
                 .env("GOBIN", &go_bin)
                 .stdout(std::process::Stdio::null())
                 .status()?;
@@ -415,10 +418,9 @@ fn link_binaries(install_dir: &Path, bin_dir: &Path, _tool_name: &str) -> Result
                 {
                     use std::os::unix::fs::PermissionsExt;
                     if let Ok(meta) = path.metadata()
-                        && meta.permissions().mode() & 0o111 == 0
-                    {
-                        continue; // Not executable
-                    }
+                        && meta.permissions().mode() & 0o111 == 0 {
+                            continue; // Not executable
+                        }
                 }
 
                 let Some(filename) = path.file_name() else {
@@ -490,6 +492,9 @@ pub fn list() -> Result<()> {
 }
 
 pub fn remove(name: &str) -> Result<()> {
+    // SECURITY: Validate tool name
+    crate::core::security::validate_package_name(name)?;
+
     let (tools_dir, bin_dir) = get_dirs();
 
     // We need to find which manager installed it.
@@ -526,17 +531,16 @@ pub fn remove(name: &str) -> Result<()> {
         let entry = entry?;
         let path = entry.path();
         if let Ok(target) = fs::read_link(&path)
-            && !target.exists()
-        {
-            fs::remove_file(&path)?;
-            println!(
-                "    {} Removed link {}",
-                style::error("-"),
-                path.file_name()
-                    .map(|f| f.to_string_lossy())
-                    .unwrap_or_default()
-            );
-        }
+            && !target.exists() {
+                fs::remove_file(&path)?;
+                println!(
+                    "    {} Removed link {}",
+                    style::error("-"),
+                    path.file_name()
+                        .map(|f| f.to_string_lossy())
+                        .unwrap_or_default()
+                );
+            }
     }
 
     println!("\n{}", style::success("Removal complete"));
@@ -545,6 +549,11 @@ pub fn remove(name: &str) -> Result<()> {
 
 /// Update an installed tool to latest version
 pub async fn update(name: &str) -> Result<()> {
+    // SECURITY: Validate tool name (or 'all')
+    if name != "all" {
+        crate::core::security::validate_package_name(name)?;
+    }
+
     let (tools_dir, bin_dir) = get_dirs();
 
     if name == "all" {
@@ -562,10 +571,9 @@ pub async fn update(name: &str) -> Result<()> {
             );
             // Re-install to update
             if let Some((_, source, _, _)) = TOOL_REGISTRY.iter().find(|(k, _, _, _)| *k == tool)
-                && let Some((manager, pkg)) = source.split_once(':')
-            {
-                let _ = install_managed(manager, pkg, &tool, &tools_dir, &bin_dir).await;
-            }
+                && let Some((manager, pkg)) = source.split_once(':') {
+                    let _ = install_managed(manager, pkg, &tool, &tools_dir, &bin_dir).await;
+                }
         }
         println!("\n{}", style::success("All tools updated!"));
         return Ok(());
@@ -593,6 +601,11 @@ pub async fn update(name: &str) -> Result<()> {
 
 /// Search for tools in the registry
 pub fn search(query: &str) -> Result<()> {
+    // SECURITY: Validate search query
+    if query.len() > 100 {
+        anyhow::bail!("Search query too long");
+    }
+
     println!(
         "{} Searching for '{}'...\n",
         style::header("OMG Tool"),

@@ -286,7 +286,6 @@ impl UsageStats {
         // Add new achievements
         for achievement in new_achievements {
             self.achievements.push(achievement);
-            // Could trigger a notification here in the future
         }
     }
 
@@ -474,10 +473,9 @@ pub async fn sync_usage_now() {
     if let Some(license) = crate::core::license::load_license() {
         let mut stats = UsageStats::load();
         if (stats.needs_sync() || stats.needs_immediate_sync() || stats.total_commands > 0)
-            && let Err(e) = stats.sync(&license.key).await
-        {
-            tracing::debug!("Usage sync failed: {e}");
-        }
+            && let Err(e) = stats.sync(&license.key).await {
+                tracing::debug!("Usage sync failed: {e}");
+            }
     }
 }
 

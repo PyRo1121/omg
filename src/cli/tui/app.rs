@@ -1,3 +1,4 @@
+use crate::core::env::team::TeamStatus;
 use crate::core::history::Transaction;
 use crate::daemon::protocol::StatusResult;
 use anyhow::Result;
@@ -11,10 +12,12 @@ pub enum Tab {
     Runtimes,
     Security,
     Activity,
+    Team,
 }
 
 pub struct App {
     pub status: Option<StatusResult>,
+    pub team_status: Option<TeamStatus>,
     pub history: Vec<Transaction>,
     pub last_tick: Instant,
     pub current_tab: Tab,
@@ -51,6 +54,7 @@ impl App {
     pub async fn new() -> Result<Self> {
         let mut app = Self {
             status: None,
+            team_status: None,
             history: Vec::new(),
             last_tick: Instant::now(),
             current_tab: Tab::Dashboard,
@@ -68,6 +72,12 @@ impl App {
         Ok(app)
     }
 
+    #[must_use]
+    pub fn with_tab(mut self, tab: Tab) -> Self {
+        self.current_tab = tab;
+        self
+    }
+
     pub async fn refresh(&mut self) -> Result<()> {
         // Check if daemon is connected
         self.daemon_connected = crate::core::client::DaemonClient::connect().await.is_ok();
@@ -77,21 +87,64 @@ impl App {
             && let Ok(crate::daemon::protocol::ResponseResult::Status(status)) = client
                 .call(crate::daemon::protocol::Request::Status { id: 0 })
                 .await
-        {
-            self.status = Some(status);
-        }
+            {
+                self.status = Some(status);
+            }
 
         // 2. Fetch history
         if let Ok(history_mgr) = crate::core::history::HistoryManager::new()
-            && let Ok(entries) = history_mgr.load()
-        {
-            self.history = entries.into_iter().rev().take(50).collect();
-        }
+            && let Ok(entries) = history_mgr.load() {
+                self.history = entries.into_iter().rev().take(50).collect();
+            }
 
         // 3. Update system metrics
         self.update_system_metrics();
 
+        // 4. Fetch team status if in a team workspace
+        self.fetch_team_status().await;
+
         Ok(())
+    }
+
+    async fn fetch_team_status(&mut self) {
+        // 1. Try to load local team workspace status
+        if let Ok(cwd) = std::env::current_dir() {
+            let workspace = crate::core::env::team::TeamWorkspace::new(&cwd);
+            if workspace.is_team_workspace()
+                && let Ok(status) = workspace.load_status() {
+                    self.team_status = Some(status);
+                }
+        }
+
+        // 2. If we have a Team+ license, try to fetch real-time member data from the API
+        if let Some(license) = crate::core::license::load_license() {
+            let tier = license.tier_enum();
+            if matches!(tier, crate::core::license::Tier::Team | crate::core::license::Tier::Enterprise)
+                && let Ok(members) = crate::core::license::fetch_team_members().await {
+                    // If we don't have a local team workspace, create a synthetic one from API data
+                    if self.team_status.is_none() {
+                        self.team_status = Some(crate::core::env::team::TeamStatus {
+                            config: crate::core::env::team::TeamConfig {
+                                team_id: "fleet".to_string(),
+                                name: format!("{} Fleet", license.customer.as_deref().unwrap_or("Your")),
+                                ..Default::default()
+                            },
+                            lock_hash: String::new(),
+                            members: members.into_iter().map(|m| {
+                                crate::core::env::team::TeamMember {
+                                    id: m.machine_id,
+                                    name: m.hostname.unwrap_or_else(|| "Unknown".to_string()),
+                                    env_hash: String::new(),
+                                    last_sync: parse_timestamp(&m.last_seen_at),
+                                    in_sync: m.is_active,
+                                    drift_summary: None,
+                                }
+                            }).collect(),
+                            updated_at: jiff::Timestamp::now().as_second(),
+                        });
+                    }
+                }
+        }
     }
 
     fn update_system_metrics(&mut self) {
@@ -123,21 +176,20 @@ impl App {
     fn get_cpu_usage() -> f32 {
         // Read /proc/stat for CPU usage
         if let Ok(stat) = std::fs::read_to_string("/proc/stat")
-            && let Some(line) = stat.lines().next()
-        {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() > 4 && parts.first() == Some(&"cpu") {
-                let user: u64 = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
-                let nice: u64 = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
-                let system: u64 = parts.get(3).and_then(|s| s.parse().ok()).unwrap_or(0);
-                let idle: u64 = parts.get(4).and_then(|s| s.parse().ok()).unwrap_or(0);
+            && let Some(line) = stat.lines().next() {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() > 4 && parts.first() == Some(&"cpu") {
+                    let user: u64 = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+                    let nice: u64 = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
+                    let system: u64 = parts.get(3).and_then(|s| s.parse().ok()).unwrap_or(0);
+                    let idle: u64 = parts.get(4).and_then(|s| s.parse().ok()).unwrap_or(0);
 
-                let total = user + nice + system + idle;
-                if total > 0 {
-                    return ((total - idle) as f32 / total as f32) * 100.0;
+                    let total = user + nice + system + idle;
+                    if total > 0 {
+                        return ((total - idle) as f32 / total as f32) * 100.0;
+                    }
                 }
             }
-        }
         0.0
     }
 
@@ -148,15 +200,14 @@ impl App {
             let mut available = 0u64;
 
             for line in meminfo.lines() {
-                if line.starts_with("MemTotal:")
-                    && let Some(kb) = line.split_whitespace().nth(1)
-                {
-                    total = kb.parse().unwrap_or(0);
+                if line.starts_with("MemTotal:") {
+                    if let Some(kb) = line.split_whitespace().nth(1) {
+                        total = kb.parse().unwrap_or(0);
+                    }
                 } else if line.starts_with("MemAvailable:")
-                    && let Some(kb) = line.split_whitespace().nth(1)
-                {
-                    available = kb.parse().unwrap_or(0);
-                }
+                    && let Some(kb) = line.split_whitespace().nth(1) {
+                        available = kb.parse().unwrap_or(0);
+                    }
             }
 
             if total > 0 {
@@ -172,11 +223,20 @@ impl App {
         let Ok(path) = CString::new("/") else {
             return (0, 0);
         };
-        // SAFETY: zeroed statvfs is valid for libc::statvfs to populate
-        let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
-        // SAFETY: path is a valid CString, stat is a valid mutable pointer
-        let result = unsafe { libc::statvfs(path.as_ptr(), std::ptr::addr_of_mut!(stat)) };
+
+        // SAFETY: MaybeUninit ensures we don't rely on uninitialized memory.
+        // libc::statvfs will fully initialize the structure before we read it.
+        let mut stat = std::mem::MaybeUninit::<libc::statvfs>::uninit();
+
+        // SAFETY:
+        // - path.as_ptr() returns a valid null-terminated C string
+        // - stat.as_mut_ptr() is a valid pointer to uninitialized memory
+        // - libc::statvfs will initialize the memory if successful
+        let result = unsafe { libc::statvfs(path.as_ptr(), stat.as_mut_ptr()) };
+
         if result == 0 {
+            // SAFETY: statvfs succeeded (result == 0), so stat is now fully initialized
+            let stat = unsafe { stat.assume_init() };
             let block_size = stat.f_frsize;
             let total_blocks = stat.f_blocks;
             let free_blocks = stat.f_bfree;
@@ -198,11 +258,10 @@ impl App {
                 if parts.len() > 9
                     && parts.first().is_some_and(|s| !s.starts_with("lo"))
                     && let (Some(rx_str), Some(tx_str)) = (parts.get(1), parts.get(9))
-                    && let (Ok(rx), Ok(tx)) = (rx_str.parse::<u64>(), tx_str.parse::<u64>())
-                {
-                    total_rx += rx;
-                    total_tx += tx;
-                }
+                        && let (Ok(rx), Ok(tx)) = (rx_str.parse::<u64>(), tx_str.parse::<u64>()) {
+                            total_rx += rx;
+                            total_tx += tx;
+                        }
             }
 
             return (total_rx, total_tx);
@@ -225,21 +284,21 @@ impl App {
                     limit: Some(50),
                 })
                 .await
-        {
-            self.search_results = res
-                .packages
-                .into_iter()
-                .map(|p| crate::package_managers::SyncPackage {
-                    name: p.name,
-                    version: crate::package_managers::parse_version_or_zero(&p.version),
-                    description: p.description,
-                    repo: "official".to_string(),
-                    download_size: 0,
-                    installed: false,
-                })
-                .collect();
-            return Ok(());
-        }
+            {
+                self.search_results = res
+                    .packages
+                    .into_iter()
+                    .map(|p| crate::package_managers::SyncPackage {
+                        name: p.name,
+                        version: crate::package_managers::parse_version_or_zero(&p.version),
+                        description: p.description,
+                        repo: "official".to_string(),
+                        download_size: 0,
+                        installed: false,
+                    })
+                    .collect();
+                return Ok(());
+            }
 
         // Fallback to direct search if daemon is not available
         #[cfg(feature = "arch")]
@@ -261,7 +320,7 @@ impl App {
     }
 
     pub async fn update_system(&self) -> Result<()> {
-        crate::cli::packages::update(false).await
+        crate::cli::packages::update(false, false).await
     }
 
     pub async fn clean_cache(&self) -> Result<()> {
@@ -274,7 +333,7 @@ impl App {
         {
             crate::package_managers::remove_orphans().await
         }
-        #[cfg(feature = "debian")]
+        #[cfg(all(feature = "debian", not(feature = "arch")))]
         {
             crate::package_managers::apt_remove_orphans().map_err(Into::into)
         }
@@ -307,7 +366,7 @@ impl App {
             // Navigation
             KeyCode::Char('q') => std::process::exit(0),
             KeyCode::Char('r') => {
-                // Trigger refresh
+                // Trigger refresh - force it by setting last_tick to a past time
                 self.last_tick = Instant::now()
                     .checked_sub(std::time::Duration::from_secs(10))
                     .unwrap_or_else(Instant::now);
@@ -319,6 +378,7 @@ impl App {
             KeyCode::Char('3') => self.current_tab = Tab::Runtimes,
             KeyCode::Char('4') => self.current_tab = Tab::Security,
             KeyCode::Char('5') => self.current_tab = Tab::Activity,
+            KeyCode::Char('6') => self.current_tab = Tab::Team,
 
             // List navigation
             KeyCode::Up | KeyCode::Char('k') => {
@@ -371,16 +431,18 @@ impl App {
                     Tab::Packages => Tab::Runtimes,
                     Tab::Runtimes => Tab::Security,
                     Tab::Security => Tab::Activity,
-                    Tab::Activity => Tab::Dashboard,
+                    Tab::Activity => Tab::Team,
+                    Tab::Team => Tab::Dashboard,
                 };
             }
             KeyCode::BackTab => {
                 self.current_tab = match self.current_tab {
-                    Tab::Dashboard => Tab::Activity,
-                    Tab::Packages => Tab::Dashboard,
-                    Tab::Runtimes => Tab::Packages,
-                    Tab::Security => Tab::Runtimes,
+                    Tab::Dashboard => Tab::Team,
+                    Tab::Team => Tab::Activity,
                     Tab::Activity => Tab::Security,
+                    Tab::Security => Tab::Runtimes,
+                    Tab::Runtimes => Tab::Packages,
+                    Tab::Packages => Tab::Dashboard,
                 };
             }
 
@@ -418,5 +480,14 @@ impl App {
             .as_ref()
             .map(|s| s.runtime_versions.iter().cloned().collect())
             .unwrap_or_default()
+    }
+}
+
+fn parse_timestamp(s: &str) -> i64 {
+    use std::str::FromStr;
+    if let Ok(ts) = jiff::Timestamp::from_str(s) {
+        ts.as_second()
+    } else {
+        0
     }
 }

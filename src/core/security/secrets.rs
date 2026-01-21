@@ -397,10 +397,9 @@ impl SecretScanner {
 
                 self.scan_directory_recursive(&entry_path, findings)?;
             } else if Self::is_scannable_file(&entry_path)
-                && let Ok(file_findings) = self.scan_file(&entry_path)
-            {
-                findings.extend(file_findings);
-            }
+                && let Ok(file_findings) = self.scan_file(&entry_path) {
+                    findings.extend(file_findings);
+                }
         }
 
         Ok(())

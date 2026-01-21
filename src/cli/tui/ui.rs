@@ -71,6 +71,7 @@ pub fn draw(f: &mut Frame, app: &App) {
         Tab::Runtimes => draw_runtimes(f, body, app),
         Tab::Security => draw_security(f, body, app),
         Tab::Activity => draw_activity(f, body, app),
+        Tab::Team => draw_team(f, body, app),
     }
 
     draw_status_bar(f, footer, app);
@@ -132,6 +133,7 @@ fn draw_header(f: &mut Frame, area: Rect, app: &App) {
         " Runtimes",
         "󰒃 Security",
         " Activity",
+        "󰃐 Team",
     ];
     let tabs = Tabs::new(tab_titles)
         .select(app.current_tab as usize)
@@ -1053,6 +1055,178 @@ fn draw_activity(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(activity_list, area);
 }
 
+fn draw_team(f: &mut Frame, area: Rect, app: &App) {
+    if let Some(status) = &app.team_status {
+        let chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
+            .split(area);
+
+        let (Some(left), Some(right)) = (chunks.first(), chunks.get(1)) else {
+            return;
+        };
+
+        // Team Info
+        let info_lines = vec![
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  Team: ", Style::default().fg(colors::FG_MUTED)),
+                Span::styled(
+                    &status.config.name,
+                    Style::default()
+                        .fg(colors::ACCENT_CYAN)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("  ID: ", Style::default().fg(colors::FG_MUTED)),
+                Span::styled(&status.config.team_id, Style::default().fg(colors::FG_PRIMARY)),
+            ]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  Remote: ", Style::default().fg(colors::FG_MUTED)),
+                Span::styled(
+                    status.config.remote_url.as_deref().unwrap_or("None"),
+                    Style::default().fg(colors::ACCENT_BLUE),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("  Lock Hash: ", Style::default().fg(colors::FG_MUTED)),
+                Span::styled(
+                    if status.lock_hash.is_empty() {
+                        "none"
+                    } else {
+                        &status.lock_hash[..8]
+                    },
+                    Style::default().fg(colors::FG_PRIMARY),
+                ),
+            ]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  Status: ", Style::default().fg(colors::FG_MUTED)),
+                Span::styled(
+                    if status.in_sync_count() == status.members.len() {
+                        "All Systems Operational"
+                    } else {
+                        "Drift Detected"
+                    },
+                    Style::default().fg(if status.in_sync_count() == status.members.len() {
+                        colors::ACCENT_GREEN
+                    } else {
+                        colors::ACCENT_YELLOW
+                    }),
+                ),
+            ]),
+        ];
+
+        let info_widget = Paragraph::new(info_lines)
+            .block(styled_block("󰃐 Team Info"))
+            .style(Style::default().bg(colors::BG_MEDIUM));
+        f.render_widget(info_widget, *left);
+
+        // Members List
+        let rows: Vec<Row> = status
+            .members
+            .iter()
+            .map(|member| {
+                let status_color = if member.in_sync {
+                    colors::ACCENT_GREEN
+                } else {
+                    colors::ACCENT_YELLOW
+                };
+
+                Row::new(vec![
+                    Cell::from(Span::styled(
+                        if member.in_sync { "✓" } else { "⚠" },
+                        Style::default().fg(status_color),
+                    )),
+                    Cell::from(Span::styled(
+                        &member.name,
+                        Style::default().fg(colors::FG_PRIMARY).add_modifier(Modifier::BOLD),
+                    )),
+                    Cell::from(Span::styled(
+                        &member.id,
+                        Style::default().fg(colors::FG_MUTED),
+                    )),
+                    Cell::from(Span::styled(
+                        if member.in_sync {
+                            "Synced".to_string()
+                        } else {
+                            member.drift_summary.clone().unwrap_or_default()
+                        },
+                        Style::default().fg(status_color),
+                    )),
+                ])
+                .style(Style::default().bg(colors::BG_MEDIUM))
+            })
+            .collect();
+
+        let header = Row::new(vec![
+            Cell::from(""),
+            Cell::from(Span::styled(
+                "Name",
+                Style::default()
+                    .fg(colors::ACCENT_CYAN)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Cell::from(Span::styled(
+                "ID",
+                Style::default()
+                    .fg(colors::ACCENT_CYAN)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Cell::from(Span::styled(
+                "Status",
+                Style::default()
+                    .fg(colors::ACCENT_CYAN)
+                    .add_modifier(Modifier::BOLD),
+            )),
+        ])
+        .style(Style::default().bg(colors::BG_LIGHT));
+
+        let table = Table::new(
+            rows,
+            [
+                Constraint::Length(3),
+                Constraint::Percentage(30),
+                Constraint::Percentage(20),
+                Constraint::Percentage(40),
+            ],
+        )
+        .header(header)
+        .block(styled_block(" Members"))
+        .highlight_style(Style::default().bg(colors::BG_HIGHLIGHT));
+
+        f.render_widget(table, *right);
+    } else {
+        // No team workspace
+        let lines = vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                "Not in a team workspace",
+                Style::default()
+                    .fg(colors::ACCENT_RED)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("Run ", Style::default().fg(colors::FG_MUTED)),
+                Span::styled(
+                    "omg team init <team-id>",
+                    Style::default().fg(colors::ACCENT_CYAN),
+                ),
+                Span::styled(" to get started.", Style::default().fg(colors::FG_MUTED)),
+            ]),
+        ];
+
+        let widget = Paragraph::new(lines)
+            .alignment(Alignment::Center)
+            .block(styled_block("󰃐 Team Dashboard"))
+            .style(Style::default().bg(colors::BG_MEDIUM));
+        f.render_widget(widget, area);
+    }
+}
+
 fn draw_status_bar(f: &mut Frame, area: Rect, app: &App) {
     // Key hints based on current tab
     let hints = match app.current_tab {
@@ -1078,6 +1252,7 @@ fn draw_status_bar(f: &mut Frame, area: Rect, app: &App) {
         ],
         Tab::Security => vec![("q", "Quit"), ("a", "Audit"), ("f", "Fix"), ("p", "Policy")],
         Tab::Activity => vec![("q", "Quit"), ("r", "Refresh"), ("c", "Clear")],
+        Tab::Team => vec![("q", "Quit"), ("r", "Refresh"), ("p", "Pull"), ("P", "Push")],
     };
 
     let mut spans = vec![Span::styled(" ", Style::default())];

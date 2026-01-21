@@ -7,10 +7,10 @@ use anyhow::{bail, Result};
 /// Validates a package name for security
 ///
 /// Package names must:
-/// - Contain only: a-z, A-Z, 0-9, -, _, +, .
+/// - Contain only: a-z, A-Z, 0-9, -, _, +, ., @, /
 /// - Not be empty
 /// - Not start with - or . (to prevent option injection)
-/// - Be less than 256 characters (prevent DoS)
+/// - Be less than 255 characters (prevent `DoS`)
 ///
 /// # Security
 /// This prevents shell injection via malicious package names like:
@@ -34,14 +34,11 @@ pub fn validate_package_name(name: &str) -> Result<()> {
         bail!("Package name cannot start with '.' (hidden file protection)");
     }
 
-    // Check for shell metacharacters and other dangerous characters
-    for c in name.chars() {
-        if !is_safe_package_char(c) {
-            bail!(
-                "Invalid character '{}' in package name (allowed: a-z A-Z 0-9 - _ + .)",
-                c
-            );
-        }
+    // Check for dangerous characters using iterator for better performance/readability
+    if let Some(c) = name.chars().find(|&c| !is_safe_package_char(c)) {
+        bail!(
+            "Invalid character '{c}' in package name. Only alphanumeric, -, _, ., +, @, / allowed"
+        );
     }
 
     // Additional checks for common attack patterns
@@ -49,13 +46,35 @@ pub fn validate_package_name(name: &str) -> Result<()> {
         bail!("Package name cannot contain '..' (path traversal protection)");
     }
 
+    // Prevent absolute paths (redundant but safe)
+    if name.starts_with('/') {
+        bail!("Package name cannot start with '/'");
+    }
+
     Ok(())
+}
+
+/// Validates multiple package names
+pub fn validate_package_names(names: &[String]) -> Result<()> {
+    for name in names {
+        validate_package_name(name)?;
+    }
+    Ok(())
+}
+
+/// Sanitize a package name by removing invalid characters
+/// Use this when you need to accept user input but ensure it's safe
+#[must_use]
+pub fn sanitize_package_name(name: &str) -> String {
+    name.chars()
+        .filter(|&c| is_safe_package_char(c))
+        .collect()
 }
 
 /// Checks if a character is safe for package names
 #[inline]
 fn is_safe_package_char(c: char) -> bool {
-    c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '+' || c == '.'
+    c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '+' | '.' | '@' | '/')
 }
 
 /// Validates a version string
@@ -74,7 +93,7 @@ pub fn validate_version(version: &str) -> Result<()> {
     // Allow: digits, dots, hyphens, plus, colons (for epochs), and letters
     for c in version.chars() {
         if !c.is_ascii_alphanumeric() && !matches!(c, '.' | '-' | '+' | ':' | '~') {
-            bail!("Invalid character '{}' in version string", c);
+            bail!("Invalid character '{c}' in version string");
         }
     }
 
@@ -124,6 +143,7 @@ mod tests {
         assert!(validate_package_name("lib_bar").is_ok());
         assert!(validate_package_name("foo+bar").is_ok());
         assert!(validate_package_name("foo.bar").is_ok());
+        assert!(validate_package_name("@angular/cli").is_ok());
     }
 
     #[test]
@@ -138,6 +158,7 @@ mod tests {
 
         // Path traversal
         assert!(validate_package_name("../../../etc/passwd").is_err());
+        assert!(validate_package_name("foo/../bar").is_err());
 
         // Option injection
         assert!(validate_package_name("-rf").is_err());
@@ -146,9 +167,19 @@ mod tests {
         // Hidden files
         assert!(validate_package_name(".bashrc").is_err());
 
+        // Absolute paths
+        assert!(validate_package_name("/etc/passwd").is_err());
+
         // Empty/too long
         assert!(validate_package_name("").is_err());
         assert!(validate_package_name(&"a".repeat(256)).is_err());
+    }
+
+    #[test]
+    fn test_sanitize_package_name() {
+        assert_eq!(sanitize_package_name("foo;bar"), "foobar");
+        assert_eq!(sanitize_package_name("foo&&bar"), "foobar");
+        assert_eq!(sanitize_package_name("foo-bar_baz.1+2@org/cli"), "foo-bar_baz.1+2@org/cli");
     }
 
     #[test]

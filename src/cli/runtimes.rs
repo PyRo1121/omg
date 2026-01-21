@@ -49,10 +49,9 @@ pub fn known_runtimes() -> Vec<String> {
         .collect();
 
     if MISE.is_available()
-        && let Ok(extra) = MISE.list_installed()
-    {
-        runtimes.extend(extra);
-    }
+        && let Ok(extra) = MISE.list_installed() {
+            runtimes.extend(extra);
+        }
 
     runtimes.sort();
     runtimes.dedup();
@@ -61,8 +60,15 @@ pub fn known_runtimes() -> Vec<String> {
 
 /// Switch runtime version
 pub async fn use_version(runtime: &str, version: Option<&str>) -> Result<()> {
+    // SECURITY: Validate runtime name
+    if !known_runtimes().contains(&runtime.to_string()) {
+        anyhow::bail!("Unknown runtime: {runtime}");
+    }
+
     // Auto-detect version if not provided
     let version = if let Some(v) = version {
+        // SECURITY: Validate version string
+        crate::core::security::validate_version(v)?;
         v.to_string()
     } else {
         let active = crate::hooks::get_active_versions();
@@ -182,14 +188,14 @@ pub async fn use_version(runtime: &str, version: Option<&str>) -> Result<()> {
 
 fn mise_list_versions(runtime: &str, available: bool) -> Result<()> {
     let args = if available {
-        vec!["ls-remote", runtime]
+        vec!["ls-remote", "--", runtime]
     } else {
-        vec!["ls", runtime]
+        vec!["ls", "--", runtime]
     };
     let output = Command::new(MISE.mise_path())
-        .args(&args)
+        .args(args)
         .output()
-        .with_context(|| format!("Failed to run `mise {}`", args.join(" ")))?;
+        .context("Failed to run `mise`")?;
     if !output.status.success() {
         anyhow::bail!("mise failed to list versions for {runtime}");
     }

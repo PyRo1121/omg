@@ -226,8 +226,11 @@ impl MiseManager {
 
     /// Get current version of a runtime via mise
     pub fn current_version(&self, runtime: &str) -> Result<Option<String>> {
+        // SECURITY: Validate runtime name to prevent argument injection
+        crate::core::security::validate_package_name(runtime)?;
+
         let output = Command::new(self.mise_path())
-            .args(["current", runtime])
+            .args(["current", "--", runtime])
             .output()
             .with_context(|| format!("Failed to run mise current {runtime}"))?;
 
@@ -244,10 +247,9 @@ impl MiseManager {
 
         // Parse "runtime version" or "runtime@version" format
         if let Some(rest) = line.strip_prefix(runtime)
-            && let Some(version) = rest.split_whitespace().find(|token| !token.is_empty())
-        {
-            return Ok(Some(version.to_string()));
-        }
+            && let Some(version) = rest.split_whitespace().find(|token| !token.is_empty()) {
+                return Ok(Some(version.to_string()));
+            }
 
         if let Some((_, version)) = line.split_once('@') {
             return Ok(Some(version.trim().to_string()));
@@ -258,8 +260,11 @@ impl MiseManager {
 
     /// Install a runtime version via mise
     pub fn install_runtime(&self, runtime: &str) -> Result<bool> {
+        // SECURITY: Validate runtime name
+        crate::core::security::validate_package_name(runtime)?;
+
         let status = Command::new(self.mise_path())
-            .args(["install", runtime])
+            .args(["install", "--", runtime])
             .status()
             .with_context(|| format!("Failed to run mise install {runtime}"))?;
 
@@ -269,7 +274,7 @@ impl MiseManager {
     /// List installed runtimes via mise
     pub fn list_installed(&self) -> Result<Vec<String>> {
         let output = Command::new(self.mise_path())
-            .args(["ls"])
+            .args(["ls", "--"])
             .output()
             .context("Failed to run mise ls")?;
 
@@ -293,11 +298,15 @@ impl MiseManager {
 
     /// Use a specific version of a runtime
     pub fn use_version(&self, runtime: &str, version: &str) -> Result<()> {
+        // SECURITY: Validate runtime and version
+        crate::core::security::validate_package_name(runtime)?;
+        crate::core::security::validate_version(version)?;
+
         let tool_spec = format!("{runtime}@{version}");
 
         // Install if needed
         let install_status = Command::new(self.mise_path())
-            .args(["install", &tool_spec])
+            .args(["install", "--", &tool_spec])
             .status()
             .with_context(|| format!("Failed to run mise install {tool_spec}"))?;
 
@@ -307,7 +316,7 @@ impl MiseManager {
 
         // Activate in current directory (creates mise.toml)
         let use_status = Command::new(self.mise_path())
-            .args(["use", &tool_spec])
+            .args(["use", "--", &tool_spec])
             .status()
             .with_context(|| format!("Failed to run mise use {tool_spec}"))?;
 

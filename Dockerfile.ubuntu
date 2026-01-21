@@ -5,14 +5,11 @@ RUN apt-get update && apt-get install -y \
     curl \
     build-essential \
     pkg-config \
-    libssl-dev \
     libapt-pkg-dev \
-    git \
-    clang \
+    libssl-dev \
+    bc \
     cmake \
-    zlib1g-dev \
-    liblzma-dev \
-    libbz2-dev
+    && rm -rf /var/lib/apt/lists/*
 
 # Install Rust
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
@@ -27,5 +24,8 @@ COPY . .
 # Build with debian feature
 RUN cargo build --release --no-default-features --features debian
 
-# Run smoke tests
-CMD ["./scripts/debian-smoke-test.sh"]
+# Ensure scripts are executable
+RUN chmod +x scripts/*.sh
+
+# Run rigorous benchmark
+CMD ["./scripts/benchmark-debian.sh"]

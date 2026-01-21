@@ -13,6 +13,9 @@ use crate::package_managers::get_package_manager;
 #[cfg(feature = "arch")]
 use crate::package_managers::search_sync;
 
+#[cfg(feature = "debian")]
+use crate::package_managers::apt_search_sync;
+
 use super::common::truncate;
 use super::install::install;
 
@@ -90,8 +93,8 @@ impl PackageDisplay for crate::core::Package {
 /// Display AUR results with appropriate formatting
 #[cfg(feature = "arch")]
 fn display_aur_results(
-    aur_packages_detailed: &Option<Vec<crate::package_managers::AurPackageDetail>>,
-    aur_packages_basic: &Option<Vec<crate::core::Package>>,
+    aur_packages_detailed: Option<&Vec<crate::package_managers::AurPackageDetail>>,
+    aur_packages_basic: Option<&Vec<crate::core::Package>>,
     writer: &mut impl Write,
 ) -> Result<()> {
     if let Some(aur_packages) = aur_packages_detailed {
@@ -123,8 +126,8 @@ fn display_aur_results(
             }
             writeln!(writer)?;
         }
-    } else if let Some(aur_packages) = aur_packages_basic {
-        if !aur_packages.is_empty() {
+    } else if let Some(aur_packages) = aur_packages_basic
+        && !aur_packages.is_empty() {
             writeln!(writer, "{}", style::header("AUR (Arch User Repository)"))?;
             for pkg in aur_packages.iter().take(10) {
                 writeln!(
@@ -144,7 +147,6 @@ fn display_aur_results(
             }
             writeln!(writer)?;
         }
-    }
     Ok(())
 }
 
@@ -152,9 +154,9 @@ fn display_aur_results(
 async fn handle_interactive_selection(
     official_packages: &[crate::package_managers::SyncPackage],
     #[cfg(feature = "arch")]
-    aur_packages_detailed: &Option<Vec<crate::package_managers::AurPackageDetail>>,
+    aur_packages_detailed: Option<&Vec<crate::package_managers::AurPackageDetail>>,
     #[cfg(feature = "arch")]
-    aur_packages_basic: &Option<Vec<crate::core::Package>>,
+    aur_packages_basic: Option<&Vec<crate::core::Package>>,
 ) -> Result<()> {
     let mut items = Vec::new();
     let mut pkgs_to_install = Vec::new();
@@ -226,7 +228,7 @@ async fn handle_interactive_selection(
 }
 
 /// Fetch packages from all sources (daemon, local, AUR)
-async fn fetch_packages(query: &str, detailed: bool, interactive: bool) -> SearchResults {
+async fn fetch_packages(query: &str, _detailed: bool, _interactive: bool) -> SearchResults {
     let mut official_packages: Vec<crate::package_managers::SyncPackage> = Vec::new();
     #[cfg(feature = "arch")]
     let mut aur_packages_detailed: Option<Vec<crate::package_managers::AurPackageDetail>> = None;
@@ -237,40 +239,39 @@ async fn fetch_packages(query: &str, detailed: bool, interactive: bool) -> Searc
     if !use_debian_backend() {
         // 1. Try Daemon (Ultra Fast, Cached, Pooled)
         if let Ok(mut client) = DaemonClient::connect().await
-            && let Ok(res) = client.search(query, Some(50)).await
-        {
-            daemon_used = true;
-            #[cfg(feature = "arch")]
-            let mut aur_basic = Vec::new();
+            && let Ok(res) = client.search(query, Some(50)).await {
+                daemon_used = true;
+                #[cfg(feature = "arch")]
+                let mut aur_basic = Vec::new();
 
-            for pkg in res.packages {
-                if pkg.source == "official" {
-                    official_packages.push(crate::package_managers::SyncPackage {
-                        name: pkg.name,
-                        version: crate::package_managers::parse_version_or_zero(&pkg.version),
-                        description: pkg.description,
-                        repo: "official".to_string(),
-                        download_size: 0,
-                        installed: false,
-                    });
-                } else {
-                    #[cfg(feature = "arch")]
-                    {
-                        aur_basic.push(crate::core::Package {
+                for pkg in res.packages {
+                    if pkg.source == "official" {
+                        official_packages.push(crate::package_managers::SyncPackage {
                             name: pkg.name,
                             version: crate::package_managers::parse_version_or_zero(&pkg.version),
                             description: pkg.description,
-                            source: crate::core::PackageSource::Aur,
+                            repo: "official".to_string(),
+                            download_size: 0,
                             installed: false,
                         });
+                    } else {
+                        #[cfg(feature = "arch")]
+                        {
+                            aur_basic.push(crate::core::Package {
+                                name: pkg.name,
+                                version: crate::package_managers::parse_version_or_zero(&pkg.version),
+                                description: pkg.description,
+                                source: crate::core::PackageSource::Aur,
+                                installed: false,
+                            });
+                        }
                     }
                 }
+                #[cfg(feature = "arch")]
+                if !aur_basic.is_empty() {
+                    aur_packages_basic = Some(aur_basic);
+                }
             }
-            #[cfg(feature = "arch")]
-            if !aur_basic.is_empty() {
-                aur_packages_basic = Some(aur_basic);
-            }
-        }
     }
 
     if use_debian_backend() {
@@ -412,12 +413,26 @@ pub fn search_sync_cli(query: &str, detailed: bool, interactive: bool) -> Result
     } else if pm_name == "apt" {
         #[cfg(feature = "debian")]
         {
-             if let Ok(official_packages) = crate::package_managers::apt_search_sync(query) {
+            if let Ok(official_packages) = crate::package_managers::apt_search_fast(query) {
                 if official_packages.is_empty() {
                     return Ok(false);
                 }
-                // ... same display logic could be abstracted
-             }
+
+                let sync_time = start.elapsed();
+                let mut stdout = std::io::BufWriter::new(std::io::stdout());
+
+                writeln!(
+                    stdout,
+                    "{} {} results ({:.1}ms)\n",
+                    style::header("OMG"),
+                    official_packages.len(),
+                    sync_time.as_secs_f64() * 1000.0
+                )?;
+
+                display_results("Official Repositories", &official_packages, 20, &mut stdout)?;
+                stdout.flush()?;
+                return Ok(true);
+            }
         }
     }
 
@@ -426,6 +441,14 @@ pub fn search_sync_cli(query: &str, detailed: bool, interactive: bool) -> Result
 
 /// Search for packages in official repos and AUR - LIGHTNING FAST
 pub async fn search(query: &str, detailed: bool, interactive: bool) -> Result<()> {
+    // SECURITY: Validate search query
+    if query.len() > 100 {
+        anyhow::bail!("Search query too long (max 100 characters)");
+    }
+    if query.chars().any(char::is_control) {
+        anyhow::bail!("Search query contains invalid characters");
+    }
+
     // Try sync path first
     if search_sync_cli(query, detailed, interactive)? {
         return Ok(());
@@ -442,8 +465,8 @@ pub async fn search(query: &str, detailed: bool, interactive: bool) -> Result<()
         #[cfg(feature = "arch")]
         return handle_interactive_selection(
             &results.official_packages,
-            &results.aur_packages_detailed,
-            &results.aur_packages_basic,
+            results.aur_packages_detailed.as_ref(),
+            results.aur_packages_basic.as_ref(),
         ).await;
 
         #[cfg(not(feature = "arch"))]
@@ -468,7 +491,7 @@ pub async fn search(query: &str, detailed: bool, interactive: bool) -> Result<()
     #[cfg(feature = "arch")]
     {
         let mut stdout = std::io::stdout();
-        display_aur_results(&results.aur_packages_detailed, &results.aur_packages_basic, &mut stdout)?;
+        display_aur_results(results.aur_packages_detailed.as_ref(), results.aur_packages_basic.as_ref(), &mut stdout)?;
     }
 
     println!(

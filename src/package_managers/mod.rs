@@ -1,4 +1,8 @@
 //! Package manager backends for system packages
+//!
+//! ## Feature Flags for Debian Support
+//!
+//! - `debian`: Adds rust-apt FFI for all operations (requires libapt-pkg-dev)
 
 #[cfg(feature = "arch")]
 pub mod alpm_direct;
@@ -6,8 +10,11 @@ pub mod alpm_direct;
 pub mod alpm_ops;
 #[cfg(feature = "arch")]
 pub mod alpm_worker;
+// apt module is available with debian feature
 #[cfg(feature = "debian")]
 pub mod apt;
+#[cfg(feature = "debian")]
+pub mod debian_db;
 #[cfg(feature = "arch")]
 mod aur;
 #[cfg(feature = "arch")]
@@ -62,6 +69,7 @@ pub fn get_package_manager() -> Box<dyn PackageManager> {
     match detect_distro() {
         #[cfg(feature = "arch")]
         Distro::Arch => Box::new(OfficialPackageManager::new()),
+        // debian provides AptPackageManager
         #[cfg(feature = "debian")]
         Distro::Debian | Distro::Ubuntu => Box::new(AptPackageManager::new()),
         _ => {
@@ -82,6 +90,7 @@ pub fn get_package_manager() -> Box<dyn PackageManager> {
     }
 }
 
+// apt exports are available with debian feature
 #[cfg(feature = "debian")]
 pub use apt::{
     AptPackageManager, get_sync_pkg_info as apt_get_sync_pkg_info,
@@ -90,4 +99,9 @@ pub use apt::{
     list_installed_fast as apt_list_installed_fast, list_orphans as apt_list_orphans,
     list_updates as apt_list_updates, remove_orphans as apt_remove_orphans,
     search_sync as apt_search_sync,
+};
+#[cfg(feature = "debian")]
+pub use debian_db::{
+    get_counts_fast as apt_get_counts_fast, get_info_fast as apt_get_info_fast, list_explicit_fast,
+    list_installed_fast, search_fast as apt_search_fast,
 };

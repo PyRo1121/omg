@@ -10,7 +10,17 @@ use std::path::Path;
 use crate::core::license;
 
 /// Generate executive reports
-pub fn reports(report_type: &str, format: &str) -> Result<()> {
+pub async fn reports(report_type: &str, format: &str) -> Result<()> {
+    // SECURITY: Validate report type and format
+    let valid_types = ["monthly", "quarterly", "custom"];
+    let valid_formats = ["json", "csv", "html", "pdf"];
+    if !valid_types.contains(&report_type.to_lowercase().as_str()) {
+        anyhow::bail!("Invalid report type: {report_type}");
+    }
+    if !valid_formats.contains(&format.to_lowercase().as_str()) {
+        anyhow::bail!("Invalid report format: {format}");
+    }
+
     license::require_feature("enterprise-reports")?;
 
     println!(
@@ -19,7 +29,7 @@ pub fn reports(report_type: &str, format: &str) -> Result<()> {
         report_type.yellow()
     );
 
-    let report = generate_report(report_type);
+    let report = generate_report(report_type).await;
     let filename = format!(
         "omg-report-{}-{}.{}",
         report_type,
@@ -46,6 +56,18 @@ pub fn reports(report_type: &str, format: &str) -> Result<()> {
 
 /// Export audit evidence for compliance
 pub fn audit_export(format: &str, period: Option<&str>, output: &str) -> Result<()> {
+    // SECURITY: Validate all inputs
+    let valid_frameworks = ["soc2", "iso27001", "fedramp", "hipaa", "pci-dss"];
+    if !valid_frameworks.contains(&format.to_lowercase().as_str()) {
+        anyhow::bail!("Invalid compliance framework: {format}");
+    }
+    if let Some(p) = period
+        && (p.len() > 64 || p.chars().any(|c| !c.is_ascii_alphanumeric() && c != '-'))
+    {
+        anyhow::bail!("Invalid period format");
+    }
+    crate::core::security::validate_relative_path(output)?;
+
     license::require_feature("audit-export")?;
 
     println!(
@@ -85,6 +107,14 @@ pub fn audit_export(format: &str, period: Option<&str>, output: &str) -> Result<
 
 /// Scan for license compliance issues
 pub fn license_scan(export: Option<&str>) -> Result<()> {
+    if let Some(fmt) = export {
+        // SECURITY: Validate export format
+        let valid_formats = ["json", "csv", "spdx"];
+        if !valid_formats.contains(&fmt.to_lowercase().as_str()) {
+            anyhow::bail!("Invalid license export format: {fmt}");
+        }
+    }
+
     license::require_feature("license-scan")?;
 
     println!("{} License Compliance Scan\n", "OMG".cyan().bold());
@@ -147,6 +177,14 @@ pub mod policy {
     use super::{OwoColorize, Result, license};
 
     pub fn set(scope: &str, rule: &str) -> Result<()> {
+        // SECURITY: Validate scope and rule
+        if scope.len() > 64 || scope.chars().any(|c| !c.is_ascii_alphanumeric() && c != ':' && c != '-') {
+            anyhow::bail!("Invalid policy scope");
+        }
+        if rule.len() > 1024 {
+            anyhow::bail!("Policy rule too long");
+        }
+
         license::require_feature("enterprise-policy")?;
 
         println!("{} Setting policy rule...\n", "OMG".cyan().bold());
@@ -161,32 +199,50 @@ pub mod policy {
         Ok(())
     }
 
-    pub fn show(scope: Option<&str>) -> Result<()> {
-        license::require_feature("enterprise-policy")?;
+    pub async fn show(scope: Option<&str>) -> Result<()> {
+            if let Some(s) = scope
+                && (s.len() > 64
+                    || s.chars()
+                        .any(|c| !c.is_ascii_alphanumeric() && c != ':' && c != '-'))
+            {
+                anyhow::bail!("Invalid policy scope");
+            }
+        
+
+        license::require_feature("policy")?;
 
         println!("{} Policy Configuration\n", "OMG".cyan().bold());
 
-        let scope_str = scope.unwrap_or("all");
-        println!("  Scope: {}\n", scope_str.cyan());
+        let policies = license::fetch_policies().await?;
+        
+        if policies.is_empty() {
+            println!("  {} No active policies found", "○".dimmed());
+            println!("  Enterprise policies can be configured in the dashboard.");
+            return Ok(());
+        }
 
-        // Demo policy hierarchy
-        println!("  {}", "Organization Policy (company-wide):".bold());
-        println!("    {} No packages with critical CVEs", "→".blue());
-        println!("    {} Only OSI-approved licenses", "→".blue());
-        println!("    Override: {} (teams cannot weaken)", "false".red());
-        println!();
+        for p in policies {
+            if let Some(s) = scope && p.scope != s {
+                continue;
+            }
 
-        println!("  {}", "Team Policy (frontend):".bold());
-        println!("    {} Inherits: Organization Policy", "↳".dimmed());
-        println!("    {} Node >= 20.0.0", "→".blue());
-        println!("    {} Banned: lodash (use native)", "→".blue());
-        println!("    Override: {} (can be stricter)", "allowed".green());
-        println!();
+            println!("  {} (Scope: {})", p.rule.bold(), p.scope.cyan());
+            println!("    Enforced: {}", if p.enforced { "Yes".green().to_string() } else { "No (Audit only)".yellow().to_string() });
+            println!();
+        }
 
         Ok(())
     }
 
     pub fn inherit(from: &str, to: &str) -> Result<()> {
+        // SECURITY: Validate scopes
+        if from.len() > 64 || from.chars().any(|c| !c.is_ascii_alphanumeric() && c != ':' && c != '-') {
+            anyhow::bail!("Invalid source scope");
+        }
+        if to.len() > 64 || to.chars().any(|c| !c.is_ascii_alphanumeric() && c != ':' && c != '-') {
+            anyhow::bail!("Invalid target scope");
+        }
+
         license::require_feature("enterprise-policy")?;
 
         println!("{} Setting policy inheritance...\n", "OMG".cyan().bold());
@@ -210,6 +266,15 @@ pub mod server {
     use super::{OwoColorize, Result, license};
 
     pub fn init(license_key: &str, storage: &str, domain: &str) -> Result<()> {
+        // SECURITY: Validate all inputs
+        if license_key.len() > 128 || license_key.chars().any(|c| !c.is_ascii_alphanumeric() && c != '-') {
+            anyhow::bail!("Invalid license key format");
+        }
+        crate::core::security::validate_relative_path(storage)?;
+        if domain.len() > 255 || domain.chars().any(|c| !c.is_ascii_alphanumeric() && c != '.' && c != '-') {
+            anyhow::bail!("Invalid domain name");
+        }
+
         license::require_feature("self-hosted")?;
 
         println!(
@@ -246,6 +311,14 @@ pub mod server {
     }
 
     pub fn mirror(upstream: &str) -> Result<()> {
+        // SECURITY: Basic URL validation
+        if !upstream.starts_with("https://") {
+            anyhow::bail!("Only HTTPS upstreams allowed for security");
+        }
+        if upstream.len() > 1024 || upstream.chars().any(char::is_control) {
+            anyhow::bail!("Invalid upstream URL");
+        }
+
         license::require_feature("self-hosted")?;
 
         println!("{} Syncing from upstream...\n", "OMG".cyan().bold());
@@ -283,13 +356,18 @@ struct ReportSummary {
     cost_savings_estimate: String,
 }
 
-fn generate_report(report_type: &str) -> Report {
+async fn generate_report(report_type: &str) -> Report {
+    let mut machine_count = 0;
+    if let Ok(members) = license::fetch_team_members().await {
+        machine_count = members.len();
+    }
+
     Report {
         generated_at: jiff::Timestamp::now().as_second(),
         kind: report_type.to_string(),
         summary: ReportSummary {
             compliance_score: 94.5,
-            total_machines: 487,
+            total_machines: machine_count,
             vulnerabilities_fixed: 142,
             cost_savings_estimate: "$47,000".to_string(),
         },
@@ -334,21 +412,40 @@ struct LicenseViolation {
 }
 
 fn perform_license_scan() -> LicenseScan {
-    let mut by_license = HashMap::new();
-    by_license.insert("MIT".to_string(), 342);
-    by_license.insert("Apache-2.0".to_string(), 89);
-    by_license.insert("BSD-3-Clause".to_string(), 45);
-    by_license.insert("GPL-3.0".to_string(), 12);
+    let by_license = HashMap::new();
+    let violations = Vec::new();
+    let unknown = Vec::new();
+    let total_packages = 0;
+
+    // Use pure Rust database parser for speed
+    #[cfg(feature = "arch")]
+    if let Ok(packages) = crate::package_managers::pacman_db::list_local_cached() {
+        for pkg in packages {
+            total_packages += 1;
+            if pkg.licenses.is_empty() {
+                unknown.push(pkg.name.clone());
+            } else {
+                for lic in &pkg.licenses {
+                    *by_license.entry(lic.clone()).or_insert(0) += 1;
+                    
+                    // Production policy: Flag copyleft licenses for review
+                    if lic.to_uppercase().contains("GPL") {
+                        violations.push(LicenseViolation {
+                            package: pkg.name.clone(),
+                            license: lic.clone(),
+                            reason: "Copyleft license (GPL) requires legal review".to_string(),
+                        });
+                    }
+                }
+            }
+        }
+    }
 
     LicenseScan {
-        total: 503,
+        total: total_packages,
         by_license,
-        violations: vec![LicenseViolation {
-            package: "ffmpeg".to_string(),
-            license: "GPL-3.0".to_string(),
-            reason: "Not allowed for proprietary use".to_string(),
-        }],
-        unknown: vec!["mystery-lib".to_string()],
+        violations,
+        unknown,
     }
 }
 

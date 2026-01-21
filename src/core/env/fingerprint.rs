@@ -12,10 +12,12 @@ use std::fs;
 use std::path::Path;
 use tokio::task;
 
-#[cfg(feature = "debian")]
-use crate::package_managers::apt_list_explicit as list_explicit;
+// When arch is enabled, use arch's list_explicit
+// When only debian features are enabled (no arch), use apt_list_explicit
 #[cfg(feature = "arch")]
 use crate::package_managers::list_explicit;
+#[cfg(all(feature = "debian", not(feature = "arch")))]
+use crate::package_managers::apt_list_explicit as list_explicit;
 use crate::runtimes::{
     BunManager, GoManager, JavaManager, NodeManager, PythonManager, RubyManager, RustManager,
 };
@@ -81,7 +83,7 @@ impl EnvironmentState {
             .map(|pkg: String| pkg.trim().to_string())
             .filter(|pkg: &String| !pkg.is_empty())
             .collect();
-        #[cfg(feature = "debian")]
+        #[cfg(all(feature = "debian", not(feature = "arch")))]
         let mut packages: Vec<String> = list_explicit()
             .unwrap_or_default()
             .into_iter()

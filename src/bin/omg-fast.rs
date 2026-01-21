@@ -25,11 +25,23 @@ fn main() {
 
     // Fast path for search/info via daemon IPC
     if (cmd == "s" || cmd == "search") && args.len() >= 3 {
-        fast_search(&args[2]);
+        let query = &args[2];
+        // SECURITY: Basic validation for minimal binary
+        if query.len() > 100 || query.chars().any(|c| c.is_control()) {
+            eprintln!("Invalid search query");
+            std::process::exit(1);
+        }
+        fast_search(query);
         return;
     }
     if (cmd == "i" || cmd == "info") && args.len() >= 3 {
-        fast_info(&args[2]);
+        let package = &args[2];
+        // SECURITY: Basic validation for minimal binary
+        if package.len() > 100 || package.chars().any(|c| !c.is_ascii_alphanumeric() && !matches!(c, '-' | '_' | '.' | '+' | '@' | '/')) {
+            eprintln!("Invalid package name");
+            std::process::exit(1);
+        }
+        fast_info(package);
         return;
     }
 

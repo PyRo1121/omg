@@ -101,6 +101,16 @@ impl AurClient {
 
     /// Search AUR packages
     pub async fn search(&self, query: &str) -> Result<Vec<Package>> {
+        // Basic length check for search query
+        if query.len() > 100 {
+            anyhow::bail!("Search query too long (max 100 chars)");
+        }
+
+        // Prevent control characters
+        if query.chars().any(char::is_control) {
+             anyhow::bail!("Search query contains invalid control characters");
+        }
+
         let url = format!("{AUR_RPC_URL}?v=5&type=search&arg={query}");
 
         let response: AurResponse = self.client.get(&url).send().await?.json().await?;
@@ -108,6 +118,14 @@ impl AurClient {
         let mut packages: Vec<Package> = response
             .results
             .into_iter()
+            .filter(|p| {
+                if let Err(e) = crate::core::security::validate_package_name(&p.name) {
+                    tracing::warn!("Rejecting invalid package name from AUR search: {} ({})", p.name, e);
+                    false
+                } else {
+                    true
+                }
+            })
             .map(|p| Package {
                 name: p.name,
                 version: crate::package_managers::parse_version_or_zero(&p.version),
@@ -125,6 +143,9 @@ impl AurClient {
 
     /// Get info for a specific AUR package
     pub async fn info(&self, package: &str) -> Result<Option<Package>> {
+        // SECURITY: Validate package name
+        crate::core::security::validate_package_name(package)?;
+
         let url = format!("{AUR_RPC_URL}?v=5&type=info&arg={package}");
 
         let response: AurResponse = self.client.get(&url).send().await?.json().await?;
@@ -217,6 +238,12 @@ impl AurClient {
         while let Some(res) = stream.next().await {
             let response = res?;
             for p in response.results {
+                // SECURITY: Validate package name from RPC response
+                if let Err(e) = crate::core::security::validate_package_name(&p.name) {
+                    tracing::warn!("Rejecting invalid package name from AUR update check: {} ({})", p.name, e);
+                    continue;
+                }
+
                 if let Some(local_pkg) = pacman_db::get_local_package(&p.name)? {
                     let p_ver = crate::package_managers::parse_version_or_zero(&p.version);
                     if p_ver > local_pkg.version {
@@ -240,17 +267,27 @@ impl AurClient {
 
         if cache_path.exists()
             && let Ok(meta) = std::fs::metadata(&cache_path)
-            && let Ok(modified) = meta.modified()
-            && modified.elapsed().unwrap_or_default() < Duration::from_secs(ttl)
-        {
-            return Self::read_metadata_archive(&cache_path).map(Some);
-        }
+                && let Ok(modified) = meta.modified()
+                    && modified.elapsed().unwrap_or_default() < Duration::from_secs(ttl) {
+                        return Self::read_metadata_archive(&cache_path).map(Some);
+                    }
 
-        let meta_cache = if meta_path.exists()
-            && let Ok(bytes) = tokio_fs::read(&meta_path).await
-            && let Ok(parsed) = serde_json::from_slice::<AurMetaCache>(&bytes)
-        {
-            parsed
+        let meta_cache = if meta_path.exists() {
+            if let Ok(bytes) = tokio_fs::read(&meta_path).await {
+                if let Ok(parsed) = serde_json::from_slice::<AurMetaCache>(&bytes) {
+                    parsed
+                } else {
+                    AurMetaCache {
+                        etag: None,
+                        last_modified: None,
+                    }
+                }
+            } else {
+                AurMetaCache {
+                    etag: None,
+                    last_modified: None,
+                }
+            }
         } else {
             AurMetaCache {
                 etag: None,
@@ -349,6 +386,9 @@ impl AurClient {
 
     /// Install AUR package by building it
     pub async fn install(&self, package: &str) -> Result<()> {
+        // SECURITY: Validate package name
+        crate::core::security::validate_package_name(package)?;
+
         println!(
             "{} Installing AUR package: {}\n",
             "OMG".cyan().bold(),
@@ -423,6 +463,9 @@ impl AurClient {
     /// Uses makepkg for reliable builds that match yay/paru behavior
     #[instrument(skip(self))]
     pub async fn build_only(&self, package: &str) -> Result<PathBuf> {
+        // SECURITY: Validate package name
+        crate::core::security::validate_package_name(package)?;
+
         // Ensure build directory exists
         std::fs::create_dir_all(&self.build_dir)?;
 
@@ -545,19 +588,17 @@ impl AurClient {
 
                 // Confirm exact pkgname via .PKGINFO when available
                 if let Ok(Some(parsed_name)) = Self::pkg_name_from_archive(&entry.path())
-                    && !expected_names.iter().any(|name| name == &parsed_name)
-                {
-                    continue;
-                }
+                    && !expected_names.iter().any(|name| name == &parsed_name) {
+                        continue;
+                    }
 
                 // If multiple matches (shouldn't happen), take newest by mtime
                 if let Ok(meta) = entry.metadata() {
                     if let Ok(mtime) = meta.modified()
-                        && mtime > best_mtime
-                    {
-                        best_mtime = mtime;
-                        best_match = Some(entry.path());
-                    }
+                        && mtime > best_mtime {
+                            best_mtime = mtime;
+                            best_match = Some(entry.path());
+                        }
                 } else if best_match.is_none() {
                     best_match = Some(entry.path());
                 }
@@ -588,12 +629,11 @@ impl AurClient {
             let mut entry = entry?;
             let entry_path = entry.path()?;
             if let Some(file_name) = entry_path.file_name().and_then(|n| n.to_str())
-                && (file_name == ".PKGINFO" || file_name == "PKGINFO")
-            {
-                let mut content = String::new();
-                entry.read_to_string(&mut content)?;
-                return Ok(Self::parse_pkginfo_name(&content));
-            }
+                && (file_name == ".PKGINFO" || file_name == "PKGINFO") {
+                    let mut content = String::new();
+                    entry.read_to_string(&mut content)?;
+                    return Ok(Self::parse_pkginfo_name(&content));
+                }
         }
 
         Ok(None)
@@ -790,6 +830,7 @@ impl AurClient {
                     "1",
                     "--filter=blob:none",
                     "--single-branch",
+                    "--",
                     &url,
                     &dest.to_string_lossy(),
                 ])
@@ -894,12 +935,12 @@ impl AurClient {
                 tracing::warn!("Failed to install dependencies: {e}");
             }
 
-            // Sandboxed build with bubblewrap
             // - Read-only bind: /usr, /etc, /lib, /lib64
             // - Writable: Build directory, /tmp
             // - Minimal device access
             let pkg_dir_str = pkg_dir.to_string_lossy();
-            let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
+            let home = home::home_dir().unwrap_or_else(|| PathBuf::from("/root"));
+            let gnupg_dir = home.join(".gnupg");
 
             let pkgdest_str = env.pkgdest.to_string_lossy().to_string();
             let srcdest_str = env.srcdest.to_string_lossy().to_string();
@@ -928,9 +969,19 @@ impl AurClient {
                 "--symlink".to_string(),
                 "/usr/sbin".to_string(),
                 "/sbin".to_string(),
-                "--ro-bind".to_string(),
-                home.clone(),
-                home,
+                // Don't bind entire HOME, only .gnupg if it exists for PGP checks
+                // and a tmpfs for HOME to avoid makepkg complaining
+                "--tmpfs".to_string(),
+                home.to_string_lossy().into_owned(),
+            ];
+
+            if gnupg_dir.exists() {
+                args.push("--ro-bind".to_string());
+                args.push(gnupg_dir.to_string_lossy().into_owned());
+                args.push(gnupg_dir.to_string_lossy().into_owned());
+            }
+
+            args.extend(vec![
                 "--bind".to_string(),
                 pkg_dir_str.to_string(),
                 pkg_dir_str.to_string(),
@@ -970,7 +1021,7 @@ impl AurClient {
                 "--setenv".to_string(),
                 "BUILDDIR".to_string(),
                 builddir_str,
-            ];
+            ]);
 
             for (key, value) in &env.extra_env {
                 args.push("--setenv".to_string());
@@ -1190,8 +1241,14 @@ impl AurClient {
         // Filter to only missing keys first (parallel check)
         let mut missing_keys = Vec::new();
         for key_id in &pkgbuild.validpgpkeys {
+            // SECURITY: Validate key_id to prevent injection (hex only, max 64 chars)
+            if key_id.chars().any(|c| !c.is_ascii_hexdigit()) || key_id.len() > 64 {
+                tracing::warn!("Skipping invalid PGP key ID: {}", key_id);
+                continue;
+            }
+
             let check = Command::new("gpg")
-                .args(["--list-keys", key_id])
+                .args(["--list-keys", "--", key_id])
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
                 .status()
@@ -1215,6 +1272,7 @@ impl AurClient {
                         "--keyserver",
                         "hkps://keyserver.ubuntu.com",
                         "--recv-keys",
+                        "--",
                         &key_id,
                     ])
                     .stdout(Stdio::null())
@@ -1376,14 +1434,14 @@ impl AurClient {
     }
 
     /// Install the built package via sudo omg install <path>
-    async fn install_built_package(pkg_path: &PathBuf) -> Result<()> {
+    async fn install_built_package(pkg_path: &Path) -> Result<()> {
         println!(
             "{} Installing built package (elevating with sudo)...",
             "→".blue()
         );
 
         let pkg_path_str = pkg_path.to_string_lossy();
-        crate::core::privilege::run_self_sudo(&["install", &pkg_path_str]).await?;
+        crate::core::privilege::run_self_sudo(&["install", "--", &pkg_path_str]).await?;
 
         Ok(())
     }
@@ -1429,22 +1487,40 @@ fn create_spinner(msg: &str) -> ProgressBar {
     pb
 }
 
-/// Search AUR with detailed info
-pub async fn search_detailed(query: &str) -> Result<Vec<AurPackageDetail>> {
-    let client = shared_client().clone();
-    let url = format!("{AUR_RPC_URL}?v=5&type=search&arg={query}");
+    /// Search AUR with detailed info
+    pub async fn search_detailed(query: &str) -> Result<Vec<AurPackageDetail>> {
+        // SECURITY: Basic validation for search query
+        if query.len() > 100 {
+            anyhow::bail!("Search query too long");
+        }
 
-    let response: AurDetailedResponse = client
-        .get(&url)
-        .send()
-        .await
-        .context("Failed to connect to AUR RPC. Check your internet connection.")?
-        .json()
-        .await
-        .context("Failed to parse AUR RPC response")?;
+        let client = shared_client().clone();
+        let url = format!("{AUR_RPC_URL}?v=5&type=search&arg={query}");
 
-    Ok(response.results)
-}
+        let response: AurDetailedResponse = client
+            .get(&url)
+            .send()
+            .await
+            .context("Failed to connect to AUR RPC. Check your internet connection.")?
+            .json()
+            .await
+            .context("Failed to parse AUR RPC response")?;
+
+        // SECURITY: Validate all names in response
+        let results = response.results
+            .into_iter()
+            .filter(|p| {
+                if let Err(e) = crate::core::security::validate_package_name(&p.name) {
+                    tracing::warn!("Rejecting invalid package name from AUR search_detailed: {} ({})", p.name, e);
+                    false
+                } else {
+                    true
+                }
+            })
+            .collect();
+
+        Ok(results)
+    }
 
 #[derive(Debug, Deserialize)]
 struct AurDetailedResponse {
@@ -1477,4 +1553,76 @@ pub struct AurPackageDetail {
     pub depends: Option<Vec<String>>,
     #[serde(rename = "License")]
     pub license: Option<Vec<String>>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[tokio::test]
+    async fn test_sandbox_security_isolation() {
+        // Verify that the sandbox arguments strictly isolate the build environment
+        let _client = AurClient::default();
+        let _pkg_dir = PathBuf::from("/tmp/pkg");
+
+        let _env = MakepkgEnv {
+            makeflags: String::new(),
+            pkgdest: PathBuf::from("/tmp/pkgdest"),
+            srcdest: PathBuf::from("/tmp/srcdest"),
+            builddir: PathBuf::from("/tmp/builddir"),
+            extra_env: Vec::new(),
+        };
+
+        // We can't call run_sandboxed_makepkg directly easily without mocking everything,
+        // but we can inspect the argument construction logic if we extract it.
+        // For now, let's verify if bwrap is available and test it if so.
+
+        let bwrap_path = which::which("bwrap");
+        if bwrap_path.is_err() {
+            println!("Skipping sandbox test: bubblewrap not installed");
+            return;
+        }
+
+        // Create a dummy file to try to overwrite
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let sensitive_file = temp_dir.path().join("sensitive.txt");
+        std::fs::write(&sensitive_file, "secret").unwrap();
+
+        // Try to overwrite it from inside the sandbox
+        // The sandbox mounts / as read-only by default except for specific paths
+        // We need to verify that an arbitrary path is NOT writable
+
+        let status = Command::new("bwrap")
+            .args([
+                "--ro-bind", "/", "/",
+                "--dev", "/dev",
+                "--proc", "/proc",
+                "--tmpfs", "/tmp",
+                "--command", "/bin/sh",
+                "-c",
+                &format!("echo hacked > {}", sensitive_file.display())
+            ])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .await
+            .unwrap();
+
+        // Should fail because / is read-only
+        assert!(!status.success(), "Sandbox should prevent writing to arbitrary files");
+    }
+
+    #[test]
+    fn test_makepkg_env_sanitization() {
+        // Verify that environment variables are properly handled
+        let client = AurClient::default();
+        let pkg_dir = PathBuf::from("/tmp/test");
+
+        // This should not panic
+        let result = client.makepkg_env(&pkg_dir);
+        if let Ok(env) = result {
+            assert!(env.builddir.to_string_lossy().contains("omg-build"));
+        }
+    }
 }

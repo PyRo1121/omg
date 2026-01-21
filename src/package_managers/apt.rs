@@ -1,13 +1,19 @@
-//! Debian/Ubuntu package manager backend (APT via rust-apt)
+//! Debian/Ubuntu package manager backend
+//!
+//! This module provides full Debian/Ubuntu support using `rust-apt` FFI bindings.
+//! It requires `libapt-pkg-dev` to be installed on the system.
 
 use anyhow::{Context, Result};
 use futures::future::{BoxFuture, FutureExt};
+
+use crate::core::{Package, PackageSource};
+use crate::core::is_root;
+use crate::package_managers::types::{LocalPackage, PackageInfo, SyncPackage};
+
+// Import rust-apt for full package management
 use rust_apt::Cache;
 use rust_apt::cache::{PackageSort, Upgrade};
 use rust_apt::progress::{AcquireProgress, InstallProgress};
-
-use crate::core::{Package, PackageSource, is_root};
-use crate::package_managers::types::{LocalPackage, PackageInfo, SyncPackage};
 
 #[derive(Debug, Default)]
 pub struct AptPackageManager;
@@ -17,6 +23,7 @@ impl AptPackageManager {
     pub const fn new() -> Self {
         Self
     }
+
     pub async fn sync_databases(&self) -> Result<()> {
         if !is_root() {
             crate::core::privilege::run_self_sudo(&["sync"]).await?;
@@ -30,37 +37,6 @@ impl AptPackageManager {
     }
 }
 
-pub fn list_updates() -> Result<Vec<(String, String, String)>> {
-    let cache = open_cache(&[])?;
-    let sort = PackageSort::default().upgradable();
-    let mut updates = Vec::new();
-    for pkg in cache.packages(&sort) {
-        let installed = pkg.installed();
-        let candidate = pkg.candidate();
-        if let (Some(installed), Some(candidate)) = (installed, candidate) {
-            updates.push((
-                pkg.name().to_string(),
-                installed.version().to_string(),
-                candidate.version().to_string(),
-            ));
-        }
-    }
-    Ok(updates)
-}
-
-pub fn get_system_status() -> Result<(usize, usize, usize, usize)> {
-    let installed = list_installed_fast()?;
-    let explicit = list_explicit()?;
-    let orphans = list_orphans()?;
-    let updates = list_updates()?;
-    Ok((
-        installed.len(),
-        explicit.len(),
-        orphans.len(),
-        updates.len(),
-    ))
-}
-
 impl crate::package_managers::PackageManager for AptPackageManager {
     fn name(&self) -> &'static str {
         "apt"
@@ -69,6 +45,13 @@ impl crate::package_managers::PackageManager for AptPackageManager {
     fn search(&self, query: &str) -> BoxFuture<'static, Result<Vec<Package>>> {
         let query = query.to_string();
         async move {
+            // Try fast path first
+            if let Ok(results) = super::debian_db::search_fast(&query) {
+                if !results.is_empty() {
+                    return Ok(results);
+                }
+            }
+
             tokio::task::spawn_blocking(move || search_sync(&query))
                 .await
                 .context("APT search task failed")?
@@ -80,8 +63,11 @@ impl crate::package_managers::PackageManager for AptPackageManager {
     fn install(&self, packages: &[String]) -> BoxFuture<'static, Result<()>> {
         let packages = packages.to_vec();
         async move {
+            // SECURITY: Validate package names
+            crate::core::security::validate_package_names(&packages)?;
+
             if !is_root() {
-                let mut args = vec!["install"];
+                let mut args = vec!["install", "--"];
                 let pkg_refs: Vec<&str> = packages.iter().map(|s| s.as_str()).collect();
                 args.extend_from_slice(&pkg_refs);
                 crate::core::privilege::run_self_sudo(&args).await?;
@@ -99,8 +85,11 @@ impl crate::package_managers::PackageManager for AptPackageManager {
     fn remove(&self, packages: &[String]) -> BoxFuture<'static, Result<()>> {
         let packages = packages.to_vec();
         async move {
+            // SECURITY: Validate package names
+            crate::core::security::validate_package_names(&packages)?;
+
             if !is_root() {
-                let mut args = vec!["remove"];
+                let mut args = vec!["remove", "--"];
                 let pkg_refs: Vec<&str> = packages.iter().map(|s| s.as_str()).collect();
                 args.extend_from_slice(&pkg_refs);
                 crate::core::privilege::run_self_sudo(&args).await?;
@@ -131,15 +120,20 @@ impl crate::package_managers::PackageManager for AptPackageManager {
     }
 
     fn sync(&self) -> BoxFuture<'static, Result<()>> {
-        async move {
-            AptPackageManager::new().sync_databases().await
-        }
-        .boxed()
+        async move { AptPackageManager::new().sync_databases().await }.boxed()
     }
 
     fn info(&self, package: &str) -> BoxFuture<'static, Result<Option<Package>>> {
         let package = package.to_string();
         async move {
+            // SECURITY: Validate package name
+            crate::core::security::validate_package_name(&package)?;
+
+            // Try fast path first
+            if let Ok(Some(pkg)) = super::debian_db::get_info_fast(&package) {
+                return Ok(Some(pkg));
+            }
+
             let info = tokio::task::spawn_blocking(move || get_sync_pkg_info(&package))
                 .await
                 .context("APT info task failed")??;
@@ -148,279 +142,215 @@ impl crate::package_managers::PackageManager for AptPackageManager {
                 version: info.version,
                 description: info.description,
                 source: PackageSource::Official,
-                installed: false,
+                installed: info.installed,
             }))
         }
         .boxed()
     }
 
     fn list_installed(&self) -> BoxFuture<'static, Result<Vec<Package>>> {
-        async move { list_installed_fast().map(local_to_packages) }.boxed()
+        async move {
+            // Try fast path first
+            if let Ok(installed) = super::debian_db::list_installed_fast() {
+                return Ok(installed.into_iter().map(|p| Package {
+                    name: p.name,
+                    version: p.version,
+                    description: p.description,
+                    source: PackageSource::Official,
+                    installed: true,
+                }).collect());
+            }
+            list_installed_fast().map(local_to_packages)
+        }.boxed()
     }
 
-    fn get_status(&self) -> BoxFuture<'static, Result<(usize, usize, usize, usize)>> {
-        async move { get_system_status() }.boxed()
+    fn get_status(&self, fast: bool) -> BoxFuture<'static, Result<(usize, usize, usize, usize)>> {
+        async move {
+            // Try fast path for counts
+            if let Ok((total, explicit, _, _)) = super::debian_db::get_counts_fast() {
+                if fast {
+                    return Ok((total, explicit, 0, 0));
+                }
+                
+                // If not fast, we still want accuracy for orphans/updates
+                if let Ok((_, _, orphans, updates)) = get_system_status() {
+                    return Ok((total, explicit, orphans, updates));
+                }
+                return Ok((total, explicit, 0, 0));
+            }
+
+            get_system_status()
+        }
+        .boxed()
     }
 
     fn list_explicit(&self) -> BoxFuture<'static, Result<Vec<String>>> {
-        async move { list_explicit() }.boxed()
+        async move {
+            if let Ok(explicit) = super::debian_db::list_explicit_fast() {
+                return Ok(explicit);
+            }
+            list_explicit()
+        }.boxed()
+    }
+
+    fn list_updates(&self) -> BoxFuture<'static, Result<Vec<crate::package_managers::types::UpdateInfo>>> {
+        async move {
+            let updates = list_updates()?;
+            Ok(updates
+                .into_iter()
+                .map(|(name, old_ver, new_ver)| crate::package_managers::types::UpdateInfo {
+                    name,
+                    old_version: old_ver,
+                    new_version: new_ver,
+                    repo: "apt".to_string(),
+                })
+                .collect())
+        }
+        .boxed()
+    }
+
+    fn is_installed(&self, package: &str) -> BoxFuture<'static, bool> {
+        let package = package.to_string();
+        async move {
+            if let Ok(installed) = super::debian_db::list_installed_fast() {
+                return installed.iter().any(|p| p.name == package);
+            }
+            if let Ok(installed) = list_installed_fast() {
+                installed.iter().any(|p| p.name == package)
+            } else {
+                false
+            }
+        }
+        .boxed()
     }
 }
 
 pub fn search_sync(query: &str) -> Result<Vec<SyncPackage>> {
-    search_sync_blocking(query)
+    let cache = open_cache(&[])?;
+    let mut results = Vec::new();
+    let query_lower = query.to_lowercase();
+
+    for pkg in cache.packages(&PackageSort::default()) {
+        let name = pkg.name();
+
+        // Match name first (fast)
+        let mut matched = name.contains(&query_lower);
+
+        // If name doesn't match, check summary (slower as it might load more data)
+        let mut summary = None;
+        if !matched {
+            if let Some(candidate) = pkg.candidate() {
+                if let Some(s) = candidate.summary() {
+                    if s.to_lowercase().contains(&query_lower) {
+                        matched = true;
+                        summary = Some(s);
+                    }
+                }
+            }
+        }
+
+        if matched {
+            let candidate = pkg.candidate();
+            let version = if let Some(ref c) = candidate {
+                c.version().to_string()
+            } else if let Some(ref i) = pkg.installed() {
+                i.version().to_string()
+            } else {
+                "unknown".to_string()
+            };
+
+            results.push(SyncPackage {
+                name: name.to_string(),
+                version,
+                description: summary.or_else(|| candidate.and_then(|c| c.summary())).unwrap_or_default(),
+                repo: "apt".to_string(),
+                download_size: pkg.candidate().map(|v| v.size() as i64).unwrap_or(0),
+                installed: pkg.is_installed(),
+            });
+        }
+
+        if results.len() >= 100 {
+            break;
+        }
+    }
+
+    Ok(results)
 }
 
 pub fn get_sync_pkg_info(name: &str) -> Result<Option<PackageInfo>> {
-    // Fast path: parse Packages files directly instead of slow rust-apt
-    use std::fs;
-    use std::io::Read;
-    use std::path::Path;
-
-    let lists_dir = Path::new("/var/lib/apt/lists");
-    if !lists_dir.exists() {
-        return Ok(None);
-    }
-
-    for entry in fs::read_dir(lists_dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-
-        let content = if filename.ends_with("_Packages.lz4") {
-            if let Ok(compressed) = fs::read(&path) {
-                let mut decoder = lz4_flex::frame::FrameDecoder::new(&compressed[..]);
-                let mut buf = Vec::new();
-                if decoder.read_to_end(&mut buf).is_ok() {
-                    String::from_utf8(buf).ok()
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        } else if filename.ends_with("_Packages") && !filename.contains(".") {
-            fs::read_to_string(&path).ok()
-        } else {
-            None
-        };
-
-        if let Some(content) = content {
-            if let Some(info) = parse_package_info(&content, name) {
-                return Ok(Some(info));
-            }
+    let cache = open_cache(&[])?;
+    if let Some(pkg) = cache.get(name) {
+        let version_to_use = pkg.candidate().or_else(|| pkg.installed());
+        if let Some(version) = version_to_use {
+            return Ok(Some(PackageInfo {
+                name: pkg.name().to_string(),
+                version: version.version().to_string(),
+                description: version.summary().unwrap_or_default(),
+                url: None,
+                size: version.size(),
+                install_size: Some(version.installed_size() as i64),
+                download_size: Some(version.size() as u64),
+                repo: "apt".to_string(),
+                depends: collect_depends(&version),
+                licenses: Vec::new(),
+                installed: pkg.is_installed(),
+            }));
         }
     }
-
     Ok(None)
 }
 
-/// Parse package info from Packages file content
-fn parse_package_info(content: &str, target_name: &str) -> Option<PackageInfo> {
-    for paragraph in content.split("\n\n") {
-        if paragraph.trim().is_empty() {
-            continue;
-        }
-
-        let mut name = String::new();
-        let mut version = String::new();
-        let mut description = String::new();
-        let mut url = String::new();
-        let mut size = 0u64;
-        let mut installed_size = 0i64;
-        let mut depends = Vec::new();
-
-        for line in paragraph.lines() {
-            if line.starts_with(' ') || line.starts_with('\t') {
-                continue;
-            }
-
-            if let Some((key, value)) = line.split_once(':') {
-                let key = key.trim();
-                let value = value.trim();
-
-                match key {
-                    "Package" => name = value.to_string(),
-                    "Version" => version = value.to_string(),
-                    "Description" => description = value.to_string(),
-                    "Homepage" => url = value.to_string(),
-                    "Size" => size = value.parse().unwrap_or(0),
-                    "Installed-Size" => installed_size = value.parse::<i64>().unwrap_or(0) * 1024,
-                    "Depends" => {
-                        depends = value
-                            .split(',')
-                            .map(|d| d.trim().split_whitespace().next().unwrap_or("").to_string())
-                            .filter(|d| !d.is_empty())
-                            .collect();
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        if name == target_name {
-            return Some(PackageInfo {
-                name,
-                version,
-                description,
-                url: if url.is_empty() { None } else { Some(url) },
-                size,
-                install_size: Some(installed_size),
-                download_size: Some(size),
-                repo: "apt".to_string(),
-                depends,
-                licenses: Vec::new(),
-                installed: false,
-            });
-        }
-    }
-    None
-}
-
 pub fn list_installed_fast() -> Result<Vec<LocalPackage>> {
-    // ULTRA-FAST: Parse /var/lib/dpkg/status directly (same as dpkg -l)
-    // This is 3-5x faster than rust-apt's cache iteration
-    list_installed_direct()
-}
+    let cache = open_cache(&[])?;
+    let mut packages = Vec::new();
 
-/// Parse dpkg status file directly for maximum speed
-fn list_installed_direct() -> Result<Vec<LocalPackage>> {
-    use std::fs;
-
-    let status_file = fs::read_to_string("/var/lib/dpkg/status")?;
-    let mut packages = Vec::with_capacity(1000);
-
-    for paragraph in status_file.split("\n\n") {
-        if paragraph.trim().is_empty() {
-            continue;
+    for pkg in cache.packages(&PackageSort::default()) {
+        if pkg.is_installed() {
+            packages.push(map_local_package(&pkg));
         }
-
-        let mut name = "";
-        let mut version = "";
-        let mut description = "";
-        let mut status = "";
-        let mut auto_installed = false;
-
-        for line in paragraph.lines() {
-            if line.starts_with(' ') || line.starts_with('\t') {
-                continue;
-            }
-            if let Some((key, value)) = line.split_once(':') {
-                let value = value.trim();
-                match key {
-                    "Package" => name = value,
-                    "Version" => version = value,
-                    "Description" => description = value,
-                    "Status" => status = value,
-                    "Auto-Installed" => auto_installed = value == "1",
-                    _ => {}
-                }
-            }
-        }
-
-        // Only include installed packages (status contains "installed")
-        if name.is_empty() || !status.contains("installed") || status.contains("deinstall") {
-            continue;
-        }
-
-        packages.push(LocalPackage {
-            name: name.to_string(),
-            version: version.to_string(),
-            description: description.to_string(),
-            install_size: 0,
-            reason: if auto_installed {
-                "dependency"
-            } else {
-                "explicit"
-            },
-        });
     }
 
     Ok(packages)
 }
 
 pub fn list_explicit() -> Result<Vec<String>> {
-    // ULTRA-FAST: Parse dpkg status + apt auto-installed markers directly
-    list_explicit_direct()
-}
+    let cache = open_cache(&[])?;
+    let mut explicit = Vec::new();
 
-/// Parse dpkg status and apt extended_states for explicit packages
-fn list_explicit_direct() -> Result<Vec<String>> {
-    use std::collections::HashSet;
-    use std::fs;
-
-    // Step 1: Get all installed packages from dpkg status
-    let status_file = fs::read_to_string("/var/lib/dpkg/status")?;
-    let mut installed: HashSet<String> = HashSet::new();
-
-    for paragraph in status_file.split("\n\n") {
-        let mut name = "";
-        let mut status = "";
-
-        for line in paragraph.lines() {
-            if line.starts_with(' ') {
-                continue;
-            }
-            if let Some((key, value)) = line.split_once(':') {
-                match key {
-                    "Package" => name = value.trim(),
-                    "Status" => status = value.trim(),
-                    _ => {}
-                }
-            }
-        }
-
-        if !name.is_empty() && status.contains("installed") && !status.contains("deinstall") {
-            installed.insert(name.to_string());
+    for pkg in cache.packages(&PackageSort::default()) {
+        if pkg.is_installed() && !pkg.is_auto_installed() {
+            explicit.push(pkg.name().to_string());
         }
     }
 
-    // Step 2: Read auto-installed markers from apt
-    let auto_installed: HashSet<String> = fs::read_to_string("/var/lib/apt/extended_states")
-        .map(|content| {
-            let mut auto = HashSet::new();
-            let mut current_pkg = "";
-            for line in content.lines() {
-                if let Some(pkg) = line.strip_prefix("Package: ") {
-                    current_pkg = pkg;
-                } else if line == "Auto-Installed: 1" && !current_pkg.is_empty() {
-                    auto.insert(current_pkg.to_string());
-                }
-            }
-            auto
-        })
-        .unwrap_or_default();
-
-    // Step 3: Explicit = installed - auto-installed
-    let mut explicit: Vec<String> = installed
-        .into_iter()
-        .filter(|pkg| !auto_installed.contains(pkg))
-        .collect();
     explicit.sort();
-
     Ok(explicit)
 }
 
-pub fn list_orphans() -> Result<Vec<String>> {
-    let cache = open_cache(&[])?;
-    let sort = PackageSort::default().auto_removable();
-    let packages = cache
-        .packages(&sort)
-        .map(|pkg| pkg.name().to_string())
-        .collect();
-    Ok(packages)
-}
-
+/// List all available package names
 pub fn list_all_package_names() -> Result<Vec<String>> {
     let cache = open_cache(&[])?;
-    let sort = PackageSort::default().names();
-    let mut names: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for pkg in cache.packages(&sort) {
-        names.insert(pkg.name().to_string());
+    let mut names = Vec::new();
+
+    for pkg in cache.packages(&PackageSort::default()) {
+        names.push(pkg.name().to_string());
     }
-    let mut result: Vec<String> = names.into_iter().collect();
-    result.sort();
-    Ok(result)
+
+    names.sort();
+    names.dedup();
+    Ok(names)
+}
+
+/// List orphaned packages
+pub fn list_orphans() -> Result<Vec<String>> {
+    let cache = open_cache(&[])?;
+    let mut orphans = Vec::new();
+    for pkg in cache.packages(&PackageSort::default()) {
+        if pkg.is_auto_removable() {
+            orphans.push(pkg.name().to_string());
+        }
+    }
+    Ok(orphans)
 }
 
 pub fn remove_orphans() -> Result<()> {
@@ -431,112 +361,58 @@ pub fn remove_orphans() -> Result<()> {
     remove_blocking(&orphans)
 }
 
+/// List packages with available updates
+pub fn list_updates() -> Result<Vec<(String, String, String)>> {
+    let cache = open_cache(&[])?;
+    let mut updates = Vec::new();
+
+    for pkg in cache.packages(&PackageSort::default()) {
+        if pkg.is_upgradable() {
+            let name = pkg.name().to_string();
+            let old_version = pkg.installed().map(|v| v.version().to_string()).unwrap_or_default();
+            let new_version = pkg.candidate().map(|v| v.version().to_string()).unwrap_or_default();
+            updates.push((name, old_version, new_version));
+        }
+    }
+
+    Ok(updates)
+}
+
+pub fn get_system_status() -> Result<(usize, usize, usize, usize)> {
+    let cache = open_cache(&[])?;
+    let mut installed_count = 0;
+    let mut explicit_count = 0;
+    let mut orphans_count = 0;
+    let mut updates_count = 0;
+
+    for pkg in cache.packages(&PackageSort::default()) {
+        if pkg.is_installed() {
+            installed_count += 1;
+            if !pkg.is_auto_installed() {
+                explicit_count += 1;
+            }
+        }
+
+        if pkg.is_upgradable() {
+            updates_count += 1;
+        }
+
+        if pkg.is_auto_removable() {
+            orphans_count += 1;
+        }
+    }
+
+    Ok((
+        installed_count,
+        explicit_count,
+        orphans_count,
+        updates_count,
+    ))
+}
+
 fn open_cache(local_files: &[String]) -> Result<Cache> {
     let files: Vec<&str> = local_files.iter().map(String::as_str).collect();
     Cache::new(&files).map_err(|e| anyhow::anyhow!(format!("APT cache error: {e:?}")))
-}
-
-fn search_sync_blocking(query: &str) -> Result<Vec<SyncPackage>> {
-    // Fast search using pre-lowercased comparison
-    use std::fs;
-    use std::io::Read;
-    use std::path::Path;
-
-    let query_lower = query.to_lowercase();
-    let mut results = Vec::new();
-    let lists_dir = Path::new("/var/lib/apt/lists");
-
-    if !lists_dir.exists() {
-        return Ok(results);
-    }
-
-    // Parse Packages files with early termination once we have enough results
-    if let Ok(entries) = fs::read_dir(lists_dir) {
-        for entry in entries.flatten() {
-            if results.len() >= 100 {
-                break;
-            }
-
-            let path = entry.path();
-            let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-
-            let content = if filename.ends_with("_Packages.lz4") {
-                fs::read(&path).ok().and_then(|compressed| {
-                    let mut decoder = lz4_flex::frame::FrameDecoder::new(&compressed[..]);
-                    let mut buf = Vec::new();
-                    decoder.read_to_end(&mut buf).ok()?;
-                    String::from_utf8(buf).ok()
-                })
-            } else if filename.ends_with("_Packages.gz") {
-                fs::read(&path).ok().and_then(|compressed| {
-                    let mut decoder = flate2::read::GzDecoder::new(&compressed[..]);
-                    let mut content = String::new();
-                    decoder.read_to_string(&mut content).ok()?;
-                    Some(content)
-                })
-            } else if filename.ends_with("_Packages") && !filename.contains('.') {
-                fs::read_to_string(&path).ok()
-            } else {
-                None
-            };
-
-            if let Some(content) = content {
-                parse_packages_fast(&content, &query_lower, &mut results);
-            }
-        }
-    }
-
-    results.truncate(100);
-    Ok(results)
-}
-
-/// Optimized package parsing with early exit
-fn parse_packages_fast(content: &str, query: &str, results: &mut Vec<SyncPackage>) {
-    for paragraph in content.split("\n\n") {
-        if results.len() >= 100 {
-            return;
-        }
-        if paragraph.trim().is_empty() {
-            continue;
-        }
-
-        let mut name = "";
-        let mut version = "";
-        let mut description = "";
-        let mut size = 0u64;
-
-        for line in paragraph.lines() {
-            if line.starts_with(' ') || line.starts_with('\t') {
-                continue;
-            }
-            if let Some((key, value)) = line.split_once(':') {
-                match key {
-                    "Package" => name = value.trim(),
-                    "Version" => version = value.trim(),
-                    "Description" => description = value.trim(),
-                    "Size" => size = value.trim().parse().unwrap_or(0),
-                    _ => {}
-                }
-            }
-        }
-
-        if name.is_empty() {
-            continue;
-        }
-
-        // Check match
-        let name_lower = name.to_lowercase();
-        if name_lower.contains(query) || description.to_lowercase().contains(query) {
-            results.push(SyncPackage {
-                name: name.to_string(),
-                version: version.to_string(),
-                description: description.to_string(),
-                repo: "apt".to_string(),
-                download_size: size as i64,
-                installed: false,
-            });
-        }
-    }
 }
 
 fn install_blocking(packages: &[String]) -> Result<()> {
@@ -617,34 +493,6 @@ fn sync_databases_blocking() -> Result<()> {
     Ok(())
 }
 
-#[allow(dead_code)]
-fn map_sync_package(pkg: &rust_apt::Package<'_>) -> SyncPackage {
-    let summary = pkg
-        .candidate()
-        .and_then(|ver| ver.summary())
-        .unwrap_or_default();
-    map_sync_package_with_summary(pkg, &summary)
-}
-
-#[allow(dead_code)]
-fn map_sync_package_with_summary(pkg: &rust_apt::Package<'_>, summary: &str) -> SyncPackage {
-    let version = pkg
-        .candidate()
-        .or_else(|| pkg.installed())
-        .map(|ver| ver.version().to_string())
-        .unwrap_or_else(|| "unknown".to_string());
-
-    SyncPackage {
-        name: pkg.name().to_string(),
-        version,
-        description: summary.to_string(),
-        repo: "apt".to_string(),
-        download_size: 0,
-        installed: pkg.is_installed(),
-    }
-}
-
-#[allow(dead_code)]
 fn map_local_package(pkg: &rust_apt::Package<'_>) -> LocalPackage {
     let version = pkg
         .installed()
@@ -652,8 +500,9 @@ fn map_local_package(pkg: &rust_apt::Package<'_>) -> LocalPackage {
         .map(|ver| ver.version().to_string())
         .unwrap_or_else(|| "unknown".to_string());
     let summary = pkg
-        .candidate()
+        .installed()
         .and_then(|ver| ver.summary())
+        .or_else(|| pkg.candidate().and_then(|v| v.summary()))
         .unwrap_or_default();
     let reason = if pkg.is_auto_installed() {
         "dependency"
@@ -664,12 +513,11 @@ fn map_local_package(pkg: &rust_apt::Package<'_>) -> LocalPackage {
         name: pkg.name().to_string(),
         version,
         description: summary,
-        install_size: 0,
+        install_size: pkg.installed().map(|v| v.installed_size() as i64).unwrap_or(0),
         reason,
     }
 }
 
-#[allow(dead_code)]
 fn collect_depends(version: &rust_apt::Version<'_>) -> Vec<String> {
     let mut depends = Vec::new();
     if let Some(deps) = version.dependencies() {

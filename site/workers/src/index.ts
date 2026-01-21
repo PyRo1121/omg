@@ -234,6 +234,34 @@ export default {
         return await handleInitDb(request, env, corsHeaders);
       }
 
+      // Get license members (Team/Enterprise)
+      if (url.pathname === '/api/license/members' && request.method === 'GET') {
+        return await handleGetLicenseMembers(request, env, corsHeaders);
+      }
+
+      // Get license policies (Enterprise)
+      if (url.pathname === '/api/license/policies' && request.method === 'GET') {
+        return await handleGetLicensePolicies(request, env, corsHeaders);
+      }
+
+      // Get license audit logs (Team/Enterprise)
+      if (url.pathname === '/api/license/audit' && request.method === 'GET') {
+        return await handleGetLicenseAudit(request, env, corsHeaders);
+      }
+
+      // Team Proposals (Team/Enterprise)
+      if (url.pathname === '/api/team/propose' && request.method === 'POST') {
+        return await handleTeamPropose(request, env, corsHeaders);
+      }
+
+      if (url.pathname === '/api/team/review' && request.method === 'POST') {
+        return await handleTeamReview(request, env, corsHeaders);
+      }
+
+      if (url.pathname === '/api/team/proposals' && request.method === 'GET') {
+        return await handleGetTeamProposals(request, env, corsHeaders);
+      }
+
       return new Response('Not found', { status: 404, headers: corsHeaders });
     } catch (error) {
       console.error('Error:', error);
@@ -244,6 +272,200 @@ export default {
     }
   },
 };
+
+async function handleGetLicenseMembers(
+  request: Request,
+  env: Env,
+  corsHeaders: Record<string, string>
+): Promise<Response> {
+  const url = new URL(request.url);
+  const key = url.searchParams.get('key');
+
+  if (!key) {
+    return new Response(JSON.stringify({ error: 'Missing license key' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  // Find the license
+  const license = await env.DB.prepare(
+    `SELECT id, tier FROM licenses WHERE license_key = ? AND status = 'active'`
+  )
+    .bind(key)
+    .first();
+
+  if (!license) {
+    return new Response(JSON.stringify({ error: 'Invalid or inactive license' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  // Only Team and Enterprise can see all members
+  if (!['team', 'enterprise'].includes(license.tier as string)) {
+    return new Response(
+      JSON.stringify({ error: 'Fleet features require Team or Enterprise tier' }),
+      { status: 403, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+    );
+  }
+
+  // Get all machines for this license
+  const machines = await env.DB.prepare(
+    `SELECT machine_id, hostname, os, arch, omg_version, last_seen_at, is_active FROM machines WHERE license_id = ?`
+  )
+    .bind(license.id)
+    .all();
+
+  return new Response(JSON.stringify(machines.results || []), {
+    headers: { 'Content-Type': 'application/json', ...corsHeaders },
+  });
+}
+
+async function handleGetLicensePolicies(
+  request: Request,
+  env: Env,
+  corsHeaders: Record<string, string>
+): Promise<Response> {
+  const url = new URL(request.url);
+  const key = url.searchParams.get('key');
+
+  if (!key) {
+    return new Response(JSON.stringify({ error: 'Missing license key' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  const license = await env.DB.prepare(
+    `SELECT id, tier FROM licenses WHERE license_key = ? AND status = 'active'`
+  )
+    .bind(key)
+    .first();
+
+  if (!license) {
+    return new Response(JSON.stringify({ error: 'Invalid or inactive license' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+  if (license.tier !== 'enterprise') {
+    return new Response(JSON.stringify({ error: 'Policy features require Enterprise tier' }), {
+      status: 403,
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+    });
+  }
+
+    const policies = await env.DB.prepare(`SELECT scope, rule, enforced FROM policies WHERE license_id = ?`)
+
+      .bind(license.id)
+
+      .all();
+
+  
+
+    return new Response(JSON.stringify(policies.results || []), {
+
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+
+    });
+
+  }
+
+  
+
+  async function handleGetLicenseAudit(
+
+    request: Request,
+
+    env: Env,
+
+    corsHeaders: Record<string, string>
+
+  ): Promise<Response> {
+
+    const url = new URL(request.url);
+
+    const key = url.searchParams.get('key');
+
+  
+
+    if (!key) {
+
+      return new Response(JSON.stringify({ error: 'Missing license key' }), {
+
+        status: 400,
+
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+
+      });
+
+    }
+
+  
+
+    const license = await env.DB.prepare(
+
+      `SELECT id, customer_id, tier FROM licenses WHERE license_key = ? AND status = 'active'`
+
+    )
+
+      .bind(key)
+
+      .first();
+
+  
+
+    if (!license) {
+
+      return new Response(JSON.stringify({ error: 'Invalid or inactive license' }), {
+
+        status: 401,
+
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+
+      });
+
+    }
+
+  
+
+    if (!['team', 'enterprise'].includes(license.tier as string)) {
+
+      return new Response(JSON.stringify({ error: 'Audit logs require Team or Enterprise tier' }), {
+
+        status: 403,
+
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+
+      });
+
+    }
+
+  
+
+    const logs = await env.DB.prepare(
+
+      `SELECT action, resource_type, resource_id, ip_address, created_at FROM audit_log WHERE user_id = ? ORDER BY created_at DESC LIMIT 50`
+
+    )
+
+      .bind(license.customer_id)
+
+      .all();
+
+  
+
+    return new Response(JSON.stringify(logs.results || []), {
+
+      headers: { 'Content-Type': 'application/json', ...corsHeaders },
+
+    });
+
+  }
+
+  
 
 async function handleValidateLicense(
   request: Request,
@@ -1738,9 +1960,88 @@ async function handleReportUsage(
     });
   } catch (e) {
     console.error('Report usage error:', e);
-    return new Response(JSON.stringify({ success: false, error: 'Failed to report usage' }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json', ...corsHeaders },
-    });
-  }
-}
+        return new Response(JSON.stringify({ success: false, error: 'Failed to report usage' }), {
+            status: 500,
+            headers: { 'Content-Type': 'application/json', ...corsHeaders },
+          });
+      }
+    }
+    
+    async function handleTeamPropose(
+      request: Request,
+      env: Env,
+      corsHeaders: Record<string, string>
+    ): Promise<Response> {
+      const body = await request.json() as { key: string, message: string, state: any };
+      const { key, message, state } = body;
+    
+      const license = await env.DB.prepare(
+        `SELECT id, user_id, tier FROM licenses WHERE license_key = ? AND status = 'active'`
+      ).bind(key).first();
+    
+      if (!license || !['team', 'enterprise'].includes(license.tier as string)) {
+        return new Response(JSON.stringify({ error: 'Proposals require Team or Enterprise tier' }), {
+          status: 403,
+          headers: { 'Content-Type': 'application/json', ...corsHeaders },
+        });
+      }
+    
+      const result = await env.DB.prepare(
+        `INSERT INTO team_proposals (license_id, creator_id, message, state_json) VALUES (?, ?, ?, ?)`
+      ).bind(license.id, license.user_id, message, JSON.stringify(state)).run();
+    
+      return new Response(JSON.stringify({ success: true, proposal_id: result.meta.last_row_id }), {
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      });
+    }
+    
+    async function handleTeamReview(
+      request: Request,
+      env: Env,
+      corsHeaders: Record<string, string>
+    ): Promise<Response> {
+      const body = await request.json() as { key: string, proposal_id: number, status: string };
+      const { key, proposal_id, status } = body;
+    
+      const license = await env.DB.prepare(
+        `SELECT id, tier FROM licenses WHERE license_key = ? AND status = 'active'`
+      ).bind(key).first();
+    
+      if (!license || !['team', 'enterprise'].includes(license.tier as string)) {
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 403 });
+      }
+    
+      await env.DB.prepare(
+        `UPDATE team_proposals SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND license_id = ?`
+      ).bind(status, proposal_id, license.id).run();
+    
+      return new Response(JSON.stringify({ success: true }), {
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      });
+    }
+    
+    async function handleGetTeamProposals(
+      request: Request,
+      env: Env,
+      corsHeaders: Record<string, string>
+    ): Promise<Response> {
+      const url = new URL(request.url);
+      const key = url.searchParams.get('key');
+    
+      const license = await env.DB.prepare(
+        `SELECT id, tier FROM licenses WHERE license_key = ? AND status = 'active'`
+      ).bind(key).first();
+    
+      if (!license || !['team', 'enterprise'].includes(license.tier as string)) {
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 403 });
+      }
+    
+      const proposals = await env.DB.prepare(
+        `SELECT p.*, u.email as creator_email FROM team_proposals p JOIN users u ON p.creator_id = u.id WHERE p.license_id = ? ORDER BY p.created_at DESC`
+      ).bind(license.id).all();
+    
+      return new Response(JSON.stringify(proposals.results || []), {
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      });
+    }
+    

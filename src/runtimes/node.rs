@@ -155,10 +155,9 @@ impl NodeManager {
 
         for line in text.lines() {
             if line.ends_with(filename)
-                && let Some(hash) = line.split_whitespace().next()
-            {
-                return Ok(hash.to_string());
-            }
+                && let Some(hash) = line.split_whitespace().next() {
+                    return Ok(hash.to_string());
+                }
         }
 
         anyhow::bail!("Checksum not found for {filename}")
@@ -184,11 +183,10 @@ impl NodeManager {
 
         // Check if this is the current version
         if let Some(current) = self.current_version()
-            && current == version
-        {
-            // Remove the symlink
-            let _ = std::fs::remove_file(&self.current_link);
-        }
+            && current == version {
+                // Remove the symlink
+                let _ = std::fs::remove_file(&self.current_link);
+            }
 
         std::fs::remove_dir_all(&version_dir)?;
         println!("{} Node.js {} uninstalled", "✓".green(), version);

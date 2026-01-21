@@ -63,6 +63,9 @@ pub enum Commands {
         /// Also remove unused dependencies
         #[arg(short, long)]
         recursive: bool,
+        /// Skip confirmation
+        #[arg(short = 'y', long)]
+        yes: bool,
     },
 
     /// Update all packages (system + runtimes)
@@ -71,6 +74,9 @@ pub enum Commands {
         /// Only check for updates, don't install
         #[arg(short, long)]
         check: bool,
+        /// Skip confirmation
+        #[arg(short = 'y', long)]
+        yes: bool,
     },
 
     /// Show package information
@@ -271,8 +277,12 @@ pub enum Commands {
         full: Option<String>,
     },
 
-    /// Show system status and statistics
-    Status,
+    /// Show system status
+    Status {
+        /// Use fast path (counts only, skips full dependency scan)
+        #[arg(long, short)]
+        fast: bool,
+    },
 
     /// Check system health and environment configuration
     Doctor,
@@ -384,6 +394,9 @@ pub enum Commands {
     /// Show usage statistics (time saved, commands used, etc.)
     Stats,
 
+    /// Show system metrics (Prometheus-style)
+    Metrics,
+
     /// Interactive first-run setup wizard
     ///
     /// Configures shell hooks, daemon startup, and captures initial environment.
@@ -489,10 +502,14 @@ pub enum TeamCommands {
     },
     /// Propose environment changes for review
     Propose {
-        /// Description of the proposed change
+        /// Message describing the changes
         message: String,
     },
-    /// Review a proposed change
+
+    /// List pending team proposals
+    Proposals,
+
+    /// Review and approve/reject a proposal
     Review {
         /// Proposal ID
         id: u32,
@@ -764,6 +781,9 @@ pub enum SnapshotCommands {
         /// Dry run - show what would change
         #[arg(long)]
         dry_run: bool,
+        /// Skip confirmation
+        #[arg(short = 'y', long)]
+        yes: bool,
     },
     /// Delete a snapshot
     Delete {

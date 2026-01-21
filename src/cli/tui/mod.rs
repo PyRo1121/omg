@@ -8,25 +8,45 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 use std::io;
 use std::time::Duration;
 
-mod app;
+pub mod app;
 mod ui;
 
+// Constants for TUI behavior
+const POLL_TIMEOUT_MS: u64 = 100;
+const REFRESH_INTERVAL_SECS: u64 = 5;
+
 pub async fn run() -> Result<()> {
+    let app = app::App::new().await?;
+    run_tui_with_app(app).await
+}
+
+pub async fn run_with_tab(tab: app::Tab) -> Result<()> {
+    let app = app::App::new().await?.with_tab(tab);
+    run_tui_with_app(app).await
+}
+
+/// Centralized TUI setup and teardown to avoid code duplication
+async fn run_tui_with_app(mut app: app::App) -> Result<()> {
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
-
-    // Hide cursor
     terminal.hide_cursor()?;
 
-    // Create app and run it
-    let mut app = app::App::new().await?;
+    // Run the app
     let res = run_app(&mut terminal, &mut app).await;
 
-    // Restore terminal
+    // Restore terminal - always execute cleanup even if app failed
+    let cleanup_result = cleanup_terminal(&mut terminal);
+
+    // Return the first error if any occurred
+    res.and(cleanup_result)
+}
+
+/// Cleanup terminal state - extracted to ensure consistent cleanup
+fn cleanup_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
     disable_raw_mode()?;
     execute!(
         terminal.backend_mut(),
@@ -35,11 +55,6 @@ pub async fn run() -> Result<()> {
     )?;
     terminal.show_cursor()?;
     terminal.clear()?;
-
-    if let Err(err) = res {
-        println!("{err:?}");
-    }
-
     Ok(())
 }
 
@@ -54,89 +69,86 @@ async fn run_app(
         terminal.draw(|f| ui::draw(f, app))?;
 
         // Handle events with timeout for animations
-        if crossterm::event::poll(Duration::from_millis(100))? {
-            match event::read()? {
-                Event::Key(key) if key.kind == KeyEventKind::Press => {
-                    // Handle special actions before key processing
-                    match key.code {
-                        KeyCode::Char('u') if app.current_tab == app::Tab::Dashboard => {
-                            // Update system
-                            if let Err(e) = app.update_system().await {
-                                eprintln!("Failed to update system: {e}");
-                            }
-                            // Refresh after update
-                            app.last_tick = std::time::Instant::now()
-                                .checked_sub(Duration::from_secs(10))
-                                .unwrap_or_else(std::time::Instant::now);
-                        }
-                        KeyCode::Char('c') if app.current_tab == app::Tab::Dashboard => {
-                            // Clean cache
-                            if let Err(e) = app.clean_cache().await {
-                                eprintln!("Failed to clean cache: {e}");
-                            }
-                        }
-                        KeyCode::Char('o') if app.current_tab == app::Tab::Dashboard => {
-                            // Remove orphans
-                            if let Err(e) = app.remove_orphans().await {
-                                eprintln!("Failed to remove orphans: {e}");
-                            }
-                        }
-                        KeyCode::Char('a') if app.current_tab == app::Tab::Security => {
-                            // Run security audit
-                            match app.run_security_audit().await {
-                                Ok(vulns) => {
-                                    if vulns == 0 {
-                                        println!("No vulnerabilities found!");
-                                    } else {
-                                        println!("Found {vulns} vulnerabilities");
-                                    }
-                                }
-                                Err(e) => eprintln!("Failed to run audit: {e}"),
-                            }
-                        }
-                        KeyCode::Enter
-                            if app.current_tab == app::Tab::Packages
-                                && !app.search_results.is_empty()
-                                && !app.show_popup =>
-                        {
-                            // Install selected package
-                            let Some(pkg) = app.search_results.get(app.selected_index) else {
-                                continue;
-                            };
-                            let pkg_name = &pkg.name;
-                            if let Err(e) = app.install_package(pkg_name).await {
-                                eprintln!("Failed to install {pkg_name}: {e}");
-                            }
-                            // Refresh after install
-                            app.last_tick = std::time::Instant::now()
-                                .checked_sub(Duration::from_secs(10))
-                                .unwrap_or_else(std::time::Instant::now);
-                        }
-                        _ => {
-                            // Normal key handling
-                            app.handle_key(key.code);
-                        }
-                    }
+        if crossterm::event::poll(Duration::from_millis(POLL_TIMEOUT_MS))?
+            && let Event::Key(key) = event::read()? {
+                // Only process key press events, ignore release
+                if key.kind != KeyEventKind::Press {
+                    continue;
+                }
 
-                    // Handle search
-                    if app.search_mode && app.search_query != last_search {
-                        last_search.clone_from(&app.search_query);
-                        let query = app.search_query.clone();
-                        if let Err(e) = app.search_packages(&query).await {
-                            eprintln!("Search failed: {e}");
-                        }
-                    }
+                // Exit on 'q' - check this first for quick exit
+                if key.code == KeyCode::Char('q') {
+                    return Ok(());
+                }
 
-                    // Exit on 'q'
-                    if key.code == KeyCode::Char('q') {
-                        return Ok(());
+                // Handle special actions before key processing
+                handle_special_key_actions(app, key.code).await;
+
+                // Handle search updates
+                if app.search_mode && app.search_query != last_search {
+                    last_search.clone_from(&app.search_query);
+                    // Clone to avoid borrow checker issues
+                    let query = last_search.clone();
+                    if let Err(e) = app.search_packages(&query).await {
+                        eprintln!("Search failed: {e}");
                     }
                 }
-                _ => {}
             }
-        }
 
         // Update app state
         app.tick().await?;
     }
+}
+
+/// Handle special key actions that trigger async operations
+async fn handle_special_key_actions(app: &mut app::App, key_code: KeyCode) {
+    match key_code {
+        KeyCode::Char('u') if app.current_tab == app::Tab::Dashboard => {
+            if let Err(e) = app.update_system().await {
+                eprintln!("Failed to update system: {e}");
+            }
+            force_refresh(app);
+        }
+        KeyCode::Char('c') if app.current_tab == app::Tab::Dashboard => {
+            if let Err(e) = app.clean_cache().await {
+                eprintln!("Failed to clean cache: {e}");
+            }
+        }
+        KeyCode::Char('o') if app.current_tab == app::Tab::Dashboard => {
+            if let Err(e) = app.remove_orphans().await {
+                eprintln!("Failed to remove orphans: {e}");
+            }
+        }
+        KeyCode::Char('a') if app.current_tab == app::Tab::Security => {
+            match app.run_security_audit().await {
+                Ok(0) => eprintln!("No vulnerabilities found!"),
+                Ok(vulns) => eprintln!("Found {vulns} vulnerabilities"),
+                Err(e) => eprintln!("Failed to run audit: {e}"),
+            }
+        }
+        KeyCode::Enter
+            if app.current_tab == app::Tab::Packages
+                && !app.search_results.is_empty()
+                && !app.show_popup =>
+        {
+            if let Some(pkg) = app.search_results.get(app.selected_index) {
+                let pkg_name = pkg.name.clone();
+                if let Err(e) = app.install_package(&pkg_name).await {
+                    eprintln!("Failed to install {pkg_name}: {e}");
+                }
+                force_refresh(app);
+            }
+        }
+        _ => {
+            // Normal key handling
+            app.handle_key(key_code);
+        }
+    }
+}
+
+/// Force a refresh by setting `last_tick` to a past time
+fn force_refresh(app: &mut app::App) {
+    app.last_tick = std::time::Instant::now()
+        .checked_sub(Duration::from_secs(REFRESH_INTERVAL_SECS + 1))
+        .unwrap_or_else(std::time::Instant::now);
 }
