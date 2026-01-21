@@ -19,6 +19,13 @@ pub struct SerializedIndex {
     pub timestamp: u64,
 }
 
+/// Borrowing version for serialization (avoids clone)
+#[derive(serde::Serialize)]
+struct SerializedIndexRef<'a> {
+    pub packages: &'a [DetailedPackageInfo],
+    pub timestamp: u64,
+}
+
 /// Index metadata for cache invalidation
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct IndexMeta {
@@ -118,9 +125,15 @@ impl PersistentCache {
             .map(|d| d.as_secs())
             .unwrap_or(0);
 
-        let index = SerializedIndex {
-            packages: packages.to_vec(),
-            timestamp,
+        // OPTIMIZATION: Avoid unnecessary clone by using borrowing struct
+        // Previous: packages.to_vec() cloned 60k+ packages (~12MB allocation)
+        // Now: Serialize directly from &[T] using SerializedIndexRef
+        let index_data = {
+            let index_ref = SerializedIndexRef {
+                packages,
+                timestamp,
+            };
+            bitcode::serialize(&index_ref)?
         };
 
         let meta = IndexMeta {
@@ -128,8 +141,6 @@ impl PersistentCache {
             timestamp,
             db_mtime,
         };
-
-        let index_data = bitcode::serialize(&index)?;
         let meta_data = serde_json::to_vec(&meta)?;
 
         let write_txn = self.db.begin_write()?;
