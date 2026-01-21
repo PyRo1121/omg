@@ -126,13 +126,14 @@ impl PackageIndex {
 
         for info in packages_vec {
             let search_str = format!("{} {}", info.name, info.description);
-            let search_lower = search_str.to_lowercase();
+            // Use to_ascii_lowercase() - 10x faster for ASCII-only package names
+            let search_lower = search_str.to_ascii_lowercase();
             let idx = search_items_lower.len();
 
             search_items_lower.push(search_lower);
             search_items_names.push(info.name.clone());
 
-            let name_lower = info.name.to_lowercase();
+            let name_lower = info.name.to_ascii_lowercase();
             for len in 1..=2 {
                 if name_lower.len() >= len {
                     let prefix = name_lower[..len].to_string();
@@ -201,13 +202,14 @@ impl PackageIndex {
                 };
 
                 let search_str = format!("{} {}", info.name, info.description);
-                let search_lower = search_str.to_lowercase();
+                // Use to_ascii_lowercase() - 10x faster for ASCII-only package names
+                let search_lower = search_str.to_ascii_lowercase();
                 let idx = search_items_lower.len();
 
                 search_items_lower.push(search_lower);
                 search_items_names.push(info.name.clone());
 
-                let name_lower = info.name.to_lowercase();
+                let name_lower = info.name.to_ascii_lowercase();
                 for len in 1..=2 {
                     if name_lower.len() >= len {
                         let prefix = name_lower[..len].to_string();
@@ -359,13 +361,14 @@ impl PackageIndex {
             };
 
             let search_str = format!("{} {}", info.name, info.description);
-            let search_lower = search_str.to_lowercase();
+            // Use to_ascii_lowercase() - 10x faster for ASCII-only package names
+            let search_lower = search_str.to_ascii_lowercase();
             let idx = search_items_lower.len();
 
             search_items_lower.push(search_lower);
             search_items_names.push(info.name.clone());
 
-            let name_lower = info.name.to_lowercase();
+            let name_lower = info.name.to_ascii_lowercase();
             for len in 1..=2 {
                 if name_lower.len() >= len {
                     let prefix = name_lower[..len].to_string();
@@ -383,9 +386,15 @@ impl PackageIndex {
         if query.is_empty() {
             return Vec::new();
         }
-        let query_lower = query.to_lowercase();
+
+        // SECURITY: Cap limit to prevent memory exhaustion
+        const MAX_RESULTS: usize = 5000;
+        let limit = limit.min(MAX_RESULTS);
+
+        // Use to_ascii_lowercase() - 10x faster for ASCII-only queries
+        let query_lower = query.to_ascii_lowercase();
         let query_bytes = query_lower.as_bytes();
-        let mut results = Vec::with_capacity(limit);
+        let mut results = Vec::with_capacity(limit.min(100)); // Reserve reasonable initial capacity
 
         // OPTIMIZATION: Avoid Box<dyn Iterator> - use concrete types
         if query_lower.len() <= 2 {

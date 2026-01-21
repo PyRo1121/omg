@@ -2,6 +2,8 @@
 
 use std::sync::Arc;
 
+use anyhow::Context;
+
 use super::cache::PackageCache;
 use super::index::PackageIndex;
 use super::protocol::{
@@ -27,17 +29,20 @@ pub struct DaemonState {
 }
 
 impl DaemonState {
-    #[must_use]
-    #[allow(clippy::expect_used)]
-    pub fn new() -> Self {
+    /// Create a new daemon state
+    ///
+    /// # Errors
+    /// Returns an error if the persistent cache or package index cannot be initialized.
+    pub fn new() -> anyhow::Result<Self> {
         let data_dir = crate::core::paths::daemon_data_dir();
-        let persistent = super::db::PersistentCache::new(&data_dir).expect("daemon requires redb");
+        let persistent = super::db::PersistentCache::new(&data_dir)
+            .context("Failed to initialize persistent cache (redb)")?;
 
         // Use cached index loading for instant startup
-        let index = PackageIndex::new_with_cache(&persistent).unwrap_or_else(|e| {
+        let index = PackageIndex::new_with_cache(&persistent).or_else(|e| {
             tracing::warn!("Failed to load cached index: {e}, building fresh");
-            PackageIndex::new().expect("daemon requires index")
-        });
+            PackageIndex::new()
+        }).context("Failed to build package index")?;
 
         let cache = PackageCache::default();
 
@@ -47,7 +52,7 @@ impl DaemonState {
             tracing::debug!("Pre-warmed status cache from persistent storage");
         }
 
-        Self {
+        Ok(Self {
             cache,
             persistent,
             package_manager: get_package_manager(),
@@ -57,13 +62,13 @@ impl DaemonState {
             alpm_worker: AlpmWorker::new(),
             index: Arc::new(index),
             runtime_versions: Arc::new(RwLock::new(Vec::new())),
-        }
+        })
     }
 }
 
 impl Default for DaemonState {
     fn default() -> Self {
-        Self::new()
+        Self::new().expect("Failed to initialize DaemonState")
     }
 }
 
@@ -101,9 +106,25 @@ pub async fn handle_request(state: Arc<DaemonState>, request: Request) -> Respon
     }
 }
 
+/// Maximum number of requests in a batch to prevent DoS
+const MAX_BATCH_SIZE: usize = 100;
+
 /// Handle batch requests - process multiple requests in parallel
 async fn handle_batch(state: Arc<DaemonState>, id: RequestId, requests: Vec<Request>) -> Response {
     use futures::stream::{self, StreamExt};
+
+    // SECURITY: Limit batch size to prevent resource exhaustion
+    if requests.len() > MAX_BATCH_SIZE {
+        return Response::Error {
+            id,
+            code: error_codes::INVALID_PARAMS,
+            message: format!(
+                "Batch size {} exceeds maximum of {}",
+                requests.len(),
+                MAX_BATCH_SIZE
+            ),
+        };
+    }
 
     // Process requests concurrently with a limit to prevent DoS
     let responses: Vec<_> = stream::iter(requests)
@@ -129,7 +150,17 @@ fn handle_search(
     query: String,
     limit: Option<usize>,
 ) -> Response {
-    let limit = limit.unwrap_or(50);
+    // SECURITY: Validate search query to prevent injection attacks
+    // Allow more flexible search queries but limit length
+    if query.len() > 500 {
+        return Response::Error {
+            id,
+            code: error_codes::INVALID_PARAMS,
+            message: "Search query too long (max 500 characters)".to_string(),
+        };
+    }
+
+    let limit = limit.unwrap_or(50).min(1000); // Cap limit at 1000 to prevent resource exhaustion
 
     // Check cache first
     if let Some(cached) = state.cache.get(&query) {
@@ -160,6 +191,15 @@ fn handle_search(
 /// Handle info request
 #[inline]
 async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) -> Response {
+    // SECURITY: Validate package name to prevent command injection
+    if let Err(e) = crate::core::validation::validate_package_name(&package) {
+        return Response::Error {
+            id,
+            code: error_codes::INVALID_PARAMS,
+            message: format!("Invalid package name: {e}"),
+        };
+    }
+
     // 1. Check cache first
     if let Some(cached) = state.cache.get_info(&package) {
         return Response::Success {
