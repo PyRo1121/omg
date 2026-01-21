@@ -12,27 +12,23 @@ use crate::cli::style;
 #[cfg(feature = "arch")]
 use crate::core::history::PackageChange;
 
-use super::common::use_debian_backend;
+use crate::package_managers::get_package_manager;
 
 #[cfg(feature = "arch")]
 use super::common::log_transaction;
 
 #[cfg(feature = "arch")]
-use crate::package_managers::{AurClient, OfficialPackageManager, check_updates_cached};
-
-use crate::package_managers::PackageManager;
-
-#[cfg(feature = "debian")]
-use crate::package_managers::{AptPackageManager, apt_list_updates};
+use crate::package_managers::{AurClient, check_updates_cached};
 
 /// Update all packages
 pub async fn update(check_only: bool) -> Result<()> {
-    if use_debian_backend() {
-        #[cfg(feature = "debian")]
-        {
-            let apt = AptPackageManager::new();
-            if check_only {
-                let updates = apt_list_updates().unwrap_or_default();
+    let pm = get_package_manager();
+
+    if pm.name() == "apt" {
+        if check_only {
+            #[cfg(feature = "debian")]
+            {
+                let updates = crate::package_managers::apt_list_updates().unwrap_or_default();
                 if updates.is_empty() {
                     println!("{} System is up to date!", style::success("✓"));
                 } else {
@@ -51,30 +47,36 @@ pub async fn update(check_only: bool) -> Result<()> {
                         );
                     }
                 }
-                return Ok(());
             }
-            return apt.update().await;
+            return Ok(());
         }
+        return pm.update().await;
     }
+
     #[cfg(not(feature = "arch"))]
     {
         anyhow::bail!("Update not implemented for this backend - use debian backend");
     }
 
     #[cfg(feature = "arch")]
-    {
-        use crate::core::history::TransactionType;
-        let aur = AurClient::new();
-        let pacman = OfficialPackageManager::new();
+    update_arch(check_only, &*pm).await
+}
 
-        // STEP 1: Sync databases first to get latest info
-        if !crate::core::is_root() {
+#[cfg(feature = "arch")]
+async fn update_arch(check_only: bool, pm: &dyn crate::package_managers::PackageManager) -> Result<()> {
+    use crate::core::history::TransactionType;
+    let aur = AurClient::new();
+
+    // STEP 1: Sync databases first to get latest info
+    if !crate::core::is_root() {
             println!(
                 "{} Synchronizing databases (elevation might be required)...",
                 style::arrow("→")
             );
         }
-        pacman.sync_databases().await?;
+
+        // Specialized sync for Arch (parallel)
+        crate::package_managers::sync_databases_parallel().await?;
 
         let pb = style::spinner("Checking for updates...");
 
@@ -207,7 +209,7 @@ pub async fn update(check_only: bool) -> Result<()> {
                 .collect();
 
             if !pkg_paths_str.is_empty() {
-                pacman.install(&pkg_paths_str).await?;
+                pm.install(&pkg_paths_str).await?;
             }
         }
 
@@ -389,35 +391,35 @@ pub async fn update(check_only: bool) -> Result<()> {
 
                 let pkg_paths: Vec<_> = built_packages.iter().map(|(_, _, p)| p.clone()).collect();
 
-                let exe =
-                    std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("omg"));
-                let mut cmd = tokio::process::Command::new("sudo");
-                cmd.arg("--").arg(&exe).arg("install");
+                // Build args for run_self_sudo
+                let mut args = vec!["install".to_string()];
                 for path in &pkg_paths {
-                    cmd.arg(path);
+                    args.push(path.display().to_string());
                 }
+                let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
 
-                match cmd.status().await {
-                    Ok(status) if status.success() => {
+                match crate::core::privilege::run_self_sudo(&args_refs).await {
+                    Ok(_) => {
                         println!(
                             "{} Installed {} packages",
                             style::success("✓"),
                             built_packages.len()
                         );
                     }
-                    Ok(_) | Err(_) => {
+                    Err(_) => {
                         println!(
                             "{} Batch install failed, trying individually...",
                             style::warning("⚠")
                         );
                         // Fallback to individual installs
                         for (name, _ver, path) in &built_packages {
-                            let mut cmd = tokio::process::Command::new("sudo");
-                            cmd.arg("--").arg(&exe).arg("install").arg(path);
-                            if let Ok(status) = cmd.status().await {
-                                if status.success() {
+                            let path_str = path.display().to_string();
+                            let individual_args = ["install", &path_str];
+                            match crate::core::privilege::run_self_sudo(&individual_args).await {
+                                Ok(_) => {
                                     println!("  {} Installed {}", style::success("✓"), name);
-                                } else {
+                                }
+                                Err(_) => {
                                     println!(
                                         "  {} Failed: {}",
                                         style::error("✗"),
@@ -449,9 +451,8 @@ pub async fn update(check_only: bool) -> Result<()> {
             }
         }
 
-        // Log transaction
-        log_transaction(TransactionType::Update, changes, true);
+    // Log transaction
+    log_transaction(TransactionType::Update, changes, true);
 
-        Ok(())
-    } // end #[cfg(feature = "arch")] block
+    Ok(())
 }

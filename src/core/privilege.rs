@@ -35,6 +35,22 @@ pub fn elevate_if_needed() -> std::io::Result<()> {
     Err(err)
 }
 
+/// Run the current executable with sudo and specific arguments asynchronously
+pub async fn run_self_sudo(args: &[&str]) -> anyhow::Result<()> {
+    let exe = std::env::current_exe()?;
+    let status = tokio::process::Command::new("sudo")
+        .arg("--")
+        .arg(exe)
+        .args(args)
+        .status()
+        .await?;
+
+    if !status.success() {
+        anyhow::bail!("Elevated command failed");
+    }
+    Ok(())
+}
+
 /// Execute a closure that requires root, elevating if needed
 /// Returns Ok(true) if we elevated (caller should exit), Ok(false) if already root
 pub fn with_root<F, T>(f: F) -> anyhow::Result<T>

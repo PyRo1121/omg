@@ -55,6 +55,33 @@ pub use traits::PackageManager;
 pub use types::PackageInfo as SyncPkgInfo;
 pub use types::{LocalPackage, SyncPackage};
 
+/// Get the appropriate package manager for the current distribution
+pub fn get_package_manager() -> Box<dyn PackageManager> {
+    use crate::core::env::distro::{Distro, detect_distro};
+
+    match detect_distro() {
+        #[cfg(feature = "arch")]
+        Distro::Arch => Box::new(OfficialPackageManager::new()),
+        #[cfg(feature = "debian")]
+        Distro::Debian | Distro::Ubuntu => Box::new(AptPackageManager::new()),
+        _ => {
+            // Fallback or default
+            #[cfg(feature = "arch")]
+            {
+                Box::new(OfficialPackageManager::new())
+            }
+            #[cfg(all(not(feature = "arch"), feature = "debian"))]
+            {
+                Box::new(AptPackageManager::new())
+            }
+            #[cfg(all(not(feature = "arch"), not(feature = "debian")))]
+            {
+                panic!("No package manager backend enabled! Build with --features arch or --features debian");
+            }
+        }
+    }
+}
+
 #[cfg(feature = "debian")]
 pub use apt::{
     AptPackageManager, get_sync_pkg_info as apt_get_sync_pkg_info,

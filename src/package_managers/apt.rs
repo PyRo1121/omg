@@ -1,6 +1,7 @@
 //! Debian/Ubuntu package manager backend (APT via rust-apt)
 
 use anyhow::{Context, Result};
+use futures::future::{BoxFuture, FutureExt};
 use rust_apt::Cache;
 use rust_apt::cache::{PackageSort, Upgrade};
 use rust_apt::progress::{AcquireProgress, InstallProgress};
@@ -18,16 +19,7 @@ impl AptPackageManager {
     }
     pub async fn sync_databases(&self) -> Result<()> {
         if !is_root() {
-            let exe = std::env::current_exe()?;
-            let status = tokio::process::Command::new("sudo")
-                .arg("--")
-                .arg(exe)
-                .arg("sync")
-                .status()
-                .await?;
-            if !status.success() {
-                anyhow::bail!("Database synchronization failed");
-            }
+            crate::core::privilege::run_self_sudo(&["sync"]).await?;
             return Ok(());
         }
 
@@ -74,10 +66,7 @@ impl crate::package_managers::PackageManager for AptPackageManager {
         "apt"
     }
 
-    fn search(
-        &self,
-        query: &str,
-    ) -> impl std::future::Future<Output = Result<Vec<Package>>> + Send {
+    fn search(&self, query: &str) -> BoxFuture<'static, Result<Vec<Package>>> {
         let query = query.to_string();
         async move {
             tokio::task::spawn_blocking(move || search_sync(&query))
@@ -85,23 +74,17 @@ impl crate::package_managers::PackageManager for AptPackageManager {
                 .context("APT search task failed")?
                 .map(sync_to_packages)
         }
+        .boxed()
     }
 
-    fn install(&self, packages: &[String]) -> impl std::future::Future<Output = Result<()>> + Send {
+    fn install(&self, packages: &[String]) -> BoxFuture<'static, Result<()>> {
         let packages = packages.to_vec();
         async move {
             if !is_root() {
-                let exe = std::env::current_exe()?;
-                let status = tokio::process::Command::new("sudo")
-                    .arg("--")
-                    .arg(exe)
-                    .arg("install")
-                    .args(&packages)
-                    .status()
-                    .await?;
-                if !status.success() {
-                    anyhow::bail!("Installation failed");
-                }
+                let mut args = vec!["install"];
+                let pkg_refs: Vec<&str> = packages.iter().map(|s| s.as_str()).collect();
+                args.extend_from_slice(&pkg_refs);
+                crate::core::privilege::run_self_sudo(&args).await?;
                 return Ok(());
             }
 
@@ -110,23 +93,17 @@ impl crate::package_managers::PackageManager for AptPackageManager {
                 .context("APT install task failed")??;
             Ok(())
         }
+        .boxed()
     }
 
-    fn remove(&self, packages: &[String]) -> impl std::future::Future<Output = Result<()>> + Send {
+    fn remove(&self, packages: &[String]) -> BoxFuture<'static, Result<()>> {
         let packages = packages.to_vec();
         async move {
             if !is_root() {
-                let exe = std::env::current_exe()?;
-                let status = tokio::process::Command::new("sudo")
-                    .arg("--")
-                    .arg(exe)
-                    .arg("remove")
-                    .args(&packages)
-                    .status()
-                    .await?;
-                if !status.success() {
-                    anyhow::bail!("Removal failed");
-                }
+                let mut args = vec!["remove"];
+                let pkg_refs: Vec<&str> = packages.iter().map(|s| s.as_str()).collect();
+                args.extend_from_slice(&pkg_refs);
+                crate::core::privilege::run_self_sudo(&args).await?;
                 return Ok(());
             }
 
@@ -135,21 +112,13 @@ impl crate::package_managers::PackageManager for AptPackageManager {
                 .context("APT remove task failed")??;
             Ok(())
         }
+        .boxed()
     }
 
-    fn update(&self) -> impl std::future::Future<Output = Result<()>> + Send {
+    fn update(&self) -> BoxFuture<'static, Result<()>> {
         async move {
             if !is_root() {
-                let exe = std::env::current_exe()?;
-                let status = tokio::process::Command::new("sudo")
-                    .arg("--")
-                    .arg(exe)
-                    .arg("update")
-                    .status()
-                    .await?;
-                if !status.success() {
-                    anyhow::bail!("Update failed");
-                }
+                crate::core::privilege::run_self_sudo(&["update"]).await?;
                 return Ok(());
             }
 
@@ -158,12 +127,17 @@ impl crate::package_managers::PackageManager for AptPackageManager {
                 .context("APT update task failed")??;
             Ok(())
         }
+        .boxed()
     }
 
-    fn info(
-        &self,
-        package: &str,
-    ) -> impl std::future::Future<Output = Result<Option<Package>>> + Send {
+    fn sync(&self) -> BoxFuture<'static, Result<()>> {
+        async move {
+            AptPackageManager::new().sync_databases().await
+        }
+        .boxed()
+    }
+
+    fn info(&self, package: &str) -> BoxFuture<'static, Result<Option<Package>>> {
         let package = package.to_string();
         async move {
             let info = tokio::task::spawn_blocking(move || get_sync_pkg_info(&package))
@@ -177,10 +151,19 @@ impl crate::package_managers::PackageManager for AptPackageManager {
                 installed: false,
             }))
         }
+        .boxed()
     }
 
-    fn list_installed(&self) -> impl std::future::Future<Output = Result<Vec<Package>>> + Send {
-        async move { list_installed_fast().map(local_to_packages) }
+    fn list_installed(&self) -> BoxFuture<'static, Result<Vec<Package>>> {
+        async move { list_installed_fast().map(local_to_packages) }.boxed()
+    }
+
+    fn get_status(&self) -> BoxFuture<'static, Result<(usize, usize, usize, usize)>> {
+        async move { get_system_status() }.boxed()
+    }
+
+    fn list_explicit(&self) -> BoxFuture<'static, Result<Vec<String>>> {
+        async move { list_explicit() }.boxed()
     }
 }
 

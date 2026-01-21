@@ -4,14 +4,11 @@ use anyhow::Result;
 
 use crate::cli::style;
 use crate::core::client::DaemonClient;
-
-use super::common::use_debian_backend;
+use crate::core::env::distro::use_debian_backend;
+use crate::package_managers::get_package_manager;
 
 #[cfg(feature = "arch")]
-use crate::package_managers::{AurClient, display_pkg_info, get_sync_pkg_info, search_detailed};
-
-#[cfg(feature = "debian")]
-use crate::package_managers::apt_get_sync_pkg_info;
+use crate::package_managers::{AurClient, search_detailed};
 
 /// Show package information (Synchronous fast-path)
 /// Alias for CLI fast path
@@ -21,21 +18,9 @@ pub fn info_sync_cli(package: &str) -> Result<bool> {
 
 /// Show package information (Synchronous fast-path)
 pub fn info_sync(package: &str) -> Result<bool> {
-    if use_debian_backend() {
-        #[cfg(feature = "debian")]
-        {
-            if let Some(info) = apt_get_sync_pkg_info(package).ok().flatten() {
-                display_package_info(&info);
-                println!(
-                    "\n  {} Official repository ({})",
-                    style::success("Source:"),
-                    style::info("apt")
-                );
-                return Ok(true);
-            }
-        }
-        return Ok(false);
-    }
+    let pm = get_package_manager();
+    let pm_name = pm.name();
+
     let start = std::time::Instant::now();
 
     // 1. Try daemon first (ULTRA FAST - <1ms)
@@ -62,20 +47,37 @@ pub fn info_sync(package: &str) -> Result<bool> {
         return Ok(true);
     }
 
-    // 2. Fallback to local ALPM (Sync, fast)
-    #[cfg(feature = "arch")]
-    if let Some(info) = get_sync_pkg_info(package).ok().flatten() {
-        display_pkg_info(&info);
-        println!(
-            "\n  {} Official repository ({})",
-            style::success("Source:"),
-            style::info(&info.repo)
-        );
+    // 2. Fallback to local package manager (Sync-like via block_on if needed, but here we just use the backend functions)
+    if pm_name == "apt" {
+        #[cfg(feature = "debian")]
+        {
+            if let Some(info) = crate::package_managers::apt_get_sync_pkg_info(package).ok().flatten() {
+                display_package_info(&info);
+                println!(
+                    "\n  {} Official repository ({})",
+                    style::success("Source:"),
+                    style::info("apt")
+                );
+                return Ok(true);
+            }
+        }
+    } else if pm_name == "pacman" {
+        #[cfg(feature = "arch")]
+        {
+            if let Some(info) = crate::package_managers::get_sync_pkg_info(package).ok().flatten() {
+                crate::package_managers::display_pkg_info(&info);
+                println!(
+                    "\n  {} Official repository ({})",
+                    style::success("Source:"),
+                    style::info(&info.repo)
+                );
 
-        // Track usage
-        crate::core::usage::track_info();
+                // Track usage
+                crate::core::usage::track_info();
 
-        return Ok(true);
+                return Ok(true);
+            }
+        }
     }
 
     Ok(false)

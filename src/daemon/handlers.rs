@@ -8,26 +8,16 @@ use super::protocol::{
     DetailedPackageInfo, ExplicitResult, Request, RequestId, Response, ResponseResult,
     SearchResult, SecurityAuditResult, StatusResult, Vulnerability, error_codes,
 };
-use crate::core::env::distro::use_debian_backend;
-
+use crate::package_managers::{AurClient, PackageManager, get_package_manager};
 #[cfg(feature = "arch")]
-use crate::package_managers::{
-    AurClient, OfficialPackageManager, alpm_worker::AlpmWorker, list_installed_fast,
-    search_detailed,
-};
+use crate::package_managers::{alpm_worker::AlpmWorker, search_detailed};
 use parking_lot::RwLock;
-
-#[cfg(feature = "debian")]
-use crate::package_managers::{
-    apt_get_sync_pkg_info, apt_get_system_status, apt_list_explicit, apt_list_installed_fast,
-};
 
 /// Daemon state shared across handlers
 pub struct DaemonState {
     pub cache: PackageCache,
     pub persistent: super::db::PersistentCache,
-    #[cfg(feature = "arch")]
-    pub pacman: OfficialPackageManager,
+    pub package_manager: Box<dyn PackageManager>,
     #[cfg(feature = "arch")]
     pub aur: AurClient,
     #[cfg(feature = "arch")]
@@ -60,8 +50,7 @@ impl DaemonState {
         Self {
             cache,
             persistent,
-            #[cfg(feature = "arch")]
-            pacman: OfficialPackageManager::new(),
+            package_manager: get_package_manager(),
             #[cfg(feature = "arch")]
             aur: AurClient::new(),
             #[cfg(feature = "arch")]
@@ -114,18 +103,17 @@ pub async fn handle_request(state: Arc<DaemonState>, request: Request) -> Respon
 
 /// Handle batch requests - process multiple requests in parallel
 async fn handle_batch(state: Arc<DaemonState>, id: RequestId, requests: Vec<Request>) -> Response {
-    use futures::future::join_all;
+    use futures::stream::{self, StreamExt};
 
-    // Process all requests concurrently
-    let futures: Vec<_> = requests
-        .into_iter()
+    // Process requests concurrently with a limit to prevent DoS
+    let responses: Vec<_> = stream::iter(requests)
         .map(|req| {
             let state = Arc::clone(&state);
-            async move { Box::pin(handle_request(state, req)).await }
+            async move { handle_request(state, req).await }
         })
-        .collect();
-
-    let responses = join_all(futures).await;
+        .buffer_unordered(16) // Limit concurrency to 16
+        .collect()
+        .await;
 
     Response::Success {
         id,
@@ -197,55 +185,51 @@ async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) ->
         };
     }
 
-    if use_debian_backend() {
-        #[cfg(feature = "debian")]
-        {
-            if let Ok(Some(info)) = apt_get_sync_pkg_info(&package) {
-                let detailed = DetailedPackageInfo {
-                    name: info.name,
-                    version: info.version.to_string(),
-                    description: info.description,
-                    url: info.url.unwrap_or_default(),
-                    size: info.size,
-                    download_size: info.download_size.unwrap_or(0),
-                    repo: info.repo,
-                    depends: info.depends,
-                    licenses: info.licenses,
-                    source: "official".to_string(),
-                };
-                state.cache.insert_info(detailed.clone());
-                return Response::Success {
-                    id,
-                    result: ResponseResult::Info(detailed),
-                };
-            }
-        }
-    } else {
-        // 3. Try AUR (arch only)
-        #[cfg(feature = "arch")]
-        {
-            if let Ok(details) = search_detailed(&package).await
-                && let Some(pkg) = details.into_iter().find(|p| p.name == package)
-            {
-                let detailed = DetailedPackageInfo {
-                    name: pkg.name,
-                    version: pkg.version.clone(),
-                    description: pkg.description.unwrap_or_default(),
-                    url: pkg.url.unwrap_or_default(),
-                    size: 0,
-                    download_size: 0,
-                    repo: "aur".to_string(),
-                    depends: pkg.depends.unwrap_or_default(),
-                    licenses: pkg.license.unwrap_or_default(),
-                    source: "aur".to_string(),
-                };
+    // 3. Try Package Manager Backend
+    if let Ok(Some(info)) = state.package_manager.info(&package).await {
+        let detailed = DetailedPackageInfo {
+            name: info.name,
+            version: info.version.to_string(),
+            description: info.description,
+            url: String::new(), // info.url not in Package struct currently
+            size: 0,
+            download_size: 0,
+            repo: String::new(),
+            depends: Vec::new(),
+            licenses: Vec::new(),
+            source: "official".to_string(),
+        };
+        state.cache.insert_info(detailed.clone());
+        return Response::Success {
+            id,
+            result: ResponseResult::Info(detailed),
+        };
+    }
 
-                state.cache.insert_info(detailed.clone());
-                return Response::Success {
-                    id,
-                    result: ResponseResult::Info(detailed),
-                };
-            }
+    // 4. Try AUR (arch only)
+    #[cfg(feature = "arch")]
+    if state.package_manager.name() == "pacman" {
+        if let Ok(details) = search_detailed(&package).await
+            && let Some(pkg) = details.into_iter().find(|p| p.name == package)
+        {
+            let detailed = DetailedPackageInfo {
+                name: pkg.name,
+                version: pkg.version.clone(),
+                description: pkg.description.unwrap_or_default(),
+                url: pkg.url.unwrap_or_default(),
+                size: 0,
+                download_size: 0,
+                repo: "aur".to_string(),
+                depends: pkg.depends.unwrap_or_default(),
+                licenses: pkg.license.unwrap_or_default(),
+                source: "aur".to_string(),
+            };
+
+            state.cache.insert_info(detailed.clone());
+            return Response::Success {
+                id,
+                result: ResponseResult::Info(detailed),
+            };
         }
     }
 
@@ -278,33 +262,29 @@ fn handle_status(state: &Arc<DaemonState>, id: RequestId) -> Response {
         };
     }
 
-    #[cfg(feature = "arch")]
-    let status = if use_debian_backend() {
+    // 3. Query system backends
+    let pm_name = state.package_manager.name();
+
+    let status = if pm_name == "apt" {
         #[cfg(feature = "debian")]
         {
-            apt_get_system_status()
+            crate::package_managers::apt_get_system_status()
         }
         #[cfg(not(feature = "debian"))]
         {
             Err(anyhow::anyhow!("Debian backend disabled"))
         }
-    } else {
-        use crate::package_managers::get_system_status;
-        get_system_status()
-    };
-
-    #[cfg(not(feature = "arch"))]
-    let status = if use_debian_backend() {
-        #[cfg(feature = "debian")]
+    } else if pm_name == "pacman" {
+        #[cfg(feature = "arch")]
         {
-            apt_get_system_status()
+            crate::package_managers::get_system_status()
         }
-        #[cfg(not(feature = "debian"))]
+        #[cfg(not(feature = "arch"))]
         {
-            Err(anyhow::anyhow!("No package manager backend available"))
+            Err(anyhow::anyhow!("Arch backend disabled"))
         }
     } else {
-        Err(anyhow::anyhow!("Arch backend disabled"))
+        Err(anyhow::anyhow!("Unsupported package manager: {}", pm_name))
     };
 
     match status {
@@ -335,30 +315,11 @@ fn handle_status(state: &Arc<DaemonState>, id: RequestId) -> Response {
 }
 
 /// Handle security audit request
-async fn handle_security_audit(_state: Arc<DaemonState>, id: RequestId) -> Response {
+async fn handle_security_audit(state: Arc<DaemonState>, id: RequestId) -> Response {
     use crate::core::security::vulnerability::VulnerabilityScanner;
 
     let scanner = VulnerabilityScanner::new();
-    let installed: Result<Vec<crate::package_managers::types::LocalPackage>, anyhow::Error> =
-        if use_debian_backend() {
-            #[cfg(feature = "debian")]
-            {
-                apt_list_installed_fast()
-            }
-            #[cfg(not(feature = "debian"))]
-            {
-                Err(anyhow::anyhow!("Debian backend disabled"))
-            }
-        } else {
-            #[cfg(feature = "arch")]
-            {
-                list_installed_fast()
-            }
-            #[cfg(not(feature = "arch"))]
-            {
-                Err(anyhow::anyhow!("Arch backend disabled"))
-            }
-        };
+    let installed = state.package_manager.list_installed().await;
 
     let installed = match installed {
         Ok(pkgs) => pkgs,
@@ -376,20 +337,24 @@ async fn handle_security_audit(_state: Arc<DaemonState>, id: RequestId) -> Respo
     let mut high_severity = 0;
 
     let scanner = Arc::new(scanner);
-    let mut set = tokio::task::JoinSet::new();
 
-    for pkg in installed.iter().take(20) {
-        let scanner = scanner.clone();
-        let name = pkg.name.clone();
-        let version = pkg.version.clone();
-        set.spawn(async move {
-            let res = scanner.scan_package(&name, &version).await;
-            (name, res)
-        });
-    }
+    // Use bounded concurrency instead of limiting the count
+    use futures::stream::{self, StreamExt};
 
-    while let Some(res) = set.join_next().await {
-        if let Ok((name, Ok(vulns))) = res
+    let mut stream = stream::iter(installed)
+        .map(|pkg| {
+            let scanner = scanner.clone();
+            async move {
+                let name = pkg.name.clone();
+                let version = pkg.version.clone();
+                let res = scanner.scan_package(&name, &version).await;
+                (name, res)
+            }
+        })
+        .buffer_unordered(32); // Scan up to 32 packages concurrently
+
+    while let Some((name, res)) = stream.next().await {
+        if let Ok(vulns) = res
             && !vulns.is_empty()
         {
             let mapped: Vec<Vulnerability> = vulns
@@ -434,33 +399,27 @@ fn handle_list_explicit(state: &Arc<DaemonState>, id: RequestId) -> Response {
         };
     }
 
-    #[cfg(feature = "arch")]
-    let packages = if use_debian_backend() {
+    let pm_name = state.package_manager.name();
+    let packages = if pm_name == "apt" {
         #[cfg(feature = "debian")]
         {
-            apt_list_explicit()
+            crate::package_managers::apt_list_explicit()
         }
         #[cfg(not(feature = "debian"))]
         {
             Err(anyhow::anyhow!("Debian backend disabled"))
         }
-    } else {
-        use crate::package_managers::list_explicit_fast;
-        list_explicit_fast()
-    };
-
-    #[cfg(not(feature = "arch"))]
-    let packages = if use_debian_backend() {
-        #[cfg(feature = "debian")]
+    } else if pm_name == "pacman" {
+        #[cfg(feature = "arch")]
         {
-            apt_list_explicit()
+            crate::package_managers::list_explicit_fast()
         }
-        #[cfg(not(feature = "debian"))]
+        #[cfg(not(feature = "arch"))]
         {
-            Err(anyhow::anyhow!("No package manager backend available"))
+            Err(anyhow::anyhow!("Arch backend disabled"))
         }
     } else {
-        Err(anyhow::anyhow!("Arch backend disabled"))
+        Err(anyhow::anyhow!("Unsupported package manager: {}", pm_name))
     };
 
     match packages {
@@ -488,33 +447,27 @@ fn handle_explicit_count(state: &Arc<DaemonState>, id: RequestId) -> Response {
         };
     }
 
-    #[cfg(feature = "arch")]
-    let count = if use_debian_backend() {
+    let pm_name = state.package_manager.name();
+    let count = if pm_name == "apt" {
         #[cfg(feature = "debian")]
         {
-            apt_list_explicit().map(|packages| packages.len())
+            crate::package_managers::apt_list_explicit().map(|packages| packages.len())
         }
         #[cfg(not(feature = "debian"))]
         {
             Err(anyhow::anyhow!("Debian backend disabled"))
         }
-    } else {
-        use crate::package_managers::list_explicit_fast;
-        list_explicit_fast().map(|packages| packages.len())
-    };
-
-    #[cfg(not(feature = "arch"))]
-    let count = if use_debian_backend() {
-        #[cfg(feature = "debian")]
+    } else if pm_name == "pacman" {
+        #[cfg(feature = "arch")]
         {
-            apt_list_explicit().map(|packages| packages.len())
+            crate::package_managers::list_explicit_fast().map(|packages| packages.len())
         }
-        #[cfg(not(feature = "debian"))]
+        #[cfg(not(feature = "arch"))]
         {
-            Err(anyhow::anyhow!("No package manager backend available"))
+            Err(anyhow::anyhow!("Arch backend disabled"))
         }
     } else {
-        Err(anyhow::anyhow!("Arch backend disabled"))
+        Err(anyhow::anyhow!("Unsupported package manager: {}", pm_name))
     };
 
     match count {
