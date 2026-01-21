@@ -2,159 +2,236 @@
 
 use anyhow::Result;
 use dialoguer::{MultiSelect, theme::ColorfulTheme};
+use std::io::Write;
 
 use crate::cli::style;
 use crate::core::client::DaemonClient;
+use crate::core::env::distro::use_debian_backend;
 use crate::daemon::protocol::{Request, ResponseResult};
+use crate::package_managers::get_package_manager;
 
-use super::common::{truncate, use_debian_backend};
+#[cfg(feature = "arch")]
+use crate::package_managers::search_sync;
+
+use super::common::truncate;
 use super::install::install;
 
 #[cfg(feature = "arch")]
-use crate::package_managers::{AurClient, search_detailed, search_sync};
+use crate::package_managers::{AurClient, search_detailed};
 
-#[cfg(feature = "debian")]
-use crate::package_managers::apt_search_sync;
-
-/// Search for packages in official repos and AUR (Synchronous fast-path)
-pub fn search_sync_cli(query: &str, detailed: bool, interactive: bool) -> Result<bool> {
-    // Daemon path works for both Arch and Debian - provides cached searches
-    if detailed || interactive {
-        // Fallback to async for these modes as they require spin-up or complex interaction
-        return Ok(false);
-    }
-
-    let start = std::time::Instant::now();
-
-    // 1. Try Daemon first (ULTRA FAST - <1ms)
-    let daemon_res = if let Ok(mut client) = DaemonClient::connect_sync() {
-        client.call_sync(&Request::Search {
-            id: 0,
-            query: query.to_string(),
-            limit: Some(50),
-        }).ok()
-    } else {
-        None
-    };
-
-    if let Some(ResponseResult::Search(res)) = daemon_res {
-        let sync_time = start.elapsed();
-
-        if res.packages.is_empty() {
-            return Ok(false);
-        }
-
-        let mut stdout = std::io::BufWriter::new(std::io::stdout());
-        use std::io::Write;
-
-        writeln!(
-            stdout,
-            "{} {} results ({:.1}ms)\n",
-            style::header("OMG"),
-            res.packages.len(),
-            sync_time.as_secs_f64() * 1000.0
-        )?;
-
-        writeln!(stdout, "{}", style::header("Official Repositories"))?;
-        for pkg in res.packages.iter().take(20) {
-            writeln!(
-                stdout,
-                "  {} {} ({}) - {}",
-                style::package(&pkg.name),
-                style::version(&pkg.version),
-                style::info(&pkg.source), // Source might be 'official' or 'aur' in search result
-                style::dim(&truncate(&pkg.description, 50))
-            )?;
-        }
-        if res.packages.len() > 20 {
-            let more = res.packages.len() - 20;
-            write!(stdout, "  {}", style::dim("(+"))?;
-            write!(stdout, "{more}")?;
-            writeln!(stdout, "{})", style::dim(" more packages..."))?;
-        }
-        writeln!(
-            stdout,
-            "\n{} {}",
-            style::arrow("Use"),
-            style::command("omg info <package> for details")
-        )?;
-        stdout.flush()?;
-
-        // Track usage
-        crate::core::usage::track_search();
-
-        return Ok(true);
-    }
-
-    // 2. Fallback to local search if daemon is not available (mostly for tests)
+/// Holds the results from searching packages across different sources
+struct SearchResults {
+    official_packages: Vec<crate::package_managers::SyncPackage>,
     #[cfg(feature = "arch")]
-    {
-        if let Ok(official_packages) = search_sync(query) {
-            if official_packages.is_empty() {
-                return Ok(false);
-            }
+    aur_packages_detailed: Option<Vec<crate::package_managers::AurPackageDetail>>,
+    #[cfg(feature = "arch")]
+    aur_packages_basic: Option<Vec<crate::core::Package>>,
+    #[cfg(not(feature = "arch"))]
+    _phantom: std::marker::PhantomData<()>,
+}
 
-            let sync_time = start.elapsed();
-            let mut stdout = std::io::BufWriter::new(std::io::stdout());
-            use std::io::Write;
+/// Display search results with formatting and truncation
+fn display_results(
+    header: &str,
+    packages: &[impl PackageDisplay],
+    limit: usize,
+    writer: &mut impl Write,
+) -> Result<()> {
+    writeln!(writer, "{}", style::header(header))?;
+    for pkg in packages.iter().take(limit) {
+        writeln!(writer, "{}", pkg.display_format())?;
+    }
 
-            writeln!(
-                stdout,
-                "{} {} results ({:.1}ms)\n",
-                style::header("OMG"),
-                official_packages.len(),
-                sync_time.as_secs_f64() * 1000.0
-            )?;
+    if packages.len() > limit {
+        let more = packages.len() - limit;
+        write!(writer, "  {}", style::dim("(+"))?;
+        write!(writer, "{more}")?;
+        writeln!(writer, "{})", style::dim(" more packages..."))?;
+    }
 
-            writeln!(stdout, "{}", style::header("Official Repositories"))?;
-            for pkg in official_packages.iter().take(20) {
-                let installed = if pkg.installed {
-                    style::dim(" [installed]")
+    Ok(())
+}
+
+/// Trait for types that can be displayed in search results
+trait PackageDisplay {
+    fn display_format(&self) -> String;
+}
+
+impl PackageDisplay for crate::package_managers::SyncPackage {
+    fn display_format(&self) -> String {
+        let installed = if self.installed {
+            style::dim(" [installed]")
+        } else {
+            String::new()
+        };
+        format!(
+            "  {} {} ({}) - {}{}",
+            style::package(&self.name),
+            style::version(&self.version.to_string()),
+            style::info(&self.repo),
+            style::dim(&truncate(&self.description, 50)),
+            installed
+        )
+    }
+}
+
+impl PackageDisplay for crate::core::Package {
+    fn display_format(&self) -> String {
+        format!(
+            "  {} {} ({}) - {}",
+            style::package(&self.name),
+            style::version(&self.version.to_string()),
+            style::info(&self.source.to_string()),
+            style::dim(&truncate(&self.description, 50))
+        )
+    }
+}
+
+/// Display AUR results with appropriate formatting
+#[cfg(feature = "arch")]
+fn display_aur_results(
+    aur_packages_detailed: &Option<Vec<crate::package_managers::AurPackageDetail>>,
+    aur_packages_basic: &Option<Vec<crate::core::Package>>,
+    writer: &mut impl Write,
+) -> Result<()> {
+    if let Some(aur_packages) = aur_packages_detailed {
+        if !aur_packages.is_empty() {
+            writeln!(writer, "{}", style::header("AUR (Arch User Repository)"))?;
+            for pkg in aur_packages.iter().take(10) {
+                let out_of_date = if pkg.out_of_date.is_some() {
+                    style::error(" [OUT OF DATE]")
                 } else {
                     String::new()
                 };
                 writeln!(
-                    stdout,
-                    "  {} {} ({}) - {}{}",
+                    writer,
+                    "  {} {} - {} {} {}{}",
                     style::package(&pkg.name),
-                    style::version(&pkg.version.to_string()),
-                    style::info(&pkg.repo),
-                    style::dim(&truncate(&pkg.description, 50)),
-                    installed
+                    style::version(&pkg.version),
+                    style::info(&format!("↑{}", pkg.num_votes)),
+                    style::info(&format!("{:.1}%", pkg.popularity)),
+                    style::dim(&truncate(&pkg.description.clone().unwrap_or_default(), 40)),
+                    out_of_date
                 )?;
             }
-            stdout.flush()?;
-            return Ok(true);
+            if aur_packages.len() > 10 {
+                writeln!(
+                    writer,
+                    "  {}",
+                    style::dim(&format!("(+{}) more packages...", aur_packages.len() - 10))
+                )?;
+            }
+            writeln!(writer)?;
+        }
+    } else if let Some(aur_packages) = aur_packages_basic {
+        if !aur_packages.is_empty() {
+            writeln!(writer, "{}", style::header("AUR (Arch User Repository)"))?;
+            for pkg in aur_packages.iter().take(10) {
+                writeln!(
+                    writer,
+                    "  {} {} - {}",
+                    style::package(&pkg.name),
+                    style::version(&pkg.version.to_string()),
+                    style::dim(&truncate(&pkg.description, 55))
+                )?;
+            }
+            if aur_packages.len() > 10 {
+                writeln!(
+                    writer,
+                    "  {}",
+                    style::dim(&format!("(+{}) more packages...", aur_packages.len() - 10))
+                )?;
+            }
+            writeln!(writer)?;
+        }
+    }
+    Ok(())
+}
+
+/// Handle interactive package selection and installation
+async fn handle_interactive_selection(
+    official_packages: &[crate::package_managers::SyncPackage],
+    #[cfg(feature = "arch")]
+    aur_packages_detailed: &Option<Vec<crate::package_managers::AurPackageDetail>>,
+    #[cfg(feature = "arch")]
+    aur_packages_basic: &Option<Vec<crate::core::Package>>,
+) -> Result<()> {
+    let mut items = Vec::new();
+    let mut pkgs_to_install = Vec::new();
+
+    // Add official packages
+    for pkg in official_packages {
+        let status = if pkg.installed { "[installed]" } else { "" };
+        items.push(format!(
+            "{} {} {} ({}) - {}",
+            style::package(&pkg.name),
+            style::version(&pkg.version.to_string()),
+            status,
+            style::info(&pkg.repo),
+            style::dim(&truncate(&pkg.description, 40))
+        ));
+        pkgs_to_install.push(pkg.name.clone());
+    }
+
+    // Add AUR packages (Arch only)
+    #[cfg(feature = "arch")]
+    {
+        if let Some(aur) = aur_packages_detailed {
+            for pkg in aur {
+                items.push(format!(
+                    "{} {} ({}) - {}",
+                    style::package(&pkg.name),
+                    style::version(&pkg.version),
+                    style::warning("AUR"),
+                    style::dim(&truncate(&pkg.description.clone().unwrap_or_default(), 40))
+                ));
+                pkgs_to_install.push(pkg.name.clone());
+            }
+        } else if let Some(aur) = aur_packages_basic {
+            for pkg in aur {
+                items.push(format!(
+                    "{} {} ({}) - {}",
+                    style::package(&pkg.name),
+                    style::version(&pkg.version.to_string()),
+                    style::warning("AUR"),
+                    style::dim(&truncate(&pkg.description, 40))
+                ));
+                pkgs_to_install.push(pkg.name.clone());
+            }
         }
     }
 
-    Ok(false)
-}
-
-/// Search for packages in official repos and AUR - LIGHTNING FAST
-pub async fn search(query: &str, detailed: bool, interactive: bool) -> Result<()> {
-    // Try sync path first
-    if search_sync_cli(query, detailed, interactive)? {
+    if items.is_empty() {
+        println!("{}", style::error("No packages found"));
         return Ok(());
     }
 
-    // ... rest of async search
-    let start = std::time::Instant::now();
+    println!("{}", style::arrow("Select packages to install:"));
 
+    let selections = MultiSelect::with_theme(&ColorfulTheme::default())
+        .items(&items)
+        .interact()?;
+
+    if selections.is_empty() {
+        println!("{}", style::dim("No packages selected"));
+        return Ok(());
+    }
+
+    let selected_names: Vec<String> = selections
+        .into_iter()
+        .filter_map(|i| pkgs_to_install.get(i).cloned())
+        .collect();
+
+    install(&selected_names, false).await
+}
+
+/// Fetch packages from all sources (daemon, local, AUR)
+async fn fetch_packages(query: &str, detailed: bool, interactive: bool) -> SearchResults {
     let mut official_packages: Vec<crate::package_managers::SyncPackage> = Vec::new();
-    // AUR variables - typed differently per feature
     #[cfg(feature = "arch")]
     let mut aur_packages_detailed: Option<Vec<crate::package_managers::AurPackageDetail>> = None;
     #[cfg(feature = "arch")]
     let mut aur_packages_basic: Option<Vec<crate::core::Package>> = None;
-    // Debian doesn't use AUR, but variables must exist for code structure
-    #[cfg(not(feature = "arch"))]
-    let aur_packages_detailed: Option<Vec<crate::core::Package>> = None;
-    #[cfg(not(feature = "arch"))]
-    let mut aur_packages_basic: Option<Vec<crate::core::Package>> = None;
-
-    #[cfg(not(feature = "arch"))]
-    let _ = &aur_packages_detailed; // Suppress unused warning
 
     let mut daemon_used = false;
     if !use_debian_backend() {
@@ -163,6 +240,7 @@ pub async fn search(query: &str, detailed: bool, interactive: bool) -> Result<()
             && let Ok(res) = client.search(query, Some(50)).await
         {
             daemon_used = true;
+            #[cfg(feature = "arch")]
             let mut aur_basic = Vec::new();
 
             for pkg in res.packages {
@@ -176,15 +254,19 @@ pub async fn search(query: &str, detailed: bool, interactive: bool) -> Result<()
                         installed: false,
                     });
                 } else {
-                    aur_basic.push(crate::core::Package {
-                        name: pkg.name,
-                        version: crate::package_managers::parse_version_or_zero(&pkg.version),
-                        description: pkg.description,
-                        source: crate::core::PackageSource::Aur,
-                        installed: false,
-                    });
+                    #[cfg(feature = "arch")]
+                    {
+                        aur_basic.push(crate::core::Package {
+                            name: pkg.name,
+                            version: crate::package_managers::parse_version_or_zero(&pkg.version),
+                            description: pkg.description,
+                            source: crate::core::PackageSource::Aur,
+                            installed: false,
+                        });
+                    }
                 }
             }
+            #[cfg(feature = "arch")]
             if !aur_basic.is_empty() {
                 aur_packages_basic = Some(aur_basic);
             }
@@ -218,185 +300,183 @@ pub async fn search(query: &str, detailed: bool, interactive: bool) -> Result<()
         }
     }
 
-    let sync_time = start.elapsed();
-
-    if interactive {
-        let mut items = Vec::new();
-        let mut pkgs_to_install = Vec::new();
-
-        // Add official
-        for pkg in &official_packages {
-            let status = if pkg.installed { "[installed]" } else { "" };
-            items.push(format!(
-                "{} {} {} ({}) - {}",
-                style::package(&pkg.name),
-                style::version(&pkg.version.to_string()),
-                status,
-                style::info(&pkg.repo),
-                style::dim(&truncate(&pkg.description, 40))
-            ));
-            pkgs_to_install.push(pkg.name.clone());
-        }
-
-        // Add AUR (Arch only)
+    SearchResults {
+        official_packages,
         #[cfg(feature = "arch")]
-        {
-            if let Some(aur) = &aur_packages_detailed {
-                for pkg in aur {
-                    items.push(format!(
-                        "{} {} ({}) - {}",
-                        style::package(&pkg.name),
-                        style::version(&pkg.version),
-                        style::warning("AUR"),
-                        style::dim(&truncate(&pkg.description.clone().unwrap_or_default(), 40))
-                    ));
-                    pkgs_to_install.push(pkg.name.clone());
-                }
-            } else if let Some(aur) = &aur_packages_basic {
-                for pkg in aur {
-                    items.push(format!(
-                        "{} {} ({}) - {}",
-                        style::package(&pkg.name),
-                        style::version(&pkg.version.to_string()),
-                        style::warning("AUR"),
-                        style::dim(&truncate(&pkg.description, 40))
-                    ));
-                    pkgs_to_install.push(pkg.name.clone());
-                }
-            }
-        }
-        #[cfg(not(feature = "arch"))]
-        {
-            let _ = &aur_packages_detailed;
-            let _ = &aur_packages_basic;
-        }
-
-        if items.is_empty() {
-            println!(
-                "{}",
-                style::error(&format!("No packages found for '{query}'"))
-            );
-            return Ok(());
-        }
-
-        println!("{}", style::arrow("Select packages to install:"));
-
-        let selections = MultiSelect::with_theme(&ColorfulTheme::default())
-            .items(&items)
-            .interact()?;
-
-        if selections.is_empty() {
-            println!("{}", style::dim("No packages selected"));
-            return Ok(());
-        }
-
-        let selected_names: Vec<String> = selections
-            .into_iter()
-            .filter_map(|i| pkgs_to_install.get(i).cloned())
-            .collect();
-
-        install(&selected_names, false).await
-    } else {
-        // Display official packages first
-        if !official_packages.is_empty() {
-            println!(
-                "{} {} results ({:.1}ms)\n",
-                style::header("OMG"),
-                official_packages.len(),
-                sync_time.as_secs_f64() * 1000.0
-            );
-
-            println!("{}", style::header("Official Repositories"));
-            for pkg in official_packages.iter().take(20) {
-                let installed = if pkg.installed {
-                    style::dim(" [installed]")
-                } else {
-                    String::new()
-                };
-                println!(
-                    "  {} {} ({}) - {}{}",
-                    style::package(&pkg.name),
-                    style::version(&pkg.version.to_string()),
-                    style::info(&pkg.repo),
-                    style::dim(&truncate(&pkg.description, 50)),
-                    installed
-                );
-            }
-            if official_packages.len() > 20 {
-                println!(
-                    "  {}",
-                    style::dim(&format!(
-                        "(+{}) more packages...",
-                        official_packages.len() - 20
-                    ))
-                );
-            }
-            println!();
-        }
-
-        // Search AUR (cached result) - Arch only
+        aur_packages_detailed,
         #[cfg(feature = "arch")]
-        {
-            if let Some(aur_packages) = aur_packages_detailed {
-                if !aur_packages.is_empty() {
-                    println!("{}", style::header("AUR (Arch User Repository)"));
-                    for pkg in aur_packages.iter().take(10) {
-                        let out_of_date = if pkg.out_of_date.is_some() {
-                            style::error(" [OUT OF DATE]")
-                        } else {
-                            String::new()
-                        };
-                        println!(
-                            "  {} {} - {} {} {}{}",
-                            style::package(&pkg.name),
-                            style::version(&pkg.version),
-                            style::info(&format!("↑{}", pkg.num_votes)),
-                            style::info(&format!("{:.1}%", pkg.popularity)),
-                            style::dim(&truncate(&pkg.description.clone().unwrap_or_default(), 40)),
-                            out_of_date
-                        );
-                    }
-                    if aur_packages.len() > 10 {
-                        println!(
-                            "  {}",
-                            style::dim(&format!("(+{}) more packages...", aur_packages.len() - 10))
-                        );
-                    }
-                    println!();
-                }
-            } else if let Some(aur_packages) = aur_packages_basic
-                && !aur_packages.is_empty()
-            {
-                println!("{}", style::header("AUR (Arch User Repository)"));
-                for pkg in aur_packages.iter().take(10) {
-                    println!(
-                        "  {} {} - {}",
-                        style::package(&pkg.name),
-                        style::version(&pkg.version.to_string()),
-                        style::dim(&truncate(&pkg.description, 55))
-                    );
-                }
-                if aur_packages.len() > 10 {
-                    println!(
-                        "  {}",
-                        style::dim(&format!("(+{}) more packages...", aur_packages.len() - 10))
-                    );
-                }
-                println!();
-            }
-        }
+        aur_packages_basic,
         #[cfg(not(feature = "arch"))]
-        {
-            let _ = aur_packages_detailed;
-            let _ = aur_packages_basic;
-        }
-
-        println!(
-            "{} {}",
-            style::arrow("Use"),
-            style::command("omg info <package> for details")
-        );
-
-        Ok(())
+        _phantom: std::marker::PhantomData,
     }
 }
+
+/// Search for packages in official repos and AUR (Synchronous fast-path)
+pub fn search_sync_cli(query: &str, detailed: bool, interactive: bool) -> Result<bool> {
+    // Daemon path works for both Arch and Debian - provides cached searches
+    if detailed || interactive {
+        // Fallback to async for these modes as they require spin-up or complex interaction
+        return Ok(false);
+    }
+
+    let start = std::time::Instant::now();
+
+    // 1. Try Daemon first (ULTRA FAST - <1ms)
+    let daemon_res = if let Ok(mut client) = DaemonClient::connect_sync() {
+        client.call_sync(&Request::Search {
+            id: 0,
+            query: query.to_string(),
+            limit: Some(50),
+        }).ok()
+    } else {
+        None
+    };
+
+    if let Some(ResponseResult::Search(res)) = daemon_res {
+        let sync_time = start.elapsed();
+
+        if res.packages.is_empty() {
+            return Ok(false);
+        }
+
+        let mut stdout = std::io::BufWriter::new(std::io::stdout());
+
+        writeln!(
+            stdout,
+            "{} {} results ({:.1}ms)\n",
+            style::header("OMG"),
+            res.packages.len(),
+            sync_time.as_secs_f64() * 1000.0
+        )?;
+
+        // Convert daemon packages to Package type for display
+        let packages: Vec<crate::core::Package> = res.packages
+            .into_iter()
+            .map(|pkg| crate::core::Package {
+                name: pkg.name,
+                version: crate::package_managers::parse_version_or_zero(&pkg.version),
+                description: pkg.description,
+                source: if pkg.source == "official" {
+                    crate::core::PackageSource::Official
+                } else {
+                    crate::core::PackageSource::Aur
+                },
+                installed: false,
+            })
+            .collect();
+
+        display_results("Official Repositories", &packages, 20, &mut stdout)?;
+
+        writeln!(
+            stdout,
+            "\n{} {}",
+            style::arrow("Use"),
+            style::command("omg info <package> for details")
+        )?;
+        stdout.flush()?;
+
+        // Track usage
+        crate::core::usage::track_search();
+
+        return Ok(true);
+    }
+
+    // 2. Fallback to local search if daemon is not available (mostly for tests)
+    let pm = get_package_manager();
+    let pm_name = pm.name();
+
+    if pm_name == "pacman" {
+        #[cfg(feature = "arch")]
+        {
+            if let Ok(official_packages) = crate::package_managers::search_sync(query) {
+                if official_packages.is_empty() {
+                    return Ok(false);
+                }
+
+                let sync_time = start.elapsed();
+                let mut stdout = std::io::BufWriter::new(std::io::stdout());
+
+                writeln!(
+                    stdout,
+                    "{} {} results ({:.1}ms)\n",
+                    style::header("OMG"),
+                    official_packages.len(),
+                    sync_time.as_secs_f64() * 1000.0
+                )?;
+
+                display_results("Official Repositories", &official_packages, 20, &mut stdout)?;
+                stdout.flush()?;
+                return Ok(true);
+            }
+        }
+    } else if pm_name == "apt" {
+        #[cfg(feature = "debian")]
+        {
+             if let Ok(official_packages) = crate::package_managers::apt_search_sync(query) {
+                if official_packages.is_empty() {
+                    return Ok(false);
+                }
+                // ... same display logic could be abstracted
+             }
+        }
+    }
+
+    Ok(false)
+}
+
+/// Search for packages in official repos and AUR - LIGHTNING FAST
+pub async fn search(query: &str, detailed: bool, interactive: bool) -> Result<()> {
+    // Try sync path first
+    if search_sync_cli(query, detailed, interactive)? {
+        return Ok(());
+    }
+
+    let start = std::time::Instant::now();
+
+    // Fetch packages from all sources
+    let results = fetch_packages(query, detailed, interactive).await;
+    let sync_time = start.elapsed();
+
+    // Handle interactive mode
+    if interactive {
+        #[cfg(feature = "arch")]
+        return handle_interactive_selection(
+            &results.official_packages,
+            &results.aur_packages_detailed,
+            &results.aur_packages_basic,
+        ).await;
+
+        #[cfg(not(feature = "arch"))]
+        return handle_interactive_selection(&results.official_packages).await;
+    }
+
+    // Display official packages first
+    if !results.official_packages.is_empty() {
+        println!(
+            "{} {} results ({:.1}ms)\n",
+            style::header("OMG"),
+            results.official_packages.len(),
+            sync_time.as_secs_f64() * 1000.0
+        );
+
+        let mut stdout = std::io::stdout();
+        display_results("Official Repositories", &results.official_packages, 20, &mut stdout)?;
+        println!();
+    }
+
+    // Display AUR results (Arch only)
+    #[cfg(feature = "arch")]
+    {
+        let mut stdout = std::io::stdout();
+        display_aur_results(&results.aur_packages_detailed, &results.aur_packages_basic, &mut stdout)?;
+    }
+
+    println!(
+        "{} {}",
+        style::arrow("Use"),
+        style::command("omg info <package> for details")
+    );
+
+    Ok(())
+}
+

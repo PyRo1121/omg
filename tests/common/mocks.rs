@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use futures::future::{BoxFuture, FutureExt};
 
 /// Mock package database for testing without real system access
 #[derive(Default, Clone)]
@@ -340,5 +341,134 @@ impl MockFileSystem {
 impl Default for MockFileSystem {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Mock package manager implementing the PackageManager trait
+pub struct MockPackageManager {
+    pub db: MockPackageDb,
+}
+
+impl MockPackageManager {
+    pub fn new(db: MockPackageDb) -> Self {
+        Self { db }
+    }
+}
+
+impl omg_lib::package_managers::PackageManager for MockPackageManager {
+    fn name(&self) -> &'static str {
+        "mock"
+    }
+
+    fn search(&self, query: &str) -> BoxFuture<'static, anyhow::Result<Vec<omg_lib::core::Package>>> {
+        use omg_lib::core::{Package, PackageSource};
+        use omg_lib::package_managers::parse_version_or_zero;
+        let query = query.to_string();
+        let db = self.db.clone();
+        async move {
+            Ok(db
+                .search(&query)
+                .into_iter()
+                .map(|p| Package {
+                    installed: db.is_installed(&p.name),
+                    name: p.name,
+                    version: parse_version_or_zero(&p.version),
+                    description: p.description,
+                    source: PackageSource::Official,
+                })
+                .collect())
+        }
+        .boxed()
+    }
+
+    fn install(&self, packages: &[String]) -> BoxFuture<'static, anyhow::Result<()>> {
+        let packages = packages.to_vec();
+        let db = self.db.clone();
+        async move {
+            for pkg in &packages {
+                db.install(pkg).map_err(|e| anyhow::anyhow!(e))?;
+            }
+            Ok(())
+        }
+        .boxed()
+    }
+
+    fn remove(&self, packages: &[String]) -> BoxFuture<'static, anyhow::Result<()>> {
+        let packages = packages.to_vec();
+        let db = self.db.clone();
+        async move {
+            for pkg in &packages {
+                db.remove(pkg).map_err(|e| anyhow::anyhow!(e))?;
+            }
+            Ok(())
+        }
+        .boxed()
+    }
+
+    fn update(&self) -> BoxFuture<'static, anyhow::Result<()>> {
+        async move { Ok(()) }.boxed()
+    }
+
+    fn sync(&self) -> BoxFuture<'static, anyhow::Result<()>> {
+        async move { Ok(()) }.boxed()
+    }
+
+    fn info(&self, package: &str) -> BoxFuture<'static, anyhow::Result<Option<omg_lib::core::Package>>> {
+        use omg_lib::core::{Package, PackageSource};
+        use omg_lib::package_managers::parse_version_or_zero;
+        let package = package.to_string();
+        let db = self.db.clone();
+        async move {
+            Ok(db.get(&package).map(|p| Package {
+                installed: db.is_installed(&p.name),
+                name: p.name,
+                version: parse_version_or_zero(&p.version),
+                description: p.description,
+                source: PackageSource::Official,
+            }))
+        }
+        .boxed()
+    }
+
+    fn list_installed(&self) -> BoxFuture<'static, anyhow::Result<Vec<omg_lib::core::Package>>> {
+        use omg_lib::core::{Package, PackageSource};
+        use omg_lib::package_managers::parse_version_or_zero;
+        let db = self.db.clone();
+        async move {
+            let installed_names = db.installed.lock().unwrap().clone();
+            let mut results = Vec::new();
+            for name in installed_names {
+                if let Some(p) = db.get(&name) {
+                    results.push(Package {
+                        installed: true,
+                        name: p.name,
+                        version: parse_version_or_zero(&p.version),
+                        description: p.description,
+                        source: PackageSource::Official,
+                    });
+                }
+            }
+            Ok(results)
+        }
+        .boxed()
+    }
+
+    fn get_status(&self) -> BoxFuture<'static, anyhow::Result<(usize, usize, usize, usize)>> {
+        let db = self.db.clone();
+        async move {
+            let total = db.packages.lock().unwrap().len();
+            let explicit = db.installed.lock().unwrap().len();
+            Ok((total, explicit, 0, 0))
+        }
+        .boxed()
+    }
+
+    fn list_explicit(&self) -> BoxFuture<'static, anyhow::Result<Vec<String>>> {
+        let db = self.db.clone();
+        async move {
+            let installed = db.installed.lock().unwrap().clone();
+            Ok(installed)
+        }
+        .boxed()
     }
 }

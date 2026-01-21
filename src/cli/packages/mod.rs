@@ -15,6 +15,7 @@ mod common;
 mod explicit;
 mod info;
 mod install;
+pub mod local;
 mod remove;
 mod search;
 mod sync_db;

@@ -1382,19 +1382,8 @@ impl AurClient {
             "→".blue()
         );
 
-        let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("omg"));
-
-        let status = Command::new("sudo")
-            .arg("--")
-            .arg(exe)
-            .arg("install")
-            .arg(pkg_path)
-            .status()
-            .await?;
-
-        if !status.success() {
-            anyhow::bail!("Installation failed");
-        }
+        let pkg_path_str = pkg_path.to_string_lossy();
+        crate::core::privilege::run_self_sudo(&["install", &pkg_path_str]).await?;
 
         Ok(())
     }

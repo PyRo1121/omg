@@ -1,29 +1,39 @@
 //! Package manager trait definition
 
 use anyhow::Result;
+use futures::future::BoxFuture;
 
 use crate::core::Package;
 
-/// Trait for package manager backends (Rust 2024 native async traits)
+/// Trait for package manager backends (Dyn-compatible)
 pub trait PackageManager: Send + Sync {
     /// Get the name of this package manager
     fn name(&self) -> &'static str;
 
     /// Search for packages
-    fn search(&self, query: &str) -> impl Future<Output = Result<Vec<Package>>> + Send;
+    fn search(&self, query: &str) -> BoxFuture<'static, Result<Vec<Package>>>;
 
     /// Install packages
-    fn install(&self, packages: &[String]) -> impl Future<Output = Result<()>> + Send;
+    fn install(&self, packages: &[String]) -> BoxFuture<'static, Result<()>>;
 
     /// Remove packages
-    fn remove(&self, packages: &[String]) -> impl Future<Output = Result<()>> + Send;
+    fn remove(&self, packages: &[String]) -> BoxFuture<'static, Result<()>>;
 
-    /// Update all packages
-    fn update(&self) -> impl Future<Output = Result<()>> + Send;
+    /// Update all packages (upgrade system)
+    fn update(&self) -> BoxFuture<'static, Result<()>>;
+
+    /// Synchronize package databases (refresh metadata)
+    fn sync(&self) -> BoxFuture<'static, Result<()>>;
 
     /// Get information about a package
-    fn info(&self, package: &str) -> impl Future<Output = Result<Option<Package>>> + Send;
+    fn info(&self, package: &str) -> BoxFuture<'static, Result<Option<Package>>>;
 
     /// List installed packages
-    fn list_installed(&self) -> impl Future<Output = Result<Vec<Package>>> + Send;
+    fn list_installed(&self) -> BoxFuture<'static, Result<Vec<Package>>>;
+
+    /// Get system status (total, explicit, orphans, updates)
+    fn get_status(&self) -> BoxFuture<'static, Result<(usize, usize, usize, usize)>>;
+
+    /// List explicitly installed package names
+    fn list_explicit(&self) -> BoxFuture<'static, Result<Vec<String>>>;
 }
