@@ -19,16 +19,11 @@ on:
       - '.github/workflows/**'
   workflow_dispatch:
     inputs:
-      run_destructive:
-        description: 'Run destructive tests'
-        type: boolean
-        default: false
       run_stress:
         description: 'Run stress tests'
         type: boolean
         default: false
 
-# Cancel in-progress runs when a new commit is pushed
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -40,10 +35,10 @@ env:
 
 jobs:
   # ═══════════════════════════════════════════════════════════════════════════
-  # 1. CORE QUALITY (Arch container)
+  # 1. CORE QUALITY (Split by backend)
   # ═══════════════════════════════════════════════════════════════════════════
-  lint:
-    name: Lint & Format
+  lint-arch:
+    name: Lint (Arch)
     runs-on: ubuntu-latest
     container:
       image: archlinux:latest
@@ -59,7 +54,27 @@ jobs:
       - name: Check formatting
         run: cargo fmt -- --check
       - name: Clippy (Arch)
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --all-targets --features arch -- -D warnings
+
+  lint-debian:
+    name: Lint (Debian)
+    runs-on: ubuntu-latest
+    container:
+      image: debian:bookworm
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y build-essential curl git pkg-config libssl-dev libapt-pkg-dev clang cmake
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          . $HOME/.cargo/env
+          rustup component add clippy
+      - name: Clippy (Debian)
+        run: |
+          . $HOME/.cargo/env
+          cargo clippy --all-targets --no-default-features --features debian -- -D warnings
 
   # ═══════════════════════════════════════════════════════════════════════════
   # 2. EXHAUSTIVE CLI MATRIX (Digital Twin - All Distros)
@@ -150,7 +165,7 @@ jobs:
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
       - name: Generate coverage
-        run: cargo llvm-cov --all-features --lcov --output-path lcov.info
+        run: cargo llvm-cov --features arch --lcov --output-path lcov.info
       - name: Upload coverage
         uses: codecov/codecov-action@v4
         with:
@@ -162,13 +177,14 @@ jobs:
   # ═══════════════════════════════════════════════════════════════════════════
   test-status:
     name: "✅ Fortune 100 Gate"
-    needs: [lint, exhaustive-matrix, absolute-logic, perf-benchmarks]
+    needs: [lint-arch, lint-debian, exhaustive-matrix, absolute-logic, perf-benchmarks]
     runs-on: ubuntu-latest
     if: always()
     steps:
       - name: Check results
         run: |
-          if [[ "${{ needs.lint.result }}" != "success" ]] || \
+          if [[ "${{ needs.lint-arch.result }}" != "success" ]] || \
+             [[ "${{ needs.lint-debian.result }}" != "success" ]] || \
              [[ "${{ needs.exhaustive-matrix.result }}" != "success" ]] || \
              [[ "${{ needs.absolute-logic.result }}" != "success" ]] || \
              [[ "${{ needs.perf-benchmarks.result }}" != "success" ]]; then
