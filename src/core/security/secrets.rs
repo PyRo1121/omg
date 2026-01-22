@@ -97,9 +97,8 @@ struct SecretPattern {
 }
 
 // Static regex patterns compiled once at first use
-static RE_AWS_ACCESS_KEY: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(AKIA[0-9A-Z]{16})").expect("valid AWS access key regex")
-});
+static RE_AWS_ACCESS_KEY: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(AKIA[0-9A-Z]{16})").expect("valid AWS access key regex"));
 
 static RE_AWS_SECRET_KEY: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?i)aws[_-]?secret[_-]?access[_-]?key['"]?\s*[:=]\s*['"]?([A-Za-z0-9/+=]{40})"#)
@@ -111,9 +110,8 @@ static RE_GITHUB_TOKEN: LazyLock<Regex> = LazyLock::new(|| {
         .expect("valid GitHub token regex")
 });
 
-static RE_GITLAB_TOKEN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(glpat-[a-zA-Z0-9\-]{20,})").expect("valid GitLab token regex")
-});
+static RE_GITLAB_TOKEN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(glpat-[a-zA-Z0-9\-]{20,})").expect("valid GitLab token regex"));
 
 static RE_SLACK_TOKEN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(xox[baprs]-[0-9]{10,13}-[0-9]{10,13}[a-zA-Z0-9-]*)")
@@ -135,26 +133,23 @@ static RE_JWT: LazyLock<Regex> = LazyLock::new(|| {
         .expect("valid JWT token regex")
 });
 
-static RE_GOOGLE_API_KEY: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"AIza[0-9A-Za-z\-_]{35}").expect("valid Google API key regex")
-});
+static RE_GOOGLE_API_KEY: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"AIza[0-9A-Za-z\-_]{35}").expect("valid Google API key regex"));
 
 static RE_STRIPE_KEY: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(sk_live_[0-9a-zA-Z]{24}|rk_live_[0-9a-zA-Z]{24})")
         .expect("valid Stripe key regex")
 });
 
-static RE_TWILIO_KEY: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"SK[0-9a-fA-F]{32}").expect("valid Twilio key regex")
-});
+static RE_TWILIO_KEY: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"SK[0-9a-fA-F]{32}").expect("valid Twilio key regex"));
 
 static RE_SENDGRID_KEY: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"SG\.[a-zA-Z0-9_-]{22}\.[a-zA-Z0-9_-]{43}").expect("valid SendGrid key regex")
 });
 
-static RE_NPM_TOKEN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"npm_[a-zA-Z0-9]{36}").expect("valid NPM token regex")
-});
+static RE_NPM_TOKEN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"npm_[a-zA-Z0-9]{36}").expect("valid NPM token regex"));
 
 static RE_PYPI_TOKEN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"pypi-AgEIcHlwaS5vcmc[A-Za-z0-9\-_]{50,}").expect("valid PyPI token regex")
@@ -169,9 +164,8 @@ static RE_HEROKU_API_KEY: LazyLock<Regex> = LazyLock::new(|| {
         .expect("valid Heroku API key regex")
 });
 
-static RE_DIGITALOCEAN_TOKEN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"dop_v1_[a-f0-9]{64}").expect("valid DigitalOcean token regex")
-});
+static RE_DIGITALOCEAN_TOKEN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"dop_v1_[a-f0-9]{64}").expect("valid DigitalOcean token regex"));
 
 static RE_GENERIC_API_KEY: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?i)(api[_-]?key|apikey)['"]?\s*[:=]\s*['"]?([a-zA-Z0-9_-]{20,})"#)
@@ -397,9 +391,10 @@ impl SecretScanner {
 
                 self.scan_directory_recursive(&entry_path, findings)?;
             } else if Self::is_scannable_file(&entry_path)
-                && let Ok(file_findings) = self.scan_file(&entry_path) {
-                    findings.extend(file_findings);
-                }
+                && let Ok(file_findings) = self.scan_file(&entry_path)
+            {
+                findings.extend(file_findings);
+            }
         }
 
         Ok(())

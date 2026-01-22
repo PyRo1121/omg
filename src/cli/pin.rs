@@ -178,13 +178,13 @@ fn unpin_target(config: &mut PinConfig, target: &str) {
         return;
     }
 
-        if let Some(_v) = version
-            && config.runtimes.remove(runtime_name).is_some()
-        {
-            println!("{} Unpinned runtime {}", "✓".green(), runtime_name.yellow());
-            return;
-        }
-        println!("{} '{}' is not pinned", "⚠".yellow(), target);
+    if let Some(_v) = version
+        && config.runtimes.remove(runtime_name).is_some()
+    {
+        println!("{} Unpinned runtime {}", "✓".green(), runtime_name.yellow());
+        return;
+    }
+    println!("{} '{}' is not pinned", "⚠".yellow(), target);
 }
 
 #[cfg(feature = "arch")]
@@ -222,7 +222,9 @@ fn get_package_version(name: &str) -> Result<Option<String>> {
         Ok(Some(version))
     } else {
         // Check if package exists
-        let check = Command::new("apt-cache").args(["show", "--", name]).output()?;
+        let check = Command::new("apt-cache")
+            .args(["show", "--", name])
+            .output()?;
 
         if check.status.success() {
             Ok(None) // Exists but not installed

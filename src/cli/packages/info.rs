@@ -30,32 +30,36 @@ pub fn info_sync(package: &str) -> Result<bool> {
 
     // 1. Try daemon first (ULTRA FAST - <1ms)
     if let Ok(mut client) = DaemonClient::connect_sync()
-        && let Ok(info) = client.info_sync(package) {
-            let mut stdout = std::io::BufWriter::new(std::io::stdout());
-            use std::io::Write;
+        && let Ok(info) = client.info_sync(package)
+    {
+        let mut stdout = std::io::BufWriter::new(std::io::stdout());
+        use std::io::Write;
 
-            writeln!(
-                stdout,
-                "{} {} ({:.1}ms)\n",
-                style::header("OMG"),
-                style::dim("Daemon result (Sync Bridge)"),
-                start.elapsed().as_secs_f64() * 1000.0
-            )?;
+        writeln!(
+            stdout,
+            "{} {} ({:.1}ms)\n",
+            style::header("OMG"),
+            style::dim("Daemon result (Sync Bridge)"),
+            start.elapsed().as_secs_f64() * 1000.0
+        )?;
 
-            display_detailed_info_buffered(&mut stdout, &info)?;
-            stdout.flush()?;
+        display_detailed_info_buffered(&mut stdout, &info)?;
+        stdout.flush()?;
 
-            // Track usage
-            crate::core::usage::track_info();
+        // Track usage
+        crate::core::usage::track_info();
 
-            return Ok(true);
-        }
+        return Ok(true);
+    }
 
     // 2. Fallback to local package manager (Sync-like via block_on if needed, but here we just use the backend functions)
     if pm_name == "apt" {
         #[cfg(feature = "debian")]
         {
-            if let Some(info) = crate::package_managers::apt_get_sync_pkg_info(package).ok().flatten() {
+            if let Some(info) = crate::package_managers::apt_get_sync_pkg_info(package)
+                .ok()
+                .flatten()
+            {
                 display_package_info(&info);
                 println!(
                     "\n  {} Official repository ({})",
@@ -68,7 +72,10 @@ pub fn info_sync(package: &str) -> Result<bool> {
     } else if pm_name == "pacman" {
         #[cfg(feature = "arch")]
         {
-            if let Some(info) = crate::package_managers::get_sync_pkg_info(package).ok().flatten() {
+            if let Some(info) = crate::package_managers::get_sync_pkg_info(package)
+                .ok()
+                .flatten()
+            {
                 crate::package_managers::display_pkg_info(&info);
                 println!(
                     "\n  {} Official repository ({})",
@@ -105,18 +112,20 @@ pub async fn info_aur(package: &str) -> Result<()> {
 
         // Query detailed info for better UX
         if let Ok(detailed) = search_detailed(package).await
-            && let Some(d) = detailed.into_iter().find(|p| p.name == info.name) {
-                println!(
-                    "  {} {}",
-                    style::dim("URL:"),
-                    style::url(&d.url.unwrap_or_default())
-                );
-                println!("  {} {:.2} MB", style::dim("Popularity:"), d.popularity);
-                if let Some(license) = d.license
-                    && !license.is_empty() {
-                        println!("  {} {}", style::dim("License:"), license.join(", "));
-                    }
+            && let Some(d) = detailed.into_iter().find(|p| p.name == info.name)
+        {
+            println!(
+                "  {} {}",
+                style::dim("URL:"),
+                style::url(&d.url.unwrap_or_default())
+            );
+            println!("  {} {:.2} MB", style::dim("Popularity:"), d.popularity);
+            if let Some(license) = d.license
+                && !license.is_empty()
+            {
+                println!("  {} {}", style::dim("License:"), license.join(", "));
             }
+        }
 
         println!(
             "\n  {} {}",
@@ -226,39 +235,40 @@ pub async fn info(package: &str) -> Result<()> {
         pb.finish_and_clear();
 
         if let Some(pkgs) = details
-            && let Some(pkg) = pkgs.into_iter().find(|p| p.name == package) {
+            && let Some(pkg) = pkgs.into_iter().find(|p| p.name == package)
+        {
+            println!(
+                "  {} {}",
+                style::warning("Name:"),
+                style::package(&pkg.name)
+            );
+            println!(
+                "  {} {}",
+                style::warning("Version:"),
+                style::version(&pkg.version)
+            );
+            println!(
+                "  {} {}",
+                style::warning("Description:"),
+                pkg.description.unwrap_or_default()
+            );
+            println!(
+                "  {} {}",
+                style::warning("Maintainer:"),
+                pkg.maintainer.as_deref().unwrap_or("orphan")
+            );
+            println!("  {} {}", style::warning("Votes:"), pkg.num_votes);
+            println!("  {} {:.2}%", style::warning("Popularity:"), pkg.popularity);
+            if pkg.out_of_date.is_some() {
                 println!(
                     "  {} {}",
-                    style::warning("Name:"),
-                    style::package(&pkg.name)
+                    style::error("Status:"),
+                    style::error("OUT OF DATE")
                 );
-                println!(
-                    "  {} {}",
-                    style::warning("Version:"),
-                    style::version(&pkg.version)
-                );
-                println!(
-                    "  {} {}",
-                    style::warning("Description:"),
-                    pkg.description.unwrap_or_default()
-                );
-                println!(
-                    "  {} {}",
-                    style::warning("Maintainer:"),
-                    pkg.maintainer.as_deref().unwrap_or("orphan")
-                );
-                println!("  {} {}", style::warning("Votes:"), pkg.num_votes);
-                println!("  {} {:.2}%", style::warning("Popularity:"), pkg.popularity);
-                if pkg.out_of_date.is_some() {
-                    println!(
-                        "  {} {}",
-                        style::error("Status:"),
-                        style::error("OUT OF DATE")
-                    );
-                }
-                println!("\n  {}", style::warning("AUR (Arch User Repository)"));
-                return Ok(());
             }
+            println!("\n  {}", style::warning("AUR (Arch User Repository)"));
+            return Ok(());
+        }
 
         println!(
             "{}",

@@ -3,12 +3,12 @@
 //! Enabled only when OMG_TEST_MODE=1 is set.
 //! Persists state to a JSON file in OMG_DATA_DIR to allow stateful tests across CLI runs.
 
+use anyhow::Result;
+use futures::future::{BoxFuture, FutureExt};
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::sync::{Arc, Mutex};
-use futures::future::{BoxFuture, FutureExt};
-use anyhow::Result;
-use serde::{Deserialize, Serialize};
 
 use crate::core::{Package, PackageSource, paths};
 use crate::package_managers::traits::PackageManager;
@@ -39,12 +39,15 @@ impl MockPackageDb {
     }
 
     pub fn add_package(&self, name: &str, version: &str, description: &str, repo: &str) {
-        self.packages.lock().unwrap().insert(name.to_string(), MockPackage {
-            name: name.to_string(),
-            version: version.to_string(),
-            description: description.to_string(),
-            repo: repo.to_string(),
-        });
+        self.packages.lock().unwrap().insert(
+            name.to_string(),
+            MockPackage {
+                name: name.to_string(),
+                version: version.to_string(),
+                description: description.to_string(),
+                repo: repo.to_string(),
+            },
+        );
     }
 
     pub fn arch_defaults() -> Self {
@@ -76,7 +79,10 @@ impl MockPackageManager {
             "debian" | "ubuntu" => (MockPackageDb::debian_defaults(), "apt"),
             _ => (MockPackageDb::new(), "mock"),
         };
-        Self { db, distro_name: name }
+        Self {
+            db,
+            distro_name: name,
+        }
     }
 
     fn load_state(distro_name: &str) -> MockState {
@@ -113,8 +119,11 @@ impl PackageManager for MockPackageManager {
         let state = Self::load_state(self.distro_name);
         async move {
             let pkgs = db.packages.lock().unwrap();
-            Ok(pkgs.values()
-                .filter(|p| p.name.contains(&query) || p.description.to_lowercase().contains(&query))
+            Ok(pkgs
+                .values()
+                .filter(|p| {
+                    p.name.contains(&query) || p.description.to_lowercase().contains(&query)
+                })
                 .map(|p| Package {
                     name: p.name.clone(),
                     version: parse_version_or_zero(&p.version),
@@ -123,7 +132,8 @@ impl PackageManager for MockPackageManager {
                     installed: state.installed.contains(&p.name),
                 })
                 .collect())
-        }.boxed()
+        }
+        .boxed()
     }
 
     fn install(&self, packages: &[String]) -> BoxFuture<'static, Result<()>> {
@@ -136,7 +146,8 @@ impl PackageManager for MockPackageManager {
             }
             Self::save_state(&state);
             Ok(())
-        }.boxed()
+        }
+        .boxed()
     }
 
     fn remove(&self, packages: &[String]) -> BoxFuture<'static, Result<()>> {
@@ -149,7 +160,8 @@ impl PackageManager for MockPackageManager {
             }
             Self::save_state(&state);
             Ok(())
-        }.boxed()
+        }
+        .boxed()
     }
 
     fn update(&self) -> BoxFuture<'static, Result<()>> {
@@ -173,7 +185,8 @@ impl PackageManager for MockPackageManager {
                 source: PackageSource::Official,
                 installed: state.installed.contains(&p.name),
             }))
-        }.boxed()
+        }
+        .boxed()
     }
 
     fn list_installed(&self) -> BoxFuture<'static, Result<Vec<Package>>> {
@@ -181,7 +194,9 @@ impl PackageManager for MockPackageManager {
         let state = Self::load_state(self.distro_name);
         async move {
             let pkgs = db.packages.lock().unwrap();
-            Ok(state.installed.iter()
+            Ok(state
+                .installed
+                .iter()
                 .filter_map(|name| pkgs.get(name))
                 .map(|p| Package {
                     name: p.name.clone(),
@@ -191,7 +206,8 @@ impl PackageManager for MockPackageManager {
                     installed: true,
                 })
                 .collect())
-        }.boxed()
+        }
+        .boxed()
     }
 
     fn get_status(&self, _fast: bool) -> BoxFuture<'static, Result<(usize, usize, usize, usize)>> {
@@ -201,28 +217,23 @@ impl PackageManager for MockPackageManager {
             let total = db.packages.lock().unwrap().len();
             let explicit = state.installed.len();
             Ok((total, explicit, 0, 0))
-        }.boxed()
+        }
+        .boxed()
     }
 
     fn list_explicit(&self) -> BoxFuture<'static, Result<Vec<String>>> {
         let state = Self::load_state(self.distro_name);
-        async move {
-            Ok(state.installed.into_iter().collect())
-        }.boxed()
+        async move { Ok(state.installed.into_iter().collect()) }.boxed()
     }
 
     fn list_updates(&self) -> BoxFuture<'static, Result<Vec<UpdateInfo>>> {
-        async move {
-            Ok(Vec::new())
-        }.boxed()
+        async move { Ok(Vec::new()) }.boxed()
     }
 
     fn is_installed(&self, package: &str) -> BoxFuture<'static, bool> {
         let package = package.to_string();
         let state = Self::load_state(self.distro_name);
-        async move {
-            state.installed.contains(&package)
-        }.boxed()
+        async move { state.installed.contains(&package) }.boxed()
     }
 }
 
@@ -238,10 +249,10 @@ mod tests {
         unsafe {
             std::env::set_var("OMG_DATA_DIR", dir.path());
         }
-        
+
         let pm1 = MockPackageManager::new("arch");
         futures::executor::block_on(pm1.install(&["test-pkg".to_string()])).unwrap();
-        
+
         // New instance should see the change
         let pm2 = MockPackageManager::new("arch");
         let installed = futures::executor::block_on(pm2.list_explicit()).unwrap();

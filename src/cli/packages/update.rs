@@ -1,9 +1,9 @@
 //! Update functionality for packages
 
 use anyhow::Result;
-use std::sync::Arc;
-use owo_colors::OwoColorize;
 use dialoguer::{Confirm, theme::ColorfulTheme};
+use owo_colors::OwoColorize;
+use std::sync::Arc;
 
 use crate::cli::style;
 use crate::core::packages::PackageService;
@@ -61,7 +61,8 @@ pub async fn update(check_only: bool, yes: bool) -> Result<()> {
         return Ok(());
     }
 
-    if !yes && console::user_attended()
+    if !yes
+        && console::user_attended()
         && !Confirm::with_theme(&ColorfulTheme::default())
             .with_prompt("\nProceed with system upgrade?")
             .default(true)

@@ -272,12 +272,12 @@ pub async fn restore(id: &str, dry_run: bool, yes: bool) -> Result<()> {
                 to_install.len(),
                 to_remove.len()
             );
-            
+
             let confirm = dialoguer::Confirm::new()
                 .with_prompt("Do you want to apply these package changes?")
                 .default(false)
                 .interact()?;
-                
+
             if !confirm {
                 println!("  {} Package changes skipped", "ℹ".blue());
                 return Ok(());

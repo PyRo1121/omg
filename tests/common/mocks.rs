@@ -1,8 +1,8 @@
 //! Mock implementations for isolated testing
 
+use futures::future::{BoxFuture, FutureExt};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use futures::future::{BoxFuture, FutureExt};
 
 /// Mock package database for testing without real system access
 #[derive(Default, Clone)]
@@ -365,7 +365,10 @@ impl omg_lib::package_managers::PackageManager for MockPackageManager {
         "mock"
     }
 
-    fn search(&self, query: &str) -> BoxFuture<'static, anyhow::Result<Vec<omg_lib::core::Package>>> {
+    fn search(
+        &self,
+        query: &str,
+    ) -> BoxFuture<'static, anyhow::Result<Vec<omg_lib::core::Package>>> {
         use omg_lib::core::{Package, PackageSource};
         use omg_lib::package_managers::parse_version_or_zero;
         let query = query.to_string();
@@ -418,7 +421,10 @@ impl omg_lib::package_managers::PackageManager for MockPackageManager {
         async move { Ok(()) }.boxed()
     }
 
-    fn info(&self, package: &str) -> BoxFuture<'static, anyhow::Result<Option<omg_lib::core::Package>>> {
+    fn info(
+        &self,
+        package: &str,
+    ) -> BoxFuture<'static, anyhow::Result<Option<omg_lib::core::Package>>> {
         use omg_lib::core::{Package, PackageSource};
         use omg_lib::package_managers::parse_version_or_zero;
         let package = package.to_string();
@@ -458,7 +464,10 @@ impl omg_lib::package_managers::PackageManager for MockPackageManager {
         .boxed()
     }
 
-    fn get_status(&self, _fast: bool) -> BoxFuture<'static, anyhow::Result<(usize, usize, usize, usize)>> {
+    fn get_status(
+        &self,
+        _fast: bool,
+    ) -> BoxFuture<'static, anyhow::Result<(usize, usize, usize, usize)>> {
         let db = self.db.clone();
         async move {
             let total = db.packages.lock().unwrap().len();
@@ -477,7 +486,9 @@ impl omg_lib::package_managers::PackageManager for MockPackageManager {
         .boxed()
     }
 
-    fn list_updates(&self) -> BoxFuture<'static, anyhow::Result<Vec<omg_lib::package_managers::types::UpdateInfo>>> {
+    fn list_updates(
+        &self,
+    ) -> BoxFuture<'static, anyhow::Result<Vec<omg_lib::package_managers::types::UpdateInfo>>> {
         let db = self.db.clone();
         async move { Ok(db.updates.lock().unwrap().clone()) }.boxed()
     }
@@ -485,9 +496,6 @@ impl omg_lib::package_managers::PackageManager for MockPackageManager {
     fn is_installed(&self, package: &str) -> BoxFuture<'static, bool> {
         let db = self.db.clone();
         let package = package.to_string();
-        async move {
-            db.is_installed(&package)
-        }
-        .boxed()
+        async move { db.is_installed(&package) }.boxed()
     }
 }

@@ -52,19 +52,17 @@ fn test_distro_override_ubuntu() {
 
 #[tokio::test]
 async fn test_mock_package_manager_logic() {
-    use crate::common::mocks::{MockPackageDb, MockPackage, MockPackageManager};
+    use crate::common::mocks::{MockPackage, MockPackageDb, MockPackageManager};
     use omg_lib::package_managers::PackageManager;
 
-    let db = MockPackageDb::with_packages(vec![
-        MockPackage {
-            name: "test-pkg".to_string(),
-            version: "1.0.0".to_string(),
-            description: "A test package".to_string(),
-            repo: "test".to_string(),
-            dependencies: vec![],
-            installed_size: 100,
-        }
-    ]);
+    let db = MockPackageDb::with_packages(vec![MockPackage {
+        name: "test-pkg".to_string(),
+        version: "1.0.0".to_string(),
+        description: "A test package".to_string(),
+        repo: "test".to_string(),
+        dependencies: vec![],
+        installed_size: 100,
+    }]);
 
     let pm = MockPackageManager::new(db);
 

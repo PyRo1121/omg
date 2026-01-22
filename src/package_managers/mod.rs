@@ -13,10 +13,11 @@ pub mod alpm_worker;
 // apt module is available with debian feature
 #[cfg(feature = "debian")]
 pub mod apt;
-#[cfg(feature = "debian")]
-pub mod debian_db;
 #[cfg(feature = "arch")]
 mod aur;
+#[cfg(feature = "debian")]
+pub mod debian_db;
+pub mod mock;
 #[cfg(feature = "arch")]
 mod official;
 #[cfg(feature = "arch")]
@@ -25,7 +26,6 @@ pub mod pacman_db;
 pub mod parallel_sync;
 #[cfg(feature = "arch")]
 pub mod pkgbuild;
-pub mod mock;
 mod traits;
 pub mod types;
 
@@ -36,14 +36,17 @@ pub fn search_sync(query: &str) -> anyhow::Result<Vec<SyncPackage>> {
     if crate::core::paths::test_mode() {
         let pm = get_package_manager();
         let results = futures::executor::block_on(pm.search(query))?;
-        return Ok(results.into_iter().map(|p| SyncPackage {
-            name: p.name,
-            version: p.version,
-            description: p.description,
-            repo: "official".to_string(),
-            download_size: 0,
-            installed: p.installed,
-        }).collect());
+        return Ok(results
+            .into_iter()
+            .map(|p| SyncPackage {
+                name: p.name,
+                version: p.version,
+                description: p.description,
+                repo: "official".to_string(),
+                download_size: 0,
+                installed: p.installed,
+            })
+            .collect());
     }
     alpm_direct::search_sync(query)
 }
@@ -59,8 +62,8 @@ pub fn list_explicit_fast() -> anyhow::Result<Vec<String>> {
 
 #[cfg(feature = "arch")]
 pub use alpm_direct::{
-    get_counts, get_package_info, is_installed_fast, list_installed_fast,
-    list_orphans_fast, search_local,
+    get_counts, get_package_info, is_installed_fast, list_installed_fast, list_orphans_fast,
+    search_local,
 };
 #[cfg(feature = "arch")]
 pub use alpm_ops::DownloadInfo;
@@ -116,7 +119,9 @@ pub fn get_package_manager() -> Box<dyn PackageManager> {
             }
             #[cfg(all(not(feature = "arch"), not(feature = "debian")))]
             {
-                panic!("No package manager backend enabled! Build with --features arch or --features debian");
+                panic!(
+                    "No package manager backend enabled! Build with --features arch or --features debian"
+                );
             }
         }
     }
@@ -128,14 +133,17 @@ pub fn apt_search_sync(query: &str) -> anyhow::Result<Vec<SyncPackage>> {
     if crate::core::paths::test_mode() {
         let pm = get_package_manager();
         let results = futures::executor::block_on(pm.search(query))?;
-        return Ok(results.into_iter().map(|p| SyncPackage {
-            name: p.name,
-            version: p.version,
-            description: p.description,
-            repo: "main".to_string(),
-            download_size: 0,
-            installed: p.installed,
-        }).collect());
+        return Ok(results
+            .into_iter()
+            .map(|p| SyncPackage {
+                name: p.name,
+                version: p.version,
+                description: p.description,
+                repo: "main".to_string(),
+                download_size: 0,
+                installed: p.installed,
+            })
+            .collect());
     }
     apt::search_sync(query)
 }

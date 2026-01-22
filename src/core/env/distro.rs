@@ -16,14 +16,15 @@ pub fn detect_distro() -> Distro {
     static DISTRO: OnceLock<Distro> = OnceLock::new();
     *DISTRO.get_or_init(|| {
         if crate::core::paths::test_mode()
-            && let Ok(overridden) = std::env::var("OMG_TEST_DISTRO") {
-                return match overridden.to_lowercase().as_str() {
-                    "arch" => Distro::Arch,
-                    "debian" => Distro::Debian,
-                    "ubuntu" => Distro::Ubuntu,
-                    _ => Distro::Unknown,
-                };
-            }
+            && let Ok(overridden) = std::env::var("OMG_TEST_DISTRO")
+        {
+            return match overridden.to_lowercase().as_str() {
+                "arch" => Distro::Arch,
+                "debian" => Distro::Debian,
+                "ubuntu" => Distro::Ubuntu,
+                _ => Distro::Unknown,
+            };
+        }
 
         let data = fs::read_to_string("/etc/os-release").ok();
         let map = data.as_deref().map(parse_os_release).unwrap_or_default();

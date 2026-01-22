@@ -41,9 +41,7 @@ fn try_fast_explicit_count(args: &[String]) -> bool {
     }
 
     // Check for "omg explicit --count" or "omg explicit -c"
-    if args.len() >= 2
-        && args[1] == "explicit"
-        && args.iter().any(|a| a == "--count" || a == "-c")
+    if args.len() >= 2 && args[1] == "explicit" && args.iter().any(|a| a == "--count" || a == "-c")
     {
         // Try fast path first
         if let Some(count) = omg_lib::core::fast_status::FastStatus::read_explicit_count() {
@@ -222,7 +220,11 @@ fn try_fast_hooks(args: &[String]) -> bool {
             }
             "hook-env" => {
                 if args.len() >= 3 {
-                    let shell = args.iter().find(|a| !a.starts_with('-') && *a != "hook-env").map(String::as_str).unwrap_or("");
+                    let shell = args
+                        .iter()
+                        .find(|a| !a.starts_with('-') && *a != "hook-env")
+                        .map(String::as_str)
+                        .unwrap_or("");
                     if hooks::hook_env(shell).is_ok() {
                         return true;
                     }
@@ -279,9 +281,10 @@ fn main() -> Result<()> {
 
     // Handle errors with helpful suggestions
     if let Err(ref err) = result
-        && let Some(suggestion) = omg_lib::core::error::suggest_for_anyhow(err) {
-            eprintln!("\n💡 {suggestion}");
-        }
+        && let Some(suggestion) = omg_lib::core::error::suggest_for_anyhow(err)
+    {
+        eprintln!("\n💡 {suggestion}");
+    }
 
     result
 }
@@ -302,7 +305,9 @@ async fn async_main(args: Vec<String>) -> Result<()> {
         Commands::Install { packages, .. } | Commands::Remove { packages, .. } => {
             omg_lib::core::security::validate_package_names(packages)?;
         }
-        Commands::Info { package } | Commands::Why { package, .. } | Commands::Blame { package } => {
+        Commands::Info { package }
+        | Commands::Why { package, .. }
+        | Commands::Blame { package } => {
             omg_lib::core::security::validate_package_name(package)?;
         }
         _ => {}
@@ -560,11 +565,7 @@ async fn async_main(args: Vec<String>) -> Result<()> {
                 TeamCommands::Proposals => {
                     team::list_proposals().await?;
                 }
-                TeamCommands::Review {
-                    id,
-                    approve,
-                    ..
-                } => {
+                TeamCommands::Review { id, approve, .. } => {
                     team::review(id, approve).await?;
                 }
                 TeamCommands::GoldenPath { command: gp_cmd } => match gp_cmd {

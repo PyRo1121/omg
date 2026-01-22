@@ -8,10 +8,10 @@
 
 #[cfg(test)]
 mod path_traversal_tests {
-    use tempfile::TempDir;
-    use std::fs::File;
-    use flate2::write::GzEncoder;
     use flate2::Compression;
+    use flate2::write::GzEncoder;
+    use std::fs::File;
+    use tempfile::TempDir;
 
     /// Test that tar extraction rejects path traversal attempts
     #[test]
@@ -64,14 +64,22 @@ mod path_traversal_tests {
         let result = omg_lib::cli::packages::local::extract_local_metadata(&malicious_pkg_path);
 
         if let Err(e) = &result {
-             let msg = e.to_string();
-             println!("Got error: {}", msg);
-             assert!(msg.contains("Security") || msg.contains("malicious") || msg.contains("traversal") || msg.contains("archive"),
-                "Unexpected error: {}", msg);
+            let msg = e.to_string();
+            println!("Got error: {}", msg);
+            assert!(
+                msg.contains("Security")
+                    || msg.contains("malicious")
+                    || msg.contains("traversal")
+                    || msg.contains("archive"),
+                "Unexpected error: {}",
+                msg
+            );
         } else {
             // If it succeeded, it means the path was sanitized by the tar crate, effectively neutralizing the attack.
             // This is also acceptable security-wise, though it means our manual check didn't trigger.
-            println!("Warning: Extraction succeeded, likely due to underlying tar crate sanitization.");
+            println!(
+                "Warning: Extraction succeeded, likely due to underlying tar crate sanitization."
+            );
         }
     }
 
@@ -124,9 +132,9 @@ mod command_injection_tests {
     /// Helper to validate package names (should be implemented in core)
     fn is_valid_package_name(name: &str) -> bool {
         // Valid package names should only contain: a-z A-Z 0-9 _ - + .
-        name.chars().all(|c| {
-            c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '+' || c == '.'
-        }) && !name.is_empty()
+        name.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '+' || c == '.')
+            && !name.is_empty()
             && !name.starts_with('-')
             && !name.starts_with('.')
     }
@@ -139,9 +147,7 @@ mod command_injection_tests {
         let pkg_name = "innocent; echo hacked";
 
         // SAFE: Using .arg() - pkg_name is passed as a literal argument
-        let _safe_cmd = Command::new("pacman")
-            .arg("-S")
-            .arg(pkg_name); // This is safe - no shell interpretation
+        let _safe_cmd = Command::new("pacman").arg("-S").arg(pkg_name); // This is safe - no shell interpretation
 
         // UNSAFE: Using shell interpolation would allow injection
         // let unsafe_cmd = Command::new("sh")
@@ -171,21 +177,18 @@ mod toctou_tests {
         fs::write(&cache_file, b"cached data").unwrap();
         fs::write(&db_file, b"original db").unwrap();
 
-        let original_mtime = fs::metadata(&db_file)
-            .unwrap()
-            .modified()
-            .unwrap();
+        let original_mtime = fs::metadata(&db_file).unwrap().modified().unwrap();
 
         // Attacker could modify DB here (between check and use)
         std::thread::sleep(std::time::Duration::from_millis(10));
         fs::write(&db_file, b"MODIFIED db").unwrap();
 
-        let new_mtime = fs::metadata(&db_file)
-            .unwrap()
-            .modified()
-            .unwrap();
+        let new_mtime = fs::metadata(&db_file).unwrap().modified().unwrap();
 
-        assert_ne!(original_mtime, new_mtime, "DB was modified (race condition)");
+        assert_ne!(
+            original_mtime, new_mtime,
+            "DB was modified (race condition)"
+        );
 
         // Mitigation: Use atomic cache validation
         // - Store mtime IN the cache file

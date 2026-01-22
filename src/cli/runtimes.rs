@@ -49,9 +49,10 @@ pub fn known_runtimes() -> Vec<String> {
         .collect();
 
     if MISE.is_available()
-        && let Ok(extra) = MISE.list_installed() {
-            runtimes.extend(extra);
-        }
+        && let Ok(extra) = MISE.list_installed()
+    {
+        runtimes.extend(extra);
+    }
 
     runtimes.sort();
     runtimes.dedup();
@@ -241,7 +242,11 @@ pub fn list_versions_sync(runtime: Option<&str>) -> Result<()> {
                 let mgr = NodeManager::new();
                 let current = mgr.current_version();
                 for v in mgr.list_installed().unwrap_or_default() {
-                    let marker = if Some(&v) == current.as_ref() { "→" } else { " " };
+                    let marker = if Some(&v) == current.as_ref() {
+                        "→"
+                    } else {
+                        " "
+                    };
                     println!("  {} {}", marker.green(), v);
                 }
             }
@@ -249,7 +254,11 @@ pub fn list_versions_sync(runtime: Option<&str>) -> Result<()> {
                 let mgr = PythonManager::new();
                 let current = mgr.current_version();
                 for v in mgr.list_installed().unwrap_or_default() {
-                    let marker = if Some(&v) == current.as_ref() { "→" } else { " " };
+                    let marker = if Some(&v) == current.as_ref() {
+                        "→"
+                    } else {
+                        " "
+                    };
                     println!("  {} {}", marker.green(), v);
                 }
             }
@@ -257,7 +266,11 @@ pub fn list_versions_sync(runtime: Option<&str>) -> Result<()> {
                 let mgr = RustManager::new();
                 let current = mgr.current_version();
                 for v in mgr.list_installed().unwrap_or_default() {
-                    let marker = if Some(&v) == current.as_ref() { "→" } else { " " };
+                    let marker = if Some(&v) == current.as_ref() {
+                        "→"
+                    } else {
+                        " "
+                    };
                     println!("  {} {}", marker.green(), v);
                 }
             }
@@ -265,7 +278,11 @@ pub fn list_versions_sync(runtime: Option<&str>) -> Result<()> {
                 let mgr = GoManager::new();
                 let current = mgr.current_version();
                 for v in mgr.list_installed().unwrap_or_default() {
-                    let marker = if Some(&v) == current.as_ref() { "→" } else { " " };
+                    let marker = if Some(&v) == current.as_ref() {
+                        "→"
+                    } else {
+                        " "
+                    };
                     println!("  {} {}", marker.green(), v);
                 }
             }
@@ -273,7 +290,11 @@ pub fn list_versions_sync(runtime: Option<&str>) -> Result<()> {
                 let mgr = RubyManager::new();
                 let current = mgr.current_version();
                 for v in mgr.list_installed().unwrap_or_default() {
-                    let marker = if Some(&v) == current.as_ref() { "→" } else { " " };
+                    let marker = if Some(&v) == current.as_ref() {
+                        "→"
+                    } else {
+                        " "
+                    };
                     println!("  {} {}", marker.green(), v);
                 }
             }
@@ -281,7 +302,11 @@ pub fn list_versions_sync(runtime: Option<&str>) -> Result<()> {
                 let mgr = JavaManager::new();
                 let current = mgr.current_version();
                 for v in mgr.list_installed().unwrap_or_default() {
-                    let marker = if Some(&v) == current.as_ref() { "→" } else { " " };
+                    let marker = if Some(&v) == current.as_ref() {
+                        "→"
+                    } else {
+                        " "
+                    };
                     println!("  {} {}", marker.green(), v);
                 }
             }
@@ -289,7 +314,11 @@ pub fn list_versions_sync(runtime: Option<&str>) -> Result<()> {
                 let mgr = BunManager::new();
                 let current = mgr.current_version();
                 for v in mgr.list_installed().unwrap_or_default() {
-                    let marker = if Some(&v) == current.as_ref() { "→" } else { " " };
+                    let marker = if Some(&v) == current.as_ref() {
+                        "→"
+                    } else {
+                        " "
+                    };
                     println!("  {} {}", marker.green(), v);
                 }
             }

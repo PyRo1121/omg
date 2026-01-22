@@ -64,9 +64,13 @@ struct CompactPackageInfo {
 impl PackageIndex {
     pub fn new() -> Result<Self> {
         #[cfg(feature = "debian")]
-        { Self::new_apt() }
+        {
+            Self::new_apt()
+        }
         #[cfg(all(feature = "arch", not(feature = "debian")))]
-        { Self::new_alpm() }
+        {
+            Self::new_alpm()
+        }
         #[cfg(not(any(feature = "arch", feature = "debian")))]
         anyhow::bail!("No package backend enabled")
     }
@@ -74,7 +78,11 @@ impl PackageIndex {
     pub fn new_with_cache(_cache: &PersistentCache) -> Result<Self> {
         let start = std::time::Instant::now();
         let index = Self::new()?;
-        tracing::info!("Compact Index built in {:?} ({} packages)", start.elapsed(), index.items.len());
+        tracing::info!(
+            "Compact Index built in {:?} ({} packages)",
+            start.elapsed(),
+            index.items.len()
+        );
         Ok(index)
     }
 
@@ -93,7 +101,7 @@ impl PackageIndex {
         for pkg in db_packages {
             let name_offset = pool.intern(&pkg.name);
             let idx = items.len();
-            
+
             items.push(CompactPackageInfo {
                 name_offset,
                 version_offset: pool.intern(&pkg.version),
@@ -114,7 +122,14 @@ impl PackageIndex {
         }
         package_offsets.push(search_buffer.len() as u32);
 
-        Ok(Self { items, pool, name_to_idx, search_buffer, package_offsets, lock: RwLock::new(()) })
+        Ok(Self {
+            items,
+            pool,
+            name_to_idx,
+            search_buffer,
+            package_offsets,
+            lock: RwLock::new(()),
+        })
     }
 
     #[cfg(feature = "arch")]
@@ -130,7 +145,7 @@ impl PackageIndex {
         for pkg in db_packages {
             let name_offset = pool.intern(&pkg.name);
             let idx = items.len();
-            
+
             items.push(CompactPackageInfo {
                 name_offset,
                 version_offset: pool.intern(&pkg.version.to_string()),
@@ -151,11 +166,20 @@ impl PackageIndex {
         }
         package_offsets.push(search_buffer.len() as u32);
 
-        Ok(Self { items, pool, name_to_idx, search_buffer, package_offsets, lock: RwLock::new(()) })
+        Ok(Self {
+            items,
+            pool,
+            name_to_idx,
+            search_buffer,
+            package_offsets,
+            lock: RwLock::new(()),
+        })
     }
 
     pub fn search(&self, query: &str, limit: usize) -> Vec<PackageInfo> {
-        if query.is_empty() { return Vec::new(); }
+        if query.is_empty() {
+            return Vec::new();
+        }
         let query_lower = query.to_ascii_lowercase();
         let finder = memmem::Finder::new(query_lower.as_bytes());
         let mut results = Vec::with_capacity(limit);
@@ -163,7 +187,9 @@ impl PackageIndex {
         let mut current_pkg_end = 0;
 
         for match_idx in finder.find_iter(&self.search_buffer) {
-            if (match_idx as u32) < current_pkg_end { continue; }
+            if (match_idx as u32) < current_pkg_end {
+                continue;
+            }
 
             let search_slice = &self.package_offsets[current_pkg_idx..];
             let relative_idx = match search_slice.binary_search(&(match_idx as u32)) {
@@ -182,7 +208,9 @@ impl PackageIndex {
                     source: self.pool.get(item.source_offset).to_string(),
                 });
             }
-            if results.len() >= limit { break; }
+            if results.len() >= limit {
+                break;
+            }
         }
         results
     }
@@ -191,7 +219,7 @@ impl PackageIndex {
         let _read_guard = self.lock.read();
         let &idx = self.name_to_idx.get(name)?;
         let item = &self.items[idx];
-        
+
         Some(DetailedPackageInfo {
             name: self.pool.get(item.name_offset).to_string(),
             version: self.pool.get(item.version_offset).to_string(),
@@ -206,13 +234,20 @@ impl PackageIndex {
         })
     }
 
-    pub fn len(&self) -> usize { self.items.len() }
-    pub fn is_empty(&self) -> bool { self.items.is_empty() }
-    
+    pub fn len(&self) -> usize {
+        self.items.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+
     pub fn suggest(&self, query: &str, limit: usize) -> Vec<String> {
-        if query.is_empty() { return Vec::new(); }
+        if query.is_empty() {
+            return Vec::new();
+        }
         let query_lower = query.to_lowercase();
-        self.name_to_idx.keys()
+        self.name_to_idx
+            .keys()
             .filter(|name| name.to_lowercase().starts_with(&query_lower))
             .take(limit)
             .cloned()
@@ -220,8 +255,9 @@ impl PackageIndex {
     }
 
     pub fn all_packages(&self) -> Vec<DetailedPackageInfo> {
-        self.items.iter().map(|item| {
-            DetailedPackageInfo {
+        self.items
+            .iter()
+            .map(|item| DetailedPackageInfo {
                 name: self.pool.get(item.name_offset).to_string(),
                 version: self.pool.get(item.version_offset).to_string(),
                 description: self.pool.get(item.description_offset).to_string(),
@@ -232,8 +268,8 @@ impl PackageIndex {
                 depends: Vec::new(),
                 licenses: Vec::new(),
                 source: self.pool.get(item.source_offset).to_string(),
-            }
-        }).collect()
+            })
+            .collect()
     }
 }
 

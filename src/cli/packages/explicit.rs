@@ -21,7 +21,7 @@ pub fn explicit_sync(count: bool) -> Result<()> {
         if let Ok(res) = client.call_sync(&request) {
             match res {
                 ResponseResult::ExplicitCount(c) => {
-                    println!( "{c}" );
+                    println!("{c}");
                     return Ok(());
                 }
                 ResponseResult::Explicit(res) => {
@@ -39,7 +39,7 @@ pub fn explicit_sync(count: bool) -> Result<()> {
         {
             let packages = crate::package_managers::list_explicit_fast().unwrap_or_default();
             if count {
-                println!( "{}", packages.len() );
+                println!("{}", packages.len());
             } else {
                 display_explicit_list(packages)?;
             }
@@ -51,7 +51,7 @@ pub fn explicit_sync(count: bool) -> Result<()> {
     if count {
         // FAST PATH: Read from daemon's status file (zero IPC, sub-ms)
         if let Some(c) = crate::core::fast_status::FastStatus::read_explicit_count() {
-            println!( "{c}" );
+            println!("{c}");
             return Ok(());
         }
 
@@ -60,7 +60,7 @@ pub fn explicit_sync(count: bool) -> Result<()> {
             let c = crate::package_managers::list_explicit_fast()
                 .map(|pkgs| pkgs.len())
                 .unwrap_or_default();
-            println!( "{c}" );
+            println!("{c}");
             return Ok(());
         }
     }
@@ -70,6 +70,11 @@ pub fn explicit_sync(count: bool) -> Result<()> {
         let packages = crate::package_managers::list_explicit_fast().unwrap_or_default();
         display_explicit_list(packages)?;
         return Ok(());
+    }
+
+    #[cfg(not(any(feature = "arch", feature = "debian")))]
+    {
+        println!("No package manager backend enabled");
     }
 
     Ok(())
@@ -87,7 +92,7 @@ fn display_explicit_list(mut packages: Vec<String>) -> Result<()> {
     )?;
 
     for pkg in &packages {
-        writeln!( stdout, "  {}", style::package(pkg) )?;
+        writeln!(stdout, "  {}", style::package(pkg))?;
     }
 
     writeln!(

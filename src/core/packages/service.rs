@@ -1,10 +1,10 @@
+use crate::core::Package;
+use crate::core::history::{HistoryManager, PackageChange, TransactionType};
+use crate::core::security::SecurityPolicy;
+use crate::package_managers::PackageManager;
+use crate::package_managers::types::UpdateInfo;
 use anyhow::Result;
 use std::sync::Arc;
-use crate::package_managers::PackageManager;
-use crate::core::Package;
-use crate::package_managers::types::UpdateInfo;
-use crate::core::security::SecurityPolicy;
-use crate::core::history::{HistoryManager, PackageChange, TransactionType};
 
 /// Service for orchestrating package operations across different backends.
 pub struct PackageService {
@@ -67,7 +67,10 @@ impl PackageService {
 
                 // Check if it's in official repos
                 if let Ok(Some(info)) = self.backend.info(pkg).await {
-                    let grade = self.policy.assign_grade(&info.name, &info.version, false, true).await;
+                    let grade = self
+                        .policy
+                        .assign_grade(&info.name, &info.version, false, true)
+                        .await;
                     self.policy.check_package(&info.name, false, None, grade)?;
 
                     official.push(pkg.clone());
@@ -78,7 +81,10 @@ impl PackageService {
                         source: "official".to_string(),
                     });
                 } else if let Ok(Some(info)) = aur.info(pkg).await {
-                    let grade = self.policy.assign_grade(&info.name, &info.version, true, false).await;
+                    let grade = self
+                        .policy
+                        .assign_grade(&info.name, &info.version, true, false)
+                        .await;
                     self.policy.check_package(&info.name, true, None, grade)?;
 
                     aur_pkgs.push(pkg.clone());
@@ -102,7 +108,8 @@ impl PackageService {
                     aur.install(&pkg).await?;
                 }
                 Ok(())
-            }.await;
+            }
+            .await;
 
             if let Some(history) = &self.history {
                 let _ = history.add_transaction(TransactionType::Install, changes, result.is_ok());
@@ -115,7 +122,10 @@ impl PackageService {
         {
             for pkg in packages {
                 if let Ok(Some(info)) = self.backend.info(pkg).await {
-                    let grade = self.policy.assign_grade(&info.name, &info.version, false, true).await;
+                    let grade = self
+                        .policy
+                        .assign_grade(&info.name, &info.version, false, true)
+                        .await;
                     self.policy.check_package(&info.name, false, None, grade)?;
 
                     changes.push(PackageChange {
@@ -142,7 +152,7 @@ impl PackageService {
         let mut changes = Vec::new();
         for pkg in packages {
             if let Ok(Some(info)) = self.backend.info(pkg).await {
-                 changes.push(PackageChange {
+                changes.push(PackageChange {
                     name: info.name,
                     old_version: Some(info.version.to_string()),
                     new_version: None,
@@ -185,7 +195,8 @@ impl PackageService {
                 }
             }
             Ok(())
-        }.await;
+        }
+        .await;
 
         if let Some(history) = &self.history {
             let _ = history.add_transaction(TransactionType::Update, changes, result.is_ok());

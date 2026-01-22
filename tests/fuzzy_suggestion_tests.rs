@@ -1,8 +1,8 @@
-use std::sync::Arc;
-use tempfile::TempDir;
 use omg_lib::daemon::handlers::{DaemonState, handle_request};
 use omg_lib::daemon::protocol::{Request, Response, ResponseResult};
 use serial_test::serial;
+use std::sync::Arc;
+use tempfile::TempDir;
 
 #[tokio::test]
 #[serial]
@@ -49,8 +49,8 @@ async fn test_fuzzy_suggestions() {
     // We'll try to find a real package name from the index first
     let all_pkgs = state.index.all_packages();
     if all_pkgs.is_empty() {
-         println!("Skipping test: No packages in index");
-         return;
+        println!("Skipping test: No packages in index");
+        return;
     }
 
     let target_pkg = &all_pkgs[0].name;
@@ -62,16 +62,28 @@ async fn test_fuzzy_suggestions() {
     let req = Request::Suggest {
         id: 1,
         query: typo.clone(),
-        limit: Some(5)
+        limit: Some(5),
     };
 
     let response = handle_request(Arc::clone(&state), req).await;
 
     match response {
-        Response::Success { result: ResponseResult::Suggest(suggestions), .. } => {
-            assert!(!suggestions.is_empty(), "Should return suggestions for '{}'", typo);
-            assert!(suggestions.contains(target_pkg), "Suggestions for '{}' should contain '{}'", typo, target_pkg);
-        },
+        Response::Success {
+            result: ResponseResult::Suggest(suggestions),
+            ..
+        } => {
+            assert!(
+                !suggestions.is_empty(),
+                "Should return suggestions for '{}'",
+                typo
+            );
+            assert!(
+                suggestions.contains(target_pkg),
+                "Suggestions for '{}' should contain '{}'",
+                typo,
+                target_pkg
+            );
+        }
         _ => panic!("Expected Suggest response"),
     }
 }

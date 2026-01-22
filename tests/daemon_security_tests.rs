@@ -1,8 +1,8 @@
-use std::sync::Arc;
-use tempfile::TempDir;
 use omg_lib::daemon::handlers::{DaemonState, handle_request};
 use omg_lib::daemon::protocol::{Request, Response, error_codes};
 use serial_test::serial;
+use std::sync::Arc;
+use tempfile::TempDir;
 
 #[tokio::test]
 #[serial]
@@ -67,14 +67,17 @@ async fn test_input_validation_audit() {
     let invalid_pkg = "invalid; rm -rf /";
     let req = Request::Info {
         id: 1,
-        package: invalid_pkg.to_string()
+        package: invalid_pkg.to_string(),
     };
 
     let response = handle_request(Arc::clone(&state), req).await;
 
     // Verify rejection
     if let Response::Error { message, .. } = response {
-        assert!(message.contains("Invalid package name"), "Should reject invalid package name");
+        assert!(
+            message.contains("Invalid package name"),
+            "Should reject invalid package name"
+        );
     } else {
         panic!("Should have returned error response");
     }
@@ -89,8 +92,14 @@ async fn test_input_validation_audit() {
 
     if audit_file.exists() {
         let content = std::fs::read_to_string(&audit_file).expect("Audit log file should exist");
-        assert!(content.contains("policy_violation"), "Log should contain policy_violation");
-        assert!(content.contains("Invalid package name"), "Log should contain error details");
+        assert!(
+            content.contains("policy_violation"),
+            "Log should contain policy_violation"
+        );
+        assert!(
+            content.contains("Invalid package name"),
+            "Log should contain error details"
+        );
     } else {
         panic!("Audit log file not found at {:?}", audit_file);
     }
@@ -116,17 +125,24 @@ async fn test_batch_size_limit_audit() {
 
     // Create oversized batch
     let mut requests = Vec::new();
-    for _ in 0..150 { // Limit is 100
+    for _ in 0..150 {
+        // Limit is 100
         requests.push(Request::Ping { id: 1 });
     }
 
-    let req = Request::Batch { id: 1, requests: Box::new(requests) };
+    let req = Request::Batch {
+        id: 1,
+        requests: Box::new(requests),
+    };
 
     let response = handle_request(Arc::clone(&state), req).await;
 
     // Verify rejection
     if let Response::Error { message, .. } = response {
-        assert!(message.contains("Batch size"), "Should reject oversized batch");
+        assert!(
+            message.contains("Batch size"),
+            "Should reject oversized batch"
+        );
     } else {
         panic!("Should have returned error response");
     }
@@ -134,5 +150,8 @@ async fn test_batch_size_limit_audit() {
     // Verify audit log
     let audit_file = temp_dir.path().join("audit").join("audit.jsonl");
     let content = std::fs::read_to_string(audit_file).expect("Audit log file should exist");
-    assert!(content.contains("Batch size"), "Log should record batch size violation");
+    assert!(
+        content.contains("Batch size"),
+        "Log should record batch size violation"
+    );
 }

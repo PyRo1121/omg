@@ -5,18 +5,18 @@
 use anyhow::Result;
 use futures::sink::SinkExt;
 use futures::stream::StreamExt;
+use governor::{Quota, RateLimiter};
+use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::UnixListener;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 use tokio_util::sync::CancellationToken;
-use governor::{Quota, RateLimiter};
-use std::num::NonZeroU32;
 
 use super::handlers::{DaemonState, handle_request};
 use super::protocol::{Request, Response, error_codes};
-use crate::core::security::{audit_log, AuditEventType, AuditSeverity};
 use crate::core::metrics::GLOBAL_METRICS;
+use crate::core::security::{AuditEventType, AuditSeverity, audit_log};
 
 #[cfg(feature = "debian")]
 use crate::package_managers::apt_get_system_status;
@@ -90,7 +90,8 @@ pub async fn run(listener: UnixListener) -> Result<()> {
                 };
 
                 (versions, status_result)
-            }).await;
+            })
+            .await;
 
             if let Ok((versions, status)) = result {
                 // Update runtime versions safely
@@ -98,8 +99,9 @@ pub async fn run(listener: UnixListener) -> Result<()> {
 
                 if let Ok((total, explicit, orphans, updates)) = status {
                     // Write fast status file for zero-IPC CLI reads
-                    let fast_status =
-                        crate::core::fast_status::FastStatus::new(total, explicit, orphans, updates);
+                    let fast_status = crate::core::fast_status::FastStatus::new(
+                        total, explicit, orphans, updates,
+                    );
                     if let Err(e) = fast_status.write_default() {
                         tracing::warn!("Failed to write fast status file: {e}");
                     }
@@ -132,11 +134,13 @@ pub async fn run(listener: UnixListener) -> Result<()> {
                 let _ = tokio::task::spawn_blocking(move || {
                     use crate::core::env::distro::use_debian_backend;
                     if !use_debian_backend()
-                        && let Ok(explicit_pkgs) = crate::package_managers::list_explicit_fast() {
-                            state_explicit.cache.update_explicit(explicit_pkgs);
-                            tracing::debug!("Pre-warmed explicit package cache");
-                        }
-                }).await;
+                        && let Ok(explicit_pkgs) = crate::package_managers::list_explicit_fast()
+                    {
+                        state_explicit.cache.update_explicit(explicit_pkgs);
+                        tracing::debug!("Pre-warmed explicit package cache");
+                    }
+                })
+                .await;
             }
         }
 
@@ -277,20 +281,25 @@ async fn handle_client(stream: tokio::net::UnixStream, state: Arc<DaemonState>) 
         }
 
         // Handle request with timeout to prevent hung clients
-        let response = tokio::time::timeout(
-            REQUEST_TIMEOUT,
-            handle_request(Arc::clone(&state), request),
-        )
-        .await
-        .unwrap_or_else(|_| {
-            tracing::warn!("Request {} timed out after {:?}", request_id, REQUEST_TIMEOUT);
-            GLOBAL_METRICS.inc_requests_failed();
-            Response::Error {
-                id: request_id,
-                code: error_codes::INTERNAL_ERROR,
-                message: format!("Request timed out after {} seconds", REQUEST_TIMEOUT.as_secs()),
-            }
-        });
+        let response =
+            tokio::time::timeout(REQUEST_TIMEOUT, handle_request(Arc::clone(&state), request))
+                .await
+                .unwrap_or_else(|_| {
+                    tracing::warn!(
+                        "Request {} timed out after {:?}",
+                        request_id,
+                        REQUEST_TIMEOUT
+                    );
+                    GLOBAL_METRICS.inc_requests_failed();
+                    Response::Error {
+                        id: request_id,
+                        code: error_codes::INTERNAL_ERROR,
+                        message: format!(
+                            "Request timed out after {} seconds",
+                            REQUEST_TIMEOUT.as_secs()
+                        ),
+                    }
+                });
 
         // Encode and send response
         let response_bytes = bitcode::serialize(&response)?;

@@ -9,7 +9,7 @@
 
 use omg_lib::cli::tui::app::{App, Tab};
 use omg_lib::core::env::team::{TeamConfig, TeamMember, TeamStatus, TeamWorkspace};
-use omg_lib::package_managers::{parse_version_or_zero, SyncPackage};
+use omg_lib::package_managers::{SyncPackage, parse_version_or_zero};
 use serial_test::serial;
 use tempfile::TempDir;
 
@@ -163,10 +163,12 @@ mod team_workspace_tests {
 
         let result = workspace.join("https://github.com/test/repo");
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Not a team workspace"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Not a team workspace")
+        );
     }
 
     #[test]

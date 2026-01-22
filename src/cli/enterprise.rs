@@ -178,7 +178,11 @@ pub mod policy {
 
     pub fn set(scope: &str, rule: &str) -> Result<()> {
         // SECURITY: Validate scope and rule
-        if scope.len() > 64 || scope.chars().any(|c| !c.is_ascii_alphanumeric() && c != ':' && c != '-') {
+        if scope.len() > 64
+            || scope
+                .chars()
+                .any(|c| !c.is_ascii_alphanumeric() && c != ':' && c != '-')
+        {
             anyhow::bail!("Invalid policy scope");
         }
         if rule.len() > 1024 {
@@ -200,21 +204,20 @@ pub mod policy {
     }
 
     pub async fn show(scope: Option<&str>) -> Result<()> {
-            if let Some(s) = scope
-                && (s.len() > 64
-                    || s.chars()
-                        .any(|c| !c.is_ascii_alphanumeric() && c != ':' && c != '-'))
-            {
-                anyhow::bail!("Invalid policy scope");
-            }
-        
+        if let Some(s) = scope
+            && (s.len() > 64
+                || s.chars()
+                    .any(|c| !c.is_ascii_alphanumeric() && c != ':' && c != '-'))
+        {
+            anyhow::bail!("Invalid policy scope");
+        }
 
         license::require_feature("policy")?;
 
         println!("{} Policy Configuration\n", "OMG".cyan().bold());
 
         let policies = license::fetch_policies().await?;
-        
+
         if policies.is_empty() {
             println!("  {} No active policies found", "○".dimmed());
             println!("  Enterprise policies can be configured in the dashboard.");
@@ -222,12 +225,21 @@ pub mod policy {
         }
 
         for p in policies {
-            if let Some(s) = scope && p.scope != s {
+            if let Some(s) = scope
+                && p.scope != s
+            {
                 continue;
             }
 
             println!("  {} (Scope: {})", p.rule.bold(), p.scope.cyan());
-            println!("    Enforced: {}", if p.enforced { "Yes".green().to_string() } else { "No (Audit only)".yellow().to_string() });
+            println!(
+                "    Enforced: {}",
+                if p.enforced {
+                    "Yes".green().to_string()
+                } else {
+                    "No (Audit only)".yellow().to_string()
+                }
+            );
             println!();
         }
 
@@ -236,10 +248,18 @@ pub mod policy {
 
     pub fn inherit(from: &str, to: &str) -> Result<()> {
         // SECURITY: Validate scopes
-        if from.len() > 64 || from.chars().any(|c| !c.is_ascii_alphanumeric() && c != ':' && c != '-') {
+        if from.len() > 64
+            || from
+                .chars()
+                .any(|c| !c.is_ascii_alphanumeric() && c != ':' && c != '-')
+        {
             anyhow::bail!("Invalid source scope");
         }
-        if to.len() > 64 || to.chars().any(|c| !c.is_ascii_alphanumeric() && c != ':' && c != '-') {
+        if to.len() > 64
+            || to
+                .chars()
+                .any(|c| !c.is_ascii_alphanumeric() && c != ':' && c != '-')
+        {
             anyhow::bail!("Invalid target scope");
         }
 
@@ -267,11 +287,19 @@ pub mod server {
 
     pub fn init(license_key: &str, storage: &str, domain: &str) -> Result<()> {
         // SECURITY: Validate all inputs
-        if license_key.len() > 128 || license_key.chars().any(|c| !c.is_ascii_alphanumeric() && c != '-') {
+        if license_key.len() > 128
+            || license_key
+                .chars()
+                .any(|c| !c.is_ascii_alphanumeric() && c != '-')
+        {
             anyhow::bail!("Invalid license key format");
         }
         crate::core::security::validate_relative_path(storage)?;
-        if domain.len() > 255 || domain.chars().any(|c| !c.is_ascii_alphanumeric() && c != '.' && c != '-') {
+        if domain.len() > 255
+            || domain
+                .chars()
+                .any(|c| !c.is_ascii_alphanumeric() && c != '.' && c != '-')
+        {
             anyhow::bail!("Invalid domain name");
         }
 
@@ -427,7 +455,7 @@ fn perform_license_scan() -> LicenseScan {
             } else {
                 for lic in &pkg.licenses {
                     *by_license.entry(lic.clone()).or_insert(0) += 1;
-                    
+
                     // Production policy: Flag copyleft licenses for review
                     if lic.to_uppercase().contains("GPL") {
                         violations.push(LicenseViolation {

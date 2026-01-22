@@ -71,8 +71,14 @@ impl PythonManager {
     pub async fn list_available(&self) -> Result<Vec<PythonVersion>> {
         if crate::core::paths::test_mode() {
             return Ok(vec![
-                PythonVersion { version: "3.12.0".to_string(), prebuilt: true },
-                PythonVersion { version: "3.11.0".to_string(), prebuilt: true },
+                PythonVersion {
+                    version: "3.12.0".to_string(),
+                    prebuilt: true,
+                },
+                PythonVersion {
+                    version: "3.11.0".to_string(),
+                    prebuilt: true,
+                },
             ]);
         }
         let releases: Vec<GithubRelease> = self
@@ -98,9 +104,10 @@ impl PythonManager {
                 if asset.name.contains(arch)
                     && asset.name.contains("linux-gnu")
                     && asset.name.contains("install_only")
-                    && let Some(version) = Self::extract_cpython_version(&asset.name) {
-                        versions.insert(version);
-                    }
+                    && let Some(version) = Self::extract_cpython_version(&asset.name)
+                {
+                    versions.insert(version);
+                }
             }
         }
 
@@ -260,9 +267,10 @@ impl PythonManager {
         }
 
         if let Some(current) = self.current_version()
-            && current == version {
-                let _ = fs::remove_file(&self.current_link);
-            }
+            && current == version
+        {
+            let _ = fs::remove_file(&self.current_link);
+        }
 
         fs::remove_dir_all(&version_dir)?;
         println!("{} Python {} uninstalled", "✓".green(), version);

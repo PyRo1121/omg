@@ -189,7 +189,11 @@ pub fn deactivate() -> Result<()> {
 /// Check if a specific feature is available
 pub fn check_feature(feature_name: &str) -> Result<()> {
     // SECURITY: Validate feature name
-    if feature_name.len() > 64 || feature_name.chars().any(|c| !c.is_ascii_alphanumeric() && c != '-') {
+    if feature_name.len() > 64
+        || feature_name
+            .chars()
+            .any(|c| !c.is_ascii_alphanumeric() && c != '-')
+    {
         anyhow::bail!("Invalid feature name");
     }
 

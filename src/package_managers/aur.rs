@@ -108,7 +108,7 @@ impl AurClient {
 
         // Prevent control characters
         if query.chars().any(char::is_control) {
-             anyhow::bail!("Search query contains invalid control characters");
+            anyhow::bail!("Search query contains invalid control characters");
         }
 
         let url = format!("{AUR_RPC_URL}?v=5&type=search&arg={query}");
@@ -120,7 +120,11 @@ impl AurClient {
             .into_iter()
             .filter(|p| {
                 if let Err(e) = crate::core::security::validate_package_name(&p.name) {
-                    tracing::warn!("Rejecting invalid package name from AUR search: {} ({})", p.name, e);
+                    tracing::warn!(
+                        "Rejecting invalid package name from AUR search: {} ({})",
+                        p.name,
+                        e
+                    );
                     false
                 } else {
                     true
@@ -240,7 +244,11 @@ impl AurClient {
             for p in response.results {
                 // SECURITY: Validate package name from RPC response
                 if let Err(e) = crate::core::security::validate_package_name(&p.name) {
-                    tracing::warn!("Rejecting invalid package name from AUR update check: {} ({})", p.name, e);
+                    tracing::warn!(
+                        "Rejecting invalid package name from AUR update check: {} ({})",
+                        p.name,
+                        e
+                    );
                     continue;
                 }
 
@@ -267,10 +275,11 @@ impl AurClient {
 
         if cache_path.exists()
             && let Ok(meta) = std::fs::metadata(&cache_path)
-                && let Ok(modified) = meta.modified()
-                    && modified.elapsed().unwrap_or_default() < Duration::from_secs(ttl) {
-                        return Self::read_metadata_archive(&cache_path).map(Some);
-                    }
+            && let Ok(modified) = meta.modified()
+            && modified.elapsed().unwrap_or_default() < Duration::from_secs(ttl)
+        {
+            return Self::read_metadata_archive(&cache_path).map(Some);
+        }
 
         let meta_cache = if meta_path.exists() {
             if let Ok(bytes) = tokio_fs::read(&meta_path).await {
@@ -588,17 +597,19 @@ impl AurClient {
 
                 // Confirm exact pkgname via .PKGINFO when available
                 if let Ok(Some(parsed_name)) = Self::pkg_name_from_archive(&entry.path())
-                    && !expected_names.iter().any(|name| name == &parsed_name) {
-                        continue;
-                    }
+                    && !expected_names.iter().any(|name| name == &parsed_name)
+                {
+                    continue;
+                }
 
                 // If multiple matches (shouldn't happen), take newest by mtime
                 if let Ok(meta) = entry.metadata() {
                     if let Ok(mtime) = meta.modified()
-                        && mtime > best_mtime {
-                            best_mtime = mtime;
-                            best_match = Some(entry.path());
-                        }
+                        && mtime > best_mtime
+                    {
+                        best_mtime = mtime;
+                        best_match = Some(entry.path());
+                    }
                 } else if best_match.is_none() {
                     best_match = Some(entry.path());
                 }
@@ -629,11 +640,12 @@ impl AurClient {
             let mut entry = entry?;
             let entry_path = entry.path()?;
             if let Some(file_name) = entry_path.file_name().and_then(|n| n.to_str())
-                && (file_name == ".PKGINFO" || file_name == "PKGINFO") {
-                    let mut content = String::new();
-                    entry.read_to_string(&mut content)?;
-                    return Ok(Self::parse_pkginfo_name(&content));
-                }
+                && (file_name == ".PKGINFO" || file_name == "PKGINFO")
+            {
+                let mut content = String::new();
+                entry.read_to_string(&mut content)?;
+                return Ok(Self::parse_pkginfo_name(&content));
+            }
         }
 
         Ok(None)
@@ -1487,40 +1499,45 @@ fn create_spinner(msg: &str) -> ProgressBar {
     pb
 }
 
-    /// Search AUR with detailed info
-    pub async fn search_detailed(query: &str) -> Result<Vec<AurPackageDetail>> {
-        // SECURITY: Basic validation for search query
-        if query.len() > 100 {
-            anyhow::bail!("Search query too long");
-        }
-
-        let client = shared_client().clone();
-        let url = format!("{AUR_RPC_URL}?v=5&type=search&arg={query}");
-
-        let response: AurDetailedResponse = client
-            .get(&url)
-            .send()
-            .await
-            .context("Failed to connect to AUR RPC. Check your internet connection.")?
-            .json()
-            .await
-            .context("Failed to parse AUR RPC response")?;
-
-        // SECURITY: Validate all names in response
-        let results = response.results
-            .into_iter()
-            .filter(|p| {
-                if let Err(e) = crate::core::security::validate_package_name(&p.name) {
-                    tracing::warn!("Rejecting invalid package name from AUR search_detailed: {} ({})", p.name, e);
-                    false
-                } else {
-                    true
-                }
-            })
-            .collect();
-
-        Ok(results)
+/// Search AUR with detailed info
+pub async fn search_detailed(query: &str) -> Result<Vec<AurPackageDetail>> {
+    // SECURITY: Basic validation for search query
+    if query.len() > 100 {
+        anyhow::bail!("Search query too long");
     }
+
+    let client = shared_client().clone();
+    let url = format!("{AUR_RPC_URL}?v=5&type=search&arg={query}");
+
+    let response: AurDetailedResponse = client
+        .get(&url)
+        .send()
+        .await
+        .context("Failed to connect to AUR RPC. Check your internet connection.")?
+        .json()
+        .await
+        .context("Failed to parse AUR RPC response")?;
+
+    // SECURITY: Validate all names in response
+    let results = response
+        .results
+        .into_iter()
+        .filter(|p| {
+            if let Err(e) = crate::core::security::validate_package_name(&p.name) {
+                tracing::warn!(
+                    "Rejecting invalid package name from AUR search_detailed: {} ({})",
+                    p.name,
+                    e
+                );
+                false
+            } else {
+                true
+            }
+        })
+        .collect();
+
+    Ok(results)
+}
 
 #[derive(Debug, Deserialize)]
 struct AurDetailedResponse {
@@ -1595,13 +1612,19 @@ mod tests {
 
         let status = Command::new("bwrap")
             .args([
-                "--ro-bind", "/", "/",
-                "--dev", "/dev",
-                "--proc", "/proc",
-                "--tmpfs", "/tmp",
-                "--command", "/bin/sh",
+                "--ro-bind",
+                "/",
+                "/",
+                "--dev",
+                "/dev",
+                "--proc",
+                "/proc",
+                "--tmpfs",
+                "/tmp",
+                "--command",
+                "/bin/sh",
                 "-c",
-                &format!("echo hacked > {}", sensitive_file.display())
+                &format!("echo hacked > {}", sensitive_file.display()),
             ])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -1610,7 +1633,10 @@ mod tests {
             .unwrap();
 
         // Should fail because / is read-only
-        assert!(!status.success(), "Sandbox should prevent writing to arbitrary files");
+        assert!(
+            !status.success(),
+            "Sandbox should prevent writing to arbitrary files"
+        );
     }
 
     #[test]

@@ -329,9 +329,10 @@ fn get_cache_size() -> Result<i64> {
     let mut total: i64 = 0;
     for entry in fs::read_dir(cache_dir)? {
         if let Ok(entry) = entry
-            && let Ok(meta) = entry.metadata() {
-                total += meta.len().cast_signed();
-            }
+            && let Ok(meta) = entry.metadata()
+        {
+            total += meta.len().cast_signed();
+        }
     }
 
     Ok(total)

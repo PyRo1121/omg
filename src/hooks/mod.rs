@@ -240,10 +240,11 @@ pub fn detect_versions(start: &Path) -> HashMap<String, String> {
                     if let Ok(content) = std::fs::read_to_string(&file_path) {
                         for line in content.lines() {
                             if line.contains("channel")
-                                && let Some(version) = line.split('=').nth(1) {
-                                    let v = version.trim().trim_matches('"').trim_matches('\'');
-                                    versions.insert((*runtime).to_string(), v.to_string());
-                                }
+                                && let Some(version) = line.split('=').nth(1)
+                            {
+                                let v = version.trim().trim_matches('"').trim_matches('\'');
+                                versions.insert((*runtime).to_string(), v.to_string());
+                            }
                         }
                     }
                 } else if *filename == "package.json" {
@@ -376,9 +377,10 @@ fn resolve_node_bin_path(data_dir: &Path, version: &str) -> Option<PathBuf> {
     }
 
     if let Some(resolved) = resolve_installed_version_req(&versions_dir, normalized)
-        && let Some(path) = node_version_bin_path(&versions_dir, &resolved) {
-            return Some(path);
-        }
+        && let Some(path) = node_version_bin_path(&versions_dir, &resolved)
+    {
+        return Some(path);
+    }
 
     nvm_node_bin(normalized)
 }
@@ -391,9 +393,10 @@ fn resolve_bun_bin_path(data_dir: &Path, version: &str) -> Option<PathBuf> {
     }
 
     if let Some(resolved) = resolve_installed_version_req(&versions_dir, normalized)
-        && let Some(path) = bun_version_bin_path(&versions_dir, &resolved) {
-            return Some(path);
-        }
+        && let Some(path) = bun_version_bin_path(&versions_dir, &resolved)
+    {
+        return Some(path);
+    }
 
     None
 }
