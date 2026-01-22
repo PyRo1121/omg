@@ -247,9 +247,10 @@ impl MiseManager {
 
         // Parse "runtime version" or "runtime@version" format
         if let Some(rest) = line.strip_prefix(runtime)
-            && let Some(version) = rest.split_whitespace().find(|token| !token.is_empty()) {
-                return Ok(Some(version.to_string()));
-            }
+            && let Some(version) = rest.split_whitespace().find(|token| !token.is_empty())
+        {
+            return Ok(Some(version.to_string()));
+        }
 
         if let Some((_, version)) = line.split_once('@') {
             return Ok(Some(version.trim().to_string()));

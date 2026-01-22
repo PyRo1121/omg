@@ -70,30 +70,31 @@ async fn run_app(
 
         // Handle events with timeout for animations
         if crossterm::event::poll(Duration::from_millis(POLL_TIMEOUT_MS))?
-            && let Event::Key(key) = event::read()? {
-                // Only process key press events, ignore release
-                if key.kind != KeyEventKind::Press {
-                    continue;
-                }
+            && let Event::Key(key) = event::read()?
+        {
+            // Only process key press events, ignore release
+            if key.kind != KeyEventKind::Press {
+                continue;
+            }
 
-                // Exit on 'q' - check this first for quick exit
-                if key.code == KeyCode::Char('q') {
-                    return Ok(());
-                }
+            // Exit on 'q' - check this first for quick exit
+            if key.code == KeyCode::Char('q') {
+                return Ok(());
+            }
 
-                // Handle special actions before key processing
-                handle_special_key_actions(app, key.code).await;
+            // Handle special actions before key processing
+            handle_special_key_actions(app, key.code).await;
 
-                // Handle search updates
-                if app.search_mode && app.search_query != last_search {
-                    last_search.clone_from(&app.search_query);
-                    // Clone to avoid borrow checker issues
-                    let query = last_search.clone();
-                    if let Err(e) = app.search_packages(&query).await {
-                        eprintln!("Search failed: {e}");
-                    }
+            // Handle search updates
+            if app.search_mode && app.search_query != last_search {
+                last_search.clone_from(&app.search_query);
+                // Clone to avoid borrow checker issues
+                let query = last_search.clone();
+                if let Err(e) = app.search_packages(&query).await {
+                    eprintln!("Search failed: {e}");
                 }
             }
+        }
 
         // Update app state
         app.tick().await?;

@@ -127,36 +127,37 @@ fn display_aur_results(
             writeln!(writer)?;
         }
     } else if let Some(aur_packages) = aur_packages_basic
-        && !aur_packages.is_empty() {
-            writeln!(writer, "{}", style::header("AUR (Arch User Repository)"))?;
-            for pkg in aur_packages.iter().take(10) {
-                writeln!(
-                    writer,
-                    "  {} {} - {}",
-                    style::package(&pkg.name),
-                    style::version(&pkg.version.to_string()),
-                    style::dim(&truncate(&pkg.description, 55))
-                )?;
-            }
-            if aur_packages.len() > 10 {
-                writeln!(
-                    writer,
-                    "  {}",
-                    style::dim(&format!("(+{}) more packages...", aur_packages.len() - 10))
-                )?;
-            }
-            writeln!(writer)?;
+        && !aur_packages.is_empty()
+    {
+        writeln!(writer, "{}", style::header("AUR (Arch User Repository)"))?;
+        for pkg in aur_packages.iter().take(10) {
+            writeln!(
+                writer,
+                "  {} {} - {}",
+                style::package(&pkg.name),
+                style::version(&pkg.version.to_string()),
+                style::dim(&truncate(&pkg.description, 55))
+            )?;
         }
+        if aur_packages.len() > 10 {
+            writeln!(
+                writer,
+                "  {}",
+                style::dim(&format!("(+{}) more packages...", aur_packages.len() - 10))
+            )?;
+        }
+        writeln!(writer)?;
+    }
     Ok(())
 }
 
 /// Handle interactive package selection and installation
 async fn handle_interactive_selection(
     official_packages: &[crate::package_managers::SyncPackage],
-    #[cfg(feature = "arch")]
-    aur_packages_detailed: Option<&Vec<crate::package_managers::AurPackageDetail>>,
-    #[cfg(feature = "arch")]
-    aur_packages_basic: Option<&Vec<crate::core::Package>>,
+    #[cfg(feature = "arch")] aur_packages_detailed: Option<
+        &Vec<crate::package_managers::AurPackageDetail>,
+    >,
+    #[cfg(feature = "arch")] aur_packages_basic: Option<&Vec<crate::core::Package>>,
 ) -> Result<()> {
     let mut items = Vec::new();
     let mut pkgs_to_install = Vec::new();
@@ -239,39 +240,40 @@ async fn fetch_packages(query: &str, detailed: bool, interactive: bool) -> Searc
     if !use_debian_backend() {
         // 1. Try Daemon (Ultra Fast, Cached, Pooled)
         if let Ok(mut client) = DaemonClient::connect().await
-            && let Ok(res) = client.search(query, Some(50)).await {
-                daemon_used = true;
-                #[cfg(feature = "arch")]
-                let mut aur_basic = Vec::new();
+            && let Ok(res) = client.search(query, Some(50)).await
+        {
+            daemon_used = true;
+            #[cfg(feature = "arch")]
+            let mut aur_basic = Vec::new();
 
-                for pkg in res.packages {
-                    if pkg.source == "official" {
-                        official_packages.push(crate::package_managers::SyncPackage {
+            for pkg in res.packages {
+                if pkg.source == "official" {
+                    official_packages.push(crate::package_managers::SyncPackage {
+                        name: pkg.name,
+                        version: crate::package_managers::parse_version_or_zero(&pkg.version),
+                        description: pkg.description,
+                        repo: "official".to_string(),
+                        download_size: 0,
+                        installed: false,
+                    });
+                } else {
+                    #[cfg(feature = "arch")]
+                    {
+                        aur_basic.push(crate::core::Package {
                             name: pkg.name,
                             version: crate::package_managers::parse_version_or_zero(&pkg.version),
                             description: pkg.description,
-                            repo: "official".to_string(),
-                            download_size: 0,
+                            source: crate::core::PackageSource::Aur,
                             installed: false,
                         });
-                    } else {
-                        #[cfg(feature = "arch")]
-                        {
-                            aur_basic.push(crate::core::Package {
-                                name: pkg.name,
-                                version: crate::package_managers::parse_version_or_zero(&pkg.version),
-                                description: pkg.description,
-                                source: crate::core::PackageSource::Aur,
-                                installed: false,
-                            });
-                        }
                     }
                 }
-                #[cfg(feature = "arch")]
-                if !aur_basic.is_empty() {
-                    aur_packages_basic = Some(aur_basic);
-                }
             }
+            #[cfg(feature = "arch")]
+            if !aur_basic.is_empty() {
+                aur_packages_basic = Some(aur_basic);
+            }
+        }
     }
 
     if use_debian_backend() {
@@ -324,11 +326,13 @@ pub fn search_sync_cli(query: &str, detailed: bool, interactive: bool) -> Result
 
     // 1. Try Daemon first (ULTRA FAST - <1ms)
     let daemon_res = if let Ok(mut client) = DaemonClient::connect_sync() {
-        client.call_sync(&Request::Search {
-            id: 0,
-            query: query.to_string(),
-            limit: Some(50),
-        }).ok()
+        client
+            .call_sync(&Request::Search {
+                id: 0,
+                query: query.to_string(),
+                limit: Some(50),
+            })
+            .ok()
     } else {
         None
     };
@@ -351,7 +355,8 @@ pub fn search_sync_cli(query: &str, detailed: bool, interactive: bool) -> Result
         )?;
 
         // Convert daemon packages to Package type for display
-        let packages: Vec<crate::core::Package> = res.packages
+        let packages: Vec<crate::core::Package> = res
+            .packages
             .into_iter()
             .map(|pkg| crate::core::Package {
                 name: pkg.name,
@@ -467,7 +472,8 @@ pub async fn search(query: &str, detailed: bool, interactive: bool) -> Result<()
             &results.official_packages,
             results.aur_packages_detailed.as_ref(),
             results.aur_packages_basic.as_ref(),
-        ).await;
+        )
+        .await;
 
         #[cfg(not(feature = "arch"))]
         return handle_interactive_selection(&results.official_packages).await;
@@ -483,7 +489,12 @@ pub async fn search(query: &str, detailed: bool, interactive: bool) -> Result<()
         );
 
         let mut stdout = std::io::stdout();
-        display_results("Official Repositories", &results.official_packages, 20, &mut stdout)?;
+        display_results(
+            "Official Repositories",
+            &results.official_packages,
+            20,
+            &mut stdout,
+        )?;
         println!();
     }
 
@@ -491,7 +502,11 @@ pub async fn search(query: &str, detailed: bool, interactive: bool) -> Result<()
     #[cfg(feature = "arch")]
     {
         let mut stdout = std::io::stdout();
-        display_aur_results(results.aur_packages_detailed.as_ref(), results.aur_packages_basic.as_ref(), &mut stdout)?;
+        display_aur_results(
+            results.aur_packages_detailed.as_ref(),
+            results.aur_packages_basic.as_ref(),
+            &mut stdout,
+        )?;
     }
 
     println!(
@@ -502,4 +517,3 @@ pub async fn search(query: &str, detailed: bool, interactive: bool) -> Result<()
 
     Ok(())
 }
-

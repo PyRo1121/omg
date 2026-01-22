@@ -1,5 +1,5 @@
 //! Pure Rust Debian/Ubuntu Database Parser - ULTRA FAST
-//! 
+//!
 //! Parses /var/lib/apt/lists/*_Packages and /var/lib/dpkg/status files directly
 //! and provides a high-performance index with zero-copy deserialization via rkyv.
 
@@ -12,12 +12,12 @@ use std::path::Path;
 use std::sync::LazyLock;
 
 use anyhow::{Context, Result};
-use parking_lot::RwLock;
 use memchr::memmem;
+use parking_lot::RwLock;
 use rayon::prelude::*;
 
-use crate::core::{Package, PackageSource};
 use crate::core::paths;
+use crate::core::{Package, PackageSource};
 
 /// Global cache for Debian package index
 static DEBIAN_INDEX_CACHE: LazyLock<RwLock<DebianIndexCache>> =
@@ -75,7 +75,9 @@ pub struct DebianPackageIndex {
 }
 
 impl DebianPackageIndex {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
     pub fn add_package(&mut self, pkg: DebianPackage) {
         let idx = self.packages.len();
         self.name_to_idx.insert(pkg.name.clone(), idx);
@@ -88,7 +90,9 @@ impl DebianPackageIndex {
 
 pub fn ensure_index_loaded() -> Result<()> {
     let lists_dir = Path::new("/var/lib/apt/lists");
-    if !lists_dir.exists() { return Ok(()); }
+    if !lists_dir.exists() {
+        return Ok(());
+    }
 
     let newest_mtime = get_newest_mtime(lists_dir);
     {
@@ -100,7 +104,7 @@ pub fn ensure_index_loaded() -> Result<()> {
 
     let mut index = None;
     let cache_path = paths::cache_dir().join("debian_index_v4.bin");
-    
+
     // SAFE: Read file into memory and use rkyv for zero-allocation access
     if cache_path.exists() {
         if let Ok(bytes) = fs::read(&cache_path) {
@@ -110,12 +114,14 @@ pub fn ensure_index_loaded() -> Result<()> {
         }
     }
 
-    if index.is_none() { index = Some(rebuild_index()?); }
+    if index.is_none() {
+        index = Some(rebuild_index()?);
+    }
 
     if let Some(idx) = index {
         let mut search_buffer = Vec::new();
         let mut package_offsets = Vec::with_capacity(idx.packages.len() + 1);
-        
+
         for pkg in &idx.packages {
             package_offsets.push(search_buffer.len());
             search_buffer.extend_from_slice(pkg.name.as_bytes());
@@ -125,7 +131,11 @@ pub fn ensure_index_loaded() -> Result<()> {
         }
         package_offsets.push(search_buffer.len());
 
-        let installed_set = list_installed_fast().unwrap_or_default().into_iter().map(|p| p.name).collect();
+        let installed_set = list_installed_fast()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|p| p.name)
+            .collect();
 
         let mut cache = DEBIAN_INDEX_CACHE.write();
         cache.index = Some(idx);
@@ -138,9 +148,15 @@ pub fn ensure_index_loaded() -> Result<()> {
 }
 
 fn get_newest_mtime(dir: &Path) -> std::time::SystemTime {
-    fs::read_dir(dir).ok().and_then(|entries| {
-        entries.flatten().filter_map(|e| e.metadata().ok()?.modified().ok()).max()
-    }).unwrap_or(std::time::SystemTime::UNIX_EPOCH)
+    fs::read_dir(dir)
+        .ok()
+        .and_then(|entries| {
+            entries
+                .flatten()
+                .filter_map(|e| e.metadata().ok()?.modified().ok())
+                .max()
+        })
+        .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
 }
 
 fn rebuild_index() -> Result<DebianPackageIndex> {
@@ -159,15 +175,22 @@ fn rebuild_index() -> Result<DebianPackageIndex> {
         }
     }
 
-    let all_packages: Vec<DebianPackage> = pkg_files.par_iter()
+    let all_packages: Vec<DebianPackage> = pkg_files
+        .par_iter()
         .map(|path| parse_packages_file_sync(path))
         .collect::<Result<Vec<Vec<DebianPackage>>>>()?
-        .into_iter().flatten().collect();
+        .into_iter()
+        .flatten()
+        .collect();
 
-    for pkg in all_packages { new_index.add_package(pkg); }
+    for pkg in all_packages {
+        new_index.add_package(pkg);
+    }
 
     let cache_path = paths::cache_dir().join("debian_index_v4.bin");
-    if let Some(p) = cache_path.parent() { let _ = fs::create_dir_all(p); }
+    if let Some(p) = cache_path.parent() {
+        let _ = fs::create_dir_all(p);
+    }
     let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&new_index)
         .map_err(|e| anyhow::anyhow!("Serialization error: {e}"))?;
     fs::write(&cache_path, bytes)?;
@@ -198,7 +221,9 @@ fn parse_packages_file_sync(path: &Path) -> Result<Vec<DebianPackage>> {
 
     let mut packages = Vec::new();
     for paragraph in content.split("\n\n") {
-        if paragraph.trim().is_empty() { continue; }
+        if paragraph.trim().is_empty() {
+            continue;
+        }
         if let Ok(pkg) = parse_paragraph_str(paragraph) {
             packages.push(pkg);
         }
@@ -242,7 +267,12 @@ fn parse_paragraph_str(paragraph: &str) -> Result<DebianPackage> {
                 "Installed-Size" => installed_size = value.parse().unwrap_or(0),
                 "Maintainer" => maintainer = value.to_string(),
                 "Architecture" => architecture = value.to_string(),
-                "Depends" => depends = value.split(',').map(|d| d.trim().split_whitespace().next().unwrap_or("").to_string()).collect(),
+                "Depends" => {
+                    depends = value
+                        .split(',')
+                        .map(|d| d.trim().split_whitespace().next().unwrap_or("").to_string())
+                        .collect()
+                }
                 "Filename" => filename = value.to_string(),
                 "Size" => size = value.parse().unwrap_or(0),
                 "SHA256" => sha256 = value.to_string(),
@@ -252,10 +282,23 @@ fn parse_paragraph_str(paragraph: &str) -> Result<DebianPackage> {
         }
     }
 
-    if name.is_empty() { anyhow::bail!("Invalid"); }
+    if name.is_empty() {
+        anyhow::bail!("Invalid");
+    }
     Ok(DebianPackage {
-        name, version, description, section, priority, installed_size,
-        maintainer, architecture, depends, filename, size, sha256, homepage
+        name,
+        version,
+        description,
+        section,
+        priority,
+        installed_size,
+        maintainer,
+        architecture,
+        depends,
+        filename,
+        size,
+        sha256,
+        homepage,
     })
 }
 
@@ -281,11 +324,15 @@ pub fn search_fast(query: &str) -> Result<Vec<Package>> {
     let index = guard.index.as_ref().context("Index not loaded")?;
 
     if query.is_empty() {
-        return Ok(index.packages.iter().map(|pkg| {
-            let mut p = pkg.to_package();
-            p.installed = guard.installed_set.contains(&p.name);
-            p
-        }).collect());
+        return Ok(index
+            .packages
+            .iter()
+            .map(|pkg| {
+                let mut p = pkg.to_package();
+                p.installed = guard.installed_set.contains(&p.name);
+                p
+            })
+            .collect());
     }
 
     let query_lower = query.to_lowercase();
@@ -305,7 +352,9 @@ pub fn search_fast(query: &str) -> Result<Vec<Package>> {
                 results.push(p);
             }
         }
-        if results.len() >= 100 { break; }
+        if results.len() >= 100 {
+            break;
+        }
     }
     Ok(results)
 }
@@ -327,7 +376,9 @@ pub fn get_info_fast(name: &str) -> Result<Option<Package>> {
         let mut p = pkg.to_package();
         p.installed = guard.installed_set.contains(name);
         Ok(Some(p))
-    } else { Ok(None) }
+    } else {
+        Ok(None)
+    }
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
@@ -350,9 +401,11 @@ pub fn list_installed_fast() -> Result<Vec<LocalPackage>> {
         }]);
     }
     let status_path = Path::new("/var/lib/dpkg/status");
-    if !status_path.exists() { return Ok(Vec::new()); }
+    if !status_path.exists() {
+        return Ok(Vec::new());
+    }
     let status_content = fs::read_to_string(status_path)?;
-    
+
     let mut auto_installed = HashSet::new();
     if let Ok(ext_content) = fs::read_to_string("/var/lib/apt/extended_states") {
         let mut current_pkg = String::new();
@@ -367,7 +420,9 @@ pub fn list_installed_fast() -> Result<Vec<LocalPackage>> {
 
     let mut packages = Vec::new();
     for paragraph in status_content.split("\n\n") {
-        if !paragraph.contains("Status: install ok installed") { continue; }
+        if !paragraph.contains("Status: install ok installed") {
+            continue;
+        }
         let mut name = String::new();
         let mut version = String::new();
         let mut description = String::new();
@@ -386,16 +441,26 @@ pub fn list_installed_fast() -> Result<Vec<LocalPackage>> {
         }
         if !name.is_empty() {
             let is_explicit = !auto_installed.contains(&name);
-            packages.push(LocalPackage { name, version, description, architecture: arch, is_explicit });
+            packages.push(LocalPackage {
+                name,
+                version,
+                description,
+                architecture: arch,
+                is_explicit,
+            });
         }
     }
     Ok(packages)
 }
 
 pub fn is_installed_fast(name: &str) -> bool {
-    if crate::core::paths::test_mode() { return name == "apt" || name == "git"; }
+    if crate::core::paths::test_mode() {
+        return name == "apt" || name == "git";
+    }
     let guard = DEBIAN_INDEX_CACHE.read();
-    if !guard.installed_set.is_empty() { return guard.installed_set.contains(name); }
+    if !guard.installed_set.is_empty() {
+        return guard.installed_set.contains(name);
+    }
     if let Ok(content) = fs::read_to_string("/var/lib/dpkg/status") {
         let pattern = format!("Package: {name}\n");
         if let Some(pos) = content.find(&pattern) {
@@ -412,11 +477,14 @@ pub fn list_explicit_fast() -> Result<Vec<String>> {
         return Ok(vec!["apt".to_string(), "git".to_string()]);
     }
     let installed = list_installed_fast()?;
-    Ok(installed.into_iter().filter(|p| p.is_explicit).map(|p| p.name).collect())
+    Ok(installed
+        .into_iter()
+        .filter(|p| p.is_explicit)
+        .map(|p| p.name)
+        .collect())
 }
 
 pub fn get_counts_fast() -> Result<(usize, usize, usize, usize)> {
-
     let installed = list_installed_fast()?;
 
     let total = installed.len();
@@ -424,10 +492,7 @@ pub fn get_counts_fast() -> Result<(usize, usize, usize, usize)> {
     let explicit = installed.iter().filter(|p| p.is_explicit).count();
 
     Ok((total, explicit, 0, 0))
-
 }
-
-
 
 #[cfg(test)]
 
@@ -435,12 +500,9 @@ mod tests {
 
     use super::*;
 
-
-
     #[test]
 
     fn test_parse_paragraph_basic() {
-
         let para = "Package: vim\nVersion: 2:9.1.0-1\nDescription: Vi IMproved - enhanced vi editor\nSection: editors\nPriority: optional\nInstalled-Size: 3500\n";
 
         let pkg = parse_paragraph_str(para).unwrap();
@@ -452,15 +514,11 @@ mod tests {
         assert_eq!(pkg.description, "Vi IMproved - enhanced vi editor");
 
         assert_eq!(pkg.installed_size, 3500);
-
     }
-
-
 
     #[test]
 
     fn test_parse_paragraph_multiline_desc() {
-
         let para = "Package: curl\nVersion: 8.5.0-1\nDescription: command line tool for transferring data\n curl is a tool to transfer data from or to a server\n using one of the supported protocols.\nSection: net\n";
 
         let pkg = parse_paragraph_str(para).unwrap();
@@ -470,27 +528,19 @@ mod tests {
         assert!(pkg.description.contains("curl is a tool"));
 
         assert!(pkg.description.contains("supported protocols."));
-
     }
-
-
 
     #[test]
 
     fn test_parse_paragraph_invalid() {
-
         let para = "Version: 1.0\n"; // Missing name
 
         assert!(parse_paragraph_str(para).is_err());
-
     }
-
-
 
     #[test]
 
     fn test_parse_paragraph_with_depends() {
-
         let para = "Package: bash\nDepends: libc6 (>= 2.38), libreadline8 (>= 8.1)\n";
 
         let pkg = parse_paragraph_str(para).unwrap();
@@ -502,7 +552,5 @@ mod tests {
         assert_eq!(pkg.depends[0], "libc6");
 
         assert_eq!(pkg.depends[1], "libreadline8");
-
     }
-
 }

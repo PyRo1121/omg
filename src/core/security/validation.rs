@@ -2,7 +2,7 @@
 //!
 //! Prevents command injection, path traversal, and other input-based attacks.
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 
 /// Validates a package name for security
 ///
@@ -66,9 +66,7 @@ pub fn validate_package_names(names: &[String]) -> Result<()> {
 /// Use this when you need to accept user input but ensure it's safe
 #[must_use]
 pub fn sanitize_package_name(name: &str) -> String {
-    name.chars()
-        .filter(|&c| is_safe_package_char(c))
-        .collect()
+    name.chars().filter(|&c| is_safe_package_char(c)).collect()
 }
 
 /// Checks if a character is safe for package names
@@ -179,7 +177,10 @@ mod tests {
     fn test_sanitize_package_name() {
         assert_eq!(sanitize_package_name("foo;bar"), "foobar");
         assert_eq!(sanitize_package_name("foo&&bar"), "foobar");
-        assert_eq!(sanitize_package_name("foo-bar_baz.1+2@org/cli"), "foo-bar_baz.1+2@org/cli");
+        assert_eq!(
+            sanitize_package_name("foo-bar_baz.1+2@org/cli"),
+            "foo-bar_baz.1+2@org/cli"
+        );
     }
 
     #[test]

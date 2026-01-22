@@ -77,9 +77,10 @@ impl RubyManager {
 
         for release in &releases {
             if let Some(caps) = re.captures(&release.tag_name)
-                && let Some(version) = caps.get(1) {
-                    versions.insert(version.as_str().to_string());
-                }
+                && let Some(version) = caps.get(1)
+            {
+                versions.insert(version.as_str().to_string());
+            }
         }
 
         // If no version tags found, return common stable versions
@@ -181,9 +182,10 @@ impl RubyManager {
         }
 
         if let Some(current) = self.current_version()
-            && current == version {
-                let _ = fs::remove_file(&self.current_link);
-            }
+            && current == version
+        {
+            let _ = fs::remove_file(&self.current_link);
+        }
 
         fs::remove_dir_all(&version_dir)?;
         println!("{} Ruby {} uninstalled", "✓".green(), version);

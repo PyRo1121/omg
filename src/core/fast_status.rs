@@ -117,10 +117,10 @@ mod tests {
     fn test_fast_status_roundtrip() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("status.bin");
-        
+
         let status = FastStatus::new(1000, 200, 10, 5);
         status.write_to_file(&path).unwrap();
-        
+
         let read = FastStatus::read_from_file(&path).unwrap();
         assert_eq!(read.total_packages, 1000);
         assert_eq!(read.explicit_packages, 200);
@@ -134,11 +134,11 @@ mod tests {
     fn test_fast_status_invalid_magic() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("invalid.bin");
-        
+
         let mut status = FastStatus::new(100, 50, 0, 0);
         status.magic = 0xDEADBEEF;
         status.write_to_file(&path).unwrap();
-        
+
         assert!(FastStatus::read_from_file(&path).is_none());
     }
 
@@ -146,11 +146,11 @@ mod tests {
     fn test_fast_status_stale() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("stale.bin");
-        
+
         let mut status = FastStatus::new(100, 50, 0, 0);
         status.timestamp = 0; // Way in the past
         status.write_to_file(&path).unwrap();
-        
+
         assert!(FastStatus::read_from_file(&path).is_none());
     }
 }

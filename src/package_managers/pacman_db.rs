@@ -74,9 +74,11 @@ fn collect_sync_db_paths(sync_dir: &Path) -> Vec<(PathBuf, String)> {
                 .and_then(|n| n.to_str())
                 .map(str::to_string);
             if let Some(name) = name
-                && !["core", "extra", "multilib"].contains(&name.as_str()) && path.is_file() {
-                    dbs.push((path, name));
-                }
+                && !["core", "extra", "multilib"].contains(&name.as_str())
+                && path.is_file()
+            {
+                dbs.push((path, name));
+            }
         }
     }
 
@@ -446,7 +448,6 @@ fn parse_local_desc_manual(content: &str) -> Result<LocalDbPackage> {
 }
 
 pub fn get_detailed_packages() -> Result<Vec<SyncDbPackage>> {
-
     let sync_dir = paths::pacman_sync_dir();
 
     ensure_sync_cache_loaded(&sync_dir)?;
@@ -454,10 +455,7 @@ pub fn get_detailed_packages() -> Result<Vec<SyncDbPackage>> {
     let cache = SYNC_DB_CACHE.read();
 
     Ok(cache.packages.values().cloned().collect())
-
 }
-
-
 
 /// ULTRA FAST update check
 ///
@@ -481,16 +479,17 @@ pub fn check_updates_cached() -> Result<Vec<(String, Version, Version, String, S
 
     for (name, local_pkg) in &local_cache.packages {
         if let Some(sync_pkg) = sync_cache.packages.get(name)
-            && local_pkg.version < sync_pkg.version {
-                updates.push((
-                    name.clone(),
-                    local_pkg.version.clone(),
-                    sync_pkg.version.clone(),
-                    sync_pkg.repo.clone(),
-                    sync_pkg.filename.clone(),
-                    sync_pkg.csize,
-                ));
-            }
+            && local_pkg.version < sync_pkg.version
+        {
+            updates.push((
+                name.clone(),
+                local_pkg.version.clone(),
+                sync_pkg.version.clone(),
+                sync_pkg.repo.clone(),
+                sync_pkg.filename.clone(),
+                sync_pkg.csize,
+            ));
+        }
     }
 
     Ok(updates)
@@ -536,11 +535,12 @@ fn ensure_sync_cache_loaded(sync_dir: &Path) -> Result<()> {
 
     // Try to load from disk cache first (FAST < 5ms)
     if let Ok(disk_cache) = load_cache_from_disk::<DbCache>("sync_db")
-        && disk_cache.last_modified == Some(current_mtime) {
-            let mut cache = SYNC_DB_CACHE.write();
-            *cache = disk_cache;
-            return Ok(());
-        }
+        && disk_cache.last_modified == Some(current_mtime)
+    {
+        let mut cache = SYNC_DB_CACHE.write();
+        *cache = disk_cache;
+        return Ok(());
+    }
 
     // Cache miss or stale - need to reload/parse
     let packages = load_sync_packages(sync_dir)?;
@@ -569,11 +569,12 @@ fn ensure_local_cache_loaded(local_dir: &Path) -> Result<()> {
 
     // Try to load from disk cache first
     if let Ok(disk_cache) = load_cache_from_disk::<LocalDbCache>("local_db")
-        && disk_cache.last_modified == Some(current_mtime) {
-            let mut cache = LOCAL_DB_CACHE.write();
-            *cache = disk_cache;
-            return Ok(());
-        }
+        && disk_cache.last_modified == Some(current_mtime)
+    {
+        let mut cache = LOCAL_DB_CACHE.write();
+        *cache = disk_cache;
+        return Ok(());
+    }
 
     // Cache miss - reload
     let packages = parse_local_db(local_dir)?;
@@ -597,9 +598,10 @@ fn get_newest_db_mtime(sync_dir: &Path) -> SystemTime {
         for entry in entries.flatten() {
             if let Ok(meta) = entry.metadata()
                 && let Ok(mtime) = meta.modified()
-                    && mtime > newest {
-                        newest = mtime;
-                    }
+                && mtime > newest
+            {
+                newest = mtime;
+            }
         }
     }
 

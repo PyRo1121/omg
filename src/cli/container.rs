@@ -92,9 +92,11 @@ pub fn run(
         anyhow::bail!("Invalid image name");
     }
     if let Some(ref n) = name
-        && n.chars().any(|c| !c.is_ascii_alphanumeric() && c != '-' && c != '_') {
-            anyhow::bail!("Invalid container name");
-        }
+        && n.chars()
+            .any(|c| !c.is_ascii_alphanumeric() && c != '-' && c != '_')
+    {
+        anyhow::bail!("Invalid container name");
+    }
 
     let manager = ContainerManager::new()?;
 

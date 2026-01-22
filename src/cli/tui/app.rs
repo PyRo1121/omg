@@ -87,15 +87,16 @@ impl App {
             && let Ok(crate::daemon::protocol::ResponseResult::Status(status)) = client
                 .call(crate::daemon::protocol::Request::Status { id: 0 })
                 .await
-            {
-                self.status = Some(status);
-            }
+        {
+            self.status = Some(status);
+        }
 
         // 2. Fetch history
         if let Ok(history_mgr) = crate::core::history::HistoryManager::new()
-            && let Ok(entries) = history_mgr.load() {
-                self.history = entries.into_iter().rev().take(50).collect();
-            }
+            && let Ok(entries) = history_mgr.load()
+        {
+            self.history = entries.into_iter().rev().take(50).collect();
+        }
 
         // 3. Update system metrics
         self.update_system_metrics();
@@ -111,39 +112,47 @@ impl App {
         if let Ok(cwd) = std::env::current_dir() {
             let workspace = crate::core::env::team::TeamWorkspace::new(&cwd);
             if workspace.is_team_workspace()
-                && let Ok(status) = workspace.load_status() {
-                    self.team_status = Some(status);
-                }
+                && let Ok(status) = workspace.load_status()
+            {
+                self.team_status = Some(status);
+            }
         }
 
         // 2. If we have a Team+ license, try to fetch real-time member data from the API
         if let Some(license) = crate::core::license::load_license() {
             let tier = license.tier_enum();
-            if matches!(tier, crate::core::license::Tier::Team | crate::core::license::Tier::Enterprise)
-                && let Ok(members) = crate::core::license::fetch_team_members().await {
-                    // If we don't have a local team workspace, create a synthetic one from API data
-                    if self.team_status.is_none() {
-                        self.team_status = Some(crate::core::env::team::TeamStatus {
-                            config: crate::core::env::team::TeamConfig {
-                                team_id: "fleet".to_string(),
-                                name: format!("{} Fleet", license.customer.as_deref().unwrap_or("Your")),
-                                ..Default::default()
-                            },
-                            lock_hash: String::new(),
-                            members: members.into_iter().map(|m| {
-                                crate::core::env::team::TeamMember {
-                                    id: m.machine_id,
-                                    name: m.hostname.unwrap_or_else(|| "Unknown".to_string()),
-                                    env_hash: String::new(),
-                                    last_sync: parse_timestamp(&m.last_seen_at),
-                                    in_sync: m.is_active,
-                                    drift_summary: None,
-                                }
-                            }).collect(),
-                            updated_at: jiff::Timestamp::now().as_second(),
-                        });
-                    }
+            if matches!(
+                tier,
+                crate::core::license::Tier::Team | crate::core::license::Tier::Enterprise
+            ) && let Ok(members) = crate::core::license::fetch_team_members().await
+            {
+                // If we don't have a local team workspace, create a synthetic one from API data
+                if self.team_status.is_none() {
+                    self.team_status = Some(crate::core::env::team::TeamStatus {
+                        config: crate::core::env::team::TeamConfig {
+                            team_id: "fleet".to_string(),
+                            name: format!(
+                                "{} Fleet",
+                                license.customer.as_deref().unwrap_or("Your")
+                            ),
+                            ..Default::default()
+                        },
+                        lock_hash: String::new(),
+                        members: members
+                            .into_iter()
+                            .map(|m| crate::core::env::team::TeamMember {
+                                id: m.machine_id,
+                                name: m.hostname.unwrap_or_else(|| "Unknown".to_string()),
+                                env_hash: String::new(),
+                                last_sync: parse_timestamp(&m.last_seen_at),
+                                in_sync: m.is_active,
+                                drift_summary: None,
+                            })
+                            .collect(),
+                        updated_at: jiff::Timestamp::now().as_second(),
+                    });
                 }
+            }
         }
     }
 
@@ -176,20 +185,21 @@ impl App {
     fn get_cpu_usage() -> f32 {
         // Read /proc/stat for CPU usage
         if let Ok(stat) = std::fs::read_to_string("/proc/stat")
-            && let Some(line) = stat.lines().next() {
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                if parts.len() > 4 && parts.first() == Some(&"cpu") {
-                    let user: u64 = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
-                    let nice: u64 = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
-                    let system: u64 = parts.get(3).and_then(|s| s.parse().ok()).unwrap_or(0);
-                    let idle: u64 = parts.get(4).and_then(|s| s.parse().ok()).unwrap_or(0);
+            && let Some(line) = stat.lines().next()
+        {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() > 4 && parts.first() == Some(&"cpu") {
+                let user: u64 = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+                let nice: u64 = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
+                let system: u64 = parts.get(3).and_then(|s| s.parse().ok()).unwrap_or(0);
+                let idle: u64 = parts.get(4).and_then(|s| s.parse().ok()).unwrap_or(0);
 
-                    let total = user + nice + system + idle;
-                    if total > 0 {
-                        return ((total - idle) as f32 / total as f32) * 100.0;
-                    }
+                let total = user + nice + system + idle;
+                if total > 0 {
+                    return ((total - idle) as f32 / total as f32) * 100.0;
                 }
             }
+        }
         0.0
     }
 
@@ -205,9 +215,10 @@ impl App {
                         total = kb.parse().unwrap_or(0);
                     }
                 } else if line.starts_with("MemAvailable:")
-                    && let Some(kb) = line.split_whitespace().nth(1) {
-                        available = kb.parse().unwrap_or(0);
-                    }
+                    && let Some(kb) = line.split_whitespace().nth(1)
+                {
+                    available = kb.parse().unwrap_or(0);
+                }
             }
 
             if total > 0 {
@@ -241,10 +252,11 @@ impl App {
                 if parts.len() > 9
                     && parts.first().is_some_and(|s| !s.starts_with("lo"))
                     && let (Some(rx_str), Some(tx_str)) = (parts.get(1), parts.get(9))
-                        && let (Ok(rx), Ok(tx)) = (rx_str.parse::<u64>(), tx_str.parse::<u64>()) {
-                            total_rx += rx;
-                            total_tx += tx;
-                        }
+                    && let (Ok(rx), Ok(tx)) = (rx_str.parse::<u64>(), tx_str.parse::<u64>())
+                {
+                    total_rx += rx;
+                    total_tx += tx;
+                }
             }
 
             return (total_rx, total_tx);
@@ -267,21 +279,21 @@ impl App {
                     limit: Some(50),
                 })
                 .await
-            {
-                self.search_results = res
-                    .packages
-                    .into_iter()
-                    .map(|p| crate::package_managers::SyncPackage {
-                        name: p.name,
-                        version: crate::package_managers::parse_version_or_zero(&p.version),
-                        description: p.description,
-                        repo: "official".to_string(),
-                        download_size: 0,
-                        installed: false,
-                    })
-                    .collect();
-                return Ok(());
-            }
+        {
+            self.search_results = res
+                .packages
+                .into_iter()
+                .map(|p| crate::package_managers::SyncPackage {
+                    name: p.name,
+                    version: crate::package_managers::parse_version_or_zero(&p.version),
+                    description: p.description,
+                    repo: "official".to_string(),
+                    download_size: 0,
+                    installed: false,
+                })
+                .collect();
+            return Ok(());
+        }
 
         // Fallback to direct search if daemon is not available
         #[cfg(feature = "arch")]

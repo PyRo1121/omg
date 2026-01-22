@@ -1,7 +1,7 @@
 //! Install functionality for packages
 
 use anyhow::Result;
-use dialoguer::{theme::ColorfulTheme, Select};
+use dialoguer::{Select, theme::ColorfulTheme};
 use std::sync::Arc;
 
 use crate::cli::style;
@@ -84,8 +84,9 @@ pub async fn install(packages: &[String], yes: bool) -> Result<()> {
 /// Try to get fuzzy suggestions from the daemon
 async fn try_get_suggestions(query: &str) -> Vec<String> {
     if let Ok(mut client) = DaemonClient::connect().await
-        && let Ok(suggestions) = client.suggest(query, Some(5)).await {
-            return suggestions;
-        }
+        && let Ok(suggestions) = client.suggest(query, Some(5)).await
+    {
+        return suggestions;
+    }
     Vec::new()
 }

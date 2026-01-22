@@ -1,6 +1,6 @@
 use anyhow::Result as AnyhowResult;
-use futures::future::BoxFuture;
 use futures::FutureExt;
+use futures::future::BoxFuture;
 use owo_colors::OwoColorize;
 
 use crate::core::{Package, PackageSource, is_root};
@@ -156,10 +156,7 @@ impl PackageManager for OfficialPackageManager {
     }
 
     fn sync(&self) -> BoxFuture<'static, AnyhowResult<()>> {
-        async move {
-            OfficialPackageManager::new().sync_databases().await
-        }
-        .boxed()
+        async move { OfficialPackageManager::new().sync_databases().await }.boxed()
     }
 
     fn info(&self, package: &str) -> BoxFuture<'static, AnyhowResult<Option<Package>>> {
@@ -205,7 +202,10 @@ impl PackageManager for OfficialPackageManager {
         .boxed()
     }
 
-    fn get_status(&self, _fast: bool) -> BoxFuture<'static, AnyhowResult<(usize, usize, usize, usize)>> {
+    fn get_status(
+        &self,
+        _fast: bool,
+    ) -> BoxFuture<'static, AnyhowResult<(usize, usize, usize, usize)>> {
         async move { get_system_status().map_err(anyhow::Error::from) }.boxed()
     }
 
@@ -217,20 +217,22 @@ impl PackageManager for OfficialPackageManager {
         .boxed()
     }
 
-    fn list_updates(&self) -> BoxFuture<'static, AnyhowResult<Vec<crate::package_managers::types::UpdateInfo>>> {
+    fn list_updates(
+        &self,
+    ) -> BoxFuture<'static, AnyhowResult<Vec<crate::package_managers::types::UpdateInfo>>> {
         async move {
             tokio::task::spawn_blocking(move || {
                 let updates = crate::package_managers::get_update_list()?;
                 Ok(updates
                     .into_iter()
-                    .map(|(name, old, new)| {
-                        crate::package_managers::types::UpdateInfo {
+                    .map(
+                        |(name, old, new)| crate::package_managers::types::UpdateInfo {
                             name,
                             old_version: old.to_string(),
                             new_version: new.to_string(),
                             repo: "official".to_string(),
-                        }
-                    })
+                        },
+                    )
                     .collect())
             })
             .await?
@@ -274,7 +276,5 @@ pub async fn list_explicit() -> AnyhowResult<Vec<String>> {
 }
 
 pub async fn is_installed(package: &str) -> bool {
-
     crate::package_managers::is_installed_fast(package).unwrap_or(false)
-
 }

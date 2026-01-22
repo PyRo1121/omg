@@ -1080,7 +1080,10 @@ fn draw_team(f: &mut Frame, area: Rect, app: &App) {
             ]),
             Line::from(vec![
                 Span::styled("  ID: ", Style::default().fg(colors::FG_MUTED)),
-                Span::styled(&status.config.team_id, Style::default().fg(colors::FG_PRIMARY)),
+                Span::styled(
+                    &status.config.team_id,
+                    Style::default().fg(colors::FG_PRIMARY),
+                ),
             ]),
             Line::from(""),
             Line::from(vec![
@@ -1142,7 +1145,9 @@ fn draw_team(f: &mut Frame, area: Rect, app: &App) {
                     )),
                     Cell::from(Span::styled(
                         &member.name,
-                        Style::default().fg(colors::FG_PRIMARY).add_modifier(Modifier::BOLD),
+                        Style::default()
+                            .fg(colors::FG_PRIMARY)
+                            .add_modifier(Modifier::BOLD),
                     )),
                     Cell::from(Span::styled(
                         &member.id,
@@ -1252,7 +1257,12 @@ fn draw_status_bar(f: &mut Frame, area: Rect, app: &App) {
         ],
         Tab::Security => vec![("q", "Quit"), ("a", "Audit"), ("f", "Fix"), ("p", "Policy")],
         Tab::Activity => vec![("q", "Quit"), ("r", "Refresh"), ("c", "Clear")],
-        Tab::Team => vec![("q", "Quit"), ("r", "Refresh"), ("p", "Pull"), ("P", "Push")],
+        Tab::Team => vec![
+            ("q", "Quit"),
+            ("r", "Refresh"),
+            ("p", "Pull"),
+            ("P", "Push"),
+        ],
     };
 
     let mut spans = vec![Span::styled(" ", Style::default())];

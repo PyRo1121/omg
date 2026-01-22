@@ -48,14 +48,7 @@ pub fn elevate_if_needed(args: &[String]) -> std::io::Result<()> {
 /// Request elevation for a specific operation, checking against a whitelist
 pub fn elevate_for_operation(operation: &str, args: &[String]) -> std::io::Result<()> {
     // Security: Only allow elevation for known safe operations
-    const ALLOWED_ROOT_OPS: &[&str] = &[
-        "install",
-        "remove",
-        "upgrade",
-        "update",
-        "sync",
-        "clean",
-    ];
+    const ALLOWED_ROOT_OPS: &[&str] = &["install", "remove", "upgrade", "update", "sync", "clean"];
 
     if !ALLOWED_ROOT_OPS.contains(&operation) {
         return Err(std::io::Error::new(
@@ -92,7 +85,8 @@ where
     if !is_root() {
         let args: Vec<String> = std::env::args().collect();
         // Re-exec with sudo - this replaces the process
-        elevate_if_needed(&args).map_err(|e| anyhow::anyhow!("Failed to elevate privileges: {e}"))?;
+        elevate_if_needed(&args)
+            .map_err(|e| anyhow::anyhow!("Failed to elevate privileges: {e}"))?;
         // This line is never reached
         unreachable!()
     }

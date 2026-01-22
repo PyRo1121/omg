@@ -1,12 +1,12 @@
 //! Request handlers for the daemon
 
-use std::sync::Arc;
 use std::num::NonZeroU32;
+use std::sync::Arc;
 
 use anyhow::Context;
-use governor::{Quota, RateLimiter};
 use governor::clock::DefaultClock;
 use governor::state::{InMemoryState, NotKeyed};
+use governor::{Quota, RateLimiter};
 
 use super::cache::PackageCache;
 use super::index::PackageIndex;
@@ -14,13 +14,13 @@ use super::protocol::{
     DetailedPackageInfo, ExplicitResult, Request, RequestId, Response, ResponseResult,
     SearchResult, SecurityAuditResult, StatusResult, Vulnerability, error_codes,
 };
+use crate::core::metrics::GLOBAL_METRICS;
+use crate::core::security::{AuditEventType, AuditSeverity, audit_log};
 #[cfg(feature = "arch")]
 use crate::package_managers::AurClient;
 use crate::package_managers::{PackageManager, get_package_manager};
 #[cfg(feature = "arch")]
 use crate::package_managers::{alpm_worker::AlpmWorker, search_detailed};
-use crate::core::security::{audit_log, AuditEventType, AuditSeverity};
-use crate::core::metrics::GLOBAL_METRICS;
 use parking_lot::RwLock;
 
 /// Daemon state shared across handlers
@@ -48,10 +48,12 @@ impl DaemonState {
             .context("Failed to initialize persistent cache (redb)")?;
 
         // Use cached index loading for instant startup
-        let index = PackageIndex::new_with_cache(&persistent).or_else(|e| {
-            tracing::warn!("Failed to load cached index: {e}, building fresh");
-            PackageIndex::new()
-        }).context("Failed to build package index")?;
+        let index = PackageIndex::new_with_cache(&persistent)
+            .or_else(|e| {
+                tracing::warn!("Failed to load cached index: {e}, building fresh");
+                PackageIndex::new()
+            })
+            .context("Failed to build package index")?;
 
         let cache = PackageCache::default();
 
@@ -62,7 +64,8 @@ impl DaemonState {
         }
 
         // Rate limit: 100 requests per second with burst of 200
-        let quota = Quota::per_second(NonZeroU32::new(100).unwrap()).allow_burst(NonZeroU32::new(200).unwrap());
+        let quota = Quota::per_second(NonZeroU32::new(100).unwrap())
+            .allow_burst(NonZeroU32::new(200).unwrap());
         let rate_limiter = Arc::new(RateLimiter::direct(quota));
 
         Ok(Self {
@@ -199,9 +202,8 @@ async fn handle_suggest(
     let state_clone = Arc::clone(&state);
 
     // Run fuzzy search in blocking thread
-    let suggestions = tokio::task::spawn_blocking(move || {
-        state_clone.index.suggest(&query, limit)
-    }).await;
+    let suggestions =
+        tokio::task::spawn_blocking(move || state_clone.index.suggest(&query, limit)).await;
 
     match suggestions {
         Ok(results) => Response::Success {
@@ -301,9 +303,8 @@ async fn handle_search(
     let state_clone = Arc::clone(&state);
     let query_clone = query.clone();
 
-    let official = tokio::task::spawn_blocking(move || {
-        state_clone.index.search(&query_clone, limit)
-    }).await;
+    let official =
+        tokio::task::spawn_blocking(move || state_clone.index.search(&query_clone, limit)).await;
 
     let official = match official {
         Ok(res) => res,
@@ -400,26 +401,27 @@ async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) ->
     #[cfg(feature = "arch")]
     if state.package_manager.name() == "pacman"
         && let Ok(details) = search_detailed(&package).await
-            && let Some(pkg) = details.into_iter().find(|p| p.name == package) {
-                let detailed = DetailedPackageInfo {
-                    name: pkg.name,
-                    version: pkg.version.clone(),
-                    description: pkg.description.unwrap_or_default(),
-                    url: pkg.url.unwrap_or_default(),
-                    size: 0,
-                    download_size: 0,
-                    repo: "aur".to_string(),
-                    depends: pkg.depends.unwrap_or_default(),
-                    licenses: pkg.license.unwrap_or_default(),
-                    source: "aur".to_string(),
-                };
+        && let Some(pkg) = details.into_iter().find(|p| p.name == package)
+    {
+        let detailed = DetailedPackageInfo {
+            name: pkg.name,
+            version: pkg.version.clone(),
+            description: pkg.description.unwrap_or_default(),
+            url: pkg.url.unwrap_or_default(),
+            size: 0,
+            download_size: 0,
+            repo: "aur".to_string(),
+            depends: pkg.depends.unwrap_or_default(),
+            licenses: pkg.license.unwrap_or_default(),
+            source: "aur".to_string(),
+        };
 
-                state.cache.insert_info(detailed.clone());
-                return Response::Success {
-                    id,
-                    result: ResponseResult::Info(detailed),
-                };
-            }
+        state.cache.insert_info(detailed.clone());
+        return Response::Success {
+            id,
+            result: ResponseResult::Info(detailed),
+        };
+    }
 
     state.cache.insert_info_miss(&package);
 
@@ -443,9 +445,8 @@ async fn handle_status(state: Arc<DaemonState>, id: RequestId) -> Response {
     // 2. Check persistent cache (disk - slower)
     // Runs in blocking thread to avoid stalling async runtime
     let state_clone = Arc::clone(&state);
-    let cached_result = tokio::task::spawn_blocking(move || {
-        state_clone.persistent.get_status()
-    }).await;
+    let cached_result =
+        tokio::task::spawn_blocking(move || state_clone.persistent.get_status()).await;
 
     if let Ok(Ok(Some(cached))) = cached_result {
         // Promote to memory cache for next hit
@@ -482,7 +483,8 @@ async fn handle_status(state: Arc<DaemonState>, id: RequestId) -> Response {
         } else {
             Err(anyhow::anyhow!("Unsupported package manager: {pm_name}"))
         }
-    }).await;
+    })
+    .await;
 
     match status_result {
         Ok(Ok((total, explicit, orphans, updates))) => {
@@ -569,9 +571,10 @@ async fn handle_security_audit(state: Arc<DaemonState>, id: RequestId) -> Respon
             .map(|v| {
                 if let Some(score_str) = &v.score
                     && let Ok(score) = score_str.parse::<f32>()
-                        && score >= 7.0 {
-                            high_severity += 1;
-                        }
+                    && score >= 7.0
+                {
+                    high_severity += 1;
+                }
                 Vulnerability {
                     id: v.id,
                     summary: v.summary,
@@ -593,7 +596,9 @@ async fn handle_security_audit(state: Arc<DaemonState>, id: RequestId) -> Respon
         AuditEventType::SecurityAudit,
         AuditSeverity::Info,
         "daemon_handler",
-        &format!("Security audit completed: {total_vulns} vulnerabilities found ({high_severity} high severity)"),
+        &format!(
+            "Security audit completed: {total_vulns} vulnerabilities found ({high_severity} high severity)"
+        ),
     );
 
     Response::Success {
@@ -635,7 +640,8 @@ async fn handle_list_explicit(state: Arc<DaemonState>, id: RequestId) -> Respons
         } else {
             Err(anyhow::anyhow!("Unsupported package manager: {pm_name}"))
         }
-    }).await;
+    })
+    .await;
 
     match packages_result {
         Ok(Ok(packages)) => {
@@ -691,7 +697,8 @@ async fn handle_explicit_count(state: Arc<DaemonState>, id: RequestId) -> Respon
         } else {
             Err(anyhow::anyhow!("Unsupported package manager: {pm_name}"))
         }
-    }).await;
+    })
+    .await;
 
     match count_result {
         Ok(Ok(count)) => {

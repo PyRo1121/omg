@@ -37,7 +37,11 @@ fn main() {
     if (cmd == "i" || cmd == "info") && args.len() >= 3 {
         let package = &args[2];
         // SECURITY: Basic validation for minimal binary
-        if package.len() > 100 || package.chars().any(|c| !c.is_ascii_alphanumeric() && !matches!(c, '-' | '_' | '.' | '+' | '@' | '/')) {
+        if package.len() > 100
+            || package.chars().any(|c| {
+                !c.is_ascii_alphanumeric() && !matches!(c, '-' | '_' | '.' | '+' | '@' | '/')
+            })
+        {
             eprintln!("Invalid package name");
             std::process::exit(1);
         }

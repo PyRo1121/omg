@@ -9,13 +9,17 @@ use crate::core::license;
 /// Initialize a new team workspace
 pub fn init(team_id: &str, name: Option<&str>) -> Result<()> {
     // SECURITY: Validate team_id
-    if team_id.chars().any(|c| !c.is_ascii_alphanumeric() && c != '/' && c != '-' && c != '_') {
+    if team_id
+        .chars()
+        .any(|c| !c.is_ascii_alphanumeric() && c != '/' && c != '-' && c != '_')
+    {
         anyhow::bail!("Invalid team ID: {team_id}");
     }
     if let Some(n) = name
-        && (n.len() > 128 || n.chars().any(char::is_control)) {
-            anyhow::bail!("Invalid team name");
-        }
+        && (n.len() > 128 || n.chars().any(char::is_control))
+    {
+        anyhow::bail!("Invalid team name");
+    }
 
     // Require Team tier for team sync features
     license::require_feature("team-sync")?;
@@ -153,7 +157,7 @@ pub async fn members() -> Result<()> {
     println!("{} Team Members\n", "OMG".cyan().bold());
 
     let members = license::fetch_team_members().await?;
-    
+
     if members.is_empty() {
         println!("  {} No team members found", "○".dimmed());
         println!("  Team members appear here once they activate with your license key.");
@@ -166,7 +170,7 @@ pub async fn members() -> Result<()> {
     for member in &members {
         let last_seen_ts = parse_timestamp(&member.last_seen_at);
         let in_sync = now - last_seen_ts < one_hour;
-        
+
         let sync_icon = if in_sync {
             "✓".green().to_string()
         } else {
@@ -183,16 +187,20 @@ pub async fn members() -> Result<()> {
             format!("({})", &member.machine_id[..8.min(member.machine_id.len())]).dimmed()
         );
         println!("      Last active: {}", last_sync.dimmed());
-        println!("      Platform:    {} {}", 
+        println!(
+            "      Platform:    {} {}",
             member.os.as_deref().unwrap_or("unknown"),
             member.arch.as_deref().unwrap_or("")
         );
     }
 
-    let in_sync_count = members.iter().filter(|m| {
-        let ts = parse_timestamp(&m.last_seen_at);
-        now - ts < one_hour
-    }).count();
+    let in_sync_count = members
+        .iter()
+        .filter(|m| {
+            let ts = parse_timestamp(&m.last_seen_at);
+            now - ts < one_hour
+        })
+        .count();
 
     println!();
     println!(
@@ -316,9 +324,10 @@ pub fn invite(email: Option<&str>, role: &str) -> Result<()> {
         anyhow::bail!("Invalid role: {role}");
     }
     if let Some(e) = email
-        && (!e.contains('@') || e.len() > 255) {
-            anyhow::bail!("Invalid email address");
-        }
+        && (!e.contains('@') || e.len() > 255)
+    {
+        anyhow::bail!("Invalid email address");
+    }
 
     license::require_feature("team-sync")?;
 
@@ -435,12 +444,16 @@ pub async fn review(proposal_id: u32, approve: bool) -> Result<()> {
     license::require_feature("team-sync")?;
 
     let status = if approve { "approved" } else { "rejected" };
-    
+
     println!(
         "{} Reviewing proposal #{} -> {}...\n",
         "OMG".cyan().bold(),
         proposal_id,
-        if approve { "APPROVE".green().to_string() } else { "REJECT".red().to_string() }
+        if approve {
+            "APPROVE".green().to_string()
+        } else {
+            "REJECT".red().to_string()
+        }
     );
 
     license::review_proposal(proposal_id, status).await?;
@@ -512,8 +525,12 @@ pub mod golden_path {
         if name.chars().any(|c| !c.is_ascii_alphanumeric() && c != '-') {
             anyhow::bail!("Invalid template name (alphanumeric and hyphens only)");
         }
-        if let Some(v) = node { crate::core::security::validate_version(v)?; }
-        if let Some(v) = python { crate::core::security::validate_version(v)?; }
+        if let Some(v) = node {
+            crate::core::security::validate_version(v)?;
+        }
+        if let Some(v) = python {
+            crate::core::security::validate_version(v)?;
+        }
         if let Some(p) = packages {
             for pkg in p.split(',') {
                 crate::core::security::validate_package_name(pkg.trim())?;
@@ -614,7 +631,7 @@ pub async fn activity(days: u32) -> Result<()> {
     );
 
     let logs = license::fetch_audit_logs().await?;
-    
+
     if logs.is_empty() {
         println!("  {} No recent activity found", "○".dimmed());
         return Ok(());

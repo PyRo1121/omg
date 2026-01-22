@@ -46,7 +46,11 @@ fn extract_with_libalpm(path: &Path) -> Result<LocalPackageInfo> {
 
     // Safety: alpm requires valid paths
     let alpm = alpm::Alpm::new(root, db_path)?;
-    let pkg = alpm.pkg_load(path.to_str().context("Invalid path")?, true, alpm::SigLevel::NONE)?;
+    let pkg = alpm.pkg_load(
+        path.to_str().context("Invalid path")?,
+        true,
+        alpm::SigLevel::NONE,
+    )?;
 
     Ok(LocalPackageInfo {
         name: pkg.name().to_string(),
@@ -69,13 +73,26 @@ fn extract_with_pure_rust(path: &Path) -> Result<LocalPackageInfo> {
     let _filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
     // Decoder setup
-    let decoder: Box<dyn Read> = if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("zst")) {
-        Box::new(ruzstd::decoding::StreamingDecoder::new(reader).context("Failed to init zstd decoder")?)
-    } else if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("gz")) {
+    let decoder: Box<dyn Read> = if path
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("zst"))
+    {
+        Box::new(
+            ruzstd::decoding::StreamingDecoder::new(reader)
+                .context("Failed to init zstd decoder")?,
+        )
+    } else if path
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("gz"))
+    {
         Box::new(flate2::read::GzDecoder::new(reader))
-    } else if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("xz")) {
+    } else if path
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("xz"))
+    {
         let mut output = Vec::new();
-        lzma_rs::xz_decompress(&mut std::io::BufReader::new(reader), &mut output).context("Failed to decompress xz")?;
+        lzma_rs::xz_decompress(&mut std::io::BufReader::new(reader), &mut output)
+            .context("Failed to decompress xz")?;
         Box::new(std::io::Cursor::new(output))
     } else {
         Box::new(reader)
@@ -98,13 +115,13 @@ fn extract_with_pure_rust(path: &Path) -> Result<LocalPackageInfo> {
             // - Absolute paths (starting with /)
             // - Symlinks or special characters
             if path_str.contains("..") || path_str.starts_with('/') {
-                anyhow::bail!(
-                    "Security: Rejecting malicious path in package archive: {path_str}"
-                );
+                anyhow::bail!("Security: Rejecting malicious path in package archive: {path_str}");
             }
 
             if path_str == ".PKGINFO" {
-                entry.read_to_string(&mut pkginfo_content).context("Failed to read .PKGINFO")?;
+                entry
+                    .read_to_string(&mut pkginfo_content)
+                    .context("Failed to read .PKGINFO")?;
                 found = true;
                 break;
             }

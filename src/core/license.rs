@@ -324,9 +324,10 @@ impl StoredLicense {
     #[must_use]
     pub fn is_token_valid(&self) -> bool {
         if let Some(token) = &self.token
-            && verify_jwt(token).is_some() {
-                return true;
-            }
+            && verify_jwt(token).is_some()
+        {
+            return true;
+        }
         false
     }
 
@@ -334,11 +335,12 @@ impl StoredLicense {
     #[must_use]
     pub fn needs_refresh(&self) -> bool {
         if let Some(token) = &self.token
-            && let Some(payload) = verify_jwt(token) {
-                let now = jiff::Timestamp::now().as_second();
-                let one_day = 24 * 60 * 60;
-                return payload.exp - now < one_day;
-            }
+            && let Some(payload) = verify_jwt(token)
+        {
+            let now = jiff::Timestamp::now().as_second();
+            let one_day = 24 * 60 * 60;
+            return payload.exp - now < one_day;
+        }
         true
     }
 }
@@ -385,9 +387,9 @@ fn sha256_hex(data: &[u8]) -> String {
 fn verify_jwt(token: &str) -> Option<JwtPayload> {
     let mut validation = Validation::new(jsonwebtoken::Algorithm::HS256);
     validation.validate_exp = true;
-    
+
     let key = DecodingKey::from_secret(JWT_VERIFICATION_KEY);
-    
+
     decode::<JwtPayload>(token, &key, &validation)
         .map(|data| data.claims)
         .ok()
@@ -468,7 +470,10 @@ pub async fn fetch_team_members() -> Result<Vec<TeamMember>> {
         anyhow::bail!("No license found. Activate with 'omg license activate <key>'");
     };
 
-    let url = format!("https://api.pyro1121.com/api/license/members?key={}", license.key);
+    let url = format!(
+        "https://api.pyro1121.com/api/license/members?key={}",
+        license.key
+    );
 
     let response = reqwest::Client::new()
         .get(&url)
@@ -481,7 +486,10 @@ pub async fn fetch_team_members() -> Result<Vec<TeamMember>> {
         if response.status() == reqwest::StatusCode::FORBIDDEN {
             anyhow::bail!("Team features require Team or Enterprise tier");
         }
-        anyhow::bail!("Failed to fetch team members (status: {})", response.status());
+        anyhow::bail!(
+            "Failed to fetch team members (status: {})",
+            response.status()
+        );
     }
 
     let members: Vec<TeamMember> = response
@@ -498,7 +506,10 @@ pub async fn fetch_policies() -> Result<Vec<PolicyRule>> {
         anyhow::bail!("No license found. Activate with 'omg license activate <key>'");
     };
 
-    let url = format!("https://api.pyro1121.com/api/license/policies?key={}", license.key);
+    let url = format!(
+        "https://api.pyro1121.com/api/license/policies?key={}",
+        license.key
+    );
 
     let response = reqwest::Client::new()
         .get(&url)
@@ -528,7 +539,10 @@ pub async fn fetch_audit_logs() -> Result<Vec<AuditLogEntry>> {
         anyhow::bail!("No license found. Activate with 'omg license activate <key>'");
     };
 
-    let url = format!("https://api.pyro1121.com/api/license/audit?key={}", license.key);
+    let url = format!(
+        "https://api.pyro1121.com/api/license/audit?key={}",
+        license.key
+    );
 
     let response = reqwest::Client::new()
         .get(&url)
@@ -625,7 +639,10 @@ pub async fn fetch_proposals() -> Result<Vec<serde_json::Value>> {
         anyhow::bail!("No license found. Activate with 'omg license activate <key>'");
     };
 
-    let url = format!("https://api.pyro1121.com/api/team/proposals?key={}", license.key);
+    let url = format!(
+        "https://api.pyro1121.com/api/team/proposals?key={}",
+        license.key
+    );
 
     let response = reqwest::Client::new()
         .get(&url)

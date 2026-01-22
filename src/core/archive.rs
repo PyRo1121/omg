@@ -40,8 +40,16 @@ pub fn extract_tar_gz_strip(archive_path: &Path, dest_dir: &Path, strip: usize) 
         let path = entry.path()?;
 
         // SECURITY: Prevent path traversal
-        if path.components().any(|c| matches!(c, std::path::Component::ParentDir | std::path::Component::RootDir)) {
-            anyhow::bail!("Security: Malicious path detected in archive: {}", path.display());
+        if path.components().any(|c| {
+            matches!(
+                c,
+                std::path::Component::ParentDir | std::path::Component::RootDir
+            )
+        }) {
+            anyhow::bail!(
+                "Security: Malicious path detected in archive: {}",
+                path.display()
+            );
         }
 
         // Strip N components from path
@@ -122,8 +130,16 @@ pub fn extract_zip_strip(archive_path: &Path, dest_dir: &Path, strip: usize) -> 
         let outpath = match file.enclosed_name() {
             Some(path) => {
                 // SECURITY: Prevent path traversal (enclosed_name handles most, but be explicit)
-                if path.components().any(|c| matches!(c, std::path::Component::ParentDir | std::path::Component::RootDir)) {
-                    anyhow::bail!("Security: Malicious path detected in zip archive: {}", path.display());
+                if path.components().any(|c| {
+                    matches!(
+                        c,
+                        std::path::Component::ParentDir | std::path::Component::RootDir
+                    )
+                }) {
+                    anyhow::bail!(
+                        "Security: Malicious path detected in zip archive: {}",
+                        path.display()
+                    );
                 }
 
                 let stripped: std::path::PathBuf = path.components().skip(strip).collect();

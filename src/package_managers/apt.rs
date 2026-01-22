@@ -6,8 +6,8 @@
 use anyhow::{Context, Result};
 use futures::future::{BoxFuture, FutureExt};
 
-use crate::core::{Package, PackageSource};
 use crate::core::is_root;
+use crate::core::{Package, PackageSource};
 use crate::package_managers::types::{LocalPackage, PackageInfo, SyncPackage};
 
 // Import rust-apt for full package management
@@ -152,16 +152,20 @@ impl crate::package_managers::PackageManager for AptPackageManager {
         async move {
             // Try fast path first
             if let Ok(installed) = super::debian_db::list_installed_fast() {
-                return Ok(installed.into_iter().map(|p| Package {
-                    name: p.name,
-                    version: p.version,
-                    description: p.description,
-                    source: PackageSource::Official,
-                    installed: true,
-                }).collect());
+                return Ok(installed
+                    .into_iter()
+                    .map(|p| Package {
+                        name: p.name,
+                        version: p.version,
+                        description: p.description,
+                        source: PackageSource::Official,
+                        installed: true,
+                    })
+                    .collect());
             }
             list_installed_fast().map(local_to_packages)
-        }.boxed()
+        }
+        .boxed()
     }
 
     fn get_status(&self, fast: bool) -> BoxFuture<'static, Result<(usize, usize, usize, usize)>> {
@@ -171,7 +175,7 @@ impl crate::package_managers::PackageManager for AptPackageManager {
                 if fast {
                     return Ok((total, explicit, 0, 0));
                 }
-                
+
                 // If not fast, we still want accuracy for orphans/updates
                 if let Ok((_, _, orphans, updates)) = get_system_status() {
                     return Ok((total, explicit, orphans, updates));
@@ -190,20 +194,25 @@ impl crate::package_managers::PackageManager for AptPackageManager {
                 return Ok(explicit);
             }
             list_explicit()
-        }.boxed()
+        }
+        .boxed()
     }
 
-    fn list_updates(&self) -> BoxFuture<'static, Result<Vec<crate::package_managers::types::UpdateInfo>>> {
+    fn list_updates(
+        &self,
+    ) -> BoxFuture<'static, Result<Vec<crate::package_managers::types::UpdateInfo>>> {
         async move {
             let updates = list_updates()?;
             Ok(updates
                 .into_iter()
-                .map(|(name, old_ver, new_ver)| crate::package_managers::types::UpdateInfo {
-                    name,
-                    old_version: old_ver,
-                    new_version: new_ver,
-                    repo: "apt".to_string(),
-                })
+                .map(
+                    |(name, old_ver, new_ver)| crate::package_managers::types::UpdateInfo {
+                        name,
+                        old_version: old_ver,
+                        new_version: new_ver,
+                        repo: "apt".to_string(),
+                    },
+                )
                 .collect())
         }
         .boxed()
@@ -262,7 +271,9 @@ pub fn search_sync(query: &str) -> Result<Vec<SyncPackage>> {
             results.push(SyncPackage {
                 name: name.to_string(),
                 version,
-                description: summary.or_else(|| candidate.and_then(|c| c.summary())).unwrap_or_default(),
+                description: summary
+                    .or_else(|| candidate.and_then(|c| c.summary()))
+                    .unwrap_or_default(),
                 repo: "apt".to_string(),
                 download_size: pkg.candidate().map(|v| v.size() as i64).unwrap_or(0),
                 installed: pkg.is_installed(),
@@ -369,8 +380,14 @@ pub fn list_updates() -> Result<Vec<(String, String, String)>> {
     for pkg in cache.packages(&PackageSort::default()) {
         if pkg.is_upgradable() {
             let name = pkg.name().to_string();
-            let old_version = pkg.installed().map(|v| v.version().to_string()).unwrap_or_default();
-            let new_version = pkg.candidate().map(|v| v.version().to_string()).unwrap_or_default();
+            let old_version = pkg
+                .installed()
+                .map(|v| v.version().to_string())
+                .unwrap_or_default();
+            let new_version = pkg
+                .candidate()
+                .map(|v| v.version().to_string())
+                .unwrap_or_default();
             updates.push((name, old_version, new_version));
         }
     }
@@ -513,7 +530,10 @@ fn map_local_package(pkg: &rust_apt::Package<'_>) -> LocalPackage {
         name: pkg.name().to_string(),
         version,
         description: summary,
-        install_size: pkg.installed().map(|v| v.installed_size() as i64).unwrap_or(0),
+        install_size: pkg
+            .installed()
+            .map(|v| v.installed_size() as i64)
+            .unwrap_or(0),
         reason,
     }
 }

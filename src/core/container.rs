@@ -424,14 +424,14 @@ impl ContainerManager {
                 }
                 "java" => {
                     dockerfile.push_str("# Install Java\n");
-                    let java_pkg = if *version == "latest" || *version == "lts" || version.is_empty()
-                    {
-                        "default-jdk".to_string()
-                    } else if version.chars().all(|c| c.is_ascii_digit()) {
-                        format!("openjdk-{version}-jdk")
-                    } else {
-                        (*version).to_string()
-                    };
+                    let java_pkg =
+                        if *version == "latest" || *version == "lts" || version.is_empty() {
+                            "default-jdk".to_string()
+                        } else if version.chars().all(|c| c.is_ascii_digit()) {
+                            format!("openjdk-{version}-jdk")
+                        } else {
+                            (*version).to_string()
+                        };
                     dockerfile.push_str("RUN apt-get update && apt-get install -y ");
                     dockerfile.push_str(&java_pkg);
                     dockerfile.push_str(" \\\n");
@@ -467,14 +467,18 @@ impl ContainerManager {
                         use std::fmt::Write as _;
                         let _ = writeln!(dockerfile, "# Install {pkg}");
                         let _ = writeln!(dockerfile, "RUN apk add --no-cache {pkg}\n");
-                    } else if base_image.contains("fedora") || base_image.contains("rhel") || base_image.contains("centos") {
+                    } else if base_image.contains("fedora")
+                        || base_image.contains("rhel")
+                        || base_image.contains("centos")
+                    {
                         use std::fmt::Write as _;
                         let _ = writeln!(dockerfile, "# Install {pkg}");
                         let _ = writeln!(dockerfile, "RUN dnf install -y {pkg} && dnf clean all\n");
                     } else if base_image.contains("opensuse") {
                         use std::fmt::Write as _;
                         let _ = writeln!(dockerfile, "# Install {pkg}");
-                        let _ = writeln!(dockerfile, "RUN zypper install -y {pkg} && zypper clean\n");
+                        let _ =
+                            writeln!(dockerfile, "RUN zypper install -y {pkg} && zypper clean\n");
                     } else {
                         use std::fmt::Write as _;
                         let _ = writeln!(

@@ -137,7 +137,10 @@ mod apt_integration {
 
         let result = run_omg(&["clean", "--orphans"]);
         // Should succeed or report no orphans
-        assert!(result.success || result.stdout_contains("no orphan"), "Should handle clean orphans");
+        assert!(
+            result.success || result.stdout_contains("no orphan"),
+            "Should handle clean orphans"
+        );
     }
 
     #[test]
@@ -165,7 +168,10 @@ mod apt_integration {
         // 2. Verify installed
         let info = run_omg(&["info", pkg]);
         info.assert_success();
-        assert!(info.stdout_contains("installed") || info.stdout_contains("Status"), "Package should be installed");
+        assert!(
+            info.stdout_contains("installed") || info.stdout_contains("Status"),
+            "Package should be installed"
+        );
 
         // 3. Remove
         let result = run_omg(&["remove", pkg, "-y"]);
@@ -173,7 +179,10 @@ mod apt_integration {
 
         // 4. Verify removed
         let info = run_omg(&["info", pkg]);
-        assert!(!info.stdout_contains("installed") || info.stdout_contains("not installed"), "Package should be removed");
+        assert!(
+            !info.stdout_contains("installed") || info.stdout_contains("not installed"),
+            "Package should be removed"
+        );
     }
 
     #[test]
@@ -184,7 +193,10 @@ mod apt_integration {
         let result = run_omg(&["why", "apt"]);
         result.assert_success();
         // Should explain why apt is installed (usually 'explicit')
-        assert!(result.stdout_contains("apt") || result.stdout_contains("explicit"), "Should explain why apt is installed");
+        assert!(
+            result.stdout_contains("apt") || result.stdout_contains("explicit"),
+            "Should explain why apt is installed"
+        );
     }
 
     #[test]
@@ -194,7 +206,10 @@ mod apt_integration {
 
         let result = run_omg(&["size", "--tree", "apt"]);
         result.assert_success();
-        assert!(result.stdout_contains("MB") || result.stdout_contains("KB"), "Should show size of apt package");
+        assert!(
+            result.stdout_contains("MB") || result.stdout_contains("KB"),
+            "Should show size of apt package"
+        );
     }
 }
 
@@ -209,7 +224,6 @@ macro_rules! require_debian_like {
         }
     };
 }
-
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // UBUNTU-SPECIFIC TESTS

@@ -23,13 +23,14 @@ pub async fn status() -> Result<()> {
     println!("{} Fleet Status\n", "OMG".cyan().bold());
 
     let members = license::fetch_team_members().await?;
-    
+
     let total_machines = members.len();
     let now = jiff::Timestamp::now().as_second();
     let one_day = 24 * 60 * 60;
-    
+
     let active_machines = members.iter().filter(|m| m.is_active).count();
-    let online_machines = members.iter()
+    let online_machines = members
+        .iter()
         .filter(|m| {
             if let Ok(ts) = jiff::Timestamp::from_second(parse_timestamp(&m.last_seen_at)) {
                 now - ts.as_second() < one_day
@@ -38,7 +39,7 @@ pub async fn status() -> Result<()> {
             }
         })
         .count();
-    
+
     // Compliance logic: machines seen in last 24h are considered compliant for this demo
     let compliant = online_machines;
     let drifted = active_machines.saturating_sub(online_machines);
@@ -122,7 +123,9 @@ fn parse_timestamp(s: &str) -> i64 {
 pub fn push(team: Option<&str>, message: Option<&str>) -> Result<()> {
     if let Some(t) = team {
         // SECURITY: Validate team identifier
-        if t.chars().any(|c| !c.is_ascii_alphanumeric() && c != '/' && c != '-' && c != '_') {
+        if t.chars()
+            .any(|c| !c.is_ascii_alphanumeric() && c != '/' && c != '-' && c != '_')
+        {
             anyhow::bail!("Invalid team identifier");
         }
     }

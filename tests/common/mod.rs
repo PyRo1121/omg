@@ -246,7 +246,7 @@ pub fn run_omg_with_options(
     // Isolate tests by using unique data/config dirs if not provided
     let temp_data = TempDir::new().unwrap();
     let temp_config = TempDir::new().unwrap();
-    
+
     let has_data_dir = env_vars.iter().any(|(k, _)| *k == "OMG_DATA_DIR");
     let has_config_dir = env_vars.iter().any(|(k, _)| *k == "OMG_CONFIG_DIR");
 

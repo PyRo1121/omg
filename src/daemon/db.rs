@@ -55,11 +55,13 @@ impl PersistentCache {
             Some(guard) => {
                 // Zero-copy access with validation
                 let bytes = guard.value();
-                let archived = rkyv::access::<rkyv::Archived<StatusResult>, rkyv::rancor::Error>(bytes)
-                    .map_err(|e| anyhow::anyhow!("Validation error: {e}"))?;
+                let archived =
+                    rkyv::access::<rkyv::Archived<StatusResult>, rkyv::rancor::Error>(bytes)
+                        .map_err(|e| anyhow::anyhow!("Validation error: {e}"))?;
 
-                let status: StatusResult = rkyv::deserialize::<StatusResult, rkyv::rancor::Error>(archived)
-                    .map_err(|e| anyhow::anyhow!("Deserialization error: {e}"))?;
+                let status: StatusResult =
+                    rkyv::deserialize::<StatusResult, rkyv::rancor::Error>(archived)
+                        .map_err(|e| anyhow::anyhow!("Deserialization error: {e}"))?;
                 Ok(Some(status))
             }
             None => Ok(None),
@@ -111,11 +113,13 @@ impl PersistentCache {
                 let bytes = guard.value();
 
                 // Zero-copy access with validation
-                let archived = rkyv::access::<rkyv::Archived<SerializedIndex>, rkyv::rancor::Error>(bytes)
-                    .map_err(|e| anyhow::anyhow!("Validation error: {e}"))?;
+                let archived =
+                    rkyv::access::<rkyv::Archived<SerializedIndex>, rkyv::rancor::Error>(bytes)
+                        .map_err(|e| anyhow::anyhow!("Validation error: {e}"))?;
 
-                let index: SerializedIndex = rkyv::deserialize::<SerializedIndex, rkyv::rancor::Error>(archived)
-                    .map_err(|e| anyhow::anyhow!("Deserialization error: {e}"))?;
+                let index: SerializedIndex =
+                    rkyv::deserialize::<SerializedIndex, rkyv::rancor::Error>(archived)
+                        .map_err(|e| anyhow::anyhow!("Deserialization error: {e}"))?;
 
                 tracing::debug!(
                     "Loaded {} packages from cache in {:?}",
