@@ -298,8 +298,8 @@ impl UsageStats {
             self.runtimes_used.push(runtime_lower);
             self.check_achievements();
             if let Err(e) = self.save() {
-            tracing::warn!("Failed to save usage stats: {}", e);
-        }
+                tracing::warn!("Failed to save usage stats: {}", e);
+            }
         }
     }
 
