@@ -218,25 +218,8 @@ impl App {
     }
 
     fn get_disk_usage_sync() -> (u64, u64) {
-        // Use statvfs to get disk usage (no subprocess)
-        use std::ffi::CString;
-        let Ok(path) = CString::new("/") else {
-            return (0, 0);
-        };
-
-        // SAFETY: MaybeUninit ensures we don't rely on uninitialized memory.
-        // libc::statvfs will fully initialize the structure before we read it.
-        let mut stat = std::mem::MaybeUninit::<libc::statvfs>::uninit();
-
-        // SAFETY:
-        // - path.as_ptr() returns a valid null-terminated C string
-        // - stat.as_mut_ptr() is a valid pointer to uninitialized memory
-        // - libc::statvfs will initialize the memory if successful
-        let result = unsafe { libc::statvfs(path.as_ptr(), stat.as_mut_ptr()) };
-
-        if result == 0 {
-            // SAFETY: statvfs succeeded (result == 0), so stat is now fully initialized
-            let stat = unsafe { stat.assume_init() };
+        // Use rustix for safe statvfs
+        if let Ok(stat) = rustix::fs::statvfs("/") {
             let block_size = stat.f_frsize;
             let total_blocks = stat.f_blocks;
             let free_blocks = stat.f_bfree;

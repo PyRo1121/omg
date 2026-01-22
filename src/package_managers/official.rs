@@ -1,10 +1,10 @@
-use anyhow::Result;
-use futures::future::{BoxFuture, FutureExt};
+use anyhow::Result as AnyhowResult;
+use futures::future::BoxFuture;
+use futures::FutureExt;
 use owo_colors::OwoColorize;
 
-use super::PackageManager;
 use crate::core::{Package, PackageSource, is_root};
-use crate::package_managers::invalidate_caches;
+use crate::package_managers::{get_system_status, invalidate_caches, traits::PackageManager};
 
 /// Official Arch Linux package manager with enhanced UX
 pub struct OfficialPackageManager;
@@ -15,7 +15,7 @@ impl OfficialPackageManager {
         Self
     }
 
-    pub async fn sync_databases(&self) -> Result<()> {
+    pub async fn sync_databases(&self) -> AnyhowResult<()> {
         if !is_root() {
             crate::core::privilege::run_self_sudo(&["sync"]).await?;
             invalidate_caches();
@@ -39,7 +39,7 @@ impl PackageManager for OfficialPackageManager {
         "pacman"
     }
 
-    fn search(&self, query: &str) -> BoxFuture<'static, Result<Vec<Package>>> {
+    fn search(&self, query: &str) -> BoxFuture<'static, AnyhowResult<Vec<Package>>> {
         let query = query.to_string();
         async move {
             // Offload ALPM search to blocking thread
@@ -51,7 +51,7 @@ impl PackageManager for OfficialPackageManager {
                     .into_iter()
                     .map(|p| Package {
                         name: p.name,
-                        version: p.version.clone(),
+                        version: p.version,
                         description: p.description,
                         source: PackageSource::Official,
                         installed: p.installed,
@@ -63,7 +63,7 @@ impl PackageManager for OfficialPackageManager {
         .boxed()
     }
 
-    fn install(&self, packages: &[String]) -> BoxFuture<'static, Result<()>> {
+    fn install(&self, packages: &[String]) -> BoxFuture<'static, AnyhowResult<()>> {
         let packages = packages.to_vec();
         async move {
             // SECURITY: Validate package names
@@ -94,20 +94,14 @@ impl PackageManager for OfficialPackageManager {
             println!();
 
             // LIGHTNING FAST: Direct libalpm transaction
-            // Offload to blocking thread to prevent stalling async runtime
-            tokio::task::spawn_blocking(move || {
-                crate::package_managers::execute_transaction(packages, false, false)
-            })
-            .await??;
-
-            println!("{} All packages processed successfully!", "✓".green());
+            crate::package_managers::execute_transaction(packages, false, false)?;
             invalidate_caches();
             Ok(())
         }
         .boxed()
     }
 
-    fn remove(&self, packages: &[String]) -> BoxFuture<'static, Result<()>> {
+    fn remove(&self, packages: &[String]) -> BoxFuture<'static, AnyhowResult<()>> {
         let packages = packages.to_vec();
         async move {
             // SECURITY: Validate package names
@@ -132,22 +126,19 @@ impl PackageManager for OfficialPackageManager {
                 "OMG".cyan().bold(),
                 packages.len()
             );
+            for pkg in &packages {
+                println!("  {} {}", "→".dimmed(), pkg);
+            }
+            println!();
 
-            // LIGHTNING FAST: Direct libalpm transaction
-            // Offload to blocking thread
-            tokio::task::spawn_blocking(move || {
-                crate::package_managers::execute_transaction(packages, true, false)
-            })
-            .await??;
-
-            println!("{} Packages removed successfully!", "✓".green());
+            crate::package_managers::execute_transaction(packages, true, false)?;
             invalidate_caches();
             Ok(())
         }
         .boxed()
     }
 
-    fn update(&self) -> BoxFuture<'static, Result<()>> {
+    fn update(&self) -> BoxFuture<'static, AnyhowResult<()>> {
         async move {
             if !is_root() {
                 println!("{} Elevating privileges to update system...", "→".blue());
@@ -156,68 +147,53 @@ impl PackageManager for OfficialPackageManager {
                 return Ok(());
             }
 
-            println!("{} Updating system...\n", "OMG".cyan().bold());
-
-            // STEP 1: Sync databases in PARALLEL (3-5x faster than pacman -Sy)
-            crate::package_managers::sync_databases_parallel().await?;
-
-            // STEP 2: Run sysupgrade transaction
-            // Offload to blocking thread
-            tokio::task::spawn_blocking(move || {
-                crate::package_managers::execute_transaction(Vec::new(), false, true)
-            })
-            .await??;
-
-            println!("\n{} System updated successfully!", "✓".green());
+            println!("{} Starting full system upgrade...", "OMG".cyan().bold());
+            crate::package_managers::execute_transaction(Vec::new(), false, true)?;
             invalidate_caches();
             Ok(())
         }
         .boxed()
     }
 
-    fn sync(&self) -> BoxFuture<'static, Result<()>> {
+    fn sync(&self) -> BoxFuture<'static, AnyhowResult<()>> {
         async move {
             OfficialPackageManager::new().sync_databases().await
         }
         .boxed()
     }
 
-    fn info(&self, package: &str) -> BoxFuture<'static, Result<Option<Package>>> {
+    fn info(&self, package: &str) -> BoxFuture<'static, AnyhowResult<Option<Package>>> {
         let package = package.to_string();
         async move {
             // SECURITY: Validate package name
             crate::core::security::validate_package_name(&package)?;
 
-            // LIGHTNING FAST: Direct ALPM info lookup
-            // Offload to blocking thread
-            tokio::task::spawn_blocking(move || {
-                if let Some(info) = crate::package_managers::get_sync_pkg_info(&package)? {
-                    return Ok(Some(Package {
-                        name: info.name,
-                        version: info.version.clone(),
-                        description: info.description,
-                        source: PackageSource::Official,
-                        installed: crate::package_managers::is_installed_fast(&package).unwrap_or(false),
-                    }));
-                }
-                Ok(None)
-            })
-            .await?
+            // Try direct ALPM info
+            if let Ok(Some(info)) = crate::package_managers::get_package_info(&package) {
+                return Ok(Some(Package {
+                    name: info.name,
+                    version: info.version,
+                    description: info.description,
+                    source: PackageSource::Official,
+                    installed: info.installed,
+                }));
+            }
+            Ok(None)
         }
         .boxed()
     }
 
-    fn list_installed(&self) -> BoxFuture<'static, Result<Vec<Package>>> {
+    fn list_installed(&self) -> BoxFuture<'static, AnyhowResult<Vec<Package>>> {
         async move {
             // LIGHTNING FAST: Direct ALPM list
             // Offload to blocking thread
             tokio::task::spawn_blocking(move || {
-                let installed = crate::package_managers::list_installed_fast()?;
-                Ok(installed
+                let pkgs = crate::package_managers::list_installed_fast()?;
+                Ok(pkgs
                     .into_iter()
                     .map(|p| Package {
                         name: p.name,
-                        version: p.version.clone(),
+                        version: p.version,
                         description: p.description,
                         source: PackageSource::Official,
                         installed: true,
@@ -229,11 +205,11 @@ impl PackageManager for OfficialPackageManager {
         .boxed()
     }
 
-    fn get_status(&self, _fast: bool) -> BoxFuture<'static, Result<(usize, usize, usize, usize)>> {
-        async move { get_system_status() }.boxed()
+    fn get_status(&self, _fast: bool) -> BoxFuture<'static, AnyhowResult<(usize, usize, usize, usize)>> {
+        async move { get_system_status().map_err(anyhow::Error::from) }.boxed()
     }
 
-    fn list_explicit(&self) -> BoxFuture<'static, Result<Vec<String>>> {
+    fn list_explicit(&self) -> BoxFuture<'static, AnyhowResult<Vec<String>>> {
         async move {
             tokio::task::spawn_blocking(crate::package_managers::list_explicit_fast)
                 .await?
@@ -241,17 +217,17 @@ impl PackageManager for OfficialPackageManager {
         .boxed()
     }
 
-    fn list_updates(&self) -> BoxFuture<'static, Result<Vec<crate::package_managers::types::UpdateInfo>>> {
+    fn list_updates(&self) -> BoxFuture<'static, AnyhowResult<Vec<crate::package_managers::types::UpdateInfo>>> {
         async move {
             tokio::task::spawn_blocking(move || {
                 let updates = crate::package_managers::get_update_list()?;
                 Ok(updates
                     .into_iter()
-                    .map(|(name, old_ver, new_ver)| {
+                    .map(|(name, old, new)| {
                         crate::package_managers::types::UpdateInfo {
                             name,
-                            old_version: old_ver.to_string(),
-                            new_version: new_ver.to_string(),
+                            old_version: old.to_string(),
+                            new_version: new.to_string(),
                             repo: "official".to_string(),
                         }
                     })
@@ -264,45 +240,41 @@ impl PackageManager for OfficialPackageManager {
 
     fn is_installed(&self, package: &str) -> BoxFuture<'static, bool> {
         let package = package.to_string();
-        async move { is_installed(&package).await }.boxed()
+        async move { crate::package_managers::is_installed_fast(&package).unwrap_or(false) }.boxed()
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// ADDITIONAL COMMANDS (NATIVE)
-// ═══════════════════════════════════════════════════════════════════════════
-
-/// List orphan packages (not required by any other package)
-pub async fn list_orphans() -> Result<Vec<String>> {
+pub async fn list_orphans() -> AnyhowResult<Vec<String>> {
     crate::package_managers::list_orphans_direct()
 }
 
-/// Remove orphan packages
-pub async fn remove_orphans() -> Result<()> {
+pub async fn remove_orphans() -> AnyhowResult<()> {
     let orphans = list_orphans().await?;
-
     if orphans.is_empty() {
-        println!("{} No orphan packages found", "✓".green());
+        println!("{} No orphan packages to remove.", "✓".green());
         return Ok(());
     }
 
-    println!("{} Found {} orphan packages:", "→".blue(), orphans.len());
+    println!(
+        "{} Found {} orphan package(s):",
+        "OMG".cyan().bold(),
+        orphans.len()
+    );
     for pkg in &orphans {
-        println!("  {} {}", "○".dimmed(), pkg);
+        println!("  {} {}", "→".dimmed(), pkg);
     }
 
-    // LIGHTNING FAST: Direct ALPM removal
     crate::package_managers::execute_transaction(orphans, true, false)?;
-
+    invalidate_caches();
     Ok(())
 }
 
-/// Check if package is installed
-pub async fn is_installed(package: &str) -> bool {
-    crate::package_managers::is_installed_fast(package).unwrap_or(false)
+pub async fn list_explicit() -> AnyhowResult<Vec<String>> {
+    crate::package_managers::list_explicit_fast()
 }
 
-/// Get explicitly installed packages
-pub async fn list_explicit() -> Result<Vec<String>> {
-    crate::package_managers::list_explicit_fast()
+pub async fn is_installed(package: &str) -> bool {
+
+    crate::package_managers::is_installed_fast(package).unwrap_or(false)
+
 }

@@ -412,10 +412,10 @@ struct LicenseViolation {
 }
 
 fn perform_license_scan() -> LicenseScan {
-    let by_license = HashMap::new();
-    let violations = Vec::new();
-    let unknown = Vec::new();
-    let total_packages = 0;
+    let mut by_license: HashMap<String, usize> = HashMap::new();
+    let mut violations: Vec<LicenseViolation> = Vec::new();
+    let mut unknown: Vec<String> = Vec::new();
+    let mut total_packages = 0;
 
     // Use pure Rust database parser for speed
     #[cfg(feature = "arch")]

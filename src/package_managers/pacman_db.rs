@@ -460,8 +460,8 @@ pub fn get_detailed_packages() -> Result<Vec<SyncDbPackage>> {
 
 
 /// ULTRA FAST update check
-
- - uses global cache (<5ms after first load!)
+///
+/// Uses global cache (<5ms after first load!)
 /// Returns Vec of (name, `old_version`, `new_version`, repo, filename, `download_size`)
 #[instrument]
 pub fn check_updates_cached() -> Result<Vec<(String, Version, Version, String, String, u64)>> {

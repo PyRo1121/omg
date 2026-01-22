@@ -9,7 +9,6 @@ use serial_test::serial;
 async fn test_global_rate_limiting() {
     // Setup temporary environment
     let temp_dir = TempDir::new().unwrap();
-    // SAFETY: We are running tests serially now, so this is safe
     unsafe {
         std::env::set_var("OMG_DAEMON_DATA_DIR", temp_dir.path());
         std::env::set_var("OMG_DATA_DIR", temp_dir.path());

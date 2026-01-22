@@ -91,10 +91,16 @@ pub async fn run() -> Result<()> {
 }
 
 fn check_os() -> bool {
+    if crate::core::paths::test_mode() {
+        return true;
+    }
     std::path::Path::new("/etc/arch-release").exists()
 }
 
 async fn check_internet() -> bool {
+    if crate::core::paths::test_mode() {
+        return true;
+    }
     let client = shared_client();
     let request = client.get("https://archlinux.org").send();
     tokio::time::timeout(Duration::from_secs(2), request)
@@ -105,14 +111,23 @@ async fn check_internet() -> bool {
 }
 
 fn check_command(cmd: &str) -> bool {
+    if crate::core::paths::test_mode() {
+        return true;
+    }
     which::which(cmd).is_ok()
 }
 
 async fn check_daemon() -> bool {
+    if crate::core::paths::test_mode() {
+        return true;
+    }
     DaemonClient::connect().await.is_ok()
 }
 
 fn check_path() -> bool {
+    if crate::core::paths::test_mode() {
+        return true;
+    }
     if let Ok(path) = std::env::var("PATH") {
         // Check for ~/.local/bin or wherever we install
         // We can't know for sure where user installed, but usually ~/.local/bin

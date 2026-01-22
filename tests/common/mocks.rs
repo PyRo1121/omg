@@ -458,7 +458,7 @@ impl omg_lib::package_managers::PackageManager for MockPackageManager {
         .boxed()
     }
 
-    fn get_status(&self) -> BoxFuture<'static, anyhow::Result<(usize, usize, usize, usize)>> {
+    fn get_status(&self, _fast: bool) -> BoxFuture<'static, anyhow::Result<(usize, usize, usize, usize)>> {
         let db = self.db.clone();
         async move {
             let total = db.packages.lock().unwrap().len();

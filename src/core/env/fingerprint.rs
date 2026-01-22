@@ -23,7 +23,6 @@ use crate::runtimes::{
 };
 
 /// Represents the captured state of the environment
-#[allow(clippy::unsafe_derive_deserialize)]
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
 pub struct EnvironmentState {
     /// Runtime versions (`runtime_name` -> version)

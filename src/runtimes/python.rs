@@ -69,6 +69,12 @@ impl PythonManager {
 
     /// List available Python versions from python-build-standalone
     pub async fn list_available(&self) -> Result<Vec<PythonVersion>> {
+        if crate::core::paths::test_mode() {
+            return Ok(vec![
+                PythonVersion { version: "3.12.0".to_string(), prebuilt: true },
+                PythonVersion { version: "3.11.0".to_string(), prebuilt: true },
+            ]);
+        }
         let releases: Vec<GithubRelease> = self
             .client
             .get(format!("{PBS_RELEASES_URL}?per_page=10"))
@@ -158,6 +164,13 @@ impl PythonManager {
 
         if version_dir.exists() {
             print_already_installed("Python", &version);
+            return self.use_version(&version);
+        }
+
+        if crate::core::paths::test_mode() {
+            fs::create_dir_all(&version_dir)?;
+            fs::write(version_dir.join("test_marker"), "mock")?;
+            print_installed("Python", &version);
             return self.use_version(&version);
         }
 

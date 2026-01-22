@@ -185,21 +185,20 @@ if status.version != 1 {
 
 ## 🔬 Advanced: Memory-Mapped Alternative
 
-For even faster reads, you could memory-map the file:
+For even faster reads, you can memory-map the file safely using `zerocopy`:
 
 ```rust
 use memmap2::Mmap;
+use zerocopy::FromBytes;
 
 pub fn read_mmap() -> Option<FastStatus> {
     let file = File::open(status_path()).ok()?;
-    let mmap = unsafe { Mmap::map(&file).ok()? };
+    let mmap = unsafe { Mmap::map(&file).ok()? }; // Mmap itself is safe if file is not modified
 
-    // Zero-copy: just cast bytes to struct
-    let status: &FastStatus = unsafe {
-        &*(mmap.as_ptr() as *const FastStatus)
-    };
+    // SAFE zero-copy: use zerocopy to parse from mmap buffer
+    let status = FastStatus::read_from_bytes(&mmap).ok()?;
 
-    // Validate before returning
+    // Validate
     if status.magic == MAGIC && status.version == VERSION {
         Some(*status)
     } else {
@@ -208,7 +207,7 @@ pub fn read_mmap() -> Option<FastStatus> {
 }
 ```
 
-This eliminates the `read()` syscall entirely (after initial `mmap()`), achieving sub-microsecond latency.
+This eliminates the `read()` syscall entirely (after initial `mmap()`), achieving sub-microsecond latency without manual `unsafe` pointer casting.
 
 ---
 

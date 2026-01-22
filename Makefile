@@ -34,6 +34,18 @@ clean:
 	cargo clean
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# TDD and Coverage
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Continuous testing (TDD mode)
+tdd:
+	cargo watch -x test
+
+# Generate coverage report (requires cargo-tarpaulin)
+coverage:
+	cargo tarpaulin --ignore-config --ignore-tests --out html
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Docker Testing (for Debian/Ubuntu support development on Arch)
 # ═══════════════════════════════════════════════════════════════════════════════
 
