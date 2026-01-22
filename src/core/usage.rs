@@ -230,7 +230,9 @@ impl UsageStats {
         self.check_achievements();
 
         // Auto-save
-        let _ = self.save();
+        if let Err(e) = self.save() {
+            tracing::warn!("Failed to save usage stats: {}", e);
+        }
     }
 
     /// Check and unlock achievements
@@ -295,20 +297,26 @@ impl UsageStats {
         if !self.runtimes_used.contains(&runtime_lower) {
             self.runtimes_used.push(runtime_lower);
             self.check_achievements();
-            let _ = self.save();
+            if let Err(e) = self.save() {
+            tracing::warn!("Failed to save usage stats: {}", e);
+        }
         }
     }
 
     /// Record SBOM generation
     pub fn record_sbom(&mut self) {
         self.sbom_generated += 1;
-        let _ = self.save();
+        if let Err(e) = self.save() {
+            tracing::warn!("Failed to save usage stats: {}", e);
+        }
     }
 
     /// Record vulnerabilities found
     pub fn record_vulnerabilities(&mut self, count: u64) {
         self.vulnerabilities_found += count;
-        let _ = self.save();
+        if let Err(e) = self.save() {
+            tracing::warn!("Failed to save usage stats: {}", e);
+        }
     }
 
     /// Get time saved as human-readable string
