@@ -36,13 +36,9 @@ static INIT: Once = Once::new();
 /// the `serial_test` crate to prevent data races.
 pub fn init_test_env() {
     INIT.call_once(|| {
-        // Environment variable setup happens once before parallel tests start.
-        // This is safe because Once::call_once blocks other threads until completion,
-        // and the env vars we set here are only read (not modified) by tests.
-        //
-        // Tests that need to modify env vars should use #[serial] attribute.
-        // SAFETY: We are in a single-threaded context during initialization (guaranteed by Once),
-        // or effectively so for the purposes of setting these global env vars before tests run.
+        // SAFETY: We are in a single-threaded context during Once::call_once initialization.
+        // In Rust 2024, set_var is unsafe due to potential data races in multi-threaded programs.
+        // Since this is called at the very beginning of the test suite, it is safe.
         unsafe {
             std::env::set_var("OMG_TEST_MODE", "1");
             std::env::set_var("OMG_DISABLE_TELEMETRY", "1");
@@ -247,6 +243,20 @@ pub fn run_omg_with_options(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
+    // Isolate tests by using unique data/config dirs if not provided
+    let temp_data = TempDir::new().unwrap();
+    let temp_config = TempDir::new().unwrap();
+    
+    let has_data_dir = env_vars.iter().any(|(k, _)| *k == "OMG_DATA_DIR");
+    let has_config_dir = env_vars.iter().any(|(k, _)| *k == "OMG_CONFIG_DIR");
+
+    if !has_data_dir {
+        cmd.env("OMG_DATA_DIR", temp_data.path());
+    }
+    if !has_config_dir {
+        cmd.env("OMG_CONFIG_DIR", temp_config.path());
+    }
+
     if let Some(d) = dir {
         cmd.current_dir(d);
     }
@@ -325,6 +335,10 @@ impl TestProject {
 
     pub fn run(&self, args: &[&str]) -> CommandResult {
         run_omg_in_dir(args, self.path())
+    }
+
+    pub fn run_with_env(&self, args: &[&str], env_vars: &[(&str, &str)]) -> CommandResult {
+        run_omg_with_options(args, Some(self.path()), env_vars)
     }
 
     /// Create a file in the project

@@ -496,13 +496,11 @@ pub struct NexusDatabase {
 
 impl NexusDatabase {
     pub fn new(path: &str) -> anyhow::Result<Self> {
-        let env = unsafe {
-            EnvOpenOptions::new()
-                .map_size(4 * 1024 * 1024 * 1024)  // 4GB
-                .max_readers(1024)
-                .max_dbs(32)
-                .open(path)?
-        };
+        let env = EnvOpenOptions::new()
+            .map_size(4 * 1024 * 1024 * 1024)  // 4GB
+            .max_readers(1024)
+            .max_dbs(32)
+            .open(path)?;
         
         Ok(NexusDatabase { env })
     }

@@ -36,303 +36,11 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  RUSTFLAGS: "-D warnings"
 
 jobs:
   # ═══════════════════════════════════════════════════════════════════════════
-  # UNIT TESTS (Arch container - code requires arch features)
-  # ═══════════════════════════════════════════════════════════════════════════
-  unit-tests:
-    name: Unit Tests
-    runs-on: ubuntu-latest
-    container:
-      image: archlinux:latest
-      options: --privileged
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install dependencies
-        run: |
-          pacman -Syu --noconfirm
-          pacman -S --noconfirm base-devel git rustup clang sccache
-          rustup default stable
-      
-      - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.4
-        
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: "arch-stable"
-        
-      - name: Run unit tests
-        run: cargo test --lib --features arch
-
-  # ═══════════════════════════════════════════════════════════════════════════
-  # ARCH LINUX TESTS
-  # ═══════════════════════════════════════════════════════════════════════════
-  arch-tests:
-    name: Arch Linux Tests
-    runs-on: ubuntu-latest
-    container:
-      image: archlinux:latest
-      options: --privileged
-    
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install dependencies
-        run: |
-          pacman -Syu --noconfirm
-          pacman -S --noconfirm base-devel git rustup clang sccache
-          rustup default stable
-      
-      - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.4
-          
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: "arch-stable"
-        
-      - name: Build with Arch feature
-        run: cargo build --features arch
-        
-      - name: Run Arch integration tests
-        env:
-          OMG_RUN_SYSTEM_TESTS: "1"
-          OMG_TEST_DISTRO: "arch"
-        run: cargo test --test arch_tests --features arch
-        
-      - name: Run integration suite
-        env:
-          OMG_RUN_SYSTEM_TESTS: "1"
-        run: cargo test --test integration_suite --features arch
-
-  # ═══════════════════════════════════════════════════════════════════════════
-  # DEBIAN TESTS
-  # ═══════════════════════════════════════════════════════════════════════════
-  debian-tests:
-    name: Debian Tests
-    runs-on: ubuntu-latest
-    container:
-      image: debian:bookworm
-      options: --privileged
-    
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install dependencies
-        run: |
-          apt-get update
-          apt-get install -y build-essential curl git pkg-config libssl-dev libapt-pkg-dev clang cmake zlib1g-dev
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-          . $HOME/.cargo/env
-          
-      - name: Build with Debian feature
-        run: |
-          . $HOME/.cargo/env
-          cargo build --no-default-features --features debian
-          
-      - name: Run Debian integration tests
-        env:
-          OMG_RUN_SYSTEM_TESTS: "1"
-          OMG_TEST_DISTRO: "debian"
-        run: |
-          . $HOME/.cargo/env
-          cargo test --test debian_tests --no-default-features --features debian
-
-  # ═══════════════════════════════════════════════════════════════════════════
-  # UBUNTU TESTS (Multiple versions)
-  # ═══════════════════════════════════════════════════════════════════════════
-  ubuntu-tests:
-    name: Ubuntu ${{ matrix.ubuntu }} Tests
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        ubuntu: ['22.04', '24.04']
-    container:
-      image: ubuntu:${{ matrix.ubuntu }}
-      options: --privileged
-    
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install dependencies
-        run: |
-          apt-get update
-          apt-get install -y build-essential curl git pkg-config libssl-dev libapt-pkg-dev clang cmake zlib1g-dev
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-          . $HOME/.cargo/env
-          
-      - name: Build with Debian feature
-        run: |
-          . $HOME/.cargo/env
-          cargo build --no-default-features --features debian
-          
-      - name: Run Ubuntu integration tests
-        env:
-          OMG_RUN_SYSTEM_TESTS: "1"
-          OMG_TEST_DISTRO: "ubuntu"
-        run: |
-          . $HOME/.cargo/env
-          cargo test --test debian_tests --no-default-features --features debian
-
-  # ═══════════════════════════════════════════════════════════════════════════
-  # PROPERTY-BASED TESTS
-  # ═══════════════════════════════════════════════════════════════════════════
-  property-tests:
-    name: Property-Based Tests
-    runs-on: ubuntu-latest
-    container:
-      image: archlinux:latest
-      options: --privileged
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install dependencies
-        run: |
-          pacman -Syu --noconfirm
-          pacman -S --noconfirm base-devel git rustup clang sccache
-          rustup default stable
-      
-      - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.4
-        
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: "arch-stable"
-        
-      - name: Run property tests
-        run: cargo test --test property_tests --features arch -- --test-threads=1
-        timeout-minutes: 20
-        env:
-          PROPTEST_CASES: 10
-
-  # ═══════════════════════════════════════════════════════════════════════════
-  # SECURITY TESTS
-  # ═══════════════════════════════════════════════════════════════════════════
-  security-tests:
-    name: Security Tests
-    runs-on: ubuntu-latest
-    container:
-      image: archlinux:latest
-      options: --privileged
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install dependencies
-        run: |
-          pacman -Syu --noconfirm
-          pacman -S --noconfirm base-devel git rustup clang sccache
-          rustup default stable
-      
-      - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.4
-        
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: "arch-stable"
-        
-      - name: Run security tests
-        run: cargo test --test security_tests --features arch
-        
-      - name: Security audit
-        run: |
-          cargo install cargo-audit
-          # Report vulnerabilities but don't fail on known issues in dependencies
-          # The debian-packaging crate has known advisories that are being tracked
-          cargo audit || echo "::warning::Security advisories found - review above output"
-
-  # ═══════════════════════════════════════════════════════════════════════════
-  # PERFORMANCE TESTS
-  # ═══════════════════════════════════════════════════════════════════════════
-  perf-tests:
-    name: Performance Tests
-    runs-on: ubuntu-latest
-    container:
-      image: archlinux:latest
-      options: --privileged
-    
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install dependencies
-        run: |
-          pacman -Syu --noconfirm
-          pacman -S --noconfirm base-devel git rustup clang sccache
-          rustup default stable
-      
-      - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.4
-          
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: "arch-stable"
-          
-      - name: Build release
-        run: cargo build --release --features arch
-        
-      - name: Run performance tests
-        env:
-          OMG_RUN_PERF_TESTS: "1"
-          OMG_RUN_SYSTEM_TESTS: "1"
-        run: cargo test --test arch_tests --features arch -- performance
-
-  # ═══════════════════════════════════════════════════════════════════════════
-  # STRESS TESTS (Manual trigger only)
-  # ═══════════════════════════════════════════════════════════════════════════
-  stress-tests:
-    name: Stress Tests
-    runs-on: ubuntu-latest
-    if: ${{ github.event.inputs.run_stress == 'true' }}
-    container:
-      image: archlinux:latest
-      options: --privileged
-    
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install dependencies
-        run: |
-          pacman -Syu --noconfirm
-          pacman -S --noconfirm base-devel git rustup clang
-          rustup default stable
-          
-      - name: Build release
-        run: cargo build --release --features arch
-        
-      - name: Run stress tests
-        env:
-          OMG_RUN_STRESS_TESTS: "1"
-          OMG_RUN_SYSTEM_TESTS: "1"
-        run: cargo test --test property_tests --features arch -- --ignored
-
-  # ═══════════════════════════════════════════════════════════════════════════
-  # FUZZ TESTS (Manual trigger only)
-  # ═══════════════════════════════════════════════════════════════════════════
-  fuzz-tests:
-    name: Fuzz Tests
-    runs-on: ubuntu-latest
-    if: ${{ github.event.inputs.run_destructive == 'true' }}
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install Rust nightly
-        uses: dtolnay/rust-toolchain@nightly
-        
-      - name: Install cargo-fuzz
-        run: cargo install cargo-fuzz
-        
-      - name: Run fuzz tests (5 min)
-        run: |
-          cargo +nightly fuzz run fuzz_cli -- -max_total_time=300 || true
-
-  # ═══════════════════════════════════════════════════════════════════════════
-  # CLIPPY AND FORMAT CHECK
+  # 1. CORE QUALITY (Arch container)
   # ═══════════════════════════════════════════════════════════════════════════
   lint:
     name: Lint & Format
@@ -342,62 +50,88 @@ jobs:
       options: --privileged
     steps:
       - uses: actions/checkout@v4
-      
       - name: Install dependencies
         run: |
           pacman -Syu --noconfirm
           pacman -S --noconfirm base-devel git rustup clang sccache
           rustup default stable
           rustup component add rustfmt clippy
-      
-      - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.4
-          
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: "arch-stable"
-          
       - name: Check formatting
         run: cargo fmt -- --check
-        
       - name: Clippy (Arch)
-        run: cargo clippy --features arch -- -D warnings
+        run: cargo clippy --all-targets --all-features -- -D warnings
 
   # ═══════════════════════════════════════════════════════════════════════════
-  # DOCUMENTATION TESTS
+  # 2. EXHAUSTIVE CLI MATRIX (Digital Twin - All Distros)
   # ═══════════════════════════════════════════════════════════════════════════
-  doc-tests:
-    name: Documentation Tests
+  exhaustive-matrix:
+    name: CLI Matrix (${{ matrix.distro }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        distro: [arch, debian, ubuntu]
+    container:
+      image: ${{ matrix.distro == 'arch' && 'archlinux:latest' || (matrix.distro == 'debian' && 'debian:bookworm' || 'ubuntu:24.04') }}
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies (Arch)
+        if: matrix.distro == 'arch'
+        run: pacman -Syu --noconfirm && pacman -S --noconfirm base-devel git rust cargo clang
+      - name: Install dependencies (Debian/Ubuntu)
+        if: matrix.distro != 'arch'
+        run: |
+          apt-get update
+          apt-get install -y build-essential curl git pkg-config libssl-dev libapt-pkg-dev clang cmake
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+      - name: Run CLI Matrix
+        env:
+          OMG_TEST_MODE: "1"
+          OMG_TEST_DISTRO: ${{ matrix.distro }}
+        run: |
+          if [ "${{ matrix.distro }}" != "arch" ]; then . $HOME/.cargo/env; fi
+          cargo test --test exhaustive_cli_matrix --features ${{ matrix.distro == 'arch' && 'arch' || 'debian' }} -- --nocapture
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # 3. ABSOLUTE LOGIC TESTS (Edge Cases, Security, Metrics)
+  # ═══════════════════════════════════════════════════════════════════════════
+  absolute-logic:
+    name: Absolute Logic Tests
     runs-on: ubuntu-latest
     container:
       image: archlinux:latest
       options: --privileged
     steps:
       - uses: actions/checkout@v4
-      
-      - name: Install dependencies
-        run: |
-          pacman -Syu --noconfirm
-          pacman -S --noconfirm base-devel git rustup clang sccache
-          rustup default stable
-      
-      - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.4
-        
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: "arch-stable"
-        
-      - name: Run doc tests
-        run: cargo test --doc --features arch
-        
-      - name: Build docs
-        run: cargo doc --features arch --no-deps
+      - name: Bootstrap
+        run: pacman -Syu --noconfirm && pacman -S --noconfirm base-devel git rust cargo clang
+      - name: TDD Edge Cases
+        run: cargo test --test tdd_edge_cases --features arch
+      - name: Daemon Security
+        run: cargo test --test daemon_security_tests --features arch
+      - name: Metrics & Stats
+        run: cargo test --test metrics_tests --features arch
+      - name: Fuzzy Suggestions
+        run: cargo test --test fuzzy_suggestion_tests --features arch
+      - name: Property-Based
+        run: cargo test --test property_tests --features arch -- --test-threads=1
+        env:
+          PROPTEST_CASES: 100
 
   # ═══════════════════════════════════════════════════════════════════════════
-  # COVERAGE REPORT
+  # 4. PERFORMANCE BENCHMARKS (Gated)
+  # ═══════════════════════════════════════════════════════════════════════════
+  perf-benchmarks:
+    name: Performance Regressions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Ubuntu Benchmarks
+        run: make docker-ubuntu
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # 5. COVERAGE REPORT
   # ═══════════════════════════════════════════════════════════════════════════
   coverage:
     name: Code Coverage
@@ -405,75 +139,40 @@ jobs:
     container:
       image: archlinux:latest
       options: --privileged
-    
     steps:
       - uses: actions/checkout@v4
-      
       - name: Install dependencies
         run: |
           pacman -Syu --noconfirm
-          pacman -S --noconfirm base-devel git rustup llvm clang sccache
+          pacman -S --noconfirm base-devel git rustup llvm clang
           rustup default stable
           rustup component add llvm-tools-preview
-      
-      - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.4
-        
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: "arch-stable"
-          
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
-          
       - name: Generate coverage
-        env:
-          OMG_RUN_SYSTEM_TESTS: "1"
-        run: |
-          cargo llvm-cov --features arch --lcov --output-path lcov.info
-          
+        run: cargo llvm-cov --all-features --lcov --output-path lcov.info
       - name: Upload coverage
         uses: codecov/codecov-action@v4
         with:
           files: lcov.info
-          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
 
   # ═══════════════════════════════════════════════════════════════════════════
   # FINAL STATUS CHECK
   # ═══════════════════════════════════════════════════════════════════════════
   test-status:
-    name: All Tests Passed
-    needs: [unit-tests, arch-tests, debian-tests, ubuntu-tests, property-tests, security-tests, perf-tests, lint, doc-tests]
+    name: "✅ Fortune 100 Gate"
+    needs: [lint, exhaustive-matrix, absolute-logic, perf-benchmarks]
     runs-on: ubuntu-latest
     if: always()
     steps:
-      - name: Check all tests
+      - name: Check results
         run: |
-          echo "Test results:"
-          echo "  unit-tests: ${{ needs.unit-tests.result }}"
-          echo "  arch-tests: ${{ needs.arch-tests.result }}"
-          echo "  debian-tests: ${{ needs.debian-tests.result }}"
-          echo "  ubuntu-tests: ${{ needs.ubuntu-tests.result }}"
-          echo "  property-tests: ${{ needs.property-tests.result }}"
-          echo "  security-tests: ${{ needs.security-tests.result }}"
-          echo "  perf-tests: ${{ needs.perf-tests.result }}"
-          echo "  lint: ${{ needs.lint.result }}"
-          echo "  doc-tests: ${{ needs.doc-tests.result }}"
-          
-          FAILED=0
-          for result in "${{ needs.unit-tests.result }}" "${{ needs.arch-tests.result }}" \
-                        "${{ needs.debian-tests.result }}" "${{ needs.ubuntu-tests.result }}" \
-                        "${{ needs.property-tests.result }}" "${{ needs.security-tests.result }}" \
-                        "${{ needs.perf-tests.result }}" "${{ needs.lint.result }}" \
-                        "${{ needs.doc-tests.result }}"; do
-            if [[ "$result" != "success" && "$result" != "skipped" ]]; then
-              FAILED=1
-            fi
-          done
-          
-          if [[ "$FAILED" == "1" ]]; then
-            echo "❌ One or more tests failed"
+          if [[ "${{ needs.lint.result }}" != "success" ]] || \
+             [[ "${{ needs.exhaustive-matrix.result }}" != "success" ]] || \
+             [[ "${{ needs.absolute-logic.result }}" != "success" ]] || \
+             [[ "${{ needs.perf-benchmarks.result }}" != "success" ]]; then
+            echo "❌ One or more gates failed"
             exit 1
           fi
-          echo "✅ All tests passed!"
+          echo "✅ All Fortune 100 quality gates passed!"

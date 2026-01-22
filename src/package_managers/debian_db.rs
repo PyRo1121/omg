@@ -1,5 +1,5 @@
 //! Pure Rust Debian/Ubuntu Database Parser - ULTRA FAST
-//!
+//! 
 //! Parses /var/lib/apt/lists/*_Packages and /var/lib/dpkg/status files directly
 //! and provides a high-performance index with zero-copy deserialization via rkyv.
 
@@ -15,7 +15,6 @@ use anyhow::{Context, Result};
 use parking_lot::RwLock;
 use memchr::memmem;
 use rayon::prelude::*;
-use memmap2::Mmap;
 
 use crate::core::{Package, PackageSource};
 use crate::core::paths;
@@ -26,8 +25,6 @@ static DEBIAN_INDEX_CACHE: LazyLock<RwLock<DebianIndexCache>> =
 
 #[derive(Default)]
 struct DebianIndexCache {
-    /// Mapped index file
-    mmap: Option<Mmap>,
     index: Option<DebianPackageIndex>,
     last_modified: Option<std::time::SystemTime>,
     /// Contiguous search buffer for SIMD search: "name desc\0name desc\0..."
@@ -102,21 +99,13 @@ pub fn ensure_index_loaded() -> Result<()> {
     }
 
     let mut index = None;
-    let mut mmap = None;
     let cache_path = paths::cache_dir().join("debian_index_v4.bin");
     
-    // LIGHTNING FAST: Mmap zero-copy loading
+    // SAFE: Read file into memory and use rkyv for zero-allocation access
     if cache_path.exists() {
-        if let Ok(file) = fs::File::open(&cache_path) {
-            if let Ok(meta) = file.metadata() {
-                if meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH) >= newest_mtime {
-                    if let Ok(m) = unsafe { Mmap::map(&file) } {
-                        if let Ok(idx) = rkyv::from_bytes::<DebianPackageIndex, rkyv::rancor::Error>(&m) {
-                            index = Some(idx);
-                            mmap = Some(m);
-                        }
-                    }
-                }
+        if let Ok(bytes) = fs::read(&cache_path) {
+            if let Ok(idx) = rkyv::from_bytes::<DebianPackageIndex, rkyv::rancor::Error>(&bytes) {
+                index = Some(idx);
             }
         }
     }
@@ -139,7 +128,6 @@ pub fn ensure_index_loaded() -> Result<()> {
         let installed_set = list_installed_fast().unwrap_or_default().into_iter().map(|p| p.name).collect();
 
         let mut cache = DEBIAN_INDEX_CACHE.write();
-        cache.mmap = mmap;
         cache.index = Some(idx);
         cache.last_modified = Some(newest_mtime);
         cache.search_buffer = search_buffer;
@@ -279,6 +267,15 @@ pub fn get_detailed_packages() -> Result<Vec<DebianPackage>> {
 }
 
 pub fn search_fast(query: &str) -> Result<Vec<Package>> {
+    if crate::core::paths::test_mode() {
+        return Ok(vec![Package {
+            name: "apt".to_string(),
+            version: "2.6.1".to_string(),
+            description: "Debian package manager".to_string(),
+            source: PackageSource::Official,
+            installed: true,
+        }]);
+    }
     ensure_index_loaded()?;
     let guard = DEBIAN_INDEX_CACHE.read();
     let index = guard.index.as_ref().context("Index not loaded")?;
@@ -314,6 +311,15 @@ pub fn search_fast(query: &str) -> Result<Vec<Package>> {
 }
 
 pub fn get_info_fast(name: &str) -> Result<Option<Package>> {
+    if crate::core::paths::test_mode() {
+        return Ok(Some(Package {
+            name: name.to_string(),
+            version: "1.0.0".to_string(),
+            description: "Mock package".to_string(),
+            source: PackageSource::Official,
+            installed: true,
+        }));
+    }
     ensure_index_loaded()?;
     let guard = DEBIAN_INDEX_CACHE.read();
     let index = guard.index.as_ref().context("Index not loaded")?;
@@ -334,6 +340,15 @@ pub struct LocalPackage {
 }
 
 pub fn list_installed_fast() -> Result<Vec<LocalPackage>> {
+    if crate::core::paths::test_mode() {
+        return Ok(vec![LocalPackage {
+            name: "apt".to_string(),
+            version: "2.6.1".to_string(),
+            description: "Debian package manager".to_string(),
+            architecture: "amd64".to_string(),
+            is_explicit: true,
+        }]);
+    }
     let status_path = Path::new("/var/lib/dpkg/status");
     if !status_path.exists() { return Ok(Vec::new()); }
     let status_content = fs::read_to_string(status_path)?;
@@ -378,6 +393,7 @@ pub fn list_installed_fast() -> Result<Vec<LocalPackage>> {
 }
 
 pub fn is_installed_fast(name: &str) -> bool {
+    if crate::core::paths::test_mode() { return name == "apt" || name == "git"; }
     let guard = DEBIAN_INDEX_CACHE.read();
     if !guard.installed_set.is_empty() { return guard.installed_set.contains(name); }
     if let Ok(content) = fs::read_to_string("/var/lib/dpkg/status") {
@@ -392,13 +408,101 @@ pub fn is_installed_fast(name: &str) -> bool {
 }
 
 pub fn list_explicit_fast() -> Result<Vec<String>> {
+    if crate::core::paths::test_mode() {
+        return Ok(vec!["apt".to_string(), "git".to_string()]);
+    }
     let installed = list_installed_fast()?;
     Ok(installed.into_iter().filter(|p| p.is_explicit).map(|p| p.name).collect())
 }
 
 pub fn get_counts_fast() -> Result<(usize, usize, usize, usize)> {
+
     let installed = list_installed_fast()?;
+
     let total = installed.len();
+
     let explicit = installed.iter().filter(|p| p.is_explicit).count();
+
     Ok((total, explicit, 0, 0))
+
+}
+
+
+
+#[cfg(test)]
+
+mod tests {
+
+    use super::*;
+
+
+
+    #[test]
+
+    fn test_parse_paragraph_basic() {
+
+        let para = "Package: vim\nVersion: 2:9.1.0-1\nDescription: Vi IMproved - enhanced vi editor\nSection: editors\nPriority: optional\nInstalled-Size: 3500\n";
+
+        let pkg = parse_paragraph_str(para).unwrap();
+
+        assert_eq!(pkg.name, "vim");
+
+        assert_eq!(pkg.version, "2:9.1.0-1");
+
+        assert_eq!(pkg.description, "Vi IMproved - enhanced vi editor");
+
+        assert_eq!(pkg.installed_size, 3500);
+
+    }
+
+
+
+    #[test]
+
+    fn test_parse_paragraph_multiline_desc() {
+
+        let para = "Package: curl\nVersion: 8.5.0-1\nDescription: command line tool for transferring data\n curl is a tool to transfer data from or to a server\n using one of the supported protocols.\nSection: net\n";
+
+        let pkg = parse_paragraph_str(para).unwrap();
+
+        assert_eq!(pkg.name, "curl");
+
+        assert!(pkg.description.contains("curl is a tool"));
+
+        assert!(pkg.description.contains("supported protocols."));
+
+    }
+
+
+
+    #[test]
+
+    fn test_parse_paragraph_invalid() {
+
+        let para = "Version: 1.0\n"; // Missing name
+
+        assert!(parse_paragraph_str(para).is_err());
+
+    }
+
+
+
+    #[test]
+
+    fn test_parse_paragraph_with_depends() {
+
+        let para = "Package: bash\nDepends: libc6 (>= 2.38), libreadline8 (>= 8.1)\n";
+
+        let pkg = parse_paragraph_str(para).unwrap();
+
+        assert_eq!(pkg.name, "bash");
+
+        assert_eq!(pkg.depends.len(), 2);
+
+        assert_eq!(pkg.depends[0], "libc6");
+
+        assert_eq!(pkg.depends[1], "libreadline8");
+
+    }
+
 }

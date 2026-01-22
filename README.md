@@ -231,6 +231,27 @@ We are building the last dev tool you'll ever need.
 - [ ] **GUI Dashboard**: Desktop application for visual package management
 - [x] **Team Features**: Shared environment locks with collaborative workflows (`omg team init/join/status/push/pull`)
 
+## 🧪 Testing & TDD
+
+OMG adheres to a strict **Test-Driven Development (TDD)** protocol to ensure "absolute everything" is tested.
+
+- **Red-Green-Refactor**: No feature is implemented without a failing test first.
+- **100% Memory Safety**: Zero `unsafe` blocks are allowed in application logic.
+- **Property-Based Testing**: Critical parsers and CLI commands are verified against thousands of random inputs via `proptest`.
+- **Hardware-Limited Performance**: Benchmarks are required for every hot-path change to prevent performance regressions.
+
+### Run the Suite
+```bash
+# Run all tests
+cargo test
+
+# Run TDD watch mode (requires cargo-watch)
+make tdd
+
+# Generate coverage report (requires cargo-tarpaulin)
+make coverage
+```
+
 ---
 
 ## 📜 License

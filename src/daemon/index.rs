@@ -31,7 +31,7 @@ impl StringPool {
         while end < self.pool.len() && self.pool[end] != 0 {
             end += 1;
         }
-        unsafe { std::str::from_utf8_unchecked(&self.pool[start..end]) }
+        std::str::from_utf8(&self.pool[start..end]).unwrap_or("")
     }
 }
 
@@ -163,13 +163,6 @@ impl PackageIndex {
         let mut current_pkg_end = 0;
 
         for match_idx in finder.find_iter(&self.search_buffer) {
-            // Hardware Hint: Prefetch next potential match area
-            #[cfg(target_arch = "x86_64")]
-            unsafe {
-                use std::arch::x86_64::_mm_prefetch;
-                _mm_prefetch((self.search_buffer.as_ptr() as *const i8).add(match_idx + 64), std::arch::x86_64::_MM_HINT_T0);
-            }
-
             if (match_idx as u32) < current_pkg_end { continue; }
 
             let search_slice = &self.package_offsets[current_pkg_idx..];
@@ -241,5 +234,45 @@ impl PackageIndex {
                 source: self.pool.get(item.source_offset).to_string(),
             }
         }).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_string_pool_interning() {
+        let mut pool = StringPool::default();
+        let off1 = pool.intern("hello");
+        let off2 = pool.intern("world");
+        let off3 = pool.intern("hello"); // Duplicate
+
+        assert_eq!(off1, off3);
+        assert_ne!(off1, off2);
+        assert_eq!(pool.get(off1), "hello");
+        assert_eq!(pool.get(off2), "world");
+    }
+
+    #[test]
+    fn test_string_pool_empty_and_special() {
+        let mut pool = StringPool::default();
+        let off_empty = pool.intern("");
+        let off_space = pool.intern(" ");
+        let off_unicode = pool.intern("🦀");
+
+        assert_eq!(pool.get(off_empty), "");
+        assert_eq!(pool.get(off_space), " ");
+        assert_eq!(pool.get(off_unicode), "🦀");
+    }
+
+    #[test]
+    fn test_string_pool_large() {
+        let mut pool = StringPool::default();
+        for i in 0..1000 {
+            let s = format!("string-{}", i);
+            let off = pool.intern(&s);
+            assert_eq!(pool.get(off), s);
+        }
     }
 }

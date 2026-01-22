@@ -13,8 +13,7 @@ use std::process::Command;
 /// Check if we're running as root
 #[must_use]
 pub fn is_root() -> bool {
-    // SAFETY: geteuid() is always safe to call and has no side effects
-    unsafe { libc::geteuid() == 0 }
+    rustix::process::geteuid().is_root()
 }
 
 /// Re-execute the current command with sudo if not root

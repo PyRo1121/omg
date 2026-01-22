@@ -38,6 +38,12 @@ pub enum OmgError {
     Other(String),
 }
 
+impl From<anyhow::Error> for OmgError {
+    fn from(err: anyhow::Error) -> Self {
+        Self::Other(err.to_string())
+    }
+}
+
 impl OmgError {
     /// Get a helpful suggestion for how to fix this error
     #[must_use]

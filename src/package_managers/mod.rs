@@ -25,15 +25,42 @@ pub mod pacman_db;
 pub mod parallel_sync;
 #[cfg(feature = "arch")]
 pub mod pkgbuild;
+pub mod mock;
 mod traits;
 pub mod types;
 
 pub use types::{parse_version_or_zero, zero_version};
 
 #[cfg(feature = "arch")]
+pub fn search_sync(query: &str) -> anyhow::Result<Vec<SyncPackage>> {
+    if crate::core::paths::test_mode() {
+        let pm = get_package_manager();
+        let results = futures::executor::block_on(pm.search(query))?;
+        return Ok(results.into_iter().map(|p| SyncPackage {
+            name: p.name,
+            version: p.version,
+            description: p.description,
+            repo: "official".to_string(),
+            download_size: 0,
+            installed: p.installed,
+        }).collect());
+    }
+    alpm_direct::search_sync(query)
+}
+
+#[cfg(feature = "arch")]
+pub fn list_explicit_fast() -> anyhow::Result<Vec<String>> {
+    if crate::core::paths::test_mode() {
+        let pm = get_package_manager();
+        return futures::executor::block_on(pm.list_explicit());
+    }
+    alpm_direct::list_explicit_fast()
+}
+
+#[cfg(feature = "arch")]
 pub use alpm_direct::{
-    get_counts, get_package_info, is_installed_fast, list_explicit_fast, list_installed_fast,
-    list_orphans_fast, search_local, search_sync,
+    get_counts, get_package_info, is_installed_fast, list_installed_fast,
+    list_orphans_fast, search_local,
 };
 #[cfg(feature = "arch")]
 pub use alpm_ops::DownloadInfo;
@@ -66,6 +93,11 @@ pub use types::{LocalPackage, SyncPackage};
 pub fn get_package_manager() -> Box<dyn PackageManager> {
     use crate::core::env::distro::{Distro, detect_distro};
 
+    if crate::core::paths::test_mode() {
+        let distro = std::env::var("OMG_TEST_DISTRO").unwrap_or_else(|_| "arch".to_string());
+        return Box::new(mock::MockPackageManager::new(&distro));
+    }
+
     match detect_distro() {
         #[cfg(feature = "arch")]
         Distro::Arch => Box::new(OfficialPackageManager::new()),
@@ -92,13 +124,38 @@ pub fn get_package_manager() -> Box<dyn PackageManager> {
 
 // apt exports are available with debian feature
 #[cfg(feature = "debian")]
+pub fn apt_search_sync(query: &str) -> anyhow::Result<Vec<SyncPackage>> {
+    if crate::core::paths::test_mode() {
+        let pm = get_package_manager();
+        let results = futures::executor::block_on(pm.search(query))?;
+        return Ok(results.into_iter().map(|p| SyncPackage {
+            name: p.name,
+            version: p.version,
+            description: p.description,
+            repo: "main".to_string(),
+            download_size: 0,
+            installed: p.installed,
+        }).collect());
+    }
+    apt::search_sync(query)
+}
+
+#[cfg(feature = "debian")]
+pub fn apt_list_explicit() -> anyhow::Result<Vec<String>> {
+    if crate::core::paths::test_mode() {
+        let pm = get_package_manager();
+        return futures::executor::block_on(pm.list_explicit());
+    }
+    apt::list_explicit()
+}
+
+#[cfg(feature = "debian")]
 pub use apt::{
     AptPackageManager, get_sync_pkg_info as apt_get_sync_pkg_info,
     get_system_status as apt_get_system_status,
-    list_all_package_names as apt_list_all_package_names, list_explicit as apt_list_explicit,
+    list_all_package_names as apt_list_all_package_names,
     list_installed_fast as apt_list_installed_fast, list_orphans as apt_list_orphans,
     list_updates as apt_list_updates, remove_orphans as apt_remove_orphans,
-    search_sync as apt_search_sync,
 };
 #[cfg(feature = "debian")]
 pub use debian_db::{

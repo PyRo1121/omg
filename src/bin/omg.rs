@@ -297,6 +297,17 @@ async fn async_main(args: Vec<String>) -> Result<()> {
     // and other early initialization steps.
     let cli = Cli::parse_from(&args);
 
+    // SECURITY: Validate all package names in relevant commands
+    match &cli.command {
+        Commands::Install { packages, .. } | Commands::Remove { packages, .. } => {
+            omg_lib::core::security::validate_package_names(packages)?;
+        }
+        Commands::Info { package } | Commands::Why { package, .. } | Commands::Blame { package } => {
+            omg_lib::core::security::validate_package_name(package)?;
+        }
+        _ => {}
+    }
+
     // Initialize tracing (deferred until after parsing)
     // Only use full formatting if not a simple command
     tracing_subscriber::fmt()

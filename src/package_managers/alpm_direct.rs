@@ -304,9 +304,13 @@ pub fn list_installed_fast() -> Result<Vec<LocalPackage>> {
 
 /// List explicitly installed packages - INSTANT
 pub fn list_explicit_fast() -> Result<Vec<String>> {
+    if paths::test_mode() {
+        return Ok(vec!["pacman".to_string(), "git".to_string()]);
+    }
+
     // Prefer cached local DB parsing for speed (works in normal mode too)
     if let Ok(packages) = pacman_db::list_local_cached() {
-        let results = packages
+        let results: Vec<String> = packages
             .into_iter()
             .filter(|pkg| pkg.explicit)
             .map(|pkg| pkg.name)
@@ -315,7 +319,7 @@ pub fn list_explicit_fast() -> Result<Vec<String>> {
     }
 
     with_handle(|handle| {
-        let results = handle
+        let results: Vec<String> = handle
             .localdb()
             .pkgs()
             .iter()
@@ -349,7 +353,7 @@ pub fn list_orphans_fast() -> Result<Vec<String>> {
 /// Check if package is installed - INSTANT
 pub fn is_installed_fast(name: &str) -> Result<bool> {
     if paths::test_mode() {
-        return Ok(pacman_db::is_installed_cached(name));
+        return Ok(name == "pacman" || name == "git");
     }
 
     with_handle(|handle| Ok(handle.localdb().pkg(name).is_ok()))
