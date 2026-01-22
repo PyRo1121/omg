@@ -18,6 +18,23 @@ use std::time::Instant;
 
 const ANALYTICS_API_URL: &str = "https://api.pyro1121.com/api/analytics";
 
+/// Format timestamp consistently for analytics
+fn format_timestamp(ts: jiff::Timestamp) -> String {
+    // Use RFC 3339 format with millisecond precision for consistency
+    ts.strftime("%Y-%m-%dT%H:%M:%S%.3fZ").to_string()
+}
+
+/// Parse timestamp from analytics format
+fn parse_timestamp(s: &str) -> Result<jiff::Timestamp> {
+    // Try parsing with fractional seconds
+    if let Ok(ts) = jiff::Timestamp::strptime("%Y-%m-%dT%H:%M:%S%.fZ", s) {
+        return Ok(ts);
+    }
+    // Fallback to parsing without fractional seconds
+    jiff::Timestamp::strptime("%Y-%m-%dT%H:%M:%SZ", s)
+        .map_err(|e| anyhow::anyhow!("Failed to parse timestamp: {}", e))
+}
+
 /// Global session start time
 static SESSION_START: OnceLock<Instant> = OnceLock::new();
 
@@ -120,18 +137,22 @@ impl SessionState {
     /// Start a new session
     pub fn start_new(&mut self) {
         self.session_id = uuid::Uuid::new_v4().to_string();
-        self.started_at = jiff::Timestamp::now().to_string();
+        self.started_at = format_timestamp(jiff::Timestamp::now());
         self.last_heartbeat = jiff::Timestamp::now().as_second();
         self.commands_this_session = 0;
         self.errors_this_session = 0;
         self.features_used.clear();
-        let _ = self.save();
+        if let Err(e) = self.save() {
+            tracing::warn!("Failed to save session state: {}", e);
+        }
     }
 
     /// Update heartbeat
     pub fn heartbeat(&mut self) {
         self.last_heartbeat = jiff::Timestamp::now().as_second();
-        let _ = self.save();
+        if let Err(e) = self.save() {
+            tracing::warn!("Failed to save session heartbeat: {}", e);
+        }
     }
 }
 
@@ -170,7 +191,9 @@ impl EventQueue {
         if self.events.len() > 1000 {
             self.events.drain(0..500);
         }
-        let _ = self.save();
+        if let Err(e) = self.save() {
+            tracing::warn!("Failed to save analytics event queue: {}", e);
+        }
     }
 
     pub fn needs_flush(&self) -> bool {
@@ -227,7 +250,7 @@ fn create_event(
         event_type,
         event_name: event_name.to_string(),
         properties,
-        timestamp: jiff::Timestamp::now().to_string(),
+        timestamp: format_timestamp(jiff::Timestamp::now()),
         session_id: session.session_id,
         machine_id: crate::core::license::get_machine_id(),
         license_key: license.map(|l| l.key),
@@ -453,7 +476,7 @@ pub fn end_session() {
     );
 
     // Calculate session duration
-    if let Ok(started) = jiff::Timestamp::strptime("%Y-%m-%dT%H:%M:%S%.fZ", &session.started_at) {
+    if let Ok(started) = parse_timestamp(&session.started_at) {
         let duration = jiff::Timestamp::now().as_second() - started.as_second();
         props.insert("duration_seconds".to_string(), serde_json::json!(duration));
     }

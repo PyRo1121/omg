@@ -844,12 +844,12 @@ async fn async_main(args: Vec<String>) -> Result<()> {
     let subcmd = std::env::args().nth(2);
     omg_lib::core::analytics::track_command(&cmd_name, subcmd.as_deref(), cmd_duration, true);
 
-    // Send heartbeat and analytics in background (don't block exit)
+    // Send heartbeat and analytics - wait for completion to ensure telemetry is sent
     omg_lib::core::analytics::maybe_heartbeat();
-    omg_lib::core::analytics::flush_background();
+    let _ = omg_lib::core::analytics::flush_events().await;
 
-    // Sync usage in background (don't block exit)
-    omg_lib::core::usage::maybe_sync_background();
+    // Sync usage - wait for completion to ensure telemetry is sent
+    omg_lib::core::usage::sync_usage_now().await;
 
     Ok(())
 }
