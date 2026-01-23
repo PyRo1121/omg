@@ -824,6 +824,9 @@ pub enum CiCommands {
     Init {
         /// CI provider (github, gitlab, circleci)
         provider: String,
+        /// Generate advanced "world-class" configuration with matrices and security audits
+        #[arg(short, long)]
+        advanced: bool,
     },
     /// Validate current environment matches CI expectations
     Validate,

@@ -65,17 +65,31 @@ struct CompactPackageInfo {
 
 impl PackageIndex {
     pub fn new() -> Result<Self> {
+        #[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
+        use crate::core::env::distro::{detect_distro, Distro};
+        #[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
+        let distro = detect_distro();
+
         #[cfg(any(feature = "debian", feature = "debian-pure"))]
-        {
-            Self::new_apt()
+        if distro == Distro::Debian || distro == Distro::Ubuntu {
+            return Self::new_apt();
         }
+
+        #[cfg(feature = "arch")]
+        if distro == Distro::Arch {
+            return Self::new_alpm();
+        }
+
+        // Fallbacks if detection fails but features are enabled
+        #[cfg(feature = "arch")]
+        return Self::new_alpm();
+
         #[cfg(all(
-            feature = "arch",
-            not(any(feature = "debian", feature = "debian-pure"))
+            not(feature = "arch"),
+            any(feature = "debian", feature = "debian-pure")
         ))]
-        {
-            Self::new_alpm()
-        }
+        return Self::new_apt();
+
         #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
         anyhow::bail!("No package backend enabled")
     }

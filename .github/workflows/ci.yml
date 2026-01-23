@@ -31,8 +31,13 @@ jobs:
       - name: Formatting
         run: cargo fmt --all -- --check
 
+      - name: Mock Enterprise License
+        run: |
+          mkdir -p ~/.local/share/omg
+          echo '{"key":"CI-MOCK-KEY","tier":"enterprise","features":["sbom","audit","secrets","slsa","policy"],"validated_at":9999999999}' > ~/.local/share/omg/license.json
+
       - name: Clippy (Core)
-        run: cargo clippy --all-targets --no-default-features --features debian-pure -- -D warnings
+        run: cargo clippy --all-targets --all-features -- -D warnings -W clippy::pedantic
       
       - name: Spell Check
         uses: crate-ci/typos@master
@@ -129,11 +134,23 @@ jobs:
         run: ./target/release/omg sync
 
       - name: Clippy
-        run: cargo clippy --all-targets --features arch -- -D warnings
+        run: cargo clippy --all-targets --all-features -- -D warnings -W clippy::pedantic
 
       - name: Run Integration Tests
-        continue-on-error: true
-        run: OMG_RUN_SYSTEM_TESTS=1 cargo test --test integration_suite --features arch || echo "Integration tests failed (container environment)"
+        run: |
+          OMG_RUN_SYSTEM_TESTS=1 cargo test --test integration_suite --features arch
+          cargo test --test exhaustive_cli_matrix --features arch
+
+      - name: Generate SBOM (CycloneDX)
+        run: |
+          cargo install cargo-cyclonedx --locked
+          cargo cyclonedx --format json --output-pattern "bom.{format}" --features arch
+          
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-arch
+          path: "*.bom.json"
 
   # ════════════════════════════════════════════════════════════════════════════
   # 3. COMPATIBILITY (Debian/Ubuntu)
@@ -177,8 +194,9 @@ jobs:
         run: |
           . /root/.cargo/env
           cargo build --release --no-default-features --features debian
-          cargo clippy --all-targets --no-default-features --features debian -- -D warnings
+          cargo clippy --all-targets --all-features -- -D warnings -W clippy::pedantic
           cargo test --no-default-features --features debian --lib
+          cargo test --test exhaustive_cli_matrix --no-default-features --features debian
 
       - name: Smoke Test
         run: |
@@ -240,8 +258,9 @@ jobs:
       - name: Build & Test
         run: |
           cargo build --release --no-default-features --features debian
-          cargo clippy --all-targets --no-default-features --features debian -- -D warnings
+          cargo clippy --all-targets --all-features -- -D warnings -W clippy::pedantic
           cargo test --no-default-features --features debian --lib
+          cargo test --test exhaustive_cli_matrix --no-default-features --features debian
 
       - name: Smoke Test
         run: |
