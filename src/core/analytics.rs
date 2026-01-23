@@ -32,7 +32,7 @@ fn parse_timestamp(s: &str) -> Result<jiff::Timestamp> {
     }
     // Fallback to parsing without fractional seconds
     jiff::Timestamp::strptime("%Y-%m-%dT%H:%M:%SZ", s)
-        .map_err(|e| anyhow::anyhow!("Failed to parse timestamp: {}", e))
+        .map_err(|e| anyhow::anyhow!("Failed to parse timestamp: {e}"))
 }
 
 /// Global session start time

@@ -42,7 +42,7 @@ src/
   lib.rs                        # Library root
   cli/args.rs, commands.rs      # CLI argument parsing and command implementations
   core/types.rs, error.rs       # Shared types and error handling
-  core/database.rs, client.rs   # LMDB wrapper and daemon IPC client
+  core/database.rs, client.rs   # redb wrapper and daemon IPC client
   daemon/server.rs, cache.rs    # Unix socket server and LRU cache
   package_managers/traits.rs    # PackageManager trait
   package_managers/arch.rs      # Arch pacman implementation
@@ -164,18 +164,18 @@ mod tests {
 | `tokio` | Async runtime |
 | `anyhow` / `thiserror` | Error handling |
 | `serde` / `toml` | Configuration serialization |
-| `heed` | LMDB database bindings |
+| `redb` | Pure Rust embedded database |
 | `alpm` | Direct libalpm bindings (10-100x faster) |
 | `reqwest` | HTTP client for downloads |
 | `dashmap` / `parking_lot` | Concurrent data structures |
 | `tracing` | Structured logging |
-| `colored` / `indicatif` | Terminal output |
+| `owo-colors` / `indicatif` | Terminal output |
 
 ## Architecture Notes
 
 - **Daemon (`omgd`)**: Persistent process with Unix socket IPC, in-memory cache
 - **CLI (`omg`)**: Thin client connecting to daemon or falling back to direct calls
-- **LMDB**: 4GB mmap for package metadata caching
+- **redb**: Pure Rust embedded database for package metadata caching
 - **Runtimes**: Pure Rust implementations (no subprocess for version switching)
 - **Security**: PGP verification (sequoia-openpgp), SLSA (sigstore)
 

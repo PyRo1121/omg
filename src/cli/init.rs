@@ -95,6 +95,12 @@ impl Default for WizardState {
 
 /// Run the interactive setup wizard
 pub async fn run_interactive(skip_shell: bool, skip_daemon: bool) -> Result<()> {
+    // Check if we are in a non-interactive terminal (e.g. CI)
+    if !atty::is(atty::Stream::Stdout) || !atty::is(atty::Stream::Stdin) {
+        println!("Non-interactive terminal detected, running with defaults...");
+        return run_defaults().await;
+    }
+
     let mut stdout = io::stdout();
 
     // Clear screen and show welcome

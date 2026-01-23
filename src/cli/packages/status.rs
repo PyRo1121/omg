@@ -14,18 +14,18 @@ pub async fn status(fast: bool) -> Result<()> {
     let start = std::time::Instant::now();
 
     // 1. Try Daemon first (Hot Path)
-    if let Ok(mut client) = DaemonClient::connect().await {
-        if let Ok(ResponseResult::Status(status)) = client.call(Request::Status { id: 0 }).await {
-            display_status_report(
-                status.total_packages,
-                status.explicit_packages,
-                status.orphan_packages,
-                status.updates_available,
-                start.elapsed(),
-                fast,
-            )?;
-            return Ok(());
-        }
+    if let Ok(mut client) = DaemonClient::connect().await
+        && let Ok(ResponseResult::Status(status)) = client.call(Request::Status { id: 0 }).await
+    {
+        display_status_report(
+            status.total_packages,
+            status.explicit_packages,
+            status.orphan_packages,
+            status.updates_available,
+            start.elapsed(),
+            fast,
+        )?;
+        return Ok(());
     }
 
     // 2. Fallback to direct path (Cold Path)
@@ -65,7 +65,14 @@ fn display_status_report(
         explicit.to_string().green()
     )?;
 
-    if !fast {
+    if fast {
+        writeln!(
+            stdout,
+            "  {:<20} {}",
+            "Orphans/Updates:".dimmed(),
+            "skipped (fast mode)".dimmed()
+        )?;
+    } else {
         writeln!(
             stdout,
             "  {:<20} {}",
@@ -85,13 +92,6 @@ fn display_status_report(
             } else {
                 "0".dimmed().to_string()
             }
-        )?;
-    } else {
-        writeln!(
-            stdout,
-            "  {:<20} {}",
-            "Orphans/Updates:".dimmed(),
-            "skipped (fast mode)".dimmed()
         )?;
     }
 

@@ -57,11 +57,14 @@ pub fn explicit_sync(count: bool) -> Result<()> {
 
         #[cfg(feature = "arch")]
         {
-            let c = crate::package_managers::list_explicit_fast()
-                .map(|pkgs| pkgs.len())
-                .unwrap_or_default();
-            println!("{c}");
+            let count = crate::package_managers::pacman_db::get_explicit_count()?;
+            println!("{count}");
             return Ok(());
+        }
+        
+        #[cfg(not(feature = "arch"))]
+        {
+            anyhow::bail!("Explicit count only supported on Arch Linux");
         }
     }
 
@@ -75,6 +78,7 @@ pub fn explicit_sync(count: bool) -> Result<()> {
     #[cfg(not(any(feature = "arch", feature = "debian")))]
     {
         println!("No package manager backend enabled");
+        return Ok(());
     }
 
     Ok(())

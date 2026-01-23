@@ -307,6 +307,18 @@ export interface TeamData {
     active_machines: number;
     total_commands: number;
     total_time_saved_ms: number;
+    total_time_saved_hours: number;
+    total_value_usd: number;
+  };
+  fleet_health: {
+    compliance_rate: number;
+    latest_version: string;
+    version_drift: boolean;
+  };
+  productivity_score: number;
+  insights: {
+    engagement_rate: number;
+    roi_multiplier: string;
   };
 }
 
@@ -347,12 +359,14 @@ export interface AdminOverview {
     total_installs: number;
     total_commands: number;
     mrr: number;
-    tiers: {
-      free: number;
-      pro: number;
-      team: number;
-      enterprise: number;
+    global_value_usd: number;
+    command_health: {
+      success: number;
+      failure: number;
     };
+  };
+  fleet: {
+    versions: Array<{ omg_version: string; count: number }>;
   };
   tiers: Array<{ tier: string; count: number }>;
   usage: {
@@ -366,6 +380,7 @@ export interface AdminOverview {
   installs_by_platform: Array<{ platform: string; count: number }>;
   installs_by_version: Array<{ version: string; count: number }>;
   subscriptions: Array<{ status: string; count: number }>;
+  geo_distribution: Array<{ dimension: string; count: number }>;
 }
 
 export interface AdminUser {
@@ -379,7 +394,6 @@ export interface AdminUser {
   status: string;
   max_seats: number;
   machine_count: number;
-  machines_count: number;
   total_commands: number;
   last_active: string | null;
 }
@@ -457,6 +471,13 @@ export interface AdminAnalytics {
     growth_rate: number;
     new_paid_7d: number;
   };
+  time_saved: {
+    total_ms: number;
+    total_hours: number;
+    trend: Array<{ date: string; time_saved: number }>;
+  };
+  top_errors: Array<{ error_message: string; occurrences: number }>;
+  top_packages: Array<{ package_name: string; install_count: number; search_count: number }>;
 }
 
 export async function getAdminAnalytics(): Promise<AdminAnalytics> {
@@ -694,6 +715,32 @@ export function getAdminExportUsageUrl(days = 30): string {
 
 export function getAdminExportAuditUrl(days = 30): string {
   return `${API_BASE}/api/admin/export/audit?days=${days}`;
+}
+
+// ============================================
+// AI Insights API
+// ============================================
+
+export interface SmartInsight {
+  insight: string;
+  timestamp: string;
+  generated_by: string;
+}
+
+export async function getSmartInsights(target: 'user' | 'team' | 'admin' = 'user'): Promise<SmartInsight | null> {
+  const token = getSessionToken();
+  if (!token) return null;
+
+  try {
+    const res = await fetch(`${API_BASE}/api/insights?target=${target}`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch (e) {
+    console.error('Failed to fetch insights:', e);
+    return null;
+  }
 }
 
 // ============================================

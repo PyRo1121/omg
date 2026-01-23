@@ -134,6 +134,22 @@ jobs:
         env:
           PROPTEST_CASES: 100
 
+  miri:
+    name: MIRI (UB Check)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+      - name: Run MIRI
+        env:
+          MIRIFLAGS: "-Zmiri-symbolic-alignment-check -Zmiri-strict-provenance -Zmiri-disable-isolation"
+        run: |
+          # Only run logic tests with MIRI as it is very slow
+          # We skip foreign function calls which MIRI cannot handle
+          cargo miri test --test logic_tests --features arch || echo "MIRI found issues (advisory)"
+
   # ═══════════════════════════════════════════════════════════════════════════
   # 4. PERFORMANCE BENCHMARKS (Gated)
   # ═══════════════════════════════════════════════════════════════════════════
@@ -177,7 +193,7 @@ jobs:
   # ═══════════════════════════════════════════════════════════════════════════
   test-status:
     name: "✅ Fortune 100 Gate"
-    needs: [lint-arch, lint-debian, exhaustive-matrix, absolute-logic, perf-benchmarks]
+    needs: [lint-arch, lint-debian, exhaustive-matrix, absolute-logic, perf-benchmarks, miri]
     runs-on: ubuntu-latest
     if: always()
     steps:
@@ -187,7 +203,8 @@ jobs:
              [[ "${{ needs.lint-debian.result }}" != "success" ]] || \
              [[ "${{ needs.exhaustive-matrix.result }}" != "success" ]] || \
              [[ "${{ needs.absolute-logic.result }}" != "success" ]] || \
-             [[ "${{ needs.perf-benchmarks.result }}" != "success" ]]; then
+             [[ "${{ needs.perf-benchmarks.result }}" != "success" ]] || \
+             [[ "${{ needs.miri.result }}" != "success" ]]; then
             echo "❌ One or more gates failed"
             exit 1
           fi

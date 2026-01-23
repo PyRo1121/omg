@@ -136,7 +136,7 @@ mod tests {
         let path = dir.path().join("invalid.bin");
 
         let mut status = FastStatus::new(100, 50, 0, 0);
-        status.magic = 0xDEADBEEF;
+        status.magic = 0xDEAD_BEEF;
         status.write_to_file(&path).unwrap();
 
         assert!(FastStatus::read_from_file(&path).is_none());

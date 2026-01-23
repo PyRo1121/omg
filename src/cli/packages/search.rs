@@ -113,7 +113,7 @@ fn display_aur_results(
                     style::version(&pkg.version),
                     style::info(&format!("↑{}", pkg.num_votes)),
                     style::info(&format!("{:.1}%", pkg.popularity)),
-                    style::dim(&truncate(&pkg.description.clone().unwrap_or_default(), 40)),
+                    style::dim(&truncate(pkg.description.as_deref().unwrap_or_default(), 40)),
                     out_of_date
                 )?;
             }
@@ -186,7 +186,7 @@ async fn handle_interactive_selection(
                     style::package(&pkg.name),
                     style::version(&pkg.version),
                     style::warning("AUR"),
-                    style::dim(&truncate(&pkg.description.clone().unwrap_or_default(), 40))
+                    style::dim(&truncate(pkg.description.as_deref().unwrap_or_default(), 40))
                 ));
                 pkgs_to_install.push(pkg.name.clone());
             }
@@ -229,7 +229,7 @@ async fn handle_interactive_selection(
 }
 
 /// Fetch packages from all sources (daemon, local, AUR)
-async fn fetch_packages(query: &str, detailed: bool, interactive: bool) -> SearchResults {
+async fn fetch_packages(query: &str, _detailed: bool, _interactive: bool) -> SearchResults {
     let mut official_packages: Vec<crate::package_managers::SyncPackage> = Vec::new();
     #[cfg(feature = "arch")]
     let mut aur_packages_detailed: Option<Vec<crate::package_managers::AurPackageDetail>> = None;
@@ -291,12 +291,12 @@ async fn fetch_packages(query: &str, detailed: bool, interactive: bool) -> Searc
         // Search AUR (Arch only)
         #[cfg(feature = "arch")]
         {
-            if detailed || interactive {
+            if _detailed || _interactive {
                 let pb = style::spinner("Searching AUR...");
                 let res = search_detailed(query).await.unwrap_or_default();
                 pb.finish_and_clear();
                 aur_packages_detailed = Some(res);
-            } else if !interactive {
+            } else if !_interactive {
                 let aur = AurClient::new();
                 aur_packages_basic = Some(aur.search(query).await.unwrap_or_default());
             }

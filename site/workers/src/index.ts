@@ -107,6 +107,35 @@ const TIER_SEAT_LIMITS: Record<string, number> = {
   enterprise: 999, // Unlimited for enterprise
 };
 
+// Helper to send emails via Resend
+export async function sendEmail(env: Env, to: string, subject: string, html: string): Promise<boolean> {
+  if (!env.RESEND_API_KEY) {
+    console.error('RESEND_API_KEY not configured');
+    return false;
+  }
+
+  try {
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${env.RESEND_API_KEY}`,
+      },
+      body: JSON.stringify({
+        from: 'OMG Package Manager <no-reply@pyro1121.com>',
+        to: [to],
+        subject,
+        html,
+      }),
+    });
+
+    return res.ok;
+  } catch (e) {
+    console.error('Failed to send email:', e);
+    return false;
+  }
+}
+
 // Get max seats for a tier
 function getMaxSeatsForTier(tier: string): number {
   return TIER_SEAT_LIMITS[tier] || 1;
@@ -755,8 +784,21 @@ async function handleStripeWebhook(request: Request, env: Env): Promise<Response
             .bind(crypto.randomUUID(), customer.id, licenseKey, subscription.current_period_end)
             .run();
 
-          // TODO: Send license key email to customer
-          console.log(`License created for ${customer.email}: ${licenseKey}`);
+          // Send license key email to customer
+          await sendEmail(
+            env,
+            customer.email,
+            'Your OMG License Key',
+            `
+            <h1>Welcome to OMG!</h1>
+            <p>Your ${subscription.plan.nickname || 'Pro'} license has been activated.</p>
+            <p><strong>License Key:</strong> <code>${licenseKey}</code></p>
+            <p>Activate it on your machine with:</p>
+            <pre>omg license activate ${licenseKey}</pre>
+            <p>Visit your <a href="https://pyro1121.com/dashboard">dashboard</a> to manage your machines.</p>
+          `
+          );
+          console.log(`License created and emailed for ${customer.email}: ${licenseKey}`);
         } else {
           // Update expiry
           await env.DB.prepare(

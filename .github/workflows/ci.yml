@@ -36,11 +36,27 @@ jobs:
         with:
           config: ./_typos.toml
 
-      - name: License & Advisory Audit
+      - name: Security Audit (cargo-deny)
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+          arguments: advisories bans licenses sources
+
+      - name: Security Audit (cargo-audit)
+        run: |
+          cargo install cargo-audit --locked
+          cargo audit
+
+      - name: Unsafe Code Audit (cargo-geiger)
         continue-on-error: true
         run: |
-          cargo install cargo-deny --locked || true
-          cargo deny check 2>&1 || echo "Advisory warnings (non-blocking)"
+          cargo install cargo-geiger --locked
+          cargo geiger --all-targets --features arch --output-format github
+
+      - name: Binary Size Monitor (cargo-bloat)
+        run: |
+          cargo install cargo-bloat --locked
+          cargo bloat --release --features arch -n 20
 
       - name: Unused Dependencies
         continue-on-error: true
@@ -48,6 +64,20 @@ jobs:
           curl -fsSL https://github.com/bnjbvr/cargo-machete/releases/latest/download/cargo-machete-x86_64-unknown-linux-musl.tar.gz | tar xz
           chmod +x cargo-machete
           ./cargo-machete || echo "Unused dependencies found (advisory)"
+
+  container-scan:
+    name: "Container Scan"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scan Dockerfile (Debian)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'config'
+          hide-progress: false
+          format: 'table'
+          exit-code: '1'
+          severity: 'CRITICAL,HIGH'
 
   # ════════════════════════════════════════════════════════════════════════════
   # 2. ARCH LINUX (Full System Integration)

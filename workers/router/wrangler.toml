@@ -1,0 +1,13 @@
+name = "omg-router"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+
+# Routes - attach to pyro1121.com
+routes = [
+  { pattern = "pyro1121.com/docs/*", zone_name = "pyro1121.com" },
+  { pattern = "pyro1121.com/docs", zone_name = "pyro1121.com" }
+]
+
+[vars]
+MAIN_SITE = "https://omg-site-4gd.pages.dev"
+DOCS_SITE = "https://omg-docs.pages.dev"

@@ -98,47 +98,47 @@ pub fn info_sync(package: &str) -> Result<bool> {
 #[cfg(feature = "arch")]
 pub async fn info_aur(package: &str) -> Result<()> {
     let aur = AurClient::new();
-    if let Some(info) = aur.info(package).await? {
-        // Display beautified info
-        let ver = info.version.to_string();
-        let source_str = info.source.to_string();
+    let Some(info) = aur.info(package).await? else {
         println!(
-            "  {} {} ({})",
-            style::package(&info.name),
-            style::version(&ver),
-            style::info(&source_str)
-        );
-        println!("  {} {}", style::dim("Description:"), info.description);
-
-        // Query detailed info for better UX
-        if let Ok(detailed) = search_detailed(package).await
-            && let Some(d) = detailed.into_iter().find(|p| p.name == info.name)
-        {
-            println!(
-                "  {} {}",
-                style::dim("URL:"),
-                style::url(&d.url.unwrap_or_default())
-            );
-            println!("  {} {:.2} MB", style::dim("Popularity:"), d.popularity);
-            if let Some(license) = d.license
-                && !license.is_empty()
-            {
-                println!("  {} {}", style::dim("License:"), license.join(", "));
-            }
-        }
-
-        println!(
-            "\n  {} {}",
-            style::success("Source:"),
-            style::warning("Arch User Repository (AUR)")
+            "{} Package '{}' not found in official repos or AUR.",
+            style::error("Error:"),
+            style::package(package)
         );
         return Ok(());
+    };
+
+    // Display beautified info
+    let ver = info.version.to_string();
+    let source_str = info.source.to_string();
+    println!(
+        "  {} {} ({})",
+        style::package(&info.name),
+        style::version(&ver),
+        style::info(&source_str)
+    );
+    println!("  {} {}", style::dim("Description:"), info.description);
+
+    // Query detailed info for better UX
+    if let Ok(detailed) = search_detailed(package).await
+        && let Some(d) = detailed.into_iter().find(|p| p.name == info.name)
+    {
+        println!(
+            "  {} {}",
+            style::dim("URL:"),
+            style::url(d.url.as_deref().unwrap_or_default())
+        );
+        println!("  {} {:.2} MB", style::dim("Popularity:"), d.popularity);
+        if let Some(license) = d.license
+            && !license.is_empty()
+        {
+            println!("  {} {}", style::dim("License:"), license.join(", "));
+        }
     }
 
     println!(
-        "{} Package '{}' not found in official repos or AUR.",
-        style::error("Error:"),
-        style::package(package)
+        "\n  {} {}",
+        style::success("Source:"),
+        style::warning("Arch User Repository (AUR)")
     );
     Ok(())
 }
@@ -230,50 +230,48 @@ pub async fn info(package: &str) -> Result<()> {
             style::package(package)
         );
         let pb = style::spinner("Searching AUR...");
-        let details: Option<Vec<crate::package_managers::AurPackageDetail>> =
-            search_detailed(package).await.ok();
+        let details: Vec<crate::package_managers::AurPackageDetail> =
+            search_detailed(package).await.unwrap_or_default();
         pb.finish_and_clear();
 
-        if let Some(pkgs) = details
-            && let Some(pkg) = pkgs.into_iter().find(|p| p.name == package)
-        {
+        let Some(pkg) = details.into_iter().find(|p| p.name == package) else {
             println!(
-                "  {} {}",
-                style::warning("Name:"),
-                style::package(&pkg.name)
+                "{}",
+                style::error(&format!("Package '{package}' not found"))
             );
-            println!(
-                "  {} {}",
-                style::warning("Version:"),
-                style::version(&pkg.version)
-            );
-            println!(
-                "  {} {}",
-                style::warning("Description:"),
-                pkg.description.unwrap_or_default()
-            );
-            println!(
-                "  {} {}",
-                style::warning("Maintainer:"),
-                pkg.maintainer.as_deref().unwrap_or("orphan")
-            );
-            println!("  {} {}", style::warning("Votes:"), pkg.num_votes);
-            println!("  {} {:.2}%", style::warning("Popularity:"), pkg.popularity);
-            if pkg.out_of_date.is_some() {
-                println!(
-                    "  {} {}",
-                    style::error("Status:"),
-                    style::error("OUT OF DATE")
-                );
-            }
-            println!("\n  {}", style::warning("AUR (Arch User Repository)"));
             return Ok(());
-        }
+        };
 
         println!(
-            "{}",
-            style::error(&format!("Package '{package}' not found"))
+            "  {} {}",
+            style::warning("Name:"),
+            style::package(&pkg.name)
         );
+        println!(
+            "  {} {}",
+            style::warning("Version:"),
+            style::version(&pkg.version)
+        );
+        println!(
+            "  {} {}",
+            style::warning("Description:"),
+            pkg.description.as_deref().unwrap_or_default()
+        );
+        println!(
+            "  {} {}",
+            style::warning("Maintainer:"),
+            pkg.maintainer.as_deref().unwrap_or("orphan")
+        );
+        println!("  {} {}", style::warning("Votes:"), pkg.num_votes);
+        println!("  {} {:.2}%", style::warning("Popularity:"), pkg.popularity);
+        if pkg.out_of_date.is_some() {
+            println!(
+                "  {} {}",
+                style::error("Status:"),
+                style::error("OUT OF DATE")
+            );
+        }
+        println!("\n  {}", style::warning("AUR (Arch User Repository)"));
     }
     Ok(())
 }

@@ -44,15 +44,21 @@ jobs:
           ./benchmark.sh 2>&1 | tee benchmark_output.txt
           
           # Extract key metrics for badge
-          SEARCH_TIME=$(grep -A1 "search" benchmark_report.md | tail -1 | awk -F'|' '{print $3}' | tr -d ' ms')
+          # | search | 0.82ms | 12.5ms | 13.1ms | 15.2x |
+          SEARCH_TIME=$(grep "| search |" benchmark_report.md | awk -F'|' '{print $3}' | tr -d ' ms')
           echo "search_time=${SEARCH_TIME}" >> $GITHUB_OUTPUT
           
           # Calculate speedup
-          PACMAN_TIME=$(grep -A1 "search" benchmark_report.md | tail -1 | awk -F'|' '{print $4}' | tr -d ' ms')
+          PACMAN_TIME=$(grep "| search |" benchmark_report.md | awk -F'|' '{print $4}' | tr -d ' ms')
           if [ -n "$SEARCH_TIME" ] && [ -n "$PACMAN_TIME" ] && [ "$SEARCH_TIME" != "0" ]; then
-            SPEEDUP=$(echo "scale=0; $PACMAN_TIME / $SEARCH_TIME" | bc)
+            SPEEDUP=$(echo "scale=1; $PACMAN_TIME / $SEARCH_TIME" | bc)
             echo "speedup=${SPEEDUP}x" >> $GITHUB_OUTPUT
           fi
+
+      - name: Performance Regression Gate
+        run: |
+          chmod +x scripts/check-perf-regression.py
+          python3 scripts/check-perf-regression.py
 
       - name: Generate Badge JSON
         run: |

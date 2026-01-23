@@ -36,6 +36,36 @@ jobs:
         run: |
           export RUSTFLAGS="-C target-cpu=x86-64-v2"
           cargo build --release
+          cp target/release/omg target/release/omg.first
+
+      - name: Verify Reproducibility
+        run: |
+          # Clean and build again to ensure reproducibility
+          cargo clean
+          export RUSTFLAGS="-C target-cpu=x86-64-v2"
+          # Ensure build-id and other metadata don't change if possible
+          # Rust builds are generally reproducible if environment is the same
+          cargo build --release
+          
+          echo "Comparing binaries for reproducibility..."
+          if cmp -s target/release/omg target/release/omg.first; then
+            echo "✅ Binaries are identical!"
+          else
+            echo "❌ Binaries differ! Build is not reproducible."
+            # In a real world-class setup, we might fail here
+            # For now we warn
+            sha256sum target/release/omg target/release/omg.first
+          fi
+
+      - name: Security Check (checksec)
+        run: |
+          pacman -S --noconfirm checksec
+          checksec --file=target/release/omg
+
+      - name: Generate SBOM
+        run: |
+          cargo install cargo-cyclonedx --locked
+          cargo cyclonedx --format json --package omg --output-pattern "{prefix}-{name}-{version}-{target}.{extension}"
 
       - name: Package
         run: |
@@ -44,6 +74,7 @@ jobs:
           cp target/release/omg "omg-v${VERSION}-x86_64-linux-arch/"
           cp target/release/omgd "omg-v${VERSION}-x86_64-linux-arch/" 2>/dev/null || true
           cp target/release/omg-fast "omg-v${VERSION}-x86_64-linux-arch/" 2>/dev/null || true
+          cp *.cdx.json "omg-v${VERSION}-x86_64-linux-arch/" 2>/dev/null || true
           cp README.md LICENSE "omg-v${VERSION}-x86_64-linux-arch/"
           tar -czvf "omg-v${VERSION}-x86_64-linux-arch.tar.gz" "omg-v${VERSION}-x86_64-linux-arch"
           sha256sum "omg-v${VERSION}-x86_64-linux-arch.tar.gz" > "omg-v${VERSION}-x86_64-linux-arch.tar.gz.sha256"
@@ -83,12 +114,24 @@ jobs:
           . /root/.cargo/env
           cargo build --release --no-default-features --features debian
 
+      - name: Security Check (checksec)
+        run: |
+          apt-get update && apt-get install -y checksec
+          checksec --file=target/release/omg
+
+      - name: Generate SBOM
+        run: |
+          . /root/.cargo/env
+          cargo install cargo-cyclonedx --locked
+          cargo cyclonedx --format json --package omg --output-pattern "{prefix}-{name}-{version}-{target}.{extension}"
+
       - name: Package
         run: |
           VERSION=$(awk -F'"' '/^version =/ {print $2; exit}' Cargo.toml)
           mkdir -p "omg-v${VERSION}-x86_64-linux-debian"
           cp target/release/omg "omg-v${VERSION}-x86_64-linux-debian/"
           cp target/release/omgd "omg-v${VERSION}-x86_64-linux-debian/" 2>/dev/null || true
+          cp *.cdx.json "omg-v${VERSION}-x86_64-linux-debian/" 2>/dev/null || true
           cp README.md LICENSE "omg-v${VERSION}-x86_64-linux-debian/"
           tar -czvf "omg-v${VERSION}-x86_64-linux-debian.tar.gz" "omg-v${VERSION}-x86_64-linux-debian"
           sha256sum "omg-v${VERSION}-x86_64-linux-debian.tar.gz" > "omg-v${VERSION}-x86_64-linux-debian.tar.gz.sha256"
@@ -98,6 +141,38 @@ jobs:
           name: debian-build
           path: omg-v*.tar.gz*
 
+  build-debian-aarch64:
+    name: "Build Debian (aarch64)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+      
+      - name: Install Cross
+        run: cargo install cross --locked
+
+      - name: Build
+        run: |
+          # Use cross for easy aarch64 compilation with libapt-pkg-dev dependency handled
+          # We use a custom Cross.toml if needed, but cross usually handles it
+          cross build --release --target aarch64-unknown-linux-gnu --no-default-features --features debian
+
+      - name: Package
+        run: |
+          VERSION=$(awk -F'"' '/^version =/ {print $2; exit}' Cargo.toml)
+          mkdir -p "omg-v${VERSION}-aarch64-linux-debian"
+          cp target/aarch64-unknown-linux-gnu/release/omg "omg-v${VERSION}-aarch64-linux-debian/"
+          cp README.md LICENSE "omg-v${VERSION}-aarch64-linux-debian/"
+          tar -czvf "omg-v${VERSION}-aarch64-linux-debian.tar.gz" "omg-v${VERSION}-aarch64-linux-debian"
+          sha256sum "omg-v${VERSION}-aarch64-linux-debian.tar.gz" > "omg-v${VERSION}-aarch64-linux-debian.tar.gz.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: debian-aarch64-build
+          path: omg-v*.tar.gz*
+
   # ════════════════════════════════════════════════════════════════════════════
   # PUBLISH RELEASE
   # ════════════════════════════════════════════════════════════════════════════
@@ -105,11 +180,22 @@ jobs:
   release:
     name: "Create Release"
     runs-on: ubuntu-latest
-    needs: [build-arch, build-debian]
+    needs: [build-arch, build-debian, build-debian-aarch64]
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate Changelog
+        uses: orhun/git-cliff-action@v4
+        id: git-cliff
+        with:
+          config: cliff.toml
+          args: --latest --strip header
+        env:
+          OUTPUT: CHANGELOG.md
 
       - uses: actions/download-artifact@v4
         with:
@@ -123,6 +209,7 @@ jobs:
 
       - uses: softprops/action-gh-release@v2
         with:
+          body: ${{ steps.git-cliff.outputs.content }}
           files: release/*
-          generate_release_notes: true
+          generate_release_notes: false
           prerelease: ${{ contains(github.ref, '-rc') || contains(github.ref, '-beta') || contains(github.ref, '-alpha') }}

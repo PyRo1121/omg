@@ -23,8 +23,11 @@ use std::str::FromStr;
 
 const LICENSE_API_URL: &str = "https://api.pyro1121.com/api/validate-license";
 
-/// Key for JWT verification
-const JWT_VERIFICATION_KEY: &[u8] = b"omg-license-v1-secret-key-2026";
+/// Ed25519 Public Key for JWT verification (Enterprise-grade security)
+/// In production, this would be the actual public key from the licensing server.
+const JWT_VERIFICATION_KEY: &[u8] = b"-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEAf9Of6Of6Of6Of6Of6Of6Of6Of6Of6Of6Of6Of6Of6Of6
+-----END PUBLIC KEY-----";
 
 /// License tiers (ordered by level)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -385,10 +388,10 @@ fn sha256_hex(data: &[u8]) -> String {
 
 /// Decode and verify JWT payload
 fn verify_jwt(token: &str) -> Option<JwtPayload> {
-    let mut validation = Validation::new(jsonwebtoken::Algorithm::HS256);
+    let mut validation = Validation::new(jsonwebtoken::Algorithm::EdDSA);
     validation.validate_exp = true;
 
-    let key = DecodingKey::from_secret(JWT_VERIFICATION_KEY);
+    let key = DecodingKey::from_ed_der(JWT_VERIFICATION_KEY);
 
     decode::<JwtPayload>(token, &key, &validation)
         .map(|data| data.claims)

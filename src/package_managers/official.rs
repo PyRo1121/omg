@@ -206,7 +206,7 @@ impl PackageManager for OfficialPackageManager {
         &self,
         _fast: bool,
     ) -> BoxFuture<'static, AnyhowResult<(usize, usize, usize, usize)>> {
-        async move { get_system_status().map_err(anyhow::Error::from) }.boxed()
+        async move { get_system_status() }.boxed()
     }
 
     fn list_explicit(&self) -> BoxFuture<'static, AnyhowResult<Vec<String>>> {
