@@ -1,6 +1,7 @@
 //! `omg size` - Show disk usage by packages
 
 use anyhow::Result;
+#[allow(unused_imports)]
 use owo_colors::OwoColorize;
 
 /// Show disk usage analysis
@@ -290,6 +291,7 @@ fn show_package_tree(_package: &str) -> Result<()> {
     anyhow::bail!("Size analysis requires arch or debian feature")
 }
 
+#[allow(dead_code)]
 fn format_size(bytes: i64) -> String {
     const KB: i64 = 1024;
     const MB: i64 = KB * 1024;
@@ -306,6 +308,7 @@ fn format_size(bytes: i64) -> String {
     }
 }
 
+#[allow(dead_code)]
 fn generate_bar(value: i64, max: i64, width: usize) -> String {
     let ratio = if max > 0 {
         (value as f64 / max as f64).min(1.0)

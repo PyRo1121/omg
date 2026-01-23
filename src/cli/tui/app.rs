@@ -322,7 +322,7 @@ impl App {
         crate::cli::packages::clean(true, true, true, false).await
     }
 
-    pub async fn remove_orphans(&self) -> Result<()> {
+    pub fn remove_orphans(&self) -> Result<()> {
         // Use the actual orphan removal
         #[cfg(feature = "arch")]
         {

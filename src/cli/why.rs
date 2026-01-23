@@ -40,6 +40,7 @@ pub fn run(package: &str, reverse: bool) -> Result<()> {
         anyhow::bail!("Package dependency analysis requires arch or debian feature");
     }
 
+    #[cfg(any(feature = "arch", feature = "debian"))]
     Ok(())
 }
 

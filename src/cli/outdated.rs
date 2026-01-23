@@ -256,10 +256,13 @@ fn get_outdated_packages() -> Result<Vec<OutdatedPackage>> {
 }
 
 #[cfg(not(any(feature = "arch", feature = "debian")))]
+#[allow(clippy::unnecessary_wraps)]
 fn get_outdated_packages() -> Result<Vec<OutdatedPackage>> {
+    // This is a stub for when features are disabled
     Ok(Vec::new())
 }
 
+#[allow(dead_code)]
 fn classify_update(old: &str, new: &str) -> UpdateType {
     // Parse semver-like versions
     let old_parts: Vec<_> = old.split('.').collect();

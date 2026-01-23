@@ -72,13 +72,11 @@ pub fn explicit_sync(count: bool) -> Result<()> {
     {
         let packages = crate::package_managers::list_explicit_fast().unwrap_or_default();
         display_explicit_list(packages)?;
-        return Ok(());
     }
 
     #[cfg(not(any(feature = "arch", feature = "debian")))]
     {
         println!("No package manager backend enabled");
-        return Ok(());
     }
 
     Ok(())

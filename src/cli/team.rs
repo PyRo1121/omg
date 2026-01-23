@@ -420,9 +420,24 @@ pub async fn propose(message: &str) -> Result<()> {
     println!("{} Creating proposal...\n", "OMG".cyan().bold());
 
     // Capture current environment state for the proposal
+    let packages = {
+        #[cfg(feature = "arch")]
+        {
+            crate::package_managers::list_explicit_fast().unwrap_or_default()
+        }
+        #[cfg(feature = "debian")]
+        {
+            crate::package_managers::apt_list_explicit().unwrap_or_default()
+        }
+        #[cfg(not(any(feature = "arch", feature = "debian")))]
+        {
+            Vec::<String>::new()
+        }
+    };
+
     let state = serde_json::json!({
         "environment": crate::core::env::fingerprint::EnvironmentState::capture().await?,
-        "packages": crate::package_managers::list_explicit_fast().unwrap_or_default(),
+        "packages": packages,
     });
 
     let proposal_id = license::propose_change(message, &state).await?;

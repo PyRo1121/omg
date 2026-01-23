@@ -70,7 +70,7 @@ impl PackageDisplay for crate::package_managers::SyncPackage {
         format!(
             "  {} {} ({}) - {}{}",
             style::package(&self.name),
-            style::version(&self.version.to_string()),
+            style::version(&self.version.clone()),
             style::info(&self.repo),
             style::dim(&truncate(&self.description, 50)),
             installed
@@ -83,7 +83,7 @@ impl PackageDisplay for crate::core::Package {
         format!(
             "  {} {} ({}) - {}",
             style::package(&self.name),
-            style::version(&self.version.to_string()),
+            style::version(&self.version.clone()),
             style::info(&self.source.to_string()),
             style::dim(&truncate(&self.description, 50))
         )
@@ -135,7 +135,7 @@ fn display_aur_results(
                 writer,
                 "  {} {} - {}",
                 style::package(&pkg.name),
-                style::version(&pkg.version.to_string()),
+                style::version(&pkg.version.clone()),
                 style::dim(&truncate(&pkg.description, 55))
             )?;
         }
@@ -168,7 +168,7 @@ async fn handle_interactive_selection(
         items.push(format!(
             "{} {} {} ({}) - {}",
             style::package(&pkg.name),
-            style::version(&pkg.version.to_string()),
+            style::version(&pkg.version.clone()),
             status,
             style::info(&pkg.repo),
             style::dim(&truncate(&pkg.description, 40))
@@ -195,7 +195,7 @@ async fn handle_interactive_selection(
                 items.push(format!(
                     "{} {} ({}) - {}",
                     style::package(&pkg.name),
-                    style::version(&pkg.version.to_string()),
+                    style::version(&pkg.version.clone()),
                     style::warning("AUR"),
                     style::dim(&truncate(&pkg.description, 40))
                 ));
@@ -229,7 +229,7 @@ async fn handle_interactive_selection(
 }
 
 /// Fetch packages from all sources (daemon, local, AUR)
-async fn fetch_packages(query: &str, detailed: bool, interactive: bool) -> SearchResults {
+async fn fetch_packages(query: &str, #[allow(unused_variables)] detailed: bool, #[allow(unused_variables)] interactive: bool) -> SearchResults {
     let mut official_packages: Vec<crate::package_managers::SyncPackage> = Vec::new();
     #[cfg(feature = "arch")]
     let mut aur_packages_detailed: Option<Vec<crate::package_managers::AurPackageDetail>> = None;
