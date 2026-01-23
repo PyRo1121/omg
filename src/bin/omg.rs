@@ -114,7 +114,7 @@ fn try_fast_completions(args: &[String]) -> Result<bool> {
             verbose: 0,
             quiet: false,
             all: use_all,
-            command: Commands::Help { all: use_all },
+            command: Commands::Status { fast: false },
         });
 
         // Use the new tiered help system
@@ -737,10 +737,6 @@ async fn async_main(args: Vec<String>) -> Result<()> {
         }
         Commands::Metrics => {
             commands::metrics().await?;
-        }
-        Commands::Help { all } => {
-            // Use the new tiered help system
-            omg_lib::cli::help::print_help(&cli, all)?;
         }
         Commands::Init {
             defaults,

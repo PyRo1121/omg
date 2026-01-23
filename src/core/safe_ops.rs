@@ -101,12 +101,8 @@ pub fn validate_path<P: AsRef<Path>>(path: P) -> Result<PathBuf> {
         return Err(anyhow::anyhow!("Path contains invalid UTF-8"));
     }
 
-    // Normalize the path
-    let normalized = path
-        .canonicalize()
-        .with_context(|| format!("Failed to canonicalize path: {}", path.display()))?;
-
-    Ok(normalized)
+    // Return the path as-is (canonicalize() fails for non-existent paths)
+    Ok(path.to_path_buf())
 }
 
 /// Safe file write with atomic operations
@@ -299,11 +295,14 @@ mod tests {
     fn test_nonzero_u32_zero() {
         let result = nonzero_u32(0, "test");
         assert!(result.is_err());
+        let err = result.unwrap_err();
+        // anyhow wraps errors, so check the chain
+        let found = err
+            .chain()
+            .any(|e| e.to_string().contains("value must be > 0, got 0"));
         assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("value must be > 0, got 0")
+            found,
+            "Error chain should contain 'value must be > 0, got 0'"
         );
     }
 
@@ -443,12 +442,12 @@ mod tests {
     fn test_rate_limiter_config_zero_values() {
         let config = RateLimiterConfig::with_values(0, 0);
         assert!(config.is_err());
-        assert!(
-            config
-                .unwrap_err()
-                .to_string()
-                .contains("value must be > 0")
-        );
+        let err = config.unwrap_err();
+        // Check the error chain for the inner error message
+        let found = err
+            .chain()
+            .any(|e| e.to_string().contains("value must be > 0"));
+        assert!(found, "Error chain should contain 'value must be > 0'");
     }
 
     #[test]
