@@ -141,7 +141,7 @@ impl RubyManager {
         match download_with_progress(&self.client, &url, &download_path, None).await {
             Ok(()) => {
                 println!("{} Extracting (pure Rust)...", "→".blue());
-                extract_tar_gz(&download_path, &version_dir, 1)?;
+                extract_tar_gz(&download_path, &version_dir, 1).await?;
 
                 let _ = fs::remove_file(&download_path);
 

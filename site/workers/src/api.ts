@@ -8,16 +8,17 @@ interface RateLimit {
 
 export interface Env {
   DB: D1Database;
-  AI: any; // Cloudflare Workers AI
+  AI: any;
   STRIPE_SECRET_KEY: string;
   STRIPE_WEBHOOK_SECRET: string;
   JWT_SECRET: string;
   RESEND_API_KEY?: string;
   JWT_PRIVATE_KEY?: string;
-  ADMIN_USER_ID?: string; // Set via wrangler secret - never expose in code
+  ADMIN_USER_ID?: string;
   STRIPE_TEAM_PRICE_ID?: string;
   STRIPE_ENT_PRICE_ID?: string;
-  // Rate limiters (defined in wrangler.toml)
+  META_API_KEY?: string;
+  ACCOUNT_ID?: string;
   ADMIN_RATE_LIMITER?: RateLimit;
   AUTH_RATE_LIMITER?: RateLimit;
   API_RATE_LIMITER?: RateLimit;

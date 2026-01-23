@@ -1,0 +1,12 @@
+name = "omg-releases"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+
+[r2_buckets]
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "omg-releases"
+preview_bucket_name = "omg-releases-preview"
+
+[env.production]
+route = { pattern = "releases.pyro1121.com", custom_domain = true }

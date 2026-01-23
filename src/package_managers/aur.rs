@@ -273,12 +273,26 @@ impl AurClient {
         let meta_path = self.metadata_meta_path();
         let ttl = self.settings.aur.metadata_cache_ttl_secs;
 
-        if cache_path.exists()
-            && let Ok(meta) = std::fs::metadata(&cache_path)
-            && let Ok(modified) = meta.modified()
-            && modified.elapsed().unwrap_or_default() < Duration::from_secs(ttl)
-        {
-            return Self::read_metadata_archive(&cache_path).map(Some);
+        let cache_path_clone = cache_path.clone();
+        let should_use_cache = tokio::task::spawn_blocking(move || {
+            if cache_path_clone.exists() {
+                if let Ok(meta) = std::fs::metadata(&cache_path_clone) {
+                    if let Ok(modified) = meta.modified() {
+                        if modified.elapsed().unwrap_or_default() < Duration::from_secs(ttl) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            false
+        })
+        .await?;
+
+        if should_use_cache {
+            let cache_path_clone = cache_path.clone();
+            return tokio::task::spawn_blocking(move || Self::read_metadata_archive(&cache_path_clone))
+                .await?
+                .map(Some);
         }
 
         let meta_cache = if meta_path.exists() {
@@ -318,7 +332,10 @@ impl AurClient {
 
         let response = req.send().await?;
         if response.status() == reqwest::StatusCode::NOT_MODIFIED && cache_path.exists() {
-            return Self::read_metadata_archive(&cache_path).map(Some);
+            let cache_path_clone = cache_path.clone();
+            return tokio::task::spawn_blocking(move || Self::read_metadata_archive(&cache_path_clone))
+                .await?
+                .map(Some);
         }
 
         let response = response.error_for_status()?;
@@ -344,7 +361,10 @@ impl AurClient {
             let _ = tokio_fs::write(&meta_path, meta_bytes).await;
         }
 
-        Self::read_metadata_archive(&cache_path).map(Some)
+        let cache_path_clone = cache_path.clone();
+        tokio::task::spawn_blocking(move || Self::read_metadata_archive(&cache_path_clone))
+            .await?
+            .map(Some)
     }
 
     fn read_metadata_archive(path: &Path) -> Result<AurResponse> {
@@ -436,7 +456,7 @@ impl AurClient {
             Self::review_pkgbuild(&pkgbuild_path)?;
         }
 
-        let pkg_file = if let Some(cached) = self.cached_package(package, &env.pkgdest, &cache_key)
+        let pkg_file =         if let Some(cached) = self.cached_package(package, &env.pkgdest, &cache_key).await?
         {
             println!("{} Using cached build...", "→".blue());
             cached
@@ -453,8 +473,8 @@ impl AurClient {
                 );
             }
 
-            let pkg_file = Self::find_built_package(&pkg_dir, &env.pkgdest)?;
-            self.write_cache_key(package, &cache_key)?;
+            let pkg_file = Self::find_built_package(&pkg_dir, &env.pkgdest).await?;
+            self.write_cache_key(package, &cache_key).await?;
             pkg_file
         };
 
@@ -514,7 +534,7 @@ impl AurClient {
         if self.settings.aur.review_pkgbuild {
             Self::review_pkgbuild(&pkgbuild_path)?;
         }
-        if let Some(cached) = self.cached_package(package, &env.pkgdest, &cache_key) {
+        if let Some(cached) = self.cached_package(package, &env.pkgdest, &cache_key).await? {
             return Ok(cached);
         }
 
@@ -528,30 +548,36 @@ impl AurClient {
             anyhow::bail!("makepkg failed for '{package}'. Check build output above for details.");
         }
 
-        let pkg_file = Self::find_built_package(&pkg_dir, &env.pkgdest)?;
-        self.write_cache_key(package, &cache_key)?;
+        let pkg_file = Self::find_built_package(&pkg_dir, &env.pkgdest).await?;
+        self.write_cache_key(package, &cache_key).await?;
         Ok(pkg_file)
     }
 
-    fn find_built_package(pkg_dir: &Path, pkgdest: &Path) -> Result<PathBuf> {
-        let mut expected_names = Self::expected_pkg_names(pkg_dir);
-        if expected_names.is_empty() {
-            let fallback = pkg_dir.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if !fallback.is_empty() {
-                expected_names.push(fallback.to_string());
+    async fn find_built_package(pkg_dir: &Path, pkgdest: &Path) -> Result<PathBuf> {
+        let pkg_dir = pkg_dir.to_path_buf();
+        let pkgdest = pkgdest.to_path_buf();
+
+        tokio::task::spawn_blocking(move || {
+            let mut expected_names = Self::expected_pkg_names(&pkg_dir);
+            if expected_names.is_empty() {
+                let fallback = pkg_dir.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                if !fallback.is_empty() {
+                    expected_names.push(fallback.to_string());
+                }
             }
-        }
 
-        // First try pkgdest (shared cache), filtering by expected package names
-        let pkg_path = Self::find_package_in_dir(pkgdest, &expected_names)
-            .or_else(|| Self::find_package_in_dir(pkg_dir, &expected_names));
+            // First try pkgdest (shared cache), filtering by expected package names
+            let pkg_path = Self::find_package_in_dir(&pkgdest, &expected_names)
+                .or_else(|| Self::find_package_in_dir(&pkg_dir, &expected_names));
 
-        pkg_path.ok_or_else(|| {
-            anyhow::anyhow!(
-                "No package archive found for '{expected_names:?}' after makepkg. Check ~/.cache/omg/aur/_logs/{}/.log",
-                pkg_dir.file_name().and_then(|n| n.to_str()).unwrap_or("unknown")
-            )
+            pkg_path.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "No package archive found for '{expected_names:?}' after makepkg. Check ~/.cache/omg/aur/_logs/{}/.log",
+                    pkg_dir.file_name().and_then(|n| n.to_str()).unwrap_or("unknown")
+                )
+            })
         })
+        .await?
     }
 
     fn expected_pkg_names(pkg_dir: &Path) -> Vec<String> {
@@ -703,7 +729,7 @@ impl AurClient {
 
         // Check build cache
         let cache_key = self.cache_key(&pkg_dir, &env.makeflags)?;
-        if let Some(cached) = self.cached_package(package, &env.pkgdest, &cache_key) {
+        if let Some(cached) = self.cached_package(package, &env.pkgdest, &cache_key).await? {
             return Ok(cached);
         }
 
@@ -726,8 +752,8 @@ impl AurClient {
             anyhow::bail!("makepkg failed for '{package}'");
         }
 
-        let pkg_file = Self::find_built_package(&pkg_dir, &env.pkgdest)?;
-        self.write_cache_key(package, &cache_key)?;
+        let pkg_file = Self::find_built_package(&pkg_dir, &env.pkgdest).await?;
+        self.write_cache_key(package, &cache_key).await?;
         Ok(pkg_file)
     }
 
@@ -749,7 +775,7 @@ impl AurClient {
         let env = self.makepkg_env(&pkg_dir)?;
         let cache_key = self.cache_key(&pkg_dir, &env.makeflags)?;
 
-        if let Some(cached) = self.cached_package(package, &env.pkgdest, &cache_key) {
+        if let Some(cached) = self.cached_package(package, &env.pkgdest, &cache_key).await? {
             return Ok(cached);
         }
 
@@ -765,8 +791,8 @@ impl AurClient {
             );
         }
 
-        let pkg_file = Self::find_built_package(&pkg_dir, &env.pkgdest)?;
-        self.write_cache_key(package, &cache_key)?;
+        let pkg_file = Self::find_built_package(&pkg_dir, &env.pkgdest).await?;
+        self.write_cache_key(package, &cache_key).await?;
         Ok(pkg_file)
     }
 
@@ -783,9 +809,13 @@ impl AurClient {
         let log_dir = self.build_dir.join("_logs");
         std::fs::create_dir_all(&log_dir)?;
         let log_path = log_dir.join(format!("{package_name}.log"));
-        let log_file = File::create(&log_path)?;
-        let log_file_err = log_file.try_clone()?;
-
+        let log_path_clone = log_path.clone();
+        let (log_file, log_file_err) = tokio::task::spawn_blocking(move || {
+            let f = File::create(&log_path_clone)?;
+            let e = f.try_clone()?;
+            Ok::<_, anyhow::Error>((f, e))
+        })
+        .await??;
         let spinner = create_spinner(&format!("Building {package_name}..."));
 
         let mut cmd = Command::new("makepkg");
@@ -915,9 +945,13 @@ impl AurClient {
         let log_dir = self.build_dir.join("_logs");
         std::fs::create_dir_all(&log_dir)?;
         let log_path = log_dir.join(format!("{package_name}.log"));
-        let log_file = File::create(&log_path)?;
-        let log_file_err = log_file.try_clone()?;
-
+        let log_path_clone = log_path.clone();
+        let (log_file, log_file_err) = tokio::task::spawn_blocking(move || {
+            let f = File::create(&log_path_clone)?;
+            let e = f.try_clone()?;
+            Ok::<_, anyhow::Error>((f, e))
+        })
+        .await??;
         let spinner = create_spinner(&format!("Building {package_name}..."));
 
         // Check if bubblewrap is available
@@ -1089,8 +1123,13 @@ impl AurClient {
         let log_dir = self.build_dir.join("_logs");
         std::fs::create_dir_all(&log_dir)?;
         let log_path = log_dir.join(format!("{package_name}.log"));
-        let log_file = File::create(&log_path)?;
-        let log_file_err = log_file.try_clone()?;
+        let log_path_clone = log_path.clone();
+        let (log_file, log_file_err) = tokio::task::spawn_blocking(move || {
+            let f = File::create(&log_path_clone)?;
+            let e = f.try_clone()?;
+            Ok::<_, anyhow::Error>((f, e))
+        })
+        .await??;
         let spinner = create_spinner(&format!("Building {package_name}..."));
 
         let status = self
@@ -1146,8 +1185,13 @@ impl AurClient {
         let log_dir = self.build_dir.join("_logs");
         std::fs::create_dir_all(&log_dir)?;
         let log_path = log_dir.join(format!("{package_name}.log"));
-        let log_file = File::create(&log_path)?;
-        let log_file_err = log_file.try_clone()?;
+        let log_path_clone = log_path.clone();
+        let (log_file, log_file_err) = tokio::task::spawn_blocking(move || {
+            let f = File::create(&log_path_clone)?;
+            let e = f.try_clone()?;
+            Ok::<_, anyhow::Error>((f, e))
+        })
+        .await??;
         let spinner = create_spinner(&format!("Building {package_name} (chroot)..."));
 
         let mut cmd = if Command::new("which")
@@ -1414,34 +1458,49 @@ impl AurClient {
             .join(format!("{package}.hash"))
     }
 
-    fn cached_package(&self, package: &str, pkgdest: &Path, cache_key: &str) -> Option<PathBuf> {
+    async fn cached_package(&self, package: &str, pkgdest: &Path, cache_key: &str) -> Result<Option<PathBuf>> {
         if !self.settings.aur.cache_builds {
-            return None;
+            return Ok(None);
         }
 
-        let cache_path = self.cache_path(package);
-        if !cache_path.exists() {
-            return None;
-        }
+        let package = package.to_string();
+        let pkgdest = pkgdest.to_path_buf();
+        let cache_key = cache_key.to_string();
+        let cache_path = self.cache_path(&package);
 
-        let cached = std::fs::read_to_string(&cache_path).unwrap_or_default();
-        if cached.trim() != cache_key {
-            return None;
-        }
+        tokio::task::spawn_blocking(move || {
+            if !cache_path.exists() {
+                return None;
+            }
 
-        Self::find_package_in_dir(pkgdest, &[package.to_string()])
+            let cached = std::fs::read_to_string(&cache_path).unwrap_or_default();
+            if cached.trim() != cache_key {
+                return None;
+            }
+
+            Self::find_package_in_dir(&pkgdest, &[package])
+        })
+        .await
+        .map_err(Into::into)
     }
 
-    fn write_cache_key(&self, package: &str, cache_key: &str) -> Result<()> {
+    async fn write_cache_key(&self, package: &str, cache_key: &str) -> Result<()> {
         if !self.settings.aur.cache_builds {
             return Ok(());
         }
 
-        let cache_path = self.cache_path(package);
-        if let Some(parent) = cache_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(cache_path, cache_key)?;
+        let package = package.to_string();
+        let cache_key = cache_key.to_string();
+        let cache_path = self.cache_path(&package);
+
+        tokio::task::spawn_blocking(move || {
+            if let Some(parent) = cache_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(cache_path, cache_key)?;
+            Ok::<(), anyhow::Error>(())
+        })
+        .await??;
         Ok(())
     }
 

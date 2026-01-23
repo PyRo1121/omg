@@ -91,7 +91,7 @@ impl crate::package_managers::PackageManager for AptPackageManager {
 
             if !is_root() {
                 let mut args = vec!["remove", "--"];
-                let pkg_refs: Vec<&str> = packages.iter().map(|s| s.as_str()).collect();
+                let pkg_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
                 args.extend_from_slice(&pkg_refs);
                 crate::core::privilege::run_self_sudo(&args).await?;
                 return Ok(());
@@ -249,12 +249,10 @@ pub fn search_sync(query: &str) -> Result<Vec<SyncPackage>> {
         // If name doesn't match, check summary (slower as it might load more data)
         let mut summary = None;
         if !matched {
-            if let Some(candidate) = pkg.candidate() {
-                if let Some(s) = candidate.summary() {
-                    if s.to_lowercase().contains(&query_lower) {
-                        matched = true;
-                        summary = Some(s);
-                    }
+            if let Some(s) = pkg.candidate().and_then(|c| c.summary()) {
+                if s.to_lowercase().contains(&query_lower) {
+                    matched = true;
+                    summary = Some(s);
                 }
             }
         }
@@ -276,7 +274,9 @@ pub fn search_sync(query: &str) -> Result<Vec<SyncPackage>> {
                     .or_else(|| candidate.and_then(|c| c.summary()))
                     .unwrap_or_default(),
                 repo: "apt".to_string(),
-                download_size: pkg.candidate().map_or(0, |v| v.size() as i64),
+                download_size: pkg.candidate().map_or(0, |v| {
+                    i64::try_from(v.size()).unwrap_or(i64::MAX)
+                }),
                 installed: pkg.is_installed(),
             });
         }
@@ -300,8 +300,8 @@ pub fn get_sync_pkg_info(name: &str) -> Result<Option<PackageInfo>> {
                 description: version.summary().unwrap_or_default(),
                 url: None,
                 size: version.size(),
-                install_size: Some(version.installed_size() as i64),
-                download_size: Some(version.size() as u64),
+                install_size: Some(i64::try_from(version.installed_size()).unwrap_or(i64::MAX)),
+                download_size: Some(version.size()),
                 repo: "apt".to_string(),
                 depends: collect_depends(&version),
                 licenses: Vec::new(),
@@ -437,7 +437,12 @@ fn install_blocking(packages: &[String]) -> Result<()> {
     let (local_files, names): (Vec<String>, Vec<String>) = packages
         .iter()
         .cloned()
-        .partition(|pkg| pkg.ends_with(".deb") || pkg.ends_with(".ddeb"));
+        .partition(|pkg| {
+            let path = std::path::Path::new(pkg);
+            path.extension().map_or(false, |ext| {
+                ext.eq_ignore_ascii_case("deb") || ext.eq_ignore_ascii_case("ddeb")
+            })
+        });
 
     let cache = open_cache(&local_files)?;
     for pkg_name in &names {
@@ -516,8 +521,7 @@ fn map_local_package(pkg: &rust_apt::Package<'_>) -> LocalPackage {
     let version = pkg
         .installed()
         .or_else(|| pkg.candidate())
-        .map(|ver| ver.version().to_string())
-        .unwrap_or_else(|| "unknown".to_string());
+        .map_or_else(|| "unknown".to_string(), |ver| ver.version().to_string());
     let summary = pkg
         .installed()
         .and_then(|ver| ver.summary())

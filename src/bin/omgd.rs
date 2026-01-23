@@ -4,8 +4,10 @@
 
 use anyhow::Result;
 use clap::Parser;
+use sentry_tracing::EventFilter;
 use std::path::PathBuf;
 use tokio::net::UnixListener;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use omg_lib::core::paths;
 use omg_lib::daemon::server;
@@ -32,13 +34,30 @@ struct Args {
 async fn main() -> Result<()> {
     let args = Args::parse();
 
-    // Initialize tracing
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive(tracing::Level::INFO.into()),
-        )
-        .with_target(false)
+    // Initialize Sentry
+    // DSN is loaded from OMG_SENTRY_DSN environment variable
+    let _guard = sentry::init((
+        std::env::var("OMG_SENTRY_DSN").ok(),
+        sentry::ClientOptions {
+            release: sentry::release_name!(),
+            attach_stacktrace: true,
+            ..Default::default()
+        },
+    ));
+
+    // Initialize tracing with Sentry integration
+    let env_filter = tracing_subscriber::EnvFilter::from_default_env()
+        .add_directive(tracing::Level::INFO.into());
+
+    let sentry_layer = sentry_tracing::layer().event_filter(|md| match md.level() {
+        &tracing::Level::ERROR => EventFilter::Event,
+        _ => EventFilter::Breadcrumb,
+    });
+
+    tracing_subscriber::registry()
+        .with(env_filter)
+        .with(tracing_subscriber::fmt::layer().with_target(false))
+        .with(sentry_layer)
         .init();
 
     // Determine socket path
@@ -66,7 +85,30 @@ async fn main() -> Result<()> {
     }
 
     // Run server
-    server::run(listener).await?;
+    // Capture panics in Sentry
+    use futures::FutureExt;
+
+    let result = std::panic::AssertUnwindSafe(async {
+        server::run(listener).await
+    })
+    .catch_unwind()
+    .await;
+
+    match result {
+        Ok(run_result) => run_result?,
+        Err(e) => {
+            let msg = if let Some(s) = e.downcast_ref::<&str>() {
+                format!("Daemon panicked: {}", s)
+            } else if let Some(s) = e.downcast_ref::<String>() {
+                format!("Daemon panicked: {}", s)
+            } else {
+                "Daemon panicked: unknown error".to_string()
+            };
+            
+            tracing::error!("{}", msg);
+            anyhow::bail!(msg);
+        }
+    }
 
     // Cleanup socket on exit
     if socket_path.exists() {

@@ -1,4 +1,4 @@
-// AI Insights Handler - Using Cloudflare Workers AI
+// AI Insights Handler - Using Cloudflare AI Gateway with Meta.com
 import { Env, jsonResponse, errorResponse, validateSession, getAuthToken } from '../api';
 
 export async function handleGetSmartInsights(request: Request, env: Env): Promise<Response> {
@@ -46,13 +46,14 @@ export async function handleGetSmartInsights(request: Request, env: Env): Promis
       `).bind(auth.user.id).first();
       
       const timeHours = Math.round((Number(usage?.time) || 0) / 3600000);
-      const efficiency = usage?.cmds > 0 ? (timeHours / (usage?.cmds || 1) * 100).toFixed(2) : 0;
+      const cmdsNum = Number(usage?.cmds) || 0;
+      const efficiency = cmdsNum > 0 ? (timeHours / cmdsNum * 100).toFixed(2) : 0;
       
       contextData = `Usage Stats: ${usage?.cmds?.toLocaleString()} commands executed, ${timeHours} hours saved, ${efficiency}% average efficiency per command. Breakdown: ${commandBreakdown?.searches || 0} searches, ${commandBreakdown?.installs || 0} installs, ${commandBreakdown?.runtime_switches || 0} runtime switches.`;
       additionalContext = `OMG saves 39 minutes per engineer annually just on package queries. For a 50-person team, that's $2,350-$2,650 in reclaimed productivity. Zero context switching between 7 package managers.`;
     }
     
-    // 2. Generate Insight using Workers AI (Llama 3) with OMG-specific prompts
+    // 2. Generate Insight using AI Gateway with Meta.com Llama 4 Maverick
     let systemPrompt = '';
     let userPrompt = '';
     
@@ -66,21 +67,59 @@ export async function handleGetSmartInsights(request: Request, env: Env): Promis
       systemPrompt = `You are a personal productivity assistant for OMG users. You analyze individual developer usage to identify efficiency gains, runtime optimization opportunities, and workflow improvements. Focus on: time savings, command efficiency, runtime adoption patterns, and skill development. Be encouraging but specific. Avoid generic motivational statements.`;
       userPrompt = `Analyze this developer's OMG usage: ${contextData} ${additionalContext} Provide 1 specific, actionable insight about how to improve efficiency, optimize their workflow, or discover underutilized features. Focus on concrete actions they can take today.`;
     }
-    
-    const aiResponse = await env.AI.run('@cf/meta/llama-3-8b-instruct', {
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt }
-      ],
-      max_tokens: 500
-    });
+
+    let aiResponse;
+    let modelUsed = 'Workers AI (Llama 3.1 70B)';
+
+    try {
+      if (env.META_API_KEY) {
+        const response = await fetch('https://api.llama.com/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${env.META_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: 'Llama-4-Maverick-17B-128E-Instruct-FP8',
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: userPrompt }
+            ],
+            max_tokens: 500,
+            temperature: 0.7
+          })
+        });
+
+        if (response.ok) {
+          const data: any = await response.json();
+          aiResponse = { response: data.choices?.[0]?.message?.content };
+          modelUsed = 'Meta.com (Llama 4 Maverick 17B)';
+        } else {
+          const errorText = await response.text();
+          console.warn('Meta API error:', response.status, errorText);
+          throw new Error(`Meta API error: ${response.status}`);
+        }
+      } else {
+        throw new Error('META_API_KEY not configured');
+      }
+    } catch (metaError) {
+      console.warn('Meta API failed, falling back to Workers AI:', metaError);
+      
+      aiResponse = await env.AI.run('@cf/meta/llama-3.1-70b-instruct', {
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ],
+        max_tokens: 500
+      });
+    }
 
     const insight = aiResponse.response || "Continue optimizing your workflow with OMG's parallel execution engine.";
 
     return jsonResponse({
       insight,
       timestamp: new Date().toISOString(),
-      generated_by: 'Workers AI (Llama 3)'
+      generated_by: modelUsed
     });
   } catch (e) {
     console.error('AI Insight Error:', e);

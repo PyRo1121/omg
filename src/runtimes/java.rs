@@ -165,7 +165,7 @@ impl JavaManager {
         download_with_progress(&self.client, &binary.package.link, &download_path, None).await?;
 
         println!("{} Extracting (pure Rust)...", "→".blue());
-        extract_tar_gz(&download_path, &version_dir, 1)?;
+        extract_tar_gz(&download_path, &version_dir, 1).await?;
 
         let _ = fs::remove_file(&download_path);
 

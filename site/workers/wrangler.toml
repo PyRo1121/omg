@@ -34,4 +34,7 @@ namespace_id = "1003"
 simple = { limit = 1000, period = 60 }
 
 # Secrets are set via: bunx wrangler secret put <NAME>
-# Required: STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, JWT_SECRET, ADMIN_USER_ID, RESEND_API_KEY
+# Required: STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, JWT_SECRET, ADMIN_USER_ID, RESEND_API_KEY, META_API_KEY
+
+[vars]
+ACCOUNT_ID = "f1e95b3e1b502cf366dfc81a863695fa"

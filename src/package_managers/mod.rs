@@ -58,7 +58,7 @@ pub fn list_explicit_fast() -> anyhow::Result<Vec<String>> {
             let pm = get_package_manager();
             return futures::executor::block_on(pm.list_explicit());
         }
-        return alpm_direct::list_explicit_fast();
+        alpm_direct::list_explicit_fast()
     }
 
     #[cfg(all(
@@ -66,7 +66,7 @@ pub fn list_explicit_fast() -> anyhow::Result<Vec<String>> {
         any(feature = "debian", feature = "debian-pure")
     ))]
     {
-        return debian_db::list_explicit_fast();
+        debian_db::list_explicit_fast()
     }
 
     #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]

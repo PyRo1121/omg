@@ -22,6 +22,7 @@ pub mod packages;
 pub mod pin;
 pub mod runtimes;
 pub mod security;
+pub mod self_update;
 pub mod size;
 pub mod snapshot;
 pub mod style;
