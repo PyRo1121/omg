@@ -48,7 +48,8 @@ impl crate::package_managers::PackageManager for AptPackageManager {
             // Try fast path first
             let fast_results = super::debian_db::search_fast(&query);
             if let Ok(results) = fast_results
-                && !results.is_empty() {
+                && !results.is_empty()
+            {
                 return Ok(results);
             }
 
@@ -250,7 +251,8 @@ pub fn search_sync(query: &str) -> Result<Vec<SyncPackage>> {
         let mut summary = None;
         if !matched
             && let Some(s) = pkg.candidate().and_then(|c| c.summary())
-            && s.to_lowercase().contains(&query_lower) {
+            && s.to_lowercase().contains(&query_lower)
+        {
             matched = true;
             summary = Some(s);
         }
