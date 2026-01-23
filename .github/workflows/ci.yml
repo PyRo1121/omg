@@ -194,7 +194,7 @@ jobs:
         run: |
           . /root/.cargo/env
           cargo build --release --no-default-features --features debian
-          cargo clippy --all-targets --all-features -- -D warnings -W clippy::pedantic
+          cargo clippy --all-targets --no-default-features --features debian -- -D warnings -W clippy::pedantic
           cargo test --no-default-features --features debian --lib
           cargo test --test exhaustive_cli_matrix --no-default-features --features debian
 
