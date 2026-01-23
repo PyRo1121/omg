@@ -28,3 +28,39 @@ fn test_daemon_initialization_debian_mock() {
     // We expect get_detailed_packages to return mock data in test mode.
     assert!(!state.index.is_empty(), "Package index should not be empty in mock mode");
 }
+
+#[cfg(any(feature = "debian", feature = "debian-pure"))]
+#[tokio::test]
+async fn test_handle_debian_search() {
+    unsafe {
+        std::env::set_var("OMG_TEST_MODE", "true");
+        std::env::set_var("OMG_TEST_DISTRO", "debian");
+    }
+
+    use omg_lib::daemon::handlers::{DaemonState, handle_request};
+    use omg_lib::daemon::protocol::{Request, Response, ResponseResult};
+    use std::sync::Arc;
+
+    let state = Arc::new(DaemonState::new().unwrap());
+    
+    let req = Request::DebianSearch {
+        id: 123,
+        query: "apt".to_string(),
+        limit: Some(10),
+    };
+
+    let response = handle_request(state, req).await;
+
+    match response {
+        Response::Success { id, result } => {
+            assert_eq!(id, 123);
+            if let ResponseResult::DebianSearch(pkgs) = result {
+                assert!(!pkgs.is_empty());
+                assert_eq!(pkgs[0], "apt");
+            } else {
+                panic!("Expected DebianSearch result, got {:?}", result);
+            }
+        }
+        Response::Error { message, .. } => panic!("Search failed: {}", message),
+    }
+}

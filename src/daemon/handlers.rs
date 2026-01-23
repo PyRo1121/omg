@@ -153,15 +153,44 @@ pub async fn handle_request(state: Arc<DaemonState>, request: Request) -> Respon
 async fn handle_debian_search(
     _state: Arc<DaemonState>,
     id: RequestId,
-    _query: String,
-    _limit: Option<usize>,
+    query: String,
+    limit: Option<usize>,
 ) -> Response {
-    // TODO: Implement actual Debian search in Phase 2
-    // For now, return error to indicate not implemented
-    Response::Error {
-        id,
-        code: error_codes::METHOD_NOT_FOUND,
-        message: "Debian search not yet implemented".to_string(),
+    let limit = limit.unwrap_or(DEFAULT_SEARCH_LIMIT).min(MAX_SEARCH_LIMIT);
+
+    // Run search in blocking task
+    let results = tokio::task::spawn_blocking(move || {
+        #[cfg(any(feature = "debian", feature = "debian-pure"))]
+        {
+            crate::package_managers::apt_search_fast(&query).map(|pkgs| {
+                pkgs.into_iter()
+                    .take(limit)
+                    .map(|p| p.name)
+                    .collect::<Vec<String>>()
+            })
+        }
+        #[cfg(not(any(feature = "debian", feature = "debian-pure")))]
+        {
+            Err(anyhow::anyhow!("Debian backend disabled"))
+        }
+    })
+    .await;
+
+    match results {
+        Ok(Ok(pkgs)) => Response::Success {
+            id,
+            result: ResponseResult::DebianSearch(pkgs),
+        },
+        Ok(Err(e)) => Response::Error {
+            id,
+            code: error_codes::INTERNAL_ERROR,
+            message: format!("Debian search failed: {e}"),
+        },
+        Err(e) => Response::Error {
+            id,
+            code: error_codes::INTERNAL_ERROR,
+            message: format!("Debian search task panicked: {e}"),
+        },
     }
 }
 
