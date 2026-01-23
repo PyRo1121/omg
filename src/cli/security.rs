@@ -110,7 +110,11 @@ pub async fn generate_sbom(output: Option<String>, include_vulns: bool) -> Resul
 }
 
 /// View audit log entries
-pub fn view_audit_log(limit: usize, severity_filter: Option<String>, export: Option<String>) -> Result<()> {
+pub fn view_audit_log(
+    limit: usize,
+    severity_filter: Option<String>,
+    export: Option<String>,
+) -> Result<()> {
     // Require Team tier for audit logs
     license::require_feature("audit-log")?;
 
@@ -140,10 +144,18 @@ pub fn view_audit_log(limit: usize, severity_filter: Option<String>, export: Opt
     };
 
     if let Some(export_path) = export {
-        println!("{} Exporting audit log to {}...", "OMG".cyan().bold(), export_path.white());
+        println!(
+            "{} Exporting audit log to {}...",
+            "OMG".cyan().bold(),
+            export_path.white()
+        );
         let path = std::path::PathBuf::from(&export_path);
-        let format = if export_path.ends_with(".csv") { "csv" } else { "json" };
-        
+        let format = if export_path.ends_with(".csv") {
+            "csv"
+        } else {
+            "json"
+        };
+
         match format {
             "csv" => {
                 let mut wtr = csv::Writer::from_path(&path)?;

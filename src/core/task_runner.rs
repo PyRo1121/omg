@@ -102,7 +102,10 @@ pub struct TaskDetector {
 impl TaskDetector {
     pub fn new(current_dir: PathBuf) -> Self {
         let config = Self::load_config(&current_dir).unwrap_or_default();
-        Self { current_dir, config }
+        Self {
+            current_dir,
+            config,
+        }
     }
 
     fn load_config(path: &Path) -> Option<OmgProjectConfig> {
@@ -125,7 +128,11 @@ impl TaskDetector {
                 && let Some(scripts) = pkg.scripts
             {
                 for (name, _) in scripts {
-                    let ecosystem = if package_manager == "bun" { Ecosystem::Bun } else { Ecosystem::Node };
+                    let ecosystem = if package_manager == "bun" {
+                        Ecosystem::Bun
+                    } else {
+                        Ecosystem::Node
+                    };
                     tasks.push(Task {
                         name: name.clone(),
                         command: package_manager.clone(),
@@ -141,7 +148,11 @@ impl TaskDetector {
                 command: package_manager.clone(),
                 args: vec!["install".to_string()],
                 source: "package.json".to_string(),
-                ecosystem: if package_manager == "bun" { Ecosystem::Bun } else { Ecosystem::Node },
+                ecosystem: if package_manager == "bun" {
+                    Ecosystem::Bun
+                } else {
+                    Ecosystem::Node
+                },
             });
         }
 
@@ -217,7 +228,9 @@ impl TaskDetector {
         }
 
         // 6. Go (Taskfile)
-        if self.current_dir.join("Taskfile.yml").exists() || self.current_dir.join("Taskfile.yaml").exists() {
+        if self.current_dir.join("Taskfile.yml").exists()
+            || self.current_dir.join("Taskfile.yaml").exists()
+        {
             tasks.push(Task {
                 name: "list".to_string(),
                 command: "task".to_string(),
@@ -299,7 +312,9 @@ impl TaskDetector {
                 });
             }
         }
-        if self.current_dir.join("build.gradle").exists() || self.current_dir.join("build.gradle.kts").exists() {
+        if self.current_dir.join("build.gradle").exists()
+            || self.current_dir.join("build.gradle.kts").exists()
+        {
             for t in ["build", "test", "run", "clean"] {
                 tasks.push(Task {
                     name: t.to_string(),
@@ -316,11 +331,14 @@ impl TaskDetector {
 
     pub fn resolve(&self, task_name: &str, using: Option<&str>, all: bool) -> Result<Vec<Task>> {
         let all_tasks = self.detect()?;
-        let mut matches: Vec<Task> = all_tasks.into_iter().filter(|t| t.name == task_name).collect();
+        let mut matches: Vec<Task> = all_tasks
+            .into_iter()
+            .filter(|t| t.name == task_name)
+            .collect();
 
         if matches.is_empty() {
-             // Fallback logic moved here for better encapsulation
-             return Ok(Vec::new());
+            // Fallback logic moved here for better encapsulation
+            return Ok(Vec::new());
         }
 
         // 1. Filter by ecosystem if 'using' is provided
@@ -328,17 +346,22 @@ impl TaskDetector {
             matches.retain(|t| t.ecosystem.matches(ecosystem_name));
 
             if matches.is_empty() {
-                anyhow::bail!("No task '{}' found for ecosystem '{}'", task_name, ecosystem_name);
+                anyhow::bail!(
+                    "No task '{}' found for ecosystem '{}'",
+                    task_name,
+                    ecosystem_name
+                );
             }
         }
 
         // 2. Filter by .omg.toml mapping
         if let Some(preferred_ecosystem) = self.config.scripts.get(task_name) {
-            let filtered: Vec<Task> = matches.iter()
+            let filtered: Vec<Task> = matches
+                .iter()
                 .filter(|t| t.ecosystem.matches(preferred_ecosystem))
                 .cloned()
                 .collect();
-            
+
             if !filtered.is_empty() {
                 matches = filtered;
             }
@@ -360,11 +383,16 @@ impl TaskDetector {
             }
 
             // Otherwise, interactive selection
-            let items: Vec<String> = matches.iter()
+            let items: Vec<String> = matches
+                .iter()
                 .map(|t| format!("{} (via {})", t.ecosystem, t.source))
                 .collect();
 
-            println!("{} Found '{}' in multiple ecosystems:", "OMG".cyan().bold(), task_name);
+            println!(
+                "{} Found '{}' in multiple ecosystems:",
+                "OMG".cyan().bold(),
+                task_name
+            );
             let selection = Select::with_theme(&ColorfulTheme::default())
                 .with_prompt("Which one did you mean?")
                 .items(&items)
@@ -537,7 +565,13 @@ pub fn run_task(
     extra_args: &[String],
     backend_override: Option<RuntimeBackend>,
 ) -> Result<()> {
-    run_async(run_task_advanced(task_name, extra_args, backend_override, None, false))
+    run_async(run_task_advanced(
+        task_name,
+        extra_args,
+        backend_override,
+        None,
+        false,
+    ))
 }
 
 /// Run an async future from sync context, reusing existing runtime if available
@@ -688,7 +722,6 @@ struct Poetry {
 }
 
 fn execute_process(
-
     cmd: &str,
     args: &[String],
     extra_args: &[String],
@@ -1202,8 +1235,8 @@ pub async fn run_tasks_parallel(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     use std::fs;
+    use tempfile::TempDir;
 
     #[test]
     fn test_ecosystem_priority() {
@@ -1230,7 +1263,11 @@ build = "node"
     async fn test_resolve_priority() {
         let temp = TempDir::new().unwrap();
         fs::write(temp.path().join("Cargo.toml"), "[package]\nname = \"test\"").unwrap();
-        fs::write(temp.path().join("package.json"), r#"{"scripts": {"test": "echo node"}}"#).unwrap();
+        fs::write(
+            temp.path().join("package.json"),
+            r#"{"scripts": {"test": "echo node"}}"#,
+        )
+        .unwrap();
 
         let detector = TaskDetector::new(temp.path().to_path_buf());
         let matches = detector.resolve("test", None, false).unwrap();
@@ -1242,7 +1279,11 @@ build = "node"
     async fn test_resolve_using_override() {
         let temp = TempDir::new().unwrap();
         fs::write(temp.path().join("Cargo.toml"), "[package]\nname = \"test\"").unwrap();
-        fs::write(temp.path().join("package.json"), r#"{"scripts": {"test": "echo node"}}"#).unwrap();
+        fs::write(
+            temp.path().join("package.json"),
+            r#"{"scripts": {"test": "echo node"}}"#,
+        )
+        .unwrap();
 
         let detector = TaskDetector::new(temp.path().to_path_buf());
         // Explicitly use 'bun' (default for package.json in detector if no lockfile)
@@ -1255,7 +1296,11 @@ build = "node"
     async fn test_resolve_all() {
         let temp = TempDir::new().unwrap();
         fs::write(temp.path().join("Cargo.toml"), "[package]\nname = \"test\"").unwrap();
-        fs::write(temp.path().join("package.json"), r#"{"scripts": {"test": "echo node"}}"#).unwrap();
+        fs::write(
+            temp.path().join("package.json"),
+            r#"{"scripts": {"test": "echo node"}}"#,
+        )
+        .unwrap();
 
         let detector = TaskDetector::new(temp.path().to_path_buf());
         let matches = detector.resolve("test", None, true).unwrap();
@@ -1266,7 +1311,11 @@ build = "node"
     async fn test_resolve_config_override() {
         let temp = TempDir::new().unwrap();
         fs::write(temp.path().join("Cargo.toml"), "[package]\nname = \"test\"").unwrap();
-        fs::write(temp.path().join("package.json"), r#"{"scripts": {"test": "echo node"}}"#).unwrap();
+        fs::write(
+            temp.path().join("package.json"),
+            r#"{"scripts": {"test": "echo node"}}"#,
+        )
+        .unwrap();
         fs::write(temp.path().join(".omg.toml"), "[scripts]\ntest = \"bun\"").unwrap();
 
         let detector = TaskDetector::new(temp.path().to_path_buf());

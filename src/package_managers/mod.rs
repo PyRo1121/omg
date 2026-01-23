@@ -13,12 +13,12 @@ pub mod alpm_worker;
 // apt module is available with debian feature
 #[cfg(feature = "debian")]
 pub mod apt;
-#[cfg(feature = "debian-pure")]
-pub mod debian_pure;
 #[cfg(feature = "arch")]
 mod aur;
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
 pub mod debian_db;
+#[cfg(feature = "debian-pure")]
+pub mod debian_pure;
 pub mod mock;
 #[cfg(feature = "arch")]
 mod official;

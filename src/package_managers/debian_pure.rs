@@ -1,6 +1,6 @@
 //! Pure Rust Debian/Ubuntu package manager backend
 //!
-//! Uses `debian_db` for ultra-fast searches and info, and spawns `apt` 
+//! Uses `debian_db` for ultra-fast searches and info, and spawns `apt`
 //! command for transactions. This allows Debian support without C dependencies.
 
 use anyhow::Result;
@@ -30,7 +30,7 @@ impl PureDebianPackageManager {
         };
 
         let status = cmd.args(args).status()?;
-        
+
         if status.success() {
             Ok(())
         } else {
@@ -46,9 +46,7 @@ impl PackageManager for PureDebianPackageManager {
 
     fn search(&self, query: &str) -> BoxFuture<'static, Result<Vec<Package>>> {
         let query = query.to_string();
-        async move {
-            debian_db::search_fast(&query)
-        }.boxed()
+        async move { debian_db::search_fast(&query) }.boxed()
     }
 
     fn install(&self, packages: &[String]) -> BoxFuture<'static, Result<()>> {
@@ -60,7 +58,8 @@ impl PackageManager for PureDebianPackageManager {
             }
             let pm = PureDebianPackageManager::new();
             pm.run_apt(&args)
-        }.boxed()
+        }
+        .boxed()
     }
 
     fn remove(&self, packages: &[String]) -> BoxFuture<'static, Result<()>> {
@@ -72,65 +71,62 @@ impl PackageManager for PureDebianPackageManager {
             }
             let pm = PureDebianPackageManager::new();
             pm.run_apt(&args)
-        }.boxed()
+        }
+        .boxed()
     }
 
     fn update(&self) -> BoxFuture<'static, Result<()>> {
         async move {
             let pm = PureDebianPackageManager::new();
             pm.run_apt(&["upgrade", "-y"])
-        }.boxed()
+        }
+        .boxed()
     }
 
     fn sync(&self) -> BoxFuture<'static, Result<()>> {
         async move {
             let pm = PureDebianPackageManager::new();
             pm.run_apt(&["update"])
-        }.boxed()
+        }
+        .boxed()
     }
 
     fn info(&self, package: &str) -> BoxFuture<'static, Result<Option<Package>>> {
         let package = package.to_string();
-        async move {
-            debian_db::get_info_fast(&package)
-        }.boxed()
+        async move { debian_db::get_info_fast(&package) }.boxed()
     }
 
     fn list_installed(&self) -> BoxFuture<'static, Result<Vec<Package>>> {
         async move {
             let installed = debian_db::list_installed_fast()?;
-            Ok(installed.into_iter().map(|p| Package {
-                name: p.name,
-                version: crate::package_managers::types::parse_version_or_zero(&p.version),
-                description: p.description,
-                source: PackageSource::Official,
-                installed: true,
-            }).collect())
-        }.boxed()
+            Ok(installed
+                .into_iter()
+                .map(|p| Package {
+                    name: p.name,
+                    version: crate::package_managers::types::parse_version_or_zero(&p.version),
+                    description: p.description,
+                    source: PackageSource::Official,
+                    installed: true,
+                })
+                .collect())
+        }
+        .boxed()
     }
 
     fn get_status(&self, _fast: bool) -> BoxFuture<'static, Result<(usize, usize, usize, usize)>> {
-        async move {
-            debian_db::get_counts_fast()
-        }.boxed()
+        async move { debian_db::get_counts_fast() }.boxed()
     }
 
     fn list_explicit(&self) -> BoxFuture<'static, Result<Vec<String>>> {
-        async move {
-            debian_db::list_explicit_fast()
-        }.boxed()
+        async move { debian_db::list_explicit_fast() }.boxed()
     }
 
     fn list_updates(&self) -> BoxFuture<'static, Result<Vec<UpdateInfo>>> {
-        async move {
-            Ok(Vec::new())
-        }.boxed()
+        async move { Ok(Vec::new()) }.boxed()
     }
 
     fn is_installed(&self, package: &str) -> BoxFuture<'static, bool> {
         let package = package.to_string();
-        async move {
-            debian_db::is_installed_fast(&package)
-        }.boxed()
+        async move { debian_db::is_installed_fast(&package) }.boxed()
     }
 }
