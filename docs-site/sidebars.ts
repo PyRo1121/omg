@@ -3,6 +3,7 @@ import type {SidebarsConfig} from '@docusaurus/plugin-content-docs';
 const sidebars: SidebarsConfig = {
   docsSidebar: [
     'index',
+    'white-paper',
     {
       type: 'category',
       label: 'Getting Started',
@@ -59,6 +60,7 @@ const sidebars: SidebarsConfig = {
       type: 'category',
       label: 'Reference',
       items: [
+        'api-reference',
         'workflows',
         'troubleshooting',
         'faq',
