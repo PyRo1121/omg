@@ -208,7 +208,7 @@ pub enum Commands {
         /// Runtime to list versions for (omit for all)
         runtime: Option<String>,
         /// Show available versions, not just installed
-        #[arg(short, long)]
+        #[arg(short = 'A', long)]
         available: bool,
     },
 
@@ -422,14 +422,6 @@ pub enum Commands {
         /// Update to a specific version
         #[arg(long)]
         version: Option<String>,
-    },
-
-    /// Show help (essential by default, all with --all flag)
-    #[command(visible_alias = "h", next_help_heading = "System & Configuration")]
-    Help {
-        /// Show all commands including advanced ones (default: show essential only)
-        #[arg(short, long, global = true)]
-        all: bool,
     },
 
     /// Interactive first-run setup wizard
@@ -837,7 +829,7 @@ pub enum CiCommands {
         /// CI provider (github, gitlab, circleci)
         provider: String,
         /// Generate advanced "world-class" configuration with matrices and security audits
-        #[arg(short, long)]
+        #[arg(long)]
         advanced: bool,
     },
     /// Validate current environment matches CI expectations
