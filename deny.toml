@@ -37,7 +37,7 @@ allow = [
     "BSL-1.0",
     "AGPL-3.0-or-later",
 ]
-copyleft = "warn"
+# copyleft = "warn"
 confidence-threshold = 0.8
 
 [[licenses.clarify]]
@@ -46,8 +46,8 @@ expression = "MIT AND ISC AND OpenSSL"
 license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
 
 [bans]
-multiple-versions = "warn"
-highlight = "workspace"
+# multiple-versions = "warn"
+# highlight = "workspace"
 
 # Deny specific problematic crates
 deny = []
