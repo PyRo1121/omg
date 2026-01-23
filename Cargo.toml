@@ -12,7 +12,7 @@ keywords = ["package-manager", "arch-linux", "version-manager", "runtime"]
 categories = ["command-line-utilities", "development-tools"]
 
 [package.metadata.cargo-machete]
-ignored = ["ar", "gzp", "winnow"] # Used in debian feature
+ignored = ["ar", "gzp", "winnow"]
 
 [lib]
 name = "omg_lib"
@@ -69,13 +69,13 @@ httpdate = "1.0.3"
 tokio-util = { version = "0.7.18", features = ["io", "codec", "rt"] }
 
 # Archives + compression (PURE RUST - no C deps)
-tar = "0.4.44"
-flate2 = { version = "1.1.8", default-features = false, features = [
+tar = "4.0.44"
+flate2 = { version = "1.18", default-features = false, features = [
     "zlib-rs",
-] } # zlib-rs is ~30% faster than miniz_oxide
+] }
 lz4_flex = { version = "0.12", default-features = false, features = [
     "frame",
-] } # Frame format + perf mode
+] }
 zip = { version = "7.1.0", default-features = false, features = [
     "deflate",
     "time",
@@ -85,7 +85,6 @@ regex = "1.12.2"
 ruzstd = "0.8.2" # Pure Rust zstd decoder (replaces zstd)
 
 # Git operations - using command-line git (always available on Arch)
-# Removed libgit2/gix dependency for simpler builds
 
 # Memory management
 parking_lot = "0.12.5"
@@ -131,7 +130,6 @@ redb = "3.1"
 alpm = { version = "5.0.2", optional = true }
 
 # Official Arch Linux pure Rust ALPM ecosystem (archlinux/alpm)
-# Tracking git main (bleeding edge)
 alpm-types = { git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", package = "alpm-types", optional = true }
 alpm-srcinfo = { git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", package = "alpm-srcinfo", optional = true }
 alpm-db = { git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", package = "alpm-db", optional = true }
@@ -147,12 +145,10 @@ semver = "1.0.27"
 # Tempfile handling
 tempfile = "3.24.0"
 
-
 # Data parallelism
 rayon = "1.11.0"
 
 # Security (Phase 4.2) - PURE RUST crypto backend (for package verification, not secrets)
-# NOTE: sequoia-openpgp requires Rust 1.80+ due to ff crate
 sequoia-openpgp = { version = "2.2.0-pqc.1", default-features = false, features = ["crypto-rust", "allow-experimental-crypto", "allow-variable-time-crypto"], optional = true }
 nucleo-matcher = "0.3.1"
 dirs = "6.0.0"
@@ -180,7 +176,7 @@ sentry-tracing = "0.46.1"
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
-tempfile = "3.24"
+tempfile = "3.24.0"
 assert_cmd = "2.1"
 predicates = "3.1"
 pprof = { version = "0.15", features = ["flamegraph"] }
@@ -214,15 +210,24 @@ arch = [
     "alpm-db",
     "alpm-repo-db",
     "alpm-pkginfo",
+    "alpm-types"
 ]
 pgp = ["sequoia-openpgp"] # Optional PGP verification (requires Rust 1.80+)
 
 # Debian/Ubuntu support - unified feature
 # Requires libapt-pkg-dev: `apt install libapt-pkg-dev`
-debian = ["debian-packaging", "winnow", "gzp", "rust-apt"]
+debian = ["debian-packaging", "winnow", "gzp", "ar", "rust-apt"]
+
 # Pure Rust Debian support (no FFI, no system dependencies) - for testing/indexing
 debian-pure = ["debian-packaging", "winnow", "gzp", "ar"]
 
 license = [] # Enable license/subscription features (Pro, Team, Enterprise tiers)
 docker_tests = [] # Enable tests that require running as root (e.g. in Docker)
 sequoia-openpgp = ["dep:sequoia-openpgp"]
+
+[profile.release]
+lto = "fat"       # Full LTO for maximum cross-crate inlining
+codegen-units = 1
+panic = "abort"
+strip = true
+opt-level = 3
