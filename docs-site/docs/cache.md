@@ -32,7 +32,7 @@ For data that must survive reboots or daemon restarts, OMG uses **redb**, an emb
 - **Serialization**: `rkyv` (zero-copy binary format)
 - **Location**: `~/.local/share/omg/cache.redb`
 - **Key Features**:
-  - **Cold Start Optimization**: The daemon pre-loads the package index from redb on startup, enabling <10ms first-run queries.
+  - **Cold Start Optimization**: The daemon pre-loads the package index from redb on startup, enabling \<10ms first-run queries.
   - **Audit Integrity**: All package operations are logged with atomic commits.
 - **Latency**: < 2ms (NVMe) / < 10ms (SATA)
 

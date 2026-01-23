@@ -41,7 +41,7 @@ impl std::fmt::Display for Ecosystem {
             Self::Ruby => write!(f, "Ruby"),
             Self::Python => write!(f, "Python"),
             Self::Java => write!(f, "Java"),
-            Self::Custom(s) => write!(f, "{}", s),
+            Self::Custom(s) => write!(f, "{s}"),
         }
     }
 }
@@ -57,25 +57,25 @@ impl Ecosystem {
             Self::Java => 60,
             Self::Php => 50,
             Self::Make => 40,
-            _ => 0,
+            Self::Custom(_) => 0,
         }
     }
 
     fn matches(&self, name: &str) -> bool {
         let name = name.to_lowercase();
-        if self.to_string().to_lowercase() == name || format!("{:?}", self).to_lowercase() == name {
+        if self.to_string().to_lowercase() == name || format!("{self:?}").to_lowercase() == name {
             return true;
         }
-        match (self, name.as_str()) {
-            (Self::Node, "node" | "nodejs" | "js" | "javascript") => true,
-            (Self::Python, "py" | "python3") => true,
-            (Self::Rust, "rs" | "cargo") => true,
-            (Self::Make, "makefile") => true,
-            (Self::Go, "golang" | "task") => true,
-            (Self::Ruby, "rb" | "rake") => true,
-            (Self::Php, "composer") => true,
-            _ => false,
-        }
+        matches!(
+            (self, name.as_str()),
+            (Self::Node, "node" | "nodejs" | "js" | "javascript")
+                | (Self::Python, "py" | "python3")
+                | (Self::Rust, "rs" | "cargo")
+                | (Self::Make, "makefile")
+                | (Self::Go, "golang" | "task")
+                | (Self::Ruby, "rb" | "rake")
+                | (Self::Php, "composer")
+        )
     }
 }
 
@@ -270,6 +270,7 @@ impl TaskDetector {
         }
 
         // 9. Python (Pipenv)
+        #[allow(clippy::collapsible_if)]
         if self.current_dir.join("Pipfile").exists() {
             if let Ok(content) = std::fs::read_to_string(self.current_dir.join("Pipfile")) {
                 let mut in_scripts = false;
@@ -347,9 +348,7 @@ impl TaskDetector {
 
             if matches.is_empty() {
                 anyhow::bail!(
-                    "No task '{}' found for ecosystem '{}'",
-                    task_name,
-                    ecosystem_name
+                    "No task '{task_name}' found for ecosystem '{ecosystem_name}'"
                 );
             }
         }
@@ -413,7 +412,7 @@ pub fn detect_tasks() -> Result<Vec<Task>> {
 }
 
 /// Execute a task with advanced options
-pub async fn run_task_advanced(
+pub fn run_task_advanced(
     task_name: &str,
     extra_args: &[String],
     backend_override: Option<RuntimeBackend>,
@@ -565,13 +564,13 @@ pub fn run_task(
     extra_args: &[String],
     backend_override: Option<RuntimeBackend>,
 ) -> Result<()> {
-    run_async(run_task_advanced(
+    run_task_advanced(
         task_name,
         extra_args,
         backend_override,
         None,
         false,
-    ))
+    )
 }
 
 /// Run an async future from sync context, reusing existing runtime if available

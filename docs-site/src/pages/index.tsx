@@ -1,34 +1,130 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import Layout from '@theme/Layout';
 import Link from '@docusaurus/Link';
+import { motion, AnimatePresence, useInView } from 'framer-motion';
+import { 
+  Zap, 
+  Shield, 
+  Users, 
+  Terminal, 
+  Package, 
+  Layers, 
+  ChevronRight, 
+  Cpu,
+  Globe,
+  Clock
+} from 'lucide-react';
 import styles from './index.module.css';
 
 function SpeedMetric({ value, label, suffix = '' }: { value: string; label: string; suffix?: string }) {
+  const ref = useRef(null);
+  const isInView = useInView(ref, { once: true });
+  const [count, setCount] = useState(0);
+
+  useEffect(() => {
+    if (isInView) {
+      const target = parseFloat(value);
+      if (isNaN(target)) return;
+      
+      let start = 0;
+      const duration = 2000;
+      const startTime = performance.now();
+
+      const animate = (currentTime: number) => {
+        const elapsed = currentTime - startTime;
+        const progress = Math.min(elapsed / duration, 1);
+        const easeOutExpo = 1 - Math.pow(2, -10 * progress);
+        const currentCount = easeOutExpo * target;
+        
+        setCount(currentCount);
+
+        if (progress < 1) {
+          requestAnimationFrame(animate);
+        } else {
+          setCount(target);
+        }
+      };
+
+      requestAnimationFrame(animate);
+    }
+  }, [isInView, value]);
+
   return (
-    <div className={styles.metric}>
-      <span className={styles.metricValue}>{value}<span className={styles.metricSuffix}>{suffix}</span></span>
+    <div className={styles.metric} ref={ref}>
+      <motion.span 
+        className={styles.metricValue}
+        initial={{ opacity: 0, y: 20 }}
+        animate={isInView ? { opacity: 1, y: 0 } : {}}
+      >
+        {value.includes('.') ? count.toFixed(1) : Math.floor(count)}
+        <span className={styles.metricSuffix}>{suffix}</span>
+      </motion.span>
       <span className={styles.metricLabel}>{label}</span>
     </div>
   );
 }
 
 function TerminalDemo() {
-  const [step, setStep] = useState(0);
-  const commands = [
-    { cmd: 'omg search neovim', delay: 1200 },
-    { cmd: '', output: '✓ 47 packages found in 6ms', delay: 800 },
-    { cmd: 'omg use node 22', delay: 1200 },
-    { cmd: '', output: '✓ Node.js 22.0.0 activated', delay: 800 },
-    { cmd: 'omg run dev', delay: 1000 },
-    { cmd: '', output: '→ Detected package.json, using bun', delay: 600 },
+  const [displayedLines, setDisplayedLines] = useState<{ type: 'cmd' | 'out'; text: string }[]>([]);
+  const [currentText, setCurrentText] = useState('');
+  const [currentStep, setCurrentStep] = useState(0);
+  const [isTyping, setIsTyping] = useState(true);
+
+  const scenario = [
+    { type: 'cmd', text: 'omg search neovim' },
+    { type: 'out', text: '✓ 47 packages found in 6ms' },
+    { type: 'cmd', text: 'omg use node 22' },
+    { type: 'out', text: '✓ Node.js 22.0.0 activated' },
+    { type: 'cmd', text: 'omg run dev' },
+    { type: 'out', text: '→ Detected package.json, using bun' },
   ];
 
   useEffect(() => {
-    const timer = setInterval(() => {
-      setStep((s) => (s + 1) % commands.length);
-    }, 2000);
-    return () => clearInterval(timer);
-  }, []);
+    let timeout: NodeJS.Timeout;
+
+    const runScenario = async () => {
+      const step = scenario[currentStep];
+      
+      if (step.type === 'cmd') {
+        setIsTyping(true);
+        let i = 0;
+        const typeChar = () => {
+          if (i < step.text.length) {
+            setCurrentText(step.text.slice(0, i + 1));
+            i++;
+            timeout = setTimeout(typeChar, 40 + Math.random() * 40);
+          } else {
+            timeout = setTimeout(() => {
+              setDisplayedLines(prev => [...prev, { type: 'cmd', text: step.text }]);
+              setCurrentText('');
+              setIsTyping(false);
+              proceed();
+            }, 600);
+          }
+        };
+        typeChar();
+      } else {
+        timeout = setTimeout(() => {
+          setDisplayedLines(prev => [...prev, { type: 'out', text: step.text }]);
+          proceed();
+        }, 400);
+      }
+    };
+
+    const proceed = () => {
+      if (currentStep < scenario.length - 1) {
+        setCurrentStep(s => s + 1);
+      } else {
+        timeout = setTimeout(() => {
+          setDisplayedLines([]);
+          setCurrentStep(0);
+        }, 3000);
+      }
+    };
+
+    runScenario();
+    return () => clearTimeout(timeout);
+  }, [currentStep]);
 
   return (
     <div className={styles.terminal}>
@@ -36,31 +132,51 @@ function TerminalDemo() {
         <div className={styles.terminalDots}>
           <span></span><span></span><span></span>
         </div>
-        <span className={styles.terminalTitle}>~</span>
+        <div className={styles.terminalTitle}>
+          <Terminal size={14} style={{ marginRight: 6, verticalAlign: 'middle' }} />
+          omg — zsh
+        </div>
       </div>
       <div className={styles.terminalBody}>
-        {commands.slice(0, step + 1).map((item, i) => (
-          <div key={i} className={item.cmd ? styles.terminalCommand : styles.terminalOutput}>
-            {item.cmd ? (
-              <><span className={styles.prompt}>❯</span> {item.cmd}</>
-            ) : (
-              item.output
-            )}
+        {displayedLines.map((line, i) => (
+          <div key={i} className={line.type === 'cmd' ? styles.terminalCommand : styles.terminalOutput}>
+            {line.type === 'cmd' && <span className={styles.prompt}>❯</span>}
+            {line.text}
           </div>
         ))}
-        <div className={styles.cursor}></div>
+        {isTyping && (
+          <div className={styles.terminalCommand}>
+            <span className={styles.prompt}>❯</span>
+            {currentText}
+            <span className={styles.cursor}></span>
+          </div>
+        )}
+        {!isTyping && currentStep !== scenario.length - 1 && displayedLines.length > 0 && (
+           <div className={styles.terminalCommand}>
+            <span className={styles.prompt}>❯</span>
+            <span className={styles.cursor}></span>
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-function FeatureCard({ icon, title, description }: { icon: string; title: string; description: string }) {
+function FeatureCard({ icon: Icon, title, description, delay }: { icon: any; title: string; description: string; delay: number }) {
   return (
-    <div className={styles.featureCard}>
-      <div className={styles.featureIcon}>{icon}</div>
+    <motion.div 
+      className={styles.featureCard}
+      initial={{ opacity: 0, y: 20 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true }}
+      transition={{ delay }}
+    >
+      <div className={styles.featureIcon}>
+        <Icon size={32} strokeWidth={1.5} color="#38bdf8" />
+      </div>
       <h3>{title}</h3>
       <p>{description}</p>
-    </div>
+    </motion.div>
   );
 }
 
@@ -86,34 +202,74 @@ function ComparisonBar({ tool, time, maxTime }: { tool: string; time: number; ma
 export default function Home(): React.JSX.Element {
   return (
     <Layout
-      title="Documentation"
-      description="The fastest unified package manager for Arch Linux and all language runtimes"
+      title="OMG - The Fastest Unified Package Manager"
+      description="The fastest unified package manager for Arch Linux and all language runtimes. One tool for everything."
     >
       <div className={styles.hero}>
         <div className={styles.heroGrid}></div>
         <div className={styles.heroContent}>
-          <div className={styles.heroText}>
-            <div className={styles.badge}>22x faster than pacman</div>
-            <h1>One tool.<br />Every package.<br />All runtimes.</h1>
-            <p className={styles.heroSubtitle}>
+          <motion.div 
+            className={styles.heroText}
+            initial={{ opacity: 0, x: -30 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.6 }}
+          >
+            <motion.div 
+              className={styles.badge}
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ delay: 0.2 }}
+            >
+              <Zap size={14} style={{ marginRight: 8 }} />
+              22x faster than pacman
+            </motion.div>
+            <motion.h1
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.3 }}
+            >
+              One tool.<br />Every package.<br />All runtimes.
+            </motion.h1>
+            <motion.p 
+              className={styles.heroSubtitle}
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.4 }}
+            >
               Stop juggling pacman, yay, nvm, pyenv, and rustup.<br />
-              OMG unifies everything into one blazing-fast CLI.
-            </p>
-            <div className={styles.heroActions}>
+              OMG unifies your entire dev stack into one blazing-fast CLI.
+            </motion.p>
+            <motion.div 
+              className={styles.heroActions}
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.5 }}
+            >
               <Link to="/quickstart" className={styles.primaryButton}>
-                Get Started
+                Get Started <ChevronRight size={20} style={{ marginLeft: 8 }} />
               </Link>
               <Link to="/cli" className={styles.secondaryButton}>
                 CLI Reference
               </Link>
-            </div>
-            <div className={styles.installCommand}>
+            </motion.div>
+            <motion.div 
+              className={styles.installCommand}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 0.7 }}
+            >
               <code>curl -fsSL https://pyro1121.com/install.sh | bash</code>
-            </div>
-          </div>
-          <div className={styles.heroVisual}>
+            </motion.div>
+          </motion.div>
+          
+          <motion.div 
+            className={styles.heroVisual}
+            initial={{ opacity: 0, scale: 0.95, x: 30 }}
+            animate={{ opacity: 1, scale: 1, x: 0 }}
+            transition={{ duration: 0.8, ease: "easeOut" }}
+          >
             <TerminalDemo />
-          </div>
+          </motion.div>
         </div>
       </div>
 
@@ -121,12 +277,26 @@ export default function Home(): React.JSX.Element {
         <SpeedMetric value="6" suffix="ms" label="Package search" />
         <SpeedMetric value="22" suffix="x" label="Faster than pacman" />
         <SpeedMetric value="7" suffix="+" label="Language runtimes" />
-        <SpeedMetric value="0" suffix="" label="Runtime dependencies" />
+        <SpeedMetric value="1.2" suffix="ms" label="Daemon latency" />
       </section>
 
       <section className={styles.comparison}>
-        <h2>Raw Performance</h2>
-        <p className={styles.sectionSubtitle}>Measured on real hardware, not benchmarketing</p>
+        <motion.h2
+          initial={{ opacity: 0, y: 20 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true }}
+        >
+          Raw Performance
+        </motion.h2>
+        <motion.p 
+          className={styles.sectionSubtitle}
+          initial={{ opacity: 0 }}
+          whileInView={{ opacity: 1 }}
+          viewport={{ once: true }}
+          transition={{ delay: 0.2 }}
+        >
+          Measured on real hardware, not benchmarketing
+        </motion.p>
         <div className={styles.comparisonChart}>
           <ComparisonBar tool="OMG" time={6} maxTime={150} />
           <ComparisonBar tool="pacman" time={133} maxTime={150} />
@@ -136,49 +306,74 @@ export default function Home(): React.JSX.Element {
       </section>
 
       <section className={styles.features}>
-        <h2>Everything you need</h2>
-        <p className={styles.sectionSubtitle}>One tool replaces your entire toolkit</p>
+        <motion.h2
+          initial={{ opacity: 0, y: 20 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true }}
+        >
+          Technical Precision
+        </motion.h2>
+        <motion.p 
+          className={styles.sectionSubtitle}
+          initial={{ opacity: 0 }}
+          whileInView={{ opacity: 1 }}
+          viewport={{ once: true }}
+          transition={{ delay: 0.2 }}
+        >
+          Built for engineers who value speed and reliability
+        </motion.p>
         <div className={styles.featureGrid}>
           <FeatureCard
-            icon="📦"
+            icon={Package}
             title="System Packages"
-            description="Official repos + AUR with automatic detection. Install anything with one command."
+            description="Direct libalpm integration. Repos + AUR with sub-10ms search latency."
+            delay={0.1}
           />
           <FeatureCard
-            icon="🔧"
-            title="Runtime Versions"
-            description="Node, Python, Rust, Go, Ruby, Java, Bun. Switch versions instantly."
+            icon={Cpu}
+            title="Unified Runtimes"
+            description="Native management for Node, Python, Rust, Go, Ruby, Java, and Bun."
+            delay={0.2}
           />
           <FeatureCard
-            icon="🔒"
-            title="Security Built-in"
-            description="Vulnerability scanning, SBOM generation, secret detection, audit logging."
+            icon={Shield}
+            title="Security First"
+            description="Vulnerability scanning, SBOM generation, and PGP verification built-in."
+            delay={0.3}
           />
           <FeatureCard
-            icon="👥"
+            icon={Users}
             title="Team Sync"
-            description="Lock files, drift detection, environment sharing. No more 'works on my machine'."
+            description="Lock files and environment sharing to ensure consistency across the team."
+            delay={0.4}
           />
           <FeatureCard
-            icon="🚀"
+            icon={Layers}
             title="Task Runner"
-            description="One command runs any project. Auto-detects npm, cargo, make, and more."
+            description="Auto-detects project types and runs tasks with correct runtime versions."
+            delay={0.5}
           />
           <FeatureCard
-            icon="🐳"
-            title="Container Ready"
-            description="Generate Dockerfiles, run dev shells, build images. Full Docker/Podman support."
+            icon={Globe}
+            title="Cloud Native"
+            description="Generate Dockerfiles and OCI images from your local environment instantly."
+            delay={0.6}
           />
         </div>
       </section>
 
-      <section className={styles.cta}>
+      <motion.section 
+        className={styles.cta}
+        initial={{ opacity: 0 }}
+        whileInView={{ opacity: 1 }}
+        viewport={{ once: true }}
+      >
         <h2>Ready to simplify your workflow?</h2>
         <p>Join thousands of developers who've already made the switch.</p>
         <Link to="/quickstart" className={styles.primaryButton}>
-          Start in 5 minutes →
+          Get Started for Free <ChevronRight size={20} style={{ marginLeft: 8 }} />
         </Link>
-      </section>
+      </motion.section>
     </Layout>
   );
 }

@@ -18,26 +18,26 @@
   position: absolute;
   inset: 0;
   background-image:
-    linear-gradient(rgba(56, 189, 248, 0.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(56, 189, 248, 0.03) 1px, transparent 1px);
-  background-size: 60px 60px;
-  mask-image: radial-gradient(ellipse at center, black 20%, transparent 70%);
-  animation: gridPulse 8s ease-in-out infinite;
+    linear-gradient(rgba(56, 189, 248, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(56, 189, 248, 0.05) 1px, transparent 1px);
+  background-size: 64px 64px;
+  mask-image: radial-gradient(circle at 50% 50%, black 10%, transparent 80%);
+  animation: gridMove 20s linear infinite;
 }
 
-@keyframes gridPulse {
-  0%, 100% { opacity: 0.5; }
-  50% { opacity: 1; }
+@keyframes gridMove {
+  0% { transform: translateY(0); }
+  100% { transform: translateY(64px); }
 }
 
 .heroContent {
   position: relative;
   z-index: 1;
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 4rem;
+  grid-template-columns: 1.1fr 0.9fr;
+  gap: 6rem;
   max-width: 1400px;
-  padding: 2rem 4rem;
+  padding: 4rem;
   width: 100%;
 }
 
@@ -109,19 +109,24 @@
 .primaryButton {
   display: inline-flex;
   align-items: center;
-  padding: 0.875rem 1.75rem;
+  padding: 1rem 2rem;
   background: linear-gradient(135deg, #0ea5e9 0%, #38bdf8 100%);
   color: #000 !important;
-  font-weight: 600;
-  border-radius: 8px;
+  font-weight: 700;
+  border-radius: 12px;
   text-decoration: none !important;
-  transition: all 0.2s ease;
-  box-shadow: 0 0 20px rgba(56, 189, 248, 0.3);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 0 20px rgba(56, 189, 248, 0.3), 0 4px 0 #0284c7;
 }
 
 .primaryButton:hover {
   transform: translateY(-2px);
-  box-shadow: 0 0 30px rgba(56, 189, 248, 0.5);
+  box-shadow: 0 0 40px rgba(56, 189, 248, 0.5), 0 2px 0 #0284c7;
+}
+
+.primaryButton:active {
+  transform: translateY(2px);
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.2), 0 0 0 #0284c7;
 }
 
 .secondaryButton {
@@ -175,15 +180,56 @@
 
 .terminal {
   width: 100%;
-  max-width: 500px;
-  background: rgba(0, 0, 0, 0.6);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 12px;
+  max-width: 580px;
+  background: rgba(10, 10, 15, 0.85);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
   overflow: hidden;
   box-shadow:
     0 0 0 1px rgba(255, 255, 255, 0.05),
-    0 20px 50px rgba(0, 0, 0, 0.5),
-    0 0 100px rgba(56, 189, 248, 0.1);
+    0 25px 60px rgba(0, 0, 0, 0.6),
+    0 0 120px rgba(56, 189, 248, 0.15);
+}
+
+.terminalBody {
+  padding: 1.5rem;
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.9375rem;
+  min-height: 280px;
+  line-height: 1.6;
+}
+
+.terminalCommand {
+  color: #fff;
+  margin-bottom: 0.75rem;
+  display: flex;
+  align-items: center;
+}
+
+.prompt {
+  color: #38bdf8;
+  margin-right: 0.75rem;
+  font-weight: 700;
+}
+
+.terminalOutput {
+  color: #4ade80;
+  margin-bottom: 1rem;
+  padding-left: 1.5rem;
+  font-weight: 500;
+  border-left: 2px solid rgba(74, 222, 128, 0.1);
+}
+
+.cursor {
+  display: inline-block;
+  width: 10px;
+  height: 20px;
+  background: #38bdf8;
+  box-shadow: 0 0 10px #38bdf8;
+  animation: blink 1s step-end infinite;
+  vertical-align: middle;
+  margin-left: 2px;
 }
 
 .terminalHeader {
