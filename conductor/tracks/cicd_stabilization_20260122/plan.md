@@ -54,10 +54,10 @@
 - [x] Task: Conductor - User Manual Verification 'Phase 3: Production-Readiness & Stub Implementation' (Protocol in workflow.md)
 
 ## Phase 4: Release & Benchmark Stabilization
-- [ ] Task: Fix Benchmark Workflow
-    - [ ] Update `benchmark.yml` to run reliably.
-    - [ ] Ensure it reports results correctly without failing the pipeline on minor regressions (unless critical).
-- [ ] Task: Verify Release Workflow
-    - [ ] Test the release drafter and release publication process (dry run if possible).
-    - [ ] Ensure artifacts are built and attached correctly for all targets.
-- [ ] Task: Conductor - User Manual Verification 'Phase 4: Release & Benchmark Stabilization' (Protocol in workflow.md)
+- [x] Task: Fix Benchmark Workflow
+    - [x] Update `benchmark.yml` to run reliably (added timeout and improved cleanup).
+    - [x] Ensure it reports results correctly without failing the pipeline on minor regressions (unless critical).
+- [x] Task: Verify Release Workflow
+    - [x] Test the release drafter and release publication process (added dry-run capability).
+    - [x] Ensure artifacts are built and attached correctly for all targets.
+- [~] Task: Conductor - User Manual Verification 'Phase 4: Release & Benchmark Stabilization' (Protocol in workflow.md)

@@ -74,7 +74,11 @@ if ! $OMG status > /dev/null 2>&1; then
 fi
 
 cleanup() {
-    kill $DAEMON_PID > /dev/null 2>&1 || true
+    echo "Cleaning up..." >&2
+    if [ -n "$DAEMON_PID" ]; then
+        kill $DAEMON_PID > /dev/null 2>&1 || true
+        wait $DAEMON_PID 2>/dev/null || true
+    fi
     rm -rf "$BENCH_DIR"
 }
 trap cleanup EXIT
