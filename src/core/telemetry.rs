@@ -55,10 +55,10 @@ pub fn is_telemetry_opt_out() -> bool {
     }
 
     // Check settings file
-    if let Ok(settings) = crate::config::Settings::load() {
-        if !settings.telemetry_enabled {
-            return true;
-        }
+    if let Ok(settings) = crate::config::Settings::load()
+        && !settings.telemetry_enabled
+    {
+        return true;
     }
 
     false
@@ -139,11 +139,7 @@ pub async fn ping_install() -> Result<()> {
 
     // Send ping with timeout
     let client = crate::core::http::shared_client();
-    let response = client
-        .post(TELEMETRY_API_URL)
-        .json(&payload)
-        .send()
-        .await;
+    let response = client.post(TELEMETRY_API_URL).json(&payload).send().await;
 
     // Create marker file on success or network error (don't block on failure)
     match response {

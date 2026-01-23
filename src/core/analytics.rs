@@ -82,7 +82,7 @@ pub struct SystemStats {
 pub struct AnalyticsEvent {
     /// Event type
     pub event_type: EventType,
-    /// Event name (e.g., "search", "install", "node_use")
+    /// Event name (e.g., "search", "install", "`node_use`")
     pub event_name: String,
     /// Event properties
     #[serde(default)]
@@ -304,9 +304,18 @@ fn create_event(
     };
 
     // Inject system info into properties for backward compatibility with older workers
-    properties.insert("sys_cpu".to_string(), serde_json::json!(system_stats.cpu_cores));
-    properties.insert("sys_ram".to_string(), serde_json::json!(system_stats.ram_gb));
-    properties.insert("sys_kernel".to_string(), serde_json::json!(system_stats.kernel));
+    properties.insert(
+        "sys_cpu".to_string(),
+        serde_json::json!(system_stats.cpu_cores),
+    );
+    properties.insert(
+        "sys_ram".to_string(),
+        serde_json::json!(system_stats.ram_gb),
+    );
+    properties.insert(
+        "sys_kernel".to_string(),
+        serde_json::json!(system_stats.kernel),
+    );
 
     AnalyticsEvent {
         event_type,

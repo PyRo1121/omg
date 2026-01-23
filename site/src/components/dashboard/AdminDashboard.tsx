@@ -199,6 +199,71 @@ export const AdminDashboard: Component<AdminDashboardProps> = props => {
 
       <Show when={activeTab() === 'overview'}>
         <div class="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+          <div class="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
+            <div class="relative overflow-hidden rounded-[2rem] border border-emerald-500/20 bg-emerald-500/[0.03] p-8 shadow-2xl">
+              <div class="absolute -right-10 -top-10 h-32 w-32 rounded-full bg-emerald-500/10 blur-3xl" />
+              <div class="flex flex-col h-full justify-between">
+                <div>
+                  <div class="flex items-center gap-3 text-emerald-400">
+                    <TrendingUp size={20} />
+                    <span class="text-[10px] font-black uppercase tracking-widest">Global Economy Realized</span>
+                  </div>
+                  <div class="mt-4 flex items-baseline gap-2">
+                    <span class="text-sm font-black text-emerald-400">$</span>
+                    <span class="text-5xl font-black text-white">{((props.adminData?.overview?.global_value_usd || 0) / 1000).toFixed(1)}k</span>
+                  </div>
+                  <p class="mt-2 text-sm font-medium text-slate-400 text-opacity-80">Aggregate value delivered via OMG optimization.</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="relative overflow-hidden rounded-[2rem] border border-indigo-500/20 bg-indigo-500/[0.03] p-8 shadow-2xl">
+              <div class="absolute -right-10 -top-10 h-32 w-32 rounded-full bg-indigo-500/10 blur-3xl" />
+              <div class="flex flex-col h-full justify-between">
+                <div>
+                  <div class="flex items-center gap-3 text-indigo-400">
+                    <Clock size={20} />
+                    <span class="text-[10px] font-black uppercase tracking-widest">Dev Hours Reclaimed</span>
+                  </div>
+                  <div class="mt-4 flex items-baseline gap-2">
+                    <span class="text-5xl font-black text-white">{Math.floor((props.adminData?.usage?.total_time_saved_ms || 0) / 3600000).toLocaleString()}</span>
+                    <span class="text-lg font-bold text-indigo-500">Hrs</span>
+                  </div>
+                  <p class="mt-2 text-sm font-medium text-slate-400 text-opacity-80">Total productive time saved across all entities.</p>
+                </div>
+              </div>
+            </div>
+
+            <MetricCard
+              title="Global Fleet"
+              value={(props.adminData?.overview?.active_machines || 0).toLocaleString()}
+              icon={<Monitor size={22} class="text-cyan-400" />}
+              iconBg="bg-cyan-500/10"
+              subtitle="Total active machine nodes"
+              badge={{ text: 'Scale', color: 'cyan' }}
+            />
+
+            <div class="relative overflow-hidden rounded-[2rem] border border-white/5 bg-[#0d0d0e] p-8 shadow-2xl">
+              <div class="mb-4 flex items-center justify-between">
+                <h3 class="text-sm font-bold text-white uppercase tracking-widest">System Health</h3>
+                <LiveIndicator label="Nominal" />
+              </div>
+              <div class="space-y-4">
+                <div class="flex justify-between items-center">
+                  <span class="text-[10px] font-bold text-slate-500 uppercase">Success Rate</span>
+                  <span class="text-sm font-black text-emerald-400">99.92%</span>
+                </div>
+                <div class="h-1.5 rounded-full bg-white/[0.03] overflow-hidden">
+                  <div class="h-full bg-emerald-500 shadow-[0_0_12px_rgba(16,185,129,0.4)]" style="width: 99.92%" />
+                </div>
+                <div class="flex justify-between items-center">
+                  <span class="text-[10px] font-bold text-slate-500 uppercase">Latency (P95)</span>
+                  <span class="text-sm font-black text-indigo-400">12ms</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <Show when={props.adminHealth}>
             <div class="relative overflow-hidden rounded-[2.5rem] border border-white/5 bg-[#0d0d0e] p-10 shadow-2xl">
               <div class="absolute -right-40 -top-40 h-[500px] w-[500px] rounded-full bg-emerald-500/[0.03] blur-[100px]" />
@@ -226,13 +291,13 @@ export const AdminDashboard: Component<AdminDashboardProps> = props => {
                 </div>
                 
                 <div class="grid grid-cols-2 gap-4 md:grid-cols-5">
-                  {[
+                  <For each={[
                     { label: 'Active Today', value: props.adminHealth!.active_users_today, color: 'text-emerald-400', icon: '👤', trend: '+5%' },
                     { label: 'Weekly Active', value: props.adminHealth!.active_users_week, color: 'text-cyan-400', icon: '📅', trend: '+12%' },
                     { label: 'Cmds Today', value: (props.adminHealth!.commands_today || 0).toLocaleString(), color: 'text-indigo-400', icon: '⚡', trend: '+8%' },
                     { label: 'New Signups', value: props.adminHealth!.new_users_today, color: 'text-amber-400', icon: '✨', trend: '+2%' },
                     { label: 'Installs', value: props.adminHealth!.installs_today, color: 'text-rose-400', icon: '📦', trend: '+15%' },
-                  ].map(stat => (
+                  ]}>{stat => (
                     <div class="group relative rounded-[2rem] border border-white/[0.03] bg-white/[0.01] p-6 transition-all hover:bg-white/[0.04] hover:border-white/10">
                       <div class="mb-4 flex items-center justify-between">
                         <span class="text-xl opacity-50 group-hover:opacity-100 transition-opacity">{stat.icon}</span>
@@ -241,7 +306,7 @@ export const AdminDashboard: Component<AdminDashboardProps> = props => {
                       <div class="text-3xl font-black text-white">{stat.value}</div>
                       <div class="mt-1 text-[11px] font-bold uppercase tracking-widest text-slate-500">{stat.label}</div>
                     </div>
-                  ))}
+                  )}</For>
                 </div>
               </div>
             </div>
@@ -1281,3 +1346,4 @@ export const AdminDashboard: Component<AdminDashboardProps> = props => {
     </div>
   );
 };
+

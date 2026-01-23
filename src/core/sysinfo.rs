@@ -141,9 +141,10 @@ fn detect_cpu_cores() -> usize {
 
 /// Detect kernel version
 fn detect_kernel() -> String {
-    std::fs::read_to_string("/proc/version")
-        .map(|v| v.split_whitespace().nth(2).unwrap_or("unknown").to_string())
-        .unwrap_or_else(|_| "unknown".to_string())
+    std::fs::read_to_string("/proc/version").map_or_else(
+        |_| "unknown".to_string(),
+        |v| v.split_whitespace().nth(2).unwrap_or("unknown").to_string(),
+    )
 }
 
 /// Detect total RAM in gigabytes from /proc/meminfo
