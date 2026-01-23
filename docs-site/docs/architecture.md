@@ -8,365 +8,173 @@ description: System architecture and component overview
 
 **System Design and Component Architecture**
 
-This document provides a high-level overview of OMG's architecture, component interactions, and design decisions.
+This document provides a deep dive into OMG's architecture, component interactions, and the high-performance design decisions that enable sub-10ms package operations.
 
 ---
 
-## 🏗️ System Architecture
+## 🏗️ System Overview
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                              USER                                        │
-│                                │                                         │
-│                    ┌───────────┴───────────┐                            │
-│                    ▼                       ▼                            │
-│              ┌──────────┐           ┌──────────────┐                    │
-│              │ Primary  │           │ Speed-Light  │                    │
-│              │ CLI      │           │ Optimizer    │                    │
-│              └────┬─────┘           └──────┬───────┘                    │
-│                   │                        │                            │
-│                   │    Private Interface   │ Direct state read          │
-│                   ▼                        ▼                            │
-│              ┌────────────────────────────────────┐                     │
-│              │           System Daemon            │                     │
-│              │  ┌──────────────────────────────┐  │                     │
-│              │  │      Instant Access Layer    │  │                     │
-│              │  │  ┌─────────┐ ┌────────────┐  │  │                     │
-│              │  │  │  Active  │ │  Global    │  │  │                     │
-│              │  │  │  Cache   │ │  Index     │  │  │                     │
-│              │  │  └─────────┘ └────────────┘  │  │                     │
-│              │  └──────────────────────────────┘  │                     │
-│              │  ┌──────────────────────────────┐  │                     │
-│              │  │      Persistence Layer       │  │                     │
-│              │  │  ┌─────────┐ ┌────────────┐  │  │                     │
-│              │  │  │ Durable │ │ Binary     │  │  │                     │
-│              │  │  │ Storage │ │ Status     │  │  │                     │
-│              │  │  └─────────┘ └────────────┘  │  │                     │
-│              │  └──────────────────────────────┘  │                     │
-│              └────────────────┬───────────────────┘                     │
-│                               │                                         │
-│         ┌─────────────────────┼─────────────────────┐                   │
-│         │                     │                     │                   │
-│         ▼                     ▼                     ▼                   │
-│  ┌─────────────┐      ┌─────────────┐      ┌─────────────┐             │
-│  │   Arch      │      │   Debian    │      │   Cloud     │             │
-│  │   Handler   │      │   Handler   │      │   Sources   │             │
-│  │  (Native)   │      │  (Native)   │      │   (HTTPS)   │             │
-│  └─────────────┘      └─────────────┘      └─────────────┘             │
-│         │                     │                     │                   │
-│         ▼                     ▼                     ▼                   │
-│  ┌─────────────────────────────────────────────────────────────────┐   │
-│  │                    Operating System                              │   │
-│  │    Package DBs        Local Files        Remote Registries       │   │
-│  └─────────────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────────────┘
-```
+OMG uses a distributed daemon-client model designed for zero-overhead interaction.
 
-┌─────────────────────────────────────────────────────────────────────────┐
-│                              USER                                        │
-│                                │                                         │
-│                    ┌───────────┴───────────┐                            │
-│                    ▼                       ▼                            │
-│              ┌──────────┐           ┌──────────────┐                    │
-│              │ omg CLI  │           │ omg-fast CLI │                    │
-│              └────┬─────┘           └──────┬───────┘                    │
-│                   │                        │                            │
-│                   │    Unix Socket IPC     │ Direct status read        │
-│                   ▼                        ▼                            │
-│              ┌────────────────────────────────────┐                     │
-│              │           omgd (Daemon)            │                     │
-│              │  ┌──────────────────────────────┐  │                     │
-│              │  │      In-Memory Caches        │  │                     │
-│              │  │  ┌─────────┐ ┌────────────┐  │  │                     │
-│              │  │  │  moka   │ │  Index     │  │  │                     │
-│              │  │  │  LRU    │ │  (Nucleo)  │  │  │                     │
-│              │  │  └─────────┘ └────────────┘  │  │                     │
-│              │  └──────────────────────────────┘  │                     │
-│              │  ┌──────────────────────────────┐  │                     │
-│              │  │        Persistence           │  │                     │
-│              │  │  ┌─────────┐ ┌────────────┐  │  │                     │
-│              │  │  │  redb   │ │ Binary     │  │  │                     │
-│              │  │  │  (ACID) │ │ Status     │  │  │                     │
-│              │  │  └─────────┘ └────────────┘  │  │                     │
-│              │  └──────────────────────────────┘  │                     │
-│              └────────────────┬───────────────────┘                     │
-│                               │                                         │
-│         ┌─────────────────────┼─────────────────────┐                   │
-│         │                     │                     │                   │
-│         ▼                     ▼                     ▼                   │
-│  ┌─────────────┐      ┌─────────────┐      ┌─────────────┐             │
-│  │   libalpm   │      │  rust-apt   │      │  AUR HTTP   │             │
-│  │   (Arch)    │      │  (Debian)   │      │   Client    │             │
-│  └─────────────┘      └─────────────┘      └─────────────┘             │
-│         │                     │                     │                   │
-│         ▼                     ▼                     ▼                   │
-│  ┌─────────────────────────────────────────────────────────────────┐   │
-│  │                    Operating System                              │   │
-│  │    /var/lib/pacman    /var/lib/dpkg    https://aur.archlinux.org│   │
-│  └─────────────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────────────┘
+```mermaid
+graph TD
+    User[User / Terminal] --> CLI[omg CLI]
+    User --> FastCLI[omg-fast CLI]
+    
+    subgraph "Client Layer"
+        CLI
+        FastCLI
+    end
+    
+    CLI -- "Unix IPC (bitcode)" --> Daemon
+    FastCLI -- "Direct Read (rkyv)" --> Snapshot[Binary Snapshot File]
+    
+    subgraph "Daemon Layer (omgd)"
+        Daemon[omgd Server]
+        Worker[Background Status Worker]
+        CacheManager[Cache Manager]
+        
+        Daemon <--> CacheManager
+        Worker --> CacheManager
+        Worker --> Snapshot
+    end
+    
+    subgraph "Storage & Caching"
+        CacheManager <--> Moka[L1: moka In-Memory]
+        CacheManager <--> Redb[L2: redb Persistent]
+    end
+    
+    subgraph "Backends"
+        Daemon --> Pacman[libalpm / Arch]
+        Daemon --> APT[rust-apt / Debian]
+        Daemon --> AUR[AUR / HTTPS]
+        Daemon --> Runtimes[Runtime Manager]
+    end
 ```
 
 ---
 
-## 📦 Binary Components
+## 🔌 Unix IPC Flow (bitcode)
 
-OMG is distributed as a unified set of three specialized binaries, all statically linked for maximum portability and zero dependencies.
+OMG uses a custom binary protocol over Unix Domain Sockets. This ensures minimal overhead and maximum throughput.
 
-### omg (The CLI)
-The primary user interface. It is designed for human interaction, providing rich colored output, progress bars, and interactive TUI elements. It handles argument parsing, security policy enforcement, and communicates with the background daemon via a high-performance Unix socket.
+```mermaid
+sequenceDiagram
+    participant CLI as omg CLI
+    participant Srv as omgd Server
+    participant Cache as moka Cache
+    participant DB as redb Store
 
-### omgd (The Daemon)
-The "brain" of the system. It runs as a lightweight background service that maintains an in-memory index of all system packages and language runtimes. It handles heavy lifting like background vulnerability scanning, metadata indexing, and complex dependency resolution.
+    CLI->>CLI: Parse Arguments (clap)
+    CLI->>CLI: Serialize Request (bitcode)
+    CLI->>Srv: Send Frame (Length-Delimited)
+    
+    Srv->>Srv: Validate Frame Size
+    Srv->>Srv: Deserialize Request (bitcode)
+    
+    Srv->>Cache: Check Query Cache
+    alt Cache Hit
+        Cache-->>Srv: Return Cached Result
+    else Cache Miss
+        Srv->>Srv: Execute Backend Query
+        Srv->>Cache: Update Cache
+        Srv->>DB: Persist (if required)
+    end
+    
+    Srv->>Srv: Serialize Response (bitcode)
+    Srv->>CLI: Send Response Frame
+    
+    CLI->>CLI: Deserialize & Render
+```
 
-### omg-fast (The Prompt Optimizer)
-A specialized, ultra-lightweight binary specifically for shell prompts. It achieves sub-millisecond response times by reading a fixed-size binary snapshot of the system's "vital signs" directly from the filesystem. This optimization bypasses the entire IPC and network stack, acting like a shared-memory interface for instant prompt updates.
-
-
+### Protocol Characteristics
+- **Transport**: Unix Domain Sockets (UDS) for local-only, high-speed communication.
+- **Framing**: `LengthDelimitedCodec` ensures atomic message delivery.
+- **Serialization**: `bitcode` provides high-speed binary encoding with optional zero-copy support.
+- **Concurrency**: `tokio` handles thousands of concurrent IPC requests with minimal context switching.
 
 ---
 
-## 🔄 Data Flow
+## 💾 Multi-Tier Caching Strategy
 
-### Search Request
+OMG employs a tiered approach to data availability, ensuring that common queries never hit the disk or network.
 
+```mermaid
+graph LR
+    subgraph "Tier 0: Snapshots"
+        FS[FastStatus File]
+    end
+    
+    subgraph "Tier 1: In-Memory"
+        Moka[moka LRU Cache]
+    end
+    
+    subgraph "Tier 2: Persistent"
+        Redb[redb ACID Store]
+    end
+    
+    subgraph "Tier 3: System/Network"
+        System[System DBs / APIs]
+    end
+    
+    Query[Query] --> FS
+    FS -- "Miss" --> Moka
+    Moka -- "Miss" --> Redb
+    Redb -- "Miss" --> System
 ```
-User: omg search firefox
-         │
-         ▼
-    ┌─────────┐
-    │ omg CLI │ Parse args, create Request
-    └────┬────┘
-         │ Unix Socket
-         ▼
-    ┌─────────┐
-    │  omgd   │ Check moka cache
-    └────┬────┘
-         │ Cache miss
-         ▼
-    ┌──────────────────────────────────┐
-    │ Parallel Query                    │
-    │  ┌─────────┐    ┌─────────────┐  │
-    │  │ libalpm │    │ AUR HTTP    │  │
-    │  │  query  │    │   query     │  │
-    │  └────┬────┘    └──────┬──────┘  │
-    │       │                │         │
-    │       └───────┬────────┘         │
-    │               ▼                  │
-    │         Merge & Rank            │
-    │           (Nucleo)              │
-    └──────────────┬───────────────────┘
-                   │
-                   ▼
-             Update moka cache
-                   │
-                   ▼
-              Serialize Response
-                   │
-                   ▼
-              Return to CLI
-                   │
-                   ▼
-              Format & Display
-```
-
-### Runtime Switch
-
-```
-User: omg use node 20.10.0
-         │
-         ▼
-    ┌─────────┐
-    │ omg CLI │ Detect runtime type
-    └────┬────┘
-         │
-         ▼
-    Check if installed
-         │
-    ┌────┴────┐
-    │ Yes     │ No
-    │         ▼
-    │    Download from
-    │    nodejs.org/dist
-    │         │
-    │    Extract to
-    │    versions/node/20.10.0
-    │         │
-    └────┬────┘
-         │
-         ▼
-    Update symlink
-    versions/node/current → 20.10.0
-         │
-         ▼
-    Shell hook updates PATH
-```
-
----
-
-## 💾 Caching Strategy
-
-OMG uses a multi-tier caching architecture to eliminate the latency typically associated with package managers.
 
 ### 1. In-Memory (moka)
-The hottest data (recent searches, package details, system status) is kept in a concurrent, high-performance memory cache. This allows multiple CLI instances to share results instantly without hitting the disk.
+The **moka** cache handles high-frequency data:
+- **Search Results**: Cached for 5 minutes.
+- **Package Details**: Cached for 10 minutes.
+- **Rate Limit Buckets**: Managed per-connection.
 
 ### 2. Persistent (redb)
-Data that should survive a reboot is stored in `redb`, an ACID-compliant embedded database. This includes your transaction history, audit logs, and pre-computed package indices.
+The **redb** store handles data that must survive reboots:
+- **Pre-computed Index**: Cold-start search results.
+- **Audit Logs**: Tamper-proof history.
+- **Security Scores**: Cached SLSA/PGP validation results.
 
-### 3. Binary Status
-A specialized binary status file is maintained by the daemon to store your system's "vital signs" (update counts, error status). This is what enables `omg-fast` to power your shell prompt with zero-allocation, zero-IPC reads.
-
----
-
-## 🔌 IPC Protocol
-
-### Transport
-
-- **Socket:** Unix Domain Socket
-- **Framing:** Length-Delimited via `LengthDelimitedCodec`
-- **Serialization:** `bitcode` (high-performance binary serialization)
-
-### Message Types
-
-The protocol supports a wide range of structured requests and responses:
-
-*   **Search**: Query for packages with optional limits.
-*   **Info**: Retrieve detailed metadata for a specific package.
-*   **Status**: Get the current system "vital signs" (package counts, updates).
-*   **SecurityAudit**: Trigger a vulnerability scan across installed packages.
-*   **Batch**: Combine multiple requests into a single IPC round-trip for maximum efficiency.
-*   **Explicit**: List packages installed by the user.
-*   **System Controls**: Commands for cache management, pings, and health checks.
-
-### Performance
-
-- **Serialization Latency**: ~10μs
-- **Round-trip Time**: ~100μs for cached data, ~1ms for fresh queries.
-- **Efficiency**: Batching allows the system to process multiple operations in a single kernel context switch.
-
----
-
-## 🔧 Runtime Management Architecture
-
-OMG unifies language runtimes under a single "Runtime Manager" interface. This allows every language—whether it's Node.js, Rust, or Java—to behave identically from a user's perspective.
-
-### Version Storage
-All runtimes are stored in your home directory (`~/.local/share/omg/versions`), ensuring you never need `sudo` to switch a Node.js version and your system-wide packages remain untouched.
-
-### Resolution Strategy
-By default, OMG uses a "native-then-mise" strategy. It prefers its own highly optimized native managers for common languages but can seamlessly fall back to the `mise` ecosystem for more obscure runtimes, giving you the best of both worlds.
+### 3. Binary Snapshot (rkyv)
+A specialized file (`~/.local/share/omg/status.bin`) stores a zero-copy AST of system health. This allows `omg-fast` to provide shell prompt updates in **<500μs**.
 
 ---
 
 ## 🛡️ Security Architecture
 
-### Verification Pipeline
+The daemon enforces a multi-stage validation pipeline for every package operation.
 
-```
-Package Download
-      │
-      ▼
-┌─────────────────┐
-│ Checksum Verify │ SHA256
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│  PGP Signature  │ Sequoia-OpenPGP
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ SLSA Provenance │ Sigstore/Rekor
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ Vulnerability   │ ALSA + OSV.dev
-│    Scan         │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ Policy Check    │ policy.toml
-└────────┬────────┘
-         │
-         ▼
-    Install / Reject
+```mermaid
+flowchart TD
+    Start[Download Package] --> Checksum[Verify SHA256]
+    Checksum --> PGP[Sequoia-OpenPGP Signature]
+    PGP --> SLSA[Sigstore / Rekor SLSA]
+    SLSA --> Vuln[ALSA / OSV Vulnerability Scan]
+    Vuln --> Policy[Policy Enforcement]
+    Policy --> Final[Install / Reject]
+    
+    Final --> Audit[Log to redb Audit Table]
 ```
 
-### Audit Log
-
-Hash-chained, tamper-proof logging:
-- Location: `~/.local/share/omg/audit/audit.jsonl`
-- Format: JSON Lines
-- Each entry contains hash of previous entry
-- Integrity verifiable with `omg audit verify`
+### Components
+- **Sequoia-OpenPGP**: Native Rust implementation of OpenPGP for signature verification.
+- **Sigstore/Rekor**: Integration with the Sigstore transparency log for SLSA provenance.
+- **OSV.dev**: Real-time vulnerability matching against global databases.
 
 ---
 
-## 📊 Background Workers
+## 🔧 Runtime Management
 
-### Status Refresh Worker
+OMG manages language runtimes via a unified trait system.
 
-Runs every 300 seconds:
-1. Probe all runtime versions
-2. Count vulnerabilities
-3. Generate system status
-4. Update moka cache
-5. Write binary status file
-6. Persist to redb
-
-### ALSA Scanner (Optional)
-
-When enabled, periodically:
-1. Fetch ALSA issues from security.archlinux.org
-2. Match against installed packages
-3. Update daemon status with CVE count
+- **Native Managers**: Custom Rust implementations for Node.js, Python, Rust, Go, Ruby, Java, and Bun.
+- **mise Fallback**: Seamless integration with the `mise` ecosystem for 100+ additional runtimes.
+- **Environment Isolation**: Runtimes are stored in `~/.local/share/omg/versions`, avoiding the need for `sudo`.
 
 ---
 
-## 🔄 Graceful Shutdown
+## 📚 Further Reading
 
-```
-SIGINT/SIGTERM
-      │
-      ▼
-┌─────────────────┐
-│ Broadcast       │ Send shutdown signal
-│ Channel         │
-└────────┬────────┘
-         │
-    ┌────┴────┬────────────┐
-    ▼         ▼            ▼
-Client    Background    IPC
-Tasks     Workers       Server
-    │         │            │
-    │ Finish  │ Stop       │ Stop
-    │ request │ loop       │ accept
-    │         │            │
-    └────┬────┴────────────┘
-         │
-         ▼
-┌─────────────────┐
-│ Clean up socket │
-└─────────────────┘
-         │
-         ▼
-      Exit
-```
-
----
-
-## 📚 Deep Dives
-
-For detailed documentation on specific subsystems:
-
-- [Daemon Internals](./daemon.md)
-- [IPC Protocol](./ipc.md)
-- [Caching System](./cache.md)
-- [Package Search](./package-search.md)
-- [Runtime Management](./runtimes.md)
-- [CLI Internals](./cli-internals.md)
-- [Security & Audit](./security.md)
+- [IPC Protocol Deep Dive](./ipc.md)
+- [Caching System Internals](./cache.md)
+- [Security Model & Compliance](./security.md)

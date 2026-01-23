@@ -197,8 +197,10 @@ omg run dev                 # Run your project
 - **[TUI Dashboard](./tui.md)** — Interactive terminal dashboard
 
 ### Deep Dives
+- **[Technical White Paper](./white-paper.md)** — Architectural foundations and performance analysis
 - **[Architecture](./architecture.md)** — How OMG works under the hood
 - **[Daemon Internals](./daemon.md)** — The secret to OMG's speed
+- **[API Reference](./api-reference.md)** — Daemon IPC protocol and data structures
 - **[Troubleshooting](./troubleshooting.md)** — Common issues and fixes
 - **[FAQ](./faq.md)** — Frequently asked questions
 
