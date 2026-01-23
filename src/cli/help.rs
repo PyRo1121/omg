@@ -3,10 +3,17 @@
 //! Provides tiered help display to solve command discovery crisis.
 //! Shows only essential commands by default, all commands with --all flag.
 
-pub use crate::cli::args::{Cli, Commands};
 use clap::CommandFactory;
+use std::io::Write;
 
-/// Re-export help functionality for use in main binary
+use crate::cli::args::Cli;
+
+/// Essential commands that new users need most frequently
+const ESSENTIAL_COMMANDS: &[&str] = &[
+    "search", "install", "remove", "update", "use", "run", "help",
+];
+
+/// Show essential help by default, all commands with --all flag
 pub fn print_help(cli: &Cli, use_all: bool) -> anyhow::Result<()> {
     if use_all {
         // Show all commands when --all flag is used
@@ -19,20 +26,15 @@ pub fn print_help(cli: &Cli, use_all: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Essential commands that new users need most frequently
-const ESSENTIAL_COMMANDS: &[&str] = &[
-    "search", "install", "remove", "update", "use", "run", "help",
-];
-
 /// Print essential commands help with getting started guidance
-fn print_essential_help(_cli: &Cli) -> anyhow::Result<()> {
+fn print_essential_help(cli: &Cli) -> anyhow::Result<()> {
     println!("🚀 OMG - The Fastest Unified Package Manager");
     println!();
-    
+
     println!("📖 Essential Commands (Most Common):");
     println!("═════════════════════════════════");
     println!();
-    
+
     // Show help for essential commands only
     for cmd_name in ESSENTIAL_COMMANDS {
         if let Some(essential_cmd) = get_essential_command_help(*cmd_name) {
@@ -40,16 +42,13 @@ fn print_essential_help(_cli: &Cli) -> anyhow::Result<()> {
             println!();
         }
     }
-    
+
     println!("💡 Show all commands with: omg --help --all");
     println!("🔍 Explore interactive TUI with: omg dash");
     println!("📚 Complete documentation: https://pyro1121.com/docs");
     println!();
-    
+
     print_getting_started();
-    
-    Ok(())
-}
 }
 
 /// Get help text for an essential command
