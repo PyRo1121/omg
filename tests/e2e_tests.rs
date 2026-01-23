@@ -435,7 +435,10 @@ mod self_update_tests {
         // Simulate failure: new binary doesn't exist, need to restore
         let non_existent = temp_dir.path().join("does-not-exist");
         let move_result = fs::rename(&non_existent, &current_binary);
-        assert!(move_result.is_err(), "Move should fail for non-existent file");
+        assert!(
+            move_result.is_err(),
+            "Move should fail for non-existent file"
+        );
 
         // Then: Restore from backup
         fs::rename(&backup_binary, &current_binary)?;
@@ -500,10 +503,8 @@ mod license_tests {
         let key = "a".repeat(129);
 
         // When: We validate the format
-        let is_valid = key.len() <= 128
-            && key
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '-');
+        let is_valid =
+            key.len() <= 128 && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
 
         // Then: It should be rejected
         assert!(!is_valid, "Key exceeding 128 chars should be rejected");
@@ -527,7 +528,10 @@ mod license_tests {
                 key.len() <= 128 && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
 
             // Then: It should be rejected
-            assert!(!is_valid, "Key '{key}' with invalid chars should be rejected");
+            assert!(
+                !is_valid,
+                "Key '{key}' with invalid chars should be rejected"
+            );
         }
     }
 
@@ -804,8 +808,16 @@ mod usage_tests {
 
         // Then: Counters should be updated
         assert_eq!(stats.total_commands, 3, "Total should be 3");
-        assert_eq!(stats.commands.get("search"), Some(&2), "Search count should be 2");
-        assert_eq!(stats.commands.get("info"), Some(&1), "Info count should be 1");
+        assert_eq!(
+            stats.commands.get("search"),
+            Some(&2),
+            "Search count should be 2"
+        );
+        assert_eq!(
+            stats.commands.get("info"),
+            Some(&1),
+            "Info count should be 1"
+        );
         assert_eq!(
             stats.time_saved_ms,
             127 + 127 + 132,
@@ -820,12 +832,8 @@ mod usage_tests {
         let mut stats = UsageStats::default();
 
         // When: We track package installations
-        stats
-            .installed_packages
-            .insert("firefox".to_string(), 1);
-        stats
-            .installed_packages
-            .insert("vim".to_string(), 3);
+        stats.installed_packages.insert("firefox".to_string(), 1);
+        stats.installed_packages.insert("vim".to_string(), 3);
         *stats
             .installed_packages
             .entry("firefox".to_string())
@@ -853,8 +861,7 @@ mod usage_tests {
         // When: We track runtime switches
         stats.runtime_usage_counts.insert("node".to_string(), 5);
         stats.runtime_usage_counts.insert("python".to_string(), 3);
-        stats
-            .runtime_usage_counts.insert("rust".to_string(), 1);
+        stats.runtime_usage_counts.insert("rust".to_string(), 1);
 
         // Then: Runtime counts should be tracked
         assert_eq!(
@@ -877,15 +884,18 @@ mod usage_tests {
         // Given: Expected time savings per operation
         // Then: Values should match documented benchmarks
         assert_eq!(
-            time_saved::SEARCH_MS, 127,
+            time_saved::SEARCH_MS,
+            127,
             "Search should save 127ms (133ms - 6ms)"
         );
         assert_eq!(
-            time_saved::INFO_MS, 132,
+            time_saved::INFO_MS,
+            132,
             "Info should save 132ms (138ms - 6.5ms)"
         );
         assert_eq!(
-            time_saved::RUNTIME_SWITCH_MS, 148,
+            time_saved::RUNTIME_SWITCH_MS,
+            148,
             "Runtime switch should save 148ms (150ms - 1.8ms)"
         );
     }
@@ -912,10 +922,7 @@ mod usage_tests {
             let formatted = stats.time_saved_human();
 
             // Then: Format should be correct
-            assert_eq!(
-                formatted, expected,
-                "{ms}ms should format as '{expected}'"
-            );
+            assert_eq!(formatted, expected, "{ms}ms should format as '{expected}'");
         }
     }
 
@@ -957,9 +964,7 @@ mod usage_tests {
         stats.total_commands = 50;
         stats.time_saved_ms = 10000;
         stats.installed_packages.insert("git".to_string(), 1);
-        stats
-            .runtime_usage_counts
-            .insert("node".to_string(), 5);
+        stats.runtime_usage_counts.insert("node".to_string(), 5);
 
         // When: We serialize to JSON
         let json = serde_json::to_string(&stats)?;
@@ -993,9 +998,7 @@ mod usage_tests {
         stats.total_commands = 100;
         stats.queries_today = 10;
         stats.installed_packages.insert("vim".to_string(), 1);
-        stats
-            .runtime_usage_counts
-            .insert("python".to_string(), 3);
+        stats.runtime_usage_counts.insert("python".to_string(), 3);
 
         // When: We construct a sync payload (simulating what sync() does)
         let payload = serde_json::json!({
@@ -1058,7 +1061,7 @@ mod usage_tests {
 /// Tests for daemon IPC protocol and communication
 mod daemon_tests {
     use super::*;
-    use omg_lib::daemon::protocol::{Request, Response, ResponseResult, SearchResult, PackageInfo};
+    use omg_lib::daemon::protocol::{PackageInfo, Request, Response, ResponseResult, SearchResult};
 
     /// Verify request serialization with bitcode
     #[test]
@@ -1174,12 +1177,20 @@ mod daemon_tests {
         framed.extend_from_slice(message);
 
         // Then: Frame should have correct structure
-        assert_eq!(framed.len(), 4 + message.len(), "Frame should have 4-byte prefix + message");
+        assert_eq!(
+            framed.len(),
+            4 + message.len(),
+            "Frame should have 4-byte prefix + message"
+        );
 
         // And: Length prefix should be correct
         let prefix_bytes: [u8; 4] = framed[..4].try_into()?;
         let decoded_len = u32::from_be_bytes(prefix_bytes);
-        assert_eq!(decoded_len as usize, message.len(), "Length prefix should match message length");
+        assert_eq!(
+            decoded_len as usize,
+            message.len(),
+            "Length prefix should match message length"
+        );
 
         Ok(())
     }
@@ -1205,8 +1216,15 @@ mod daemon_tests {
     fn test_all_request_types_have_id() {
         // Given: All request types
         let requests: Vec<Request> = vec![
-            Request::Search { id: 1, query: "test".to_string(), limit: None },
-            Request::Info { id: 2, package: "test".to_string() },
+            Request::Search {
+                id: 1,
+                query: "test".to_string(),
+                limit: None,
+            },
+            Request::Info {
+                id: 2,
+                package: "test".to_string(),
+            },
             Request::Status { id: 3 },
             Request::Explicit { id: 4 },
             Request::ExplicitCount { id: 5 },
@@ -1215,7 +1233,11 @@ mod daemon_tests {
             Request::CacheStats { id: 8 },
             Request::CacheClear { id: 9 },
             Request::Metrics { id: 10 },
-            Request::Suggest { id: 11, query: "test".to_string(), limit: None },
+            Request::Suggest {
+                id: 11,
+                query: "test".to_string(),
+                limit: None,
+            },
         ];
 
         // Then: Each should return its ID
@@ -1236,8 +1258,15 @@ mod daemon_tests {
         let batch = Request::Batch {
             id: 1,
             requests: Box::new(vec![
-                Request::Search { id: 2, query: "vim".to_string(), limit: Some(5) },
-                Request::Info { id: 3, package: "git".to_string() },
+                Request::Search {
+                    id: 2,
+                    query: "vim".to_string(),
+                    limit: Some(5),
+                },
+                Request::Info {
+                    id: 3,
+                    package: "git".to_string(),
+                },
             ]),
         };
 
@@ -1360,8 +1389,14 @@ mod integration_tests {
         let final_content = env.read_data_file("usage.json")?;
         let final_stats: omg_lib::core::usage::UsageStats = serde_json::from_str(&final_content)?;
 
-        assert_eq!(final_stats.total_commands, 105, "Commands should accumulate");
-        assert_eq!(final_stats.time_saved_ms, 13335, "Time saved should accumulate");
+        assert_eq!(
+            final_stats.total_commands, 105,
+            "Commands should accumulate"
+        );
+        assert_eq!(
+            final_stats.time_saved_ms, 13335,
+            "Time saved should accumulate"
+        );
 
         Ok(())
     }
@@ -1551,7 +1586,9 @@ mod performance_tests {
         // Given: Usage stats with data
         let mut stats = omg_lib::core::usage::UsageStats::default();
         for i in 0..100 {
-            stats.installed_packages.insert(format!("pkg-{i}"), i as u64);
+            stats
+                .installed_packages
+                .insert(format!("pkg-{i}"), i as u64);
         }
         stats.total_commands = 1000;
         stats.time_saved_ms = 100000;

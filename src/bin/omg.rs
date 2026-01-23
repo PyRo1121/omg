@@ -449,7 +449,11 @@ async fn async_main(args: Vec<String>) -> Result<()> {
                 Some(AuditCommands::Secrets { path }) => {
                     security::scan_secrets(path)?;
                 }
-                Some(AuditCommands::Log { limit, severity, export }) => {
+                Some(AuditCommands::Log {
+                    limit,
+                    severity,
+                    export,
+                }) => {
                     security::view_audit_log(limit, severity, export)?;
                 }
                 Some(AuditCommands::Verify) => {
@@ -482,7 +486,8 @@ async fn async_main(args: Vec<String>) -> Result<()> {
             } else if parallel {
                 task_runner::run_tasks_parallel(&task, &args, backend).await?;
             } else {
-                task_runner::run_task_advanced(&task, &args, backend, using.as_deref(), all).await?;
+                task_runner::run_task_advanced(&task, &args, backend, using.as_deref(), all)
+                    .await?;
             }
         }
         Commands::New { stack, name } => {
