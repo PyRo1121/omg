@@ -13,36 +13,66 @@ export async function handleGetSmartInsights(request: Request, env: Env): Promis
   const target = url.searchParams.get('target') || 'user'; // 'user', 'team', or 'admin'
 
   try {
-    // 1. Gather Context Data for the AI
+    // 1. Gather Rich Context Data for AI
     let contextData = '';
+    let additionalContext = '';
     
     if (target === 'admin' && isAdmin) {
       const stats = await env.DB.prepare(`
         SELECT 
           (SELECT COUNT(*) FROM customers) as users,
           (SELECT SUM(value) FROM analytics_daily WHERE metric = 'total_commands') as cmds,
+          (SELECT SUM(value) FROM analytics_daily WHERE metric = 'total_time_saved_ms') as time_ms,
           (SELECT dimension FROM analytics_daily WHERE metric = 'errors' ORDER BY value DESC LIMIT 1) as top_error
       `).first();
-      contextData = `Platform Stats: ${stats?.users} users, ${stats?.cmds} commands run. Top error: ${stats?.top_error}.`;
+      const timeHours = Math.round((Number(stats?.time_ms) || 0) / 3600000);
+      contextData = `Platform Stats: ${stats?.users} total users, ${stats?.cmds?.toLocaleString()} commands executed, ${timeHours} hours saved system-wide. Top error: ${stats?.top_error || 'None'}.`;
+      additionalContext = `OMG provides unified package management across Arch Linux, Debian, Ubuntu, and 8 language runtimes (Node.js, Python, Rust, Go, Ruby, Java, Bun, and 100+ more via mise). Key metrics include 22x faster searches than pacman/yay, 59-483x faster than apt-cache/Nala.`;
     } else {
       const usage = await env.DB.prepare(`
         SELECT SUM(commands_run) as cmds, SUM(time_saved_ms) as time
-        FROM usage_daily 
+          FROM usage_daily 
+          WHERE license_id = (SELECT id FROM licenses WHERE customer_id = ?)
+      `).bind(auth.user.id).first();
+      
+      // Get command breakdown for user/team
+      const commandBreakdown = await env.DB.prepare(`
+        SELECT 
+          SUM(CASE WHEN command_type = 'search' THEN 1 ELSE 0 END) as searches,
+          SUM(CASE WHEN command_type = 'install' THEN 1 ELSE 0 END) as installs,
+          SUM(CASE WHEN command_type LIKE '%use%' THEN 1 ELSE 0 END) as runtime_switches
+        FROM usage_daily
         WHERE license_id = (SELECT id FROM licenses WHERE customer_id = ?)
       `).bind(auth.user.id).first();
-      contextData = `User Stats: ${usage?.cmds} commands run, ${Math.round((Number(usage?.time) || 0) / 60000)} minutes saved.`;
+      
+      const timeHours = Math.round((Number(usage?.time) || 0) / 3600000);
+      const efficiency = usage?.cmds > 0 ? (timeHours / (usage?.cmds || 1) * 100).toFixed(2) : 0;
+      
+      contextData = `Usage Stats: ${usage?.cmds?.toLocaleString()} commands executed, ${timeHours} hours saved, ${efficiency}% average efficiency per command. Breakdown: ${commandBreakdown?.searches || 0} searches, ${commandBreakdown?.installs || 0} installs, ${commandBreakdown?.runtime_switches || 0} runtime switches.`;
+      additionalContext = `OMG saves 39 minutes per engineer annually just on package queries. For a 50-person team, that's $2,350-$2,650 in reclaimed productivity. Zero context switching between 7 package managers.`;
     }
-
-    // 2. Generate Insight using Workers AI (Llama 3)
-    const systemPrompt = `You are the OMG AI Insights engine. You analyze package manager usage data and provide 1 concise, high-value, fortune-100 style strategic recommendation. Be professional, data-driven, and brief.`;
-    const userPrompt = `Based on this data: ${contextData}, provide a "Smart Insight" for the ${target} dashboard.`;
-
+    
+    // 2. Generate Insight using Workers AI (Llama 3) with OMG-specific prompts
+    let systemPrompt = '';
+    let userPrompt = '';
+    
+    if (target === 'admin') {
+      systemPrompt = `You are an expert DevOps and SaaS platform analyst for OMG, a high-performance unified package manager. You analyze platform metrics and provide actionable insights for improving user engagement, feature adoption, and technical health. Focus on: user retention, feature utilization, error patterns, and growth opportunities. Be specific, data-driven, and concise. Avoid generic advice.`;
+      userPrompt = `Analyze these OMG platform metrics and provide 1 specific, actionable insight for administrators: ${contextData} ${additionalContext} Consider trends, anomalies, or optimization opportunities. Return 1-2 sentences that directly address an actionable observation.`;
+    } else if (target === 'team') {
+      systemPrompt = `You are a team productivity analyst specializing in developer tooling and fleet management for OMG. You analyze team usage patterns to identify efficiency opportunities, security gaps, and collaboration improvements. Focus on: fleet health, runtime consistency, time savings optimization, and policy enforcement. Be specific, data-driven, and avoid generic statements like "continue doing X".`;
+      userPrompt = `Based on this team data: ${contextData} ${additionalContext} Provide 1 specific, actionable insight that addresses either: (a) an efficiency improvement opportunity, (b) a security or compliance concern, or (c) a collaboration bottleneck. Be specific about what action to take.`;
+    } else {
+      systemPrompt = `You are a personal productivity assistant for OMG users. You analyze individual developer usage to identify efficiency gains, runtime optimization opportunities, and workflow improvements. Focus on: time savings, command efficiency, runtime adoption patterns, and skill development. Be encouraging but specific. Avoid generic motivational statements.`;
+      userPrompt = `Analyze this developer's OMG usage: ${contextData} ${additionalContext} Provide 1 specific, actionable insight about how to improve efficiency, optimize their workflow, or discover underutilized features. Focus on concrete actions they can take today.`;
+    }
+    
     const aiResponse = await env.AI.run('@cf/meta/llama-3-8b-instruct', {
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt }
       ],
-      max_tokens: 100
+      max_tokens: 500
     });
 
     const insight = aiResponse.response || "Continue optimizing your workflow with OMG's parallel execution engine.";

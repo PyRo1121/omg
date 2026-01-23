@@ -47,9 +47,9 @@ impl crate::package_managers::PackageManager for AptPackageManager {
         async move {
             // Try fast path first
             let fast_results = super::debian_db::search_fast(&query);
-            if let Ok(ref results) = fast_results {
+            if let Ok(results) = fast_results {
                 if !results.is_empty() {
-                    return Ok(fast_results);
+                    return Ok(results);
                 }
             }
 
