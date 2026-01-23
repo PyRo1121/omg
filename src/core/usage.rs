@@ -147,6 +147,12 @@ pub struct UsageStats {
     /// Runtimes used (for Polyglot achievement)
     #[serde(default)]
     pub runtimes_used: Vec<String>,
+    /// Installed packages (for Global Insights)
+    #[serde(default)]
+    pub installed_packages: HashMap<String, u64>,
+    /// Runtime usage counts (for Global Insights)
+    #[serde(default)]
+    pub runtime_usage_counts: HashMap<String, u64>,
     /// First use date
     #[serde(default)]
     pub first_use_date: String,
@@ -379,6 +385,8 @@ impl UsageStats {
             "packages_installed": self.commands.get("install").copied().unwrap_or(0),
             "packages_searched": self.commands.get("search").copied().unwrap_or(0),
             "runtimes_switched": self.commands.get("runtime_switch").copied().unwrap_or(0),
+            "installed_packages": self.installed_packages,
+            "runtime_usage_counts": self.runtime_usage_counts,
             "sbom_generated": self.sbom_generated,
             "vulnerabilities_found": self.vulnerabilities_found,
             "time_saved_ms": self.time_saved_ms,
@@ -427,14 +435,27 @@ pub fn track_status() {
     track("status", time_saved::STATUS_MS);
 }
 
-/// Track runtime switch
-pub fn track_runtime_switch() {
-    track("runtime_switch", time_saved::RUNTIME_SWITCH_MS);
-}
 
 /// Track install command
-pub fn track_install() {
-    track("install", time_saved::INSTALL_MS);
+pub fn track_install(packages: &[String]) {
+    let mut stats = UsageStats::load();
+    
+    for pkg in packages {
+        *stats.installed_packages.entry(pkg.clone()).or_insert(0) += 1;
+    }
+    
+    stats.record_command("install", time_saved::INSTALL_MS);
+}
+
+/// Track runtime switch
+pub fn track_runtime_switch(runtime: &str) {
+    let mut stats = UsageStats::load();
+    
+    *stats.runtime_usage_counts.entry(runtime.to_string()).or_insert(0) += 1;
+    
+    stats.record_runtime(runtime);
+    
+    stats.record_command("runtime_switch", time_saved::RUNTIME_SWITCH_MS);
 }
 
 /// Sync usage in background if needed

@@ -88,6 +88,8 @@ pub async fn use_version(runtime: &str, version: Option<&str>) -> Result<()> {
         version.yellow()
     );
 
+    crate::core::usage::track_runtime_switch(runtime);
+
     match runtime.to_lowercase().as_str() {
         "node" | "nodejs" => {
             let node_mgr = NodeManager::new();
