@@ -2,8 +2,8 @@
 //!
 //! Enterprise-grade test coverage for Arch Linux package management.
 //!
-//! Run: cargo test --test arch_tests --features arch
-//! With system tests: OMG_RUN_SYSTEM_TESTS=1 cargo test --test arch_tests --features arch
+//! Run: cargo test --test `arch_tests` --features arch
+//! With system tests: `OMG_RUN_SYSTEM_TESTS=1` cargo test --test `arch_tests` --features arch
 
 #![cfg(feature = "arch")]
 #![allow(clippy::doc_markdown)]
