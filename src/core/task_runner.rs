@@ -682,14 +682,85 @@ pub async fn run_task_advanced(
     Ok(())
 }
 
-/// Execute a task (compatibility wrapper)
-pub fn run_task(
-    task_name: &str,
-    extra_args: &[String],
-    backend_override: Option<RuntimeBackend>,
-) -> Result<()> {
-    run_async(run_task_advanced(task_name, extra_args, backend_override, None, false))
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+    use std::fs;
+
+    #[test]
+    fn test_ecosystem_priority() {
+        assert!(Ecosystem::Rust.priority() > Ecosystem::Node.priority());
+        assert!(Ecosystem::Node.priority() > Ecosystem::Python.priority());
+        assert!(Ecosystem::Python.priority() > Ecosystem::Make.priority());
+    }
+
+    #[test]
+    fn test_config_loading() {
+        let temp = TempDir::new().unwrap();
+        let config_content = r#"[scripts]
+test = "rust"
+build = "node"
+"#;
+        fs::write(temp.path().join(".omg.toml"), config_content).unwrap();
+
+        let detector = TaskDetector::new(temp.path().to_path_buf());
+        assert_eq!(detector.config.scripts.get("test").unwrap(), "rust");
+        assert_eq!(detector.config.scripts.get("build").unwrap(), "node");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_priority() {
+        let temp = TempDir::new().unwrap();
+        // Create both Cargo.toml and package.json
+        fs::write(temp.path().join("Cargo.toml"), "[package]\nname = \"test\"").unwrap();
+        fs::write(temp.path().join("package.json"), r#"{"scripts": {"test": "echo node"}}"#).unwrap();
+
+        let detector = TaskDetector::new(temp.path().to_path_buf());
+        // 'test' is in both, but Rust (Cargo) should have higher priority
+        let matches = detector.resolve("test", None, false).unwrap();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].ecosystem, Ecosystem::Rust);
+    }
+
+    #[tokio::test]
+    async fn test_resolve_using_override() {
+        let temp = TempDir::new().unwrap();
+        fs::write(temp.path().join("Cargo.toml"), "[package]\nname = \"test\"").unwrap();
+        fs::write(temp.path().join("package.json"), r#"{"scripts": {"test": "echo node"}}"#).unwrap();
+
+        let detector = TaskDetector::new(temp.path().to_path_buf());
+        // Explicitly use 'node'
+        let matches = detector.resolve("test", Some("node"), false).unwrap();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].ecosystem, Ecosystem::Node);
+    }
+
+    #[tokio::test]
+    async fn test_resolve_all() {
+        let temp = TempDir::new().unwrap();
+        fs::write(temp.path().join("Cargo.toml"), "[package]\nname = \"test\"").unwrap();
+        fs::write(temp.path().join("package.json"), r#"{"scripts": {"test": "echo node"}}"#).unwrap();
+
+        let detector = TaskDetector::new(temp.path().to_path_buf());
+        let matches = detector.resolve("test", None, true).unwrap();
+        assert_eq!(matches.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_resolve_config_override() {
+        let temp = TempDir::new().unwrap();
+        fs::write(temp.path().join("Cargo.toml"), "[package]\nname = \"test\"").unwrap();
+        fs::write(temp.path().join("package.json"), r#"{"scripts": {"test": "echo node"}}"#).unwrap();
+        fs::write(temp.path().join(".omg.toml"), "[scripts]\ntest = \"node\"").unwrap();
+
+        let detector = TaskDetector::new(temp.path().to_path_buf());
+        let matches = detector.resolve("test", None, false).unwrap();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].ecosystem, Ecosystem::Node);
+    }
 }
+
 
 fn execute_process(
     cmd: &str,
