@@ -443,17 +443,17 @@ pub async fn validate_license_with_user(
     user_email: Option<&str>,
 ) -> Result<LicenseResponse> {
     let machine_id = get_machine_id();
-    let mut url = format!("{LICENSE_API_URL}?key={key}&machine_id={machine_id}");
+    
+    let payload = serde_json::json!({
+        "license_key": key,
+        "machine_id": machine_id,
+        "user_name": user_name,
+        "user_email": user_email,
+    });
 
-    if let Some(name) = user_name {
-        let _ = write!(url, "&user_name={}", urlencoding::encode(name));
-    }
-    if let Some(email) = user_email {
-        let _ = write!(url, "&user_email={}", urlencoding::encode(email));
-    }
-
-    let response = reqwest::Client::new()
-        .get(&url)
+    let response = crate::core::http::shared_client()
+        .post(LICENSE_API_URL)
+        .json(&payload)
         .timeout(std::time::Duration::from_secs(10))
         .send()
         .await

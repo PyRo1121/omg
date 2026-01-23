@@ -41,13 +41,27 @@ pub fn is_telemetry_opt_out() -> bool {
         return true;
     }
 
-    matches!(
+    // Check environment variables first (highest priority)
+    let env_opt_out = matches!(
         std::env::var("OMG_TELEMETRY").as_deref(),
         Ok("0" | "false" | "FALSE" | "off" | "OFF")
     ) || matches!(
         std::env::var("OMG_DISABLE_TELEMETRY").as_deref(),
         Ok("1" | "true" | "TRUE")
-    )
+    );
+
+    if env_opt_out {
+        return true;
+    }
+
+    // Check settings file
+    if let Ok(settings) = crate::config::Settings::load() {
+        if !settings.telemetry_enabled {
+            return true;
+        }
+    }
+
+    false
 }
 
 /// Check if this is the first run
@@ -77,7 +91,7 @@ fn get_platform() -> String {
 }
 
 /// Get package manager backend
-fn get_backend() -> String {
+pub fn get_backend() -> String {
     #[cfg(feature = "arch")]
     return "arch".to_string();
 
@@ -124,11 +138,10 @@ pub async fn ping_install() -> Result<()> {
     };
 
     // Send ping with timeout
-    let client = reqwest::Client::new();
+    let client = crate::core::http::shared_client();
     let response = client
         .post(TELEMETRY_API_URL)
         .json(&payload)
-        .timeout(std::time::Duration::from_secs(5))
         .send()
         .await;
 

@@ -24,41 +24,47 @@ export const BarChart: Component<BarChartProps> = props => {
   const colors = gradientColors[props.gradient || 'indigo'];
 
   return (
-    <div class="flex items-end gap-1.5" style={{ height: `${height}px` }}>
+    <div class="flex items-end gap-2" style={{ height: `${height}px` }}>
       <For each={props.data}>
         {(item, index) => {
           const barHeight = Math.max((item.value / maxValue()) * 100, 3);
-          const delay = props.animated ? `${index() * 50}ms` : '0ms';
+          const delay = props.animated ? `${index() * 40}ms` : '0ms';
           return (
-            <div class="group relative flex flex-1 flex-col items-center gap-1">
+            <div class="group relative flex flex-1 flex-col items-center gap-2">
               <div
-                class={`w-full rounded-t-md bg-gradient-to-t ${colors.from} ${colors.to} ${colors.hover} transition-all duration-500 ease-out`}
+                class={`w-full rounded-t-lg bg-gradient-to-t ${colors.from} ${colors.to} transition-all duration-700 ease-[cubic-bezier(0.23,1,0.32,1)] group-hover:brightness-125`}
                 style={{ 
                   height: `${barHeight}%`, 
                   'min-height': '4px',
                   'animation-delay': delay,
+                  'box-shadow': item.value > 0 ? `0 0 20px -5px ${props.gradient === 'emerald' ? 'rgba(16,185,129,0.3)' : 'rgba(99,102,241,0.3)'}` : 'none'
                 }}
               />
               <Show when={props.showLabels}>
-                <span class="w-full truncate text-center text-[10px] text-slate-500">
+                <span class="w-full truncate text-center text-[9px] font-bold uppercase tracking-widest text-slate-600 group-hover:text-slate-400 transition-colors">
                   {item.label}
                 </span>
               </Show>
               <Show when={item.value > 0}>
-                <div class="pointer-events-none absolute bottom-full left-1/2 z-20 mb-2 -translate-x-1/2 scale-95 rounded-xl border border-slate-700/50 bg-slate-800/95 px-3 py-2 text-xs whitespace-nowrap text-white opacity-0 shadow-xl backdrop-blur-sm transition-all duration-200 group-hover:scale-100 group-hover:opacity-100">
-                  <div class="font-semibold">
-                    {props.tooltipFormatter
-                      ? props.tooltipFormatter(item.value, item.label)
-                      : item.value.toLocaleString()}
+                <div class="pointer-events-none absolute bottom-full left-1/2 z-30 mb-3 -translate-x-1/2 scale-90 rounded-[1rem] border border-white/10 bg-[#0a0a0b]/90 px-4 py-3 text-xs whitespace-nowrap text-white opacity-0 shadow-2xl backdrop-blur-xl transition-all duration-300 group-hover:scale-100 group-hover:opacity-100">
+                  <div class="flex items-center gap-2">
+                    <div class={`h-2 w-2 rounded-full ${props.gradient === 'emerald' ? 'bg-emerald-500' : 'bg-indigo-500'}`} />
+                    <span class="font-black">
+                      {props.tooltipFormatter
+                        ? props.tooltipFormatter(item.value, item.label)
+                        : item.value.toLocaleString()}
+                    </span>
                   </div>
                   <Show when={item.secondaryValue !== undefined}>
-                    <div class="mt-1 text-slate-400">
-                      {props.secondaryTooltipFormatter
-                        ? props.secondaryTooltipFormatter(item.secondaryValue!, item.label)
-                        : item.secondaryValue}
+                    <div class="mt-1.5 flex items-center gap-2 border-t border-white/5 pt-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                      <span>Volume:</span>
+                      <span class="text-slate-300">
+                        {props.secondaryTooltipFormatter
+                          ? props.secondaryTooltipFormatter(item.secondaryValue!, item.label)
+                          : item.secondaryValue}
+                      </span>
                     </div>
                   </Show>
-                  <div class="absolute -bottom-1 left-1/2 h-2 w-2 -translate-x-1/2 rotate-45 border-b border-r border-slate-700/50 bg-slate-800/95" />
                 </div>
               </Show>
             </div>

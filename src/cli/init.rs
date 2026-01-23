@@ -78,6 +78,7 @@ impl DaemonStartup {
 struct WizardState {
     shell: Option<Shell>,
     daemon_startup: DaemonStartup,
+    telemetry_enabled: bool,
     build_config: Option<BuildRecommendation>,
     capture_env: bool,
 }
@@ -87,6 +88,7 @@ impl Default for WizardState {
         Self {
             shell: None,
             daemon_startup: DaemonStartup::OnShellInit,
+            telemetry_enabled: true,
             build_config: None,
             capture_env: true,
         }
@@ -127,11 +129,15 @@ pub async fn run_interactive(skip_shell: bool, skip_daemon: bool) -> Result<()> 
         println!();
     }
 
-    // Step 3: Build optimization
+    // Step 3: Telemetry consent
+    state.telemetry_enabled = select_telemetry_consent(&mut stdout)?;
+    println!();
+
+    // Step 4: Build optimization
     state.build_config = Some(select_build_config(&mut stdout)?);
     println!();
 
-    // Step 4: Environment capture
+    // Step 5: Environment capture
     state.capture_env = confirm_env_capture(&mut stdout)?;
     println!();
 
@@ -156,6 +162,9 @@ pub async fn run_interactive(skip_shell: bool, skip_daemon: bool) -> Result<()> 
     // Configure daemon startup
     configure_daemon_startup(&mut stdout, state.daemon_startup)?;
 
+    // Configure telemetry
+    apply_telemetry_config(&mut stdout, state.telemetry_enabled)?;
+
     // Apply build configuration
     if let Some(ref config) = state.build_config {
         apply_build_config(&mut stdout, config)?;
@@ -168,6 +177,118 @@ pub async fn run_interactive(skip_shell: bool, skip_daemon: bool) -> Result<()> 
 
     // Show completion message
     print_completion(&mut stdout, &state)?;
+
+    Ok(())
+}
+
+fn select_telemetry_consent(stdout: &mut io::Stdout) -> Result<bool> {
+    let options = [true, false];
+    let mut selected = 0;
+
+    execute!(
+        stdout,
+        SetForegroundColor(Color::Cyan),
+        Print("Step 3/5: "),
+        ResetColor,
+        Print("Telemetry & Anonymous Data\n")
+    )?;
+    execute!(
+        stdout,
+        SetForegroundColor(Color::DarkGrey),
+        Print("  OMG collects anonymous data to help improve the tool.\n"),
+        Print("  We collect: OMG version, OS/Arch, and a random install ID.\n"),
+        Print("  We NEVER collect: personal info, filenames, or command args.\n"),
+        ResetColor
+    )?;
+    println!();
+
+    terminal::enable_raw_mode()?;
+
+    loop {
+        let labels = [
+            "  ▸ Yes, I'd like to help improve OMG (anonymous)",
+            "    No, keep everything local",
+        ];
+        for (i, _) in labels.iter().enumerate() {
+            let display = if i == 0 {
+                if selected == 0 {
+                    "  ▸ Yes, I'd like to help improve OMG (anonymous)"
+                } else {
+                    "    Yes, I'd like to help improve OMG (anonymous)"
+                }
+            } else if selected == 1 {
+                "  ▸ No, keep everything local"
+            } else {
+                "    No, keep everything local"
+            };
+
+            if i == selected {
+                execute!(
+                    stdout,
+                    SetForegroundColor(Color::Green),
+                    Print(format!("{display}\n")),
+                    ResetColor
+                )?;
+            } else {
+                execute!(stdout, Print(format!("{display}\n")))?;
+            }
+        }
+
+        stdout.flush()?;
+
+        if let Event::Key(key) = event::read()? {
+            if key.kind != KeyEventKind::Press {
+                continue;
+            }
+            match key.code {
+                KeyCode::Up | KeyCode::Down => {
+                    selected = 1 - selected;
+                }
+                KeyCode::Enter => {
+                    terminal::disable_raw_mode()?;
+                    return Ok(options[selected]);
+                }
+                KeyCode::Char('q') => {
+                    terminal::disable_raw_mode()?;
+                    anyhow::bail!("Setup cancelled");
+                }
+                _ => {}
+            }
+        }
+
+        execute!(stdout, cursor::MoveUp(2))?;
+    }
+}
+
+fn apply_telemetry_config(stdout: &mut io::Stdout, enabled: bool) -> Result<()> {
+    execute!(
+        stdout,
+        Print("  "),
+        SetForegroundColor(Color::Blue),
+        Print("→"),
+        ResetColor,
+        Print(" Configuring telemetry...")
+    )?;
+
+    let mut settings = Settings::load().unwrap_or_default();
+    settings.telemetry_enabled = enabled;
+
+    if let Err(e) = settings.save() {
+        execute!(
+            stdout,
+            SetForegroundColor(Color::Yellow),
+            Print(format!(" (failed: {e})\n")),
+            ResetColor
+        )?;
+    } else {
+        let status = if enabled { "enabled" } else { "disabled" };
+        execute!(
+            stdout,
+            SetForegroundColor(Color::Green),
+            Print(format!(" ✓ ({status})\n")),
+            ResetColor
+        )?;
+    }
 
     Ok(())
 }
@@ -258,7 +379,7 @@ fn select_shell(stdout: &mut io::Stdout) -> Result<Shell> {
     execute!(
         stdout,
         SetForegroundColor(Color::Cyan),
-        Print("Step 1/3: "),
+        Print("Step 1/5: "),
         ResetColor,
         Print("Select your shell\n")
     )?;
@@ -345,7 +466,7 @@ fn select_daemon_startup(stdout: &mut io::Stdout) -> Result<DaemonStartup> {
     execute!(
         stdout,
         SetForegroundColor(Color::Cyan),
-        Print("Step 2/3: "),
+        Print("Step 2/5: "),
         ResetColor,
         Print("When should the daemon start?\n")
     )?;
@@ -413,7 +534,7 @@ fn select_build_config(stdout: &mut io::Stdout) -> Result<BuildRecommendation> {
     execute!(
         stdout,
         SetForegroundColor(Color::Cyan),
-        Print("Step 3/4: "),
+        Print("Step 4/5: "),
         ResetColor,
         Print("Build Performance Settings\n")
     )?;
@@ -586,7 +707,7 @@ fn confirm_env_capture(stdout: &mut io::Stdout) -> Result<bool> {
     execute!(
         stdout,
         SetForegroundColor(Color::Cyan),
-        Print("Step 4/4: "),
+        Print("Step 5/5: "),
         ResetColor,
         Print("Capture initial environment to omg.lock?\n")
     )?;

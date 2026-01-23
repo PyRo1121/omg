@@ -531,9 +531,7 @@ fn map_local_package(pkg: &rust_apt::Package<'_>) -> LocalPackage {
         name: pkg.name().to_string(),
         version,
         description: summary,
-        install_size: pkg
-            .installed()
-            .map_or(0, |v| v.installed_size() as i64),
+        install_size: pkg.installed().map_or(0, |v| v.installed_size() as i64),
         reason,
     }
 }

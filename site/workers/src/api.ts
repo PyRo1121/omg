@@ -13,6 +13,7 @@ export interface Env {
   STRIPE_WEBHOOK_SECRET: string;
   JWT_SECRET: string;
   RESEND_API_KEY?: string;
+  JWT_PRIVATE_KEY?: string;
   ADMIN_USER_ID?: string; // Set via wrangler secret - never expose in code
   STRIPE_TEAM_PRICE_ID?: string;
   STRIPE_ENT_PRICE_ID?: string;

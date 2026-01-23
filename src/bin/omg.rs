@@ -841,14 +841,21 @@ async fn async_main(args: Vec<String>) -> Result<()> {
     let cmd_duration = omg_lib::core::analytics::end_timer(cmd_start);
     let cmd_name = std::env::args().nth(1).unwrap_or_default();
     let subcmd = std::env::args().nth(2);
-    omg_lib::core::analytics::track_command(&cmd_name, subcmd.as_deref(), cmd_duration, true);
+    let backend = Some(omg_lib::core::telemetry::get_backend());
+    omg_lib::core::analytics::track_command(
+        &cmd_name,
+        subcmd.as_deref(),
+        cmd_duration,
+        true,
+        backend.as_deref(),
+    );
 
-    // Send heartbeat and analytics - wait for completion to ensure telemetry is sent
+    // Send heartbeat and analytics - use non-blocking flush
     omg_lib::core::analytics::maybe_heartbeat();
-    let _ = omg_lib::core::analytics::flush_events().await;
+    omg_lib::core::analytics::maybe_flush().await;
 
-    // Sync usage - wait for completion to ensure telemetry is sent
-    omg_lib::core::usage::sync_usage_now().await;
+    // Sync usage in background to ensure zero-impact on exit
+    omg_lib::core::usage::maybe_sync_background();
 
     Ok(())
 }

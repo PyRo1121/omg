@@ -13,6 +13,8 @@ pub struct SystemInfo {
     pub cpu_cores: usize,
     /// Total RAM in gigabytes
     pub ram_gb: f64,
+    /// Kernel version
+    pub kernel: String,
     /// Whether ccache is installed
     pub ccache_available: bool,
     /// Whether sccache is installed
@@ -45,6 +47,7 @@ impl SystemInfo {
         Self {
             cpu_cores: detect_cpu_cores(),
             ram_gb: detect_ram_gb(),
+            kernel: detect_kernel(),
             ccache_available: is_tool_available("ccache"),
             sccache_available: is_tool_available("sccache"),
             distcc_available: is_tool_available("distcc"),
@@ -136,6 +139,13 @@ fn detect_cpu_cores() -> usize {
         .unwrap_or(1)
 }
 
+/// Detect kernel version
+fn detect_kernel() -> String {
+    std::fs::read_to_string("/proc/version")
+        .map(|v| v.split_whitespace().nth(2).unwrap_or("unknown").to_string())
+        .unwrap_or_else(|_| "unknown".to_string())
+}
+
 /// Detect total RAM in gigabytes from /proc/meminfo
 fn detect_ram_gb() -> f64 {
     if let Ok(content) = std::fs::read_to_string("/proc/meminfo") {
@@ -202,6 +212,7 @@ mod tests {
         let info = SystemInfo {
             cpu_cores: 8,
             ram_gb: 16.0,
+            kernel: "6.12.0".to_string(),
             ccache_available: true,
             sccache_available: false,
             distcc_available: false,

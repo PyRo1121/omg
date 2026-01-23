@@ -1,20 +1,157 @@
-/**
- * OMG SaaS - Cloudflare Workers Backend
- *
- * Handles:
- * - License validation with signed JWTs
- * - Stripe webhooks for subscription management
- * - Checkout session creation
- * - Machine-bound license tokens
- */
+import {
+  handleValidateLicense,
+  handleGetLicense,
+  handleReportUsage,
+  handleInstallPing,
+  handleAnalytics,
+  handleGetLicenseMembers,
+  handleGetLicensePolicies,
+  handleGetLicenseAudit,
+  handleTeamPropose,
+  handleTeamReview,
+  handleGetTeamProposals,
+} from './handlers/license';
+
+import {
+  handleCreateCheckout,
+  handleStripeWebhook,
+  handleBillingPortal,
+} from './handlers/billing';
+
+import {
+  handleSendCode,
+  handleVerifyCode,
+  handleVerifySession,
+} from './handlers/auth';
+
+import {
+  handleRegisterFree,
+  handleInstallsBadge,
+} from './handlers/users';
+
+import {
+  handleInitDb,
+} from './handlers/admin';
 
 export interface Env {
   DB: D1Database;
   STRIPE_SECRET_KEY: string;
   STRIPE_WEBHOOK_SECRET: string;
-  JWT_SECRET: string; // HMAC-SHA256 secret for signing JWTs
-  RESEND_API_KEY?: string; // For sending OTP emails
+  JWT_SECRET: string;
+  JWT_PRIVATE_KEY?: string;
+  RESEND_API_KEY?: string;
 }
+
+export default {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    const url = new URL(request.url);
+    const corsHeaders = {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    };
+
+    if (request.method === 'OPTIONS') {
+      return new Response(null, { headers: corsHeaders });
+    }
+
+    try {
+      if (url.pathname === '/api/validate-license') {
+        return await handleValidateLicense(request, env);
+      }
+
+      if (url.pathname === '/api/create-checkout' && request.method === 'POST') {
+        return await handleCreateCheckout(request, env);
+      }
+
+      if (url.pathname === '/webhook/stripe' && request.method === 'POST') {
+        return await handleStripeWebhook(request, env);
+      }
+
+      if (url.pathname === '/api/get-license' && request.method === 'GET') {
+        return await handleGetLicense(request, env);
+      }
+
+      if (url.pathname === '/api/billing-portal' && request.method === 'POST') {
+        return await handleBillingPortal(request, env);
+      }
+
+      if (url.pathname === '/api/register-free' && request.method === 'POST') {
+        return await handleRegisterFree(request, env);
+      }
+
+      if (url.pathname === '/api/auth/send-code' && request.method === 'POST') {
+        return await handleSendCode(request, env);
+      }
+
+      if (url.pathname === '/api/auth/verify-code' && request.method === 'POST') {
+        return await handleVerifyCode(request, env);
+      }
+
+      if (url.pathname === '/api/auth/verify-session' && request.method === 'POST') {
+        return await handleVerifySession(request, env);
+      }
+
+      if (url.pathname === '/api/install-ping' && request.method === 'POST') {
+        return await handleInstallPing(request, env);
+      }
+
+      if (url.pathname === '/api/analytics' && request.method === 'POST') {
+        return await handleAnalytics(request, env);
+      }
+
+      if (url.pathname === '/api/report-usage' && request.method === 'POST') {
+        return await handleReportUsage(request, env);
+      }
+
+      if (url.pathname === '/api/badge/installs' && request.method === 'GET') {
+        return await handleInstallsBadge(request, env);
+      }
+
+      if (url.pathname === '/health') {
+        return new Response(JSON.stringify({ status: 'ok', timestamp: new Date().toISOString() }), {
+          headers: { 'Content-Type': 'application/json', ...corsHeaders },
+        });
+      }
+
+      if (url.pathname === '/api/init-db' && request.method === 'POST') {
+        return await handleInitDb(request, env);
+      }
+
+      if (url.pathname === '/api/license/members' && request.method === 'GET') {
+        return await handleGetLicenseMembers(request, env);
+      }
+
+      if (url.pathname === '/api/license/policies' && request.method === 'GET') {
+        return await handleGetLicensePolicies(request, env);
+      }
+
+      if (url.pathname === '/api/license/audit' && request.method === 'GET') {
+        return await handleGetLicenseAudit(request, env);
+      }
+
+      if (url.pathname === '/api/team/propose' && request.method === 'POST') {
+        return await handleTeamPropose(request, env);
+      }
+
+      if (url.pathname === '/api/team/review' && request.method === 'POST') {
+        return await handleTeamReview(request, env);
+      }
+
+      if (url.pathname === '/api/team/proposals' && request.method === 'GET') {
+        return await handleGetTeamProposals(request, env);
+      }
+
+      return new Response('Not found', { status: 404, headers: corsHeaders });
+    } catch (error) {
+      console.error('Error:', error);
+      return new Response(JSON.stringify({ error: 'Internal server error' }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      });
+    }
+  },
+};
 
 interface LicenseResponse {
   valid: boolean;
@@ -37,8 +174,11 @@ interface JWTPayload {
 }
 
 // Base64URL encode/decode helpers
-function base64UrlEncode(data: string): string {
-  return btoa(data).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+function base64UrlEncode(data: Uint8Array | string): string {
+  if (typeof data === 'string') {
+    return btoa(data).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+  return btoa(String.fromCharCode(...data)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
 function base64UrlDecode(data: string): string {
@@ -46,27 +186,39 @@ function base64UrlDecode(data: string): string {
   return atob(padded.replace(/-/g, '+').replace(/_/g, '/'));
 }
 
-// HMAC-SHA256 signing
-async function hmacSign(secret: string, data: string): Promise<string> {
+async function eddsaSign(privateKeyDer: string, data: string): Promise<string> {
   const encoder = new TextEncoder();
+  
+  const keyData = base64UrlDecode(privateKeyDer.replace(/-----BEGIN PRIVATE KEY-----|-----END PRIVATE KEY-----|\n/g, ''));
+  const keyBuffer = new Uint8Array(keyData.length);
+  for (let i = 0; i < keyData.length; i++) {
+    keyBuffer[i] = keyData.charCodeAt(i);
+  }
+
   const key = await crypto.subtle.importKey(
-    'raw',
-    encoder.encode(secret),
-    { name: 'HMAC', hash: 'SHA-256' },
+    'pkcs8',
+    keyBuffer,
+    { name: 'Ed25519', namedCurve: 'Ed25519' },
     false,
     ['sign']
   );
-  const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(data));
-  return base64UrlEncode(String.fromCharCode(...new Uint8Array(signature)));
+
+  const signature = await crypto.subtle.sign('Ed25519', key, encoder.encode(data));
+  return base64UrlEncode(new Uint8Array(signature));
 }
 
 // Create a signed JWT
-async function createJWT(payload: JWTPayload, secret: string): Promise<string> {
-  const header = { alg: 'HS256', typ: 'JWT' };
+async function createJWT(payload: JWTPayload, secret: string, algorithm: 'HS256' | 'EdDSA' = 'HS256'): Promise<string> {
+  const header = { alg: algorithm === 'EdDSA' ? 'EdDSA' : 'HS256', typ: 'JWT' };
   const headerB64 = base64UrlEncode(JSON.stringify(header));
   const payloadB64 = base64UrlEncode(JSON.stringify(payload));
-  const signature = await hmacSign(secret, `${headerB64}.${payloadB64}`);
-  return `${headerB64}.${payloadB64}.${signature}`;
+  const data = `${headerB64}.${payloadB64}`;
+  
+  const signature = algorithm === 'EdDSA' 
+    ? await eddsaSign(secret, data)
+    : await hmacSign(secret, data);
+    
+  return `${data}.${signature}`;
 }
 
 // Verify and decode a JWT
@@ -156,6 +308,20 @@ function getFeaturesForTier(tier: string): string[] {
   return features;
 }
 
+import {
+  handleValidateLicense,
+  handleGetLicense,
+  handleReportUsage,
+  handleInstallPing,
+  handleAnalytics,
+  handleGetLicenseMembers,
+  handleGetLicensePolicies,
+  handleGetLicenseAudit,
+  handleTeamPropose,
+  handleTeamReview,
+  handleGetTeamProposals,
+} from './handlers/license';
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -173,7 +339,7 @@ export default {
     try {
       // License validation endpoint
       if (url.pathname === '/api/validate-license') {
-        return await handleValidateLicense(request, env, corsHeaders);
+        return await handleValidateLicense(request, env);
       }
 
       // Create checkout session
@@ -188,7 +354,7 @@ export default {
 
       // Get license by email (for post-checkout)
       if (url.pathname === '/api/get-license' && request.method === 'GET') {
-        return await handleGetLicense(request, env, corsHeaders);
+        return await handleGetLicense(request, env);
       }
 
       // Refresh license token (get new JWT without changing key)
@@ -233,17 +399,17 @@ export default {
 
       // Install telemetry ping
       if (url.pathname === '/api/install-ping' && request.method === 'POST') {
-        return await handleInstallPing(request, env, corsHeaders);
+        return await handleInstallPing(request, env);
       }
 
       // Analytics events (batch)
       if (url.pathname === '/api/analytics' && request.method === 'POST') {
-        return await handleAnalytics(request, env, corsHeaders);
+        return await handleAnalytics(request, env);
       }
 
       // Report usage (legacy, still supported)
       if (url.pathname === '/api/report-usage' && request.method === 'POST') {
-        return await handleReportUsage(request, env, corsHeaders);
+        return await handleReportUsage(request, env);
       }
 
       // Install badge endpoint (shields.io format)
@@ -265,30 +431,30 @@ export default {
 
       // Get license members (Team/Enterprise)
       if (url.pathname === '/api/license/members' && request.method === 'GET') {
-        return await handleGetLicenseMembers(request, env, corsHeaders);
+        return await handleGetLicenseMembers(request, env);
       }
 
       // Get license policies (Enterprise)
       if (url.pathname === '/api/license/policies' && request.method === 'GET') {
-        return await handleGetLicensePolicies(request, env, corsHeaders);
+        return await handleGetLicensePolicies(request, env);
       }
 
       // Get license audit logs (Team/Enterprise)
       if (url.pathname === '/api/license/audit' && request.method === 'GET') {
-        return await handleGetLicenseAudit(request, env, corsHeaders);
+        return await handleGetLicenseAudit(request, env);
       }
 
       // Team Proposals (Team/Enterprise)
       if (url.pathname === '/api/team/propose' && request.method === 'POST') {
-        return await handleTeamPropose(request, env, corsHeaders);
+        return await handleTeamPropose(request, env);
       }
 
       if (url.pathname === '/api/team/review' && request.method === 'POST') {
-        return await handleTeamReview(request, env, corsHeaders);
+        return await handleTeamReview(request, env);
       }
 
       if (url.pathname === '/api/team/proposals' && request.method === 'GET') {
-        return await handleGetTeamProposals(request, env, corsHeaders);
+        return await handleGetTeamProposals(request, env);
       }
 
       return new Response('Not found', { status: 404, headers: corsHeaders });
