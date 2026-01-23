@@ -317,6 +317,14 @@ pub enum Commands {
         /// Run multiple tasks in parallel (comma-separated)
         #[arg(short, long)]
         parallel: bool,
+
+        /// Ecosystem to use (e.g., node, rust, python, make)
+        #[arg(short, long)]
+        using: Option<String>,
+
+        /// Run task across all detected ecosystems
+        #[arg(short, long)]
+        all: bool,
     },
 
     /// Create a new project from a template
