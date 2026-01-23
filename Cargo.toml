@@ -69,8 +69,8 @@ httpdate = "1.0.3"
 tokio-util = { version = "0.7.18", features = ["io", "codec", "rt"] }
 
 # Archives + compression (PURE RUST - no C deps)
-tar = "4.0.44"
-flate2 = { version = "1.18", default-features = false, features = [
+tar = "0.4.44"
+flate2 = { version = "1.1.8", default-features = false, features = [
     "zlib-rs",
 ] }
 lz4_flex = { version = "0.12", default-features = false, features = [
@@ -209,8 +209,7 @@ arch = [
     "alpm-srcinfo",
     "alpm-db",
     "alpm-repo-db",
-    "alpm-pkginfo",
-    "alpm-types"
+    "alpm-pkginfo"
 ]
 pgp = ["sequoia-openpgp"] # Optional PGP verification (requires Rust 1.80+)
 
@@ -224,10 +223,3 @@ debian-pure = ["debian-packaging", "winnow", "gzp", "ar"]
 license = [] # Enable license/subscription features (Pro, Team, Enterprise tiers)
 docker_tests = [] # Enable tests that require running as root (e.g. in Docker)
 sequoia-openpgp = ["dep:sequoia-openpgp"]
-
-[profile.release]
-lto = "fat"       # Full LTO for maximum cross-crate inlining
-codegen-units = 1
-panic = "abort"
-strip = true
-opt-level = 3
