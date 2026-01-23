@@ -192,26 +192,45 @@ jobs:
   ubuntu:
     name: "Ubuntu"
     runs-on: ubuntu-latest
+    container:
+      image: ubuntu:latest
+
+    env:
+      DEBIAN_FRONTEND: noninteractive
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Install system dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libapt-pkg-dev \
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates \
+            curl \
+            git \
+            build-essential \
             pkg-config \
             libssl-dev \
+            libapt-pkg-dev \
             clang \
             cmake
+          rm -rf /var/lib/apt/lists/*
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+          echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> $GITHUB_ENV
+          echo 'export CARGO_HOME="$HOME/.cargo"' >> $GITHUB_ENV
+          echo 'export RUSTUP_HOME="$HOME/.rustup"' >> $GITHUB_ENV
+
+      - name: Fix git permissions
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Get rust version
         id: rust-version
-        run: echo "version=$(rustc --version | cut -d' ' -f2)" >> $GITHUB_OUTPUT
+        run: |
+          export PATH="$HOME/.cargo/bin:$PATH"
+          echo "version=$(rustc --version | cut -d' ' -f2)" >> $GITHUB_OUTPUT
 
       - name: Cache cargo build
         uses: actions/cache@v4
@@ -226,16 +245,23 @@ jobs:
             ubuntu-
 
       - name: Build release binary
-        run: cargo build --release --no-default-features --features ${{ env.DEBIAN_FEATURES }}
+        run: |
+          export PATH="$HOME/.cargo/bin:$PATH"
+          cargo build --release --no-default-features --features ${{ env.DEBIAN_FEATURES }}
 
       - name: Run clippy
-        run: cargo clippy --all-targets --no-default-features --features ${{ env.DEBIAN_FEATURES }} -- -D warnings -W clippy::pedantic
+        run: |
+          export PATH="$HOME/.cargo/bin:$PATH"
+          cargo clippy --all-targets --no-default-features --features ${{ env.DEBIAN_FEATURES }} -- -D warnings -W clippy::pedantic
 
       - name: Run unit tests
-        run: cargo test --lib --no-default-features --features ${{ env.DEBIAN_FEATURES }}
+        run: |
+          export PATH="$HOME/.cargo/bin:$PATH"
+          cargo test --lib --no-default-features --features ${{ env.DEBIAN_FEATURES }}
 
       - name: Verify binary exists and works
         run: |
+          export PATH="$HOME/.cargo/bin:$PATH"
           ./target/release/omg --version
           ./target/release/omg --help
 
