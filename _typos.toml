@@ -2,7 +2,8 @@
 extend-ignore-re = [
     "omg",
     "omgd",
-    "ratatui"
+    "ratatui",
+    "Ratatui"
 ]
 
 [files]
