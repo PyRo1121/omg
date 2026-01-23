@@ -27,7 +27,7 @@ pub fn print_help(cli: &Cli, use_all: bool) -> anyhow::Result<()> {
 }
 
 /// Print essential commands help with getting started guidance
-fn print_essential_help(cli: &Cli) -> anyhow::Result<()> {
+fn print_essential_help(_cli: &Cli) -> anyhow::Result<()> {
     println!("🚀 OMG - The Fastest Unified Package Manager");
     println!();
 
