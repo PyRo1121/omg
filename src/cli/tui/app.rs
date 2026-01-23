@@ -331,7 +331,7 @@ impl App {
         }
         #[cfg(all(feature = "debian", not(feature = "arch")))]
         {
-            crate::package_managers::apt_remove_orphans().map_err(Into::into)
+            crate::package_managers::apt_remove_orphans()
         }
         #[cfg(not(any(feature = "arch", feature = "debian")))]
         Ok(())

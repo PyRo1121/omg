@@ -60,7 +60,7 @@ pub fn is_debian_like() -> bool {
 pub fn use_debian_backend() -> bool {
     #[cfg(feature = "debian")]
     {
-        return is_debian_like();
+        is_debian_like()
     }
 
     #[cfg(not(feature = "debian"))]

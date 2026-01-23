@@ -229,7 +229,7 @@ fn get_package_version(name: &str) -> Result<Option<String>> {
         if check.status.success() {
             Ok(None) // Exists but not installed
         } else {
-            anyhow::bail!("Package '{}' not found", name)
+            anyhow::bail!("Package '{name}' not found")
         }
     }
 }

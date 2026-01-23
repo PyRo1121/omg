@@ -30,7 +30,7 @@ impl AptPackageManager {
             return Ok(());
         }
 
-        tokio::task::spawn_blocking(move || sync_databases_blocking())
+        tokio::task::spawn_blocking(sync_databases_blocking)
             .await
             .context("APT sync task failed")??;
         Ok(())
@@ -46,9 +46,10 @@ impl crate::package_managers::PackageManager for AptPackageManager {
         let query = query.to_string();
         async move {
             // Try fast path first
-            if let Ok(results) = super::debian_db::search_fast(&query) {
+            let fast_results = super::debian_db::search_fast(&query);
+            if let Ok(ref results) = fast_results {
                 if !results.is_empty() {
-                    return Ok(results);
+                    return Ok(fast_results);
                 }
             }
 

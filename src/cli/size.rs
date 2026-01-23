@@ -215,7 +215,7 @@ fn show_package_tree(package: &str) -> Result<()> {
         .output()?;
 
     if !output.status.success() {
-        anyhow::bail!("Package '{}' not installed", package);
+        anyhow::bail!("Package '{package}' not installed");
     }
 
     let size: i64 = String::from_utf8_lossy(&output.stdout)
@@ -225,10 +225,9 @@ fn show_package_tree(package: &str) -> Result<()> {
         * 1024;
 
     println!(
-        "  {} {} ({})",
+        "  {} {} (package itself)",
         package.yellow().bold(),
-        format_size(size).cyan(),
-        "package itself"
+        format_size(size).cyan()
     );
 
     // Get dependencies
@@ -240,21 +239,28 @@ fn show_package_tree(package: &str) -> Result<()> {
     let mut dep_sizes: Vec<(String, i64)> = Vec::new();
 
     for line in deps_str.lines() {
-        if line.trim().starts_with("Depends:") {
-            let dep_name = line.trim().strip_prefix("Depends:").unwrap_or("").trim();
-            if let Ok(dep_out) = Command::new("dpkg-query")
-                .args(["-W", "-f=${Installed-Size}", "--", dep_name])
-                .output()
-            {
-                if dep_out.status.success() {
-                    let dep_size: i64 = String::from_utf8_lossy(&dep_out.stdout)
-                        .trim()
-                        .parse()
-                        .unwrap_or(0)
-                        * 1024;
-                    dep_sizes.push((dep_name.to_string(), dep_size));
-                }
-            }
+        if !line.trim().starts_with("Depends:") {
+            continue;
+        }
+        let dep_name = match line.trim().strip_prefix("Depends:") {
+            Some(suffix) => suffix.trim(),
+            None => continue,
+        };
+
+        let Ok(dep_out) = Command::new("dpkg-query")
+            .args(["-W", "-f=${Installed-Size}", "--", dep_name])
+            .output()
+        else {
+            continue;
+        };
+
+        if dep_out.status.success() {
+            let dep_size: i64 = String::from_utf8_lossy(&dep_out.stdout)
+                .trim()
+                .parse()
+                .unwrap_or(0)
+                * 1024;
+            dep_sizes.push((dep_name.to_string(), dep_size));
         }
     }
 
