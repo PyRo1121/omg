@@ -30,7 +30,7 @@ struct SearchResults {
     #[cfg(feature = "arch")]
     aur_packages_basic: Option<Vec<crate::core::Package>>,
     #[cfg(not(feature = "arch"))]
-    _phantom: std::marker::PhantomData<()>,
+    _phantom: std::marker::PhantomData<()>
 }
 
 /// Display search results with formatting and truncation
@@ -123,7 +123,7 @@ fn display_aur_results(
                 writeln!(
                     writer,
                     "  {}",
-                    style::dim(&format!("(+{}) more packages...", aur_packages.len() - 10))
+                    style::dim(&format!("(+{})", aur_packages.len() - 10))
                 )?;
             }
             writeln!(writer)?;
@@ -145,7 +145,7 @@ fn display_aur_results(
             writeln!(
                 writer,
                 "  {}",
-                style::dim(&format!("(+{}) more packages...", aur_packages.len() - 10))
+                style::dim(&format!("(+{})", aur_packages.len() - 10))
             )?;
         }
         writeln!(writer)?;
@@ -198,7 +198,6 @@ async fn handle_interactive_selection(
                 items.push(format!(
                     "{} {} ({}) - {}",
                     style::package(&pkg.name),
-                    #[allow(clippy::implicit_clone)]
                     style::version(&pkg.version.to_string()),
                     style::warning("AUR"),
                     style::dim(&truncate(&pkg.description, 40))
@@ -247,11 +246,11 @@ async fn fetch_packages(query: &str, #[allow(unused_variables)] detailed: bool, 
             && let Ok(res) = client.debian_search(query, Some(50)).await
         {
             daemon_used = true;
-            for name in res {
+            for pkg in res {
                 official_packages.push(crate::package_managers::SyncPackage {
-                    name,
-                    version: crate::package_managers::parse_version_or_zero("0.0.0"), // TODO: Fetch full info
-                    description: "Fetched via daemon".to_string(),
+                    name: pkg.name,
+                    version: crate::package_managers::parse_version_or_zero(&pkg.version),
+                    description: pkg.description,
                     repo: "apt".to_string(),
                     download_size: 0,
                     installed: false,

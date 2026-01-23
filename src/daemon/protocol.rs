@@ -118,8 +118,8 @@ pub enum ResponseResult {
     Message(String),
     /// Batch response containing multiple results
     Batch(Box<Vec<Response>>),
-    /// Debian search results (list of package names)
-    DebianSearch(Vec<String>),
+    /// Debian search results (list of package info)
+    DebianSearch(Vec<PackageInfo>),
 }
 
 // Error codes

@@ -11,7 +11,7 @@ use governor::{Quota, RateLimiter};
 use super::cache::PackageCache;
 use super::index::PackageIndex;
 use super::protocol::{
-    DetailedPackageInfo, ExplicitResult, Request, RequestId, Response, ResponseResult,
+    DetailedPackageInfo, ExplicitResult, PackageInfo, Request, RequestId, Response, ResponseResult,
     SearchResult, SecurityAuditResult, StatusResult, Vulnerability, error_codes,
 };
 use crate::core::metrics::GLOBAL_METRICS;
@@ -173,13 +173,18 @@ async fn handle_debian_search(
         {
             crate::package_managers::apt_search_fast(&_query_clone).map(|pkgs| {
                 pkgs.into_iter()
-                    .map(|p| p.name)
-                    .collect::<Vec<String>>()
+                    .map(|p| PackageInfo {
+                        name: p.name,
+                        version: p.version.to_string(),
+                        description: p.description,
+                        source: "apt".to_string(),
+                    })
+                    .collect::<Vec<PackageInfo>>()
             })
         }
         #[cfg(not(any(feature = "debian", feature = "debian-pure")))]
         {
-            Err::<Vec<String>, _>(anyhow::anyhow!("Debian backend disabled"))
+            Err::<Vec<PackageInfo>, _>(anyhow::anyhow!("Debian backend disabled"))
         }
     })
     .await;
