@@ -275,24 +275,22 @@ impl AurClient {
 
         let cache_path_clone = cache_path.clone();
         let should_use_cache = tokio::task::spawn_blocking(move || {
-            if cache_path_clone.exists() {
-                if let Ok(meta) = std::fs::metadata(&cache_path_clone) {
-                    if let Ok(modified) = meta.modified() {
-                        if modified.elapsed().unwrap_or_default() < Duration::from_secs(ttl) {
-                            return true;
-                        }
-                    }
-                }
-            }
-            false
+            let matches_ttl = std::fs::metadata(&cache_path_clone)
+                .and_then(|m| m.modified())
+                .map(|m| m.elapsed().unwrap_or_default() < Duration::from_secs(ttl))
+                .unwrap_or(false);
+
+            cache_path_clone.exists() && matches_ttl
         })
         .await?;
 
         if should_use_cache {
             let cache_path_clone = cache_path.clone();
-            return tokio::task::spawn_blocking(move || Self::read_metadata_archive(&cache_path_clone))
-                .await?
-                .map(Some);
+            return tokio::task::spawn_blocking(move || {
+                Self::read_metadata_archive(&cache_path_clone)
+            })
+            .await?
+            .map(Some);
         }
 
         let meta_cache = if meta_path.exists() {
@@ -333,9 +331,11 @@ impl AurClient {
         let response = req.send().await?;
         if response.status() == reqwest::StatusCode::NOT_MODIFIED && cache_path.exists() {
             let cache_path_clone = cache_path.clone();
-            return tokio::task::spawn_blocking(move || Self::read_metadata_archive(&cache_path_clone))
-                .await?
-                .map(Some);
+            return tokio::task::spawn_blocking(move || {
+                Self::read_metadata_archive(&cache_path_clone)
+            })
+            .await?
+            .map(Some);
         }
 
         let response = response.error_for_status()?;
@@ -456,7 +456,9 @@ impl AurClient {
             Self::review_pkgbuild(&pkgbuild_path)?;
         }
 
-        let pkg_file =         if let Some(cached) = self.cached_package(package, &env.pkgdest, &cache_key).await?
+        let pkg_file = if let Some(cached) = self
+            .cached_package(package, &env.pkgdest, &cache_key)
+            .await?
         {
             println!("{} Using cached build...", "→".blue());
             cached
@@ -534,7 +536,10 @@ impl AurClient {
         if self.settings.aur.review_pkgbuild {
             Self::review_pkgbuild(&pkgbuild_path)?;
         }
-        if let Some(cached) = self.cached_package(package, &env.pkgdest, &cache_key).await? {
+        if let Some(cached) = self
+            .cached_package(package, &env.pkgdest, &cache_key)
+            .await?
+        {
             return Ok(cached);
         }
 
@@ -729,7 +734,10 @@ impl AurClient {
 
         // Check build cache
         let cache_key = self.cache_key(&pkg_dir, &env.makeflags)?;
-        if let Some(cached) = self.cached_package(package, &env.pkgdest, &cache_key).await? {
+        if let Some(cached) = self
+            .cached_package(package, &env.pkgdest, &cache_key)
+            .await?
+        {
             return Ok(cached);
         }
 
@@ -775,7 +783,10 @@ impl AurClient {
         let env = self.makepkg_env(&pkg_dir)?;
         let cache_key = self.cache_key(&pkg_dir, &env.makeflags)?;
 
-        if let Some(cached) = self.cached_package(package, &env.pkgdest, &cache_key).await? {
+        if let Some(cached) = self
+            .cached_package(package, &env.pkgdest, &cache_key)
+            .await?
+        {
             return Ok(cached);
         }
 
@@ -1458,7 +1469,12 @@ impl AurClient {
             .join(format!("{package}.hash"))
     }
 
-    async fn cached_package(&self, package: &str, pkgdest: &Path, cache_key: &str) -> Result<Option<PathBuf>> {
+    async fn cached_package(
+        &self,
+        package: &str,
+        pkgdest: &Path,
+        cache_key: &str,
+    ) -> Result<Option<PathBuf>> {
         if !self.settings.aur.cache_builds {
             return Ok(None);
         }

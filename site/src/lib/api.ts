@@ -221,6 +221,11 @@ export interface DashboardData {
   subscription: Subscription | null;
   invoices: Invoice[];
   is_admin?: boolean;
+  global_stats?: {
+    top_package: string;
+    top_runtime: string;
+    percentile: number;
+  };
 }
 
 export async function getDashboard(): Promise<DashboardData> {

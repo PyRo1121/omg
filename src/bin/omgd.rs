@@ -88,11 +88,9 @@ async fn main() -> Result<()> {
     // Capture panics in Sentry
     use futures::FutureExt;
 
-    let result = std::panic::AssertUnwindSafe(async {
-        server::run(listener).await
-    })
-    .catch_unwind()
-    .await;
+    let result = std::panic::AssertUnwindSafe(async { server::run(listener).await })
+        .catch_unwind()
+        .await;
 
     match result {
         Ok(run_result) => run_result?,
@@ -104,7 +102,7 @@ async fn main() -> Result<()> {
             } else {
                 "Daemon panicked: unknown error".to_string()
             };
-            
+
             tracing::error!("{}", msg);
             anyhow::bail!(msg);
         }

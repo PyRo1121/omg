@@ -773,7 +773,7 @@ const DashboardPage: Component = () => {
                       <div class="rounded-xl bg-slate-800/50 p-4">
                         <div class="mb-2 text-xs font-bold text-slate-500 uppercase tracking-wider">Top Package</div>
                         <div class="flex items-center justify-between">
-                          <span class="font-mono text-white">ripgrep</span>
+                          <span class="font-mono text-white truncate max-w-[120px]">{d.global_stats?.top_package || 'ripgrep'}</span>
                           <span class="text-xs text-emerald-400">Trending</span>
                         </div>
                         <div class="mt-2 h-1 w-full rounded-full bg-slate-700">
@@ -783,8 +783,8 @@ const DashboardPage: Component = () => {
                       <div class="rounded-xl bg-slate-800/50 p-4">
                         <div class="mb-2 text-xs font-bold text-slate-500 uppercase tracking-wider">Fastest Runtime</div>
                         <div class="flex items-center justify-between">
-                          <span class="font-mono text-white">Bun</span>
-                          <span class="text-xs text-indigo-400">4ms startup</span>
+                          <span class="font-mono text-white capitalize">{d.global_stats?.top_runtime || 'node'}</span>
+                          <span class="text-xs text-indigo-400">Most Used</span>
                         </div>
                         <div class="mt-2 h-1 w-full rounded-full bg-slate-700">
                           <div class="h-full w-[92%] rounded-full bg-indigo-500" />
@@ -793,7 +793,7 @@ const DashboardPage: Component = () => {
                       <div class="rounded-xl bg-slate-800/50 p-4">
                         <div class="mb-2 text-xs font-bold text-slate-500 uppercase tracking-wider">Your Contribution</div>
                         <div class="flex items-center justify-between">
-                          <span class="font-bold text-white">Top 5%</span>
+                          <span class="font-bold text-white">Top {Math.max(1, 100 - (d.global_stats?.percentile || 0))}%</span>
                           <span class="text-xs text-purple-400">Power User</span>
                         </div>
                         <div class="mt-2 text-[10px] text-slate-500">
