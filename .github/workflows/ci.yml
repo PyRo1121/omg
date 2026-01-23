@@ -42,11 +42,6 @@ jobs:
           command: check
           arguments: advisories bans licenses sources
 
-      - name: Security Audit (cargo-audit)
-        run: |
-          cargo install cargo-audit --locked
-          cargo audit
-
       - name: Unsafe Code Audit (cargo-geiger)
         continue-on-error: true
         run: |
