@@ -20,9 +20,9 @@ This plan follows the project's TDD protocol: Write Test -> Implement -> Refacto
     - [x] Implement caching logic using `moka` or `redb`
 - [x] Task: Conductor - User Manual Verification 'Phase 2: Client Refactor' (Protocol in workflow.md) [f2ebdaa]
 
-## Phase 3: Verification & Benchmarking
+## Phase 3: Verification & Benchmarking [checkpoint: 509aff9]
 - [x] Task: Add comprehensive integration suite for Debian/Ubuntu [2509a55]
     - [x] Implement Docker-based smoke tests for Debian search operations
-- [~] Task: Performance benchmarking
-    - [ ] Run `benchmark.sh` and verify sub-30ms performance for Debian searches
-- [ ] Task: Conductor - User Manual Verification 'Phase 3: Verification & Benchmarking' (Protocol in workflow.md)
+- [x] Task: Performance benchmarking [509aff9]
+    - [x] Run `benchmark.sh` and verify sub-30ms performance for Debian searches
+- [x] Task: Conductor - User Manual Verification 'Phase 3: Verification & Benchmarking' (Protocol in workflow.md) [509aff9]
