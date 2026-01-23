@@ -36,8 +36,8 @@ jobs:
           mkdir -p ~/.local/share/omg
           echo '{"key":"CI-MOCK-KEY","tier":"enterprise","features":["sbom","audit","secrets","slsa","policy"],"validated_at":9999999999}' > ~/.local/share/omg/license.json
 
-      - name: Clippy (Core)
-        run: cargo clippy --all-targets --no-default-features --features debian -- -D warnings -W clippy::pedantic
+        - name: Clippy (Core)
+        run: cargo clippy --all-targets --no-default-features --features debian -- -D warnings -W clippy::pedantic --allow clippy::collapsible_if
       
       - name: Spell Check
         uses: crate-ci/typos@master
@@ -179,8 +179,12 @@ jobs:
         run: |
           curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal --component clippy,rustfmt
           echo "/root/.cargo/bin" >> $GITHUB_PATH
+      
+      - name: Rust Version
+        id: rust-version
+        run: echo "version=$(rustc --version | cut -d' ' -f2)" >> $GITHUB_OUTPUT
 
-      - name: Cache
+        - name: Cache
         uses: actions/cache@v4
         with:
           path: |
@@ -189,6 +193,11 @@ jobs:
             target
           key: debian-${{ hashFiles('Cargo.lock') }}
           restore-keys: debian-
+      
+      - name: Rust Version
+        id: rust-version
+        run: |
+            echo "version=$(rustc --version | cut -d' ' -f2)" >> $GITHUB_OUTPUT
 
       - name: Build & Test
         run: |

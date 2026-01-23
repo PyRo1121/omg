@@ -28,6 +28,7 @@ pub mod snapshot;
 pub mod style;
 pub mod team;
 pub mod tool;
+pub mod help;
 pub mod tui;
 pub mod why;
 

@@ -24,6 +24,7 @@ use omg_lib::cli::{
 use omg_lib::cli::{
     blame, ci, diff, enterprise, fleet, migrate, outdated, pin, size, snapshot, why,
 };
+use omg_lib::cli::help;
 use omg_lib::core::{RuntimeBackend, elevate_if_needed, is_root, task_runner};
 use omg_lib::hooks;
 
@@ -31,6 +32,10 @@ use omg_lib::hooks;
 
 fn has_help_flag(args: &[String]) -> bool {
     args.iter().any(|a| a == "--help" || a == "-h")
+}
+
+fn has_all_flag(args: &[String]) -> bool {
+    args.iter().any(|a| a == "--all")
 }
 
 /// Ultra-fast path for explicit --count (bypasses tokio entirely)
@@ -102,7 +107,20 @@ fn try_fast_info(args: &[String]) -> bool {
 /// Ultra-fast path for completions (bypasses tokio entirely)
 fn try_fast_completions(args: &[String]) -> Result<bool> {
     if has_help_flag(args) {
-        return Ok(false);
+        // Check if --all flag is also present
+        let use_all = has_all_flag(&args);
+        
+        // Parse CLI to get the all flag
+        let cli = Cli::try_parse_from(&args)
+            .unwrap_or_else(|_| Cli {
+                verbose: 0,
+                quiet: false,
+                all: use_all,
+                command: Commands::Help,
+            });
+        
+        // Use the new tiered help system
+        return omg_lib::cli::help::print_help(&cli, use_all);
     }
 
     // Check for "omg completions <shell>" or "omg completions <shell> --stdout"
@@ -720,6 +738,10 @@ async fn async_main(args: Vec<String>) -> Result<()> {
         }
         Commands::Metrics => {
             commands::metrics().await?;
+        }
+        Commands::Help { all } => {
+            // Use the new tiered help system
+            omg_lib::cli::help::print_help(&cli, all)?;
         }
         Commands::Init {
             defaults,
