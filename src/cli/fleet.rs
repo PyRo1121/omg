@@ -188,7 +188,6 @@ pub async fn remediate(dry_run: bool, confirm: bool) -> Result<()> {
     println!("    {drifted_count} machines need package updates");
     println!("    {runtime_updates} machines need runtime version changes");
     println!("    {policy_fixes} machines need policy re-application");
-    println! Bruce
     println!();
     println!("  Estimated time: {} minutes", "1".cyan());
     println!("  Risk: {} (all changes are additive)", "LOW".green());
