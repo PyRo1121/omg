@@ -18,9 +18,9 @@
 - [x] Task: Conductor - User Manual Verification 'Phase 1: Workflow Analysis & Quick Fixes' (Protocol in workflow.md)
 
 ## Phase 2: Enhanced Quality Gates
-- [ ] Task: Integrate `cargo-audit` into CI
-    - [ ] Create a new workflow or job to run `cargo audit`.
-    - [ ] Configure it to fail on vulnerability findings.
+- [x] Task: Integrate `cargo-audit` into CI
+    - [x] Create a new workflow or job to run `cargo audit`.
+    - [x] Configure it to fail on vulnerability findings.
 - [ ] Task: Enforce Code Coverage
     - [ ] Update `ci.yml` to generate coverage reports (e.g., using `tarpaulin`).
     - [ ] Add a step to fail the build if coverage is below 80%.
