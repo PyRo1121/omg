@@ -785,10 +785,10 @@ async fn async_main(args: Vec<String>) -> Result<()> {
                 fleet::status().await?;
             }
             FleetCommands::Push { team, message } => {
-                fleet::push(team.as_deref(), message.as_deref())?;
+                fleet::push(team.as_deref(), message.as_deref()).await?;
             }
             FleetCommands::Remediate { dry_run, confirm } => {
-                fleet::remediate(dry_run, confirm)?;
+                fleet::remediate(dry_run, confirm).await?;
             }
         },
         Commands::Enterprise { command } => match command {
@@ -832,7 +832,7 @@ async fn async_main(args: Vec<String>) -> Result<()> {
                     enterprise::server::init(&license, &storage, &domain)?;
                 }
                 ServerCommands::Mirror { upstream } => {
-                    enterprise::server::mirror(&upstream)?;
+                    enterprise::server::mirror(&upstream).await?;
                 }
             },
         },

@@ -530,6 +530,37 @@ pub mod golden_path {
         pub created_at: i64,
     }
 
+    #[derive(Debug, Serialize, Deserialize, Default)]
+    pub struct GoldenPathConfig {
+        pub templates: Vec<GoldenPathTemplate>,
+    }
+
+    impl GoldenPathConfig {
+        fn path() -> std::path::PathBuf {
+            crate::core::paths::config_dir().join("golden-paths.toml")
+        }
+
+        pub fn load() -> Result<Self> {
+            let path = Self::path();
+            if path.exists() {
+                let content = std::fs::read_to_string(&path)?;
+                Ok(toml::from_str(&content)?)
+            } else {
+                Ok(Self::default())
+            }
+        }
+
+        pub fn save(&self) -> Result<()> {
+            let path = Self::path();
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let content = toml::to_string_pretty(self)?;
+            std::fs::write(path, content)?;
+            Ok(())
+        }
+    }
+
     pub fn create(
         name: &str,
         node: Option<&str>,
@@ -553,6 +584,28 @@ pub mod golden_path {
         }
 
         license::require_feature("team-sync")?;
+
+        let mut config = GoldenPathConfig::load()?;
+        
+        let mut runtimes = HashMap::new();
+        if let Some(v) = node { runtimes.insert("node".to_string(), v.to_string()); }
+        if let Some(v) = python { runtimes.insert("python".to_string(), v.to_string()); }
+        
+        let package_list = packages
+            .map(|p| p.split(',').map(|s| s.trim().to_string()).collect())
+            .unwrap_or_default();
+
+        let template = GoldenPathTemplate {
+            name: name.to_string(),
+            runtimes,
+            packages: package_list,
+            created_at: jiff::Timestamp::now().as_second(),
+        };
+
+        // Remove existing if same name
+        config.templates.retain(|t| t.name != name);
+        config.templates.push(template);
+        config.save()?;
 
         println!("{} Creating golden path template...\n", "OMG".cyan().bold());
 
@@ -582,13 +635,25 @@ pub mod golden_path {
 
         println!("{} Golden Path Templates\n", "OMG".cyan().bold());
 
-        println!("  {}", "Available templates:".bold());
-        println!(
-            "    {} - Node 20, React, ESLint, Prettier",
-            "react-app".cyan()
-        );
-        println!("    {} - Python 3.12, FastAPI, pytest", "python-api".cyan());
-        println!("    {} - Go 1.21, standard layout", "go-service".cyan());
+        let config = GoldenPathConfig::load()?;
+
+        if config.templates.is_empty() {
+            println!("  {}", "No custom templates found.".dimmed());
+            println!("  Displaying defaults:");
+            println!(
+                "    {} - Node 20, React, ESLint, Prettier",
+                "react-app".cyan()
+            );
+            println!("    {} - Python 3.12, FastAPI, pytest", "python-api".cyan());
+            println!("    {} - Go 1.21, standard layout", "go-service".cyan());
+        } else {
+            println!("  {}", "Available templates:".bold());
+            for t in &config.templates {
+                let runtimes = t.runtimes.keys().cloned().collect::<Vec<_>>().join(", ");
+                println!("    {} - runtimes: [{}], packages: {} ", t.name.cyan(), runtimes, t.packages.len());
+            }
+        }
+
         println!();
         println!(
             "  Create new: {}",
@@ -601,8 +666,17 @@ pub mod golden_path {
     pub fn delete(name: &str) -> Result<()> {
         license::require_feature("team-sync")?;
 
-        println!("{} Deleting golden path...\n", "OMG".cyan().bold());
-        println!("  {} Deleted template '{}'", "✓".green(), name);
+        let mut config = GoldenPathConfig::load()?;
+        let original_len = config.templates.len();
+        config.templates.retain(|t| t.name != name);
+
+        if config.templates.len() < original_len {
+            config.save()?;
+            println!("{} Deleting golden path...\n", "OMG".cyan().bold());
+            println!("  {} Deleted template '{}'", "✓".green(), name);
+        } else {
+            println!("{} Template '{}' not found", "⚠".yellow(), name);
+        }
 
         Ok(())
     }
