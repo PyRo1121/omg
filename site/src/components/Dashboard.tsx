@@ -1,4 +1,5 @@
 import { Component, createSignal, Show, For } from 'solid-js';
+import { RefreshCw, Zap, CheckCircle, Monitor, Clock, Terminal, Flame, Crown, CreditCard } from './ui/Icons';
 
 interface LicenseInfo {
   license_key: string;

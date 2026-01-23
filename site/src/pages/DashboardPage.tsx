@@ -14,6 +14,7 @@ import {
   Clock,
   Terminal,
   Flame,
+  CheckCircle,
 } from '../components/ui/Icons';
 
 type View = 'login' | 'verify' | 'dashboard';

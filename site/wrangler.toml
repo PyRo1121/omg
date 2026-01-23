@@ -1,0 +1,17 @@
+name = "omg-site"
+compatibility_date = "2024-01-01"
+
+# Cloudflare Pages configuration
+pages_build_output_dir = "dist"
+compatibility_flags = ["nodejs_compat"]
+
+# SPA routing - handle all routes on index.html
+pages = {
+  "/*" = "index.html"
+}
+
+# Assets caching for better performance
+[assets]
+directory = "dist"
+binding = "ASSETS"
+tags = ["pages"]
