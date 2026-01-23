@@ -216,7 +216,8 @@ impl SbomGenerator {
                 mime_type: None,
                 bom_ref: Some(bom_ref.clone()),
                 name: pkg.name.clone(),
-                version: pkg.version.clone(),
+                #[allow(clippy::implicit_clone)]
+                version: pkg.version.to_string(),
                 description: Some(pkg.description.clone()),
                 purl: Some(format!("pkg:pacman/archlinux/{}@{}", pkg.name, pkg.version)),
                 licenses: vec![],

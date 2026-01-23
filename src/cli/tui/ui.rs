@@ -740,7 +740,8 @@ fn draw_packages(f: &mut Frame, area: Rect, app: &App) {
                         }),
                 )),
                 Cell::from(Span::styled(
-                    pkg.version.clone(),
+                    #[allow(clippy::implicit_clone)]
+                    pkg.version.to_string(),
                     base_style.fg(colors::ACCENT_GREEN),
                 )),
                 Cell::from(Span::styled(pkg.repo.clone(), base_style.fg(source_color))),

@@ -61,6 +61,7 @@ trait PackageDisplay {
 }
 
 impl PackageDisplay for crate::package_managers::SyncPackage {
+    #[allow(clippy::implicit_clone)]
     fn display_format(&self) -> String {
         let installed = if self.installed {
             style::dim(" [installed]")
@@ -70,7 +71,7 @@ impl PackageDisplay for crate::package_managers::SyncPackage {
         format!(
             "  {} {} ({}) - {}{}",
             style::package(&self.name),
-            style::version(&self.version.clone()),
+            style::version(&self.version.to_string()),
             style::info(&self.repo),
             style::dim(&truncate(&self.description, 50)),
             installed
@@ -79,11 +80,12 @@ impl PackageDisplay for crate::package_managers::SyncPackage {
 }
 
 impl PackageDisplay for crate::core::Package {
+    #[allow(clippy::implicit_clone)]
     fn display_format(&self) -> String {
         format!(
             "  {} {} ({}) - {}",
             style::package(&self.name),
-            style::version(&self.version.clone()),
+            style::version(&self.version.to_string()),
             style::info(&self.source.to_string()),
             style::dim(&truncate(&self.description, 50))
         )
@@ -135,7 +137,7 @@ fn display_aur_results(
                 writer,
                 "  {} {} - {}",
                 style::package(&pkg.name),
-                style::version(&pkg.version.clone()),
+                style::version(&pkg.version.to_string()),
                 style::dim(&truncate(&pkg.description, 55))
             )?;
         }
@@ -152,6 +154,7 @@ fn display_aur_results(
 }
 
 /// Handle interactive package selection and installation
+#[allow(clippy::implicit_clone)]
 async fn handle_interactive_selection(
     official_packages: &[crate::package_managers::SyncPackage],
     #[cfg(feature = "arch")] aur_packages_detailed: Option<
@@ -168,7 +171,7 @@ async fn handle_interactive_selection(
         items.push(format!(
             "{} {} {} ({}) - {}",
             style::package(&pkg.name),
-            style::version(&pkg.version.clone()),
+            style::version(&pkg.version.to_string()),
             status,
             style::info(&pkg.repo),
             style::dim(&truncate(&pkg.description, 40))
@@ -195,7 +198,8 @@ async fn handle_interactive_selection(
                 items.push(format!(
                     "{} {} ({}) - {}",
                     style::package(&pkg.name),
-                    style::version(&pkg.version.clone()),
+                    #[allow(clippy::implicit_clone)]
+                    style::version(&pkg.version.to_string()),
                     style::warning("AUR"),
                     style::dim(&truncate(&pkg.description, 40))
                 ));

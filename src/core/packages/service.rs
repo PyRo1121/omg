@@ -77,7 +77,8 @@ impl PackageService {
                     changes.push(PackageChange {
                         name: info.name,
                         old_version: None,
-                        new_version: Some(info.version.clone()),
+                        #[allow(clippy::implicit_clone)]
+                        new_version: Some(info.version.to_string()),
                         source: "official".to_string(),
                     });
                 } else if let Ok(Some(info)) = aur.info(pkg).await {
@@ -91,7 +92,8 @@ impl PackageService {
                     changes.push(PackageChange {
                         name: info.name,
                         old_version: None,
-                        new_version: Some(info.version.clone()),
+                        #[allow(clippy::implicit_clone)]
+                        new_version: Some(info.version.to_string()),
                         source: "aur".to_string(),
                     });
                 } else {
@@ -131,7 +133,8 @@ impl PackageService {
                     changes.push(PackageChange {
                         name: info.name,
                         old_version: None,
-                        new_version: Some(info.version.clone()),
+                        #[allow(clippy::implicit_clone)]
+                        new_version: Some(info.version.to_string()),
                         source: self.backend.name().to_string(),
                     });
                 } else {
@@ -154,7 +157,8 @@ impl PackageService {
             if let Ok(Some(info)) = self.backend.info(pkg).await {
                 changes.push(PackageChange {
                     name: info.name,
-                    old_version: Some(info.version.clone()),
+                    #[allow(clippy::implicit_clone)]
+                    old_version: Some(info.version.to_string()),
                     new_version: None,
                     source: self.backend.name().to_string(),
                 });

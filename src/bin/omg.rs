@@ -702,7 +702,7 @@ async fn async_main(args: Vec<String>) -> Result<()> {
             commands::history(limit)?;
         }
         Commands::Rollback { id } => {
-            commands::rollback(id)?;
+            commands::rollback(id).await?;
         }
         Commands::Dash => {
             omg_lib::cli::tui::run().await?;

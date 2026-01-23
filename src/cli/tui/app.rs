@@ -322,7 +322,8 @@ impl App {
         crate::cli::packages::clean(true, true, true, false).await
     }
 
-    pub fn remove_orphans(&self) -> Result<()> {
+    #[allow(clippy::unused_async)]
+    pub async fn remove_orphans(&self) -> Result<()> {
         // Use the actual orphan removal
         #[cfg(feature = "arch")]
         {

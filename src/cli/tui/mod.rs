@@ -116,7 +116,7 @@ async fn handle_special_key_actions(app: &mut app::App, key_code: KeyCode) {
             }
         }
         KeyCode::Char('o') if app.current_tab == app::Tab::Dashboard => {
-            if let Err(e) = app.remove_orphans() {
+            if let Err(e) = app.remove_orphans().await {
                 eprintln!("Failed to remove orphans: {e}");
             }
         }
