@@ -287,7 +287,7 @@ fn display_package_info(info: &crate::package_managers::types::PackageInfo) {
     println!(
         "  {} {}",
         style::dim("Version:"),
-        style::version(&info.version.to_string())
+        style::version(&info.version.clone())
     );
     println!(
         "  {} {}",

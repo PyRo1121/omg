@@ -376,5 +376,3 @@ export const LiveIndicator: Component<LiveIndicatorProps> = props => {
     </div>
   );
 };
-
-export default BarChart;
