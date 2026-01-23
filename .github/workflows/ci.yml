@@ -43,7 +43,7 @@ jobs:
         uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check
-          arguments: advisories bans licenses sources
+          arguments: --all-features
 
       - name: Unsafe Code Audit (cargo-geiger)
         continue-on-error: true
@@ -102,7 +102,7 @@ jobs:
       - name: Bootstrap System
         run: |
           pacman -Syu --noconfirm
-          pacman -S --noconfirm base-devel git rust cargo pkgconf openssl libarchive clang
+          pacman -S --noconfirm base-devel git rust cargo pkgconf openssl libarchive clang clippy rustfmt
       
       - uses: actions/checkout@v4
       - name: Git Ownership fix
@@ -160,7 +160,7 @@ jobs:
 
       - name: Install Rust
         run: |
-          curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
+          curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal --component clippy,rustfmt
           echo "/root/.cargo/bin" >> $GITHUB_PATH
 
       - name: Cache
