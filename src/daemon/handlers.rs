@@ -439,7 +439,8 @@ async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) ->
     if let Ok(Some(info)) = state.package_manager.info(&package).await {
         let detailed = DetailedPackageInfo {
             name: info.name,
-            version: info.version.clone(),
+            #[allow(clippy::implicit_clone)]
+            version: info.version.to_string(),
             description: info.description,
             url: String::new(), // info.url not in Package struct currently
             size: 0,
