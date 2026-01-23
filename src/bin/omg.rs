@@ -469,6 +469,8 @@ async fn async_main(args: Vec<String>) -> Result<()> {
             runtime_backend,
             watch,
             parallel,
+            using,
+            all,
         } => {
             let backend = runtime_backend
                 .as_deref()
@@ -480,7 +482,7 @@ async fn async_main(args: Vec<String>) -> Result<()> {
             } else if parallel {
                 task_runner::run_tasks_parallel(&task, &args, backend).await?;
             } else {
-                task_runner::run_task(&task, &args, backend)?;
+                task_runner::run_task_advanced(&task, &args, backend, using.as_deref(), all).await?;
             }
         }
         Commands::New { stack, name } => {

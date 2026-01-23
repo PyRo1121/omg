@@ -1,10 +1,10 @@
 use anyhow::{Context, Result};
-use dialoguer::{Confirm, theme::ColorfulTheme};
+use dialoguer::{Confirm, Select, theme::ColorfulTheme};
 use owo_colors::OwoColorize;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::config::Settings;
@@ -13,12 +13,373 @@ use crate::hooks;
 use crate::runtimes::rust::RustManager;
 use crate::runtimes::{BunManager, NodeManager};
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Ecosystem {
+    Node,
+    Bun,
+    Deno,
+    Php,
+    Rust,
+    Make,
+    Go,
+    Ruby,
+    Python,
+    Java,
+    Custom(String),
+}
+
+impl std::fmt::Display for Ecosystem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Node => write!(f, "Node.js"),
+            Self::Bun => write!(f, "Bun"),
+            Self::Deno => write!(f, "Deno"),
+            Self::Php => write!(f, "PHP"),
+            Self::Rust => write!(f, "Rust"),
+            Self::Make => write!(f, "Make"),
+            Self::Go => write!(f, "Go"),
+            Self::Ruby => write!(f, "Ruby"),
+            Self::Python => write!(f, "Python"),
+            Self::Java => write!(f, "Java"),
+            Self::Custom(s) => write!(f, "{}", s),
+        }
+    }
+}
+
+impl Ecosystem {
+    fn from_source(source: &str) -> Self {
+        match source {
+            "package.json" => Self::Node,
+            "deno.json" => Self::Deno,
+            "composer.json" => Self::Php,
+            "Cargo.toml" => Self::Rust,
+            "Makefile" => Self::Make,
+            "Taskfile.yml" | "Taskfile.yaml" => Self::Go,
+            "Rakefile" => Self::Ruby,
+            "pyproject.toml" | "Pipfile" => Self::Python,
+            "pom.xml" | "build.gradle" => Self::Java,
+            _ => Self::Custom(source.to_string()),
+        }
+    }
+
+    fn priority(&self) -> i32 {
+        match self {
+            Self::Rust => 100,
+            Self::Node | Self::Bun | Self::Deno => 90,
+            Self::Python => 80,
+            Self::Go => 75,
+            Self::Ruby => 70,
+            Self::Java => 60,
+            Self::Php => 50,
+            Self::Make => 40,
+            _ => 0,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Task {
     pub name: String,
     pub command: String,
     pub args: Vec<String>,
     pub source: String,
+    pub ecosystem: Ecosystem,
+}
+
+#[derive(Deserialize, Default)]
+pub struct OmgProjectConfig {
+    #[serde(default)]
+    pub scripts: HashMap<String, String>,
+}
+
+pub struct TaskDetector {
+    pub current_dir: PathBuf,
+    pub config: OmgProjectConfig,
+}
+
+impl TaskDetector {
+    pub fn new(current_dir: PathBuf) -> Self {
+        let config = Self::load_config(&current_dir).unwrap_or_default();
+        Self { current_dir, config }
+    }
+
+    fn load_config(path: &Path) -> Option<OmgProjectConfig> {
+        let config_path = path.join(".omg.toml");
+        if config_path.exists() {
+            let content = std::fs::read_to_string(config_path).ok()?;
+            toml::from_str(&content).ok()
+        } else {
+            None
+        }
+    }
+
+    pub fn detect(&self) -> Result<Vec<Task>> {
+        let mut tasks = Vec::new();
+
+        // 1. Node.js / Bun (package.json)
+        if let Some(package_manager) = detect_js_package_manager(&self.current_dir) {
+            if let Ok(file) = std::fs::File::open(self.current_dir.join("package.json"))
+                && let Ok(pkg) = serde_json::from_reader::<_, PackageJson>(file)
+                && let Some(scripts) = pkg.scripts
+            {
+                for (name, _) in scripts {
+                    let ecosystem = if package_manager == "bun" { Ecosystem::Bun } else { Ecosystem::Node };
+                    tasks.push(Task {
+                        name: name.clone(),
+                        command: package_manager.clone(),
+                        args: vec!["run".to_string(), name],
+                        source: "package.json".to_string(),
+                        ecosystem,
+                    });
+                }
+            }
+
+            tasks.push(Task {
+                name: "install".to_string(),
+                command: package_manager.clone(),
+                args: vec!["install".to_string()],
+                source: "package.json".to_string(),
+                ecosystem: if package_manager == "bun" { Ecosystem::Bun } else { Ecosystem::Node },
+            });
+        }
+
+        // 2. Deno (deno.json)
+        if let Ok(file) = std::fs::File::open(self.current_dir.join("deno.json"))
+            && let Ok(pkg) = serde_json::from_reader::<_, DenoJson>(file)
+            && let Some(dtasks) = pkg.tasks
+        {
+            for (name, _) in dtasks {
+                tasks.push(Task {
+                    name: name.clone(),
+                    command: "deno".to_string(),
+                    args: vec!["task".to_string(), name],
+                    source: "deno.json".to_string(),
+                    ecosystem: Ecosystem::Deno,
+                });
+            }
+        }
+
+        // 3. PHP (composer.json)
+        if let Ok(file) = std::fs::File::open(self.current_dir.join("composer.json"))
+            && let Ok(pkg) = serde_json::from_reader::<_, ComposerJson>(file)
+            && let Some(scripts) = pkg.scripts
+        {
+            for (name, _) in scripts {
+                tasks.push(Task {
+                    name: name.clone(),
+                    command: "composer".to_string(),
+                    args: vec!["run-script".to_string(), name],
+                    source: "composer.json".to_string(),
+                    ecosystem: Ecosystem::Php,
+                });
+            }
+        }
+
+        // 4. Rust (Cargo.toml)
+        if self.current_dir.join("Cargo.toml").exists() {
+            let standard_tasks = vec!["build", "test", "check", "run", "clippy", "fmt"];
+            for t in standard_tasks {
+                tasks.push(Task {
+                    name: t.to_string(),
+                    command: "cargo".to_string(),
+                    args: vec![t.to_string()],
+                    source: "Cargo.toml".to_string(),
+                    ecosystem: Ecosystem::Rust,
+                });
+            }
+        }
+
+        // 5. Makefile
+        if self.current_dir.join("Makefile").exists()
+            && let Ok(content) = std::fs::read_to_string(self.current_dir.join("Makefile"))
+        {
+            for line in content.lines() {
+                if let Some(target) = line.split(':').next() {
+                    let target = target.trim();
+                    if !target.is_empty()
+                        && !target.contains('=')
+                        && !target.contains('.')
+                        && !target.starts_with('#')
+                        && !target.contains('%')
+                    {
+                        tasks.push(Task {
+                            name: target.to_string(),
+                            command: "make".to_string(),
+                            args: vec![target.to_string()],
+                            source: "Makefile".to_string(),
+                            ecosystem: Ecosystem::Make,
+                        });
+                    }
+                }
+            }
+        }
+
+        // 6. Go (Taskfile)
+        if self.current_dir.join("Taskfile.yml").exists() || self.current_dir.join("Taskfile.yaml").exists() {
+            tasks.push(Task {
+                name: "list".to_string(),
+                command: "task".to_string(),
+                args: vec!["--list".to_string()],
+                source: "Taskfile.yml".to_string(),
+                ecosystem: Ecosystem::Go,
+            });
+        }
+
+        // 7. Ruby (Rakefile)
+        if self.current_dir.join("Rakefile").exists() {
+            tasks.push(Task {
+                name: "tasks".to_string(),
+                command: "rake".to_string(),
+                args: vec!["-T".to_string()],
+                source: "Rakefile".to_string(),
+                ecosystem: Ecosystem::Ruby,
+            });
+        }
+
+        // 8. Python (Poetry)
+        if let Ok(content) = std::fs::read_to_string(self.current_dir.join("pyproject.toml"))
+            && let Ok(proj) = toml::from_str::<PyProject>(&content)
+            && let Some(tool) = proj.tool
+            && let Some(poetry) = tool.poetry
+            && let Some(scripts) = poetry.scripts
+        {
+            for (name, _) in scripts {
+                tasks.push(Task {
+                    name: name.clone(),
+                    command: "poetry".to_string(),
+                    args: vec!["run".to_string(), name],
+                    source: "pyproject.toml".to_string(),
+                    ecosystem: Ecosystem::Python,
+                });
+            }
+        }
+
+        // 9. Python (Pipenv)
+        if self.current_dir.join("Pipfile").exists() {
+            if let Ok(content) = std::fs::read_to_string(self.current_dir.join("Pipfile")) {
+                let mut in_scripts = false;
+                for line in content.lines() {
+                    let line = line.trim();
+                    if line == "[scripts]" {
+                        in_scripts = true;
+                        continue;
+                    }
+                    if line.starts_with('[') && line != "[scripts]" {
+                        in_scripts = false;
+                    }
+                    if in_scripts
+                        && !line.is_empty()
+                        && !line.starts_with('#')
+                        && let Some((key, _)) = line.split_once('=')
+                    {
+                        let key = key.trim();
+                        tasks.push(Task {
+                            name: key.to_string(),
+                            command: "pipenv".to_string(),
+                            args: vec!["run".to_string(), key.to_string()],
+                            source: "Pipfile".to_string(),
+                            ecosystem: Ecosystem::Python,
+                        });
+                    }
+                }
+            }
+        }
+
+        // 10. Java (Maven/Gradle)
+        if self.current_dir.join("pom.xml").exists() {
+            for t in ["clean", "compile", "test", "package", "install"] {
+                tasks.push(Task {
+                    name: t.to_string(),
+                    command: "mvn".to_string(),
+                    args: vec![t.to_string()],
+                    source: "pom.xml".to_string(),
+                    ecosystem: Ecosystem::Java,
+                });
+            }
+        }
+        if self.current_dir.join("build.gradle").exists() || self.current_dir.join("build.gradle.kts").exists() {
+            for t in ["build", "test", "run", "clean"] {
+                tasks.push(Task {
+                    name: t.to_string(),
+                    command: "./gradlew".to_string(),
+                    args: vec![t.to_string()],
+                    source: "build.gradle".to_string(),
+                    ecosystem: Ecosystem::Java,
+                });
+            }
+        }
+
+        Ok(tasks)
+    }
+
+    pub fn resolve(&self, task_name: &str, using: Option<&str>, all: bool) -> Result<Vec<Task>> {
+        let all_tasks = self.detect()?;
+        let mut matches: Vec<Task> = all_tasks.into_iter().filter(|t| t.name == task_name).collect();
+
+        if matches.is_empty() {
+             // Fallback logic moved here for better encapsulation
+             return Ok(Vec::new());
+        }
+
+        // 1. Filter by ecosystem if 'using' is provided
+        if let Some(ecosystem_name) = using {
+            matches.retain(|t| {
+                t.ecosystem.to_string().to_lowercase() == ecosystem_name.to_lowercase()
+                    || format!("{:?}", t.ecosystem).to_lowercase() == ecosystem_name.to_lowercase()
+            });
+
+            if matches.is_empty() {
+                anyhow::bail!("No task '{}' found for ecosystem '{}'", task_name, ecosystem_name);
+            }
+        }
+
+        // 2. Filter by .omg.toml mapping
+        if let Some(preferred_ecosystem) = self.config.scripts.get(task_name) {
+            let filtered: Vec<Task> = matches.iter()
+                .filter(|t| {
+                    t.ecosystem.to_string().to_lowercase() == preferred_ecosystem.to_lowercase()
+                        || format!("{:?}", t.ecosystem).to_lowercase() == preferred_ecosystem.to_lowercase()
+                })
+                .cloned()
+                .collect();
+            
+            if !filtered.is_empty() {
+                matches = filtered;
+            }
+        }
+
+        // 3. If --all, return all matches
+        if all {
+            return Ok(matches);
+        }
+
+        // 4. If multiple matches, resolve ambiguity
+        if matches.len() > 1 {
+            // Sort by priority
+            matches.sort_by(|a, b| b.ecosystem.priority().cmp(&a.ecosystem.priority()));
+
+            // If priorities are different, and the first one is higher than second, prefer it
+            if matches[0].ecosystem.priority() > matches[1].ecosystem.priority() {
+                return Ok(vec![matches[0].clone()]);
+            }
+
+            // Otherwise, interactive selection
+            let items: Vec<String> = matches.iter()
+                .map(|t| format!("{} (via {})", t.ecosystem, t.source))
+                .collect();
+
+            println!("{} Found '{}' in multiple ecosystems:", "OMG".cyan().bold(), task_name);
+            let selection = Select::with_theme(&ColorfulTheme::default())
+                .with_prompt("Which one did you mean?")
+                .items(&items)
+                .default(0)
+                .interact()?;
+
+            return Ok(vec![matches[selection].clone()]);
+        }
+
+        Ok(matches)
+    }
 }
 
 /// Run an async future from sync context, reusing existing runtime if available
@@ -170,208 +531,19 @@ struct Poetry {
 
 /// Detect available tasks in the current directory
 pub fn detect_tasks() -> Result<Vec<Task>> {
-    let mut tasks = Vec::new();
-    let current_dir = std::env::current_dir()?;
-
-    // 1. Node.js / Bun (package.json)
-    if let Some(package_manager) = detect_js_package_manager(&current_dir) {
-        if let Ok(file) = std::fs::File::open(current_dir.join("package.json"))
-            && let Ok(pkg) = serde_json::from_reader::<_, PackageJson>(file)
-            && let Some(scripts) = pkg.scripts
-        {
-            for (name, _) in scripts {
-                tasks.push(Task {
-                    name: name.clone(),
-                    command: package_manager.clone(),
-                    args: vec!["run".to_string(), name],
-                    source: "package.json".to_string(),
-                });
-            }
-        }
-
-        tasks.push(Task {
-            name: "install".to_string(),
-            command: package_manager,
-            args: vec!["install".to_string()],
-            source: "package.json".to_string(),
-        });
-    }
-
-    // 2. Deno (deno.json)
-    if let Ok(file) = std::fs::File::open(current_dir.join("deno.json"))
-        && let Ok(pkg) = serde_json::from_reader::<_, DenoJson>(file)
-        && let Some(dtasks) = pkg.tasks
-    {
-        for (name, _) in dtasks {
-            tasks.push(Task {
-                name: name.clone(),
-                command: "deno".to_string(),
-                args: vec!["task".to_string(), name],
-                source: "deno.json".to_string(),
-            });
-        }
-    }
-
-    // 3. PHP (composer.json)
-    if let Ok(file) = std::fs::File::open(current_dir.join("composer.json"))
-        && let Ok(pkg) = serde_json::from_reader::<_, ComposerJson>(file)
-        && let Some(scripts) = pkg.scripts
-    {
-        for (name, _) in scripts {
-            tasks.push(Task {
-                name: name.clone(),
-                command: "composer".to_string(),
-                args: vec!["run-script".to_string(), name],
-                source: "composer.json".to_string(),
-            });
-        }
-    }
-
-    // 4. Rust (Cargo.toml)
-    if current_dir.join("Cargo.toml").exists() {
-        let standard_tasks = vec!["build", "test", "check", "run", "clippy", "fmt"];
-        for t in standard_tasks {
-            tasks.push(Task {
-                name: t.to_string(),
-                command: "cargo".to_string(),
-                args: vec![t.to_string()],
-                source: "Cargo.toml".to_string(),
-            });
-        }
-    }
-
-    // 5. Makefile
-    if current_dir.join("Makefile").exists()
-        && let Ok(content) = std::fs::read_to_string(current_dir.join("Makefile"))
-    {
-        for line in content.lines() {
-            if let Some(target) = line.split(':').next() {
-                let target = target.trim();
-                if !target.is_empty()
-                    && !target.contains('=')
-                    && !target.contains('.')
-                    && !target.starts_with('#')
-                    && !target.contains('%')
-                {
-                    tasks.push(Task {
-                        name: target.to_string(),
-                        command: "make".to_string(),
-                        args: vec![target.to_string()],
-                        source: "Makefile".to_string(),
-                    });
-                }
-            }
-        }
-    }
-
-    // 6. Go (Taskfile)
-    if current_dir.join("Taskfile.yml").exists() || current_dir.join("Taskfile.yaml").exists() {
-        // We assume 'task' binary is available or installed by omg
-        // Parsing Taskfile is complex without YAML parser, so we rely on fallback mostly,
-        // but we can register standard 'build', 'test' blindly if we want?
-        // Better: rely on fallback. But user asked for detection.
-        // I'll add a generic entry point.
-        tasks.push(Task {
-            name: "list".to_string(),
-            command: "task".to_string(),
-            args: vec!["--list".to_string()],
-            source: "Taskfile.yml".to_string(),
-        });
-    }
-
-    // 7. Ruby (Rakefile)
-    if current_dir.join("Rakefile").exists() {
-        tasks.push(Task {
-            name: "tasks".to_string(),
-            command: "rake".to_string(),
-            args: vec!["-T".to_string()],
-            source: "Rakefile".to_string(),
-        });
-    }
-
-    // 8. Python (Poetry)
-    if let Ok(content) = std::fs::read_to_string(current_dir.join("pyproject.toml"))
-        && let Ok(proj) = toml::from_str::<PyProject>(&content)
-        && let Some(tool) = proj.tool
-        && let Some(poetry) = tool.poetry
-        && let Some(scripts) = poetry.scripts
-    {
-        for (name, _) in scripts {
-            tasks.push(Task {
-                name: name.clone(),
-                command: "poetry".to_string(),
-                args: vec!["run".to_string(), name],
-                source: "pyproject.toml".to_string(),
-            });
-        }
-    }
-
-    // 9. Python (Pipenv)
-    if current_dir.join("Pipfile").exists() {
-        // Pipenv scripts are in [scripts] section of Pipfile.
-        // Pipfile is TOML-like.
-        // If we can parse it as TOML, great.
-        if let Ok(content) = std::fs::read_to_string(current_dir.join("Pipfile")) {
-            // Basic manual parsing for [scripts]
-            let mut in_scripts = false;
-            for line in content.lines() {
-                let line = line.trim();
-                if line == "[scripts]" {
-                    in_scripts = true;
-                    continue;
-                }
-                if line.starts_with('[') && line != "[scripts]" {
-                    in_scripts = false;
-                }
-                if in_scripts
-                    && !line.is_empty()
-                    && !line.starts_with('#')
-                    && let Some((key, _)) = line.split_once('=')
-                {
-                    let key = key.trim();
-                    tasks.push(Task {
-                        name: key.to_string(),
-                        command: "pipenv".to_string(),
-                        args: vec!["run".to_string(), key.to_string()],
-                        source: "Pipfile".to_string(),
-                    });
-                }
-            }
-        }
-    }
-
-    // 10. Java (Maven/Gradle)
-    if current_dir.join("pom.xml").exists() {
-        for t in ["clean", "compile", "test", "package", "install"] {
-            tasks.push(Task {
-                name: t.to_string(),
-                command: "mvn".to_string(),
-                args: vec![t.to_string()],
-                source: "pom.xml".to_string(),
-            });
-        }
-    }
-    if current_dir.join("build.gradle").exists() || current_dir.join("build.gradle.kts").exists() {
-        for t in ["build", "test", "run", "clean"] {
-            tasks.push(Task {
-                name: t.to_string(),
-                command: "./gradlew".to_string(),
-                args: vec![t.to_string()],
-                source: "build.gradle".to_string(),
-            });
-        }
-    }
-
-    Ok(tasks)
+    let detector = TaskDetector::new(std::env::current_dir()?);
+    detector.detect()
 }
 
-/// Execute a task
-pub fn run_task(
+/// Execute a task with advanced options
+pub async fn run_task_advanced(
     task_name: &str,
     extra_args: &[String],
     backend_override: Option<RuntimeBackend>,
+    using: Option<&str>,
+    all: bool,
 ) -> Result<()> {
-    // SECURITY: Validate task name to prevent shell injection or arbitrary command execution via maliciously named tasks
+    // SECURITY: Validate task name
     if task_name
         .chars()
         .any(|c| !c.is_ascii_alphanumeric() && c != '-' && c != '_' && c != '.')
@@ -379,10 +551,8 @@ pub fn run_task(
         anyhow::bail!("Invalid task name: {task_name}");
     }
 
-    let tasks = detect_tasks()?;
-
-    // Find the task
-    let matches: Vec<&Task> = tasks.iter().filter(|t| t.name == task_name).collect();
+    let detector = TaskDetector::new(std::env::current_dir()?);
+    let matches = detector.resolve(task_name, using, all)?;
 
     if matches.is_empty() {
         // Fallback: Smart guessing
@@ -497,18 +667,28 @@ pub fn run_task(
         return execute_process(task_name, &[], extra_args, backend_override);
     }
 
-    let Some(task) = matches.first() else {
-        return execute_process(task_name, &[], extra_args, backend_override);
-    };
+    for task in matches {
+        println!(
+            "{} Running task '{}' via {} ({})...",
+            "OMG".cyan().bold(),
+            task.name.white().bold(),
+            task.ecosystem.to_string().magenta(),
+            task.source.blue()
+        );
 
-    println!(
-        "{} Running task '{}' via {}...",
-        "OMG".cyan().bold(),
-        task.name.white().bold(),
-        task.source.blue()
-    );
+        execute_process(&task.command, &task.args, extra_args, backend_override)?;
+    }
 
-    execute_process(&task.command, &task.args, extra_args, backend_override)
+    Ok(())
+}
+
+/// Execute a task (compatibility wrapper)
+pub fn run_task(
+    task_name: &str,
+    extra_args: &[String],
+    backend_override: Option<RuntimeBackend>,
+) -> Result<()> {
+    run_async(run_task_advanced(task_name, extra_args, backend_override, None, false))
 }
 
 fn execute_process(
