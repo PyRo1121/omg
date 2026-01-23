@@ -117,20 +117,26 @@ export const AdminDashboard: Component<AdminDashboardProps> = props => {
   };
 
   return (
-    <div class="space-y-8">
-      {/* Header with Live Status */}
+    <div class="space-y-8 pb-12">
       <div class="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
-        <div class="flex items-start gap-4">
-          <div class="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-amber-500 via-orange-500 to-red-500 shadow-lg shadow-orange-500/25">
-            <Crown size={28} class="text-white" />
+        <div class="flex items-start gap-5">
+          <div class="relative flex h-16 w-16 items-center justify-center rounded-[1.25rem] bg-gradient-to-br from-amber-400 via-orange-500 to-red-600 shadow-2xl shadow-orange-500/20">
+            <Crown size={32} class="text-white drop-shadow-lg" />
+            <div class="absolute -inset-1 rounded-[1.4rem] border border-orange-500/30 blur-sm" />
           </div>
           <div>
             <div class="flex items-center gap-3">
-              <h1 class="text-3xl font-bold tracking-tight text-white">Admin Console</h1>
-              <LiveIndicator label="Real-time" />
+              <h1 class="text-4xl font-black tracking-tight text-white lg:text-5xl">Admin</h1>
+              <div class="mt-1 flex items-center gap-2 rounded-full bg-emerald-500/10 px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-emerald-400 ring-1 ring-emerald-500/20">
+                <span class="relative flex h-2 w-2">
+                  <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
+                  <span class="relative inline-flex h-2 w-2 rounded-full bg-emerald-400"></span>
+                </span>
+                Live Console
+              </div>
             </div>
-            <p class="mt-1 text-slate-400">
-              Monitor system health, manage users, and track revenue
+            <p class="mt-2 text-slate-400 font-medium">
+              System governance, user telemetry, and global operations.
             </p>
           </div>
         </div>
@@ -139,200 +145,192 @@ export const AdminDashboard: Component<AdminDashboardProps> = props => {
           <button
             onClick={handleRefresh}
             disabled={isRefreshing()}
-            class="group flex items-center gap-2 rounded-xl border border-slate-700/50 bg-slate-800/80 px-4 py-2.5 text-sm font-medium text-white backdrop-blur-sm transition-all hover:border-slate-600 hover:bg-slate-700/80 disabled:opacity-50"
+            class="group flex items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.03] px-5 py-3 text-sm font-bold text-white transition-all hover:bg-white/[0.08] disabled:opacity-50"
           >
-            <svg class={`h-4 w-4 transition-transform ${isRefreshing() ? 'animate-spin' : 'group-hover:rotate-180'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-            </svg>
-            {isRefreshing() ? 'Refreshing...' : 'Refresh'}
+            <RefreshCw size={16} class={isRefreshing() ? 'animate-spin' : 'group-hover:rotate-180 transition-transform duration-500'} />
+            {isRefreshing() ? 'Syncing...' : 'Refresh'}
           </button>
           
           <div class="relative group">
-            <button class="flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-500 px-5 py-2.5 text-sm font-medium text-white shadow-lg shadow-indigo-500/25 transition-all hover:from-indigo-500 hover:to-indigo-400 hover:shadow-indigo-500/40">
-              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-              </svg>
-              Export Data
-              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <button class="flex items-center gap-3 rounded-2xl bg-white px-6 py-3 text-sm font-bold text-black shadow-xl shadow-white/10 transition-all hover:scale-[1.02] active:scale-[0.98]">
+              <FileText size={18} />
+              Export
+              <svg class="h-4 w-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
               </svg>
             </button>
-            <div class="absolute right-0 top-full z-50 mt-2 hidden w-48 rounded-xl border border-slate-700/50 bg-slate-800/95 p-2 shadow-xl backdrop-blur-sm group-hover:block">
-              <button onClick={() => props.onExport('users')} class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-slate-300 hover:bg-slate-700/50 hover:text-white">
-                <Users size={16} /> Export Users
+            <div class="absolute right-0 top-full z-50 mt-2 hidden w-56 rounded-2xl border border-white/10 bg-[#151516] p-2 shadow-2xl backdrop-blur-xl group-hover:block animate-in fade-in slide-in-from-top-2">
+              <button onClick={() => props.onExport('users')} class="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/5 hover:text-white transition-colors">
+                <Users size={18} class="text-indigo-400" /> Export Users
               </button>
-              <button onClick={() => props.onExport('usage')} class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-slate-300 hover:bg-slate-700/50 hover:text-white">
-                <BarChart3 size={16} /> Export Usage
+              <button onClick={() => props.onExport('usage')} class="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/5 hover:text-white transition-colors">
+                <BarChart3 size={18} class="text-emerald-400" /> Export Usage
               </button>
-              <button onClick={() => props.onExport('audit')} class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-slate-300 hover:bg-slate-700/50 hover:text-white">
-                <FileText size={16} /> Export Audit Log
+              <div class="my-1 border-t border-white/5" />
+              <button onClick={() => props.onExport('audit')} class="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium text-slate-300 hover:bg-white/5 hover:text-white transition-colors">
+                <FileText size={18} class="text-amber-400" /> Audit Log
               </button>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Navigation Tabs */}
-      <div class="flex items-center gap-2 rounded-2xl border border-slate-800/60 bg-slate-900/50 p-1.5 backdrop-blur-sm">
+      <div class="flex items-center gap-1 rounded-[1.5rem] border border-white/5 bg-white/[0.02] p-1.5 backdrop-blur-xl">
         <For each={[
-          { id: 'overview' as const, label: 'Overview', Icon: BarChart3 },
-          { id: 'users' as const, label: 'Users', Icon: Users },
-          { id: 'revenue' as const, label: 'Revenue', Icon: DollarSign },
-          { id: 'activity' as const, label: 'Activity', Icon: Activity },
-          { id: 'analytics' as const, label: 'Analytics', Icon: TrendingUp },
+          { id: 'overview' as const, label: 'Overview', Icon: BarChart3, color: 'text-indigo-400' },
+          { id: 'users' as const, label: 'Users', Icon: Users, color: 'text-emerald-400' },
+          { id: 'revenue' as const, label: 'Revenue', Icon: DollarSign, color: 'text-amber-400' },
+          { id: 'activity' as const, label: 'Activity', Icon: Activity, color: 'text-rose-400' },
+          { id: 'analytics' as const, label: 'Analytics', Icon: TrendingUp, color: 'text-cyan-400' },
         ]}>{tab => (
           <button
             onClick={() => setActiveTab(tab.id)}
-            class={`group relative flex items-center gap-2.5 rounded-xl px-5 py-3 text-sm font-medium transition-all duration-200 ${
+            class={`relative flex flex-1 items-center justify-center gap-3 rounded-[1.25rem] py-3.5 text-sm font-bold transition-all duration-300 ${
               activeTab() === tab.id
-                ? 'bg-gradient-to-r from-slate-700/80 to-slate-700/60 text-white shadow-lg'
-                : 'text-slate-400 hover:bg-slate-800/50 hover:text-white'
+                ? 'bg-white text-black shadow-lg shadow-white/5 scale-[1.02]'
+                : 'text-slate-400 hover:text-white hover:bg-white/5'
             }`}
           >
-            <tab.Icon size={18} />
-            <span>{tab.label}</span>
-            {activeTab() === tab.id && (
-              <div class="absolute -bottom-1.5 left-1/2 h-0.5 w-8 -translate-x-1/2 rounded-full bg-gradient-to-r from-indigo-500 to-purple-500" />
-            )}
+            <tab.Icon size={18} class={activeTab() === tab.id ? 'text-black' : tab.color} />
+            <span class="hidden sm:inline">{tab.label}</span>
           </button>
         )}</For>
       </div>
 
-      {/* Overview Tab */}
       <Show when={activeTab() === 'overview'}>
-        <div class="space-y-8">
-          {/* Real-time Health Banner */}
+        <div class="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
           <Show when={props.adminHealth}>
-            <div class="relative overflow-hidden rounded-2xl border border-slate-800/60 bg-gradient-to-br from-slate-900 via-slate-900 to-slate-800/50 p-6">
-              <div class="absolute -right-20 -top-20 h-64 w-64 rounded-full bg-gradient-to-br from-emerald-500/10 to-transparent blur-3xl" />
-              <div class="absolute -bottom-20 -left-20 h-64 w-64 rounded-full bg-gradient-to-br from-indigo-500/10 to-transparent blur-3xl" />
+            <div class="relative overflow-hidden rounded-[2.5rem] border border-white/5 bg-[#0d0d0e] p-10 shadow-2xl">
+              <div class="absolute -right-40 -top-40 h-[500px] w-[500px] rounded-full bg-emerald-500/[0.03] blur-[100px]" />
+              <div class="absolute -bottom-40 -left-40 h-[500px] w-[500px] rounded-full bg-indigo-500/[0.03] blur-[100px]" />
               
-              <div class="relative">
-                <div class="mb-6 flex items-center justify-between">
-                  <div class="flex items-center gap-3">
-                    <div class="relative">
-                      <div class="h-3 w-3 rounded-full bg-emerald-400" />
-                      <div class="absolute inset-0 h-3 w-3 animate-ping rounded-full bg-emerald-400 opacity-75" />
+              <div class="relative flex flex-col gap-10">
+                <div class="flex items-center justify-between">
+                  <div class="flex items-center gap-4">
+                    <div class="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-500/10 text-emerald-400">
+                      <Activity size={24} />
                     </div>
-                    <h2 class="text-lg font-semibold text-white">Live System Status</h2>
+                    <div>
+                      <h2 class="text-2xl font-black text-white">System Vitality</h2>
+                      <p class="text-sm font-medium text-slate-500">Real-time health telemetry across all clusters.</p>
+                    </div>
                   </div>
-                  <span class="text-xs text-slate-500">Updated just now</span>
+                  <div class="flex items-center gap-6">
+                    <div class="text-right">
+                      <p class="text-[10px] font-bold uppercase tracking-widest text-slate-500">Global Load</p>
+                      <p class="text-sm font-bold text-white">Nominal</p>
+                    </div>
+                    <div class="h-10 w-[1px] bg-white/10" />
+                    <LiveIndicator label="Syncing" />
+                  </div>
                 </div>
                 
                 <div class="grid grid-cols-2 gap-4 md:grid-cols-5">
-                  <div class="group rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4 transition-all hover:border-emerald-500/40 hover:bg-emerald-500/10">
-                    <div class="flex items-center gap-2">
-                      <span class="text-2xl">🟢</span>
-                      <div>
-                        <div class="text-2xl font-bold text-white">{props.adminHealth!.active_users_today}</div>
-                        <div class="text-xs text-emerald-400">Active Today</div>
+                  {[
+                    { label: 'Active Today', value: props.adminHealth!.active_users_today, color: 'text-emerald-400', icon: '👤', trend: '+5%' },
+                    { label: 'Weekly Active', value: props.adminHealth!.active_users_week, color: 'text-cyan-400', icon: '📅', trend: '+12%' },
+                    { label: 'Cmds Today', value: (props.adminHealth!.commands_today || 0).toLocaleString(), color: 'text-indigo-400', icon: '⚡', trend: '+8%' },
+                    { label: 'New Signups', value: props.adminHealth!.new_users_today, color: 'text-amber-400', icon: '✨', trend: '+2%' },
+                    { label: 'Installs', value: props.adminHealth!.installs_today, color: 'text-rose-400', icon: '📦', trend: '+15%' },
+                  ].map(stat => (
+                    <div class="group relative rounded-[2rem] border border-white/[0.03] bg-white/[0.01] p-6 transition-all hover:bg-white/[0.04] hover:border-white/10">
+                      <div class="mb-4 flex items-center justify-between">
+                        <span class="text-xl opacity-50 group-hover:opacity-100 transition-opacity">{stat.icon}</span>
+                        <span class={`text-[10px] font-bold ${stat.color} opacity-0 group-hover:opacity-100 transition-opacity`}>{stat.trend}</span>
                       </div>
+                      <div class="text-3xl font-black text-white">{stat.value}</div>
+                      <div class="mt-1 text-[11px] font-bold uppercase tracking-widest text-slate-500">{stat.label}</div>
                     </div>
-                  </div>
-                  
-                  <div class="rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-4 transition-all hover:border-cyan-500/40 hover:bg-cyan-500/10">
-                    <div class="text-2xl font-bold text-white">{props.adminHealth!.active_users_week}</div>
-                    <div class="text-xs text-cyan-400">Active This Week</div>
-                  </div>
-                  
-                  <div class="rounded-xl border border-indigo-500/20 bg-indigo-500/5 p-4 transition-all hover:border-indigo-500/40 hover:bg-indigo-500/10">
-                    <div class="text-2xl font-bold text-white">{(props.adminHealth!.commands_today || 0).toLocaleString()}</div>
-                    <div class="text-xs text-indigo-400">Commands Today</div>
-                  </div>
-                  
-                  <div class="rounded-xl border border-amber-500/20 bg-amber-500/5 p-4 transition-all hover:border-amber-500/40 hover:bg-amber-500/10">
-                    <div class="text-2xl font-bold text-white">{props.adminHealth!.new_users_today}</div>
-                    <div class="text-xs text-amber-400">New Signups</div>
-                  </div>
-                  
-                  <div class="rounded-xl border border-purple-500/20 bg-purple-500/5 p-4 transition-all hover:border-purple-500/40 hover:bg-purple-500/10">
-                    <div class="text-2xl font-bold text-white">{props.adminHealth!.installs_today}</div>
-                    <div class="text-xs text-purple-400">Installs Today</div>
-                  </div>
+                  ))}
                 </div>
               </div>
             </div>
           </Show>
 
-          {/* Key Metrics Grid */}
           <Show when={props.adminData}>
-            <div class="grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-4">
+            <div class="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
               <MetricCard
-                title="Total Users"
+                title="Global Userbase"
                 value={(props.adminData!.overview?.total_users || 0).toLocaleString()}
-                icon={<Users size={20} class="text-indigo-400" />}
-                iconBg="bg-indigo-500/20"
+                icon={<Users size={22} class="text-indigo-400" />}
+                iconBg="bg-indigo-500/10"
                 sparklineData={commandsSparkline()}
-                sparklineColor="#6366f1"
-                subtitle="All registered accounts"
+                sparklineColor="#818cf8"
+                subtitle="Aggregated registered entities"
               />
               <MetricCard
-                title="Active Licenses"
+                title="Active Entitlements"
                 value={(props.adminData!.overview?.active_licenses || 0).toLocaleString()}
-                icon={<Key size={20} class="text-emerald-400" />}
-                iconBg="bg-emerald-500/20"
-                subtitle="Currently active"
-                badge={{ text: 'Healthy', color: 'emerald' }}
+                icon={<Key size={22} class="text-emerald-400" />}
+                iconBg="bg-emerald-500/10"
+                subtitle="Validated commercial seats"
+                badge={{ text: 'Verified', color: 'emerald' }}
               />
               <MetricCard
-                title="Active Machines"
+                title="Provisioned Nodes"
                 value={(props.adminData!.overview?.active_machines || 0).toLocaleString()}
-                icon={<Monitor size={20} class="text-cyan-400" />}
-                iconBg="bg-cyan-500/20"
-                subtitle="Connected devices"
+                icon={<Monitor size={22} class="text-cyan-400" />}
+                iconBg="bg-cyan-500/10"
+                subtitle="Connected machine instances"
               />
               <MetricCard
-                title="Total Commands"
+                title="Operations"
                 value={(props.adminData!.usage?.total_commands || 0).toLocaleString()}
-                icon={<Zap size={20} class="text-purple-400" />}
-                iconBg="bg-purple-500/20"
+                icon={<Zap size={22} class="text-purple-400" />}
+                iconBg="bg-purple-500/10"
                 sparklineData={commandsSparkline()}
-                sparklineColor="#a855f7"
-                subtitle="Last 30 days"
+                sparklineColor="#a78bfa"
+                subtitle="Total CLI execution volume"
               />
             </div>
 
-            {/* System Health & Real-time Ops */}
             <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
-              <div class="rounded-2xl border border-slate-800/60 bg-gradient-to-br from-slate-900/90 to-slate-800/50 p-6 backdrop-blur-sm">
-                <div class="mb-4 flex items-center justify-between">
-                  <h3 class="text-lg font-semibold text-white">CLI Command Health</h3>
-                  <LiveIndicator label="Last 24h" />
+              <div class="rounded-[2rem] border border-white/5 bg-white/[0.02] p-8 shadow-2xl backdrop-blur-xl">
+                <div class="mb-6 flex items-center justify-between">
+                  <div>
+                    <h3 class="text-xl font-bold text-white">Execution Health</h3>
+                    <p class="text-xs font-medium text-slate-500">Global CLI success/failure ratio.</p>
+                  </div>
+                  <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-400">
+                    <TrendingUp size={20} />
+                  </div>
                 </div>
-                <div class="flex items-center gap-8">
-                  <div class="flex-1 space-y-4">
-                    <div class="flex justify-between text-sm">
-                      <span class="text-slate-400">Success Rate</span>
-                      <span class="font-bold text-emerald-400">
-                        {(() => {
-                          const s = props.adminData!.overview?.command_health?.success || 0;
-                          const f = props.adminData!.overview?.command_health?.failure || 0;
-                          const total = s + f;
-                          return total > 0 ? ((s / total) * 100).toFixed(1) : '100';
-                        })()}%
-                      </span>
-                    </div>
-                    <div class="h-2.5 overflow-hidden rounded-full bg-slate-800">
-                      <div 
-                        class="h-full bg-gradient-to-r from-emerald-500 to-teal-400 transition-all duration-1000"
-                        style={{ 
-                          width: `${(() => {
+                <div class="flex items-center gap-10">
+                  <div class="flex-1 space-y-6">
+                    <div>
+                      <div class="mb-2 flex justify-between text-xs font-bold uppercase tracking-widest">
+                        <span class="text-slate-500">Global Success Rate</span>
+                        <span class="text-emerald-400">
+                          {(() => {
                             const s = props.adminData!.overview?.command_health?.success || 0;
                             const f = props.adminData!.overview?.command_health?.failure || 0;
                             const total = s + f;
-                            return total > 0 ? (s / total) * 100 : 100;
-                          })()}%` 
-                        }}
-                      />
-                    </div>
-                    <div class="grid grid-cols-2 gap-4">
-                      <div>
-                        <div class="text-xs text-slate-500 uppercase">Success</div>
-                        <div class="text-lg font-semibold text-white">{(props.adminData!.overview?.command_health?.success || 0).toLocaleString()}</div>
+                            return total > 0 ? ((s / total) * 100).toFixed(1) : '100';
+                          })()}%
+                        </span>
                       </div>
-                      <div>
-                        <div class="text-xs text-slate-500 uppercase">Failures</div>
-                        <div class="text-lg font-semibold text-red-400">{(props.adminData!.overview?.command_health?.failure || 0).toLocaleString()}</div>
+                      <div class="h-3 overflow-hidden rounded-full bg-white/[0.05]">
+                        <div 
+                          class="h-full bg-gradient-to-r from-emerald-500 to-teal-400 transition-all duration-1000 shadow-[0_0_12px_rgba(16,185,129,0.4)]"
+                          style={{ 
+                            width: `${(() => {
+                              const s = props.adminData!.overview?.command_health?.success || 0;
+                              const f = props.adminData!.overview?.command_health?.failure || 0;
+                              const total = s + f;
+                              return total > 0 ? (s / total) * 100 : 100;
+                            })()}%` 
+                          }}
+                        />
+                      </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-8">
+                      <div class="rounded-2xl border border-white/[0.03] bg-white/[0.01] p-4">
+                        <div class="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Successful</div>
+                        <div class="mt-1 text-2xl font-black text-white">{(props.adminData!.overview?.command_health?.success || 0).toLocaleString()}</div>
+                      </div>
+                      <div class="rounded-2xl border border-white/[0.03] bg-white/[0.01] p-4">
+                        <div class="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Anomalies</div>
+                        <div class="mt-1 text-2xl font-black text-rose-500">{(props.adminData!.overview?.command_health?.failure || 0).toLocaleString()}</div>
                       </div>
                     </div>
                   </div>
@@ -340,35 +338,41 @@ export const AdminDashboard: Component<AdminDashboardProps> = props => {
                     <DonutChart 
                       data={[
                         { label: 'Success', value: props.adminData!.overview?.command_health?.success || 1, color: '#10b981' },
-                        { label: 'Failure', value: props.adminData!.overview?.command_health?.failure || 0, color: '#ef4444' }
+                        { label: 'Failure', value: props.adminData!.overview?.command_health?.failure || 0, color: '#f43f5e' }
                       ]} 
-                      size={100} 
-                      thickness={12}
+                      size={120} 
+                      thickness={14}
                     />
                   </div>
                 </div>
               </div>
 
-              <div class="rounded-2xl border border-slate-800/60 bg-gradient-to-br from-slate-900/90 to-slate-800/50 p-6 backdrop-blur-sm">
-                <div class="mb-4 flex items-center justify-between">
-                  <h3 class="text-lg font-semibold text-white">Geographic Reach</h3>
-                  <Globe size={18} class="text-indigo-400" />
+              <div class="rounded-[2rem] border border-white/5 bg-white/[0.02] p-8 shadow-2xl backdrop-blur-xl">
+                <div class="mb-6 flex items-center justify-between">
+                  <div>
+                    <h3 class="text-xl font-bold text-white">Node Distribution</h3>
+                    <p class="text-xs font-medium text-slate-500">Top geographic regions by machine count.</p>
+                  </div>
+                  <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-500/10 text-indigo-400">
+                    <Globe size={20} />
+                  </div>
                 </div>
-                <div class="space-y-3">
+                <div class="space-y-4">
                   <For each={props.adminData!.geo_distribution?.slice(0, 4)}>
                     {geo => (
-                      <div class="flex items-center justify-between">
-                        <div class="flex items-center gap-2">
-                          <span class="text-slate-400">{geo.dimension || 'Unknown'}</span>
+                      <div class="group flex items-center justify-between rounded-2xl bg-white/[0.02] px-5 py-3 transition-all hover:bg-white/[0.05]">
+                        <div class="flex items-center gap-4">
+                          <div class="h-2 w-2 rounded-full bg-indigo-500 group-hover:shadow-[0_0_8px_rgba(99,102,241,0.6)]" />
+                          <span class="text-sm font-bold text-slate-300">{geo.dimension || 'Unknown'}</span>
                         </div>
-                        <div class="flex items-center gap-3">
-                          <div class="h-1.5 w-24 overflow-hidden rounded-full bg-slate-800">
+                        <div class="flex items-center gap-4">
+                          <div class="h-1.5 w-32 overflow-hidden rounded-full bg-white/[0.05]">
                             <div 
-                              class="h-full bg-indigo-500" 
+                              class="h-full bg-gradient-to-r from-indigo-600 to-indigo-400 shadow-[0_0_8px_rgba(99,102,241,0.3)]" 
                               style={{ width: `${Math.min((geo.count / (props.adminData!.overview?.total_users || 1)) * 100 * 5, 100)}%` }} 
                             />
                           </div>
-                          <span class="text-xs font-medium text-white">{geo.count}</span>
+                          <span class="text-xs font-black text-white min-w-[2rem] text-right">{geo.count}</span>
                         </div>
                       </div>
                     )}
@@ -377,61 +381,76 @@ export const AdminDashboard: Component<AdminDashboardProps> = props => {
               </div>
             </div>
 
-            {/* Trending & Issues Row */}
             <div class="grid grid-cols-1 gap-6 lg:grid-cols-3">
-              <div class="rounded-2xl border border-slate-800/60 bg-slate-900/50 p-6 lg:col-span-2">
-                <div class="mb-4 flex items-center justify-between">
-                  <h3 class="text-lg font-semibold text-white">Trending Packages</h3>
-                  <button onClick={() => props.onTabChange('analytics')} class="text-xs text-indigo-400 hover:text-indigo-300 transition-colors">View Detailed Analytics</button>
+              <div class="rounded-[2rem] border border-white/5 bg-[#0d0d0e] p-8 lg:col-span-2">
+                <div class="mb-6 flex items-center justify-between">
+                  <div>
+                    <h3 class="text-xl font-bold text-white">Trending High-Volume Packages</h3>
+                    <p class="text-xs font-medium text-slate-500">Most active package installs in the last 24h.</p>
+                  </div>
+                  <button onClick={() => setActiveTab('analytics')} class="text-xs font-bold text-indigo-400 hover:text-indigo-300 transition-colors uppercase tracking-widest">Analytics →</button>
                 </div>
                 <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <For each={props.analyticsData?.top_packages?.slice(0, 4) || []}>
+                  <For each={props.adminAnalytics?.top_packages?.slice(0, 4) || []}>
                     {(pkg: any) => (
-                      <div class="flex items-center justify-between rounded-xl bg-slate-800/30 p-3 hover:bg-slate-800/50 transition-colors">
-                        <div class="flex items-center gap-3">
-                          <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-400">
-                            <Package size={16} />
+                      <div class="group flex items-center justify-between rounded-2xl border border-white/[0.03] bg-white/[0.01] p-4 transition-all hover:bg-white/[0.05] hover:border-white/10">
+                        <div class="flex items-center gap-4">
+                          <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-400 group-hover:scale-110 transition-transform">
+                            <Package size={20} />
                           </div>
-                          <span class="font-medium text-slate-200">{pkg.package_name}</span>
+                          <div>
+                            <span class="block font-bold text-white">{pkg.package_name}</span>
+                            <span class="text-[10px] font-bold text-slate-600 uppercase">Stable</span>
+                          </div>
                         </div>
                         <div class="text-right">
-                          <div class="text-sm font-bold text-white">{pkg.install_count}</div>
-                          <div class="text-[10px] text-slate-500 uppercase tracking-tight">Installs</div>
+                          <div class="text-lg font-black text-white">{pkg.install_count}</div>
+                          <div class="text-[10px] font-bold text-emerald-500 uppercase tracking-tight">Installs</div>
                         </div>
                       </div>
                     )}
                   </For>
-                  <Show when={!props.analyticsData?.top_packages?.length}>
-                    <p class="py-4 text-center text-sm text-slate-500 italic col-span-2">No package data collected yet</p>
+                  <Show when={!props.adminAnalytics?.top_packages?.length}>
+                    <div class="flex h-32 flex-col items-center justify-center py-4 text-center col-span-2 rounded-2xl border border-dashed border-white/10">
+                      <Package size={32} class="text-slate-700 mb-2" />
+                      <p class="text-sm font-medium text-slate-500">Awaiting telemetry stream...</p>
+                    </div>
                   </Show>
                 </div>
               </div>
 
-              <div class="rounded-2xl border border-slate-800/60 bg-slate-900/50 p-6">
-                <div class="mb-4 flex items-center justify-between">
-                  <h3 class="text-lg font-semibold text-white">Critical Alerts</h3>
-                  <Show when={props.analyticsData?.top_errors?.length}>
-                    <span class="flex h-2 w-2 rounded-full bg-red-500 animate-pulse" />
+              <div class="rounded-[2rem] border border-white/5 bg-[#0d0d0e] p-8">
+                <div class="mb-6 flex items-center justify-between">
+                  <div>
+                    <h3 class="text-xl font-bold text-white">Security Alerts</h3>
+                    <p class="text-xs font-medium text-slate-500">Real-time anomaly detection.</p>
+                  </div>
+                  <Show when={props.adminAnalytics?.top_errors?.length}>
+                    <div class="flex h-2 w-2 rounded-full bg-rose-500 shadow-[0_0_12px_rgba(244,63,94,0.6)] animate-pulse" />
                   </Show>
                 </div>
-                <div class="space-y-3">
-                  <For each={props.analyticsData?.top_errors?.slice(0, 3) || []}>
+                <div class="space-y-4">
+                  <For each={props.adminAnalytics?.top_errors?.slice(0, 3) || []}>
                     {(err: any) => (
-                      <div class="group relative rounded-lg border border-red-500/10 bg-red-500/5 p-3 hover:bg-red-500/10 transition-colors">
-                        <div class="mb-1 flex items-center justify-between">
-                          <span class="text-[10px] font-bold text-red-400 uppercase tracking-wider">Exception</span>
-                          <span class="text-[10px] text-slate-500">{err.occurrences}x</span>
+                      <div class="group relative rounded-2xl border border-rose-500/10 bg-rose-500/[0.03] p-4 transition-all hover:bg-rose-500/[0.08] hover:border-rose-500/30">
+                        <div class="mb-2 flex items-center justify-between">
+                          <span class="flex items-center gap-2 text-[10px] font-black text-rose-400 uppercase tracking-widest">
+                            <AlertCircle size={12} />
+                            Critical Error
+                          </span>
+                          <span class="rounded bg-rose-500/10 px-1.5 py-0.5 text-[10px] font-bold text-rose-500">{err.occurrences}x</span>
                         </div>
-                        <div class="truncate text-xs font-mono text-slate-300">{err.error_message}</div>
+                        <div class="truncate font-mono text-xs font-bold text-slate-300 bg-black/20 p-2 rounded-lg">{err.error_message}</div>
                       </div>
                     )}
                   </For>
-                  <Show when={!props.analyticsData?.top_errors?.length}>
-                    <div class="flex flex-col items-center justify-center py-6 text-center">
-                      <div class="mb-2 rounded-full bg-emerald-500/10 p-2 text-emerald-400">
-                        <CheckCircle size={20} />
+                  <Show when={!props.adminAnalytics?.top_errors?.length}>
+                    <div class="flex flex-col items-center justify-center py-10 text-center rounded-2xl bg-emerald-500/[0.02] border border-emerald-500/10">
+                      <div class="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-400 shadow-[0_0_20px_rgba(16,185,129,0.1)]">
+                        <CheckCircle size={24} />
                       </div>
-                      <p class="text-xs text-slate-500">System operating normally</p>
+                      <p class="text-sm font-bold text-emerald-500">Zero System Errors</p>
+                      <p class="mt-1 text-xs text-slate-600">Health checks passing</p>
                     </div>
                   </Show>
                 </div>
@@ -439,44 +458,47 @@ export const AdminDashboard: Component<AdminDashboardProps> = props => {
             </div>
           </Show>
 
-          {/* Charts Section */}
           <div class="grid grid-cols-1 gap-6 xl:grid-cols-3">
-            {/* User Distribution */}
-            <div class="rounded-2xl border border-slate-800/60 bg-gradient-to-br from-slate-900/90 to-slate-800/50 p-6 backdrop-blur-sm">
-              <div class="mb-6 flex items-center justify-between">
-                <h3 class="text-lg font-semibold text-white">User Distribution</h3>
-                <span class="rounded-full bg-slate-800 px-3 py-1 text-xs text-slate-400">By Tier</span>
+            <div class="rounded-[2.5rem] border border-white/5 bg-[#0d0d0e] p-8 shadow-2xl">
+              <div class="mb-8 flex items-center justify-between">
+                <div>
+                  <h3 class="text-xl font-bold text-white">Segment Share</h3>
+                  <p class="text-xs font-medium text-slate-500">Distribution by customer tier.</p>
+                </div>
+                <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-purple-500/10 text-purple-400">
+                  <PieChart size={20} />
+                </div>
               </div>
-              <div class="flex justify-center">
+              <div class="flex justify-center py-4">
                 <DonutChart 
                   data={tierDistribution()} 
-                  size={180} 
-                  thickness={32}
-                  centerLabel="Users"
+                  size={200} 
+                  thickness={24}
+                  centerLabel="Entities"
                   showLegend
                 />
               </div>
             </div>
 
-            {/* Revenue Chart */}
-            <div class="rounded-2xl border border-slate-800/60 bg-gradient-to-br from-slate-900/90 to-slate-800/50 p-6 backdrop-blur-sm xl:col-span-2">
-              <div class="mb-6 flex items-center justify-between">
+            <div class="rounded-[2.5rem] border border-white/5 bg-[#0d0d0e] p-8 shadow-2xl xl:col-span-2">
+              <div class="mb-8 flex items-center justify-between">
                 <div>
-                  <h3 class="text-lg font-semibold text-white">Revenue Trend</h3>
-                  <p class="text-sm text-slate-500">Monthly recurring revenue</p>
+                  <h3 class="text-xl font-bold text-white">Commercial Velocity</h3>
+                  <p class="text-xs font-medium text-slate-500">Gross revenue performance (Trailing 12M).</p>
                 </div>
                 <Show when={props.adminRevenue}>
                   <div class="text-right">
-                    <div class="text-3xl font-bold text-emerald-400">
-                      ${(props.adminRevenue!.mrr || 0).toLocaleString()}
+                    <div class="flex items-center justify-end gap-2 text-3xl font-black text-emerald-400">
+                      <DollarSign size={24} />
+                      {(props.adminRevenue!.mrr || 0).toLocaleString()}
                     </div>
-                    <div class="text-xs text-slate-500">Current MRR</div>
+                    <div class="text-[10px] font-bold uppercase tracking-widest text-slate-600">Current MRR Target Met</div>
                   </div>
                 </Show>
               </div>
               <BarChart
                 data={revenueData()}
-                height={220}
+                height={260}
                 showLabels
                 gradient="emerald"
                 animated
@@ -485,45 +507,44 @@ export const AdminDashboard: Component<AdminDashboardProps> = props => {
             </div>
           </div>
 
-          {/* Activity Feed */}
-          <div class="rounded-2xl border border-slate-800/60 bg-gradient-to-br from-slate-900/90 to-slate-800/50 p-6 backdrop-blur-sm">
-            <div class="mb-6 flex items-center justify-between">
-              <div class="flex items-center gap-3">
-                <h3 class="text-lg font-semibold text-white">Recent Activity</h3>
-                <span class="rounded-full bg-indigo-500/20 px-2 py-0.5 text-xs font-medium text-indigo-400">
-                  {props.adminActivity.length} events
-                </span>
+          <div class="rounded-[2.5rem] border border-white/5 bg-gradient-to-br from-[#0d0d0e] to-black p-10 shadow-2xl">
+            <div class="mb-8 flex items-center justify-between">
+              <div class="flex items-center gap-4">
+                <div class="flex h-12 w-12 items-center justify-center rounded-[1.25rem] bg-indigo-500/10 text-indigo-400">
+                  <Activity size={24} />
+                </div>
+                <div>
+                  <h3 class="text-2xl font-black text-white">Event Horizon</h3>
+                  <p class="text-sm font-medium text-slate-500">Global audit trail of system-wide interactions.</p>
+                </div>
               </div>
               <button
                 onClick={() => setActiveTab('activity')}
-                class="flex items-center gap-1 text-sm text-indigo-400 transition-colors hover:text-indigo-300"
+                class="rounded-2xl bg-white/[0.03] px-6 py-3 text-sm font-bold text-white transition-all hover:bg-white/[0.08]"
               >
-                View all
-                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
-                </svg>
+                View Full Ledger →
               </button>
             </div>
             
-            <div class="grid gap-3 md:grid-cols-2">
+            <div class="grid gap-4 md:grid-cols-2">
               <For each={props.adminActivity.slice(0, 6)}>
                 {activity => {
                   const { icon, bg } = getActivityIcon(activity.type);
                   return (
-                    <div class="group flex items-center gap-4 rounded-xl border border-slate-800/40 bg-slate-800/20 p-4 transition-all hover:border-slate-700/60 hover:bg-slate-800/40">
-                      <div class={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${bg}`}>
-                        <span class="text-lg">{icon}</span>
+                    <div class="group flex items-center gap-5 rounded-3xl border border-white/[0.03] bg-white/[0.01] p-5 transition-all hover:bg-white/[0.04] hover:border-white/10">
+                      <div class={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl shadow-inner ${bg}`}>
+                        <span class="text-xl group-hover:scale-110 transition-transform">{icon}</span>
                       </div>
                       <div class="min-w-0 flex-1">
-                        <p class="truncate text-sm font-medium text-white">{activity.description}</p>
-                        <p class="text-xs text-slate-500">{api.formatRelativeTime(activity.timestamp)}</p>
+                        <p class="truncate text-sm font-bold text-white group-hover:text-indigo-300 transition-colors">{activity.description}</p>
+                        <p class="text-[11px] font-bold text-slate-600 uppercase tracking-tight mt-0.5">{api.formatRelativeTime(activity.timestamp)}</p>
                       </div>
                       <Show when={activity.user_id}>
                         <button
                           onClick={() => props.onUserClick(activity.user_id)}
-                          class="shrink-0 rounded-lg bg-slate-700/50 px-3 py-1.5 text-xs font-medium text-slate-300 opacity-0 transition-all hover:bg-slate-700 hover:text-white group-hover:opacity-100"
+                          class="shrink-0 rounded-xl bg-white/5 px-4 py-2 text-xs font-bold text-slate-400 opacity-0 transition-all hover:bg-white/10 hover:text-white group-hover:opacity-100"
                         >
-                          View
+                          Profile
                         </button>
                       </Show>
                     </div>
@@ -535,54 +556,49 @@ export const AdminDashboard: Component<AdminDashboardProps> = props => {
         </div>
       </Show>
 
-      {/* Users Tab */}
       <Show when={activeTab() === 'users'}>
-        <div class="space-y-6">
-          {/* Search and Filters */}
+        <div class="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
           <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <form onSubmit={handleSearch} class="relative flex-1 sm:max-w-md">
-              <svg class="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <form onSubmit={handleSearch} class="relative flex-1 sm:max-w-xl">
+              <svg class="absolute left-5 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
               </svg>
               <input
                 type="text"
                 value={searchInput()}
                 onInput={e => setSearchInput(e.currentTarget.value)}
-                placeholder="Search users by email or license key..."
-                class="w-full rounded-xl border border-slate-700/50 bg-slate-800/80 py-3 pr-4 pl-12 text-white placeholder-slate-500 backdrop-blur-sm transition-all focus:border-indigo-500/50 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                placeholder="Search by identity, machine ID, or license..."
+                class="w-full rounded-[1.25rem] border border-white/10 bg-white/[0.03] py-4 pr-6 pl-14 text-white placeholder-slate-600 focus:border-indigo-500 focus:bg-white/[0.05] focus:outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all"
               />
             </form>
             <button
               onClick={() => props.onExport('users')}
-              class="flex items-center gap-2 rounded-xl border border-slate-700/50 bg-slate-800/80 px-4 py-3 text-sm font-medium text-white backdrop-blur-sm transition-all hover:border-slate-600 hover:bg-slate-700/80"
+              class="flex items-center gap-2 rounded-2xl bg-white/[0.03] border border-white/10 px-6 py-4 text-sm font-bold text-white transition-all hover:bg-white/[0.08]"
             >
-              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-              </svg>
-              Export CSV
+              <FileText size={18} class="text-indigo-400" />
+              Dataset Export
             </button>
           </div>
 
-          {/* Users Table */}
-          <div class="overflow-hidden rounded-2xl border border-slate-800/60 bg-gradient-to-br from-slate-900/90 to-slate-800/50 backdrop-blur-sm">
+          <div class="overflow-hidden rounded-[2.5rem] border border-white/5 bg-[#0d0d0e] shadow-2xl">
             <Table
               data={props.adminUsers}
-              emptyMessage="No users found"
+              emptyMessage="No matching entities found in the registry."
               emptyIcon="👥"
               onRowClick={user => props.onUserClick(user.id)}
               columns={[
                 {
                   key: 'email',
-                  header: 'User',
+                  header: 'Entity / Identity',
                   render: user => (
-                    <div class="flex items-center gap-3">
-                      <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 text-sm font-bold text-white shadow-lg shadow-indigo-500/20">
+                    <div class="flex items-center gap-4 py-1">
+                      <div class="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500/20 to-purple-600/20 border border-indigo-500/20 text-lg font-black text-indigo-400 shadow-inner">
                         {user.email.charAt(0).toUpperCase()}
                       </div>
                       <div>
-                        <div class="font-medium text-white">{user.email}</div>
-                        <div class="text-xs text-slate-500">
-                          Joined {api.formatRelativeTime(user.created_at)}
+                        <div class="font-black text-white group-hover:text-indigo-300 transition-colors">{user.email}</div>
+                        <div class="text-[10px] font-bold text-slate-600 uppercase tracking-widest mt-0.5">
+                          Registered {api.formatRelativeTime(user.created_at)}
                         </div>
                       </div>
                     </div>
@@ -590,36 +606,42 @@ export const AdminDashboard: Component<AdminDashboardProps> = props => {
                 },
                 {
                   key: 'tier',
-                  header: 'Tier',
+                  header: 'Service Tier',
                   render: user => <TierBadge tier={user.tier} />,
                 },
                 {
                   key: 'status',
-                  header: 'Status',
+                  header: 'Access State',
                   render: user => <StatusBadge status={user.status} pulse={user.status === 'active'} />,
                 },
                 {
                   key: 'machines',
-                  header: 'Machines',
+                  header: 'Nodes',
                   render: user => (
-                    <span class="rounded-lg bg-slate-800/80 px-2.5 py-1 text-sm text-slate-300">
-                      {user.machines_count || user.machine_count || 0}
-                    </span>
+                    <div class="flex items-center gap-2">
+                      <Monitor size={14} class="text-slate-600" />
+                      <span class="text-sm font-black text-slate-300">
+                        {user.machines_count || user.machine_count || 0}
+                      </span>
+                    </div>
                   ),
                 },
                 {
                   key: 'commands',
-                  header: 'Commands',
+                  header: 'Ops Volume',
                   render: user => (
-                    <span class="font-medium text-indigo-400">{(user.total_commands || 0).toLocaleString()}</span>
+                    <div class="flex items-center gap-2">
+                      <Zap size={14} class="text-indigo-500" />
+                      <span class="font-black text-white">{(user.total_commands || 0).toLocaleString()}</span>
+                    </div>
                   ),
                 },
                 {
                   key: 'last_active',
-                  header: 'Last Active',
+                  header: 'Last Signal',
                   render: user => (
-                    <span class="text-sm text-slate-400">
-                      {user.last_active ? api.formatRelativeTime(user.last_active) : 'Never'}
+                    <span class="text-xs font-bold text-slate-500 uppercase tracking-tight">
+                      {user.last_active ? api.formatRelativeTime(user.last_active) : 'Dark'}
                     </span>
                   ),
                 },
@@ -661,50 +683,57 @@ export const AdminDashboard: Component<AdminDashboardProps> = props => {
         </div>
       </Show>
 
-      {/* Revenue Tab */}
       <Show when={activeTab() === 'revenue'}>
         <Show when={props.adminRevenue}>
-          <div class="space-y-6">
-            {/* Revenue Stats */}
-            <div class="grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-4">
+          <div class="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <div class="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
               <MetricCard
-                title="Monthly Recurring Revenue"
+                title="Monthly Recurring"
                 value={`$${(props.adminRevenue!.mrr || 0).toLocaleString()}`}
-                icon={<DollarSign size={20} class="text-emerald-400" />}
-                iconBg="bg-emerald-500/20"
+                icon={<DollarSign size={22} class="text-emerald-400" />}
+                iconBg="bg-emerald-500/10"
                 badge={{ text: 'MRR', color: 'emerald' }}
+                subtitle="Aggregated subscription revenue"
               />
               <MetricCard
                 title="Annual Run Rate"
                 value={`$${(props.adminRevenue!.arr || 0).toLocaleString()}`}
-                icon={<TrendingUp size={20} class="text-indigo-400" />}
-                iconBg="bg-indigo-500/20"
+                icon={<TrendingUp size={22} class="text-indigo-400" />}
+                iconBg="bg-indigo-500/10"
                 badge={{ text: 'ARR', color: 'blue' }}
+                subtitle="Projected yearly performance"
               />
               <MetricCard
-                title="Paying Customers"
+                title="Commercial Entities"
                 value={(props.adminRevenue!.revenue_by_tier?.reduce((sum, t) => sum + (t.customers || 0), 0) || 0).toLocaleString()}
-                icon={<Users size={20} class="text-cyan-400" />}
-                iconBg="bg-cyan-500/20"
+                icon={<Users size={22} class="text-cyan-400" />}
+                iconBg="bg-cyan-500/10"
+                subtitle="Active paying customer base"
               />
               <MetricCard
-                title="Churn Rate"
+                title="Churn Velocity"
                 value={props.adminRevenue!.churn?.rate || '0%'}
-                icon={<TrendingUp size={20} class="text-amber-400 rotate-180" />}
-                iconBg="bg-amber-500/20"
-                badge={{ text: props.adminRevenue!.churn?.rate === '0%' ? 'Excellent' : 'Monitor', color: props.adminRevenue!.churn?.rate === '0%' ? 'emerald' : 'amber' }}
+                icon={<Activity size={22} class="text-amber-400" />}
+                iconBg="bg-amber-500/10"
+                badge={{ text: props.adminRevenue!.churn?.rate === '0%' ? 'Optimal' : 'Monitor', color: props.adminRevenue!.churn?.rate === '0%' ? 'emerald' : 'amber' }}
+                subtitle="Net customer attrition rate"
               />
             </div>
 
-            {/* Revenue Chart */}
-            <div class="rounded-2xl border border-slate-800/60 bg-gradient-to-br from-slate-900/90 to-slate-800/50 p-6 backdrop-blur-sm">
-              <div class="mb-6">
-                <h3 class="text-lg font-semibold text-white">Revenue Trend</h3>
-                <p class="text-sm text-slate-500">Last 12 months performance</p>
+            <div class="rounded-[2.5rem] border border-white/5 bg-[#0d0d0e] p-10 shadow-2xl">
+              <div class="mb-10 flex items-center justify-between">
+                <div>
+                  <h3 class="text-2xl font-black text-white tracking-tight">Revenue Trajectory</h3>
+                  <p class="text-sm font-medium text-slate-500 text-opacity-80">Trailing 12-month fiscal performance ledger.</p>
+                </div>
+                <div class="flex items-center gap-2 rounded-full bg-emerald-500/10 px-4 py-2 ring-1 ring-emerald-500/20">
+                  <div class="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                  <span class="text-[10px] font-black uppercase tracking-widest text-emerald-400">Target: +15% MoM</span>
+                </div>
               </div>
               <BarChart
                 data={revenueData()}
-                height={280}
+                height={300}
                 showLabels
                 gradient="emerald"
                 animated
@@ -712,25 +741,24 @@ export const AdminDashboard: Component<AdminDashboardProps> = props => {
               />
             </div>
 
-            {/* Cohorts */}
             <Show when={props.adminCohorts?.cohort_sizes?.length}>
-              <div class="rounded-2xl border border-slate-800/60 bg-gradient-to-br from-slate-900/90 to-slate-800/50 p-6 backdrop-blur-sm">
-                <div class="mb-6">
-                  <h3 class="text-lg font-semibold text-white">User Retention Cohorts</h3>
-                  <p class="text-sm text-slate-500">Weekly cohort analysis</p>
+              <div class="rounded-[2.5rem] border border-white/5 bg-[#0d0d0e] p-10 shadow-2xl">
+                <div class="mb-8">
+                  <h3 class="text-2xl font-black text-white tracking-tight">Retention Cohorts</h3>
+                  <p class="text-sm font-medium text-slate-500">Longitudinal user engagement analysis.</p>
                 </div>
-                <div class="overflow-x-auto">
-                  <table class="w-full">
+                <div class="overflow-hidden rounded-3xl border border-white/5 bg-black/20">
+                  <table class="w-full text-left border-collapse">
                     <thead>
-                      <tr class="border-b border-slate-800">
-                        <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-400">Cohort</th>
-                        <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-400">Size</th>
-                        <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-400">Week 1</th>
-                        <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-400">Week 2</th>
-                        <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-400">Week 4</th>
+                      <tr class="border-b border-white/5">
+                        <th class="px-6 py-5 text-[10px] font-black uppercase tracking-widest text-slate-500">Cohort Week</th>
+                        <th class="px-6 py-5 text-[10px] font-black uppercase tracking-widest text-slate-500">Entities</th>
+                        <th class="px-6 py-5 text-[10px] font-black uppercase tracking-widest text-slate-500">W1 Retention</th>
+                        <th class="px-6 py-5 text-[10px] font-black uppercase tracking-widest text-slate-500">W2 Retention</th>
+                        <th class="px-6 py-5 text-[10px] font-black uppercase tracking-widest text-slate-500">W4 Retention</th>
                       </tr>
                     </thead>
-                    <tbody class="divide-y divide-slate-800/50">
+                    <tbody class="divide-y divide-white/[0.02]">
                       <For each={props.adminCohorts!.cohort_sizes?.slice(0, 6) || []}>
                         {cohortSize => {
                           const cohortWeek = cohortSize.cohort_week;
@@ -745,30 +773,32 @@ export const AdminDashboard: Component<AdminDashboardProps> = props => {
                           const week2 = getRetention(2);
                           const week4 = getRetention(4);
                           const getRetentionColor = (retained: number, total: number) => {
-                            if (total === 0) return 'text-slate-500';
+                            if (total === 0) return 'text-slate-600';
                             const rate = retained / total;
-                            if (rate >= 0.5) return 'text-emerald-400';
-                            if (rate >= 0.25) return 'text-amber-400';
-                            return 'text-red-400';
+                            if (rate >= 0.5) return 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20';
+                            if (rate >= 0.25) return 'text-amber-400 bg-amber-500/10 border-amber-500/20';
+                            return 'text-rose-400 bg-rose-500/10 border-rose-500/20';
                           };
                           return (
-                            <tr class="transition-colors hover:bg-slate-800/30">
-                              <td class="px-4 py-3 font-medium text-white">{cohortWeek}</td>
-                              <td class="px-4 py-3 text-slate-300">{size}</td>
-                              <td class="px-4 py-3">
-                                <span class={getRetentionColor(week1, size)}>
-                                  {week1} <span class="text-slate-500">({size > 0 ? Math.round((week1 / size) * 100) : 0}%)</span>
-                                </span>
+                            <tr class="group transition-colors hover:bg-white/[0.02]">
+                              <td class="px-6 py-5 font-bold text-white tracking-tight">{cohortWeek}</td>
+                              <td class="px-6 py-5">
+                                <span class="rounded-lg bg-white/5 px-2.5 py-1 text-xs font-black text-slate-400">{size}</span>
                               </td>
-                              <td class="px-4 py-3">
-                                <span class={getRetentionColor(week2, size)}>
-                                  {week2} <span class="text-slate-500">({size > 0 ? Math.round((week2 / size) * 100) : 0}%)</span>
-                                </span>
+                              <td class="px-6 py-5">
+                                <div class={`inline-flex items-center gap-2 rounded-xl border px-3 py-1.5 text-xs font-black ${getRetentionColor(week1, size)}`}>
+                                  {week1} <span class="opacity-50">({size > 0 ? Math.round((week1 / size) * 100) : 0}%)</span>
+                                </div>
                               </td>
-                              <td class="px-4 py-3">
-                                <span class={getRetentionColor(week4, size)}>
-                                  {week4} <span class="text-slate-500">({size > 0 ? Math.round((week4 / size) * 100) : 0}%)</span>
-                                </span>
+                              <td class="px-6 py-5">
+                                <div class={`inline-flex items-center gap-2 rounded-xl border px-3 py-1.5 text-xs font-black ${getRetentionColor(week2, size)}`}>
+                                  {week2} <span class="opacity-50">({size > 0 ? Math.round((week2 / size) * 100) : 0}%)</span>
+                                </div>
+                              </td>
+                              <td class="px-6 py-5">
+                                <div class={`inline-flex items-center gap-2 rounded-xl border px-3 py-1.5 text-xs font-black ${getRetentionColor(week4, size)}`}>
+                                  {week4} <span class="opacity-50">({size > 0 ? Math.round((week4 / size) * 100) : 0}%)</span>
+                                </div>
                               </td>
                             </tr>
                           );
@@ -783,59 +813,59 @@ export const AdminDashboard: Component<AdminDashboardProps> = props => {
         </Show>
       </Show>
 
-      {/* Activity Tab */}
       <Show when={activeTab() === 'activity'}>
-        <div class="space-y-6">
-          <div class="flex items-center justify-between">
+        <div class="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+          <div class="flex items-center justify-between border-b border-white/5 pb-6">
             <div>
-              <h2 class="text-xl font-semibold text-white">Activity Log</h2>
-              <p class="text-sm text-slate-500">Complete event history</p>
+              <h2 class="text-3xl font-black text-white tracking-tight">System Ledger</h2>
+              <p class="text-sm font-medium text-slate-500">Immutable audit trail of all global entity interactions.</p>
             </div>
             <button
               onClick={() => props.onExport('audit')}
-              class="flex items-center gap-2 rounded-xl border border-slate-700/50 bg-slate-800/80 px-4 py-2.5 text-sm font-medium text-white backdrop-blur-sm transition-all hover:border-slate-600 hover:bg-slate-700/80"
+              class="flex items-center gap-3 rounded-[1.25rem] bg-white/[0.03] border border-white/10 px-6 py-4 text-sm font-bold text-white transition-all hover:bg-white/[0.08]"
             >
-              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-              </svg>
-              Export Log
+              <FileText size={18} class="text-amber-400" />
+              Download Full Audit
             </button>
           </div>
 
-          <div class="rounded-2xl border border-slate-800/60 bg-gradient-to-br from-slate-900/90 to-slate-800/50 backdrop-blur-sm">
-            <div class="max-h-[600px] divide-y divide-slate-800/50 overflow-y-auto">
+          <div class="overflow-hidden rounded-[2.5rem] border border-white/5 bg-[#0d0d0e] shadow-2xl">
+            <div class="max-h-[800px] divide-y divide-white/[0.03] overflow-y-auto custom-scrollbar">
               <For each={props.adminActivity}>
                 {activity => {
                   const { icon, bg } = getActivityIcon(activity.type);
                   return (
-                    <div class="group flex items-start gap-4 p-5 transition-colors hover:bg-slate-800/30">
-                      <div class={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl ${bg}`}>
-                        <span class="text-xl">{icon}</span>
+                    <div class="group flex items-start gap-6 p-6 transition-all hover:bg-white/[0.02]">
+                      <div class={`flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl shadow-inner transition-transform group-hover:scale-110 ${bg}`}>
+                        <span class="text-2xl">{icon}</span>
                       </div>
                       <div class="min-w-0 flex-1">
-                        <p class="text-sm font-medium text-white">{activity.description}</p>
-                        <div class="mt-1 flex flex-wrap items-center gap-3 text-xs text-slate-500">
-                          <span>{api.formatRelativeTime(activity.timestamp)}</span>
-                          <Show when={activity.user_email}>
-                            <span class="flex items-center gap-1">
-                              <span>•</span>
-                              <span class="text-slate-400">{activity.user_email}</span>
-                            </span>
-                          </Show>
+                        <div class="flex items-center gap-3">
+                          <p class="text-base font-bold text-white tracking-tight">{activity.description}</p>
                           <Show when={activity.platform}>
-                            <span class="flex items-center gap-1">
-                              <span>•</span>
-                              <span class="rounded bg-slate-800 px-1.5 py-0.5 text-slate-400">{activity.platform}</span>
-                            </span>
+                            <span class="rounded-lg bg-white/5 border border-white/5 px-2 py-0.5 text-[9px] font-black uppercase text-slate-500">{activity.platform}</span>
+                          </Show>
+                        </div>
+                        <div class="mt-2 flex flex-wrap items-center gap-4 text-xs font-bold text-slate-600">
+                          <div class="flex items-center gap-1.5">
+                            <Calendar size={14} />
+                            <span>{api.formatRelativeTime(activity.timestamp)}</span>
+                          </div>
+                          <Show when={activity.user_email}>
+                            <div class="flex items-center gap-1.5">
+                              <span class="h-1 w-1 rounded-full bg-slate-800" />
+                              <Users size={14} />
+                              <span class="text-indigo-400/80">{activity.user_email}</span>
+                            </div>
                           </Show>
                         </div>
                       </div>
                       <Show when={activity.user_id}>
                         <button
                           onClick={() => props.onUserClick(activity.user_id)}
-                          class="shrink-0 rounded-lg bg-slate-800/80 px-4 py-2 text-xs font-medium text-indigo-400 opacity-0 transition-all hover:bg-slate-700 hover:text-indigo-300 group-hover:opacity-100"
+                          class="shrink-0 rounded-xl bg-white/[0.03] border border-white/5 px-5 py-2.5 text-xs font-black text-slate-400 opacity-0 transition-all hover:bg-white/10 hover:text-white group-hover:opacity-100"
                         >
-                          View User →
+                          Trace Entity →
                         </button>
                       </Show>
                     </div>
@@ -847,67 +877,48 @@ export const AdminDashboard: Component<AdminDashboardProps> = props => {
         </div>
       </Show>
 
-      {/* Analytics Tab */}
       <Show when={activeTab() === 'analytics'}>
-        <div class="space-y-6">
+        <div class="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 pb-20">
           <SmartInsights target="admin" />
           
-          <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
-            <MetricCard
-              icon={<Users size={20} class="text-cyan-400" />}
-              title="DAU"
-              value={props.adminAnalytics?.dau?.toLocaleString() || '0'}
-              subtitle="Daily Active Users"
-              iconBg="bg-cyan-500/20"
-            />
-            <MetricCard
-              icon={<Calendar size={20} class="text-blue-400" />}
-              title="WAU"
-              value={props.adminAnalytics?.wau?.toLocaleString() || '0'}
-              subtitle="Weekly Active Users"
-              iconBg="bg-blue-500/20"
-            />
-            <MetricCard
-              icon={<CalendarDays size={20} class="text-indigo-400" />}
-              title="MAU"
-              value={props.adminAnalytics?.mau?.toLocaleString() || '0'}
-              subtitle="Monthly Active Users"
-              iconBg="bg-indigo-500/20"
-            />
-            <MetricCard
-              icon={<RefreshCw size={20} class="text-emerald-400" />}
-              title="Retention"
-              value={`${props.adminAnalytics?.retention_rate || 0}%`}
-              subtitle="Week over week"
-              iconBg="bg-emerald-500/20"
-            />
-            <MetricCard
-              icon={<Zap size={20} class="text-purple-400" />}
-              title="Events Today"
-              value={props.adminAnalytics?.events_today?.toLocaleString() || '0'}
-              subtitle="Telemetry events"
-              iconBg="bg-purple-500/20"
-            />
+          <div class="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-5">
+            {[
+              { label: 'DAU', value: props.adminAnalytics?.dau, sub: 'Daily Active', color: 'text-cyan-400', icon: <Users size={18} /> },
+              { label: 'WAU', value: props.adminAnalytics?.wau, sub: 'Weekly Active', color: 'text-blue-400', icon: <Calendar size={18} /> },
+              { label: 'MAU', value: props.adminAnalytics?.mau, sub: 'Monthly Active', color: 'text-indigo-400', icon: <CalendarDays size={18} /> },
+              { label: 'Retention', value: `${props.adminAnalytics?.retention_rate || 0}%`, sub: 'W-o-W Rate', color: 'text-emerald-400', icon: <RefreshCw size={18} /> },
+              { label: 'Events', value: props.adminAnalytics?.events_today, sub: 'Today (24h)', color: 'text-purple-400', icon: <Zap size={18} /> },
+            ].map(stat => (
+              <div class="rounded-3xl border border-white/5 bg-[#0d0d0e] p-6 shadow-xl transition-all hover:border-white/10">
+                <div class="mb-4 flex items-center justify-between">
+                  <div class={`flex h-10 w-10 items-center justify-center rounded-xl bg-white/[0.03] ${stat.color}`}>
+                    {stat.icon}
+                  </div>
+                  <span class="text-[10px] font-black uppercase tracking-widest text-slate-600">{stat.label}</span>
+                </div>
+                <div class="text-2xl font-black text-white">{stat.value?.toLocaleString() || '0'}</div>
+                <div class="mt-1 text-[10px] font-bold uppercase tracking-tight text-slate-500 opacity-60">{stat.sub}</div>
+              </div>
+            ))}
           </div>
 
           <div class="grid gap-6 lg:grid-cols-2">
-            {/* Commands by Type */}
-            <div class="rounded-2xl border border-slate-800/60 bg-gradient-to-br from-slate-900/90 to-slate-800/50 p-6 backdrop-blur-sm">
-              <h3 class="mb-4 text-lg font-semibold text-white">Most Used Commands</h3>
-              <div class="space-y-3">
+            <div class="rounded-[2.5rem] border border-white/5 bg-[#0d0d0e] p-10 shadow-2xl">
+              <h3 class="mb-8 text-xl font-black text-white tracking-tight uppercase tracking-widest">Most Executed Operations</h3>
+              <div class="space-y-6">
                 <For each={props.adminAnalytics?.commands_by_type || []}>
-                  {(cmd, _i) => {
+                  {(cmd) => {
                     const maxCount = props.adminAnalytics?.commands_by_type?.[0]?.count || 1;
                     const percentage = (cmd.count / maxCount) * 100;
                     return (
                       <div class="group">
-                        <div class="mb-1 flex items-center justify-between text-sm">
-                          <span class="font-medium text-white">{cmd.command}</span>
-                          <span class="text-slate-400">{cmd.count.toLocaleString()}</span>
+                        <div class="mb-2 flex items-center justify-between">
+                          <span class="text-sm font-bold text-slate-300 group-hover:text-white transition-colors uppercase tracking-tight">{cmd.command}</span>
+                          <span class="text-xs font-black text-indigo-400">{cmd.count.toLocaleString()} ops</span>
                         </div>
-                        <div class="h-2 overflow-hidden rounded-full bg-slate-800">
+                        <div class="h-2.5 overflow-hidden rounded-full bg-white/[0.03] p-0.5">
                           <div
-                            class="h-full rounded-full bg-gradient-to-r from-cyan-500 to-blue-500 transition-all"
+                            class="h-full rounded-full bg-gradient-to-r from-cyan-500 to-indigo-500 transition-all duration-1000 shadow-[0_0_12px_rgba(99,102,241,0.4)]"
                             style={{ width: `${percentage}%` }}
                           />
                         </div>
@@ -915,29 +926,25 @@ export const AdminDashboard: Component<AdminDashboardProps> = props => {
                     );
                   }}
                 </For>
-                <Show when={!props.adminAnalytics?.commands_by_type?.length}>
-                  <p class="py-4 text-center text-sm text-slate-500">No command data yet</p>
-                </Show>
               </div>
             </div>
 
-            {/* Features by Usage */}
-            <div class="rounded-2xl border border-slate-800/60 bg-gradient-to-br from-slate-900/90 to-slate-800/50 p-6 backdrop-blur-sm">
-              <h3 class="mb-4 text-lg font-semibold text-white">Feature Usage</h3>
-              <div class="space-y-3">
+            <div class="rounded-[2.5rem] border border-white/5 bg-[#0d0d0e] p-10 shadow-2xl">
+              <h3 class="mb-8 text-xl font-black text-white tracking-tight uppercase tracking-widest">High-Utility Features</h3>
+              <div class="space-y-6">
                 <For each={props.adminAnalytics?.features_by_usage || []}>
                   {(feature) => {
                     const maxCount = props.adminAnalytics?.features_by_usage?.[0]?.count || 1;
                     const percentage = (feature.count / maxCount) * 100;
                     return (
                       <div class="group">
-                        <div class="mb-1 flex items-center justify-between text-sm">
-                          <span class="font-medium text-white">{feature.feature}</span>
-                          <span class="text-slate-400">{feature.count.toLocaleString()}</span>
+                        <div class="mb-2 flex items-center justify-between">
+                          <span class="text-sm font-bold text-slate-300 group-hover:text-white transition-colors uppercase tracking-tight">{feature.feature}</span>
+                          <span class="text-xs font-black text-purple-400">{feature.count.toLocaleString()} hits</span>
                         </div>
-                        <div class="h-2 overflow-hidden rounded-full bg-slate-800">
+                        <div class="h-2.5 overflow-hidden rounded-full bg-white/[0.03] p-0.5">
                           <div
-                            class="h-full rounded-full bg-gradient-to-r from-purple-500 to-pink-500 transition-all"
+                            class="h-full rounded-full bg-gradient-to-r from-purple-500 to-pink-500 transition-all duration-1000 shadow-[0_0_12px_rgba(236,72,153,0.4)]"
                             style={{ width: `${percentage}%` }}
                           />
                         </div>
@@ -945,197 +952,153 @@ export const AdminDashboard: Component<AdminDashboardProps> = props => {
                     );
                   }}
                 </For>
-                <Show when={!props.adminAnalytics?.features_by_usage?.length}>
-                  <p class="py-4 text-center text-sm text-slate-500">No feature data yet</p>
-                </Show>
               </div>
             </div>
           </div>
 
-          {/* DAU Trend Chart */}
-          <div class="rounded-2xl border border-slate-800 bg-slate-900/50 p-6">
-            <h3 class="mb-4 text-lg font-semibold text-white">Daily Active Users Trend</h3>
-            <div class="h-64 w-full">
-              <AreaChart
-                data={props.analyticsData!.dau_trend.map(d => ({
+          <div class="rounded-[2.5rem] border border-white/5 bg-[#0d0d0e] p-10 shadow-2xl">
+            <div class="mb-8 flex items-center justify-between">
+              <div>
+                <h3 class="text-2xl font-black text-white tracking-tight uppercase">Activity Saturation</h3>
+                <p class="text-sm font-medium text-slate-500">Real-time daily active user fluctuations.</p>
+              </div>
+              <div class="flex items-center gap-4">
+                <div class="flex items-center gap-2">
+                  <div class="h-2 w-2 rounded-full bg-blue-500" />
+                  <span class="text-[10px] font-black uppercase text-slate-500">Current Load</span>
+                </div>
+              </div>
+            </div>
+            <div class="h-80 w-full">
+              <BarChart
+                data={props.adminAnalytics?.dau_trend?.map(d => ({
                   label: new Date(d.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
                   value: d.active_users
-                }))}
-                color="#3b82f6"
+                })) || []}
+                height={320}
+                gradient="indigo"
+                animated
+                showLabels
               />
             </div>
           </div>
 
-          {/* Time Saved Trend Chart */}
-          <div class="rounded-2xl border border-slate-800 bg-slate-900/50 p-6">
-            <div class="mb-4 flex items-center justify-between">
-              <h3 class="text-lg font-semibold text-white">Cumulative Productivity Impact</h3>
-              <div class="flex items-center gap-2 text-xs text-emerald-400">
-                <TrendingUp size={14} />
-                <span>+12% vs last month</span>
+          <div class="rounded-[2.5rem] border border-white/5 bg-[#0d0d0e] p-10 shadow-2xl">
+            <div class="mb-10 flex items-center justify-between">
+              <div>
+                <h3 class="text-2xl font-black text-white tracking-tight uppercase">Economic Impact</h3>
+                <p class="text-sm font-medium text-slate-500 text-opacity-80">Cumulative dev-hours reclaimed via OMG optimization.</p>
+              </div>
+              <div class="flex items-center gap-2 rounded-full bg-emerald-500/10 px-4 py-2 ring-1 ring-emerald-500/20">
+                <TrendingUp size={14} class="text-emerald-400" />
+                <span class="text-[10px] font-black uppercase tracking-widest text-emerald-400">+12% Gain MoM</span>
               </div>
             </div>
-            <div class="h-64 w-full">
-              <AreaChart
-                data={props.analyticsData!.time_saved?.trend?.map((d: any) => ({
+            <div class="h-80 w-full">
+              <BarChart
+                data={props.adminAnalytics?.time_saved?.trend?.map((d: any) => ({
                   label: new Date(d.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
-                  value: Math.round(d.time_saved / 3600000) // Convert to hours
+                  value: Math.round(d.time_saved / 3600000)
                 })) || []}
-                color="#10b981"
+                height={320}
+                gradient="emerald"
+                animated
+                showLabels
+                tooltipFormatter={(v) => `${v} hours`}
               />
-            </div>
-            <div class="mt-4 flex justify-center gap-6 text-xs text-slate-500">
-              <div class="flex items-center gap-1.5">
-                <div class="h-2 w-2 rounded-full bg-emerald-500" />
-                <span>Total Hours Saved</span>
-              </div>
             </div>
           </div>
 
           <div class="grid gap-6 lg:grid-cols-2">
-            {/* Version Distribution */}
-            <div class="rounded-2xl border border-slate-800/60 bg-gradient-to-br from-slate-900/90 to-slate-800/50 p-6 backdrop-blur-sm">
-              <h3 class="mb-4 text-lg font-semibold text-white">Version Distribution</h3>
-              <div class="space-y-3">
+            <div class="rounded-[2.5rem] border border-white/5 bg-[#0d0d0e] p-10 shadow-2xl">
+              <h3 class="mb-8 text-xl font-black text-white tracking-tight uppercase tracking-widest">Global Fleet Versions</h3>
+              <div class="space-y-4">
                 <For each={props.adminAnalytics?.version_distribution || []}>
                   {(ver) => {
                     const total = (props.adminAnalytics?.version_distribution || []).reduce((s, v) => s + v.count, 0) || 1;
                     const percentage = (ver.count / total) * 100;
                     return (
-                      <div class="flex items-center justify-between rounded-lg bg-slate-800/50 p-3">
-                        <div class="flex items-center gap-3">
-                          <span class="rounded bg-emerald-500/20 px-2 py-1 font-mono text-xs text-emerald-400">v{ver.version}</span>
-                          <span class="text-sm text-slate-300">{ver.count.toLocaleString()} users</span>
+                      <div class="group flex items-center justify-between rounded-2xl bg-white/[0.02] p-5 transition-all hover:bg-white/[0.05]">
+                        <div class="flex items-center gap-4">
+                          <span class="rounded-lg bg-emerald-500/10 border border-emerald-500/20 px-3 py-1.5 font-mono text-xs font-black text-emerald-400 shadow-inner group-hover:scale-110 transition-transform">v{ver.version}</span>
+                          <span class="text-sm font-bold text-slate-400 uppercase tracking-tight">{ver.count.toLocaleString()} entities</span>
                         </div>
-                        <span class="text-sm font-medium text-white">{percentage.toFixed(1)}%</span>
+                        <span class="text-sm font-black text-white">{percentage.toFixed(1)}%</span>
                       </div>
                     );
                   }}
                 </For>
-                <Show when={!props.adminAnalytics?.version_distribution?.length}>
-                  <p class="py-4 text-center text-sm text-slate-500">No version data yet</p>
-                </Show>
               </div>
             </div>
 
-            {/* Platform Distribution */}
-            <div class="rounded-2xl border border-slate-800/60 bg-gradient-to-br from-slate-900/90 to-slate-800/50 p-6 backdrop-blur-sm">
-              <h3 class="mb-4 text-lg font-semibold text-white">Platform Distribution</h3>
-              <div class="space-y-3">
+            <div class="rounded-[2.5rem] border border-white/5 bg-[#0d0d0e] p-10 shadow-2xl">
+              <h3 class="mb-8 text-xl font-black text-white tracking-tight uppercase tracking-widest">Platform Saturation</h3>
+              <div class="space-y-4">
                 <For each={props.adminAnalytics?.platform_distribution || []}>
                   {(plat) => {
                     const total = (props.adminAnalytics?.platform_distribution || []).reduce((s, p) => s + p.count, 0) || 1;
                     const percentage = (plat.count / total) * 100;
                     const platformIcon = plat.platform.includes('linux') ? '🐧' : plat.platform.includes('darwin') ? '🍎' : '💻';
                     return (
-                      <div class="flex items-center justify-between rounded-lg bg-slate-800/50 p-3">
-                        <div class="flex items-center gap-3">
-                          <span class="text-xl">{platformIcon}</span>
-                          <span class="text-sm text-slate-300">{plat.platform}</span>
+                      <div class="group flex items-center justify-between rounded-2xl bg-white/[0.02] p-5 transition-all hover:bg-white/[0.05]">
+                        <div class="flex items-center gap-4">
+                          <span class="text-3xl group-hover:scale-125 transition-transform duration-500">{platformIcon}</span>
+                          <div>
+                            <span class="block text-sm font-black text-white uppercase tracking-widest">{plat.platform}</span>
+                            <span class="text-[10px] font-bold text-slate-600 uppercase">{plat.count.toLocaleString()} Nodes</span>
+                          </div>
                         </div>
-                        <div class="flex items-center gap-3">
-                          <span class="text-sm text-slate-400">{plat.count.toLocaleString()}</span>
-                          <span class="text-sm font-medium text-white">{percentage.toFixed(1)}%</span>
-                        </div>
+                        <span class="text-lg font-black text-white">{percentage.toFixed(1)}%</span>
                       </div>
                     );
                   }}
                 </For>
-                <Show when={!props.adminAnalytics?.platform_distribution?.length}>
-                  <p class="py-4 text-center text-sm text-slate-500">No platform data yet</p>
-                </Show>
               </div>
             </div>
           </div>
 
-          {/* Performance Metrics */}
-          <div class="rounded-2xl border border-slate-800/60 bg-gradient-to-br from-slate-900/90 to-slate-800/50 p-6 backdrop-blur-sm">
-            <h3 class="mb-4 text-lg font-semibold text-white">Performance Metrics (Last 7 Days)</h3>
+          <div class="rounded-[2.5rem] border border-white/5 bg-[#0d0d0e] p-10 shadow-2xl overflow-hidden">
+            <h3 class="mb-8 text-xl font-black text-white tracking-tight uppercase tracking-widest">Entity Performance Ledger</h3>
             <div class="overflow-x-auto">
-              <table class="w-full">
+              <table class="w-full text-left">
                 <thead>
-                  <tr class="border-b border-slate-800">
-                    <th class="px-4 py-3 text-left text-sm font-medium text-slate-400">Operation</th>
-                    <th class="px-4 py-3 text-right text-sm font-medium text-slate-400">P50</th>
-                    <th class="px-4 py-3 text-right text-sm font-medium text-slate-400">P95</th>
-                    <th class="px-4 py-3 text-right text-sm font-medium text-slate-400">P99</th>
-                    <th class="px-4 py-3 text-right text-sm font-medium text-slate-400">Count</th>
+                  <tr class="border-b border-white/5">
+                    <th class="px-6 py-5 text-[10px] font-black uppercase tracking-widest text-slate-500">Operation / Protocol</th>
+                    <th class="px-6 py-5 text-right text-[10px] font-black uppercase tracking-widest text-slate-500">P50</th>
+                    <th class="px-6 py-5 text-right text-[10px] font-black uppercase tracking-widest text-slate-500">P95</th>
+                    <th class="px-6 py-5 text-right text-[10px] font-black uppercase tracking-widest text-slate-500">P99</th>
+                    <th class="px-6 py-5 text-right text-[10px] font-black uppercase tracking-widest text-slate-500">Ops/Sec</th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody class="divide-y divide-white/[0.02]">
                   <For each={Object.entries(props.adminAnalytics?.performance || {})}>
                     {([op, stats]) => (
-                      <tr class="border-b border-slate-800/50">
-                        <td class="px-4 py-3 font-medium text-white">{op}</td>
-                        <td class="px-4 py-3 text-right text-emerald-400">{stats.p50}ms</td>
-                        <td class="px-4 py-3 text-right text-amber-400">{stats.p95}ms</td>
-                        <td class="px-4 py-3 text-right text-red-400">{stats.p99}ms</td>
-                        <td class="px-4 py-3 text-right text-slate-400">{stats.count.toLocaleString()}</td>
+                      <tr class="group transition-colors hover:bg-white/[0.02]">
+                        <td class="px-6 py-5">
+                          <span class="font-bold text-white tracking-tight group-hover:text-indigo-400 transition-colors">{op}</span>
+                        </td>
+                        <td class="px-6 py-5 text-right">
+                          <span class="rounded-lg bg-emerald-500/10 px-2.5 py-1 text-xs font-black text-emerald-400 border border-emerald-500/20">{stats.p50}ms</span>
+                        </td>
+                        <td class="px-6 py-5 text-right">
+                          <span class="rounded-lg bg-amber-500/10 px-2.5 py-1 text-xs font-black text-amber-400 border border-amber-500/20">{stats.p95}ms</span>
+                        </td>
+                        <td class="px-6 py-5 text-right">
+                          <span class="rounded-lg bg-rose-500/10 px-2.5 py-1 text-xs font-black text-rose-400 border border-rose-500/20">{stats.p99}ms</span>
+                        </td>
+                        <td class="px-6 py-5 text-right">
+                          <span class="text-sm font-black text-slate-400">{(stats.count / 604800).toFixed(2)}</span>
+                        </td>
                       </tr>
                     )}
                   </For>
                 </tbody>
               </table>
-              <Show when={!Object.keys(props.adminAnalytics?.performance || {}).length}>
-                <p class="py-8 text-center text-sm text-slate-500">No performance data yet</p>
-              </Show>
             </div>
           </div>
-
-          {/* Errors */}
-          <Show when={props.adminAnalytics?.errors_by_type?.length}>
-            <div class="rounded-2xl border border-red-500/30 bg-red-500/5 p-6">
-              <h3 class="mb-4 flex items-center gap-2 text-lg font-semibold text-red-400">
-                <AlertTriangle size={20} /> Error Tracking
-              </h3>
-              <div class="space-y-2">
-                <For each={props.adminAnalytics?.errors_by_type || []}>
-                  {(err) => (
-                    <div class="flex items-center justify-between rounded-lg bg-red-500/10 p-3">
-                      <span class="font-mono text-sm text-red-300">{err.error_type}</span>
-                      <span class="rounded bg-red-500/20 px-2 py-1 text-sm font-medium text-red-400">{err.count.toLocaleString()}</span>
-                    </div>
-                  )}
-                </For>
-              </div>
-            </div>
-          </Show>
-
-          {/* Gold-Tier: User Funnel */}
-          <div class="rounded-2xl border border-amber-500/30 bg-gradient-to-br from-amber-500/5 to-orange-500/5 p-6">
-            <h3 class="mb-6 flex items-center gap-2 text-lg font-semibold text-amber-400">
-              <Target size={20} /> User Funnel
-            </h3>
-            <div class="flex items-center justify-between gap-2">
-              {(() => {
-                const funnel = props.adminAnalytics?.funnel;
-                const stages = [
-                  { label: 'Installs', value: funnel?.installs || 0, color: 'bg-slate-500' },
-                  { label: 'Activated', value: funnel?.activated || 0, color: 'bg-blue-500' },
-                  { label: 'First Cmd', value: funnel?.first_command || 0, color: 'bg-cyan-500' },
-                  { label: 'Engaged', value: funnel?.engaged_7d || 0, color: 'bg-emerald-500' },
-                  { label: 'Power Users', value: funnel?.power_users || 0, color: 'bg-amber-500' },
-                ];
-                const maxVal = Math.max(...stages.map(s => s.value), 1);
-                return (
-                  <For each={stages}>
-                    {(stage, i) => {
-                      const height = Math.max((stage.value / maxVal) * 120, 20);
-                      const convRate = i() > 0 && stages[i() - 1].value > 0 
-                        ? Math.round((stage.value / stages[i() - 1].value) * 100) 
-                        : 100;
-                      return (
-                        <div class="flex flex-1 flex-col items-center gap-2">
-                          <span class="text-xs text-slate-400">{stage.value.toLocaleString()}</span>
-                          <div 
-                            class={`w-full rounded-t-lg ${stage.color} transition-all`}
-                            style={{ height: `${height}px` }}
-                          />
-                          <span class="text-xs font-medium text-white">{stage.label}</span>
-                          <Show when={i() > 0}>
-                            <span class={`text-xs ${convRate >= 50 ? 'text-emerald-400' : convRate >= 25 ? 'text-amber-400' : 'text-red-400'}`}>
-                              {convRate}%
-                            </span>
+        </div>
+      </Show>
+    </div>
                           </Show>
                         </div>
                       );
@@ -1233,70 +1196,78 @@ export const AdminDashboard: Component<AdminDashboardProps> = props => {
             </div>
           </Show>
 
-          {/* Gold-Tier: Top Errors & Packages */}
-          <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
-            <div class="rounded-2xl border border-red-500/30 bg-red-500/5 p-6">
-              <h3 class="mb-4 flex items-center gap-2 text-lg font-semibold text-red-400">
-                <AlertCircle size={20} /> Top Errors (24h)
-              </h3>
-              <div class="space-y-3">
-                <For each={props.analyticsData!.top_errors?.slice(0, 5) || []}>
+          <div class="grid gap-6 lg:grid-cols-2">
+            <div class="rounded-[2.5rem] border border-rose-500/20 bg-rose-500/[0.02] p-10 shadow-2xl">
+              <h3 class="mb-8 text-xl font-black text-rose-400 tracking-tight uppercase tracking-widest">Global Fault Ledger</h3>
+              <div class="space-y-4">
+                <For each={props.adminAnalytics?.top_errors?.slice(0, 5) || []}>
                   {(err: any) => (
-                    <div class="flex items-center justify-between rounded-lg bg-slate-800/50 p-3">
-                      <div class="max-w-[70%] truncate text-sm font-mono text-slate-300">{err.error_message}</div>
-                      <div class="flex items-center gap-2">
-                        <span class="rounded bg-red-500/20 px-2 py-0.5 text-xs font-bold text-red-400">{err.occurrences}</span>
+                    <div class="flex items-center justify-between rounded-2xl bg-black/40 border border-white/5 p-5 transition-all hover:border-rose-500/30 group">
+                      <div class="max-w-[70%] truncate font-mono text-xs font-bold text-slate-400 group-hover:text-rose-300 transition-colors">{err.error_message}</div>
+                      <div class="flex items-center gap-3">
+                        <span class="text-[10px] font-black text-slate-600 uppercase">Frequency</span>
+                        <span class="rounded-lg bg-rose-500/10 border border-rose-500/20 px-3 py-1 text-xs font-black text-rose-400 shadow-inner">{err.occurrences}x</span>
                       </div>
                     </div>
                   )}
                 </For>
-                <Show when={!props.analyticsData!.top_errors?.length}>
-                  <p class="py-4 text-center text-sm text-slate-500 italic">No errors reported</p>
+                <Show when={!props.adminAnalytics?.top_errors?.length}>
+                  <div class="flex flex-col items-center justify-center py-10 text-center rounded-2xl bg-emerald-500/[0.02] border border-emerald-500/10">
+                    <CheckCircle size={32} class="text-emerald-500/40 mb-3" />
+                    <p class="text-sm font-bold text-emerald-500">Nominal Operation</p>
+                  </div>
                 </Show>
               </div>
             </div>
 
-            <div class="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-6">
-              <h3 class="mb-4 flex items-center gap-2 text-lg font-semibold text-emerald-400">
-                <Package size={20} /> Trending Packages
-              </h3>
-              <div class="space-y-3">
-                <For each={props.analyticsData!.top_packages?.slice(0, 5) || []}>
+            <div class="rounded-[2.5rem] border border-emerald-500/20 bg-emerald-500/[0.02] p-10 shadow-2xl">
+              <h3 class="mb-8 text-xl font-black text-emerald-400 tracking-tight uppercase tracking-widest">Trending Volume</h3>
+              <div class="space-y-4">
+                <For each={props.adminAnalytics?.top_packages?.slice(0, 5) || []}>
                   {(pkg: any) => (
-                    <div class="flex items-center justify-between rounded-lg bg-slate-800/50 p-3">
-                      <div class="text-sm font-medium text-white">{pkg.package_name}</div>
-                      <div class="flex gap-3 text-xs">
-                        <span class="text-slate-400"><span class="text-emerald-400 font-bold">{pkg.install_count}</span> installs</span>
-                        <span class="text-slate-400"><span class="text-indigo-400 font-bold">{pkg.search_count}</span> searches</span>
+                    <div class="flex items-center justify-between rounded-2xl bg-black/40 border border-white/5 p-5 transition-all hover:border-emerald-500/30 group">
+                      <div class="font-bold text-white group-hover:text-emerald-400 transition-colors">{pkg.package_name}</div>
+                      <div class="flex items-center gap-6 text-xs">
+                        <div class="text-right">
+                          <div class="font-black text-emerald-400">{pkg.install_count}</div>
+                          <div class="text-[9px] font-bold text-slate-600 uppercase">Installs</div>
+                        </div>
+                        <div class="text-right">
+                          <div class="font-black text-indigo-400">{pkg.search_count}</div>
+                          <div class="text-[9px] font-bold text-slate-600 uppercase">Searches</div>
+                        </div>
                       </div>
                     </div>
                   )}
                 </For>
-                <Show when={!props.analyticsData!.top_packages?.length}>
-                  <p class="py-4 text-center text-sm text-slate-500 italic">No package data yet</p>
+                <Show when={!props.adminAnalytics?.top_packages?.length}>
+                  <p class="py-10 text-center text-sm font-bold text-slate-600 italic uppercase tracking-widest">No Telemetry Streamed</p>
                 </Show>
               </div>
             </div>
           </div>
 
-          {/* Gold-Tier: Geographic Distribution */}
-          <Show when={props.analyticsData?.geo_distribution?.length}>
-            <div class="rounded-2xl border border-cyan-500/30 bg-cyan-500/5 p-6">
-              <h3 class="mb-4 flex items-center gap-2 text-lg font-semibold text-cyan-400">
-                <Globe size={20} /> Geographic Distribution
-              </h3>
-              <div class="grid grid-cols-2 gap-3 md:grid-cols-4">
-                <For each={props.analyticsData?.geo_distribution?.slice(0, 8) || []}>
+          <Show when={props.adminAnalytics?.geo_distribution?.length}>
+            <div class="rounded-[2.5rem] border border-cyan-500/20 bg-cyan-500/[0.02] p-10 shadow-2xl">
+              <div class="mb-8 flex items-center justify-between">
+                <div>
+                  <h3 class="text-2xl font-black text-cyan-400 tracking-tight uppercase">Global Geographic Density</h3>
+                  <p class="text-sm font-medium text-slate-500">Distribution of machine entities by regional timezone.</p>
+                </div>
+                <Globe size={32} class="text-cyan-500/20" />
+              </div>
+              <div class="grid grid-cols-2 gap-4 md:grid-cols-4">
+                <For each={props.adminAnalytics?.geo_distribution?.slice(0, 8) || []}>
                   {(geo: any) => {
-                    const total = (props.analyticsData?.geo_distribution || []).reduce((s: number, g: any) => s + (g.users || g.count || 0), 0) || 1;
+                    const total = (props.adminAnalytics?.geo_distribution || []).reduce((s: number, g: any) => s + (g.users || g.count || 0), 0) || 1;
                     const val = geo.users || geo.count || 0;
                     const pct = Math.round((val / total) * 100);
                     return (
-                      <div class="rounded-lg bg-slate-800/50 p-3">
-                        <div class="truncate text-sm font-medium text-white">{geo.timezone || geo.dimension || 'Unknown'}</div>
-                        <div class="mt-1 flex items-center justify-between">
-                          <span class="text-xs text-slate-400">{val} users</span>
-                          <span class="text-xs text-cyan-400">{pct}%</span>
+                      <div class="rounded-3xl bg-black/40 border border-white/5 p-6 transition-all hover:bg-white/[0.02] hover:border-cyan-500/30 group">
+                        <div class="truncate text-xs font-black text-slate-500 group-hover:text-cyan-400 transition-colors uppercase tracking-widest">{geo.timezone || geo.dimension || 'Unknown'}</div>
+                        <div class="mt-4 flex items-end justify-between">
+                          <div class="text-2xl font-black text-white">{val.toLocaleString()}</div>
+                          <div class="mb-1 rounded bg-cyan-500/10 px-1.5 py-0.5 text-[10px] font-black text-cyan-400 border border-cyan-500/20">{pct}%</div>
                         </div>
                       </div>
                     );

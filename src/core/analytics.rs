@@ -16,7 +16,14 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::time::Instant;
 
+use parking_lot::RwLock;
+
 const ANALYTICS_API_URL: &str = "https://api.pyro1121.com/api/analytics";
+const MAX_RETRIES: u32 = 5;
+
+/// Global state caches to avoid redundant disk I/O
+static SESSION_CACHE: OnceLock<RwLock<SessionState>> = OnceLock::new();
+static QUEUE_CACHE: OnceLock<RwLock<EventQueue>> = OnceLock::new();
 
 /// Format timestamp consistently for analytics
 fn format_timestamp(ts: jiff::Timestamp) -> String {
@@ -56,6 +63,18 @@ pub enum EventType {
     Error,
     /// Performance metric
     Performance,
+    /// System health/telemetry
+    Telemetry,
+}
+
+/// System telemetry information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SystemStats {
+    pub cpu_cores: usize,
+    pub ram_gb: f64,
+    pub kernel: String,
+    pub os: String,
+    pub arch: String,
 }
 
 /// Analytics event payload
@@ -63,11 +82,14 @@ pub enum EventType {
 pub struct AnalyticsEvent {
     /// Event type
     pub event_type: EventType,
-    /// Event name (e.g., "search", "install", "`node_use`")
+    /// Event name (e.g., "search", "install", "node_use")
     pub event_name: String,
     /// Event properties
     #[serde(default)]
     pub properties: HashMap<String, serde_json::Value>,
+    /// System stats (for hardware-aware analytics)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub system: Option<SystemStats>,
     /// Timestamp (ISO 8601)
     pub timestamp: String,
     /// Session ID (UUID for this CLI session)
@@ -84,6 +106,9 @@ pub struct AnalyticsEvent {
     /// Duration in milliseconds (for performance events)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<u64>,
+    /// Number of retries attempted
+    #[serde(default)]
+    pub retries: u32,
 }
 
 /// Session state stored locally
@@ -111,6 +136,13 @@ impl SessionState {
     }
 
     pub fn load() -> Self {
+        SESSION_CACHE
+            .get_or_init(|| RwLock::new(Self::load_from_disk()))
+            .read()
+            .clone()
+    }
+
+    fn load_from_disk() -> Self {
         Self::path()
             .ok()
             .and_then(|p| std::fs::read_to_string(p).ok())
@@ -119,6 +151,11 @@ impl SessionState {
     }
 
     pub fn save(&self) -> Result<()> {
+        if let Some(cache) = SESSION_CACHE.get() {
+            let mut writer = cache.write();
+            *writer = self.clone();
+        }
+
         let path = Self::path()?;
         let content = serde_json::to_string_pretty(self)?;
         std::fs::write(path, content)?;
@@ -147,7 +184,7 @@ impl SessionState {
         }
     }
 
-    /// Update heartbeat
+    /// Synchronize session heartbeat
     pub fn heartbeat(&mut self) {
         self.last_heartbeat = jiff::Timestamp::now().as_second();
         if let Err(e) = self.save() {
@@ -171,6 +208,13 @@ impl EventQueue {
     }
 
     pub fn load() -> Self {
+        QUEUE_CACHE
+            .get_or_init(|| RwLock::new(Self::load_from_disk()))
+            .read()
+            .clone()
+    }
+
+    fn load_from_disk() -> Self {
         Self::path()
             .ok()
             .and_then(|p| std::fs::read_to_string(p).ok())
@@ -179,6 +223,11 @@ impl EventQueue {
     }
 
     pub fn save(&self) -> Result<()> {
+        if let Some(cache) = QUEUE_CACHE.get() {
+            let mut writer = cache.write();
+            *writer = self.clone();
+        }
+
         let path = Self::path()?;
         let content = serde_json::to_string(self)?;
         std::fs::write(path, content)?;
@@ -187,13 +236,10 @@ impl EventQueue {
 
     pub fn push(&mut self, event: AnalyticsEvent) {
         self.events.push(event);
-        // Keep queue bounded
         if self.events.len() > 1000 {
             self.events.drain(0..500);
         }
-        if let Err(e) = self.save() {
-            tracing::warn!("Failed to save analytics event queue: {}", e);
-        }
+        let _ = self.save();
     }
 
     pub fn needs_flush(&self) -> bool {
@@ -226,6 +272,8 @@ fn get_session() -> SessionState {
                 HashMap::new(),
                 None,
             );
+            // Track geo info once per session
+            track_geo_info();
         }
     }
     session
@@ -240,16 +288,31 @@ pub fn session_id() -> String {
 fn create_event(
     event_type: EventType,
     event_name: &str,
-    properties: HashMap<String, serde_json::Value>,
+    mut properties: HashMap<String, serde_json::Value>,
     duration_ms: Option<u64>,
 ) -> AnalyticsEvent {
     let session = get_session();
     let license = crate::core::license::load_license();
+    let sys = crate::core::sysinfo::SystemInfo::detect();
+
+    let system_stats = SystemStats {
+        cpu_cores: sys.cpu_cores,
+        ram_gb: sys.ram_gb,
+        kernel: sys.kernel,
+        os: std::env::consts::OS.to_string(),
+        arch: std::env::consts::ARCH.to_string(),
+    };
+
+    // Inject system info into properties for backward compatibility with older workers
+    properties.insert("sys_cpu".to_string(), serde_json::json!(system_stats.cpu_cores));
+    properties.insert("sys_ram".to_string(), serde_json::json!(system_stats.ram_gb));
+    properties.insert("sys_kernel".to_string(), serde_json::json!(system_stats.kernel));
 
     AnalyticsEvent {
         event_type,
         event_name: event_name.to_string(),
         properties,
+        system: Some(system_stats),
         timestamp: format_timestamp(jiff::Timestamp::now()),
         session_id: session.session_id,
         machine_id: crate::core::license::get_machine_id(),
@@ -257,6 +320,7 @@ fn create_event(
         version: env!("CARGO_PKG_VERSION").to_string(),
         platform: format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
         duration_ms,
+        retries: 0,
     }
 }
 
@@ -278,7 +342,13 @@ pub fn queue_event(
 }
 
 /// Track a command execution
-pub fn track_command(command: &str, subcommand: Option<&str>, duration_ms: u64, success: bool) {
+pub fn track_command(
+    command: &str,
+    subcommand: Option<&str>,
+    duration_ms: u64,
+    success: bool,
+    backend: Option<&str>,
+) {
     if !is_enabled() || crate::core::paths::test_mode() {
         return;
     }
@@ -289,10 +359,20 @@ pub fn track_command(command: &str, subcommand: Option<&str>, duration_ms: u64, 
         props.insert("subcommand".to_string(), serde_json::json!(sub));
     }
     props.insert("success".to_string(), serde_json::json!(success));
+    if let Some(be) = backend {
+        props.insert("backend".to_string(), serde_json::json!(be));
+    }
+
+    // Add more granular success details if it was a package operation
+    if matches!(command, "install" | "remove" | "upgrade" | "search") {
+        props.insert(
+            "op_type".to_string(),
+            serde_json::json!("package_management"),
+        );
+    }
 
     queue_event(EventType::Command, command, props, Some(duration_ms));
 
-    // Update session
     let mut session = SessionState::load();
     session.commands_this_session += 1;
     session.heartbeat();
@@ -307,7 +387,6 @@ pub fn track_feature(feature: &str, properties: HashMap<String, serde_json::Valu
 
     queue_event(EventType::Feature, feature, properties, None);
 
-    // Update session
     let mut session = SessionState::load();
     if !session.features_used.contains(&feature.to_string()) {
         session.features_used.push(feature.to_string());
@@ -330,7 +409,6 @@ pub fn track_error(error_type: &str, message: &str, context: Option<&str>) {
 
     queue_event(EventType::Error, error_type, props, None);
 
-    // Update session
     let mut session = SessionState::load();
     session.errors_this_session += 1;
     let _ = session.save();
@@ -406,8 +484,7 @@ pub async fn flush_events() -> Result<()> {
     let events = queue.take_events();
     let _ = queue.save();
 
-    // Send batch to API
-    let client = reqwest::Client::new();
+    let client = crate::core::http::shared_client();
     let res = client
         .post(ANALYTICS_API_URL)
         .json(&serde_json::json!({ "events": events }))
@@ -420,10 +497,19 @@ pub async fn flush_events() -> Result<()> {
             tracing::debug!("Flushed {} analytics events", events.len());
         }
         _ => {
-            // Re-queue on failure for "Gold Tier" reliability
+            // Re-queue on failure for "Gold Tier" reliability, with retry limits
             let mut queue = EventQueue::load();
-            for event in events {
-                queue.push(event);
+            for mut event in events {
+                event.retries += 1;
+                if event.retries <= MAX_RETRIES {
+                    queue.push(event);
+                } else {
+                    tracing::warn!(
+                        "Dropping analytics event '{}' after {} retries",
+                        event.event_name,
+                        MAX_RETRIES
+                    );
+                }
             }
         }
     }
@@ -671,6 +757,7 @@ mod tests {
                 event_type: EventType::Command,
                 event_name: format!("test_{i}"),
                 properties: HashMap::new(),
+                system: None,
                 timestamp: String::new(),
                 session_id: String::new(),
                 machine_id: String::new(),
@@ -678,6 +765,7 @@ mod tests {
                 version: String::new(),
                 platform: String::new(),
                 duration_ms: None,
+                retries: 0,
             });
         }
 

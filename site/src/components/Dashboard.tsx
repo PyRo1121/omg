@@ -150,6 +150,7 @@ const Dashboard: Component<{ isOpen: boolean; onClose: () => void }> = props => 
           status: data.status,
           used_seats: data.used_seats,
           max_seats: data.max_seats,
+          usage: data.usage,
         });
         setLicenseKey(data.license_key);
         setView('dashboard');
@@ -332,18 +333,18 @@ const Dashboard: Component<{ isOpen: boolean; onClose: () => void }> = props => 
   const getTierColor = (tier: string) => {
     switch (tier.toLowerCase()) {
       case 'pro':
-        return 'from-indigo-500 to-blue-500';
+        return 'from-indigo-500/20 to-indigo-500/5 border-indigo-500/30 text-indigo-400';
       case 'team':
-        return 'from-purple-500 to-pink-500';
+        return 'from-cyan-500/20 to-cyan-500/5 border-cyan-500/30 text-cyan-400';
       case 'enterprise':
-        return 'from-amber-500 to-orange-500';
+        return 'from-amber-500/20 to-amber-500/5 border-amber-500/30 text-amber-400';
       default:
-        return 'from-slate-500 to-slate-600';
+        return 'from-slate-500/20 to-slate-500/5 border-slate-500/30 text-slate-400';
     }
   };
 
   const formatDate = (dateStr: string) => {
-    if (!dateStr) return 'Never';
+    if (!dateStr || dateStr === 'Never') return 'Never';
     const date = new Date(dateStr);
     return date.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
   };
@@ -351,294 +352,149 @@ const Dashboard: Component<{ isOpen: boolean; onClose: () => void }> = props => 
   return (
     <Show when={props.isOpen}>
       <div
-        class="fixed inset-0 z-[100] flex items-center justify-center p-4"
+        class="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6"
         onClick={e => e.target === e.currentTarget && props.onClose()}
       >
-        <div class="animate-fade-in absolute inset-0 bg-black/80 backdrop-blur-md" />
+        <div class="animate-fade-in absolute inset-0 bg-black/90 backdrop-blur-xl" />
 
-        <div class="animate-scale-in relative max-h-[90vh] w-full max-w-2xl overflow-hidden overflow-y-auto rounded-3xl border border-slate-700/50 bg-gradient-to-b from-slate-800 to-slate-900 shadow-2xl shadow-black/50">
-          {/* Glow effects */}
-          <div class="pointer-events-none absolute -top-20 -right-20 h-40 w-40 rounded-full bg-indigo-500/20 blur-3xl" />
-          <div class="pointer-events-none absolute -bottom-20 -left-20 h-40 w-40 rounded-full bg-purple-500/20 blur-3xl" />
+          <div class="animate-scale-in relative flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-[2rem] border border-white/10 bg-[#0a0a0b] shadow-2xl shadow-black">
+            <div class="pointer-events-none absolute -top-[30%] -left-[10%] h-[70%] w-[70%] rounded-full bg-indigo-500/10 blur-[120px]" />
+            <div class="pointer-events-none absolute -bottom-[30%] -right-[10%] h-[70%] w-[70%] rounded-full bg-purple-500/10 blur-[120px]" />
 
-          <div class="relative p-8">
-            {/* Header */}
-            <div class="mb-8 flex items-center justify-between">
-              <div class="flex items-center gap-3">
-                <div class="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-cyan-400">
-                  <svg
-                    class="h-6 w-6 text-white"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      stroke-width="2"
-                      d="M5.121 17.804A13.937 13.937 0 0112 16c2.5 0 4.847.655 6.879 1.804M15 10a3 3 0 11-6 0 3 3 0 016 0zm6 2a9 9 0 11-18 0 9 9 0 0118 0z"
-                    />
-                  </svg>
-                </div>
-                <div>
-                  <h2 class="text-2xl font-bold text-white">License Dashboard</h2>
-                  <p class="text-sm text-slate-400">Manage your OMG subscription</p>
+            <div class="flex items-center justify-between border-b border-white/[0.05] bg-white/[0.02] px-8 py-6 backdrop-blur-md">
+
+            <div class="flex items-center gap-4">
+              <div class="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 shadow-lg shadow-indigo-500/20">
+                <svg class="h-6 w-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+              </div>
+              <div>
+                <h2 class="text-xl font-bold tracking-tight text-white">OMG Dashboard</h2>
+                <div class="flex items-center gap-2">
+                  <span class="flex h-2 w-2 rounded-full bg-emerald-500" />
+                  <p class="text-xs font-medium text-slate-400">System Status: Operational</p>
                 </div>
               </div>
-              <button
-                onClick={props.onClose}
-                class="rounded-lg p-2 text-slate-400 transition-all hover:bg-slate-700/50 hover:text-white"
-              >
-                <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                    d="M6 18L18 6M6 6l12 12"
-                  />
-                </svg>
-              </button>
             </div>
+            <button
+              onClick={props.onClose}
+              class="flex h-10 w-10 items-center justify-center rounded-full bg-white/[0.05] text-slate-400 transition-all hover:bg-white/10 hover:text-white"
+            >
+              <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
 
+          <div class="flex-1 overflow-y-auto px-8 py-8">
             <Show when={view() === 'login'}>
-              <div class="space-y-6">
-                <div class="rounded-2xl border border-slate-700/50 bg-slate-800/50 p-6">
-                  <div class="mb-5 flex items-start gap-3">
-                    <div class="rounded-lg bg-indigo-500/20 p-2">
-                      <svg
-                        class="h-5 w-5 text-indigo-400"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                          stroke-width="2"
-                          d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
-                        />
-                      </svg>
-                    </div>
-                    <div>
-                      <p class="font-medium text-white">Access Your Dashboard</p>
-                      <p class="text-sm text-slate-400">
-                        Enter the email associated with your license
-                      </p>
-                    </div>
+              <div class="mx-auto max-w-md space-y-8 py-12">
+                <div class="text-center">
+                  <h3 class="text-3xl font-bold text-white">Welcome Back</h3>
+                  <p class="mt-2 text-slate-400">Enter your email to manage your license and view stats</p>
+                </div>
+
+                <div class="space-y-4">
+                  <div class="relative group">
+                    <input
+                      type="email"
+                      value={email()}
+                      onInput={e => setEmail(e.currentTarget.value)}
+                      onKeyPress={e => e.key === 'Enter' && fetchLicense()}
+                      placeholder="name@company.com"
+                      class="w-full rounded-2xl border border-white/10 bg-white/[0.03] px-5 py-4 text-white placeholder-slate-500 transition-all focus:border-indigo-500 focus:bg-white/[0.05] focus:outline-none focus:ring-4 focus:ring-indigo-500/10"
+                    />
                   </div>
 
-                  <input
-                    type="email"
-                    value={email()}
-                    onInput={e => setEmail(e.currentTarget.value)}
-                    onKeyPress={e => e.key === 'Enter' && fetchLicense()}
-                    placeholder="you@company.com"
-                    class="w-full rounded-xl border border-slate-600 bg-slate-900/50 px-4 py-3 text-white placeholder-slate-500 transition-all focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 focus:outline-none"
-                  />
-
                   <Show when={error()}>
-                    <div class="mt-4 flex items-start gap-3 rounded-xl border border-red-500/30 bg-red-500/10 p-4">
-                      <svg
-                        class="mt-0.5 h-5 w-5 flex-shrink-0 text-red-400"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                          stroke-width="2"
-                          d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                        />
+                    <div class="flex items-center gap-3 rounded-2xl border border-red-500/20 bg-red-500/10 p-4 text-sm text-red-400">
+                      <svg class="h-5 w-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                       </svg>
-                      <p class="text-sm text-red-400">{error()}</p>
+                      {error()}
                     </div>
                   </Show>
 
                   <button
                     onClick={fetchLicense}
                     disabled={loading() || !email()}
-                    class="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-indigo-500 to-blue-500 py-4 font-semibold text-white transition-all hover:from-indigo-400 hover:to-blue-400 disabled:from-slate-600 disabled:to-slate-600"
+                    class="relative flex w-full items-center justify-center gap-3 overflow-hidden rounded-2xl bg-white px-8 py-4 font-bold text-black transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50"
                   >
-                    {loading() ? (
-                      <>
-                        <svg class="h-5 w-5 animate-spin" fill="none" viewBox="0 0 24 24">
-                          <circle
-                            class="opacity-25"
-                            cx="12"
-                            cy="12"
-                            r="10"
-                            stroke="currentColor"
-                            stroke-width="4"
-                          />
-                          <path
-                            class="opacity-75"
-                            fill="currentColor"
-                            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                          />
-                        </svg>
-                        Loading...
-                      </>
-                    ) : (
-                      <>
-                        <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                            stroke-width="2"
-                            d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1"
-                          />
-                        </svg>
-                        Access Dashboard
-                      </>
-                    )}
+                    <Show when={loading()}>
+                      <svg class="h-5 w-5 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                      </svg>
+                    </Show>
+                    {loading() ? 'Verifying...' : 'Access Dashboard'}
                   </button>
                 </div>
 
-                <div class="space-y-3 text-center">
+                <div class="flex flex-col gap-4 text-center">
                   <p class="text-sm text-slate-500">
                     Don't have an account?{' '}
-                    <button
-                      onClick={() => setView('register')}
-                      class="text-indigo-400 hover:underline"
-                    >
+                    <button onClick={() => setView('register')} class="font-semibold text-indigo-400 hover:text-indigo-300">
                       Create free account
                     </button>
-                  </p>
-                  <p class="text-xs text-slate-600">
-                    Or{' '}
-                    <a
-                      href="#pricing"
-                      onClick={props.onClose}
-                      class="text-indigo-400 hover:underline"
-                    >
-                      upgrade to Pro
-                    </a>{' '}
-                    for security features
                   </p>
                 </div>
               </div>
             </Show>
 
             <Show when={view() === 'register'}>
-              <div class="space-y-6">
-                <div class="rounded-2xl border border-green-500/30 bg-gradient-to-br from-green-500/10 to-emerald-500/10 p-6">
-                  <div class="mb-5 flex items-start gap-3">
-                    <div class="rounded-lg bg-green-500/20 p-2">
-                      <svg
-                        class="h-5 w-5 text-green-400"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                          stroke-width="2"
-                          d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z"
-                        />
-                      </svg>
-                    </div>
-                    <div>
-                      <p class="font-medium text-white">Create Free Account</p>
-                      <p class="text-sm text-slate-400">
-                        Track your usage, time saved, and most-used commands
-                      </p>
-                    </div>
-                  </div>
+              <div class="mx-auto max-w-md space-y-8 py-12">
+                <div class="text-center">
+                  <h3 class="text-3xl font-bold text-white">Join the Elite</h3>
+                  <p class="mt-2 text-slate-400">Start tracking your productivity and managing packages faster</p>
+                </div>
 
+                <div class="space-y-4">
                   <input
                     type="email"
                     value={email()}
                     onInput={e => setEmail(e.currentTarget.value)}
                     onKeyPress={e => e.key === 'Enter' && registerFreeAccount()}
-                    placeholder="you@email.com"
-                    class="w-full rounded-xl border border-slate-600 bg-slate-900/50 px-4 py-3 text-white placeholder-slate-500 transition-all focus:border-green-500 focus:ring-2 focus:ring-green-500/20 focus:outline-none"
+                    placeholder="name@email.com"
+                    class="w-full rounded-2xl border border-white/10 bg-white/[0.03] px-5 py-4 text-white placeholder-slate-500 transition-all focus:border-emerald-500 focus:bg-white/[0.05] focus:outline-none focus:ring-4 focus:ring-emerald-500/10"
                   />
 
                   <Show when={error()}>
-                    <div class="mt-4 flex items-start gap-3 rounded-xl border border-red-500/30 bg-red-500/10 p-4">
-                      <svg
-                        class="mt-0.5 h-5 w-5 flex-shrink-0 text-red-400"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                          stroke-width="2"
-                          d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                        />
-                      </svg>
-                      <p class="text-sm text-red-400">{error()}</p>
+                    <div class="flex items-center gap-3 rounded-2xl border border-red-500/20 bg-red-500/10 p-4 text-sm text-red-400">
+                      {error()}
                     </div>
                   </Show>
 
                   <button
                     onClick={registerFreeAccount}
                     disabled={loading() || !email()}
-                    class="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-green-500 to-emerald-500 py-4 font-semibold text-white transition-all hover:from-green-400 hover:to-emerald-400 disabled:from-slate-600 disabled:to-slate-600"
+                    class="flex w-full items-center justify-center gap-3 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 px-8 py-4 font-bold text-white transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50"
                   >
-                    {loading() ? (
-                      <>
-                        <svg class="h-5 w-5 animate-spin" fill="none" viewBox="0 0 24 24">
-                          <circle
-                            class="opacity-25"
-                            cx="12"
-                            cy="12"
-                            r="10"
-                            stroke="currentColor"
-                            stroke-width="4"
-                          />
-                          <path
-                            class="opacity-75"
-                            fill="currentColor"
-                            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                          />
-                        </svg>
-                        Creating account...
-                      </>
-                    ) : (
-                      <>
-                        <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                            stroke-width="2"
-                            d="M5 13l4 4L19 7"
-                          />
-                        </svg>
-                        Create Free Account
-                      </>
-                    )}
+                    {loading() ? 'Creating...' : 'Create Free Account'}
                   </button>
+                </div>
 
-                  <div class="mt-4 rounded-xl bg-slate-800/50 p-4">
-                    <p class="mb-2 text-sm font-medium text-slate-300">Free tier includes:</p>
-                    <ul class="space-y-1 text-xs text-slate-400">
-                      <li class="flex items-center gap-2">
-                        <span class="text-green-400">✓</span> Usage tracking & analytics
-                      </li>
-                      <li class="flex items-center gap-2">
-                        <span class="text-green-400">✓</span> Time saved calculations
-                      </li>
-                      <li class="flex items-center gap-2">
-                        <span class="text-green-400">✓</span> Command history & stats
-                      </li>
-                      <li class="flex items-center gap-2">
-                        <span class="text-green-400">✓</span> Package management
-                      </li>
-                      <li class="flex items-center gap-2">
-                        <span class="text-green-400">✓</span> 100+ runtimes via mise
-                      </li>
-                    </ul>
-                  </div>
+                <div class="rounded-2xl border border-white/[0.05] bg-white/[0.02] p-6">
+                  <p class="mb-3 text-xs font-bold uppercase tracking-wider text-slate-500">Free Tier Includes</p>
+                  <ul class="grid grid-cols-2 gap-3 text-sm text-slate-400">
+                    <li class="flex items-center gap-2">
+                      <span class="text-emerald-500">✓</span> Usage Tracking
+                    </li>
+                    <li class="flex items-center gap-2">
+                      <span class="text-emerald-500">✓</span> Analytics
+                    </li>
+                    <li class="flex items-center gap-2">
+                      <span class="text-emerald-500">✓</span> Time Saved
+                    </li>
+                    <li class="flex items-center gap-2">
+                      <span class="text-emerald-500">✓</span> Achievements
+                    </li>
+                  </ul>
                 </div>
 
                 <p class="text-center text-sm text-slate-500">
                   Already have an account?{' '}
-                  <button onClick={() => setView('login')} class="text-indigo-400 hover:underline">
+                  <button onClick={() => setView('login')} class="font-semibold text-indigo-400 hover:text-indigo-300">
                     Sign in
                   </button>
                 </p>
@@ -646,203 +502,102 @@ const Dashboard: Component<{ isOpen: boolean; onClose: () => void }> = props => 
             </Show>
 
             <Show when={view() === 'dashboard' && license()}>
-              <div class="space-y-6">
-                {/* License Status Card */}
-                <div
-                  class={`bg-gradient-to-br ${getTierColor(license()!.tier)} rounded-2xl p-[1px]`}
-                >
-                  <div class="rounded-2xl bg-slate-900 p-6">
-                    <div class="mb-4 flex items-center justify-between">
-                      <div class="flex items-center gap-3">
-                        <div
-                          class={`bg-gradient-to-r px-3 py-1 ${getTierColor(license()!.tier)} rounded-full`}
-                        >
-                          <span class="text-sm font-bold text-white uppercase">
-                            {license()!.tier}
+              <div class="grid grid-cols-1 gap-8 lg:grid-cols-3">
+                <div class="space-y-6 lg:col-span-2">
+                  <div class={`relative overflow-hidden rounded-3xl border p-6 bg-gradient-to-br ${getTierColor(license()!.tier)}`}>
+                    <div class="relative z-10 flex items-center justify-between">
+                      <div>
+                        <div class="flex items-center gap-3">
+                          <h3 class="text-2xl font-bold text-white">{license()!.tier.toUpperCase()}</h3>
+                          <span class={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider ${
+                            license()!.status === 'active' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'
+                          }`}>
+                            {license()!.status}
                           </span>
                         </div>
-                        <span
-                          class={`rounded-full px-2 py-1 text-xs font-medium ${
-                            license()!.status === 'active'
-                              ? 'bg-green-500/20 text-green-400'
-                              : 'bg-red-500/20 text-red-400'
-                          }`}
-                        >
-                          {license()!.status}
-                        </span>
+                        <p class="mt-1 text-sm opacity-70">License active for {email()}</p>
                       </div>
-                      <button
-                        onClick={logout}
-                        class="flex items-center gap-1 text-sm text-slate-400 hover:text-white"
-                      >
-                        <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                            stroke-width="2"
-                            d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"
-                          />
-                        </svg>
-                        Logout
-                      </button>
+                      <div class="text-right">
+                        <p class="text-[10px] font-bold uppercase tracking-wider opacity-50">Expires</p>
+                        <p class="text-sm font-medium">{formatDate(license()!.expires_at)}</p>
+                      </div>
                     </div>
+                  </div>
 
-                    <div class="grid grid-cols-2 gap-4 text-sm">
-                      <div>
-                        <p class="text-slate-400">Email</p>
-                        <p class="font-medium text-white">{email()}</p>
-                      </div>
-                      <div>
-                        <p class="text-slate-400">Expires</p>
-                        <p class="font-medium text-white">{formatDate(license()!.expires_at)}</p>
-                      </div>
-                      <Show when={license()!.max_seats}>
+                  <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <div class="rounded-3xl border border-white/[0.05] bg-white/[0.02] p-6 transition-all hover:bg-white/[0.04]">
+                      <div class="flex items-center justify-between">
                         <div>
-                          <p class="text-slate-400">Seats Used</p>
-                          <p class="font-medium text-white">
-                            {license()!.used_seats || 0} / {license()!.max_seats}
-                          </p>
+                          <p class="text-sm font-medium text-slate-500">Productivity Gained</p>
+                          <h4 class="mt-1 text-3xl font-bold text-emerald-400">
+                            {license()!.usage?.time_saved_ms ? formatTimeSaved(license()!.usage!.time_saved_ms) : '0ms'}
+                          </h4>
                         </div>
-                      </Show>
-                    </div>
-                  </div>
-                </div>
-
-                {/* License Key */}
-                <div class="rounded-2xl border border-slate-700/50 bg-slate-800/50 p-6">
-                  <div class="mb-3 flex items-center justify-between">
-                    <h3 class="flex items-center gap-2 font-semibold text-white">
-                      <svg
-                        class="h-5 w-5 text-indigo-400"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                          stroke-width="2"
-                          d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"
-                        />
-                      </svg>
-                      License Key
-                    </h3>
-                    <button
-                      onClick={() => copyToClipboard(licenseKey())}
-                      class="flex items-center gap-1.5 rounded-lg bg-slate-700/50 px-3 py-1.5 text-sm text-slate-300 transition-all hover:bg-slate-600/50 hover:text-white"
-                    >
-                      {copied() ? (
-                        <>
-                          <svg
-                            class="h-4 w-4 text-green-400"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                          >
-                            <path
-                              stroke-linecap="round"
-                              stroke-linejoin="round"
-                              stroke-width="2"
-                              d="M5 13l4 4L19 7"
-                            />
+                        <div class="rounded-2xl bg-emerald-500/10 p-3 text-emerald-400">
+                          <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                           </svg>
-                          Copied!
-                        </>
-                      ) : (
-                        <>
-                          <svg
-                            class="h-4 w-4"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                          >
-                            <path
-                              stroke-linecap="round"
-                              stroke-linejoin="round"
-                              stroke-width="2"
-                              d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
-                            />
+                        </div>
+                      </div>
+                      <div class="mt-4 flex items-center gap-2">
+                        <div class="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-800">
+                          <div class="h-full w-[65%] rounded-full bg-emerald-500 shadow-[0_0_12px_rgba(16,185,129,0.4)]" />
+                        </div>
+                        <span class="text-[10px] font-bold text-emerald-500">+12%</span>
+                      </div>
+                    </div>
+
+                    <div class="rounded-3xl border border-white/[0.05] bg-white/[0.02] p-6 transition-all hover:bg-white/[0.04]">
+                      <div class="flex items-center justify-between">
+                        <div>
+                          <p class="text-sm font-medium text-slate-500">Daily Streak</p>
+                          <h4 class="mt-1 text-3xl font-bold text-orange-400">
+                            {license()!.usage?.current_streak || 0} Days
+                          </h4>
+                        </div>
+                        <div class="rounded-2xl bg-orange-500/10 p-3 text-orange-400">
+                          <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 18.657A8 8 0 016.343 7.343S7 9 9 10c0-2 .5-5 2.5-7 3 3 3 6 3 6s.5 1 2 2c2 2 2.5 7 .5 10.657z" />
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
                           </svg>
-                          Copy
-                        </>
-                      )}
-                    </button>
-                  </div>
-                  <code class="block rounded-lg bg-slate-900/50 p-3 font-mono text-sm break-all text-green-400">
-                    {licenseKey()}
-                  </code>
-                  <p class="mt-2 text-xs text-slate-500">
-                    Activate with:{' '}
-                    <code class="text-slate-400">omg license activate {licenseKey()}</code>
-                  </p>
-                </div>
-
-                {/* Usage Statistics - All tiers */}
-                <div class="rounded-2xl border border-slate-700/50 bg-slate-800/50 p-6">
-                  <h3 class="mb-4 flex items-center gap-2 font-semibold text-white">
-                    <svg
-                      class="h-5 w-5 text-cyan-400"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        stroke-width="2"
-                        d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
-                      />
-                    </svg>
-                    Usage Statistics
-                  </h3>
-                  <div class="mb-4 grid grid-cols-2 gap-3">
-                    <div class="rounded-xl bg-slate-900/50 p-4 text-center">
-                      <div class="text-2xl font-bold text-green-400">
-                        {license()!.usage?.time_saved_ms
-                          ? formatTimeSaved(license()!.usage!.time_saved_ms)
-                          : '0ms'}
+                        </div>
                       </div>
-                      <div class="text-xs text-slate-500">Time Saved</div>
-                    </div>
-                    <div class="rounded-xl bg-slate-900/50 p-4 text-center">
-                      <div class="text-2xl font-bold text-cyan-400">
-                        {license()!.usage?.total_commands || 0}
-                      </div>
-                      <div class="text-xs text-slate-500">Commands</div>
-                    </div>
-                    <div class="rounded-xl bg-slate-900/50 p-4 text-center">
-                      <div class="text-2xl font-bold text-indigo-400">
-                        {license()!.usage?.queries_today || 0}
-                      </div>
-                      <div class="text-xs text-slate-500">Today</div>
-                    </div>
-                    <div class="flex flex-col items-center justify-center rounded-xl bg-slate-900/50 p-4 text-center">
-                      <div class="flex items-center gap-1 text-2xl font-bold text-orange-400">
-                        🔥 {license()!.usage?.current_streak || 0}
-                      </div>
-                      <div class="text-xs text-slate-500">Day Streak</div>
+                      <p class="mt-4 text-xs text-slate-500">Personal Best: {license()!.usage?.longest_streak || 0} days</p>
                     </div>
                   </div>
 
-                  {/* Achievements */}
-                  <Show
-                    when={
-                      license()!.usage?.achievements && license()!.usage!.achievements.length > 0
-                    }
-                  >
-                    <div class="mt-4 border-t border-slate-700/50 pt-4">
-                      <h4 class="mb-3 flex items-center gap-2 text-sm font-medium text-slate-300">
-                        🏆 Achievements ({license()!.usage!.achievements.length}/12)
-                      </h4>
-                      <div class="flex flex-wrap gap-2">
-                        <For each={license()!.usage!.achievements}>{(id: string) => {
-                          const achievement = ACHIEVEMENTS[id];
-                          return achievement ? (
-                            <div
-                              class="group relative cursor-help rounded-lg bg-slate-700/50 px-2 py-1 text-sm"
-                              title={`${achievement.name}: ${achievement.description}`}
-                            >
-                              <span>{achievement.emoji}</span>
+                  <div class="grid grid-cols-2 gap-4 sm:grid-cols-4">
+                    {[
+                      { label: 'Total Cmds', value: license()!.usage?.total_commands || 0, color: 'text-indigo-400' },
+                      { label: 'Today', value: license()!.usage?.queries_today || 0, color: 'text-cyan-400' },
+                      { label: 'SBOMs', value: license()!.usage?.sbom_generated || 0, color: 'text-purple-400' },
+                      { label: 'CVEs Found', value: license()!.usage?.vulnerabilities_found || 0, color: 'text-rose-400' },
+                    ].map(stat => (
+                      <div class="rounded-2xl border border-white/[0.05] bg-white/[0.01] p-4 text-center">
+                        <p class="text-[10px] font-bold uppercase tracking-wider text-slate-500">{stat.label}</p>
+                        <p class={`mt-1 text-xl font-bold ${stat.color}`}>{stat.value.toLocaleString()}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  <Show when={license()!.usage?.achievements?.length}>
+                    <div class="rounded-3xl border border-white/[0.05] bg-white/[0.01] p-6">
+                      <div class="mb-4 flex items-center justify-between">
+                        <h4 class="text-sm font-bold text-white uppercase tracking-tight">Unlocked Trophies</h4>
+                        <span class="text-xs text-slate-500">{license()!.usage!.achievements.length} / 12</span>
+                      </div>
+                      <div class="flex flex-wrap gap-3">
+                        <For each={license()!.usage!.achievements}>{(id) => {
+                          const ach = ACHIEVEMENTS[id];
+                          return ach ? (
+                            <div class="group relative">
+                              <div class="flex h-12 w-12 cursor-help items-center justify-center rounded-2xl bg-white/[0.05] text-xl transition-all hover:scale-110 hover:bg-white/10">
+                                {ach.emoji}
+                              </div>
+                              <div class="pointer-events-none absolute bottom-full left-1/2 z-20 mb-2 w-48 -translate-x-1/2 scale-95 rounded-xl border border-white/10 bg-[#151516] p-3 text-xs opacity-0 shadow-2xl backdrop-blur-xl transition-all group-hover:scale-100 group-hover:opacity-100">
+                                <p class="font-bold text-white">{ach.name}</p>
+                                <p class="mt-1 leading-relaxed text-slate-400">{ach.description}</p>
+                              </div>
                             </div>
                           ) : null;
                         }}</For>
@@ -851,174 +606,93 @@ const Dashboard: Component<{ isOpen: boolean; onClose: () => void }> = props => 
                   </Show>
                 </div>
 
-                {/* Security Stats - Pro/Team feature */}
-                <Show
-                  when={
-                    license()!.tier.toLowerCase() !== 'free' &&
-                    (license()!.usage?.sbom_generated || license()!.usage?.vulnerabilities_found)
-                  }
-                >
-                  <div class="rounded-2xl border border-slate-700/50 bg-slate-800/50 p-6">
-                    <h3 class="mb-4 flex items-center gap-2 font-semibold text-white">
-                      🛡️ Security Stats
-                    </h3>
-                    <div class="grid grid-cols-2 gap-4">
-                      <div class="rounded-xl bg-slate-900/50 p-4 text-center">
-                        <div class="text-2xl font-bold text-green-400">
-                          {license()!.usage?.sbom_generated || 0}
-                        </div>
-                        <div class="text-xs text-slate-500">SBOMs Generated</div>
-                      </div>
-                      <div class="rounded-xl bg-slate-900/50 p-4 text-center">
-                        <div class="text-2xl font-bold text-amber-400">
-                          {license()!.usage?.vulnerabilities_found || 0}
-                        </div>
-                        <div class="text-xs text-slate-500">CVEs Found</div>
-                      </div>
+                <div class="space-y-6">
+                  <div class="rounded-3xl border border-white/[0.05] bg-white/[0.02] p-6">
+                    <div class="mb-4 flex items-center justify-between">
+                      <h4 class="text-xs font-bold uppercase tracking-wider text-slate-500">License Key</h4>
+                      <button
+                        onClick={() => copyToClipboard(licenseKey())}
+                        class="text-indigo-400 transition-colors hover:text-indigo-300"
+                      >
+                        {copied() ? 'Copied!' : 'Copy'}
+                      </button>
                     </div>
+                    <div class="group relative rounded-2xl border border-white/[0.05] bg-black/40 p-4">
+                      <code class="block truncate font-mono text-sm text-indigo-300">
+                        {licenseKey()}
+                      </code>
+                    </div>
+                    <p class="mt-3 text-[10px] leading-relaxed text-slate-500">
+                      Run <code class="text-indigo-400">omg license activate</code> with this key to link your CLI.
+                    </p>
                   </div>
-                </Show>
 
-                {/* Subscription Management */}
-                <div class="rounded-2xl border border-slate-700/50 bg-slate-800/50 p-6">
-                  <h3 class="mb-4 flex items-center gap-2 font-semibold text-white">
-                    <svg
-                      class="h-5 w-5 text-purple-400"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
+                  {/* Actions */}
+                  <div class="space-y-3">
+                    <button
+                      onClick={openBillingPortal}
+                      disabled={actionLoading()}
+                      class="flex w-full items-center justify-center gap-3 rounded-2xl bg-white/[0.05] px-6 py-4 text-sm font-bold text-white transition-all hover:bg-white/10 disabled:opacity-50"
                     >
-                      <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        stroke-width="2"
-                        d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"
-                      />
-                    </svg>
-                    Subscription
-                  </h3>
-                  <p class="mb-4 text-sm text-slate-400">
-                    Manage your subscription, update payment methods, upgrade, downgrade, or cancel.
-                  </p>
-                  <button
-                    onClick={openBillingPortal}
-                    disabled={actionLoading()}
-                    class="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-purple-500 to-pink-500 py-3 font-medium text-white transition-all hover:from-purple-400 hover:to-pink-400 disabled:opacity-50"
-                  >
-                    <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        stroke-width="2"
-                        d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
-                      />
-                      <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        stroke-width="2"
-                        d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
-                      />
-                    </svg>
-                    Manage Subscription
-                  </button>
-                </div>
+                      <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+                      </svg>
+                      Billing Portal
+                    </button>
 
-                {/* Actions */}
-                <div class="grid grid-cols-2 gap-4">
-                  <button
-                    onClick={refreshLicense}
-                    disabled={actionLoading()}
-                    class="flex items-center justify-center gap-2 rounded-xl border border-slate-600 bg-slate-700/50 py-3 font-medium text-white transition-all hover:bg-slate-600/50 disabled:opacity-50"
-                  >
-                    <svg
-                      class={`h-5 w-5 ${actionLoading() ? 'animate-spin' : ''}`}
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
+                    <div class="grid grid-cols-2 gap-3">
+                      <button
+                        onClick={refreshLicense}
+                        disabled={actionLoading()}
+                        class="flex items-center justify-center gap-2 rounded-2xl border border-white/[0.05] bg-white/[0.02] py-4 text-xs font-bold text-slate-300 transition-all hover:bg-white/[0.05]"
+                      >
+                        <RefreshCw size={14} class={actionLoading() ? 'animate-spin' : ''} />
+                        Refresh
+                      </button>
+                      <button
+                        onClick={regenerateLicense}
+                        disabled={actionLoading()}
+                        class="flex items-center justify-center gap-2 rounded-2xl border border-rose-500/20 bg-rose-500/5 py-4 text-xs font-bold text-rose-400 transition-all hover:bg-rose-500/10"
+                      >
+                        <Zap size={14} />
+                        Regen Key
+                      </button>
+                    </div>
+
+                    <button
+                      onClick={logout}
+                      class="flex w-full items-center justify-center gap-2 py-4 text-xs font-bold text-slate-500 transition-colors hover:text-slate-300"
                     >
-                      <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        stroke-width="2"
-                        d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-                      />
-                    </svg>
-                    Refresh Token
-                  </button>
-
-                  <button
-                    onClick={regenerateLicense}
-                    disabled={actionLoading()}
-                    class="flex items-center justify-center gap-2 rounded-xl border border-amber-500/50 bg-amber-500/20 py-3 font-medium text-amber-400 transition-all hover:bg-amber-500/30 disabled:opacity-50"
-                  >
-                    <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        stroke-width="2"
-                        d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-                      />
-                    </svg>
-                    Regenerate Key
-                  </button>
-                </div>
-
-                {/* Action Message */}
-                <Show when={actionMessage()}>
-                  <div
-                    class={`rounded-xl p-4 text-sm ${
-                      actionMessage().includes('success') || actionMessage().includes('generated')
-                        ? 'border border-green-500/30 bg-green-500/10 text-green-400'
-                        : 'border border-amber-500/30 bg-amber-500/10 text-amber-400'
-                    }`}
-                  >
-                    {actionMessage()}
+                      Logout Session
+                    </button>
                   </div>
-                </Show>
 
-                {/* Help Section */}
-                <div class="rounded-xl border border-slate-700/30 bg-slate-800/30 p-4">
-                  <h4 class="mb-2 flex items-center gap-2 font-medium text-white">
-                    <svg
-                      class="h-4 w-4 text-slate-400"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        stroke-width="2"
-                        d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                      />
-                    </svg>
-                    Need Help?
-                  </h4>
-                  <ul class="space-y-1 text-sm text-slate-400">
-                    <li>
-                      • <strong>Refresh Token</strong>: Get a new JWT without changing your license
-                      key
-                    </li>
-                    <li>
-                      • <strong>Regenerate Key</strong>: Create a new license key if yours was
-                      leaked
-                    </li>
-                    <li>
-                      • Contact{' '}
-                      <a href="mailto:support@pyro1121.com" class="text-indigo-400 hover:underline">
-                        support@pyro1121.com
-                      </a>{' '}
-                      for billing issues
-                    </li>
-                  </ul>
+                  <div class="rounded-3xl bg-indigo-500/5 p-6 border border-indigo-500/10">
+                    <h5 class="flex items-center gap-2 text-xs font-bold text-indigo-400 uppercase">
+                      <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      Pro Tip
+                    </h5>
+                    <p class="mt-2 text-xs leading-relaxed text-indigo-300/60">
+                      Use <code class="text-indigo-300">omg dash</code> in your terminal for a real-time TUI dashboard synced with this account.
+                    </p>
+                  </div>
                 </div>
               </div>
             </Show>
           </div>
+          
+          <Show when={actionMessage()}>
+            <div class="animate-slide-up border-t border-white/[0.05] bg-white/[0.02] px-8 py-3 text-center">
+              <p class="text-sm font-medium text-indigo-400">{actionMessage()}</p>
+            </div>
+          </Show>
         </div>
       </div>
     </Show>
   );
 };
+
 
 export default Dashboard;

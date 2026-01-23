@@ -11,11 +11,28 @@ import {
 
 // Validate license key (called by CLI during activation)
 export async function handleValidateLicense(request: Request, env: Env): Promise<Response> {
-  const url = new URL(request.url);
-  const licenseKey = url.searchParams.get('key');
-  const machineId = url.searchParams.get('machine_id');
-  const userName = url.searchParams.get('user_name');
-  const userEmail = url.searchParams.get('user_email');
+  let licenseKey: string | null = null;
+  let machineId: string | null = null;
+  let userName: string | null = null;
+  let userEmail: string | null = null;
+
+  if (request.method === 'POST') {
+    try {
+      const body = (await request.json()) as any;
+      licenseKey = body.key || body.license_key;
+      machineId = body.machine_id;
+      userName = body.user_name;
+      userEmail = body.user_email;
+    } catch (e) {
+      return errorResponse('Invalid JSON body');
+    }
+  } else {
+    const url = new URL(request.url);
+    licenseKey = url.searchParams.get('key');
+    machineId = url.searchParams.get('machine_id');
+    userName = url.searchParams.get('user_name');
+    userEmail = url.searchParams.get('user_email');
+  }
 
   if (!licenseKey) {
     return errorResponse('License key required');
@@ -50,9 +67,7 @@ export async function handleValidateLicense(request: Request, env: Env): Promise
     }
   }
 
-  // Handle machine registration if machine_id provided
   if (machineId) {
-    // Check if machine already registered
     const existingMachine = await env.DB.prepare(
       `
       SELECT * FROM machines WHERE license_id = ? AND machine_id = ?
@@ -62,7 +77,6 @@ export async function handleValidateLicense(request: Request, env: Env): Promise
       .first();
 
     if (existingMachine) {
-      // Update last seen and user info if provided
       if (userName || userEmail) {
         await env.DB.prepare(
           `
@@ -81,7 +95,6 @@ export async function handleValidateLicense(request: Request, env: Env): Promise
           .run();
       }
     } else {
-      // Check machine limit
       const machineCount = await env.DB.prepare(
         `
         SELECT COUNT(*) as count FROM machines WHERE license_id = ? AND is_active = 1
@@ -98,7 +111,6 @@ export async function handleValidateLicense(request: Request, env: Env): Promise
         });
       }
 
-      // Register new machine with user info
       await env.DB.prepare(
         `
         INSERT INTO machines (id, license_id, machine_id, user_name, user_email, is_active)
@@ -119,8 +131,9 @@ export async function handleValidateLicense(request: Request, env: Env): Promise
     }
   }
 
-  // Generate JWT token for offline validation
-  const token = await generateLicenseJWT(license, machineId, env.JWT_SECRET);
+  const token = env.JWT_PRIVATE_KEY 
+    ? await generateLicenseJWT(license, machineId, env.JWT_PRIVATE_KEY, 'EdDSA')
+    : await generateLicenseJWT(license, machineId, env.JWT_SECRET, 'HS256');
 
   const tier = license.tier as keyof typeof TIER_FEATURES;
   const tierConfig = TIER_FEATURES[tier] || TIER_FEATURES.free;
@@ -352,9 +365,10 @@ export async function handleInstallPing(request: Request, env: Env): Promise<Res
 async function generateLicenseJWT(
   license: Record<string, unknown>,
   machineId: string | null,
-  secret: string
+  secret: string,
+  algorithm: 'HS256' | 'EdDSA' = 'HS256'
 ): Promise<string> {
-  const header = { alg: 'HS256', typ: 'JWT' };
+  const header = { alg: algorithm, typ: 'JWT' };
   const now = Math.floor(Date.now() / 1000);
   const payload = {
     sub: license.customer_id,
@@ -366,17 +380,31 @@ async function generateLicenseJWT(
     lic: license.license_key,
   };
 
-  const encoder = new TextEncoder();
-  const headerB64 = btoa(JSON.stringify(header))
-    .replace(/=/g, '')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_');
-  const payloadB64 = btoa(JSON.stringify(payload))
-    .replace(/=/g, '')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_');
+  const headerB64 = base64UrlEncode(JSON.stringify(header));
+  const payloadB64 = base64UrlEncode(JSON.stringify(payload));
+  const data = `${headerB64}.${payloadB64}`;
 
-  const data = encoder.encode(`${headerB64}.${payloadB64}`);
+  const signature = algorithm === 'EdDSA'
+    ? await eddsaSign(secret, data)
+    : await hmacSign(secret, data);
+
+  return `${data}.${signature}`;
+}
+
+function base64UrlEncode(data: Uint8Array | string): string {
+  if (typeof data === 'string') {
+    return btoa(data).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+  return btoa(String.fromCharCode(...data)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function base64UrlDecode(data: string): string {
+  const padded = data + '==='.slice(0, (4 - (data.length % 4)) % 4);
+  return atob(padded.replace(/-/g, '+').replace(/_/g, '/'));
+}
+
+async function hmacSign(secret: string, data: string): Promise<string> {
+  const encoder = new TextEncoder();
   const key = await crypto.subtle.importKey(
     'raw',
     encoder.encode(secret),
@@ -384,13 +412,28 @@ async function generateLicenseJWT(
     false,
     ['sign']
   );
-  const signature = await crypto.subtle.sign('HMAC', key, data);
-  const signatureB64 = btoa(String.fromCharCode(...new Uint8Array(signature)))
-    .replace(/=/g, '')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_');
+  const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(data));
+  return base64UrlEncode(new Uint8Array(signature));
+}
 
-  return `${headerB64}.${payloadB64}.${signatureB64}`;
+async function eddsaSign(privateKeyDer: string, data: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const keyData = base64UrlDecode(privateKeyDer.replace(/-----BEGIN PRIVATE KEY-----|-----END PRIVATE KEY-----|\n/g, ''));
+  const keyBuffer = new Uint8Array(keyData.length);
+  for (let i = 0; i < keyData.length; i++) {
+    keyBuffer[i] = keyData.charCodeAt(i);
+  }
+
+  const key = await crypto.subtle.importKey(
+    'pkcs8',
+    keyBuffer,
+    { name: 'Ed25519', namedCurve: 'Ed25519' },
+    false,
+    ['sign']
+  );
+
+  const signature = await crypto.subtle.sign('Ed25519', key, encoder.encode(data));
+  return base64UrlEncode(new Uint8Array(signature));
 }
 
 // Handle analytics events (batch)
