@@ -37,12 +37,12 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
-      - name: Run clippy (arch features only - works everywhere)
+      - name: Run clippy (no native dependencies - works everywhere)
         run: |
-          cargo clippy --all-targets --features ${{ env.ARCH_FEATURES }} -- -D warnings -W clippy::pedantic
+          cargo clippy --all-targets --no-default-features --features pgp,license -- -D warnings -W clippy::pedantic
 
-      - name: Run tests (arch features)
-        run: cargo test --all-targets --features ${{ env.ARCH_FEATURES }}
+      - name: Run tests (no native dependencies)
+        run: cargo test --all-targets --no-default-features --features pgp,license
 
   ################################################################################
   # Arch Linux build
