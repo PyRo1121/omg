@@ -402,7 +402,7 @@ pub enum Commands {
     Metrics,
 
     /// Update OMG to the latest version
-    #[command(visible_alias = "up")]
+    #[command(visible_alias = "up", disable_version_flag = true)]
     SelfUpdate {
         /// Force update even if already latest
         #[arg(long)]
@@ -767,6 +767,9 @@ pub enum AuditCommands {
         /// Filter by severity (debug, info, warning, error, critical)
         #[arg(short, long)]
         severity: Option<String>,
+        /// Export log to file
+        #[arg(short, long)]
+        export: Option<String>,
     },
     /// Verify audit log integrity (tamper detection)
     Verify,

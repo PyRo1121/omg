@@ -617,11 +617,31 @@ const DashboardPage: Component = () => {
         </Show>
 
         {/* Dashboard View */}
-        <Show when={view() === 'dashboard' && dashboard()}>
-          {(() => {
-            const d = dashboard()!;
-            return (
-              <div class="space-y-8">
+        <Show when={view() === 'dashboard'}>
+          <Show 
+            when={dashboard()} 
+            fallback={
+              <div class="space-y-8 animate-pulse">
+                <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                  <div class="space-y-2">
+                    <div class="h-8 w-48 rounded-lg bg-white/5" />
+                    <div class="h-4 w-64 rounded-lg bg-white/5" />
+                  </div>
+                  <div class="h-10 w-32 rounded-full bg-white/5" />
+                </div>
+                <div class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
+                  <For each={[1, 2, 3, 4]}>{_ => (
+                    <div class="h-32 rounded-2xl border border-white/5 bg-white/[0.02]" />
+                  )}</For>
+                </div>
+                <div class="h-96 rounded-2xl border border-white/5 bg-white/[0.02]" />
+              </div>
+            }
+          >
+            {(() => {
+              const d = dashboard()!;
+              return (
+                <div class="space-y-8">
                 {/* Action Message */}
                 <Show when={actionMessage()}>
                   <div class="animate-in slide-in-from-right fixed top-20 right-6 z-50 rounded-xl border border-slate-700 bg-slate-800 p-4 shadow-xl">
@@ -655,7 +675,7 @@ const DashboardPage: Component = () => {
                 </div>
 
                 {/* Tabs */}
-                <div role="tablist" class="flex w-fit flex-wrap gap-1 rounded-xl bg-slate-800/50 p-1">
+                <div role="tablist" class="flex w-full overflow-x-auto no-scrollbar gap-1 rounded-xl bg-slate-800/50 p-1 md:w-fit">
                   <For each={[
                     { id: 'overview' as const, label: 'Overview', Icon: BarChart3 },
                     { id: 'machines' as const, label: 'Machines', Icon: Monitor },
@@ -769,7 +789,7 @@ const DashboardPage: Component = () => {
                       </Show>
                     </div>
                     
-                    <div class="grid grid-cols-1 gap-6 md:grid-cols-3">
+                    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                       <div class="rounded-xl bg-slate-800/50 p-4">
                         <div class="mb-2 text-xs font-bold text-slate-500 uppercase tracking-wider">Top Package</div>
                         <div class="flex items-center justify-between">
@@ -818,7 +838,7 @@ const DashboardPage: Component = () => {
                         </div>
                       </div>
                     </div>
-                    <div class="flex h-40 items-end gap-1">
+                    <div class="flex h-40 items-end gap-0.5 sm:gap-1">
                       <For
                         each={
                           d.usage.daily.length > 0
@@ -1838,7 +1858,8 @@ const DashboardPage: Component = () => {
             );
           })()}
         </Show>
-      </main>
+      </Show>
+    </main>
 
       {/* Footer */}
       <footer class="relative z-10 mt-16 border-t border-slate-800/50">

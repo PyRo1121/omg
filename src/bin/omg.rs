@@ -449,8 +449,8 @@ async fn async_main(args: Vec<String>) -> Result<()> {
                 Some(AuditCommands::Secrets { path }) => {
                     security::scan_secrets(path)?;
                 }
-                Some(AuditCommands::Log { limit, severity }) => {
-                    security::view_audit_log(limit, severity)?;
+                Some(AuditCommands::Log { limit, severity, export }) => {
+                    security::view_audit_log(limit, severity, export)?;
                 }
                 Some(AuditCommands::Verify) => {
                     security::verify_audit_log()?;

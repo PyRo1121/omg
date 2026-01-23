@@ -49,12 +49,33 @@ pub async fn run(force: bool, version: Option<String>) -> Result<()> {
     let platform = "x86_64-unknown-linux-gnu"; // Auto-detect in real impl
     let download_url = format!("{UPDATE_URL}/download/omg-{target_version}-{platform}.tar.gz");
 
-    let response = reqwest::get(&download_url).await?;
+    let client = reqwest::Client::new();
+    let response = client.get(&download_url).send().await?;
     if !response.status().is_success() {
         anyhow::bail!("Failed to download update: {}", response.status());
     }
 
-    let bytes = response.bytes().await?;
+    let total_size = response
+        .content_length()
+        .ok_or_else(|| anyhow::anyhow!("Failed to get content length"))?;
+
+    use indicatif::{ProgressBar, ProgressStyle};
+    let pb = ProgressBar::new(total_size);
+    pb.set_style(ProgressStyle::default_bar()
+        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")?
+        .progress_chars("#>-"));
+
+    let mut bytes = Vec::with_capacity(total_size as usize);
+    let mut stream = response.bytes_stream();
+
+    use futures::StreamExt;
+    while let Some(item) = stream.next().await {
+        let chunk = item?;
+        bytes.extend_from_slice(&chunk);
+        pb.inc(chunk.len() as u64);
+    }
+    pb.finish_with_message("Download complete");
+
     let cursor = std::io::Cursor::new(bytes);
     let decoder = flate2::read::GzDecoder::new(cursor);
     let mut archive = tar::Archive::new(decoder);

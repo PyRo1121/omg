@@ -486,7 +486,7 @@ export const TeamAnalytics: Component<TeamAnalyticsProps> = props => {
         </div>
       </div>
 
-      <div class="flex items-center gap-1 rounded-[1.5rem] border border-white/5 bg-white/[0.02] p-1.5 backdrop-blur-xl">
+      <div class="flex items-center gap-1 overflow-x-auto no-scrollbar rounded-[1.5rem] border border-white/5 bg-white/[0.02] p-1.5 backdrop-blur-xl">
         <For each={[
           { id: 'overview' as const, label: 'Value & ROI', Icon: BarChart3, color: 'text-indigo-400' },
           { id: 'members' as const, label: 'Fleet & Members', Icon: Users, color: 'text-emerald-400' },
@@ -623,7 +623,7 @@ export const TeamAnalytics: Component<TeamAnalyticsProps> = props => {
                       <div class="h-full bg-gradient-to-r from-emerald-600 to-emerald-400" style={{ width: `${securityMetrics().compliance_score}%` }} />
                     </div>
                   </div>
-                  <div class="grid grid-cols-2 gap-4">
+                  <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     <div class="rounded-2xl bg-white/[0.02] p-4 border border-white/[0.03]">
                       <span class="text-[10px] font-bold text-slate-500 uppercase">Critical</span>
                       <div class="text-xl font-black text-white">{securityMetrics().critical}</div>
@@ -741,7 +741,7 @@ export const TeamAnalytics: Component<TeamAnalyticsProps> = props => {
                     </Show>
                   </div>
                   
-                  <div class="mt-8 grid grid-cols-2 gap-4">
+                  <div class="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2">
                     <div class="rounded-3xl border border-white/[0.03] bg-white/[0.01] p-5">
                       <div class="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Ops Volume</div>
                       <div class="mt-1 text-2xl font-black text-white">{member.total_commands.toLocaleString()}</div>

@@ -107,6 +107,7 @@ console = "0.16.2"
 
 # Interactive prompts
 dialoguer = "0.12.0"
+csv = "1.3"
 
 # File watching
 notify = "7.0"
