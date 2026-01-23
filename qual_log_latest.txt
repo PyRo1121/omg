@@ -1,0 +1,494 @@
+﻿2026-01-23T04:35:43.1913406Z Current runner version: '2.331.0'
+2026-01-23T04:35:43.1938242Z ##[group]Runner Image Provisioner
+2026-01-23T04:35:43.1939050Z Hosted Compute Agent
+2026-01-23T04:35:43.1939621Z Version: 20260115.477
+2026-01-23T04:35:43.1940659Z Commit: 4b342d620503cbe250a3154040964899ea7c9b00
+2026-01-23T04:35:43.1941367Z Build Date: 2026-01-15T22:32:41Z
+2026-01-23T04:35:43.1942019Z Worker ID: {586e5c05-6c8e-474d-894f-2fff9b736650}
+2026-01-23T04:35:43.1942698Z Azure Region: centralus
+2026-01-23T04:35:43.1943264Z ##[endgroup]
+2026-01-23T04:35:43.1944733Z ##[group]Operating System
+2026-01-23T04:35:43.1945402Z Ubuntu
+2026-01-23T04:35:43.1945929Z 24.04.3
+2026-01-23T04:35:43.1946347Z LTS
+2026-01-23T04:35:43.1946837Z ##[endgroup]
+2026-01-23T04:35:43.1947345Z ##[group]Runner Image
+2026-01-23T04:35:43.1947934Z Image: ubuntu-24.04
+2026-01-23T04:35:43.1948395Z Version: 20260119.4.1
+2026-01-23T04:35:43.1949670Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260119.4/images/ubuntu/Ubuntu2404-Readme.md
+2026-01-23T04:35:43.1951549Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260119.4
+2026-01-23T04:35:43.1952492Z ##[endgroup]
+2026-01-23T04:35:43.1953512Z ##[group]GITHUB_TOKEN Permissions
+2026-01-23T04:35:43.1955689Z Contents: read
+2026-01-23T04:35:43.1956246Z Metadata: read
+2026-01-23T04:35:43.1956716Z Packages: read
+2026-01-23T04:35:43.1957297Z ##[endgroup]
+2026-01-23T04:35:43.1959433Z Secret source: Actions
+2026-01-23T04:35:43.1960424Z Prepare workflow directory
+2026-01-23T04:35:43.2348926Z Prepare all required actions
+2026-01-23T04:35:43.2388314Z Getting action download info
+2026-01-23T04:35:43.6079262Z Download action repository 'actions/checkout@v4' (SHA:34e114876b0b11c390a56381ad16ebd13914f8d5)
+2026-01-23T04:35:43.7483170Z Download action repository 'dtolnay/rust-toolchain@stable' (SHA:4be9e76fd7c4901c61fb841f559994984270fce7)
+2026-01-23T04:35:44.2150827Z Download action repository 'crate-ci/typos@master' (SHA:65120634e79d8374d1aa2f27e54baa0c364fff5a)
+2026-01-23T04:35:44.9936486Z Download action repository 'EmbarkStudios/cargo-deny-action@v2' (SHA:3fd3802e88374d3fe9159b834c7714ec57d6c979)
+2026-01-23T04:35:45.5692466Z Complete job name: Qual & Sec
+2026-01-23T04:35:45.6203322Z ##[group]Build container for action use: '/home/runner/work/_actions/EmbarkStudios/cargo-deny-action/v2/Dockerfile'.
+2026-01-23T04:35:45.6258261Z ##[command]/usr/bin/docker build -t ba4f35:c758b88646a84abda7f06403ba3bae1f -f "/home/runner/work/_actions/EmbarkStudios/cargo-deny-action/v2/Dockerfile" "/home/runner/work/_actions/EmbarkStudios/cargo-deny-action/v2"
+2026-01-23T04:35:46.1730219Z #0 building with "default" instance using docker driver
+2026-01-23T04:35:46.1730620Z 
+2026-01-23T04:35:46.1730802Z #1 [internal] load build definition from Dockerfile
+2026-01-23T04:35:46.1731191Z #1 transferring dockerfile: 508B done
+2026-01-23T04:35:46.1731518Z #1 DONE 0.0s
+2026-01-23T04:35:46.1731648Z 
+2026-01-23T04:35:46.1731850Z #2 [auth] library/rust:pull token for registry-1.docker.io
+2026-01-23T04:35:46.3232635Z #2 DONE 0.0s
+2026-01-23T04:35:46.3233031Z 
+2026-01-23T04:35:46.3233736Z #3 [internal] load metadata for docker.io/library/rust:1.85.0-alpine3.20@sha256:f0cef6c65992995b1c7816cb667de95799852e3fbed9d06f95855cbc512a0fd0
+2026-01-23T04:35:46.8113420Z #3 DONE 0.8s
+2026-01-23T04:35:46.9397168Z 
+2026-01-23T04:35:46.9397587Z #4 [internal] load .dockerignore
+2026-01-23T04:35:46.9398119Z #4 transferring context: 2B done
+2026-01-23T04:35:46.9398579Z #4 DONE 0.0s
+2026-01-23T04:35:46.9398758Z 
+2026-01-23T04:35:46.9398897Z #5 [internal] load build context
+2026-01-23T04:35:46.9399284Z #5 transferring context: 1.19kB done
+2026-01-23T04:35:46.9399704Z #5 DONE 0.0s
+2026-01-23T04:35:46.9400128Z 
+2026-01-23T04:35:46.9400802Z #6 [1/3] FROM docker.io/library/rust:1.85.0-alpine3.20@sha256:f0cef6c65992995b1c7816cb667de95799852e3fbed9d06f95855cbc512a0fd0
+2026-01-23T04:35:46.9402120Z #6 resolve docker.io/library/rust:1.85.0-alpine3.20@sha256:f0cef6c65992995b1c7816cb667de95799852e3fbed9d06f95855cbc512a0fd0 done
+2026-01-23T04:35:46.9403554Z #6 sha256:0a9a5dfd008f05ebc27e4790db0709a29e527690c21bcbcd01481eaeb6bb49dc 0B / 3.63MB 0.1s
+2026-01-23T04:35:46.9404224Z #6 sha256:d0430b4a2b30329b0c06034d1df61c2f3533c436834a54b76def8756d804d888 0B / 55.32MB 0.1s
+2026-01-23T04:35:46.9404805Z #6 sha256:8fda7dd06f6e434e3727cd86155430a51568846533e3824548334e20f1078e28 0B / 239.16MB 0.1s
+2026-01-23T04:35:46.9405401Z #6 sha256:f0cef6c65992995b1c7816cb667de95799852e3fbed9d06f95855cbc512a0fd0 2.63kB / 2.63kB done
+2026-01-23T04:35:46.9406014Z #6 sha256:6d824fef86a8532aecead5889d49d432d19e0dd58b958266c994cca9eb7a3357 1.54kB / 1.54kB done
+2026-01-23T04:35:46.9406613Z #6 sha256:7c38e59fb99c1014ea6d250d396bb9bf55981f1d69fe17ed05047b90cd119ca9 2.53kB / 2.53kB done
+2026-01-23T04:35:47.0535204Z #6 sha256:0a9a5dfd008f05ebc27e4790db0709a29e527690c21bcbcd01481eaeb6bb49dc 3.63MB / 3.63MB 0.1s done
+2026-01-23T04:35:47.0536567Z #6 extracting sha256:0a9a5dfd008f05ebc27e4790db0709a29e527690c21bcbcd01481eaeb6bb49dc 0.1s done
+2026-01-23T04:35:47.2459412Z #6 sha256:d0430b4a2b30329b0c06034d1df61c2f3533c436834a54b76def8756d804d888 31.46MB / 55.32MB 0.4s
+2026-01-23T04:35:47.2460990Z #6 sha256:8fda7dd06f6e434e3727cd86155430a51568846533e3824548334e20f1078e28 42.99MB / 239.16MB 0.4s
+2026-01-23T04:35:47.3517618Z #6 sha256:d0430b4a2b30329b0c06034d1df61c2f3533c436834a54b76def8756d804d888 49.28MB / 55.32MB 0.5s
+2026-01-23T04:35:47.3518456Z #6 sha256:8fda7dd06f6e434e3727cd86155430a51568846533e3824548334e20f1078e28 70.25MB / 239.16MB 0.5s
+2026-01-23T04:35:47.4861445Z #6 sha256:d0430b4a2b30329b0c06034d1df61c2f3533c436834a54b76def8756d804d888 55.32MB / 55.32MB 0.6s done
+2026-01-23T04:35:47.4863469Z #6 sha256:8fda7dd06f6e434e3727cd86155430a51568846533e3824548334e20f1078e28 89.13MB / 239.16MB 0.6s
+2026-01-23T04:35:47.4865378Z #6 extracting sha256:d0430b4a2b30329b0c06034d1df61c2f3533c436834a54b76def8756d804d888
+2026-01-23T04:35:47.5910158Z #6 sha256:8fda7dd06f6e434e3727cd86155430a51568846533e3824548334e20f1078e28 120.59MB / 239.16MB 0.7s
+2026-01-23T04:35:47.6977775Z #6 sha256:8fda7dd06f6e434e3727cd86155430a51568846533e3824548334e20f1078e28 146.80MB / 239.16MB 0.8s
+2026-01-23T04:35:47.8101958Z #6 sha256:8fda7dd06f6e434e3727cd86155430a51568846533e3824548334e20f1078e28 170.92MB / 239.16MB 0.9s
+2026-01-23T04:35:47.9185276Z #6 sha256:8fda7dd06f6e434e3727cd86155430a51568846533e3824548334e20f1078e28 199.23MB / 239.16MB 1.0s
+2026-01-23T04:35:48.0227598Z #6 sha256:8fda7dd06f6e434e3727cd86155430a51568846533e3824548334e20f1078e28 227.54MB / 239.16MB 1.1s
+2026-01-23T04:35:48.5033436Z #6 sha256:8fda7dd06f6e434e3727cd86155430a51568846533e3824548334e20f1078e28 239.16MB / 239.16MB 1.4s done
+2026-01-23T04:35:48.5034966Z #6 extracting sha256:d0430b4a2b30329b0c06034d1df61c2f3533c436834a54b76def8756d804d888 0.9s done
+2026-01-23T04:35:49.7248195Z #6 extracting sha256:8fda7dd06f6e434e3727cd86155430a51568846533e3824548334e20f1078e28
+2026-01-23T04:35:52.6976948Z #6 extracting sha256:8fda7dd06f6e434e3727cd86155430a51568846533e3824548334e20f1078e28 2.8s done
+2026-01-23T04:35:54.0168164Z #6 DONE 7.2s
+2026-01-23T04:35:54.1433507Z 
+2026-01-23T04:35:54.1435752Z #7 [2/3] RUN set -eux;     apk update;     apk add bash curl git tar openssh;     curl --silent -L https://github.com/EmbarkStudios/cargo-deny/releases/download/0.19.0/cargo-deny-0.19.0-x86_64-unknown-linux-musl.tar.gz | tar -xzv -C /usr/bin --strip-components=1;
+2026-01-23T04:35:54.1437747Z #7 0.126 + apk update
+2026-01-23T04:35:54.3016238Z #7 0.133 fetch https://dl-cdn.alpinelinux.org/alpine/v3.20/main/x86_64/APKINDEX.tar.gz
+2026-01-23T04:35:54.3093144Z #7 0.292 fetch https://dl-cdn.alpinelinux.org/alpine/v3.20/community/x86_64/APKINDEX.tar.gz
+2026-01-23T04:35:54.5898451Z #7 0.572 v3.20.8-117-gb634d192f10 [https://dl-cdn.alpinelinux.org/alpine/v3.20/main]
+2026-01-23T04:35:54.5899479Z #7 0.572 v3.20.8-115-g409235effe2 [https://dl-cdn.alpinelinux.org/alpine/v3.20/community]
+2026-01-23T04:35:54.5900566Z #7 0.572 OK: 24179 distinct packages available
+2026-01-23T04:35:54.8010786Z #7 0.633 + apk add bash curl git tar openssh
+2026-01-23T04:35:54.9185159Z #7 0.901 (1/26) Installing ncurses-terminfo-base (6.4_p20240420-r2)
+2026-01-23T04:35:55.0613616Z #7 0.996 (2/26) Installing libncursesw (6.4_p20240420-r2)
+2026-01-23T04:35:55.0614405Z #7 1.044 (3/26) Installing readline (8.2.10-r0)
+2026-01-23T04:35:55.1638703Z #7 1.066 (4/26) Installing bash (5.2.26-r0)
+2026-01-23T04:35:55.1639333Z #7 1.105 Executing bash-5.2.26-r0.post-install
+2026-01-23T04:35:55.1640160Z #7 1.108 (5/26) Installing brotli-libs (1.1.0-r2)
+2026-01-23T04:35:55.1640677Z #7 1.131 (6/26) Installing c-ares (1.33.1-r0)
+2026-01-23T04:35:55.1641211Z #7 1.146 (7/26) Installing libunistring (1.2-r0)
+2026-01-23T04:35:55.2806844Z #7 1.172 (8/26) Installing libidn2 (2.3.7-r0)
+2026-01-23T04:35:55.2808342Z #7 1.190 (9/26) Installing nghttp2-libs (1.62.1-r0)
+2026-01-23T04:35:55.2808980Z #7 1.206 (10/26) Installing libpsl (0.21.5-r1)
+2026-01-23T04:35:55.2809435Z #7 1.221 (11/26) Installing libcurl (8.14.1-r2)
+2026-01-23T04:35:55.2810149Z #7 1.242 (12/26) Installing curl (8.14.1-r2)
+2026-01-23T04:35:55.2810684Z #7 1.263 (13/26) Installing libexpat (2.7.3-r0)
+2026-01-23T04:35:55.3951931Z #7 1.281 (14/26) Installing pcre2 (10.43-r0)
+2026-01-23T04:35:55.3952540Z #7 1.304 (15/26) Installing git (2.45.4-r0)
+2026-01-23T04:35:55.3953206Z #7 1.378 (16/26) Installing git-init-template (2.45.4-r0)
+2026-01-23T04:35:55.5021967Z #7 1.394 (17/26) Installing openssh-keygen (9.7_p1-r5)
+2026-01-23T04:35:55.5022544Z #7 1.413 (18/26) Installing libedit (20240517.3.1-r0)
+2026-01-23T04:35:55.5022952Z #7 1.431 (19/26) Installing openssh-client-common (9.7_p1-r5)
+2026-01-23T04:35:55.5023336Z #7 1.462 (20/26) Installing openssh-client-default (9.7_p1-r5)
+2026-01-23T04:35:55.5023688Z #7 1.485 (21/26) Installing openssh-sftp-server (9.7_p1-r5)
+2026-01-23T04:35:55.6207305Z #7 1.502 (22/26) Installing openssh-server-common (9.7_p1-r5)
+2026-01-23T04:35:55.6208125Z #7 1.519 (23/26) Installing openssh-server (9.7_p1-r5)
+2026-01-23T04:35:55.6208842Z #7 1.541 (24/26) Installing openssh (9.7_p1-r5)
+2026-01-23T04:35:55.6209412Z #7 1.559 (25/26) Installing libacl (2.3.2-r0)
+2026-01-23T04:35:55.6210266Z #7 1.574 (26/26) Installing tar (1.35-r2)
+2026-01-23T04:35:55.6210845Z #7 1.603 Executing busybox-1.36.1-r29.trigger
+2026-01-23T04:35:55.8440201Z #7 1.610 OK: 167 MiB in 53 packages
+2026-01-23T04:35:55.8440930Z #7 1.676 + curl --silent -L https://github.com/EmbarkStudios/cargo-deny/releases/download/0.19.0/cargo-deny-0.19.0-x86_64-unknown-linux-musl.tar.gz
+2026-01-23T04:35:55.8442187Z #7 1.676 + tar -xzv -C /usr/bin '--strip-components=1'
+2026-01-23T04:35:55.8584690Z #7 1.841 cargo-deny-0.19.0-x86_64-unknown-linux-musl/LICENSE-APACHE
+2026-01-23T04:35:56.0096701Z #7 1.841 cargo-deny-0.19.0-x86_64-unknown-linux-musl/README.md
+2026-01-23T04:35:56.0097472Z #7 1.841 cargo-deny-0.19.0-x86_64-unknown-linux-musl/LICENSE-MIT
+2026-01-23T04:35:56.0098191Z #7 1.841 cargo-deny-0.19.0-x86_64-unknown-linux-musl/cargo-deny
+2026-01-23T04:35:56.0988714Z #7 DONE 2.1s
+2026-01-23T04:35:56.2689777Z 
+2026-01-23T04:35:56.2690377Z #8 [3/3] COPY entrypoint.sh /entrypoint.sh
+2026-01-23T04:35:57.0071308Z #8 DONE 0.0s
+2026-01-23T04:35:57.0071538Z 
+2026-01-23T04:35:57.0071640Z #9 exporting to image
+2026-01-23T04:35:57.0071990Z #9 exporting layers
+2026-01-23T04:35:57.0072379Z #9 exporting layers 0.9s done
+2026-01-23T04:35:57.0273748Z #9 writing image sha256:75e6eb89e299cf2b75baa4c0dd06920c617028448b6b444b644480e2d9cf117e done
+2026-01-23T04:35:57.0274800Z #9 naming to docker.io/library/ba4f35:c758b88646a84abda7f06403ba3bae1f done
+2026-01-23T04:35:57.0319299Z #9 DONE 0.9s
+2026-01-23T04:35:57.0326973Z ##[endgroup]
+2026-01-23T04:35:57.0587381Z ##[group]Run actions/checkout@v4
+2026-01-23T04:35:57.0587939Z with:
+2026-01-23T04:35:57.0588131Z   repository: PyRo1121/omg
+2026-01-23T04:35:57.0588532Z   token: ***
+2026-01-23T04:35:57.0588708Z   ssh-strict: true
+2026-01-23T04:35:57.0588886Z   ssh-user: git
+2026-01-23T04:35:57.0589073Z   persist-credentials: true
+2026-01-23T04:35:57.0589289Z   clean: true
+2026-01-23T04:35:57.0589470Z   sparse-checkout-cone-mode: true
+2026-01-23T04:35:57.0589703Z   fetch-depth: 1
+2026-01-23T04:35:57.0590279Z   fetch-tags: false
+2026-01-23T04:35:57.0590463Z   show-progress: true
+2026-01-23T04:35:57.0590648Z   lfs: false
+2026-01-23T04:35:57.0590807Z   submodules: false
+2026-01-23T04:35:57.0590996Z   set-safe-directory: true
+2026-01-23T04:35:57.0591455Z env:
+2026-01-23T04:35:57.0591629Z   CARGO_TERM_COLOR: always
+2026-01-23T04:35:57.0591843Z   RUSTFLAGS: -D warnings
+2026-01-23T04:35:57.0592064Z ##[endgroup]
+2026-01-23T04:35:57.1640592Z Syncing repository: PyRo1121/omg
+2026-01-23T04:35:57.1641850Z ##[group]Getting Git version info
+2026-01-23T04:35:57.1642184Z Working directory is '/home/runner/work/omg/omg'
+2026-01-23T04:35:57.1642678Z [command]/usr/bin/git version
+2026-01-23T04:35:57.1662019Z git version 2.52.0
+2026-01-23T04:35:57.1687057Z ##[endgroup]
+2026-01-23T04:35:57.1707059Z Temporarily overriding HOME='/home/runner/work/_temp/b10495a5-c52a-48c4-a0b8-57ed372f183a' before making global git config changes
+2026-01-23T04:35:57.1708002Z Adding repository directory to the temporary git global config as a safe directory
+2026-01-23T04:35:57.1712486Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/omg/omg
+2026-01-23T04:35:57.1751910Z Deleting the contents of '/home/runner/work/omg/omg'
+2026-01-23T04:35:57.1755465Z ##[group]Initializing the repository
+2026-01-23T04:35:57.1760053Z [command]/usr/bin/git init /home/runner/work/omg/omg
+2026-01-23T04:35:57.1892236Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-01-23T04:35:57.1893213Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-01-23T04:35:57.1893762Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-01-23T04:35:57.1894145Z hint: call:
+2026-01-23T04:35:57.1894315Z hint:
+2026-01-23T04:35:57.1894565Z hint: 	git config --global init.defaultBranch <name>
+2026-01-23T04:35:57.1894860Z hint:
+2026-01-23T04:35:57.1895135Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-01-23T04:35:57.1895631Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-01-23T04:35:57.1895996Z hint:
+2026-01-23T04:35:57.1983453Z hint: 	git branch -m <name>
+2026-01-23T04:35:57.1983930Z hint:
+2026-01-23T04:35:57.1984606Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-01-23T04:35:57.1985665Z Initialized empty Git repository in /home/runner/work/omg/omg/.git/
+2026-01-23T04:35:57.1987231Z [command]/usr/bin/git remote add origin https://github.com/PyRo1121/omg
+2026-01-23T04:35:57.1988712Z ##[endgroup]
+2026-01-23T04:35:57.1989399Z ##[group]Disabling automatic garbage collection
+2026-01-23T04:35:57.1990198Z [command]/usr/bin/git config --local gc.auto 0
+2026-01-23T04:35:57.1991422Z ##[endgroup]
+2026-01-23T04:35:57.1991741Z ##[group]Setting up auth
+2026-01-23T04:35:57.1992173Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-01-23T04:35:57.2025761Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-01-23T04:35:57.2387476Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-01-23T04:35:57.2416312Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-01-23T04:35:57.2633393Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-01-23T04:35:57.2664345Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-01-23T04:35:57.2883637Z [command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-01-23T04:35:57.2919980Z ##[endgroup]
+2026-01-23T04:35:57.2920679Z ##[group]Fetching the repository
+2026-01-23T04:35:57.2928724Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +a3b5f4a6c6959a1b95f9d36cdb858ba1623a1ebf:refs/remotes/origin/main
+2026-01-23T04:36:03.0598909Z From https://github.com/PyRo1121/omg
+2026-01-23T04:36:03.0599656Z  * [new ref]         a3b5f4a6c6959a1b95f9d36cdb858ba1623a1ebf -> origin/main
+2026-01-23T04:36:03.0626681Z ##[endgroup]
+2026-01-23T04:36:03.0627029Z ##[group]Determining the checkout info
+2026-01-23T04:36:03.0629775Z ##[endgroup]
+2026-01-23T04:36:03.0635543Z [command]/usr/bin/git sparse-checkout disable
+2026-01-23T04:36:03.0675899Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-01-23T04:36:03.0700990Z ##[group]Checking out the ref
+2026-01-23T04:36:03.0705506Z [command]/usr/bin/git checkout --progress --force -B main refs/remotes/origin/main
+2026-01-23T04:36:03.8955585Z Switched to a new branch 'main'
+2026-01-23T04:36:03.8956888Z branch 'main' set up to track 'origin/main'.
+2026-01-23T04:36:03.9082377Z ##[endgroup]
+2026-01-23T04:36:03.9121057Z [command]/usr/bin/git log -1 --format=%H
+2026-01-23T04:36:03.9142525Z a3b5f4a6c6959a1b95f9d36cdb858ba1623a1ebf
+2026-01-23T04:36:03.9422479Z ##[group]Run dtolnay/rust-toolchain@stable
+2026-01-23T04:36:03.9422766Z with:
+2026-01-23T04:36:03.9422941Z   components: rustfmt, clippy
+2026-01-23T04:36:03.9423168Z   toolchain: stable
+2026-01-23T04:36:03.9423335Z env:
+2026-01-23T04:36:03.9423494Z   CARGO_TERM_COLOR: always
+2026-01-23T04:36:03.9423702Z   RUSTFLAGS: -D warnings
+2026-01-23T04:36:03.9423894Z ##[endgroup]
+2026-01-23T04:36:03.9521901Z ##[group]Run : parse toolchain version
+2026-01-23T04:36:03.9522257Z [36;1m: parse toolchain version[0m
+2026-01-23T04:36:03.9522515Z [36;1mif [[ -z $toolchain ]]; then[0m
+2026-01-23T04:36:03.9523007Z [36;1m  # GitHub does not enforce `required: true` inputs itself. https://github.com/actions/runner/issues/1070[0m
+2026-01-23T04:36:03.9523545Z [36;1m  echo "'toolchain' is a required input" >&2[0m
+2026-01-23T04:36:03.9523821Z [36;1m  exit 1[0m
+2026-01-23T04:36:03.9524141Z [36;1melif [[ $toolchain =~ ^stable' '[0-9]+' '(year|month|week|day)s?' 'ago$ ]]; then[0m
+2026-01-23T04:36:03.9524563Z [36;1m  if [[ Linux == macOS ]]; then[0m
+2026-01-23T04:36:03.9525049Z [36;1m    echo "toolchain=1.$((($(date -v-$(sed 's/stable \([0-9]*\) \(.\).*/\1\2/' <<< $toolchain) +%s)/60/60/24-16569)/7/6))" >> $GITHUB_OUTPUT[0m
+2026-01-23T04:36:03.9525524Z [36;1m  else[0m
+2026-01-23T04:36:03.9525896Z [36;1m    echo "toolchain=1.$((($(date --date "${toolchain#stable }" +%s)/60/60/24-16569)/7/6))" >> $GITHUB_OUTPUT[0m
+2026-01-23T04:36:03.9526314Z [36;1m  fi[0m
+2026-01-23T04:36:03.9526584Z [36;1melif [[ $toolchain =~ ^stable' 'minus' '[0-9]+' 'releases?$ ]]; then[0m
+2026-01-23T04:36:03.9527071Z [36;1m  echo "toolchain=1.$((($(date +%s)/60/60/24-16569)/7/6-${toolchain//[^0-9]/}))" >> $GITHUB_OUTPUT[0m
+2026-01-23T04:36:03.9527502Z [36;1melif [[ $toolchain =~ ^1\.[0-9]+$ ]]; then[0m
+2026-01-23T04:36:03.9527982Z [36;1m  echo "toolchain=1.$((i=${toolchain#1.}, c=($(date +%s)/60/60/24-16569)/7/6, i+9*i*(10*i<=c)+90*i*(100*i<=c)))" >> $GITHUB_OUTPUT[0m
+2026-01-23T04:36:03.9528437Z [36;1melse[0m
+2026-01-23T04:36:03.9528661Z [36;1m  echo "toolchain=$toolchain" >> $GITHUB_OUTPUT[0m
+2026-01-23T04:36:03.9528920Z [36;1mfi[0m
+2026-01-23T04:36:03.9563093Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-01-23T04:36:03.9563419Z env:
+2026-01-23T04:36:03.9563585Z   CARGO_TERM_COLOR: always
+2026-01-23T04:36:03.9563807Z   RUSTFLAGS: -D warnings
+2026-01-23T04:36:03.9564003Z   toolchain: stable
+2026-01-23T04:36:03.9564178Z ##[endgroup]
+2026-01-23T04:36:03.9691286Z ##[group]Run : construct rustup command line
+2026-01-23T04:36:03.9691586Z [36;1m: construct rustup command line[0m
+2026-01-23T04:36:03.9692012Z [36;1mecho "targets=$(for t in ${targets//,/ }; do echo -n ' --target' $t; done)" >> $GITHUB_OUTPUT[0m
+2026-01-23T04:36:03.9692611Z [36;1mecho "components=$(for c in ${components//,/ }; do echo -n ' --component' $c; done)" >> $GITHUB_OUTPUT[0m
+2026-01-23T04:36:03.9693074Z [36;1mecho "downgrade=" >> $GITHUB_OUTPUT[0m
+2026-01-23T04:36:03.9722647Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-01-23T04:36:03.9722950Z env:
+2026-01-23T04:36:03.9723122Z   CARGO_TERM_COLOR: always
+2026-01-23T04:36:03.9723324Z   RUSTFLAGS: -D warnings
+2026-01-23T04:36:03.9723521Z   targets: 
+2026-01-23T04:36:03.9723695Z   components: rustfmt, clippy
+2026-01-23T04:36:03.9723896Z ##[endgroup]
+2026-01-23T04:36:03.9804596Z ##[group]Run : set $CARGO_HOME
+2026-01-23T04:36:03.9804848Z [36;1m: set $CARGO_HOME[0m
+2026-01-23T04:36:03.9805147Z [36;1mecho CARGO_HOME=${CARGO_HOME:-"$HOME/.cargo"} >> $GITHUB_ENV[0m
+2026-01-23T04:36:03.9833209Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-01-23T04:36:03.9833520Z env:
+2026-01-23T04:36:03.9833688Z   CARGO_TERM_COLOR: always
+2026-01-23T04:36:03.9833906Z   RUSTFLAGS: -D warnings
+2026-01-23T04:36:03.9834109Z ##[endgroup]
+2026-01-23T04:36:03.9907135Z ##[group]Run : install rustup if needed
+2026-01-23T04:36:03.9907415Z [36;1m: install rustup if needed[0m
+2026-01-23T04:36:03.9907689Z [36;1mif ! command -v rustup &>/dev/null; then[0m
+2026-01-23T04:36:03.9908602Z [36;1m  curl --proto '=https' --tlsv1.2 --retry 10 --retry-connrefused --location --silent --show-error --fail https://sh.rustup.rs | sh -s -- --default-toolchain none -y[0m
+2026-01-23T04:36:03.9909313Z [36;1m  echo "$CARGO_HOME/bin" >> $GITHUB_PATH[0m
+2026-01-23T04:36:03.9909569Z [36;1mfi[0m
+2026-01-23T04:36:03.9937297Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-01-23T04:36:03.9937623Z env:
+2026-01-23T04:36:03.9937791Z   CARGO_TERM_COLOR: always
+2026-01-23T04:36:03.9937998Z   RUSTFLAGS: -D warnings
+2026-01-23T04:36:03.9938202Z   CARGO_HOME: /home/runner/.cargo
+2026-01-23T04:36:03.9938417Z ##[endgroup]
+2026-01-23T04:36:04.0009130Z ##[group]Run rustup toolchain install stable --component rustfmt --component clippy --profile minimal --no-self-update
+2026-01-23T04:36:04.0010129Z [36;1mrustup toolchain install stable --component rustfmt --component clippy --profile minimal --no-self-update[0m
+2026-01-23T04:36:04.0037798Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-01-23T04:36:04.0038099Z env:
+2026-01-23T04:36:04.0038269Z   CARGO_TERM_COLOR: always
+2026-01-23T04:36:04.0038477Z   RUSTFLAGS: -D warnings
+2026-01-23T04:36:04.0038689Z   CARGO_HOME: /home/runner/.cargo
+2026-01-23T04:36:04.0038922Z   RUSTUP_PERMIT_COPY_RENAME: 1
+2026-01-23T04:36:04.0039125Z ##[endgroup]
+2026-01-23T04:36:04.2669251Z info: syncing channel updates for 'stable-x86_64-unknown-linux-gnu'
+2026-01-23T04:36:04.7209529Z info: latest update on 2026-01-22, rust version 1.93.0 (254b59607 2026-01-19)
+2026-01-23T04:36:04.7522498Z info: downloading component 'clippy'
+2026-01-23T04:36:04.8911996Z info: downloading component 'rustfmt'
+2026-01-23T04:36:04.9919667Z info: downloading component 'cargo'
+2026-01-23T04:36:05.1700690Z info: downloading component 'rust-std'
+2026-01-23T04:36:05.5748164Z info: downloading component 'rustc'
+2026-01-23T04:36:06.4246671Z info: removing previous version of component 'clippy'
+2026-01-23T04:36:06.4265848Z info: removing previous version of component 'rustfmt'
+2026-01-23T04:36:06.4278593Z info: removing previous version of component 'cargo'
+2026-01-23T04:36:06.4331104Z info: removing previous version of component 'rust-std'
+2026-01-23T04:36:06.4363966Z info: removing previous version of component 'rustc'
+2026-01-23T04:36:06.4484802Z info: installing component 'clippy'
+2026-01-23T04:36:06.8241282Z info: installing component 'rustfmt'
+2026-01-23T04:36:07.0552982Z info: installing component 'cargo'
+2026-01-23T04:36:07.7554510Z info: installing component 'rust-std'
+2026-01-23T04:36:09.6843839Z info: installing component 'rustc'
+2026-01-23T04:36:14.3252878Z 
+2026-01-23T04:36:14.3347024Z   stable-x86_64-unknown-linux-gnu updated - rustc 1.93.0 (254b59607 2026-01-19) (from rustc 1.92.0 (ded5c06cf 2025-12-08))
+2026-01-23T04:36:14.3347834Z 
+2026-01-23T04:36:14.3401129Z ##[group]Run rustup default stable
+2026-01-23T04:36:14.3401408Z [36;1mrustup default stable[0m
+2026-01-23T04:36:14.3432093Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-01-23T04:36:14.3432417Z env:
+2026-01-23T04:36:14.3432592Z   CARGO_TERM_COLOR: always
+2026-01-23T04:36:14.3432801Z   RUSTFLAGS: -D warnings
+2026-01-23T04:36:14.3433019Z   CARGO_HOME: /home/runner/.cargo
+2026-01-23T04:36:14.3433231Z ##[endgroup]
+2026-01-23T04:36:14.3533819Z info: using existing install for 'stable-x86_64-unknown-linux-gnu'
+2026-01-23T04:36:14.3825991Z info: default toolchain set to 'stable-x86_64-unknown-linux-gnu'
+2026-01-23T04:36:14.3826568Z 
+2026-01-23T04:36:14.3910678Z   stable-x86_64-unknown-linux-gnu unchanged - rustc 1.93.0 (254b59607 2026-01-19)
+2026-01-23T04:36:14.3911254Z 
+2026-01-23T04:36:14.3912022Z info: note that the toolchain 'nightly-x86_64-unknown-linux-gnu' is currently in use (overridden by '/home/runner/work/omg/omg/rust-toolchain.toml')
+2026-01-23T04:36:14.3951657Z ##[group]Run : create cachekey
+2026-01-23T04:36:14.3951922Z [36;1m: create cachekey[0m
+2026-01-23T04:36:14.3952589Z [36;1mDATE=$(rustc +stable --version --verbose | sed -ne 's/^commit-date: \(20[0-9][0-9]\)-\([01][0-9]\)-\([0-3][0-9]\)$/\1\2\3/p')[0m
+2026-01-23T04:36:14.3953218Z [36;1mHASH=$(rustc +stable --version --verbose | sed -ne 's/^commit-hash: //p')[0m
+2026-01-23T04:36:14.3953684Z [36;1mecho "cachekey=$(echo $DATE$HASH | head -c12)" >> $GITHUB_OUTPUT[0m
+2026-01-23T04:36:14.3984009Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-01-23T04:36:14.3984324Z env:
+2026-01-23T04:36:14.3984498Z   CARGO_TERM_COLOR: always
+2026-01-23T04:36:14.3984711Z   RUSTFLAGS: -D warnings
+2026-01-23T04:36:14.3984926Z   CARGO_HOME: /home/runner/.cargo
+2026-01-23T04:36:14.3985141Z ##[endgroup]
+2026-01-23T04:36:14.4358975Z ##[group]Run : disable incremental compilation
+2026-01-23T04:36:14.4359302Z [36;1m: disable incremental compilation[0m
+2026-01-23T04:36:14.4359586Z [36;1mif [ -z "${CARGO_INCREMENTAL+set}" ]; then[0m
+2026-01-23T04:36:14.4360150Z [36;1m  echo CARGO_INCREMENTAL=0 >> $GITHUB_ENV[0m
+2026-01-23T04:36:14.4360440Z [36;1mfi[0m
+2026-01-23T04:36:14.4391219Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-01-23T04:36:14.4391551Z env:
+2026-01-23T04:36:14.4391718Z   CARGO_TERM_COLOR: always
+2026-01-23T04:36:14.4391933Z   RUSTFLAGS: -D warnings
+2026-01-23T04:36:14.4392148Z   CARGO_HOME: /home/runner/.cargo
+2026-01-23T04:36:14.4392361Z ##[endgroup]
+2026-01-23T04:36:14.4471092Z ##[group]Run : enable colors in Cargo output
+2026-01-23T04:36:14.4471387Z [36;1m: enable colors in Cargo output[0m
+2026-01-23T04:36:14.4471670Z [36;1mif [ -z "${CARGO_TERM_COLOR+set}" ]; then[0m
+2026-01-23T04:36:14.4471967Z [36;1m  echo CARGO_TERM_COLOR=always >> $GITHUB_ENV[0m
+2026-01-23T04:36:14.4472229Z [36;1mfi[0m
+2026-01-23T04:36:14.4499365Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-01-23T04:36:14.4499698Z env:
+2026-01-23T04:36:14.4500101Z   CARGO_TERM_COLOR: always
+2026-01-23T04:36:14.4500319Z   RUSTFLAGS: -D warnings
+2026-01-23T04:36:14.4500526Z   CARGO_HOME: /home/runner/.cargo
+2026-01-23T04:36:14.4500751Z   CARGO_INCREMENTAL: 0
+2026-01-23T04:36:14.4500938Z ##[endgroup]
+2026-01-23T04:36:14.4564590Z ##[group]Run : enable Cargo sparse registry
+2026-01-23T04:36:14.4564892Z [36;1m: enable Cargo sparse registry[0m
+2026-01-23T04:36:14.4565224Z [36;1m# implemented in 1.66, stabilized in 1.68, made default in 1.70[0m
+2026-01-23T04:36:14.4565898Z [36;1mif [ -z "${CARGO_REGISTRIES_CRATES_IO_PROTOCOL+set}" -o -f "/home/runner/work/_temp"/.implicit_cargo_registries_crates_io_protocol ]; then[0m
+2026-01-23T04:36:14.4566601Z [36;1m  if rustc +stable --version --verbose | grep -q '^release: 1\.6[89]\.'; then[0m
+2026-01-23T04:36:14.4567134Z [36;1m    touch "/home/runner/work/_temp"/.implicit_cargo_registries_crates_io_protocol || true[0m
+2026-01-23T04:36:14.4567640Z [36;1m    echo CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse >> $GITHUB_ENV[0m
+2026-01-23T04:36:14.4568095Z [36;1m  elif rustc +stable --version --verbose | grep -q '^release: 1\.6[67]\.'; then[0m
+2026-01-23T04:36:14.4568623Z [36;1m    touch "/home/runner/work/_temp"/.implicit_cargo_registries_crates_io_protocol || true[0m
+2026-01-23T04:36:14.4569297Z [36;1m    echo CARGO_REGISTRIES_CRATES_IO_PROTOCOL=git >> $GITHUB_ENV[0m
+2026-01-23T04:36:14.4569611Z [36;1m  fi[0m
+2026-01-23T04:36:14.4569779Z [36;1mfi[0m
+2026-01-23T04:36:14.4597326Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-01-23T04:36:14.4597637Z env:
+2026-01-23T04:36:14.4597810Z   CARGO_TERM_COLOR: always
+2026-01-23T04:36:14.4598022Z   RUSTFLAGS: -D warnings
+2026-01-23T04:36:14.4598236Z   CARGO_HOME: /home/runner/.cargo
+2026-01-23T04:36:14.4598456Z   CARGO_INCREMENTAL: 0
+2026-01-23T04:36:14.4598643Z ##[endgroup]
+2026-01-23T04:36:14.4948530Z ##[group]Run : work around spurious network errors in curl 8.0
+2026-01-23T04:36:14.4948935Z [36;1m: work around spurious network errors in curl 8.0[0m
+2026-01-23T04:36:14.4949452Z [36;1m# https://rust-lang.zulipchat.com/#narrow/stream/246057-t-cargo/topic/timeout.20investigation[0m
+2026-01-23T04:36:14.4950255Z [36;1mif rustc +stable --version --verbose | grep -q '^release: 1\.7[01]\.'; then[0m
+2026-01-23T04:36:14.4950890Z [36;1m  echo CARGO_HTTP_MULTIPLEXING=false >> $GITHUB_ENV[0m
+2026-01-23T04:36:14.4951203Z [36;1mfi[0m
+2026-01-23T04:36:14.4981816Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-01-23T04:36:14.4982135Z env:
+2026-01-23T04:36:14.4982307Z   CARGO_TERM_COLOR: always
+2026-01-23T04:36:14.4982521Z   RUSTFLAGS: -D warnings
+2026-01-23T04:36:14.4982737Z   CARGO_HOME: /home/runner/.cargo
+2026-01-23T04:36:14.4982959Z   CARGO_INCREMENTAL: 0
+2026-01-23T04:36:14.4983144Z ##[endgroup]
+2026-01-23T04:36:14.5194983Z ##[group]Run rustc +stable --version --verbose
+2026-01-23T04:36:14.5195319Z [36;1mrustc +stable --version --verbose[0m
+2026-01-23T04:36:14.5226067Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-01-23T04:36:14.5226375Z env:
+2026-01-23T04:36:14.5226548Z   CARGO_TERM_COLOR: always
+2026-01-23T04:36:14.5226760Z   RUSTFLAGS: -D warnings
+2026-01-23T04:36:14.5226989Z   CARGO_HOME: /home/runner/.cargo
+2026-01-23T04:36:14.5227238Z   CARGO_INCREMENTAL: 0
+2026-01-23T04:36:14.5227440Z ##[endgroup]
+2026-01-23T04:36:14.5397326Z rustc 1.93.0 (254b59607 2026-01-19)
+2026-01-23T04:36:14.5397831Z binary: rustc
+2026-01-23T04:36:14.5398264Z commit-hash: 254b59607d4417e9dffbc307138ae5c86280fe4c
+2026-01-23T04:36:14.5398808Z commit-date: 2026-01-19
+2026-01-23T04:36:14.5399164Z host: x86_64-unknown-linux-gnu
+2026-01-23T04:36:14.5399538Z release: 1.93.0
+2026-01-23T04:36:14.5400050Z LLVM version: 21.1.8
+2026-01-23T04:36:14.5471991Z ##[group]Run cargo fmt --all -- --check
+2026-01-23T04:36:14.5472303Z [36;1mcargo fmt --all -- --check[0m
+2026-01-23T04:36:14.5503350Z shell: /usr/bin/bash -e {0}
+2026-01-23T04:36:14.5503579Z env:
+2026-01-23T04:36:14.5503749Z   CARGO_TERM_COLOR: always
+2026-01-23T04:36:14.5503976Z   RUSTFLAGS: -D warnings
+2026-01-23T04:36:14.5504189Z   CARGO_HOME: /home/runner/.cargo
+2026-01-23T04:36:14.5504421Z   CARGO_INCREMENTAL: 0
+2026-01-23T04:36:14.5504614Z ##[endgroup]
+2026-01-23T04:36:14.5604405Z info: syncing channel updates for 'nightly-x86_64-unknown-linux-gnu'
+2026-01-23T04:36:14.6918279Z info: latest update on 2026-01-23, rust version 1.95.0-nightly (39052daf9 2026-01-22)
+2026-01-23T04:36:14.6918845Z info: downloading component 'cargo'
+2026-01-23T04:36:14.8734898Z info: downloading component 'clippy'
+2026-01-23T04:36:14.9960156Z info: downloading component 'rust-std'
+2026-01-23T04:36:15.3234636Z info: downloading component 'rustc'
+2026-01-23T04:36:16.1822790Z info: downloading component 'rustfmt'
+2026-01-23T04:36:16.3066618Z info: installing component 'cargo'
+2026-01-23T04:36:17.0156742Z info: installing component 'clippy'
+2026-01-23T04:36:17.3893729Z info: installing component 'rust-std'
+2026-01-23T04:36:19.2947869Z info: installing component 'rustc'
+2026-01-23T04:36:23.8182772Z info: installing component 'rustfmt'
+2026-01-23T04:36:24.3573549Z Diff in /home/runner/work/omg/omg/src/config/settings.rs:4:
+2026-01-23T04:36:24.3579617Z  use serde::{Deserialize, Serialize};
+2026-01-23T04:36:24.3580714Z  use std::path::PathBuf;
+2026-01-23T04:36:24.3580944Z  
+2026-01-23T04:36:24.3581143Z -use crate::core::{paths, RuntimeBackend};
+2026-01-23T04:36:24.3581471Z +use crate::core::{RuntimeBackend, paths};
+2026-01-23T04:36:24.3581731Z  
+2026-01-23T04:36:24.3581908Z  /// OMG configuration settings
+2026-01-23T04:36:24.3582187Z  #[derive(Debug, Clone, Serialize, Deserialize)]
+2026-01-23T04:36:24.3608396Z Diff in /home/runner/work/omg/omg/src/core/analytics.rs:304:
+2026-01-23T04:36:24.3609061Z      };
+2026-01-23T04:36:24.3609386Z  
+2026-01-23T04:36:24.3610243Z      // Inject system info into properties for backward compatibility with older workers
+2026-01-23T04:36:24.3611424Z -    properties.insert("sys_cpu".to_string(), serde_json::json!(system_stats.cpu_cores));
+2026-01-23T04:36:24.3612569Z -    properties.insert("sys_ram".to_string(), serde_json::json!(system_stats.ram_gb));
+2026-01-23T04:36:24.3613695Z -    properties.insert("sys_kernel".to_string(), serde_json::json!(system_stats.kernel));
+2026-01-23T04:36:24.3614317Z +    properties.insert(
+2026-01-23T04:36:24.3614585Z +        "sys_cpu".to_string(),
+2026-01-23T04:36:24.3614892Z +        serde_json::json!(system_stats.cpu_cores),
+2026-01-23T04:36:24.3615211Z +    );
+2026-01-23T04:36:24.3615409Z +    properties.insert(
+2026-01-23T04:36:24.3615654Z +        "sys_ram".to_string(),
+2026-01-23T04:36:24.3615978Z +        serde_json::json!(system_stats.ram_gb),
+2026-01-23T04:36:24.3616282Z +    );
+2026-01-23T04:36:24.3616484Z +    properties.insert(
+2026-01-23T04:36:24.3616691Z +        "sys_kernel".to_string(),
+2026-01-23T04:36:24.3616937Z +        serde_json::json!(system_stats.kernel),
+2026-01-23T04:36:24.3617171Z +    );
+2026-01-23T04:36:24.3617317Z  
+2026-01-23T04:36:24.3617468Z      AnalyticsEvent {
+2026-01-23T04:36:24.3617652Z          event_type,
+2026-01-23T04:36:24.3826906Z Diff in /home/runner/work/omg/omg/src/core/license.rs:443:
+2026-01-23T04:36:24.3827653Z      user_email: Option<&str>,
+2026-01-23T04:36:24.3828173Z  ) -> Result<LicenseResponse> {
+2026-01-23T04:36:24.3828708Z      let machine_id = get_machine_id();
+2026-01-23T04:36:24.3829228Z -    
+2026-01-23T04:36:24.3829553Z +
+2026-01-23T04:36:24.3830242Z      let payload = serde_json::json!({
+2026-01-23T04:36:24.3830786Z          "license_key": key,
+2026-01-23T04:36:24.3831182Z          "machine_id": machine_id,
+2026-01-23T04:36:24.4108002Z Diff in /home/runner/work/omg/omg/src/core/telemetry.rs:139:
+2026-01-23T04:36:24.4108724Z  
+2026-01-23T04:36:24.4109090Z      // Send ping with timeout
+2026-01-23T04:36:24.4110416Z      let client = crate::core::http::shared_client();
+2026-01-23T04:36:24.4111081Z -    let response = client
+2026-01-23T04:36:24.4111569Z -        .post(TELEMETRY_API_URL)
+2026-01-23T04:36:24.4112021Z -        .json(&payload)
+2026-01-23T04:36:24.4112302Z -        .send()
+2026-01-23T04:36:24.4112550Z -        .await;
+2026-01-23T04:36:24.4112999Z +    let response = client.post(TELEMETRY_API_URL).json(&payload).send().await;
+2026-01-23T04:36:24.4113541Z  
+2026-01-23T04:36:24.4113941Z      // Create marker file on success or network error (don't block on failure)
+2026-01-23T04:36:24.4114466Z      match response {
+2026-01-23T04:36:24.6271208Z ##[error]Process completed with exit code 1.
+2026-01-23T04:36:24.6363339Z Post job cleanup.
+2026-01-23T04:36:24.7295545Z [command]/usr/bin/git version
+2026-01-23T04:36:24.7331749Z git version 2.52.0
+2026-01-23T04:36:24.7374923Z Temporarily overriding HOME='/home/runner/work/_temp/505a31b4-cd0e-4d03-8c55-6dbc18555205' before making global git config changes
+2026-01-23T04:36:24.7376211Z Adding repository directory to the temporary git global config as a safe directory
+2026-01-23T04:36:24.7388121Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/omg/omg
+2026-01-23T04:36:24.7422264Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-01-23T04:36:24.7454429Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-01-23T04:36:24.7676298Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-01-23T04:36:24.7696525Z http.https://github.com/.extraheader
+2026-01-23T04:36:24.7709537Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+2026-01-23T04:36:24.7740564Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-01-23T04:36:24.7959018Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-01-23T04:36:24.7988780Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-01-23T04:36:24.8319253Z Cleaning up orphan processes

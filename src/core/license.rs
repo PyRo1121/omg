@@ -17,7 +17,6 @@
 use anyhow::{Context, Result};
 use jsonwebtoken::{DecodingKey, Validation, decode};
 use serde::{Deserialize, Serialize};
-use std::fmt::Write;
 use std::path::PathBuf;
 use std::str::FromStr;
 
@@ -443,7 +442,7 @@ pub async fn validate_license_with_user(
     user_email: Option<&str>,
 ) -> Result<LicenseResponse> {
     let machine_id = get_machine_id();
-    
+
     let payload = serde_json::json!({
         "license_key": key,
         "machine_id": machine_id,

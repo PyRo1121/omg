@@ -4,7 +4,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-use crate::core::{paths, RuntimeBackend};
+use crate::core::{RuntimeBackend, paths};
 
 /// OMG configuration settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
