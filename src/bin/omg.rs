@@ -11,6 +11,7 @@ use clap::Parser;
 use omg_lib::cli::LicenseCommands;
 use omg_lib::cli::doctor;
 use omg_lib::cli::env;
+use omg_lib::cli::help;
 use omg_lib::cli::new;
 use omg_lib::cli::packages;
 use omg_lib::cli::runtimes;
@@ -24,7 +25,6 @@ use omg_lib::cli::{
 use omg_lib::cli::{
     blame, ci, diff, enterprise, fleet, migrate, outdated, pin, size, snapshot, why,
 };
-use omg_lib::cli::help;
 use omg_lib::core::{RuntimeBackend, elevate_if_needed, is_root, task_runner};
 use omg_lib::hooks;
 
@@ -109,22 +109,21 @@ fn try_fast_completions(args: &[String]) -> Result<bool> {
     if has_help_flag(args) {
         // Check if --all flag is also present
         let use_all = has_all_flag(&args);
-        
+
         // Show startup spinner for help operations (>100ms)
         if use_all {
             // For --help --all, show immediate spinner since help generation can take time
             crate::lib::progress::show_spinner("Loading help system...");
         }
-        
+
         // Parse CLI to get the all flag
-        let cli = Cli::try_parse_from(&args)
-            .unwrap_or_else(|_| Cli {
-                verbose: 0,
-                quiet: false,
-                all: use_all,
-                command: Commands::Help,
-            });
-        
+        let cli = Cli::try_parse_from(&args).unwrap_or_else(|_| Cli {
+            verbose: 0,
+            quiet: false,
+            all: use_all,
+            command: Commands::Help,
+        });
+
         // Use the new tiered help system
         return omg_lib::cli::help::print_help(&cli, use_all);
     }
