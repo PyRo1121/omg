@@ -20,7 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [ 'actions', 'rust' ]
+        language: [ 'rust' ]
 
     steps:
     - name: Checkout repository
@@ -30,7 +30,6 @@ jobs:
       uses: github/codeql-action/init@v4
       with:
         languages: ${{ matrix.language }}
-        build-mode: none
 
     - name: Install dependencies (Debian/Rust)
       if: matrix.language == 'rust'
