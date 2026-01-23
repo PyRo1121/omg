@@ -32,7 +32,7 @@ fn print_essential_help(cli: &Cli) -> anyhow::Result<()> {
     println!();
 
     println!("📖 Essential Commands (Most Common):");
-    println!("═════════════════════════════════");
+    println!("═══════════════════════════════");
     println!();
 
     // Show help for essential commands only
@@ -49,6 +49,8 @@ fn print_essential_help(cli: &Cli) -> anyhow::Result<()> {
     println!();
 
     print_getting_started();
+
+    Ok(())
 }
 
 /// Get help text for an essential command
