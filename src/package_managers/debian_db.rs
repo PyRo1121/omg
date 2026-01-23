@@ -3,7 +3,7 @@
 //! Parses /var/lib/apt/lists/*_Packages and /var/lib/dpkg/status files directly
 //! and provides a high-performance index with zero-copy deserialization via rkyv.
 
-#![cfg(feature = "debian")]
+#![cfg(any(feature = "debian", feature = "debian-pure"))]
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -303,23 +303,39 @@ fn parse_paragraph_str(paragraph: &str) -> Result<DebianPackage> {
 }
 
 pub fn get_detailed_packages() -> Result<Vec<DebianPackage>> {
+    if crate::core::paths::test_mode() {
+        return Ok(vec![DebianPackage {
+            name: "apt".to_string(),
+            version: "2.6.1".to_string(),
+            description: "Debian package manager".to_string(),
+            section: "admin".to_string(),
+            priority: "optional".to_string(),
+            installed_size: 1024,
+            maintainer: "Debian".to_string(),
+            architecture: "amd64".to_string(),
+            depends: vec![],
+            filename: "pool/main/a/apt/apt_2.6.1_amd64.deb".to_string(),
+            size: 500,
+            sha256: "hash".to_string(),
+            homepage: "https://debian.org".to_string(),
+        }]);
+    }
     ensure_index_loaded()?;
     let guard = DEBIAN_INDEX_CACHE.read();
     let index = guard.index.as_ref().context("Index not loaded")?;
     Ok(index.packages.clone())
 }
 
-pub fn search_fast(query: &str) -> Result<Vec<Package>> {
+    pub fn search_fast(query: &str) -> Result<Vec<Package>> {
     if crate::core::paths::test_mode() {
         return Ok(vec![Package {
             name: "apt".to_string(),
-            version: "2.6.1".to_string(),
+            version: parse_version_or_zero("2.6.1"),
             description: "Debian package manager".to_string(),
             source: PackageSource::Official,
             installed: true,
         }]);
-    }
-    ensure_index_loaded()?;
+    }    ensure_index_loaded()?;
     let guard = DEBIAN_INDEX_CACHE.read();
     let index = guard.index.as_ref().context("Index not loaded")?;
 
@@ -359,17 +375,16 @@ pub fn search_fast(query: &str) -> Result<Vec<Package>> {
     Ok(results)
 }
 
-pub fn get_info_fast(name: &str) -> Result<Option<Package>> {
+    pub fn get_info_fast(name: &str) -> Result<Option<Package>> {
     if crate::core::paths::test_mode() {
         return Ok(Some(Package {
             name: name.to_string(),
-            version: "1.0.0".to_string(),
+            version: parse_version_or_zero("1.0.0"),
             description: "Mock package".to_string(),
             source: PackageSource::Official,
             installed: true,
         }));
-    }
-    ensure_index_loaded()?;
+    }    ensure_index_loaded()?;
     let guard = DEBIAN_INDEX_CACHE.read();
     let index = guard.index.as_ref().context("Index not loaded")?;
     if let Some(pkg) = index.get(name) {

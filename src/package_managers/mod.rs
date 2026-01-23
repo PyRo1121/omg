@@ -15,7 +15,7 @@ pub mod alpm_worker;
 pub mod apt;
 #[cfg(feature = "arch")]
 mod aur;
-#[cfg(feature = "debian")]
+#[cfg(any(feature = "debian", feature = "debian-pure"))]
 pub mod debian_db;
 pub mod mock;
 #[cfg(feature = "arch")]
@@ -30,6 +30,7 @@ mod traits;
 pub mod types;
 
 pub use types::{parse_version_or_zero, zero_version};
+
 
 #[cfg(feature = "arch")]
 pub fn search_sync(query: &str) -> anyhow::Result<Vec<SyncPackage>> {
@@ -165,8 +166,9 @@ pub use apt::{
     list_installed_fast as apt_list_installed_fast, list_orphans as apt_list_orphans,
     list_updates as apt_list_updates, remove_orphans as apt_remove_orphans,
 };
-#[cfg(feature = "debian")]
+#[cfg(any(feature = "debian", feature = "debian-pure"))]
 pub use debian_db::{
-    get_counts_fast as apt_get_counts_fast, get_info_fast as apt_get_info_fast, list_explicit_fast,
-    list_installed_fast, search_fast as apt_search_fast,
+    get_counts_fast as apt_get_counts_fast, get_info_fast as apt_get_info_fast,
+    list_explicit_fast as apt_list_explicit_fast, list_installed_fast as apt_list_installed_fast,
+    search_fast as apt_search_fast,
 };

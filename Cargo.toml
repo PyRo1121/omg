@@ -112,6 +112,7 @@ notify = "7.0"
 
 # Configuration
 home = "0.5.12"
+atty = "0.2"
 
 # Cryptography
 sha2 = "0.10.9"
@@ -219,6 +220,8 @@ pgp = ["sequoia-openpgp"] # Optional PGP verification (requires Rust 1.80+)
 # Debian/Ubuntu support - unified feature
 # Requires libapt-pkg-dev: `apt install libapt-pkg-dev`
 debian = ["debian-packaging", "winnow", "gzp", "ar", "rust-apt"]
+# Pure Rust Debian support (no FFI, no system dependencies) - for testing/indexing
+debian-pure = ["debian-packaging", "winnow", "gzp", "ar"]
 
 license = [] # Enable license/subscription features (Pro, Team, Enterprise tiers)
 docker_tests = [] # Enable tests that require running as root (e.g. in Docker)
