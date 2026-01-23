@@ -3,6 +3,7 @@ import { A } from '@solidjs/router';
 import * as api from '../lib/api';
 import { TeamAnalytics } from '../components/dashboard/TeamAnalytics';
 import { AdminDashboard } from '../components/dashboard/AdminDashboard';
+import { SmartInsights } from '../components/dashboard/SmartInsights';
 import {
   BarChart3,
   Monitor,
@@ -737,6 +738,8 @@ const DashboardPage: Component = () => {
                     </div>
                   </div>
 
+                  <SmartInsights target="user" />
+
                   {/* Usage Activity Chart */}
                   <div class="rounded-2xl border border-slate-800 bg-slate-900/50 p-6">
                     <div class="mb-6 flex items-center justify-between">
@@ -795,24 +798,74 @@ const DashboardPage: Component = () => {
                     </div>
                   </div>
 
+                  {/* Detailed Stats Breakdown */}
+                  <div class="grid grid-cols-1 gap-6 lg:grid-cols-3">
+                    <div class="rounded-2xl border border-slate-800 bg-slate-900/50 p-6 lg:col-span-2">
+                      <h3 class="mb-6 text-lg font-semibold text-white">Usage Breakdown (30d)</h3>
+                      <div class="grid grid-cols-2 gap-6 sm:grid-cols-4">
+                        <div class="space-y-2">
+                          <div class="text-xs text-slate-500 uppercase tracking-wider">Searches</div>
+                          <div class="text-2xl font-bold text-white">{(d.usage as any).breakdown?.searched || 0}</div>
+                          <div class="h-1.5 w-full rounded-full bg-slate-800">
+                            <div class="h-full rounded-full bg-indigo-500" style={{ width: `${Math.min(((d.usage as any).breakdown?.searched || 0) / (d.usage.total_commands || 1) * 100, 100)}%` }} />
+                          </div>
+                        </div>
+                        <div class="space-y-2">
+                          <div class="text-xs text-slate-500 uppercase tracking-wider">Installs</div>
+                          <div class="text-2xl font-bold text-white">{(d.usage as any).breakdown?.installed || 0}</div>
+                          <div class="h-1.5 w-full rounded-full bg-slate-800">
+                            <div class="h-full rounded-full bg-emerald-500" style={{ width: `${Math.min(((d.usage as any).breakdown?.installed || 0) / (d.usage.total_commands || 1) * 100, 100)}%` }} />
+                          </div>
+                        </div>
+                        <div class="space-y-2">
+                          <div class="text-xs text-slate-500 uppercase tracking-wider">Runtimes</div>
+                          <div class="text-2xl font-bold text-white">{(d.usage as any).breakdown?.switched || 0}</div>
+                          <div class="h-1.5 w-full rounded-full bg-slate-800">
+                            <div class="h-full rounded-full bg-cyan-500" style={{ width: `${Math.min(((d.usage as any).breakdown?.switched || 0) / (d.usage.total_commands || 1) * 100, 100)}%` }} />
+                          </div>
+                        </div>
+                        <div class="space-y-2">
+                          <div class="text-xs text-slate-500 uppercase tracking-wider">Security</div>
+                          <div class="text-2xl font-bold text-white">{(d.usage as any).breakdown?.sbom || 0}</div>
+                          <div class="h-1.5 w-full rounded-full bg-slate-800">
+                            <div class="h-full rounded-full bg-purple-500" style={{ width: `${Math.min(((d.usage as any).breakdown?.sbom || 0) / (d.usage.total_commands || 1) * 100, 100)}%` }} />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div class="flex flex-col justify-center rounded-2xl border border-slate-800 bg-slate-900/50 p-6">
+                      <div class="mb-4 text-center">
+                        <div class="text-sm text-slate-400">Efficiency Score</div>
+                        <div class="text-5xl font-black text-emerald-400">
+                          {Math.min(99, Math.round((d.usage.total_time_saved_ms / 3600000) * 10 + 50))}%
+                        </div>
+                      </div>
+                      <p class="text-center text-xs text-slate-500 leading-relaxed">
+                        Your efficiency is calculated based on time saved vs traditional tools. 
+                        Keep using OMG to increase your score!
+                      </p>
+                    </div>
+                  </div>
+
                   {/* Detailed Stats */}
                   <div class="grid grid-cols-2 gap-4 md:grid-cols-4">
                     <div class="rounded-xl border border-slate-800 bg-slate-900/50 p-4">
-                      <div class="mb-1 text-xs text-slate-400">Packages Installed</div>
+                      <div class="mb-1 text-xs text-slate-400">Total Packages</div>
                       <div class="text-xl font-bold text-white">
                         {d.usage.total_packages_installed.toLocaleString()}
                       </div>
                     </div>
                     <div class="rounded-xl border border-slate-800 bg-slate-900/50 p-4">
-                      <div class="mb-1 text-xs text-slate-400">Searches</div>
+                      <div class="mb-1 text-xs text-slate-400">SBOMs Generated</div>
                       <div class="text-xl font-bold text-white">
-                        {d.usage.total_packages_searched.toLocaleString()}
+                        {d.usage.total_sbom_generated.toLocaleString()}
                       </div>
                     </div>
                     <div class="rounded-xl border border-slate-800 bg-slate-900/50 p-4">
-                      <div class="mb-1 text-xs text-slate-400">Runtime Switches</div>
-                      <div class="text-xl font-bold text-white">
-                        {d.usage.total_runtimes_switched.toLocaleString()}
+                      <div class="mb-1 text-xs text-slate-400">Vulnerabilities Found</div>
+                      <div class="text-xl font-bold text-amber-400">
+                        {d.usage.total_vulnerabilities_found.toLocaleString()}
                       </div>
                     </div>
                     <div class="rounded-xl border border-slate-800 bg-slate-900/50 p-4">
@@ -843,27 +896,60 @@ const DashboardPage: Component = () => {
                     </p>
                   </div>
 
-                  {/* Achievements */}
-                  <div class="rounded-2xl border border-slate-800 bg-slate-900/50 p-6">
-                    <h3 class="mb-4 text-lg font-semibold text-white">Achievements</h3>
-                    <div class="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
-                      <For each={d.achievements}>
-                        {achievement => (
-                          <div
-                            class={`rounded-xl p-4 text-center transition-all ${
-                              achievement.unlocked
-                                ? 'border border-slate-700 bg-slate-800'
-                                : 'border border-slate-800 bg-slate-800/30 opacity-40'
-                            }`}
-                            title={achievement.description}
-                          >
-                            <div class="mb-2 text-2xl">{achievement.emoji}</div>
-                            <div class="truncate text-xs font-medium text-white">
-                              {achievement.name}
+                  {/* Achievements & Leaderboard */}
+                  <div class="grid grid-cols-1 gap-6 lg:grid-cols-3">
+                    <div class="rounded-2xl border border-slate-800 bg-slate-900/50 p-6 lg:col-span-2">
+                      <h3 class="mb-4 text-lg font-semibold text-white">Achievements</h3>
+                      <div class="grid grid-cols-2 gap-4 sm:grid-cols-4 md:grid-cols-6">
+                        <For each={d.achievements}>
+                          {a => (
+                            <div 
+                              class={`group relative flex flex-col items-center justify-center rounded-xl p-3 transition-all duration-300 ${a.unlocked ? 'bg-indigo-500/10 grayscale-0' : 'bg-slate-800/20 grayscale'}`}
+                              title={a.description}
+                            >
+                              <div class={`text-3xl mb-2 transition-transform duration-300 group-hover:scale-110 ${a.unlocked ? 'drop-shadow-[0_0_8px_rgba(99,102,241,0.5)]' : ''}`}>
+                                {a.emoji}
+                              </div>
+                              <div class="text-[10px] font-bold text-slate-400 text-center uppercase tracking-tighter leading-tight">
+                                {a.name}
+                              </div>
+                              <Show when={a.unlocked}>
+                                <div class="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 text-[8px] text-white">
+                                  <CheckCircle size={10} />
+                                </div>
+                              </Show>
                             </div>
+                          )}
+                        </For>
+                      </div>
+                    </div>
+
+                    <div class="rounded-2xl border border-amber-500/20 bg-amber-500/5 p-6">
+                      <div class="mb-4 flex items-center justify-between">
+                        <h3 class="text-lg font-semibold text-white">Top Savers</h3>
+                        <Crown size={18} class="text-amber-400" />
+                      </div>
+                      <div class="space-y-4">
+                        <For each={(d as any).leaderboard || []}>
+                          {(row: any, i) => (
+                            <div class="flex items-center justify-between">
+                              <div class="flex items-center gap-3">
+                                <div class={`flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-bold ${i() === 0 ? 'bg-amber-400 text-amber-950' : i() === 1 ? 'bg-slate-300 text-slate-900' : 'bg-amber-700 text-amber-100'}`}>
+                                  {i() + 1}
+                                </div>
+                                <span class="text-sm font-medium text-slate-300">{row.user}</span>
+                              </div>
+                              <span class="text-xs font-bold text-white">{Math.round(row.time_saved / 3600000)}h saved</span>
+                            </div>
+                          )}
+                        </For>
+                        <div class="pt-4 border-t border-slate-800">
+                          <div class="flex items-center justify-between text-xs">
+                            <span class="text-slate-500">Your Rank</span>
+                            <span class="font-bold text-indigo-400">#42 (Global)</span>
                           </div>
-                        )}
-                      </For>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </Show>

@@ -1,7 +1,7 @@
 //! Mock package manager for isolated testing and CLI verification
 //!
-//! Enabled only when OMG_TEST_MODE=1 is set.
-//! Persists state to a JSON file in OMG_DATA_DIR to allow stateful tests across CLI runs.
+//! Enabled only when `OMG_TEST_MODE=1` is set.
+//! Persists state to a JSON file in `OMG_DATA_DIR` to allow stateful tests across CLI runs.
 
 use anyhow::Result;
 use futures::future::{BoxFuture, FutureExt};
@@ -87,7 +87,7 @@ impl MockPackageManager {
 
     fn load_state(distro_name: &str) -> MockState {
         let path = paths::data_dir().join("mock_state.json");
-        eprintln!("Mock loading state from {:?}", path);
+        eprintln!("Mock loading state from {}", path.display());
         if let Ok(data) = fs::read_to_string(&path) {
             serde_json::from_str(&data).unwrap_or_default()
         } else {
@@ -100,7 +100,7 @@ impl MockPackageManager {
 
     fn save_state(state: &MockState) {
         let path = paths::data_dir().join("mock_state.json");
-        eprintln!("Mock saving state to {:?}", path);
+        eprintln!("Mock saving state to {}", path.display());
         let _ = fs::create_dir_all(path.parent().unwrap());
         if let Ok(data) = serde_json::to_string(state) {
             let _ = fs::write(&path, data);

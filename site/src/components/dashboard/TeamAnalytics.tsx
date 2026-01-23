@@ -3,6 +3,7 @@ import * as api from '../../lib/api';
 import { MetricCard } from '../ui/Card';
 import { StatusBadge } from '../ui/Badge';
 import { BarChart, DonutChart, LiveIndicator } from '../ui/Chart';
+import { SmartInsights } from './SmartInsights';
 import {
   Users,
   BarChart3,
@@ -11,6 +12,7 @@ import {
   AlertTriangle,
   FileText,
   Lightbulb,
+  DollarSign,
 } from '../ui/Icons';
 
 interface TeamAnalyticsProps {
@@ -348,6 +350,61 @@ export const TeamAnalytics: Component<TeamAnalyticsProps> = props => {
             />
           </div>
 
+          <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
+            <div class="rounded-2xl border border-slate-800/60 bg-gradient-to-br from-slate-900/90 to-slate-800/50 p-6 backdrop-blur-sm">
+              <div class="mb-4 flex items-center justify-between">
+                <h3 class="text-lg font-semibold text-white">Fleet Compliance</h3>
+                <span class={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${props.teamData!.fleet_health.compliance_rate >= 90 ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-400'}`}>
+                  {props.teamData!.fleet_health.compliance_rate}% Match
+                </span>
+              </div>
+              <div class="flex items-center gap-8">
+                <div class="flex-1 space-y-4">
+                  <div class="flex justify-between text-sm">
+                    <span class="text-slate-400">Latest Stable: <span class="text-white font-mono">{props.teamData!.fleet_health.latest_version}</span></span>
+                  </div>
+                  <div class="h-2.5 overflow-hidden rounded-full bg-slate-800">
+                    <div 
+                      class="h-full bg-gradient-to-r from-indigo-500 to-purple-400 transition-all duration-1000"
+                      style={{ width: `${props.teamData!.fleet_health.compliance_rate}%` }}
+                    />
+                  </div>
+                  <Show when={props.teamData!.fleet_health.version_drift}>
+                    <p class="text-xs text-amber-400 flex items-center gap-1.5">
+                      <AlertTriangle size={12} />
+                      Warning: Version drift detected across {props.teamData!.totals.total_machines} machines.
+                    </p>
+                  </Show>
+                </div>
+              </div>
+            </div>
+
+            <div class="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-6 backdrop-blur-sm">
+              <div class="mb-4 flex items-center justify-between">
+                <h3 class="text-lg font-semibold text-white">Economic Value (ROI)</h3>
+                <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500/20 text-emerald-400">
+                  <DollarSign size={18} />
+                </div>
+              </div>
+              <div class="space-y-4">
+                <div class="flex items-baseline gap-2">
+                  <span class="text-4xl font-black text-white">${props.teamData!.totals.total_value_usd.toLocaleString()}</span>
+                  <span class="text-xs text-slate-500 uppercase font-bold tracking-wider">Value Realized</span>
+                </div>
+                <div class="flex items-center gap-4">
+                  <div class="flex-1">
+                    <div class="text-[10px] text-slate-500 uppercase mb-1">Cost Multiplier</div>
+                    <div class="text-sm font-bold text-emerald-400">{props.teamData!.insights.roi_multiplier}x ROI</div>
+                  </div>
+                  <div class="flex-1">
+                    <div class="text-[10px] text-slate-500 uppercase mb-1">Efficiency Gain</div>
+                    <div class="text-sm font-bold text-indigo-400">+{props.teamData!.productivity_score}%</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
           {/* Charts Row */}
           <div class="grid grid-cols-1 gap-6 xl:grid-cols-3">
             {/* Seat Usage */}
@@ -606,6 +663,8 @@ export const TeamAnalytics: Component<TeamAnalyticsProps> = props => {
       {/* Insights Tab */}
       <Show when={view() === 'insights'}>
         <div class="space-y-6">
+          <SmartInsights target="team" />
+          
           <div class="rounded-2xl border border-slate-800/60 bg-gradient-to-br from-slate-900/90 to-slate-800/50 p-6 backdrop-blur-sm">
             <div class="mb-6 flex items-center gap-3">
               <h3 class="text-lg font-semibold text-white">Productivity Insights</h3>

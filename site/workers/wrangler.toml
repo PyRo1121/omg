@@ -12,6 +12,9 @@ binding = "DB"
 database_name = "omg-licensing"
 database_id = "bcaf7781-a747-4637-92d9-94782e4fa1db"
 
+[ai]
+binding = "AI"
+
 # Rate limiting for admin API (100 requests per minute per user)
 [[ratelimits]]
 name = "ADMIN_RATE_LIMITER"

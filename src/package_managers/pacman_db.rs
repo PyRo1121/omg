@@ -901,6 +901,12 @@ pub fn get_counts_fast() -> Result<(usize, usize, usize)> {
     Ok((total, explicit, total - explicit))
 }
 
+/// Get explicit package count only - INSTANT
+pub fn get_explicit_count() -> Result<usize> {
+    let (_, explicit, _) = get_counts_fast()?;
+    Ok(explicit)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

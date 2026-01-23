@@ -161,10 +161,10 @@ fn print_dependency_path(handle: &alpm::Alpm, from: &str, to: &str) {
         if current == to {
             // Reconstruct path
             let mut path = vec![to.to_string()];
-            let mut node = to.to_string();
-            while let Some(p) = parent.get(&node) {
+            let mut current_node = to;
+            while let Some(p) = parent.get(current_node) {
                 path.push(p.clone());
-                node = p.clone();
+                current_node = p;
             }
             path.reverse();
 

@@ -1,13 +1,9 @@
 //! Edge case testing for the TDD suite
-//!
+//! 
 //! This file focuses on obscure error paths and "absolute everything" testing.
 
-mod common;
-
-use common::*;
 use omg_lib::core::security::validation;
-use omg_lib::package_managers::parse_version_or_zero;
-
+use omg_lib::package_managers::types::parse_version_or_zero;
 #[test]
 fn test_version_parsing_edge_cases() {
     // Standard versions
@@ -42,7 +38,7 @@ fn test_package_name_validation_rigorous() {
 
 #[tokio::test]
 async fn test_daemon_protocol_boundaries() {
-    use omg_lib::daemon::protocol::{Request, RequestId, Response};
+    use omg_lib::daemon::protocol::Request;
 
     // Test large request ID
     let req = Request::Ping { id: u64::MAX };

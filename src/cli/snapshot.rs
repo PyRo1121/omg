@@ -91,7 +91,7 @@ pub async fn create(message: Option<String>) -> Result<()> {
         id: id.clone(),
         message: message.clone(),
         created_at: snapshot.created_at,
-        hash: state.hash.clone(),
+        hash: state.hash,
     });
     save_index(&index)?;
 
