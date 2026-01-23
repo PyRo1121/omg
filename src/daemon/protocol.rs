@@ -57,6 +57,12 @@ pub enum Request {
         id: RequestId,
         requests: Box<Vec<Request>>,
     },
+    /// Search Debian/Ubuntu packages (apt)
+    DebianSearch {
+        id: RequestId,
+        query: String,
+        limit: Option<usize>,
+    },
 }
 
 impl Request {
@@ -74,7 +80,8 @@ impl Request {
             | Self::CacheClear { id }
             | Self::Metrics { id }
             | Self::Suggest { id, .. }
-            | Self::Batch { id, .. } => *id,
+            | Self::Batch { id, .. }
+            | Self::DebianSearch { id, .. } => *id,
         }
     }
 }
@@ -111,6 +118,8 @@ pub enum ResponseResult {
     Message(String),
     /// Batch response containing multiple results
     Batch(Box<Vec<Response>>),
+    /// Debian search results (list of package names)
+    DebianSearch(Vec<String>),
 }
 
 // Error codes
