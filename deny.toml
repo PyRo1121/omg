@@ -47,10 +47,10 @@ license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
 
 [bans]
 multiple-versions = "warn"
-wildcards = "allow"
 highlight = "all"
-workspace-default-features = "allow"
-external-default-features = "allow"
+# wildcards = "allow"
+# workspace-default-features = "allow"
+# external-default-features = "allow"
 
 # Deny specific problematic crates
 deny = []
