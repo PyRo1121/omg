@@ -3,7 +3,7 @@
 This plan follows the project's TDD protocol: Write Test -> Implement -> Refactor.
 
 ## Phase 1: Daemon Integration & IPC
-- [ ] Task: Define Debian-specific IPC message types in `omg-lib`
+- [x] Task: Define Debian-specific IPC message types in `omg-lib` [82b3e6b]
     - [ ] Write failing unit tests for Debian search request/response serialization
     - [ ] Implement `DebianSearch` variants in the IPC protocol
 - [ ] Task: Integrate `debian-packaging` indexing into `omgd`
