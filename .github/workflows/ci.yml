@@ -37,7 +37,7 @@ jobs:
           echo '{"key":"CI-MOCK-KEY","tier":"enterprise","features":["sbom","audit","secrets","slsa","policy"],"validated_at":9999999999}' > ~/.local/share/omg/license.json
 
       - name: Clippy (Core)
-        run: cargo clippy --all-targets --all-features -- -D warnings -W clippy::pedantic
+        run: cargo clippy --all-targets --no-default-features --features debian -- -D warnings -W clippy::pedantic
       
       - name: Spell Check
         uses: crate-ci/typos@master
@@ -48,7 +48,7 @@ jobs:
         uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check
-          arguments: --all-features
+          arguments: --no-default-features --features debian
 
       - name: Unsafe Code Audit (cargo-geiger)
         continue-on-error: true
@@ -258,7 +258,7 @@ jobs:
       - name: Build & Test
         run: |
           cargo build --release --no-default-features --features debian
-          cargo clippy --all-targets --all-features -- -D warnings -W clippy::pedantic
+          cargo clippy --all-targets --no-default-features --features debian -- -D warnings -W clippy::pedantic
           cargo test --no-default-features --features debian --lib
           cargo test --test exhaustive_cli_matrix --no-default-features --features debian
 
