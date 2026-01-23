@@ -15,8 +15,8 @@ static KEY_EXPLICIT_COUNT: LazyLock<String> = LazyLock::new(|| "explicit_count".
 pub struct PackageCache {
     /// Search results cache: query -> packages
     cache: Cache<String, Vec<PackageInfo>>,
-    /// Debian search results cache: query -> package names
-    debian_cache: Cache<String, Vec<String>>,
+    /// Debian search results cache: query -> package info
+    debian_cache: Cache<String, Vec<PackageInfo>>,
     /// Detailed info cache: pkgname -> info
     detailed_cache: Cache<String, DetailedPackageInfo>,
     /// Negative cache for missing package info
@@ -135,12 +135,12 @@ impl PackageCache {
     /// Get cached Debian search results
     #[inline]
     #[must_use]
-    pub fn get_debian(&self, query: &str) -> Option<Vec<String>> {
+    pub fn get_debian(&self, query: &str) -> Option<Vec<PackageInfo>> {
         self.debian_cache.get(query)
     }
 
     /// Store Debian search results in cache
-    pub fn insert_debian(&self, query: String, packages: Vec<String>) {
+    pub fn insert_debian(&self, query: String, packages: Vec<PackageInfo>) {
         self.debian_cache.insert(query, packages);
     }
 
