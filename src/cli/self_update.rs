@@ -4,7 +4,6 @@ use anyhow::{Context, Result};
 use owo_colors::OwoColorize;
 use std::env;
 use std::fs;
-use std::path::PathBuf;
 
 const UPDATE_URL: &str = "https://releases.pyro1121.com";
 

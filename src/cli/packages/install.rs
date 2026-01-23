@@ -31,7 +31,7 @@ pub async fn install(packages: &[String], yes: bool) -> Result<()> {
         match service.install(&packages_to_install, yes).await {
             Ok(()) => {
                 // Track usage
-                crate::core::usage::track_install();
+                crate::core::usage::track_install(&packages_to_install);
                 return Ok(());
             }
             Err(e) => {
