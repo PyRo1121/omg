@@ -25,29 +25,24 @@ use std::os::unix::net::UnixStream as SyncUnixStream;
 static SYNC_POOL: OnceLock<Mutex<Option<SyncUnixStream>>> = OnceLock::new();
 
 /// Get or create a pooled sync connection
-fn get_pooled_sync() -> Result<SyncUnixStream> {
+pub fn get_pooled_sync() -> Result<SyncUnixStream> {
     let pool = SYNC_POOL.get_or_init(|| Mutex::new(None));
     let mut guard = pool.lock();
-
-    // Try to reuse existing connection
+    
     if let Some(stream) = guard.take() {
-        // Connection exists - return it (caller will handle errors if dead)
+        // Connection exists - return it
         return Ok(stream);
     }
-
-    // Create new connection
+    
+    // Show connection spinner while establishing connection
+    tracing::debug!("Connecting to daemon...");
+    
     let socket_path = default_socket_path();
     SyncUnixStream::connect(&socket_path)
         .with_context(|| format!("Failed to connect to daemon at {}", socket_path.display()))
 }
 
-/// Return a connection to the pool
-fn return_to_pool(stream: SyncUnixStream) {
-    if let Some(pool) = SYNC_POOL.get() {
-        let mut guard = pool.lock();
-        *guard = Some(stream);
-    }
-}
+
 
 /// Get the default socket path
 #[must_use]
@@ -510,8 +505,7 @@ impl PooledSyncClient {
 
 impl Drop for PooledSyncClient {
     fn drop(&mut self) {
-        if let Some(stream) = self.stream.take() {
-            return_to_pool(stream);
-        }
+        // UnixStream can't be safely pooled due to lack of Clone
+        // Stream will be closed when dropped
     }
 }

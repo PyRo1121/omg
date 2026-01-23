@@ -110,6 +110,12 @@ fn try_fast_completions(args: &[String]) -> Result<bool> {
         // Check if --all flag is also present
         let use_all = has_all_flag(&args);
         
+        // Show startup spinner for help operations (>100ms)
+        if use_all {
+            // For --help --all, show immediate spinner since help generation can take time
+            crate::lib::progress::show_spinner("Loading help system...");
+        }
+        
         // Parse CLI to get the all flag
         let cli = Cli::try_parse_from(&args)
             .unwrap_or_else(|_| Cli {

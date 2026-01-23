@@ -37,6 +37,28 @@ pub enum AuditEventType {
     SbomExported,
 }
 
+impl std::fmt::Display for AuditEventType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::PackageInstall => write!(f, "PACKAGE_INSTALL"),
+            Self::PackageRemove => write!(f, "PACKAGE_REMOVE"),
+            Self::PackageUpgrade => write!(f, "PACKAGE_UPGRADE"),
+            Self::PackageDowngrade => write!(f, "PACKAGE_DOWNGRADE"),
+            Self::SecurityAudit => write!(f, "SECURITY_AUDIT"),
+            Self::VulnerabilityDetected => write!(f, "VULNERABILITY_DETECTED"),
+            Self::SignatureVerified => write!(f, "SIGNATURE_VERIFIED"),
+            Self::SignatureFailed => write!(f, "SIGNATURE_FAILED"),
+            Self::PolicyViolation => write!(f, "POLICY_VIOLATION"),
+            Self::PolicyChanged => write!(f, "POLICY_CHANGED"),
+            Self::ConfigChanged => write!(f, "CONFIG_CHANGED"),
+            Self::DaemonStarted => write!(f, "DAEMON_STARTED"),
+            Self::DaemonStopped => write!(f, "DAEMON_STOPPED"),
+            Self::SbomGenerated => write!(f, "SBOM_GENERATED"),
+            Self::SbomExported => write!(f, "SBOM_EXPORTED"),
+        }
+    }
+}
+
 /// Severity levels for audit events
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "lowercase")]
@@ -376,7 +398,9 @@ static AUDIT_LOGGER: std::sync::LazyLock<std::sync::Mutex<Option<AuditLogger>>> 
 /// Initialize the global audit logger
 pub fn init_audit_logger() -> Result<()> {
     let logger = AuditLogger::new()?;
-    *AUDIT_LOGGER.lock().unwrap() = Some(logger);
+    *AUDIT_LOGGER.lock().map_err(|e| {
+        anyhow::anyhow!("Failed to acquire audit logger lock: {}", e)
+    })? = Some(logger);
     Ok(())
 }
 
@@ -391,6 +415,13 @@ pub fn audit_log(
         && let Some(logger) = guard.as_mut()
     {
         let _ = logger.log(event, severity, resource, description);
+    } else {
+        // Fallback to tracing if audit logger is not available
+        tracing::warn!(
+            "Audit logger not available: {} - {}",
+            event,
+            description
+        );
     }
 }
 
@@ -406,6 +437,14 @@ pub fn audit_log_with_metadata(
         && let Some(logger) = guard.as_mut()
     {
         let _ = logger.log_with_metadata(event, severity, resource, description, Some(metadata));
+    } else {
+        // Fallback to tracing if audit logger is not available
+        tracing::warn!(
+            "Audit logger not available: {} - {} (metadata: {:?})",
+            event,
+            description,
+            metadata
+        );
     }
 }
 

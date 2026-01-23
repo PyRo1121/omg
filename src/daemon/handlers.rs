@@ -1,6 +1,5 @@
 //! Request handlers for the daemon
 
-use std::num::NonZeroU32;
 use std::sync::Arc;
 
 use anyhow::Context;
@@ -64,8 +63,12 @@ impl DaemonState {
         }
 
         // Rate limit: 100 requests per second with burst of 200
-        let quota = Quota::per_second(NonZeroU32::new(100).unwrap())
-            .allow_burst(NonZeroU32::new(200).unwrap());
+        let quota = Quota::per_second(
+            crate::core::safe_ops::nonzero_u32_or_default(100, 1)
+        )
+        .allow_burst(
+            crate::core::safe_ops::nonzero_u32_or_default(200, 1)
+        );
         let rate_limiter = Arc::new(RateLimiter::direct(quota));
 
         Ok(Self {
