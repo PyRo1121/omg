@@ -47,10 +47,9 @@ impl crate::package_managers::PackageManager for AptPackageManager {
         async move {
             // Try fast path first
             let fast_results = super::debian_db::search_fast(&query);
-            if let Ok(results) = fast_results {
-                if !results.is_empty() {
-                    return Ok(results);
-                }
+            if let Ok(results) = fast_results
+                && !results.is_empty() {
+                return Ok(results);
             }
 
             let results = tokio::task::spawn_blocking(move || search_sync(&query))
@@ -249,13 +248,11 @@ pub fn search_sync(query: &str) -> Result<Vec<SyncPackage>> {
         #[allow(clippy::collapsible_if)]
         // If name doesn't match, check summary (slower as it might load more data)
         let mut summary = None;
-        if !matched {
-            if let Some(s) = pkg.candidate().and_then(|c| c.summary()) {
-                if s.to_lowercase().contains(&query_lower) {
-                    matched = true;
-                    summary = Some(s);
-                }
-            }
+        if !matched
+            && let Some(s) = pkg.candidate().and_then(|c| c.summary())
+            && s.to_lowercase().contains(&query_lower) {
+            matched = true;
+            summary = Some(s);
         }
 
         #[allow(clippy::redundant_closure_for_method_calls)]
