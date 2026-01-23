@@ -143,6 +143,25 @@ pub async fn handle_request(state: Arc<DaemonState>, request: Request) -> Respon
         Request::Metrics { id } => handle_metrics(id),
         Request::Suggest { id, query, limit } => handle_suggest(state, id, query, limit).await,
         Request::Batch { id, requests } => handle_batch(state, id, *requests).await,
+        Request::DebianSearch { id, query, limit } => {
+            handle_debian_search(state, id, query, limit).await
+        }
+    }
+}
+
+/// Handle Debian search request
+async fn handle_debian_search(
+    _state: Arc<DaemonState>,
+    id: RequestId,
+    _query: String,
+    _limit: Option<usize>,
+) -> Response {
+    // TODO: Implement actual Debian search in Phase 2
+    // For now, return error to indicate not implemented
+    Response::Error {
+        id,
+        code: error_codes::METHOD_NOT_FOUND,
+        message: "Debian search not yet implemented".to_string(),
     }
 }
 
