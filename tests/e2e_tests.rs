@@ -960,9 +960,11 @@ mod usage_tests {
     #[test]
     fn test_usage_stats_json_serialization() -> Result<()> {
         // Given: Usage stats with data
-        let mut stats = UsageStats::default();
-        stats.total_commands = 50;
-        stats.time_saved_ms = 10000;
+        let mut stats = UsageStats {
+            total_commands: 50,
+            time_saved_ms: 10000,
+            ..Default::default()
+        };
         stats.installed_packages.insert("git".to_string(), 1);
         stats.runtime_usage_counts.insert("node".to_string(), 5);
 
@@ -994,9 +996,11 @@ mod usage_tests {
     #[test]
     fn test_sync_payload_format() -> Result<()> {
         // Given: Usage stats
-        let mut stats = UsageStats::default();
-        stats.total_commands = 100;
-        stats.queries_today = 10;
+        let mut stats = UsageStats {
+            total_commands: 100,
+            queries_today: 10,
+            ..Default::default()
+        };
         stats.installed_packages.insert("vim".to_string(), 1);
         stats.runtime_usage_counts.insert("python".to_string(), 3);
 

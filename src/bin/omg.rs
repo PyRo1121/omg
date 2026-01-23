@@ -486,8 +486,7 @@ async fn async_main(args: Vec<String>) -> Result<()> {
             } else if parallel {
                 task_runner::run_tasks_parallel(&task, &args, backend).await?;
             } else {
-                task_runner::run_task_advanced(&task, &args, backend, using.as_deref(), all)
-                    .await?;
+                task_runner::run_task_advanced(&task, &args, backend, using.as_deref(), all)?;
             }
         }
         Commands::New { stack, name } => {

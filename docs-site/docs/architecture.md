@@ -136,7 +136,7 @@ The **redb** store handles data that must survive reboots:
 - **Security Scores**: Cached SLSA/PGP validation results.
 
 ### 3. Binary Snapshot (rkyv)
-A specialized file (`~/.local/share/omg/status.bin`) stores a zero-copy AST of system health. This allows `omg-fast` to provide shell prompt updates in **<500μs**.
+A specialized file (`~/.local/share/omg/status.bin`) stores a zero-copy AST of system health. This allows `omg-fast` to provide shell prompt updates in **\<500μs**.
 
 ---
 

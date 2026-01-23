@@ -200,7 +200,7 @@ jobs:
           path: sbom.json
 "#
     } else {
-        r#"name: CI
+        r"name: CI
 
 on:
   push:
@@ -251,7 +251,7 @@ jobs:
       
       - name: Run Tests
         run: cargo test --all-features
-"#
+"
     };
 
     let path = ".github/workflows/ci.yml";

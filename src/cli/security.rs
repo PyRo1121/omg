@@ -150,31 +150,30 @@ pub fn view_audit_log(
             export_path.white()
         );
         let path = std::path::PathBuf::from(&export_path);
-        let format = if export_path.ends_with(".csv") {
+        let format = if std::path::Path::new(&export_path)
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("csv")) {
             "csv"
         } else {
             "json"
         };
 
-        match format {
-            "csv" => {
-                let mut wtr = csv::Writer::from_path(&path)?;
-                wtr.write_record(&["Timestamp", "Severity", "Event", "Description", "Resource"])?;
-                for entry in &entries {
-                    wtr.write_record(&[
-                        entry.timestamp.to_string(),
-                        entry.severity.to_string(),
-                        format!("{:?}", entry.event_type),
-                        entry.description.clone(),
-                        entry.resource.clone(),
-                    ])?;
-                }
-                wtr.flush()?;
+        if format == "csv" {
+            let mut wtr = csv::Writer::from_path(&path)?;
+            wtr.write_record(["Timestamp", "Severity", "Event", "Description", "Resource"])?;
+            for entry in &entries {
+                wtr.write_record(&[
+                    entry.timestamp.clone(),
+                    entry.severity.to_string(),
+                    format!("{:?}", entry.event_type),
+                    entry.description.clone(),
+                    entry.resource.clone(),
+                ])?;
             }
-            _ => {
-                let json = serde_json::to_string_pretty(&entries)?;
-                std::fs::write(&path, json)?;
-            }
+            wtr.flush()?;
+        } else {
+            let json = serde_json::to_string_pretty(&entries)?;
+            std::fs::write(&path, json)?;
         }
         println!("{} Export successful", "✓".green());
         return Ok(());

@@ -1,9 +1,9 @@
 use anyhow::{Context, Result};
-use openpgp::Cert;
-use openpgp::Packet;
 use openpgp::parse::Parse;
 use openpgp::parse::{PacketParser, PacketParserResult};
 use openpgp::policy::StandardPolicy;
+use openpgp::Cert;
+use openpgp::Packet;
 use sequoia_openpgp as openpgp;
 use std::path::Path;
 
@@ -24,11 +24,12 @@ impl PgpVerifier {
     pub fn new() -> Self {
         let distro = crate::core::env::distro::detect_distro();
         let system_keyring = match distro {
-            crate::core::env::distro::Distro::Arch => "/usr/share/pacman/keyrings/archlinux.gpg",
             crate::core::env::distro::Distro::Debian | crate::core::env::distro::Distro::Ubuntu => {
                 "/usr/share/keyrings/debian-archive-keyring.gpg"
             }
-            crate::core::env::distro::Distro::Unknown => "/usr/share/pacman/keyrings/archlinux.gpg",
+            crate::core::env::distro::Distro::Arch | crate::core::env::distro::Distro::Unknown => {
+                "/usr/share/pacman/keyrings/archlinux.gpg"
+            }
         };
 
         let certs = if std::path::Path::new(system_keyring).exists() {
