@@ -16,6 +16,7 @@ pub mod metrics;
 pub mod packages;
 pub mod paths;
 pub mod privilege;
+pub mod safe_ops;
 pub mod security;
 pub mod sysinfo;
 pub mod task_runner;

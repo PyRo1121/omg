@@ -44,6 +44,7 @@
 
 pub mod cli;
 pub mod config;
+// pub mod completion;  // Temporarily disabled to fix compilation
 pub mod core;
 pub mod daemon;
 pub mod hooks;
