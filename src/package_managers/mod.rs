@@ -13,6 +13,8 @@ pub mod alpm_worker;
 // apt module is available with debian feature
 #[cfg(feature = "debian")]
 pub mod apt;
+#[cfg(feature = "debian-pure")]
+pub mod debian_pure;
 #[cfg(feature = "arch")]
 mod aur;
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
@@ -123,22 +125,28 @@ pub fn get_package_manager() -> Box<dyn PackageManager> {
         // debian provides AptPackageManager
         #[cfg(feature = "debian")]
         Distro::Debian | Distro::Ubuntu => Box::new(AptPackageManager::new()),
+        // debian-pure provides PureDebianPackageManager
+        #[cfg(all(not(feature = "debian"), feature = "debian-pure"))]
+        Distro::Debian | Distro::Ubuntu => Box::new(debian_pure::PureDebianPackageManager::new()),
         _ => {
             // Fallback or default
             #[cfg(feature = "arch")]
-            {
-                Box::new(OfficialPackageManager::new())
-            }
+            return Box::new(OfficialPackageManager::new());
+
             #[cfg(all(not(feature = "arch"), feature = "debian"))]
-            {
-                Box::new(AptPackageManager::new())
-            }
-            #[cfg(all(not(feature = "arch"), not(feature = "debian")))]
-            {
-                panic!(
-                    "No package manager backend enabled! Build with --features arch or --features debian"
-                );
-            }
+            return Box::new(AptPackageManager::new());
+
+            #[cfg(all(
+                not(feature = "arch"),
+                not(feature = "debian"),
+                feature = "debian-pure"
+            ))]
+            return Box::new(debian_pure::PureDebianPackageManager::new());
+
+            #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
+            panic!(
+                "No package manager backend enabled! Build with --features arch or --features debian"
+            );
         }
     }
 }

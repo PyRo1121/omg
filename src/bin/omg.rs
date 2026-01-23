@@ -766,8 +766,8 @@ async fn async_main(args: Vec<String>) -> Result<()> {
             }
         },
         Commands::Ci { command } => match command {
-            CiCommands::Init { provider } => {
-                ci::init(&provider)?;
+            CiCommands::Init { provider, advanced } => {
+                ci::init(&provider, advanced)?;
             }
             CiCommands::Validate => {
                 ci::validate().await?;

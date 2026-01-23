@@ -67,13 +67,13 @@ impl Default for TestConfig {
         Self {
             run_system_tests: env::var("OMG_RUN_SYSTEM_TESTS")
                 .map(|v| v == "1")
-                .unwrap_or(false),
+                .unwrap_or(cfg!(feature = "docker_tests")),
             run_network_tests: env::var("OMG_RUN_NETWORK_TESTS")
                 .map(|v| v == "1")
-                .unwrap_or(false),
+                .unwrap_or(cfg!(feature = "docker_tests")),
             run_destructive_tests: env::var("OMG_RUN_DESTRUCTIVE_TESTS")
                 .map(|v| v == "1")
-                .unwrap_or(false),
+                .unwrap_or(cfg!(feature = "docker_tests")),
             run_perf_tests: env::var("OMG_RUN_PERF_TESTS")
                 .map(|v| v == "1")
                 .unwrap_or(false),
