@@ -32,7 +32,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Clippy (Core)
-        run: cargo clippy --all-targets --no-default-features -- -D warnings
+        run: cargo clippy --all-targets --no-default-features --features debian-pure -- -D warnings
       
       - name: Spell Check
         uses: crate-ci/typos@master
