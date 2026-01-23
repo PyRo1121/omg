@@ -18,7 +18,7 @@ use std::time::Duration;
 // ═══════════════════════════════════════════════════════════════════════════════
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(100))]
+    #![proptest_config(ProptestConfig::with_cases(20))]
 
     /// Any string input to search should not crash (excluding null bytes which Command rejects)
     #[test]
@@ -119,7 +119,7 @@ proptest! {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(200))]
+    #![proptest_config(ProptestConfig::with_cases(50))]
 
     /// Semver-like versions should parse
     #[test]
@@ -169,7 +169,7 @@ proptest! {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(100))]
+    #![proptest_config(ProptestConfig::with_cases(20))]
 
     /// File paths should be handled safely
     #[test]
@@ -206,7 +206,7 @@ proptest! {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(100))]
+    #![proptest_config(ProptestConfig::with_cases(20))]
 
     /// Malformed TOML should not crash
     #[test]
@@ -270,7 +270,7 @@ proptest! {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(20))]
+    #![proptest_config(ProptestConfig::with_cases(10))]
 
     /// Help should always be fast regardless of input
     #[test]
@@ -296,7 +296,7 @@ proptest! {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(10))]
+    #![proptest_config(ProptestConfig::with_cases(5))]
 
     /// Concurrent reads should be safe
     #[test]

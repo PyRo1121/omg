@@ -1,6 +1,10 @@
+#[cfg(any(feature = "debian", feature = "debian-pure"))]
 use std::time::Instant;
+#[cfg(any(feature = "debian", feature = "debian-pure"))]
 use omg_lib::daemon::handlers::DaemonState;
+#[cfg(any(feature = "debian", feature = "debian-pure"))]
 use omg_lib::daemon::protocol::Request;
+#[cfg(any(feature = "debian", feature = "debian-pure"))]
 use std::sync::Arc;
 
 #[cfg(any(feature = "debian", feature = "debian-pure"))]

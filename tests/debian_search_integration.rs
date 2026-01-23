@@ -1,4 +1,6 @@
+#[cfg(any(feature = "debian", feature = "debian-pure"))]
 use assert_cmd::Command;
+#[cfg(any(feature = "debian", feature = "debian-pure"))]
 use predicates::prelude::*;
 
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
