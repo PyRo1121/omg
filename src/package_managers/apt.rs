@@ -274,9 +274,9 @@ pub fn search_sync(query: &str) -> Result<Vec<SyncPackage>> {
                     .or_else(|| candidate.and_then(|c| c.summary()))
                     .unwrap_or_default(),
                 repo: "apt".to_string(),
-                download_size: pkg.candidate().map_or(0, |v| {
-                    i64::try_from(v.size()).unwrap_or(i64::MAX)
-                }),
+                download_size: pkg
+                    .candidate()
+                    .map_or(0, |v| i64::try_from(v.size()).unwrap_or(i64::MAX)),
                 installed: pkg.is_installed(),
             });
         }
@@ -434,10 +434,8 @@ fn open_cache(local_files: &[String]) -> Result<Cache> {
 }
 
 fn install_blocking(packages: &[String]) -> Result<()> {
-    let (local_files, names): (Vec<String>, Vec<String>) = packages
-        .iter()
-        .cloned()
-        .partition(|pkg| {
+    let (local_files, names): (Vec<String>, Vec<String>) =
+        packages.iter().cloned().partition(|pkg| {
             let path = std::path::Path::new(pkg);
             path.extension().map_or(false, |ext| {
                 ext.eq_ignore_ascii_case("deb") || ext.eq_ignore_ascii_case("ddeb")

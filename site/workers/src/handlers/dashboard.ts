@@ -173,6 +173,27 @@ export async function handleGetDashboard(request: Request, env: Env): Promise<Re
     vulns += row.vulnerabilities_found || 0;
   }
 
+  // Get global stats for telemetry section
+  const topPackage = await env.DB.prepare(`
+    SELECT package_name FROM analytics_packages ORDER BY install_count DESC LIMIT 1
+  `).first<{ package_name: string }>();
+
+  const topRuntime = await env.DB.prepare(`
+    SELECT dimension FROM analytics_daily WHERE metric = 'version' ORDER BY value DESC LIMIT 1
+  `).first<{ dimension: string }>();
+
+  // Calculate user percentile
+  const userTotalCommands = Number(totalUsage?.total_commands) || 0;
+  const rankResult = await env.DB.prepare(`
+    SELECT COUNT(*) as better_users FROM (
+      SELECT SUM(commands_run) as total FROM usage_daily GROUP BY license_id HAVING total > ?
+    )
+  `).bind(userTotalCommands).first<{ better_users: number }>();
+  
+  const totalUsersResult = await env.DB.prepare(`SELECT COUNT(DISTINCT license_id) as count FROM usage_daily`).first<{ count: number }>();
+  const totalUsers = Number(totalUsersResult?.count) || 1;
+  const percentile = Math.round((1 - ((Number(rankResult?.better_users) || 0) / totalUsers)) * 100);
+
   return jsonResponse({
     user: {
       id: user.id,
@@ -229,6 +250,11 @@ export async function handleGetDashboard(request: Request, env: Env): Promise<Re
       ORDER BY time_saved DESC
       LIMIT 3
     `).all().then(r => r.results || []),
+    global_stats: {
+      top_package: topPackage?.package_name || 'ripgrep',
+      top_runtime: topRuntime?.dimension || 'node',
+      percentile: percentile
+    }
   });
 }
 

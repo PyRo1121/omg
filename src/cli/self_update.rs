@@ -22,11 +22,11 @@ pub async fn run(force: bool, version: Option<String>) -> Result<()> {
         // Fetch latest version
         let client = reqwest::Client::new();
         let resp = client
-            .get(format!("{}/latest-version", UPDATE_URL))
+            .get(format!("{UPDATE_URL}/latest-version"))
             .send()
             .await
             .context("Failed to check for updates")?;
-        
+
         if !resp.status().is_success() {
             anyhow::bail!("Failed to fetch version info: {}", resp.status());
         }
@@ -47,8 +47,8 @@ pub async fn run(force: bool, version: Option<String>) -> Result<()> {
 
     // Download binary
     let platform = "x86_64-unknown-linux-gnu"; // Auto-detect in real impl
-    let download_url = format!("{}/download/omg-{}-{}.tar.gz", UPDATE_URL, target_version, platform);
-    
+    let download_url = format!("{UPDATE_URL}/download/omg-{target_version}-{platform}.tar.gz");
+
     let response = reqwest::get(&download_url).await?;
     if !response.status().is_success() {
         anyhow::bail!("Failed to download update: {}", response.status());
@@ -65,7 +65,7 @@ pub async fn run(force: bool, version: Option<String>) -> Result<()> {
 
     // Find the new binary
     let new_binary = temp_dir.path().join("omg");
-    
+
     // Perform blocking I/O operations in a separate thread
     tokio::task::spawn_blocking(move || -> Result<()> {
         archive.unpack(temp_dir.path())?;
@@ -76,34 +76,38 @@ pub async fn run(force: bool, version: Option<String>) -> Result<()> {
 
         // Replace current binary
         let current_exe = env::current_exe()?;
-        
+
         // On Linux we can rename over the running executable
         // We rename the *current* exe to .old first to be safe, then move new one in
         let backup_path = current_exe.with_extension("old");
         fs::rename(&current_exe, &backup_path).context("Failed to backup current binary")?;
-        
+
         match fs::rename(&new_binary, &current_exe) {
-            Ok(_) => {
+            Ok(()) => {
                 // Fix permissions
                 use std::os::unix::fs::PermissionsExt;
                 let mut perms = fs::metadata(&current_exe)?.permissions();
                 perms.set_mode(0o755);
                 fs::set_permissions(&current_exe, perms)?;
-                
+
                 // Cleanup backup
                 let _ = fs::remove_file(backup_path);
             }
             Err(e) => {
                 // Restore backup
                 let _ = fs::rename(&backup_path, &current_exe);
-                return Err(anyhow::anyhow!("Failed to install update: {}", e));
+                return Err(anyhow::anyhow!("Failed to install update: {e}"));
             }
         }
         Ok(())
-    }).await??;
+    })
+    .await??;
 
     println!("  {} Update successful!", "✓".green());
-    println!("  {} is now installed.", format!("v{}", target_version).cyan());
+    println!(
+        "  {} is now installed.",
+        format!("v{target_version}").cyan()
+    );
 
     Ok(())
 }

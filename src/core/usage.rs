@@ -435,26 +435,28 @@ pub fn track_status() {
     track("status", time_saved::STATUS_MS);
 }
 
-
 /// Track install command
 pub fn track_install(packages: &[String]) {
     let mut stats = UsageStats::load();
-    
+
     for pkg in packages {
         *stats.installed_packages.entry(pkg.clone()).or_insert(0) += 1;
     }
-    
+
     stats.record_command("install", time_saved::INSTALL_MS);
 }
 
 /// Track runtime switch
 pub fn track_runtime_switch(runtime: &str) {
     let mut stats = UsageStats::load();
-    
-    *stats.runtime_usage_counts.entry(runtime.to_string()).or_insert(0) += 1;
-    
+
+    *stats
+        .runtime_usage_counts
+        .entry(runtime.to_string())
+        .or_insert(0) += 1;
+
     stats.record_runtime(runtime);
-    
+
     stats.record_command("runtime_switch", time_saved::RUNTIME_SWITCH_MS);
 }
 

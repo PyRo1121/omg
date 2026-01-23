@@ -213,6 +213,8 @@ export async function handleReportUsage(request: Request, env: Env): Promise<Res
     time_saved_ms?: number;
     current_streak?: number;
     achievements?: string[];
+    installed_packages?: Record<string, number>;
+    runtime_usage_counts?: Record<string, number>;
   };
 
   if (!body.license_key) {
@@ -309,6 +311,28 @@ export async function handleReportUsage(request: Request, env: Env): Promise<Res
         body.machine_id
       )
       .run();
+  }
+
+  // Process granular package stats
+  if (body.installed_packages) {
+    for (const [pkg, count] of Object.entries(body.installed_packages)) {
+      await env.DB.prepare(`
+        INSERT INTO analytics_packages (package_name, install_count, last_seen_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(package_name) DO UPDATE SET install_count = install_count + ?, last_seen_at = CURRENT_TIMESTAMP
+      `).bind(pkg, count, count).run();
+    }
+  }
+
+  // Process granular runtime stats
+  if (body.runtime_usage_counts) {
+    for (const [runtime, count] of Object.entries(body.runtime_usage_counts)) {
+      await env.DB.prepare(`
+        INSERT INTO analytics_daily (date, metric, dimension, value)
+        VALUES (?, 'version', ?, ?)
+        ON CONFLICT(date, metric, dimension) DO UPDATE SET value = value + ?
+      `).bind(today, runtime, count, count).run();
+    }
   }
 
   // Sync achievements if provided

@@ -67,7 +67,7 @@ pub async fn download_with_progress(
     let mut file = tokio::fs::File::create(dest)
         .await
         .with_context(|| format!("Failed to create file: {}", dest.display()))?;
-    
+
     let mut stream = response.bytes_stream();
     let mut downloaded: u64 = 0;
     let mut hasher = if expected_sha256.is_some() {
@@ -78,8 +78,10 @@ pub async fn download_with_progress(
 
     while let Some(item) = stream.next().await {
         let chunk = item.context("Error downloading chunk")?;
-        file.write_all(&chunk).await.context("Error writing to file")?;
-        
+        file.write_all(&chunk)
+            .await
+            .context("Error writing to file")?;
+
         if let Some(h) = &mut hasher {
             h.update(&chunk);
         }
@@ -108,7 +110,11 @@ pub async fn download_with_progress(
 }
 
 /// Extract a .tar.gz archive with progress
-pub async fn extract_tar_gz(archive_path: &Path, dest_dir: &Path, strip_components: usize) -> Result<()> {
+pub async fn extract_tar_gz(
+    archive_path: &Path,
+    dest_dir: &Path,
+    strip_components: usize,
+) -> Result<()> {
     let archive_path = archive_path.to_path_buf();
     let dest_dir = dest_dir.to_path_buf();
 
@@ -156,7 +162,11 @@ pub async fn extract_tar_gz(archive_path: &Path, dest_dir: &Path, strip_componen
 }
 
 /// Extract a .tar.xz archive with progress (pure Rust)
-pub async fn extract_tar_xz(archive_path: &Path, dest_dir: &Path, strip_components: usize) -> Result<()> {
+pub async fn extract_tar_xz(
+    archive_path: &Path,
+    dest_dir: &Path,
+    strip_components: usize,
+) -> Result<()> {
     let archive_path = archive_path.to_path_buf();
     let dest_dir = dest_dir.to_path_buf();
 
@@ -208,7 +218,11 @@ pub async fn extract_tar_xz(archive_path: &Path, dest_dir: &Path, strip_componen
 }
 
 /// Extract a .zip archive with progress
-pub async fn extract_zip(archive_path: &Path, dest_dir: &Path, strip_components: usize) -> Result<()> {
+pub async fn extract_zip(
+    archive_path: &Path,
+    dest_dir: &Path,
+    strip_components: usize,
+) -> Result<()> {
     let archive_path = archive_path.to_path_buf();
     let dest_dir = dest_dir.to_path_buf();
 
