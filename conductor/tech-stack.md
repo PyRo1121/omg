@@ -16,7 +16,8 @@
 
 ## Package Manager Integration
 - **Arch Linux:** `alpm` bindings and official `archlinux/alpm` Rust ecosystem for direct library access.
-- **Debian/Ubuntu:** `rust-apt` and `debian-packaging` (pure Rust implementation) for accelerated APT operations.
+- **Debian/Ubuntu:** `rust-apt` and `debian-packaging` (pure Rust implementation) for accelerated APT operations, fully integrated into the `omgd` IPC layer.
+- **Build Features:** `debian-pure` feature added for FFI-less testing and indexing validation.
 
 ## Testing & Quality Assurance
 - **Unit & Integration:** `cargo test` with a strict TDD protocol.
