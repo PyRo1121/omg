@@ -1,7 +1,7 @@
 //! Safe operations library for OMG
 //!
 //! Provides safe constructors and utilities for common operations that would otherwise
-//! require unwrap() or expect(). This module helps eliminate panic-prone patterns
+//! require `unwrap()` or `expect()`. This module helps eliminate panic-prone patterns
 //! throughout the codebase while maintaining performance and ergonomics.
 
 use std::num::{NonZeroU32, NonZeroU64, NonZeroUsize};
@@ -29,56 +29,56 @@ pub enum SafeOpError {
     OutOfRange(String),
 }
 
-/// Safe constructor for NonZeroU32 with context
+/// Safe constructor for `NonZeroU32` with context
 pub fn nonzero_u32(value: u32, context: &str) -> Result<NonZeroU32> {
     NonZeroU32::new(value)
-        .ok_or_else(|| anyhow::anyhow!("{}: value must be > 0, got {}", context, value))
-        .with_context(|| format!("Failed to create NonZeroU32 for {}", context))
+        .ok_or_else(|| anyhow::anyhow!("{context}: value must be > 0, got {value}"))
+        .with_context(|| format!("Failed to create NonZeroU32 for {context}"))
 }
 
-/// Safe constructor for NonZeroU64 with context
+/// Safe constructor for `NonZeroU64` with context
 pub fn nonzero_u64(value: u64, context: &str) -> Result<NonZeroU64> {
     NonZeroU64::new(value)
-        .ok_or_else(|| anyhow::anyhow!("{}: value must be > 0, got {}", context, value))
-        .with_context(|| format!("Failed to create NonZeroU64 for {}", context))
+        .ok_or_else(|| anyhow::anyhow!("{context}: value must be > 0, got {value}"))
+        .with_context(|| format!("Failed to create NonZeroU64 for {context}"))
 }
 
-/// Safe constructor for NonZeroUsize with context
+/// Safe constructor for `NonZeroUsize` with context
 pub fn nonzero_usize(value: usize, context: &str) -> Result<NonZeroUsize> {
     NonZeroUsize::new(value)
-        .ok_or_else(|| anyhow::anyhow!("{}: value must be > 0, got {}", context, value))
-        .with_context(|| format!("Failed to create NonZeroUsize for {}", context))
+        .ok_or_else(|| anyhow::anyhow!("{context}: value must be > 0, got {value}"))
+        .with_context(|| format!("Failed to create NonZeroUsize for {context}"))
 }
 
-/// Create a NonZeroU32 with a default fallback value
+/// Create a `NonZeroU32` with a default fallback value
 pub fn nonzero_u32_or_default(value: u32, default: u32) -> NonZeroU32 {
     NonZeroU32::new(value).unwrap_or_else(|| NonZeroU32::new(default).unwrap())
 }
 
-/// Create a NonZeroU64 with a default fallback value
+/// Create a `NonZeroU64` with a default fallback value
 pub fn nonzero_u64_or_default(value: u64, default: u64) -> NonZeroU64 {
     NonZeroU64::new(value).unwrap_or_else(|| NonZeroU64::new(default).unwrap())
 }
 
-/// Create a NonZeroUsize with a default fallback value
+/// Create a `NonZeroUsize` with a default fallback value
 pub fn nonzero_usize_or_default(value: usize, default: usize) -> NonZeroUsize {
     NonZeroUsize::new(value).unwrap_or_else(|| NonZeroUsize::new(default).unwrap())
 }
 
-/// Safe alternative to expect() with better error context
+/// Safe alternative to `expect()` with better error context
 pub fn expect_or<T>(option: Option<T>, context: &str) -> Result<T> {
-    option.ok_or_else(|| anyhow::anyhow!("Expected value for {} but found None", context))
+    option.ok_or_else(|| anyhow::anyhow!("Expected value for {context} but found None"))
 }
 
-/// Safe alternative to unwrap() that returns a default value
+/// Safe alternative to `unwrap()` that returns a default value
 pub fn unwrap_or_default<T: Default>(option: Option<T>) -> T {
     option.unwrap_or_default()
 }
 
-/// Safe alternative to unwrap() that exits with a helpful error message
+/// Safe alternative to `unwrap()` that exits with a helpful error message
 pub fn unwrap_or_exit<T>(option: Option<T>, context: &str) -> T {
     option.unwrap_or_else(|| {
-        eprintln!("❌ Fatal error: {}", context);
+        eprintln!("❌ Fatal error: {context}");
         std::process::exit(1);
     })
 }

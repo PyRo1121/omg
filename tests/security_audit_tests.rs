@@ -65,14 +65,13 @@ mod path_traversal_tests {
 
         if let Err(e) = &result {
             let msg = e.to_string();
-            println!("Got error: {}", msg);
+            println!("Got error: {msg}");
             assert!(
                 msg.contains("Security")
                     || msg.contains("malicious")
                     || msg.contains("traversal")
                     || msg.contains("archive"),
-                "Unexpected error: {}",
-                msg
+                "Unexpected error: {msg}"
             );
         } else {
             // If it succeeded, it means the path was sanitized by the tar crate, effectively neutralizing the attack.
@@ -219,7 +218,7 @@ mod unsafe_code_tests {
         assert!(!is_root_val || cfg!(feature = "docker_tests"));
     }
 
-    /// Validate unsafe transmute in core/fast_status.rs
+    /// Validate unsafe transmute in `core/fast_status.rs`
     #[test]
     fn test_fast_status_transmute_safety() {
         // SAFETY AUDIT: Lines 62 and 82 of src/core/fast_status.rs
@@ -288,7 +287,7 @@ mod performance_regression_tests {
 
     /// Benchmark daemon startup time
     #[test]
-    #[ignore] // Run with: cargo test --release -- --ignored
+    #[ignore = "Run with: cargo test --release -- --ignored"]
     fn bench_daemon_startup_cold() {
         // Target: <10ms cold start with cached index
         let start = Instant::now();
@@ -307,7 +306,7 @@ mod performance_regression_tests {
 
     /// Benchmark search operation speed
     #[test]
-    #[ignore]
+    #[ignore = "Performance benchmark - run manually"]
     fn bench_package_search_speed() {
         // Target: <1ms for typical search query
         let start = Instant::now();

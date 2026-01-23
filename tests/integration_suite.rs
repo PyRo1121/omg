@@ -1802,8 +1802,7 @@ mod stress_tests {
             let (success, stdout, stderr) = run_omg_in_dir(&["use", "node"], temp_dir.path());
             assert!(
                 success,
-                "Rapid version detection failed on iteration {}: stdout: '{}', stderr: '{}'",
-                i, stdout, stderr
+                "Rapid version detection failed on iteration {i}: stdout: '{stdout}', stderr: '{stderr}'"
             );
         }
     }

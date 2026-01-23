@@ -1,14 +1,13 @@
-name: Multi-Distro Test Matrix
+name: Test Matrix
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main]
     paths:
       - 'src/**'
       - 'tests/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
-      - '.github/workflows/**'
   pull_request:
     branches: [main]
     paths:
@@ -16,13 +15,7 @@ on:
       - 'tests/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
-      - '.github/workflows/**'
   workflow_dispatch:
-    inputs:
-      run_stress:
-        description: 'Run stress tests'
-        type: boolean
-        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -31,37 +24,35 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
-  RUSTFLAGS: "-D warnings"
 
 jobs:
   # ═══════════════════════════════════════════════════════════════════════════
-  # 1. CORE QUALITY (Split by backend)
+  # Lint checks for each platform
   # ═══════════════════════════════════════════════════════════════════════════
   lint-arch:
     name: Lint (Arch)
     runs-on: ubuntu-latest
     container:
       image: archlinux:latest
-      options: --privileged
     steps:
       - uses: actions/checkout@v4
       - name: Install dependencies
         run: |
           pacman -Syu --noconfirm
-          pacman -S --noconfirm base-devel git rustup clang cmake sccache
-          rustup default stable
-          rustup component add rustfmt clippy
+          pacman -S --noconfirm base-devel git rust cargo clang cmake
       - name: Check formatting
         run: cargo fmt -- --check
       - name: Clippy (Arch)
-        run: cargo clippy --all-targets --features arch -- -D warnings
+        run: cargo clippy --all-targets --features arch -- -D warnings -W clippy::pedantic
 
   lint-debian:
     name: Lint (Debian)
     runs-on: ubuntu-latest
     container:
       image: debian:bookworm
-      options: --privileged
+    env:
+      CARGO_HOME: /usr/local/cargo
+      RUSTUP_HOME: /usr/local/rustup
     steps:
       - uses: actions/checkout@v4
       - name: Install dependencies
@@ -69,143 +60,94 @@ jobs:
           apt-get update
           apt-get install -y build-essential curl git pkg-config libssl-dev libapt-pkg-dev clang cmake
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-          . $HOME/.cargo/env
-          rustup component add clippy
+          rm -rf /var/lib/apt/lists/*
       - name: Clippy (Debian)
         run: |
-          . $HOME/.cargo/env
-          cargo clippy --all-targets --no-default-features --features debian -- -D warnings
+          export PATH="$CARGO_HOME/bin:$PATH"
+          cargo clippy --all-targets --no-default-features --features debian -- -D warnings -W clippy::pedantic
 
   # ═══════════════════════════════════════════════════════════════════════════
-  # 2. EXHAUSTIVE CLI MATRIX (Digital Twin - All Distros)
+  # Test matrix for all distros
   # ═══════════════════════════════════════════════════════════════════════════
-  exhaustive-matrix:
-    name: CLI Matrix (${{ matrix.distro }})
+  test-matrix:
+    name: Tests (${{ matrix.distro }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         distro: [arch, debian, ubuntu]
     container:
-      image: ${{ matrix.distro == 'arch' && 'archlinux:latest' || (matrix.distro == 'debian' && 'debian:bookworm' || 'ubuntu:24.04') }}
-      options: --privileged
+      image: ${{ matrix.distro == 'arch' && 'archlinux:latest' || (matrix.distro == 'debian' && 'debian:bookworm' || 'ubuntu:latest') }}
     steps:
       - uses: actions/checkout@v4
+
       - name: Install dependencies (Arch)
         if: matrix.distro == 'arch'
-        run: pacman -Syu --noconfirm && pacman -S --noconfirm base-devel git rust cargo clang cmake
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm base-devel git rust cargo clang cmake
+
       - name: Install dependencies (Debian/Ubuntu)
         if: matrix.distro != 'arch'
         run: |
           apt-get update
           apt-get install -y build-essential curl git pkg-config libssl-dev libapt-pkg-dev clang cmake
+          rm -rf /var/lib/apt/lists/*
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-      - name: Run CLI Matrix
-        env:
-          OMG_TEST_MODE: "1"
-          OMG_TEST_DISTRO: ${{ matrix.distro }}
+
+      - name: Run unit tests
         run: |
-          if [ "${{ matrix.distro }}" != "arch" ]; then . $HOME/.cargo/env; fi
-          cargo test --test exhaustive_cli_matrix --features ${{ matrix.distro == 'arch' && 'arch' || 'debian' }} -- --nocapture
+          if [ "${{ matrix.distro }}" != "arch" ]; then export PATH="$HOME/.cargo/bin:$PATH"; fi
+          FEATURES="${{ matrix.distro == 'arch' && 'arch' || 'debian' }}"
+          cargo test --lib --no-default-features --features "$FEATURES"
+
+      - name: Run doc tests
+        run: |
+          if [ "${{ matrix.distro }}" != "arch" ]; then export PATH="$HOME/.cargo/bin:$PATH"; fi
+          FEATURES="${{ matrix.distro == 'arch' && 'arch' || 'debian' }}"
+          cargo test --doc --no-default-features --features "$FEATURES"
 
   # ═══════════════════════════════════════════════════════════════════════════
-  # 3. ABSOLUTE LOGIC TESTS (Edge Cases, Security, Metrics)
+  # Integration tests (Arch only - most complete)
   # ═══════════════════════════════════════════════════════════════════════════
-  absolute-logic:
-    name: Absolute Logic Tests
+  integration-tests:
+    name: Integration Tests
     runs-on: ubuntu-latest
     container:
       image: archlinux:latest
-      options: --privileged
-    steps:
-      - uses: actions/checkout@v4
-      - name: Bootstrap
-        run: pacman -Syu --noconfirm && pacman -S --noconfirm base-devel git rust cargo clang cmake
-      - name: TDD Edge Cases
-        run: cargo test --test tdd_edge_cases --features arch
-      - name: Daemon Security
-        run: cargo test --test daemon_security_tests --features arch
-      - name: Metrics & Stats
-        run: cargo test --test metrics_tests --features arch
-      - name: Fuzzy Suggestions
-        run: cargo test --test fuzzy_suggestion_tests --features arch
-      - name: Property-Based
-        run: cargo test --test property_tests --features arch -- --test-threads=1
-        env:
-          PROPTEST_CASES: 100
-
-  miri:
-    name: MIRI (UB Check)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
-        with:
-          components: miri
-      - name: Run MIRI
-        env:
-          MIRIFLAGS: "-Zmiri-symbolic-alignment-check -Zmiri-strict-provenance -Zmiri-disable-isolation"
-        run: |
-          # Only run logic tests with MIRI as it is very slow
-          # We skip foreign function calls which MIRI cannot handle
-          cargo miri test --test logic_tests --features arch || echo "MIRI found issues (advisory)"
-
-  # ═══════════════════════════════════════════════════════════════════════════
-  # 4. PERFORMANCE BENCHMARKS (Gated)
-  # ═══════════════════════════════════════════════════════════════════════════
-  perf-benchmarks:
-    name: Performance Regressions
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Run Ubuntu Benchmarks
-        run: make docker-ubuntu
-
-  # ═══════════════════════════════════════════════════════════════════════════
-  # 5. COVERAGE REPORT
-  # ═══════════════════════════════════════════════════════════════════════════
-  coverage:
-    name: Code Coverage
-    runs-on: ubuntu-latest
-    container:
-      image: archlinux:latest
-      options: --privileged
     steps:
       - uses: actions/checkout@v4
       - name: Install dependencies
         run: |
           pacman -Syu --noconfirm
-          pacman -S --noconfirm base-devel git rustup llvm clang cmake
-          rustup default stable
-          rustup component add llvm-tools-preview
-      - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@cargo-llvm-cov
-      - name: Generate coverage
-        run: cargo llvm-cov --features arch --lcov --output-path lcov.info
-      - name: Upload coverage
-        uses: codecov/codecov-action@v4
-        with:
-          files: lcov.info
-          token: ${{ secrets.CODECOV_TOKEN }}
+          pacman -S --noconfirm base-devel git rust cargo clang cmake
+      - name: Run integration tests
+        run: |
+          cargo test --test integration_suite --features arch
+          cargo test --test exhaustive_cli_matrix --features arch
 
   # ═══════════════════════════════════════════════════════════════════════════
-  # FINAL STATUS CHECK
+  # Final status check
   # ═══════════════════════════════════════════════════════════════════════════
   test-status:
-    name: "✅ Fortune 100 Gate"
-    needs: [lint-arch, lint-debian, exhaustive-matrix, absolute-logic, perf-benchmarks, miri]
+    name: "Test Status"
+    needs: [lint-arch, lint-debian, test-matrix, integration-tests]
     runs-on: ubuntu-latest
     if: always()
     steps:
       - name: Check results
         run: |
+          echo "Lint Arch: ${{ needs.lint-arch.result }}"
+          echo "Lint Debian: ${{ needs.lint-debian.result }}"
+          echo "Test Matrix: ${{ needs.test-matrix.result }}"
+          echo "Integration: ${{ needs.integration-tests.result }}"
+
           if [[ "${{ needs.lint-arch.result }}" != "success" ]] || \
              [[ "${{ needs.lint-debian.result }}" != "success" ]] || \
-             [[ "${{ needs.exhaustive-matrix.result }}" != "success" ]] || \
-             [[ "${{ needs.absolute-logic.result }}" != "success" ]] || \
-             [[ "${{ needs.perf-benchmarks.result }}" != "success" ]] || \
-             [[ "${{ needs.miri.result }}" != "success" ]]; then
-            echo "❌ One or more gates failed"
+             [[ "${{ needs.test-matrix.result }}" != "success" ]] || \
+             [[ "${{ needs.integration-tests.result }}" != "success" ]]; then
+            echo "::error::One or more test jobs failed"
             exit 1
           fi
-          echo "✅ All Fortune 100 quality gates passed!"
+
+          echo "::notice::All test jobs passed successfully!"

@@ -370,8 +370,7 @@ mod self_update_tests {
         let extracted_binary = extract_dir.path().join("omg");
         assert!(
             extracted_binary.exists(),
-            "Extracted binary should exist at {:?}",
-            extracted_binary
+            "Extracted binary should exist at {extracted_binary:?}"
         );
 
         // And: Should have correct content
@@ -627,8 +626,7 @@ mod license_tests {
             // Then: It should match expected
             assert_eq!(
                 required, expected_tier,
-                "Feature {:?} should require {:?} tier",
-                feature, expected_tier
+                "Feature {feature:?} should require {expected_tier:?} tier"
             );
         }
     }
@@ -667,7 +665,7 @@ mod license_tests {
             features: vec!["sbom".to_string(), "audit".to_string()],
             customer: Some("Test Customer".to_string()),
             expires_at: Some("2025-12-31".to_string()),
-            validated_at: 1700000000,
+            validated_at: 1_700_000_000,
             token: Some("test.jwt.token".to_string()),
             machine_id: Some("abc123def456".to_string()),
         };
@@ -825,7 +823,7 @@ mod usage_tests {
         );
     }
 
-    /// Verify installed_packages hashmap tracks package installations
+    /// Verify `installed_packages` hashmap tracks package installations
     #[test]
     fn test_installed_packages_tracking() {
         // Given: Usage stats
@@ -852,7 +850,7 @@ mod usage_tests {
         );
     }
 
-    /// Verify runtime_usage_counts hashmap tracks runtime switches
+    /// Verify `runtime_usage_counts` hashmap tracks runtime switches
     #[test]
     fn test_runtime_usage_tracking() {
         // Given: Usage stats
@@ -994,7 +992,7 @@ mod usage_tests {
 
     /// Verify sync payload format matches API expectations
     #[test]
-    fn test_sync_payload_format() -> Result<()> {
+    fn test_sync_payload_format() {
         // Given: Usage stats
         let mut stats = UsageStats {
             total_commands: 100,
@@ -1027,8 +1025,6 @@ mod usage_tests {
             payload["runtime_usage_counts"].is_object(),
             "runtime_usage_counts should be object"
         );
-
-        Ok(())
     }
 
     /// Verify usage file persistence
@@ -1162,7 +1158,7 @@ mod daemon_tests {
                 assert_eq!(code, error_codes::PACKAGE_NOT_FOUND);
                 assert!(message.contains("nonexistent"));
             }
-            _ => panic!("Expected error response"),
+            Response::Success { .. } => panic!("Expected error response"),
         }
 
         Ok(())
@@ -1175,7 +1171,7 @@ mod daemon_tests {
         let message = b"test message content";
 
         // When: We apply length-delimited framing (Big Endian u32 prefix)
-        let len = message.len() as u32;
+        let len = u32::try_from(message.len()).unwrap();
         let mut framed = Vec::with_capacity(4 + message.len());
         framed.extend_from_slice(&len.to_be_bytes());
         framed.extend_from_slice(message);
@@ -1249,8 +1245,7 @@ mod daemon_tests {
             assert_eq!(
                 request.id(),
                 (idx + 1) as u64,
-                "Request type {:?} should return correct ID",
-                request
+                "Request type {request:?} should return correct ID"
             );
         }
     }
@@ -1553,8 +1548,7 @@ mod performance_tests {
         // Then: Should be reasonably fast (< 10ms for 1000 iterations)
         assert!(
             duration < Duration::from_millis(100),
-            "1000 serializations should complete in <100ms, took {:?}",
-            duration
+            "1000 serializations should complete in <100ms, took {duration:?}"
         );
 
         Ok(())
@@ -1577,8 +1571,7 @@ mod performance_tests {
         // Then: Should be sub-millisecond for 10000 comparisons
         assert!(
             duration < Duration::from_millis(10),
-            "10000 version comparisons should complete in <10ms, took {:?}",
-            duration
+            "10000 version comparisons should complete in <10ms, took {duration:?}"
         );
 
         Ok(())
@@ -1592,10 +1585,10 @@ mod performance_tests {
         for i in 0..100 {
             stats
                 .installed_packages
-                .insert(format!("pkg-{i}"), i as u64);
+                .insert(format!("pkg-{i}"), u64::try_from(i).unwrap());
         }
         stats.total_commands = 1000;
-        stats.time_saved_ms = 100000;
+        stats.time_saved_ms = 100_000;
 
         // When: We serialize many times
         let start = Instant::now();
@@ -1607,8 +1600,7 @@ mod performance_tests {
         // Then: Should be reasonably fast
         assert!(
             duration < Duration::from_millis(100),
-            "100 JSON serializations should complete in <100ms, took {:?}",
-            duration
+            "100 JSON serializations should complete in <100ms, took {duration:?}"
         );
 
         Ok(())

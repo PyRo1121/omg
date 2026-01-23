@@ -31,12 +31,11 @@ async fn test_fuzzy_suggestions() {
     // Let's try to initialize and see if we get any suggestions for a common package.
     // If the environment has no packages (e.g. CI without apt/pacman setup), this might be empty.
 
-    let state = match DaemonState::new() {
-        Ok(s) => Arc::new(s),
-        Err(_) => {
-            println!("Skipping test: Could not initialize DaemonState (no package manager?)");
-            return;
-        }
+    let state = if let Ok(s) = DaemonState::new() {
+        Arc::new(s)
+    } else {
+        println!("Skipping test: Could not initialize DaemonState (no package manager?)");
+        return;
     };
 
     // If the index is empty, we can't test much.
@@ -74,14 +73,11 @@ async fn test_fuzzy_suggestions() {
         } => {
             assert!(
                 !suggestions.is_empty(),
-                "Should return suggestions for '{}'",
-                typo
+                "Should return suggestions for '{typo}'"
             );
             assert!(
                 suggestions.contains(target_pkg),
-                "Suggestions for '{}' should contain '{}'",
-                typo,
-                target_pkg
+                "Suggestions for '{typo}' should contain '{target_pkg}'"
             );
         }
         _ => panic!("Expected Suggest response"),

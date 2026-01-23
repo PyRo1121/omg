@@ -1,7 +1,7 @@
 //! Logic tests for package manager abstraction
 //!
 //! These tests verify that the package manager abstraction works across
-//! different simulated distributions using the OMG_TEST_DISTRO override.
+//! different simulated distributions using the `OMG_TEST_DISTRO` override.
 
 mod common;
 

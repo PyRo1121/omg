@@ -399,7 +399,7 @@ static AUDIT_LOGGER: std::sync::LazyLock<std::sync::Mutex<Option<AuditLogger>>> 
 pub fn init_audit_logger() -> Result<()> {
     let logger = AuditLogger::new()?;
     *AUDIT_LOGGER.lock().map_err(|e| {
-        anyhow::anyhow!("Failed to acquire audit logger lock: {}", e)
+        anyhow::anyhow!("Failed to acquire audit logger lock: {e}")
     })? = Some(logger);
     Ok(())
 }

@@ -218,7 +218,7 @@ mod runtime_matrix {
             .map(|res| res.map(|e| e.file_name().into_string().unwrap()))
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
-        println!("Project dir content: {:?}", entries);
+        println!("Project dir content: {entries:?}");
 
         assert!(project.file_exists("omg.lock"));
 

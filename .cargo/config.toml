@@ -1,5 +1,10 @@
 [build]
 rustflags = []
 
+# Default x86_64 Linux target
 [target.x86_64-unknown-linux-gnu]
-rustflags = []
+linker = "gcc"
+
+# Debian/Ubuntu: Use system linker (gcc) to avoid .eh_frame corruption with rust-lld + LTO
+# The rustls crate has known .eh_frame section issues when using rust-lld with LTO enabled
+# This occurs on Debian/Ubuntu when building with fat LTO and rustls dependencies

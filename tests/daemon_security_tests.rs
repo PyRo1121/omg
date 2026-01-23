@@ -101,7 +101,7 @@ async fn test_input_validation_audit() {
             "Log should contain error details"
         );
     } else {
-        panic!("Audit log file not found at {:?}", audit_file);
+        panic!("Audit log file not found at {audit_file:?}");
     }
 }
 
