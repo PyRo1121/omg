@@ -4,6 +4,7 @@
 
 use anyhow::Result;
 use clap::Parser;
+use futures::FutureExt;
 use sentry_tracing::EventFilter;
 use std::path::PathBuf;
 use tokio::net::UnixListener;
@@ -86,8 +87,6 @@ async fn main() -> Result<()> {
 
     // Run server
     // Capture panics in Sentry
-    use futures::FutureExt;
-
     let result = std::panic::AssertUnwindSafe(async { server::run(listener).await })
         .catch_unwind()
         .await;
@@ -96,14 +95,14 @@ async fn main() -> Result<()> {
         Ok(run_result) => run_result?,
         Err(e) => {
             let msg = if let Some(s) = e.downcast_ref::<&str>() {
-                format!("Daemon panicked: {}", s)
+                format!("Daemon panicked: {s}")
             } else if let Some(s) = e.downcast_ref::<String>() {
-                format!("Daemon panicked: {}", s)
+                format!("Daemon panicked: {s}")
             } else {
                 "Daemon panicked: unknown error".to_string()
             };
 
-            tracing::error!("{}", msg);
+            tracing::error!("{msg}");
             anyhow::bail!(msg);
         }
     }

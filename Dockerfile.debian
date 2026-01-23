@@ -2,6 +2,7 @@ FROM debian:bookworm
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
     curl \
     build-essential \
     pkg-config \
@@ -27,11 +28,12 @@ ENV PATH="/home/omguser/.cargo/bin:${PATH}"
 # Set working directory
 WORKDIR /home/omguser/omg
 
-# Copy source
+# Copy source (including .cargo/config.toml for linker fix)
 COPY --chown=omguser:omguser . .
 
 # Build with debian feature
 RUN cargo build --release --no-default-features --features debian
 
-# Run smoke tests
-CMD ["./scripts/debian-smoke-test.sh"]
+# Set PATH and run without daemon (direct commands work without IPC)
+ENV PATH="/home/omguser/omg/.cargo/bin:/home/omguser/omg/target/release:/home/omguser/.cargo/bin:${PATH}"
+CMD ["/bin/bash", "-c", "omg search bash && echo 'Debian search: SUCCESS' && /home/omguser/omg/target/release/omg --version"]

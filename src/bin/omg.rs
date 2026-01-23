@@ -11,7 +11,6 @@ use clap::Parser;
 use omg_lib::cli::LicenseCommands;
 use omg_lib::cli::doctor;
 use omg_lib::cli::env;
-use omg_lib::cli::help;
 use omg_lib::cli::new;
 use omg_lib::cli::packages;
 use omg_lib::cli::runtimes;
@@ -108,24 +107,19 @@ fn try_fast_info(args: &[String]) -> bool {
 fn try_fast_completions(args: &[String]) -> Result<bool> {
     if has_help_flag(args) {
         // Check if --all flag is also present
-        let use_all = has_all_flag(&args);
-
-        // Show startup spinner for help operations (>100ms)
-        if use_all {
-            // For --help --all, show immediate spinner since help generation can take time
-            crate::lib::progress::show_spinner("Loading help system...");
-        }
+        let use_all = has_all_flag(args);
 
         // Parse CLI to get the all flag
-        let cli = Cli::try_parse_from(&args).unwrap_or_else(|_| Cli {
+        let cli = Cli::try_parse_from(args.iter()).unwrap_or(Cli {
             verbose: 0,
             quiet: false,
             all: use_all,
-            command: Commands::Help,
+            command: Commands::Help { all: use_all },
         });
 
         // Use the new tiered help system
-        return omg_lib::cli::help::print_help(&cli, use_all);
+        omg_lib::cli::help::print_help(&cli, use_all)?;
+        return Ok(true);
     }
 
     // Check for "omg completions <shell>" or "omg completions <shell> --stdout"

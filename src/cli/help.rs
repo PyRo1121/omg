@@ -4,7 +4,6 @@
 //! Shows only essential commands by default, all commands with --all flag.
 
 use clap::CommandFactory;
-use std::io::Write;
 
 use crate::cli::args::Cli;
 
@@ -20,14 +19,14 @@ pub fn print_help(cli: &Cli, use_all: bool) -> anyhow::Result<()> {
         Cli::command().print_help()?;
     } else {
         // Show only essential commands by default for new users
-        print_essential_help(cli)?;
+        print_essential_help(cli);
     }
 
     Ok(())
 }
 
 /// Print essential commands help with getting started guidance
-fn print_essential_help(_cli: &Cli) -> anyhow::Result<()> {
+fn print_essential_help(_cli: &Cli) {
     println!("🚀 OMG - The Fastest Unified Package Manager");
     println!();
 
@@ -37,8 +36,8 @@ fn print_essential_help(_cli: &Cli) -> anyhow::Result<()> {
 
     // Show help for essential commands only
     for cmd_name in ESSENTIAL_COMMANDS {
-        if let Some(essential_cmd) = get_essential_command_help(*cmd_name) {
-            println!("{}", essential_cmd);
+        if let Some(essential_cmd) = get_essential_command_help(cmd_name) {
+            println!("{essential_cmd}");
             println!();
         }
     }
@@ -49,13 +48,11 @@ fn print_essential_help(_cli: &Cli) -> anyhow::Result<()> {
     println!();
 
     print_getting_started();
-
-    Ok(())
 }
 
 /// Get help text for an essential command
 fn get_essential_command_help(cmd_name: &str) -> Option<String> {
-    let cmd = match cmd_name {
+    match cmd_name {
         "search" => Some("  🔍 search <query>     Search packages (22x faster than pacman)")
             .map(|s| s.to_string() + "\n     Examples: omg search firefox, omg s node"),
         "install" => Some("  📦 install <pkg>      Install packages (auto-detects AUR)")
@@ -71,9 +68,7 @@ fn get_essential_command_help(cmd_name: &str) -> Option<String> {
         "help" => Some("  ❓ help [--all]      Show help (essential by default)")
             .map(|s| s.to_string() + "\n     Examples: omg help, omg --help --all"),
         _ => None,
-    };
-
-    cmd
+    }
 }
 
 /// Print getting started guidance

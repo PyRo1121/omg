@@ -349,7 +349,7 @@ impl Default for MockFileSystem {
     }
 }
 
-/// Mock package manager implementing the PackageManager trait
+/// Mock package manager implementing the `PackageManager` trait
 pub struct MockPackageManager {
     pub db: MockPackageDb,
 }

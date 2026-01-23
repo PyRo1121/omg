@@ -601,6 +601,60 @@ omg explicit
 
 ---
 
+## 🔨 Build Issues
+
+### Debian/Ubuntu Linker Error (.eh_frame corruption)
+
+**Symptoms:**
+- Build fails with: `rust-lld: error: corrupted .eh_frame: CIE/FDE ends past end of section`
+- Build fails with: `rust-lld: error: .eh_frame: relocation is not in any piece`
+- Occurs when building with `--features debian` or `--features debian-pure`
+
+**Root Cause:**
+The `rustls` crate has a known issue with `.eh_frame` section corruption when using `rust-lld` (Rust's LLVM linker) with full LTO (Link Time Optimization) enabled.
+
+**Solutions:**
+
+```bash
+# 1. Ensure .cargo/config.toml has correct linker setting
+cat .cargo/config.toml
+# Should contain:
+# [target.x86_64-unknown-linux-gnu]
+# linker = "gcc"
+
+# 2. Clean and rebuild
+cargo clean
+cargo build --release --no-default-features --features debian-pure
+
+# 3. If issue persists, try disabling LTO temporarily
+# Edit Cargo.toml, change lto = "fat" to:
+# lto = "thin"
+# or
+# lto = false
+
+# 4. Verify linker is being used
+cargo build --release --no-default-features --features debian-pure 2>&1 | grep -i linker
+# Should show "gcc" not "rust-lld"
+```
+
+**For Docker builds:**
+The `.cargo/config.toml` file is copied into the Docker image, so the fix should work automatically. If not:
+
+```bash
+# In Dockerfile, after copying source:
+COPY --chown=omguser:omguser .cargo/config.toml .cargo/config.toml
+
+# Rebuild Docker image
+docker build --no-cache -f Dockerfile.debian -t omg-debian .
+```
+
+**Reference:**
+- Configuration is automatically set in `.cargo/config.toml`
+- Uses system GCC linker instead of rust-lld
+- Maintains full LTO performance on Arch Linux native builds
+
+---
+
 ## 📋 General Troubleshooting Steps
 
 ### Reset Everything

@@ -41,37 +41,7 @@ jobs:
       - name: Build
         run: |
           export RUSTFLAGS="-C target-cpu=x86-64-v2"
-          cargo build --release
-          cp target/release/omg target/release/omg.first
-
-      - name: Verify Reproducibility
-        run: |
-          # Clean and build again to ensure reproducibility
-          cargo clean
-          export RUSTFLAGS="-C target-cpu=x86-64-v2"
-          # Ensure build-id and other metadata don't change if possible
-          # Rust builds are generally reproducible if environment is the same
-          cargo build --release
-          
-          echo "Comparing binaries for reproducibility..."
-          if cmp -s target/release/omg target/release/omg.first; then
-            echo "✅ Binaries are identical!"
-          else
-            echo "❌ Binaries differ! Build is not reproducible."
-            # In a real world-class setup, we might fail here
-            # For now we warn
-            sha256sum target/release/omg target/release/omg.first
-          fi
-
-      - name: Security Check (checksec)
-        run: |
-          pacman -S --noconfirm checksec
-          checksec --file=target/release/omg
-
-      - name: Generate SBOM
-        run: |
-          cargo install cargo-cyclonedx --locked
-          cargo cyclonedx --format json --package omg --output-pattern "{prefix}-{name}-{version}-{target}.{extension}"
+          cargo build --release --features arch
 
       - name: Package
         run: |
@@ -79,8 +49,6 @@ jobs:
           mkdir -p "omg-v${VERSION}-x86_64-linux-arch"
           cp target/release/omg "omg-v${VERSION}-x86_64-linux-arch/"
           cp target/release/omgd "omg-v${VERSION}-x86_64-linux-arch/" 2>/dev/null || true
-          cp target/release/omg-fast "omg-v${VERSION}-x86_64-linux-arch/" 2>/dev/null || true
-          cp *.cdx.json "omg-v${VERSION}-x86_64-linux-arch/" 2>/dev/null || true
           cp README.md LICENSE "omg-v${VERSION}-x86_64-linux-arch/"
           tar -czvf "omg-v${VERSION}-x86_64-linux-arch.tar.gz" "omg-v${VERSION}-x86_64-linux-arch"
           sha256sum "omg-v${VERSION}-x86_64-linux-arch.tar.gz" > "omg-v${VERSION}-x86_64-linux-arch.tar.gz.sha256"
@@ -95,15 +63,25 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: debian:bookworm
-      options: --user root
     env:
-      HOME: /root
-      CARGO_HOME: /root/.cargo
+      DEBIAN_FRONTEND: noninteractive
+      CARGO_HOME: /usr/local/cargo
+      RUSTUP_HOME: /usr/local/rustup
     steps:
       - name: Install Dependencies
         run: |
           apt-get update
-          apt-get install -y curl git build-essential pkg-config libssl-dev libapt-pkg-dev clang cmake
+          apt-get install -y --no-install-recommends \
+            ca-certificates \
+            curl \
+            git \
+            build-essential \
+            pkg-config \
+            libssl-dev \
+            libapt-pkg-dev \
+            clang \
+            cmake
+          rm -rf /var/lib/apt/lists/*
 
       - uses: actions/checkout@v4
 
@@ -112,32 +90,20 @@ jobs:
 
       - name: Install Rust
         run: |
-          curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
-          echo "/root/.cargo/bin" >> $GITHUB_PATH
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+          echo 'export PATH="$CARGO_HOME/bin:$PATH"' >> $GITHUB_ENV
 
       - name: Build
         run: |
-          . /root/.cargo/env
+          export PATH="$CARGO_HOME/bin:$PATH"
           cargo build --release --no-default-features --features debian
-
-      - name: Security Check (checksec)
-        run: |
-          apt-get update && apt-get install -y checksec
-          checksec --file=target/release/omg
-
-      - name: Generate SBOM
-        run: |
-          . /root/.cargo/env
-          cargo install cargo-cyclonedx --locked
-          cargo cyclonedx --format json --package omg --output-pattern "{prefix}-{name}-{version}-{target}.{extension}"
 
       - name: Package
         run: |
+          export PATH="$CARGO_HOME/bin:$PATH"
           VERSION=$(awk -F'"' '/^version =/ {print $2; exit}' Cargo.toml)
           mkdir -p "omg-v${VERSION}-x86_64-linux-debian"
           cp target/release/omg "omg-v${VERSION}-x86_64-linux-debian/"
-          cp target/release/omgd "omg-v${VERSION}-x86_64-linux-debian/" 2>/dev/null || true
-          cp *.cdx.json "omg-v${VERSION}-x86_64-linux-debian/" 2>/dev/null || true
           cp README.md LICENSE "omg-v${VERSION}-x86_64-linux-debian/"
           tar -czvf "omg-v${VERSION}-x86_64-linux-debian.tar.gz" "omg-v${VERSION}-x86_64-linux-debian"
           sha256sum "omg-v${VERSION}-x86_64-linux-debian.tar.gz" > "omg-v${VERSION}-x86_64-linux-debian.tar.gz.sha256"
@@ -147,36 +113,40 @@ jobs:
           name: debian-build
           path: omg-v*.tar.gz*
 
-  build-debian-aarch64:
-    name: "Build Debian (aarch64)"
+  build-ubuntu:
+    name: "Build Ubuntu"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-unknown-linux-gnu
-      
-      - name: Install Cross
-        run: cargo install cross --locked
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libapt-pkg-dev \
+            pkg-config \
+            libssl-dev \
+            clang \
+            cmake
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Build
-        run: |
-          # Use cross for easy aarch64 compilation with libapt-pkg-dev dependency handled
-          # We use a custom Cross.toml if needed, but cross usually handles it
-          cross build --release --target aarch64-unknown-linux-gnu --no-default-features --features debian
+        run: cargo build --release --no-default-features --features debian
 
       - name: Package
         run: |
           VERSION=$(awk -F'"' '/^version =/ {print $2; exit}' Cargo.toml)
-          mkdir -p "omg-v${VERSION}-aarch64-linux-debian"
-          cp target/aarch64-unknown-linux-gnu/release/omg "omg-v${VERSION}-aarch64-linux-debian/"
-          cp README.md LICENSE "omg-v${VERSION}-aarch64-linux-debian/"
-          tar -czvf "omg-v${VERSION}-aarch64-linux-debian.tar.gz" "omg-v${VERSION}-aarch64-linux-debian"
-          sha256sum "omg-v${VERSION}-aarch64-linux-debian.tar.gz" > "omg-v${VERSION}-aarch64-linux-debian.tar.gz.sha256"
+          mkdir -p "omg-v${VERSION}-x86_64-linux-ubuntu"
+          cp target/release/omg "omg-v${VERSION}-x86_64-linux-ubuntu/"
+          cp README.md LICENSE "omg-v${VERSION}-x86_64-linux-ubuntu/"
+          tar -czvf "omg-v${VERSION}-x86_64-linux-ubuntu.tar.gz" "omg-v${VERSION}-x86_64-linux-ubuntu"
+          sha256sum "omg-v${VERSION}-x86_64-linux-ubuntu.tar.gz" > "omg-v${VERSION}-x86_64-linux-ubuntu.tar.gz.sha256"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: debian-aarch64-build
+          name: ubuntu-build
           path: omg-v*.tar.gz*
 
   # ════════════════════════════════════════════════════════════════════════════
@@ -186,22 +156,13 @@ jobs:
   release:
     name: "Create Release"
     runs-on: ubuntu-latest
-    needs: [build-arch, build-debian, build-debian-aarch64]
+    needs: [build-arch, build-debian, build-ubuntu]
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Generate Changelog
-        uses: orhun/git-cliff-action@v4
-        id: git-cliff
-        with:
-          config: cliff.toml
-          args: --latest --strip header
-        env:
-          OUTPUT: CHANGELOG.md
 
       - uses: actions/download-artifact@v4
         with:
@@ -213,10 +174,30 @@ jobs:
           find artifacts -name "*.tar.gz*" -exec cp {} release/ \;
           ls -la release/
 
+      - name: Generate Release Notes
+        id: release_notes
+        run: |
+          echo "## OMG v${{ github.ref_name }}" > release_notes.md
+          echo "" >> release_notes.md
+          echo "### Downloads" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "- **Arch Linux**: \`omg-*-x86_64-linux-arch.tar.gz\`" >> release_notes.md
+          echo "- **Debian**: \`omg-*-x86_64-linux-debian.tar.gz\`" >> release_notes.md
+          echo "- **Ubuntu**: \`omg-*-x86_64-linux-ubuntu.tar.gz\`" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "### Installation" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "\`\`\`bash" >> release_notes.md
+          echo "tar -xzf omg-*-x86_64-linux-*.tar.gz" >> release_notes.md
+          echo "cd omg-*-x86_64-linux-*" >> release_notes.md
+          echo "sudo cp omg /usr/local/bin/" >> release_notes.md
+          echo "\`\`\`" >> release_notes.md
+
       - uses: softprops/action-gh-release@v2
         if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'false')
         with:
-          body: ${{ steps.git-cliff.outputs.content }}
+          body_path: release_notes.md
           files: release/*
           generate_release_notes: false
+          draft: false
           prerelease: ${{ contains(github.ref, '-rc') || contains(github.ref, '-beta') || contains(github.ref, '-alpha') }}

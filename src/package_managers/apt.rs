@@ -53,10 +53,11 @@ impl crate::package_managers::PackageManager for AptPackageManager {
                 }
             }
 
-            tokio::task::spawn_blocking(move || search_sync(&query))
+            let results = tokio::task::spawn_blocking(move || search_sync(&query))
                 .await
-                .context("APT search task failed")?
-                .map(sync_to_packages)
+                .context("APT search task failed")??;
+
+            Ok(sync_to_packages(results))
         }
         .boxed()
     }
@@ -164,7 +165,7 @@ impl crate::package_managers::PackageManager for AptPackageManager {
                     })
                     .collect());
             }
-            list_installed_fast().map(local_to_packages)
+            Ok(local_to_packages(list_installed_fast()?))
         }
         .boxed()
     }
@@ -234,7 +235,6 @@ impl crate::package_managers::PackageManager for AptPackageManager {
         .boxed()
     }
 }
-
 pub fn search_sync(query: &str) -> Result<Vec<SyncPackage>> {
     let cache = open_cache(&[])?;
     let mut results = Vec::new();
@@ -246,7 +246,7 @@ pub fn search_sync(query: &str) -> Result<Vec<SyncPackage>> {
         // Match name first (fast)
         let mut matched = name.contains(&query_lower);
 
-                #[allow(clippy::collapsible_if)]
+        #[allow(clippy::collapsible_if)]
         // If name doesn't match, check summary (slower as it might load more data)
         let mut summary = None;
         if !matched {
@@ -257,21 +257,23 @@ pub fn search_sync(query: &str) -> Result<Vec<SyncPackage>> {
                 }
             }
         }
-        }
-    #[allow(clippy::redundant_closure_for_method_calls)]
-    #[allow(clippy::unnecessary_map_or)]
+
         #[allow(clippy::redundant_closure_for_method_calls)]
         #[allow(clippy::unnecessary_map_or)]
 
         if matched {
             let candidate = pkg.candidate();
-            let version = if let Some(ref c) = candidate {
+            let version: String = if let Some(ref c) = candidate {
                 c.version().to_string()
             } else if let Some(ref i) = pkg.installed() {
                 i.version().to_string()
             } else {
                 "unknown".to_string()
             };
+
+            let download_size: i64 = pkg
+                .candidate()
+                .map_or(0i64, |v| i64::try_from(v.size()).unwrap_or(i64::MAX));
 
             results.push(SyncPackage {
                 name: name.to_string(),
@@ -280,9 +282,7 @@ pub fn search_sync(query: &str) -> Result<Vec<SyncPackage>> {
                     .or_else(|| candidate.and_then(|c| c.summary()))
                     .unwrap_or_default(),
                 repo: "apt".to_string(),
-                download_size: pkg
-                    .candidate()
-                    .map_or(0, |v| i64::try_from(v.size()).unwrap_or(i64::MAX)),
+                download_size,
                 installed: pkg.is_installed(),
             });
         }
@@ -579,9 +579,9 @@ fn local_to_packages(local_pkgs: Vec<LocalPackage>) -> Vec<Package> {
     local_pkgs
         .into_iter()
         .map(|pkg| Package {
-            name: pkg.name,
-            version: pkg.version,
-            description: pkg.description,
+            name: pkg.name.clone(),
+            version: pkg.version.clone(),
+            description: pkg.description.clone(),
             source: PackageSource::Official,
             installed: true,
         })

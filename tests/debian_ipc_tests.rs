@@ -13,7 +13,7 @@ fn test_debian_search_request_serialization() {
     // Verify it serializes correctly with the variant name
     assert!(serialized.contains("DebianSearch"));
     assert!(serialized.contains("vim"));
-    assert!(serialized.contains("1"));
+    assert!(serialized.contains('1'));
 
     // Test round-trip deserialization
     let deserialized: Request = serde_json::from_str(&serialized).unwrap();

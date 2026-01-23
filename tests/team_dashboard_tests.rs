@@ -1,14 +1,14 @@
 //! Comprehensive test suite for Team Dashboard TUI functionality
 //!
 //! This module tests:
-//! - TeamDashboardApp state management
+//! - `TeamDashboardApp` state management
 //! - Tab navigation and switching
 //! - Member data handling and display
 //! - Team status loading and updates
-//! - Integration with TeamWorkspace
+//! - Integration with `TeamWorkspace`
 
 use omg_lib::cli::tui::app::{App, Tab};
-use omg_lib::core::env::team::{TeamConfig, TeamMember, TeamStatus, TeamWorkspace};
+use omg_lib::core::env::team::{NotificationSettings, TeamConfig, TeamMember, TeamStatus, TeamWorkspace};
 use omg_lib::package_managers::{SyncPackage, parse_version_or_zero};
 use serial_test::serial;
 use tempfile::TempDir;
@@ -20,7 +20,7 @@ fn create_test_workspace() -> (TempDir, TeamWorkspace) {
     (temp_dir, workspace)
 }
 
-/// Helper to create a test TeamStatus with predefined members
+/// Helper to create a test `TeamStatus` with predefined members
 fn create_test_team_status() -> TeamStatus {
     let config = TeamConfig {
         team_id: "test-team".to_string(),
@@ -29,7 +29,7 @@ fn create_test_team_status() -> TeamStatus {
         remote_url: Some("https://github.com/test/repo".to_string()),
         auto_sync: true,
         auto_push: false,
-        notifications: Default::default(),
+        notifications: NotificationSettings::default(),
     };
 
     let members = vec![
@@ -140,7 +140,7 @@ mod team_workspace_tests {
         let (temp_dir, mut workspace) = create_test_workspace();
 
         let result = workspace.init("test-team", "Test Team");
-        assert!(result.is_ok(), "Failed to init workspace: {:?}", result);
+        assert!(result.is_ok(), "Failed to init workspace: {result:?}");
 
         assert!(workspace.is_team_workspace());
         assert!(workspace.config().is_some());
@@ -371,7 +371,7 @@ mod member_data_handling_tests {
             id: "test-id".to_string(),
             name: "Test User".to_string(),
             env_hash: "hash123".to_string(),
-            last_sync: 1234567890,
+            last_sync: 1_234_567_890,
             in_sync: true,
             drift_summary: None,
         };
@@ -606,8 +606,6 @@ mod refresh_and_tick_tests {
     async fn test_tick_updates_metrics() {
         let mut app = App::new().await.unwrap();
 
-        let _initial_update = app.last_update;
-
         // Wait a small amount of time
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
@@ -822,8 +820,8 @@ mod property_based_tests {
                 .iter()
                 .enumerate()
                 .map(|(i, &in_sync)| TeamMember {
-                    id: format!("member-{}", i),
-                    name: format!("Member {}", i),
+                    id: format!("member-{i}"),
+                    name: format!("Member {i}"),
                     env_hash: "hash".to_string(),
                     last_sync: 1000,
                     in_sync,

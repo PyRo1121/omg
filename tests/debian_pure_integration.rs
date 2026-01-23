@@ -1,6 +1,6 @@
 //! Integration tests for Pure Rust Debian implementation
 //!
-//! This verifies that the PureDebianPackageManager works correctly
+//! This verifies that the `PureDebianPackageManager` works correctly
 //! even without the C-based rust-apt dependency.
 
 #![cfg(feature = "debian-pure")]
