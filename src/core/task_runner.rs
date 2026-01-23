@@ -47,21 +47,6 @@ impl std::fmt::Display for Ecosystem {
 }
 
 impl Ecosystem {
-    fn from_source(source: &str) -> Self {
-        match source {
-            "package.json" => Self::Node,
-            "deno.json" => Self::Deno,
-            "composer.json" => Self::Php,
-            "Cargo.toml" => Self::Rust,
-            "Makefile" => Self::Make,
-            "Taskfile.yml" | "Taskfile.yaml" => Self::Go,
-            "Rakefile" => Self::Ruby,
-            "pyproject.toml" | "Pipfile" => Self::Python,
-            "pom.xml" | "build.gradle" => Self::Java,
-            _ => Self::Custom(source.to_string()),
-        }
-    }
-
     fn priority(&self) -> i32 {
         match self {
             Self::Rust => 100,
@@ -73,6 +58,23 @@ impl Ecosystem {
             Self::Php => 50,
             Self::Make => 40,
             _ => 0,
+        }
+    }
+
+    fn matches(&self, name: &str) -> bool {
+        let name = name.to_lowercase();
+        if self.to_string().to_lowercase() == name || format!("{:?}", self).to_lowercase() == name {
+            return true;
+        }
+        match (self, name.as_str()) {
+            (Self::Node, "node" | "nodejs" | "js" | "javascript") => true,
+            (Self::Python, "py" | "python3") => true,
+            (Self::Rust, "rs" | "cargo") => true,
+            (Self::Make, "makefile") => true,
+            (Self::Go, "golang" | "task") => true,
+            (Self::Ruby, "rb" | "rake") => true,
+            (Self::Php, "composer") => true,
+            _ => false,
         }
     }
 }
@@ -323,10 +325,7 @@ impl TaskDetector {
 
         // 1. Filter by ecosystem if 'using' is provided
         if let Some(ecosystem_name) = using {
-            matches.retain(|t| {
-                t.ecosystem.to_string().to_lowercase() == ecosystem_name.to_lowercase()
-                    || format!("{:?}", t.ecosystem).to_lowercase() == ecosystem_name.to_lowercase()
-            });
+            matches.retain(|t| t.ecosystem.matches(ecosystem_name));
 
             if matches.is_empty() {
                 anyhow::bail!("No task '{}' found for ecosystem '{}'", task_name, ecosystem_name);
@@ -336,10 +335,7 @@ impl TaskDetector {
         // 2. Filter by .omg.toml mapping
         if let Some(preferred_ecosystem) = self.config.scripts.get(task_name) {
             let filtered: Vec<Task> = matches.iter()
-                .filter(|t| {
-                    t.ecosystem.to_string().to_lowercase() == preferred_ecosystem.to_lowercase()
-                        || format!("{:?}", t.ecosystem).to_lowercase() == preferred_ecosystem.to_lowercase()
-                })
+                .filter(|t| t.ecosystem.matches(preferred_ecosystem))
                 .cloned()
                 .collect();
             
@@ -380,153 +376,6 @@ impl TaskDetector {
 
         Ok(matches)
     }
-}
-
-/// Run an async future from sync context, reusing existing runtime if available
-/// This is the Rust 2024 best practice - avoid creating multiple runtimes
-fn run_async<F, T>(future: F) -> Result<T>
-where
-    F: Future<Output = Result<T>>,
-{
-    // Try to use existing runtime first (if we're already in an async context)
-    if let Ok(handle) = tokio::runtime::Handle::try_current() {
-        // We're in an async context, use block_in_place to avoid deadlock
-        tokio::task::block_in_place(|| handle.block_on(future))
-    } else {
-        // No runtime exists, create a minimal one
-        // Use current_thread for sync operations - faster startup than multi_thread
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()?
-            .block_on(future)
-    }
-}
-
-/// Generic runtime installation helper - DRY implementation for all runtimes
-///
-/// Handles version normalization, installation check, and interactive prompting.
-macro_rules! ensure_runtime_impl {
-    ($runtime_name:expr, $normalized:expr, $manager:expr) => {{
-        let normalized = $normalized;
-        let installed = $manager.list_installed().unwrap_or_default();
-
-        if installed.iter().any(|v| v == &normalized) {
-            return Ok(normalized);
-        }
-
-        let prompt = format!(
-            "{} '{}' is missing. Install now?",
-            $runtime_name, normalized
-        );
-        if Confirm::with_theme(&ColorfulTheme::default())
-            .with_prompt(prompt)
-            .default(true)
-            .interact()?
-        {
-            run_async($manager.install(&normalized))?;
-            Ok(normalized)
-        } else {
-            anyhow::bail!("{} setup cancelled", $runtime_name)
-        }
-    }};
-}
-
-fn ensure_python_runtime(version: &str) -> Result<String> {
-    let manager = crate::runtimes::PythonManager::new();
-    ensure_runtime_impl!(
-        "Python",
-        version.trim_start_matches('v').to_string(),
-        manager
-    )
-}
-
-fn ensure_go_runtime(version: &str) -> Result<String> {
-    let manager = crate::runtimes::GoManager::new();
-    ensure_runtime_impl!("Go", version.trim_start_matches('v').to_string(), manager)
-}
-
-fn ensure_ruby_runtime(version: &str) -> Result<String> {
-    let manager = crate::runtimes::RubyManager::new();
-    ensure_runtime_impl!("Ruby", version.trim_start_matches('v').to_string(), manager)
-}
-
-fn ensure_java_runtime(version: &str) -> Result<String> {
-    let manager = crate::runtimes::JavaManager::new();
-    ensure_runtime_impl!("Java", version.trim().to_string(), manager)
-}
-
-fn detect_js_package_manager(current_dir: &std::path::Path) -> Option<String> {
-    if !current_dir.join("package.json").exists() {
-        return None;
-    }
-
-    if let Ok(file) = std::fs::File::open(current_dir.join("package.json"))
-        && let Ok(pkg) = serde_json::from_reader::<_, PackageJson>(file)
-        && let Some(package_manager) = pkg.package_manager
-        && let Some(name) = parse_package_manager_name(&package_manager)
-    {
-        return Some(name);
-    }
-
-    if current_dir.join("bun.lockb").exists() {
-        return Some("bun".to_string());
-    }
-    if current_dir.join("pnpm-lock.yaml").exists() {
-        return Some("pnpm".to_string());
-    }
-    if current_dir.join("yarn.lock").exists() {
-        return Some("yarn".to_string());
-    }
-    if current_dir.join("package-lock.json").exists()
-        || current_dir.join("npm-shrinkwrap.json").exists()
-    {
-        return Some("npm".to_string());
-    }
-
-    Some("bun".to_string())
-}
-
-fn detect_js_runtime(current_dir: &std::path::Path) -> Option<(String, String)> {
-    let package_manager = detect_js_package_manager(current_dir)?;
-    let runtime = if package_manager == "bun" {
-        "bun"
-    } else {
-        "node"
-    };
-    let default_version = if runtime == "bun" { "latest" } else { "lts" };
-    Some((runtime.to_string(), default_version.to_string()))
-}
-
-#[derive(Deserialize)]
-struct PackageJson {
-    #[serde(rename = "packageManager")]
-    package_manager: Option<String>,
-    scripts: Option<HashMap<String, String>>,
-}
-
-#[derive(Deserialize)]
-struct DenoJson {
-    tasks: Option<HashMap<String, String>>,
-}
-
-#[derive(Deserialize)]
-struct ComposerJson {
-    scripts: Option<HashMap<String, String>>,
-}
-
-#[derive(Deserialize)]
-struct PyProject {
-    tool: Option<Tool>,
-}
-
-#[derive(Deserialize)]
-struct Tool {
-    poetry: Option<Poetry>,
-}
-
-#[derive(Deserialize)]
-struct Poetry {
-    scripts: Option<HashMap<String, String>>,
 }
 
 /// Detect available tasks in the current directory
@@ -682,87 +531,164 @@ pub async fn run_task_advanced(
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tempfile::TempDir;
-    use std::fs;
+/// Execute a task (compatibility wrapper)
+pub fn run_task(
+    task_name: &str,
+    extra_args: &[String],
+    backend_override: Option<RuntimeBackend>,
+) -> Result<()> {
+    run_async(run_task_advanced(task_name, extra_args, backend_override, None, false))
+}
 
-    #[test]
-    fn test_ecosystem_priority() {
-        assert!(Ecosystem::Rust.priority() > Ecosystem::Node.priority());
-        assert!(Ecosystem::Node.priority() > Ecosystem::Python.priority());
-        assert!(Ecosystem::Python.priority() > Ecosystem::Make.priority());
-    }
-
-    #[test]
-    fn test_config_loading() {
-        let temp = TempDir::new().unwrap();
-        let config_content = r#"[scripts]
-test = "rust"
-build = "node"
-"#;
-        fs::write(temp.path().join(".omg.toml"), config_content).unwrap();
-
-        let detector = TaskDetector::new(temp.path().to_path_buf());
-        assert_eq!(detector.config.scripts.get("test").unwrap(), "rust");
-        assert_eq!(detector.config.scripts.get("build").unwrap(), "node");
-    }
-
-    #[tokio::test]
-    async fn test_resolve_priority() {
-        let temp = TempDir::new().unwrap();
-        // Create both Cargo.toml and package.json
-        fs::write(temp.path().join("Cargo.toml"), "[package]\nname = \"test\"").unwrap();
-        fs::write(temp.path().join("package.json"), r#"{"scripts": {"test": "echo node"}}"#).unwrap();
-
-        let detector = TaskDetector::new(temp.path().to_path_buf());
-        // 'test' is in both, but Rust (Cargo) should have higher priority
-        let matches = detector.resolve("test", None, false).unwrap();
-        assert_eq!(matches.len(), 1);
-        assert_eq!(matches[0].ecosystem, Ecosystem::Rust);
-    }
-
-    #[tokio::test]
-    async fn test_resolve_using_override() {
-        let temp = TempDir::new().unwrap();
-        fs::write(temp.path().join("Cargo.toml"), "[package]\nname = \"test\"").unwrap();
-        fs::write(temp.path().join("package.json"), r#"{"scripts": {"test": "echo node"}}"#).unwrap();
-
-        let detector = TaskDetector::new(temp.path().to_path_buf());
-        // Explicitly use 'node'
-        let matches = detector.resolve("test", Some("node"), false).unwrap();
-        assert_eq!(matches.len(), 1);
-        assert_eq!(matches[0].ecosystem, Ecosystem::Node);
-    }
-
-    #[tokio::test]
-    async fn test_resolve_all() {
-        let temp = TempDir::new().unwrap();
-        fs::write(temp.path().join("Cargo.toml"), "[package]\nname = \"test\"").unwrap();
-        fs::write(temp.path().join("package.json"), r#"{"scripts": {"test": "echo node"}}"#).unwrap();
-
-        let detector = TaskDetector::new(temp.path().to_path_buf());
-        let matches = detector.resolve("test", None, true).unwrap();
-        assert_eq!(matches.len(), 2);
-    }
-
-    #[tokio::test]
-    async fn test_resolve_config_override() {
-        let temp = TempDir::new().unwrap();
-        fs::write(temp.path().join("Cargo.toml"), "[package]\nname = \"test\"").unwrap();
-        fs::write(temp.path().join("package.json"), r#"{"scripts": {"test": "echo node"}}"#).unwrap();
-        fs::write(temp.path().join(".omg.toml"), "[scripts]\ntest = \"node\"").unwrap();
-
-        let detector = TaskDetector::new(temp.path().to_path_buf());
-        let matches = detector.resolve("test", None, false).unwrap();
-        assert_eq!(matches.len(), 1);
-        assert_eq!(matches[0].ecosystem, Ecosystem::Node);
+/// Run an async future from sync context, reusing existing runtime if available
+/// This is the Rust 2024 best practice - avoid creating multiple runtimes
+fn run_async<F, T>(future: F) -> Result<T>
+where
+    F: Future<Output = Result<T>>,
+{
+    // Try to use existing runtime first (if we're already in an async context)
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        // We're in an async context, use block_in_place to avoid deadlock
+        tokio::task::block_in_place(|| handle.block_on(future))
+    } else {
+        // No runtime exists, create a minimal one
+        // Use current_thread for sync operations - faster startup than multi_thread
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?
+            .block_on(future)
     }
 }
 
+/// Generic runtime installation helper - DRY implementation for all runtimes
+///
+/// Handles version normalization, installation check, and interactive prompting.
+macro_rules! ensure_runtime_impl {
+    ($runtime_name:expr, $normalized:expr, $manager:expr) => {{
+        let normalized = $normalized;
+        let installed = $manager.list_installed().unwrap_or_default();
+
+        if installed.iter().any(|v| v == &normalized) {
+            return Ok(normalized);
+        }
+
+        let prompt = format!(
+            "{} '{}' is missing. Install now?",
+            $runtime_name, normalized
+        );
+        if Confirm::with_theme(&ColorfulTheme::default())
+            .with_prompt(prompt)
+            .default(true)
+            .interact()?
+        {
+            run_async($manager.install(&normalized))?;
+            Ok(normalized)
+        } else {
+            anyhow::bail!("{} setup cancelled", $runtime_name)
+        }
+    }};
+}
+
+fn ensure_python_runtime(version: &str) -> Result<String> {
+    let manager = crate::runtimes::PythonManager::new();
+    ensure_runtime_impl!(
+        "Python",
+        version.trim_start_matches('v').to_string(),
+        manager
+    )
+}
+
+fn ensure_go_runtime(version: &str) -> Result<String> {
+    let manager = crate::runtimes::GoManager::new();
+    ensure_runtime_impl!("Go", version.trim_start_matches('v').to_string(), manager)
+}
+
+fn ensure_ruby_runtime(version: &str) -> Result<String> {
+    let manager = crate::runtimes::RubyManager::new();
+    ensure_runtime_impl!("Ruby", version.trim_start_matches('v').to_string(), manager)
+}
+
+fn ensure_java_runtime(version: &str) -> Result<String> {
+    let manager = crate::runtimes::JavaManager::new();
+    ensure_runtime_impl!("Java", version.trim().to_string(), manager)
+}
+
+fn detect_js_package_manager(current_dir: &std::path::Path) -> Option<String> {
+    if !current_dir.join("package.json").exists() {
+        return None;
+    }
+
+    if let Ok(file) = std::fs::File::open(current_dir.join("package.json"))
+        && let Ok(pkg) = serde_json::from_reader::<_, PackageJson>(file)
+        && let Some(package_manager) = pkg.package_manager
+        && let Some(name) = parse_package_manager_name(&package_manager)
+    {
+        return Some(name);
+    }
+
+    if current_dir.join("bun.lockb").exists() {
+        return Some("bun".to_string());
+    }
+    if current_dir.join("pnpm-lock.yaml").exists() {
+        return Some("pnpm".to_string());
+    }
+    if current_dir.join("yarn.lock").exists() {
+        return Some("yarn".to_string());
+    }
+    if current_dir.join("package-lock.json").exists()
+        || current_dir.join("npm-shrinkwrap.json").exists()
+    {
+        return Some("npm".to_string());
+    }
+
+    Some("bun".to_string())
+}
+
+fn detect_js_runtime(current_dir: &std::path::Path) -> Option<(String, String)> {
+    let package_manager = detect_js_package_manager(current_dir)?;
+    let runtime = if package_manager == "bun" {
+        "bun"
+    } else {
+        "node"
+    };
+    let default_version = if runtime == "bun" { "latest" } else { "lts" };
+    Some((runtime.to_string(), default_version.to_string()))
+}
+
+#[derive(Deserialize)]
+struct PackageJson {
+    #[serde(rename = "packageManager")]
+    package_manager: Option<String>,
+    scripts: Option<HashMap<String, String>>,
+}
+
+#[derive(Deserialize)]
+struct DenoJson {
+    tasks: Option<HashMap<String, String>>,
+}
+
+#[derive(Deserialize)]
+struct ComposerJson {
+    scripts: Option<HashMap<String, String>>,
+}
+
+#[derive(Deserialize)]
+struct PyProject {
+    tool: Option<Tool>,
+}
+
+#[derive(Deserialize)]
+struct Tool {
+    poetry: Option<Poetry>,
+}
+
+#[derive(Deserialize)]
+struct Poetry {
+    scripts: Option<HashMap<String, String>>,
+}
 
 fn execute_process(
+
     cmd: &str,
     args: &[String],
     extra_args: &[String],
@@ -1270,5 +1196,82 @@ pub async fn run_tasks_parallel(
         Ok(())
     } else {
         anyhow::bail!("Some tasks failed")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+    use std::fs;
+
+    #[test]
+    fn test_ecosystem_priority() {
+        assert!(Ecosystem::Rust.priority() > Ecosystem::Node.priority());
+        assert!(Ecosystem::Node.priority() > Ecosystem::Python.priority());
+        assert!(Ecosystem::Python.priority() > Ecosystem::Make.priority());
+    }
+
+    #[test]
+    fn test_config_loading() {
+        let temp = TempDir::new().unwrap();
+        let config_content = r#"[scripts]
+test = "rust"
+build = "node"
+"#;
+        fs::write(temp.path().join(".omg.toml"), config_content).unwrap();
+
+        let detector = TaskDetector::new(temp.path().to_path_buf());
+        assert_eq!(detector.config.scripts.get("test").unwrap(), "rust");
+        assert_eq!(detector.config.scripts.get("build").unwrap(), "node");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_priority() {
+        let temp = TempDir::new().unwrap();
+        fs::write(temp.path().join("Cargo.toml"), "[package]\nname = \"test\"").unwrap();
+        fs::write(temp.path().join("package.json"), r#"{"scripts": {"test": "echo node"}}"#).unwrap();
+
+        let detector = TaskDetector::new(temp.path().to_path_buf());
+        let matches = detector.resolve("test", None, false).unwrap();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].ecosystem, Ecosystem::Rust);
+    }
+
+    #[tokio::test]
+    async fn test_resolve_using_override() {
+        let temp = TempDir::new().unwrap();
+        fs::write(temp.path().join("Cargo.toml"), "[package]\nname = \"test\"").unwrap();
+        fs::write(temp.path().join("package.json"), r#"{"scripts": {"test": "echo node"}}"#).unwrap();
+
+        let detector = TaskDetector::new(temp.path().to_path_buf());
+        // Explicitly use 'bun' (default for package.json in detector if no lockfile)
+        let matches = detector.resolve("test", Some("bun"), false).unwrap();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].ecosystem, Ecosystem::Bun);
+    }
+
+    #[tokio::test]
+    async fn test_resolve_all() {
+        let temp = TempDir::new().unwrap();
+        fs::write(temp.path().join("Cargo.toml"), "[package]\nname = \"test\"").unwrap();
+        fs::write(temp.path().join("package.json"), r#"{"scripts": {"test": "echo node"}}"#).unwrap();
+
+        let detector = TaskDetector::new(temp.path().to_path_buf());
+        let matches = detector.resolve("test", None, true).unwrap();
+        assert_eq!(matches.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_resolve_config_override() {
+        let temp = TempDir::new().unwrap();
+        fs::write(temp.path().join("Cargo.toml"), "[package]\nname = \"test\"").unwrap();
+        fs::write(temp.path().join("package.json"), r#"{"scripts": {"test": "echo node"}}"#).unwrap();
+        fs::write(temp.path().join(".omg.toml"), "[scripts]\ntest = \"bun\"").unwrap();
+
+        let detector = TaskDetector::new(temp.path().to_path_buf());
+        let matches = detector.resolve("test", None, false).unwrap();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].ecosystem, Ecosystem::Bun);
     }
 }
