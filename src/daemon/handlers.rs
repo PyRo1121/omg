@@ -439,7 +439,7 @@ async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) ->
     if let Ok(Some(info)) = state.package_manager.info(&package).await {
         let detailed = DetailedPackageInfo {
             name: info.name,
-            version: info.version.to_string(),
+            version: info.version.clone(),
             description: info.description,
             url: String::new(), // info.url not in Package struct currently
             size: 0,
@@ -528,7 +528,7 @@ async fn handle_status(state: Arc<DaemonState>, id: RequestId) -> Response {
             }
             #[cfg(not(feature = "debian"))]
             {
-                Err(anyhow::anyhow!("Debian backend disabled"))
+                Err::<(usize, usize, usize, usize), _>(anyhow::anyhow!("Debian backend disabled"))
             }
         } else if pm_name == "pacman" {
             #[cfg(feature = "arch")]
@@ -685,7 +685,7 @@ async fn handle_list_explicit(state: Arc<DaemonState>, id: RequestId) -> Respons
             }
             #[cfg(not(feature = "debian"))]
             {
-                Err(anyhow::anyhow!("Debian backend disabled"))
+                Err::<Vec<String>, _>(anyhow::anyhow!("Debian backend disabled"))
             }
         } else if pm_name == "pacman" {
             #[cfg(feature = "arch")]
@@ -742,7 +742,7 @@ async fn handle_explicit_count(state: Arc<DaemonState>, id: RequestId) -> Respon
             }
             #[cfg(not(feature = "debian"))]
             {
-                Err(anyhow::anyhow!("Debian backend disabled"))
+                Err::<usize, _>(anyhow::anyhow!("Debian backend disabled"))
             }
         } else if pm_name == "pacman" {
             #[cfg(feature = "arch")]

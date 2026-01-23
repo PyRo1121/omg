@@ -141,6 +141,7 @@ fn get_package_info(package: &str) -> Result<(bool, Option<String>, String)> {
 }
 
 #[cfg(not(any(feature = "arch", feature = "debian")))]
+#[allow(clippy::unnecessary_wraps)]
 fn get_package_info(_package: &str) -> Result<(bool, Option<String>, String)> {
     Ok((false, None, "unknown".to_string()))
 }
@@ -218,6 +219,7 @@ fn show_required_by(package: &str) -> Result<()> {
 }
 
 #[cfg(not(any(feature = "arch", feature = "debian")))]
+#[allow(clippy::unnecessary_wraps)]
 fn show_required_by(_package: &str) -> Result<()> {
     Ok(())
 }

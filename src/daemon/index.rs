@@ -8,12 +8,14 @@ use crate::daemon::protocol::{DetailedPackageInfo, PackageInfo};
 
 /// A highly-optimized string interner for reducing memory footprint
 #[derive(Default)]
+#[allow(dead_code)]
 struct StringPool {
     pool: Vec<u8>,
     offsets: AHashMap<String, u32>,
 }
 
 impl StringPool {
+    #[allow(dead_code)]
     fn intern(&mut self, s: &str) -> u32 {
         if let Some(&offset) = self.offsets.get(s) {
             return offset;

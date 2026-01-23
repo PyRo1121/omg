@@ -466,14 +466,11 @@ struct LicenseViolation {
     reason: String,
 }
 
+#[allow(unused_mut)]
 fn perform_license_scan() -> LicenseScan {
-    #[allow(unused_mut)]
     let mut by_license: HashMap<String, usize> = HashMap::new();
-    #[allow(unused_mut)]
     let mut violations: Vec<LicenseViolation> = Vec::new();
-    #[allow(unused_mut)]
     let mut unknown: Vec<String> = Vec::new();
-    #[allow(unused_mut)]
     let mut total_packages = 0;
 
     // Use pure Rust database parser for speed

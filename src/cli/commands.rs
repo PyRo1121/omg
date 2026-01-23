@@ -561,7 +561,7 @@ pub fn history(limit: usize) -> Result<()> {
     Ok(())
 }
 
-pub async fn rollback(id: Option<String>) -> Result<()> {
+pub fn rollback(id: Option<String>) -> Result<()> {
     if let Some(ref r_id) = id {
         // SECURITY: Validate transaction ID
         if r_id.chars().any(|c| !c.is_ascii_hexdigit()) {

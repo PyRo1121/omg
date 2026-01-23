@@ -95,6 +95,7 @@ pub use types::{LocalPackage, SyncPackage};
 
 /// Get the appropriate package manager for the current distribution
 pub fn get_package_manager() -> Box<dyn PackageManager> {
+    #[allow(unused_imports)]
     use crate::core::env::distro::{Distro, detect_distro};
 
     if crate::core::paths::test_mode() {
