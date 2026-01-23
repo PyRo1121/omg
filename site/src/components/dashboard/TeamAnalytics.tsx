@@ -33,6 +33,7 @@ interface TeamAnalyticsProps {
   licenseKey: string;
   onRevoke: (machineId: string) => void;
   onRefresh: () => void;
+  loading?: boolean;
 }
 
 export const TeamAnalytics: Component<TeamAnalyticsProps> = props => {
@@ -365,6 +366,18 @@ export const TeamAnalytics: Component<TeamAnalyticsProps> = props => {
     const last7 = daily.slice(-7);
     return last7.map(d => d.commands_run || 0);
   };
+
+  if (props.loading) {
+    return (
+      <div class="space-y-8 animate-in fade-in duration-500">
+        <div class="grid gap-6 lg:grid-cols-2">
+          <CardSkeleton />
+          <CardSkeleton />
+        </div>
+        <CardSkeleton />
+      </div>
+    );
+  }
 
   if (!props.teamData) {
     return (

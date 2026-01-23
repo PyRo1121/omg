@@ -60,6 +60,7 @@ const DashboardPage: Component = () => {
 
   // Team state
   const [teamData, setTeamData] = createSignal<api.TeamData | null>(null);
+  const [teamLoading, setTeamLoading] = createSignal(false);
 
   // Check for existing session on mount
   onMount(async () => {
@@ -354,12 +355,15 @@ const DashboardPage: Component = () => {
 
   // Load team data
   const loadTeamData = async () => {
+    setTeamLoading(true);
     try {
       const data = await api.getTeamMembers();
       setTeamData(data);
     } catch (e) {
       console.error('Failed to load team data:', e);
+      setTeamData(null);
     }
+    setTeamLoading(false);
   };
 
   // Revoke team member
@@ -1089,6 +1093,7 @@ const DashboardPage: Component = () => {
                     licenseKey={d.license.license_key}
                     onRevoke={handleRevokeTeamMember}
                     onRefresh={loadTeamData}
+                    loading={teamLoading()}
                   />
                 </Show>
 
