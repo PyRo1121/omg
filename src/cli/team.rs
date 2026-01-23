@@ -586,11 +586,15 @@ pub mod golden_path {
         license::require_feature("team-sync")?;
 
         let mut config = GoldenPathConfig::load()?;
-        
+
         let mut runtimes = HashMap::new();
-        if let Some(v) = node { runtimes.insert("node".to_string(), v.to_string()); }
-        if let Some(v) = python { runtimes.insert("python".to_string(), v.to_string()); }
-        
+        if let Some(v) = node {
+            runtimes.insert("node".to_string(), v.to_string());
+        }
+        if let Some(v) = python {
+            runtimes.insert("python".to_string(), v.to_string());
+        }
+
         let package_list = packages
             .map(|p| p.split(',').map(|s| s.trim().to_string()).collect())
             .unwrap_or_default();
@@ -650,7 +654,12 @@ pub mod golden_path {
             println!("  {}", "Available templates:".bold());
             for t in &config.templates {
                 let runtimes = t.runtimes.keys().cloned().collect::<Vec<_>>().join(", ");
-                println!("    {} - runtimes: [{}], packages: {} ", t.name.cyan(), runtimes, t.packages.len());
+                println!(
+                    "    {} - runtimes: [{}], packages: {} ",
+                    t.name.cyan(),
+                    runtimes,
+                    t.packages.len()
+                );
             }
         }
 

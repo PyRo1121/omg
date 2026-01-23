@@ -1,7 +1,5 @@
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
 use assert_cmd::Command;
-#[cfg(any(feature = "debian", feature = "debian-pure"))]
-use predicates::prelude::*;
 
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
 #[test]
@@ -13,13 +11,13 @@ fn test_omg_search_debian_daemon_routing() {
     // so it will fall back, but the code path is exercised).
     // To truly test the daemon routing, we'd need a running omgd instance.
     // However, we can check if it attempts to connect.
-    
+
     // For now, we'll verify basic execution with the feature flag.
-    let mut cmd = Command::cargo_bin("omg").unwrap();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_omg"));
     cmd.env("OMG_TEST_DISTRO", "debian")
-       .env("OMG_TEST_MODE", "true") // Triggers test mode which avoids real socket connection for now
-       .arg("search")
-       .arg("vim")
-       .assert()
-       .success();
+        .env("OMG_TEST_MODE", "true") // Triggers test mode which avoids real socket connection for now
+        .arg("search")
+        .arg("vim")
+        .assert()
+        .success();
 }

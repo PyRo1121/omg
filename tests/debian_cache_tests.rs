@@ -22,7 +22,7 @@ fn test_debian_search_caching() {
 
     // These methods don't exist yet, so this will fail to compile
     cache.insert_debian(query.clone(), results.clone());
-    
+
     let cached = cache.get_debian(&query);
     assert!(cached.is_some());
     let cached_pkgs = cached.unwrap();

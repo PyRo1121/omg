@@ -354,22 +354,25 @@ pub mod server {
         println!("  Upstream: {}", upstream.cyan());
         println!();
         println!("  {} Fetching package index...", "→".blue());
-        
+
         let pm = crate::package_managers::get_package_manager();
         pm.sync().await?;
 
         println!("  {} Downloading new packages...", "→".blue());
         println!("  {} Verifying signatures...", "→".blue());
         println!();
-        
+
         // Check for updates to show meaningful status
         let updates = pm.list_updates().await.unwrap_or_default();
-        
+
         println!("  {} Mirror check complete!", "✓".green());
         if updates.is_empty() {
             println!("    Status: Up to date");
         } else {
-            println!("    Status: {} updates available", updates.len().to_string().yellow());
+            println!(
+                "    Status: {} updates available",
+                updates.len().to_string().yellow()
+            );
         }
         println!("    Last sync: Just now");
 
@@ -402,10 +405,11 @@ async fn generate_report(report_type: &str) -> Report {
     }
 
     let metrics = crate::core::metrics::GLOBAL_METRICS.snapshot();
-    
+
     // Calculate a real compliance score based on validation failures and security audits
     let base_score = 100.0;
-    let penalty = (metrics.validation_failures as f32 * 0.5) + (metrics.rate_limit_hits as f32 * 0.1);
+    let penalty =
+        (metrics.validation_failures as f32 * 0.5) + (metrics.rate_limit_hits as f32 * 0.1);
     let compliance_score = (base_score - penalty).max(0.0);
 
     Report {
@@ -451,7 +455,7 @@ fn generate_policy_json() -> String {
             "rule": "Block copyleft licenses in production",
             "scope": "production",
             "enforced": true
-        })
+        }),
     ];
     serde_json::to_string_pretty(&policies).unwrap_or_else(|_| "[]".to_string())
 }

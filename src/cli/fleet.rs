@@ -211,14 +211,19 @@ pub async fn remediate(dry_run: bool, confirm: bool) -> Result<()> {
         "  Remediating {} machines...",
         drifted_count + runtime_updates + policy_fixes
     );
-    
+
     // Simulate real work
     tokio::time::sleep(std::time::Duration::from_millis(800)).await;
 
     println!();
     println!("  {} Remediation complete!", "✓".green());
     println!();
-    println!("    {} machines remediated successfully", (drifted_count + runtime_updates + policy_fixes).to_string().green());
+    println!(
+        "    {} machines remediated successfully",
+        (drifted_count + runtime_updates + policy_fixes)
+            .to_string()
+            .green()
+    );
 
     Ok(())
 }

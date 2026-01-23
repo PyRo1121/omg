@@ -13,14 +13,12 @@ mod common;
 use common::assertions::*;
 use common::fixtures::*;
 use common::*;
-use std::time::Duration;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // DOCKER INTEGRATION
 // ═══════════════════════════════════════════════════════════════════════════════
 
 mod docker_integration {
-    use super::*;
     use std::path::Path;
 
     #[test]
@@ -28,7 +26,7 @@ mod docker_integration {
         // This ensures the smoke test script we expect for CI is present
         let script_path = Path::new("scripts/debian-smoke-test.sh");
         assert!(script_path.exists(), "debian-smoke-test.sh missing");
-        
+
         // Basic check that it's executable (on unix)
         #[cfg(unix)]
         {
@@ -261,7 +259,8 @@ mod ubuntu_specific {
         require_system_tests!();
         require_ubuntu!();
 
-        let _result = run_omg(&["search", "ubuntu-desktop"]);
+        let result = run_omg(&["search", "ubuntu-desktop"]);
+        result.assert_success();
         // Ubuntu should have ubuntu-specific packages
     }
 
@@ -736,6 +735,7 @@ mod edge_cases {
 
         // Debian uses epoch:version-revision format
         let result = run_omg(&["info", "tar"]);
+        result.assert_success();
         // Should handle version formats correctly
     }
 
@@ -745,6 +745,7 @@ mod edge_cases {
 
         // Virtual packages like "mail-transport-agent"
         let result = run_omg(&["search", "mail-transport-agent"]);
+        result.assert_success();
         // Should handle virtual packages
     }
 
@@ -924,6 +925,7 @@ mod runtime_management {
         project.with_node_project();
 
         let result = project.run(&["use", "node"]);
+        result.assert_success();
         // Should detect version from .nvmrc
     }
 
@@ -933,6 +935,7 @@ mod runtime_management {
         project.with_python_project();
 
         let result = project.run(&["use", "python"]);
+        result.assert_success();
         // Should detect version from .python-version
     }
 

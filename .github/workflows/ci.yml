@@ -89,7 +89,7 @@ jobs:
 
       - name: Generate Coverage
         run: |
-          cargo tarpaulin --verbose --workspace --timeout 120 --out Xml --fail-under 80
+          cargo tarpaulin --verbose --workspace --timeout 120 --out Xml --fail-under 80 --no-default-features --features debian-pure
 
   # ════════════════════════════════════════════════════════════════════════════
   # 2. ARCH LINUX (Full System Integration)

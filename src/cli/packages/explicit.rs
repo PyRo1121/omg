@@ -61,7 +61,7 @@ pub fn explicit_sync(count: bool) -> Result<()> {
             println!("{count}");
             return Ok(());
         }
-        
+
         #[cfg(not(feature = "arch"))]
         {
             anyhow::bail!("Explicit count only supported on Arch Linux");

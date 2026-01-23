@@ -15,8 +15,8 @@ use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
 use crate::core::paths;
 use crate::daemon::protocol::{
-    DetailedPackageInfo, PackageInfo, Request, Response, ResponseResult, SearchResult, SecurityAuditResult,
-    StatusResult,
+    DetailedPackageInfo, PackageInfo, Request, Response, ResponseResult, SearchResult,
+    SecurityAuditResult, StatusResult,
 };
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream as SyncUnixStream;
@@ -383,7 +383,11 @@ impl DaemonClient {
     }
 
     /// Search for Debian packages via daemon
-    pub async fn debian_search(&mut self, query: &str, limit: Option<usize>) -> Result<Vec<PackageInfo>> {
+    pub async fn debian_search(
+        &mut self,
+        query: &str,
+        limit: Option<usize>,
+    ) -> Result<Vec<PackageInfo>> {
         let id = self.request_id.fetch_add(1, Ordering::SeqCst);
         match self
             .call(Request::DebianSearch {

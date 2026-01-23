@@ -31,7 +31,6 @@ pub mod types;
 
 pub use types::{parse_version_or_zero, zero_version};
 
-
 #[cfg(feature = "arch")]
 pub fn search_sync(query: &str) -> anyhow::Result<Vec<SyncPackage>> {
     if crate::core::paths::test_mode() {
@@ -52,13 +51,25 @@ pub fn search_sync(query: &str) -> anyhow::Result<Vec<SyncPackage>> {
     alpm_direct::search_sync(query)
 }
 
-#[cfg(feature = "arch")]
 pub fn list_explicit_fast() -> anyhow::Result<Vec<String>> {
-    if crate::core::paths::test_mode() {
-        let pm = get_package_manager();
-        return futures::executor::block_on(pm.list_explicit());
+    #[cfg(feature = "arch")]
+    {
+        if crate::core::paths::test_mode() {
+            let pm = get_package_manager();
+            return futures::executor::block_on(pm.list_explicit());
+        }
+        alpm_direct::list_explicit_fast()
     }
-    alpm_direct::list_explicit_fast()
+
+    #[cfg(any(feature = "debian", feature = "debian-pure"))]
+    {
+        debian_db::list_explicit_fast()
+    }
+
+    #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
+    {
+        anyhow::bail!("No package manager backend enabled")
+    }
 }
 
 #[cfg(feature = "arch")]
@@ -170,6 +181,11 @@ pub use apt::{
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
 pub use debian_db::{
     get_counts_fast as apt_get_counts_fast, get_info_fast as apt_get_info_fast,
-    list_explicit_fast as apt_list_explicit_fast, list_installed_fast as apt_list_installed_fast,
-    search_fast as apt_search_fast,
+    list_explicit_fast as apt_list_explicit_fast, search_fast as apt_search_fast,
 };
+
+#[cfg(all(any(feature = "debian", feature = "debian-pure"), not(feature = "debian")))]
+pub use debian_db::list_installed_fast as apt_list_installed_fast;
+
+#[cfg(all(feature = "debian", feature = "debian-pure"))]
+pub use debian_db::list_installed_fast as apt_list_installed_db_fast;
