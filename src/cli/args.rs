@@ -21,6 +21,10 @@ pub struct Cli {
     #[arg(short, long, global = true)]
     pub quiet: bool,
 
+    /// Show all commands including advanced ones (default: show essential only)
+    #[arg(short, long, global = true)]
+    pub all: bool,
+
     #[command(subcommand)]
     pub command: Commands,
 }
@@ -418,6 +422,14 @@ pub enum Commands {
         /// Update to a specific version
         #[arg(long)]
         version: Option<String>,
+    },
+
+    /// Show help (essential by default, all with --all flag)
+    #[command(visible_alias = "h", next_help_heading = "System & Configuration")]
+    Help {
+        /// Show all commands including advanced ones (default: show essential only)
+        #[arg(short, long, global = true)]
+        all: bool,
     },
 
     /// Interactive first-run setup wizard
