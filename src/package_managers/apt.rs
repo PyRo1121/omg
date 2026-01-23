@@ -275,7 +275,7 @@ pub fn search_sync(query: &str) -> Result<Vec<SyncPackage>> {
                     .or_else(|| candidate.and_then(|c| c.summary()))
                     .unwrap_or_default(),
                 repo: "apt".to_string(),
-                download_size: pkg.candidate().map(|v| v.size() as i64).unwrap_or(0),
+                download_size: pkg.candidate().map_or(0, |v| v.size() as i64),
                 installed: pkg.is_installed(),
             });
         }
@@ -510,6 +510,7 @@ fn sync_databases_blocking() -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::cast_possible_wrap)]
 fn map_local_package(pkg: &rust_apt::Package<'_>) -> LocalPackage {
     let version = pkg
         .installed()
@@ -532,8 +533,7 @@ fn map_local_package(pkg: &rust_apt::Package<'_>) -> LocalPackage {
         description: summary,
         install_size: pkg
             .installed()
-            .map(|v| v.installed_size() as i64)
-            .unwrap_or(0),
+            .map_or(0, |v| v.installed_size() as i64),
         reason,
     }
 }

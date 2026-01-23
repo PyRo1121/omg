@@ -32,16 +32,16 @@ jobs:
         languages: ${{ matrix.language }}
         build-mode: none
 
-    - name: Install dependencies (Arch/Rust)
+    - name: Install dependencies (Debian/Rust)
       if: matrix.language == 'rust'
       run: |
         sudo apt-get update
-        sudo apt-get install -y libalpm-dev libdbus-1-dev pkg-config
+        sudo apt-get install -y libapt-pkg-dev libdbus-1-dev pkg-config
 
     - name: Build (Manual for Rust)
       if: matrix.language == 'rust'
       run: |
-        cargo build --verbose
+        cargo build --verbose --no-default-features --features debian
 
     - name: Perform CodeQL Analysis
       uses: github/codeql-action/analyze@v4
