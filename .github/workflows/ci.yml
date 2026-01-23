@@ -74,6 +74,20 @@ jobs:
           exit-code: '1'
           severity: 'CRITICAL,HIGH'
 
+  coverage:
+    name: "Coverage"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      
+      - name: Install tarpaulin
+        run: cargo install cargo-tarpaulin --locked
+
+      - name: Generate Coverage
+        run: |
+          cargo tarpaulin --verbose --workspace --timeout 120 --out Xml --fail-under 80
+
   # ════════════════════════════════════════════════════════════════════════════
   # 2. ARCH LINUX (Full System Integration)
   # ════════════════════════════════════════════════════════════════════════════
@@ -286,17 +300,21 @@ jobs:
   ci-success:
     name: "✅ CI"
     runs-on: ubuntu-latest
-    needs: [lint, arch, debian, ubuntu]
+    needs: [lint, container-scan, coverage, arch, debian, ubuntu]
     if: always()
     steps:
       - name: Check Results
         run: |
           echo "🔍 Checking job results..."
-          echo "  lint:   ${{ needs.lint.result }}"
-          echo "  arch:   ${{ needs.arch.result }}"
-          echo "  debian: ${{ needs.debian.result }}"
-          echo "  ubuntu: ${{ needs.ubuntu.result }}"
+          echo "  lint:           ${{ needs.lint.result }}"
+          echo "  container-scan: ${{ needs.container-scan.result }}"
+          echo "  coverage:       ${{ needs.coverage.result }}"
+          echo "  arch:           ${{ needs.arch.result }}"
+          echo "  debian:         ${{ needs.debian.result }}"
+          echo "  ubuntu:         ${{ needs.ubuntu.result }}"
           if [[ "${{ needs.lint.result }}" != "success" ]] || \
+             [[ "${{ needs.container-scan.result }}" != "success" ]] || \
+             [[ "${{ needs.coverage.result }}" != "success" ]] || \
              [[ "${{ needs.arch.result }}" != "success" ]] || \
              [[ "${{ needs.debian.result }}" != "success" ]] || \
              [[ "${{ needs.ubuntu.result }}" != "success" ]]; then
