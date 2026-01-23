@@ -11,14 +11,14 @@ This plan follows the project's TDD protocol: Write Test -> Implement -> Refacto
     - [ ] Implement background indexing for APT packages in `omgd`
 - [x] Task: Conductor - User Manual Verification 'Phase 1: Daemon Integration & IPC' (Protocol in workflow.md) [76108d5]
 
-## Phase 2: Client Refactor
+## Phase 2: Client Refactor [checkpoint: f2ebdaa]
 - [x] Task: Update `omg search` to route Debian queries via the daemon [f95f015]
-    - [ ] Write failing integration tests for `omg search` on Debian systems
-    - [ ] Implement client-side routing to `omgd` for Debian searches
+    - [x] Write failing integration tests for `omg search` on Debian systems
+    - [x] Implement client-side routing to `omgd` for Debian searches
 - [x] Task: Implement result caching for Debian searches [b809706]
-    - [ ] Write failing tests for cache hits/misses in `omgd`
-    - [ ] Implement caching logic using `moka` or `redb`
-- [ ] Task: Conductor - User Manual Verification 'Phase 2: Client Refactor' (Protocol in workflow.md)
+    - [x] Write failing tests for cache hits/misses in `omgd`
+    - [x] Implement caching logic using `moka` or `redb`
+- [x] Task: Conductor - User Manual Verification 'Phase 2: Client Refactor' (Protocol in workflow.md) [f2ebdaa]
 
 ## Phase 3: Verification & Benchmarking
 - [ ] Task: Add comprehensive integration suite for Debian/Ubuntu
