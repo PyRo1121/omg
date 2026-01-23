@@ -63,15 +63,15 @@ struct CompactPackageInfo {
 
 impl PackageIndex {
     pub fn new() -> Result<Self> {
-        #[cfg(feature = "debian")]
+        #[cfg(any(feature = "debian", feature = "debian-pure"))]
         {
             Self::new_apt()
         }
-        #[cfg(all(feature = "arch", not(feature = "debian")))]
+        #[cfg(all(feature = "arch", not(any(feature = "debian", feature = "debian-pure"))))]
         {
             Self::new_alpm()
         }
-        #[cfg(not(any(feature = "arch", feature = "debian")))]
+        #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
         anyhow::bail!("No package backend enabled")
     }
 
@@ -86,7 +86,7 @@ impl PackageIndex {
         Ok(index)
     }
 
-    #[cfg(feature = "debian")]
+    #[cfg(any(feature = "debian", feature = "debian-pure"))]
     fn new_apt() -> Result<Self> {
         use crate::package_managers::debian_db;
         debian_db::ensure_index_loaded()?;
@@ -306,7 +306,7 @@ mod tests {
     fn test_string_pool_large() {
         let mut pool = StringPool::default();
         for i in 0..1000 {
-            let s = format!("string-{}", i);
+            let s = format!("string-{i}");
             let off = pool.intern(&s);
             assert_eq!(pool.get(off), s);
         }
