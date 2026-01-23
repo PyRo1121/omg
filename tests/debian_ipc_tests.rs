@@ -1,4 +1,4 @@
-use omg_lib::daemon::protocol::{Request, ResponseResult};
+use omg_lib::daemon::protocol::{PackageInfo, Request, ResponseResult};
 
 #[test]
 fn test_debian_search_request_serialization() {
@@ -31,8 +31,18 @@ fn test_debian_search_request_serialization() {
 fn test_debian_search_result_serialization() {
     // This variant does not exist yet either
     let result = ResponseResult::DebianSearch(vec![
-        "vim".to_string(),
-        "nano".to_string(),
+        PackageInfo {
+            name: "vim".to_string(),
+            version: "1.0".to_string(),
+            description: "desc".to_string(),
+            source: "apt".to_string(),
+        },
+        PackageInfo {
+            name: "nano".to_string(),
+            version: "1.0".to_string(),
+            description: "desc".to_string(),
+            source: "apt".to_string(),
+        },
     ]);
 
     let serialized = serde_json::to_string(&result).unwrap();
@@ -42,7 +52,7 @@ fn test_debian_search_result_serialization() {
     let deserialized: ResponseResult = serde_json::from_str(&serialized).unwrap();
     if let ResponseResult::DebianSearch(pkgs) = deserialized {
         assert_eq!(pkgs.len(), 2);
-        assert_eq!(pkgs[0], "vim");
+        assert_eq!(pkgs[0].name, "vim");
     } else {
         panic!("Wrong variant deserialized");
     }
