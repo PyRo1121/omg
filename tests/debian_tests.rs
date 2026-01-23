@@ -6,7 +6,7 @@
 //! With system tests: `OMG_RUN_SYSTEM_TESTS=1 cargo test --test debian_tests --features debian`
 //! On Ubuntu: `OMG_TEST_DISTRO=ubuntu cargo test --test debian_tests --features debian`
 
-#![cfg(feature = "debian")]
+#![cfg(any(feature = "debian", feature = "debian-pure"))]
 
 mod common;
 
@@ -14,6 +14,30 @@ use common::assertions::*;
 use common::fixtures::*;
 use common::*;
 use std::time::Duration;
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DOCKER INTEGRATION
+// ═══════════════════════════════════════════════════════════════════════════════
+
+mod docker_integration {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn test_docker_smoke_test_script_exists() {
+        // This ensures the smoke test script we expect for CI is present
+        let script_path = Path::new("scripts/debian-smoke-test.sh");
+        assert!(script_path.exists(), "debian-smoke-test.sh missing");
+        
+        // Basic check that it's executable (on unix)
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let meta = script_path.metadata().expect("failed to get metadata");
+            assert_eq!(meta.mode() & 0o111, 0o111, "Script should be executable");
+        }
+    }
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // APT INTEGRATION TESTS
