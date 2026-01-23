@@ -398,9 +398,9 @@ static AUDIT_LOGGER: std::sync::LazyLock<std::sync::Mutex<Option<AuditLogger>>> 
 /// Initialize the global audit logger
 pub fn init_audit_logger() -> Result<()> {
     let logger = AuditLogger::new()?;
-    *AUDIT_LOGGER.lock().map_err(|e| {
-        anyhow::anyhow!("Failed to acquire audit logger lock: {e}")
-    })? = Some(logger);
+    *AUDIT_LOGGER
+        .lock()
+        .map_err(|e| anyhow::anyhow!("Failed to acquire audit logger lock: {e}"))? = Some(logger);
     Ok(())
 }
 
@@ -417,11 +417,7 @@ pub fn audit_log(
         let _ = logger.log(event, severity, resource, description);
     } else {
         // Fallback to tracing if audit logger is not available
-        tracing::warn!(
-            "Audit logger not available: {} - {}",
-            event,
-            description
-        );
+        tracing::warn!("Audit logger not available: {} - {}", event, description);
     }
 }
 

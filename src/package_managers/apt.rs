@@ -260,7 +260,6 @@ pub fn search_sync(query: &str) -> Result<Vec<SyncPackage>> {
 
         #[allow(clippy::redundant_closure_for_method_calls)]
         #[allow(clippy::unnecessary_map_or)]
-
         if matched {
             let candidate = pkg.candidate();
             let version: String = if let Some(ref c) = candidate {

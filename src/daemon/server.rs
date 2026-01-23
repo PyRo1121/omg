@@ -226,12 +226,14 @@ async fn handle_client(stream: tokio::net::UnixStream, state: Arc<DaemonState>) 
     let mut framed = Framed::new(stream, codec);
 
     // Rate limit per connection to ensure fairness
-    let quota = Quota::per_second(
-        crate::core::safe_ops::nonzero_u32_or_default(CLIENT_RATE_LIMIT_HZ, 1)
-    )
-    .allow_burst(
-        crate::core::safe_ops::nonzero_u32_or_default(CLIENT_BURST_SIZE, 1)
-    );
+    let quota = Quota::per_second(crate::core::safe_ops::nonzero_u32_or_default(
+        CLIENT_RATE_LIMIT_HZ,
+        1,
+    ))
+    .allow_burst(crate::core::safe_ops::nonzero_u32_or_default(
+        CLIENT_BURST_SIZE,
+        1,
+    ));
     let rate_limiter = RateLimiter::direct(quota);
 
     tracing::debug!("New binary client connected");

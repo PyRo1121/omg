@@ -47,7 +47,9 @@ async fn test_daemon_protocol_boundaries() {
     // Test batch with maximum items
     let mut batch = Vec::new();
     for i in 0..100 {
-        batch.push(Request::Ping { id: u64::try_from(i).unwrap() });
+        batch.push(Request::Ping {
+            id: u64::try_from(i).unwrap(),
+        });
     }
     let req_batch = Request::Batch {
         id: 0,

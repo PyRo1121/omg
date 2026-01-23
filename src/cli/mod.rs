@@ -12,6 +12,7 @@ pub mod doctor;
 pub mod enterprise;
 pub mod env;
 pub mod fleet;
+pub mod help;
 pub mod init;
 #[cfg(feature = "license")]
 pub mod license;
@@ -28,7 +29,6 @@ pub mod snapshot;
 pub mod style;
 pub mod team;
 pub mod tool;
-pub mod help;
 pub mod tui;
 pub mod why;
 

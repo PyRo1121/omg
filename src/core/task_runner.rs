@@ -347,9 +347,7 @@ impl TaskDetector {
             matches.retain(|t| t.ecosystem.matches(ecosystem_name));
 
             if matches.is_empty() {
-                anyhow::bail!(
-                    "No task '{task_name}' found for ecosystem '{ecosystem_name}'"
-                );
+                anyhow::bail!("No task '{task_name}' found for ecosystem '{ecosystem_name}'");
             }
         }
 
@@ -564,13 +562,7 @@ pub fn run_task(
     extra_args: &[String],
     backend_override: Option<RuntimeBackend>,
 ) -> Result<()> {
-    run_task_advanced(
-        task_name,
-        extra_args,
-        backend_override,
-        None,
-        false,
-    )
+    run_task_advanced(task_name, extra_args, backend_override, None, false)
 }
 
 /// Run an async future from sync context, reusing existing runtime if available
