@@ -219,7 +219,7 @@ pgp = ["sequoia-openpgp"] # Optional PGP verification (requires Rust 1.80+)
 
 # Debian/Ubuntu support - unified feature
 # Requires libapt-pkg-dev: `apt install libapt-pkg-dev`
-debian = ["debian-packaging", "winnow", "gzp", "ar", "rust-apt"]
+debian = ["debian-packaging", "winnow", "gzp", "rust-apt"]
 # Pure Rust Debian support (no FFI, no system dependencies) - for testing/indexing
 debian-pure = ["debian-packaging", "winnow", "gzp", "ar"]
 
