@@ -1798,9 +1798,13 @@ mod stress_tests {
         writeln!(f, "20.10.0").unwrap();
 
         // Run multiple times rapidly
-        for _ in 0..10 {
-            let (success, _, _) = run_omg_in_dir(&["use", "node"], temp_dir.path());
-            assert!(success, "Rapid version detection should succeed");
+        for i in 0..10 {
+            let (success, stdout, stderr) = run_omg_in_dir(&["use", "node"], temp_dir.path());
+            assert!(
+                success,
+                "Rapid version detection failed on iteration {}: stdout: '{}', stderr: '{}'",
+                i, stdout, stderr
+            );
         }
     }
 
