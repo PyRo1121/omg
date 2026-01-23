@@ -4,7 +4,7 @@
 
 use std::cmp::Ordering;
 use std::fs::{self, File};
-use std::io::{BufReader, Write};
+use std::io::BufReader;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -36,6 +36,9 @@ pub async fn download_with_progress(
     dest: &Path,
     expected_sha256: Option<&str>,
 ) -> Result<()> {
+    use futures::StreamExt;
+    use tokio::io::AsyncWriteExt;
+
     let response = client
         .get(url)
         .header("User-Agent", "omg-package-manager/0.1")
@@ -57,19 +60,40 @@ pub async fn download_with_progress(
     let pb = ProgressBar::new(total_size);
     pb.set_style(download_progress_style());
 
-    // Stream the download
-    let bytes = response
-        .bytes()
-        .await
-        .context("Failed to read download stream. Check your connection.")?;
+    if let Some(parent) = dest.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
 
-    pb.set_position(bytes.len() as u64);
+    let mut file = tokio::fs::File::create(dest)
+        .await
+        .with_context(|| format!("Failed to create file: {}", dest.display()))?;
+    
+    let mut stream = response.bytes_stream();
+    let mut downloaded: u64 = 0;
+    let mut hasher = if expected_sha256.is_some() {
+        Some(Sha256::new())
+    } else {
+        None
+    };
+
+    while let Some(item) = stream.next().await {
+        let chunk = item.context("Error downloading chunk")?;
+        file.write_all(&chunk).await.context("Error writing to file")?;
+        
+        if let Some(h) = &mut hasher {
+            h.update(&chunk);
+        }
+
+        downloaded += chunk.len() as u64;
+        pb.set_position(downloaded);
+    }
+
+    file.flush().await?;
 
     // Verify checksum if provided
     if let Some(expected) = expected_sha256 {
-        let mut hasher = Sha256::new();
-        hasher.update(&bytes);
-        let actual = format!("{:x}", hasher.finalize());
+        // Safe to unwrap because we initialized it above
+        let actual = format!("{:x}", hasher.unwrap().finalize());
 
         if actual != expected.to_lowercase() {
             anyhow::bail!(
@@ -79,154 +103,162 @@ pub async fn download_with_progress(
         pb.println(format!("  {} Checksum verified", "✓".green()));
     }
 
-    // Write to file
-    if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)?;
-    }
-
-    let mut file =
-        File::create(dest).with_context(|| format!("Failed to create file: {}", dest.display()))?;
-    file.write_all(&bytes)
-        .with_context(|| format!("Failed to write to: {}", dest.display()))?;
-
     pb.finish_and_clear();
     Ok(())
 }
 
 /// Extract a .tar.gz archive with progress
-pub fn extract_tar_gz(archive_path: &Path, dest_dir: &Path, strip_components: usize) -> Result<()> {
-    let file = File::open(archive_path)
-        .with_context(|| format!("Failed to open archive: {}", archive_path.display()))?;
+pub async fn extract_tar_gz(archive_path: &Path, dest_dir: &Path, strip_components: usize) -> Result<()> {
+    let archive_path = archive_path.to_path_buf();
+    let dest_dir = dest_dir.to_path_buf();
 
-    let decoder = flate2::read::GzDecoder::new(BufReader::new(file));
-    let mut archive = tar::Archive::new(decoder);
+    tokio::task::spawn_blocking(move || {
+        let file = File::open(&archive_path)
+            .with_context(|| format!("Failed to open archive: {}", archive_path.display()))?;
 
-    let pb = ProgressBar::new_spinner();
-    pb.set_style(extract_progress_style());
-    pb.set_message("Extracting...");
+        let decoder = flate2::read::GzDecoder::new(BufReader::new(file));
+        let mut archive = tar::Archive::new(decoder);
 
-    fs::create_dir_all(dest_dir)?;
+        let pb = ProgressBar::new_spinner();
+        pb.set_style(extract_progress_style());
+        pb.set_message("Extracting...");
 
-    for entry in archive.entries()? {
-        let mut entry = entry?;
-        let path = entry.path()?;
+        fs::create_dir_all(&dest_dir)?;
 
-        // Strip leading components
-        let stripped: PathBuf = path.components().skip(strip_components).collect();
-        if stripped.as_os_str().is_empty() {
-            continue;
-        }
+        for entry in archive.entries()? {
+            let mut entry = entry?;
+            let path = entry.path()?;
 
-        let dest_path = dest_dir.join(&stripped);
-        pb.set_message(format!("Extracting: {}", stripped.display()));
+            // Strip leading components
+            let stripped: PathBuf = path.components().skip(strip_components).collect();
+            if stripped.as_os_str().is_empty() {
+                continue;
+            }
 
-        if let Some(parent) = dest_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
+            let dest_path = dest_dir.join(&stripped);
+            pb.set_message(format!("Extracting: {}", stripped.display()));
 
-        if entry.header().entry_type().is_dir() {
-            fs::create_dir_all(&dest_path)?;
-        } else {
-            entry.unpack(&dest_path)?;
-        }
-    }
-
-    pb.finish_and_clear();
-    Ok(())
-}
-
-/// Extract a .tar.xz archive with progress (pure Rust)
-pub fn extract_tar_xz(archive_path: &Path, dest_dir: &Path, strip_components: usize) -> Result<()> {
-    let file = File::open(archive_path)
-        .with_context(|| format!("Failed to open archive: {}", archive_path.display()))?;
-
-    let pb = ProgressBar::new_spinner();
-    pb.set_style(extract_progress_style());
-    pb.set_message("Decompressing XZ...");
-
-    // Pure Rust XZ decompression
-    let mut decompressed = Vec::new();
-    lzma_rs::xz_decompress(&mut BufReader::new(file), &mut decompressed)
-        .context("Failed to decompress XZ archive")?;
-
-    pb.set_message("Extracting...");
-
-    let mut archive = tar::Archive::new(decompressed.as_slice());
-    fs::create_dir_all(dest_dir)?;
-
-    for entry in archive.entries()? {
-        let mut entry = entry?;
-        let path = entry.path()?;
-
-        // Strip leading components
-        let stripped: PathBuf = path.components().skip(strip_components).collect();
-        if stripped.as_os_str().is_empty() {
-            continue;
-        }
-
-        let dest_path = dest_dir.join(&stripped);
-
-        if let Some(parent) = dest_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-
-        if entry.header().entry_type().is_dir() {
-            fs::create_dir_all(&dest_path)?;
-        } else {
-            entry.unpack(&dest_path)?;
-        }
-    }
-
-    pb.finish_and_clear();
-    Ok(())
-}
-
-/// Extract a .zip archive with progress
-pub fn extract_zip(archive_path: &Path, dest_dir: &Path, strip_components: usize) -> Result<()> {
-    let file = File::open(archive_path)
-        .with_context(|| format!("Failed to open archive: {}", archive_path.display()))?;
-
-    let mut archive = zip::ZipArchive::new(file).context("Failed to read ZIP archive")?;
-
-    let pb = ProgressBar::new_spinner();
-    pb.set_style(extract_progress_style());
-    pb.set_message("Extracting...");
-
-    fs::create_dir_all(dest_dir)?;
-
-    for i in 0..archive.len() {
-        let mut file = archive.by_index(i)?;
-        let path = file.mangled_name();
-
-        // Strip leading components
-        let stripped: PathBuf = path.components().skip(strip_components).collect();
-        if stripped.as_os_str().is_empty() {
-            continue;
-        }
-
-        let dest_path = dest_dir.join(&stripped);
-        pb.set_message(format!("Extracting: {}", stripped.display()));
-
-        if file.is_dir() {
-            fs::create_dir_all(&dest_path)?;
-        } else {
             if let Some(parent) = dest_path.parent() {
                 fs::create_dir_all(parent)?;
             }
-            let mut outfile = File::create(&dest_path)?;
-            std::io::copy(&mut file, &mut outfile)?;
 
-            // Preserve permissions on Unix
-            #[cfg(unix)]
-            if let Some(mode) = file.unix_mode() {
-                use std::os::unix::fs::PermissionsExt;
-                fs::set_permissions(&dest_path, fs::Permissions::from_mode(mode))?;
+            if entry.header().entry_type().is_dir() {
+                fs::create_dir_all(&dest_path)?;
+            } else {
+                entry.unpack(&dest_path)?;
             }
         }
-    }
 
-    pb.finish_and_clear();
-    Ok(())
+        pb.finish_and_clear();
+        Ok(())
+    })
+    .await?
+}
+
+/// Extract a .tar.xz archive with progress (pure Rust)
+pub async fn extract_tar_xz(archive_path: &Path, dest_dir: &Path, strip_components: usize) -> Result<()> {
+    let archive_path = archive_path.to_path_buf();
+    let dest_dir = dest_dir.to_path_buf();
+
+    tokio::task::spawn_blocking(move || {
+        let file = File::open(&archive_path)
+            .with_context(|| format!("Failed to open archive: {}", archive_path.display()))?;
+
+        let pb = ProgressBar::new_spinner();
+        pb.set_style(extract_progress_style());
+        pb.set_message("Decompressing XZ...");
+
+        // Pure Rust XZ decompression
+        let mut decompressed = Vec::new();
+        lzma_rs::xz_decompress(&mut BufReader::new(file), &mut decompressed)
+            .context("Failed to decompress XZ archive")?;
+
+        pb.set_message("Extracting...");
+
+        let mut archive = tar::Archive::new(decompressed.as_slice());
+        fs::create_dir_all(&dest_dir)?;
+
+        for entry in archive.entries()? {
+            let mut entry = entry?;
+            let path = entry.path()?;
+
+            // Strip leading components
+            let stripped: PathBuf = path.components().skip(strip_components).collect();
+            if stripped.as_os_str().is_empty() {
+                continue;
+            }
+
+            let dest_path = dest_dir.join(&stripped);
+
+            if let Some(parent) = dest_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+
+            if entry.header().entry_type().is_dir() {
+                fs::create_dir_all(&dest_path)?;
+            } else {
+                entry.unpack(&dest_path)?;
+            }
+        }
+
+        pb.finish_and_clear();
+        Ok(())
+    })
+    .await?
+}
+
+/// Extract a .zip archive with progress
+pub async fn extract_zip(archive_path: &Path, dest_dir: &Path, strip_components: usize) -> Result<()> {
+    let archive_path = archive_path.to_path_buf();
+    let dest_dir = dest_dir.to_path_buf();
+
+    tokio::task::spawn_blocking(move || {
+        let file = File::open(&archive_path)
+            .with_context(|| format!("Failed to open archive: {}", archive_path.display()))?;
+
+        let mut archive = zip::ZipArchive::new(file).context("Failed to read ZIP archive")?;
+
+        let pb = ProgressBar::new_spinner();
+        pb.set_style(extract_progress_style());
+        pb.set_message("Extracting...");
+
+        fs::create_dir_all(&dest_dir)?;
+
+        for i in 0..archive.len() {
+            let mut file = archive.by_index(i)?;
+            let path = file.mangled_name();
+
+            // Strip leading components
+            let stripped: PathBuf = path.components().skip(strip_components).collect();
+            if stripped.as_os_str().is_empty() {
+                continue;
+            }
+
+            let dest_path = dest_dir.join(&stripped);
+            pb.set_message(format!("Extracting: {}", stripped.display()));
+
+            if file.is_dir() {
+                fs::create_dir_all(&dest_path)?;
+            } else {
+                if let Some(parent) = dest_path.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                let mut outfile = File::create(&dest_path)?;
+                std::io::copy(&mut file, &mut outfile)?;
+
+                // Preserve permissions on Unix
+                #[cfg(unix)]
+                if let Some(mode) = file.unix_mode() {
+                    use std::os::unix::fs::PermissionsExt;
+                    fs::set_permissions(&dest_path, fs::Permissions::from_mode(mode))?;
+                }
+            }
+        }
+
+        pb.finish_and_clear();
+        Ok(())
+    })
+    .await?
 }
 
 /// Create or update the "current" symlink

@@ -1,8 +1,10 @@
-import { Component, For, Show, createSignal, createMemo } from 'solid-js';
+import { Component, For, Show, createSignal, createMemo, createEffect, onMount } from 'solid-js';
 import * as api from '../../lib/api';
 import { MetricCard } from '../ui/Card';
 import { StatusBadge, TierBadge } from '../ui/Badge';
 import { BarChart, DonutChart, LiveIndicator, AreaChart, ActivityHeatmap } from '../ui/Chart';
+import { Dialog } from '../ui/Dialog';
+import { CardSkeleton } from '../ui/Skeleton';
 import { SmartInsights } from './SmartInsights';
 import {
   Users,
@@ -42,6 +44,122 @@ export const TeamAnalytics: Component<TeamAnalyticsProps> = props => {
   const [selectedMember, setSelectedMember] = createSignal<api.TeamMember | null>(null);
   const [showInviteModal, setShowInviteModal] = createSignal(false);
   const [alertThreshold, setAlertThreshold] = createSignal(100);
+  
+  const [policies, setPolicies] = createSignal<api.Policy[]>([]);
+  const [notifications, setNotifications] = createSignal<api.NotificationSetting[]>([]);
+  const [auditLogs, setAuditLogs] = createSignal<api.TeamAuditLogEntry[]>([]);
+  const [settingsLoading, setSettingsLoading] = createSignal(false);
+  const [settingsMessage, setSettingsMessage] = createSignal<{type: 'success' | 'error', text: string} | null>(null);
+  const [newPolicyScope, setNewPolicyScope] = createSignal<string>('runtime');
+  const [newPolicyRule, setNewPolicyRule] = createSignal('');
+  const [newPolicyValue, setNewPolicyValue] = createSignal('');
+  
+  // Confirmation Dialog State
+  const [confirmDialog, setConfirmDialog] = createSignal<{
+    isOpen: boolean;
+    title: string;
+    description: string;
+    onConfirm: () => void;
+    variant: 'danger' | 'primary' | 'neutral';
+  }>({
+    isOpen: false,
+    title: '',
+    description: '',
+    onConfirm: () => {},
+    variant: 'neutral'
+  });
+
+  const loadSettingsData = async () => {
+    if (view() !== 'settings') return;
+    setSettingsLoading(true);
+    try {
+      const [policiesRes, notifRes, logsRes] = await Promise.all([
+        api.getTeamPolicies().catch(() => ({ policies: [] })),
+        api.getNotificationSettings().catch(() => ({ settings: [] })),
+        api.getTeamAuditLogs({ limit: 20 }).catch(() => ({ logs: [], total: 0, limit: 20, offset: 0 })),
+      ]);
+      setPolicies(policiesRes.policies);
+      setNotifications(notifRes.settings);
+      setAuditLogs(logsRes.logs);
+    } catch (e) {
+      console.error('Failed to load settings:', e);
+    }
+    setSettingsLoading(false);
+  };
+
+  createEffect(() => {
+    if (view() === 'settings') {
+      loadSettingsData();
+    }
+  });
+
+  const showMessage = (type: 'success' | 'error', text: string) => {
+    setSettingsMessage({ type, text });
+    setTimeout(() => setSettingsMessage(null), 3000);
+  };
+
+  const handleSaveThreshold = async () => {
+    try {
+      await api.updateAlertThreshold('low_activity', alertThreshold());
+      showMessage('success', 'Threshold saved');
+    } catch (e) {
+      showMessage('error', 'Failed to save threshold');
+    }
+  };
+
+  const handleToggleNotification = async (type: string, enabled: boolean) => {
+    const current = notifications();
+    const updated = current.map(n => n.type === type ? { ...n, enabled } : n);
+    setNotifications(updated);
+    try {
+      await api.updateNotificationSettings(updated);
+      showMessage('success', 'Notification settings updated');
+    } catch (e) {
+      showMessage('error', 'Failed to update notifications');
+      setNotifications(current);
+    }
+  };
+
+  const handleCreatePolicy = async () => {
+    if (!newPolicyRule() || !newPolicyValue()) return;
+    try {
+      const res = await api.createTeamPolicy({
+        scope: newPolicyScope(),
+        rule: newPolicyRule(),
+        value: newPolicyValue(),
+        enforced: true,
+      });
+      if (res.success && res.policy) {
+        setPolicies([...policies(), res.policy]);
+        setNewPolicyRule('');
+        setNewPolicyValue('');
+        showMessage('success', 'Policy created');
+      }
+    } catch (e) {
+      showMessage('error', 'Failed to create policy');
+    }
+  };
+
+  const handleDeletePolicy = (id: string) => {
+    setConfirmDialog({
+      isOpen: true,
+      title: 'Delete Policy',
+      description: 'Are you sure you want to delete this policy? This action cannot be undone and may affect compliance status.',
+      variant: 'danger',
+      onConfirm: async () => {
+        const current = policies();
+        setPolicies(current.filter(p => p.id !== id));
+        try {
+          await api.deleteTeamPolicy(id);
+          showMessage('success', 'Policy deleted');
+        } catch (e) {
+          showMessage('error', 'Failed to delete policy');
+          setPolicies(current);
+        }
+        setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+      }
+    });
+  };
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
@@ -247,6 +365,50 @@ export const TeamAnalytics: Component<TeamAnalyticsProps> = props => {
     const last7 = daily.slice(-7);
     return last7.map(d => d.commands_run || 0);
   };
+
+  if (!props.teamData) {
+    return (
+      <div class="flex min-h-[60vh] flex-col items-center justify-center rounded-[2.5rem] border border-white/5 bg-[#0d0d0e] p-12 text-center shadow-2xl animate-in fade-in zoom-in-95 duration-500">
+        <div class="mb-8 flex h-24 w-24 items-center justify-center rounded-[2rem] bg-gradient-to-br from-indigo-500/20 to-purple-500/20 shadow-[0_0_50px_rgba(99,102,241,0.2)]">
+          <Users size={48} class="text-indigo-400" />
+        </div>
+        <h2 class="mb-4 text-4xl font-black text-white tracking-tight">Unlock Team Intelligence</h2>
+        <p class="mb-10 max-w-lg text-lg font-medium text-slate-400">
+          Gain visibility into your entire fleet. Manage runtimes, enforce security policies, and track productivity across your organization.
+        </p>
+        <div class="mb-12 grid w-full max-w-3xl grid-cols-1 gap-4 sm:grid-cols-3">
+          <div class="rounded-3xl border border-white/5 bg-white/[0.02] p-6 text-left">
+            <div class="mb-4 flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-400">
+              <Activity size={20} />
+            </div>
+            <h3 class="mb-2 font-bold text-white">Fleet Insights</h3>
+            <p class="text-xs font-medium text-slate-500">Real-time productivity metrics for every developer.</p>
+          </div>
+          <div class="rounded-3xl border border-white/5 bg-white/[0.02] p-6 text-left">
+            <div class="mb-4 flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-500/10 text-indigo-400">
+              <Lock size={20} />
+            </div>
+            <h3 class="mb-2 font-bold text-white">Policy Control</h3>
+            <p class="text-xs font-medium text-slate-500">Enforce package versions and security rules.</p>
+          </div>
+          <div class="rounded-3xl border border-white/5 bg-white/[0.02] p-6 text-left">
+            <div class="mb-4 flex h-10 w-10 items-center justify-center rounded-xl bg-purple-500/10 text-purple-400">
+              <Globe size={20} />
+            </div>
+            <h3 class="mb-2 font-bold text-white">Global Telemetry</h3>
+            <p class="text-xs font-medium text-slate-500">Aggregate data from all machines in your org.</p>
+          </div>
+        </div>
+        <button
+          onClick={() => window.open('https://pyro1121.com/pricing', '_blank')}
+          class="group relative overflow-hidden rounded-2xl bg-white px-10 py-4 font-black text-black transition-all hover:scale-105 hover:shadow-[0_0_40px_rgba(255,255,255,0.3)]"
+        >
+          <span class="relative z-10">Upgrade to Team</span>
+          <div class="absolute inset-0 -translate-x-full bg-gradient-to-r from-indigo-500 via-purple-500 to-indigo-500 transition-transform duration-500 group-hover:translate-x-0 opacity-20" />
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div class="space-y-8 pb-20">
@@ -749,7 +911,7 @@ export const TeamAnalytics: Component<TeamAnalyticsProps> = props => {
             <div class="rounded-[2.5rem] border border-white/5 bg-[#0d0d0e] p-8 shadow-2xl">
               <h3 class="mb-8 text-lg font-bold text-white uppercase tracking-widest">Execution Stream</h3>
               <div class="space-y-4 max-h-[400px] overflow-y-auto custom-scrollbar pr-2">
-                <For each={props.teamData?.daily_usage.slice(0, 15)}>
+                <For each={props.teamData?.daily_usage?.slice(0, 15) || []}>
                   {usage => (
                     <div class="group flex items-center gap-5 rounded-2xl bg-white/[0.02] p-4 border border-white/[0.03] transition-all hover:bg-white/[0.05]">
                       <div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-amber-500/10 text-amber-500 group-hover:scale-110 transition-transform">
@@ -763,7 +925,7 @@ export const TeamAnalytics: Component<TeamAnalyticsProps> = props => {
                         <div class="mt-1 flex items-center gap-4">
                           <span class="text-[10px] font-black text-emerald-400 uppercase tracking-widest">{api.formatTimeSaved(usage.time_saved_ms || 0)} Saved</span>
                           <div class="h-1 w-1 rounded-full bg-slate-800" />
-                          <span class="text-[10px] font-black text-indigo-400 uppercase tracking-widest">Node ID: {usage.machine_id.slice(0, 8)}</span>
+                          <span class="text-[10px] font-black text-indigo-400 uppercase tracking-widest">Node ID: {usage.machine_id?.slice(0, 8) || 'N/A'}</span>
                         </div>
                       </div>
                     </div>
@@ -861,70 +1023,257 @@ export const TeamAnalytics: Component<TeamAnalyticsProps> = props => {
 
       <Show when={view() === 'settings'}>
         <div class="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-          <div class="grid gap-6 lg:grid-cols-2">
-            <div class="rounded-[2.5rem] border border-white/5 bg-[#0d0d0e] p-10 shadow-2xl">
-              <h3 class="mb-8 text-2xl font-black text-white tracking-tight">Governance & Access</h3>
+          <Show when={settingsMessage()}>
+            <div class={`fixed top-6 right-6 z-[200] px-6 py-4 rounded-2xl font-bold text-sm animate-in slide-in-from-right ${settingsMessage()?.type === 'success' ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'}`}>
+              {settingsMessage()?.text}
+            </div>
+          </Show>
+
+          <Show when={settingsLoading()}>
+            <div class="grid gap-6 lg:grid-cols-2">
+              <CardSkeleton />
               <div class="space-y-6">
-                <div class="relative group rounded-3xl border border-white/5 bg-white/[0.02] p-8">
-                  <div class="mb-4 flex items-center justify-between">
-                    <span class="text-[10px] font-black uppercase tracking-widest text-slate-500">Organization License Key</span>
-                    <button onClick={copyLicenseKey} class="text-xs font-black text-indigo-400 hover:text-indigo-300">
-                      {copied() ? 'IDENTIFIER COPIED' : 'COPY KEY'}
+                <CardSkeleton />
+                <CardSkeleton />
+              </div>
+            </div>
+          </Show>
+
+          <Show when={!settingsLoading()}>
+            <div class="grid gap-6 lg:grid-cols-2">
+              <div class="rounded-[2.5rem] border border-white/5 bg-[#0d0d0e] p-10 shadow-2xl">
+                <h3 class="mb-8 text-2xl font-black text-white tracking-tight">Governance & Access</h3>
+                <div class="space-y-6">
+                  <div class="relative group rounded-3xl border border-white/5 bg-white/[0.02] p-8">
+                    <div class="mb-4 flex items-center justify-between">
+                      <span class="text-[10px] font-black uppercase tracking-widest text-slate-500">Organization License Key</span>
+                      <button onClick={copyLicenseKey} class="text-xs font-black text-indigo-400 hover:text-indigo-300">
+                        {copied() ? 'IDENTIFIER COPIED' : 'COPY KEY'}
+                      </button>
+                    </div>
+                    <code class="block break-all font-mono text-lg font-bold text-white">{props.licenseKey}</code>
+                  </div>
+                  <div class="grid grid-cols-2 gap-4">
+                    <div class="rounded-3xl border border-white/5 bg-white/[0.02] p-6">
+                      <div class="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Service Level</div>
+                      <div class="mt-2 text-xl font-black text-amber-500">{props.teamData?.license?.tier || 'Enterprise'}</div>
+                    </div>
+                    <div class="rounded-3xl border border-white/5 bg-white/[0.02] p-6">
+                      <div class="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Fleet Capacity</div>
+                      <div class="mt-2 text-xl font-black text-white">{props.teamData?.totals?.active_machines || 0} / {props.teamData?.license?.max_seats || 30}</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="space-y-6">
+                <div class="rounded-[2.5rem] border border-white/5 bg-[#0d0d0e] p-10 shadow-2xl">
+                  <h3 class="mb-6 text-xl font-bold text-white uppercase tracking-widest">Alert Thresholds</h3>
+                  <div class="flex items-center justify-between p-6 rounded-3xl bg-white/[0.02] border border-white/[0.03]">
+                    <div>
+                      <div class="font-bold text-white">Low Activity Alert</div>
+                      <div class="text-xs text-slate-500 mt-1">Alert when ops drop below threshold</div>
+                    </div>
+                    <div class="flex items-center gap-3">
+                      <input
+                        type="number"
+                        value={alertThreshold()}
+                        onInput={(e) => setAlertThreshold(parseInt(e.currentTarget.value) || 0)}
+                        class="w-20 rounded-xl border border-white/10 bg-black px-4 py-2 text-right font-black text-indigo-400 focus:ring-2 focus:ring-indigo-500/20 outline-none"
+                      />
+                      <button onClick={handleSaveThreshold} class="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-black text-white hover:bg-indigo-500 transition-colors">
+                        Save
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="rounded-[2.5rem] border border-white/5 bg-[#0d0d0e] p-10 shadow-2xl">
+                  <h3 class="mb-6 text-xl font-bold text-white uppercase tracking-widest">Commercial Center</h3>
+                  <p class="text-sm font-medium text-slate-500 mb-6">Manage seats, billing, and tier benefits.</p>
+                  <div class="flex gap-4">
+                    <button onClick={() => window.open('https://pyro1121.com/pricing', '_blank')} class="flex-1 rounded-2xl bg-white px-6 py-4 text-sm font-black text-black transition-all hover:scale-[1.02]">
+                      Scale Org
+                    </button>
+                    <button onClick={() => api.openBillingPortal(props.teamData?.license?.tier === 'enterprise' ? '' : '')} class="flex-1 rounded-2xl border border-white/10 bg-white/[0.03] py-4 text-sm font-black text-white transition-all hover:bg-white/[0.08]">
+                      Billing Portal
                     </button>
                   </div>
-                  <code class="block break-all font-mono text-lg font-bold text-white">{props.licenseKey}</code>
-                  <div class="absolute inset-0 rounded-3xl border border-indigo-500/0 transition-all group-hover:border-indigo-500/20" />
-                </div>
-                
-                <div class="grid grid-cols-2 gap-4">
-                  <div class="rounded-3xl border border-white/5 bg-white/[0.02] p-6">
-                    <div class="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Service Level</div>
-                    <div class="mt-2 text-xl font-black text-amber-500">{props.teamData?.license?.tier || 'Enterprise'}</div>
-                  </div>
-                  <div class="rounded-3xl border border-white/5 bg-white/[0.02] p-6">
-                    <div class="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Fleet Capacity</div>
-                    <div class="mt-2 text-xl font-black text-white">{props.teamData?.totals?.active_machines || 0} / {props.teamData?.license?.max_seats || 30}</div>
-                  </div>
                 </div>
               </div>
             </div>
 
-            <div class="space-y-6">
+            <div class="grid gap-6 lg:grid-cols-2">
               <div class="rounded-[2.5rem] border border-white/5 bg-[#0d0d0e] p-10 shadow-2xl">
-                <h3 class="mb-6 text-xl font-bold text-white uppercase tracking-widest">Alert Thresholds</h3>
-                <div class="flex items-center justify-between p-6 rounded-3xl bg-white/[0.02] border border-white/[0.03]">
-                  <div>
-                    <div class="font-bold text-white">Anomalous Activity</div>
-                    <div class="text-xs text-slate-500 mt-1">Alert when ops drop below threshold.</div>
-                  </div>
-                  <div class="flex items-center gap-4">
-                    <input
-                      type="number"
-                      value={alertThreshold()}
-                      onInput={(e) => setAlertThreshold(parseInt(e.currentTarget.value) || 0)}
-                      class="w-20 rounded-xl border border-white/10 bg-black px-4 py-2 text-right font-black text-indigo-400 focus:ring-2 focus:ring-indigo-500/20 outline-none"
-                    />
-                    <span class="text-xs font-bold text-slate-600">Ops/Wk</span>
-                  </div>
+                <div class="flex items-center justify-between mb-8">
+                  <h3 class="text-xl font-bold text-white uppercase tracking-widest">Notification Settings</h3>
+                  <AlertTriangle size={20} class="text-amber-500" />
+                </div>
+                <div class="space-y-4">
+                  <For each={notifications()}>
+                    {(notif) => (
+                      <div class="flex items-center justify-between p-4 rounded-2xl bg-white/[0.02] border border-white/[0.03]">
+                        <div>
+                          <div class="font-bold text-white text-sm">{notif.type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}</div>
+                          <div class="text-[10px] text-slate-500 mt-0.5 uppercase tracking-wide">
+                            {notif.channels.join(', ')}
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => handleToggleNotification(notif.type, !notif.enabled)}
+                          class={`w-12 h-7 rounded-full transition-all relative ${notif.enabled ? 'bg-emerald-500' : 'bg-white/10'}`}
+                        >
+                          <div class={`absolute top-1 w-5 h-5 rounded-full bg-white shadow transition-all ${notif.enabled ? 'left-6' : 'left-1'}`} />
+                        </button>
+                      </div>
+                    )}
+                  </For>
+                  <Show when={notifications().length === 0}>
+                    <div class="text-center py-8 text-slate-500 text-sm">No notification settings configured</div>
+                  </Show>
                 </div>
               </div>
 
-              <div class="rounded-[2.5rem] border border-white/5 bg-[#0d0d0e] p-10 shadow-2xl">
-                <h3 class="mb-6 text-xl font-bold text-white uppercase tracking-widest">Commercial Center</h3>
-                <p class="text-sm font-medium text-slate-500 mb-6">Manage seats, billing, and tier benefits.</p>
-                <div class="flex gap-4">
-                  <button onClick={() => window.open('https://pyro1121.com/pricing', '_blank')} class="flex-1 rounded-2xl bg-white px-6 py-4 text-sm font-black text-black transition-all hover:scale-[1.02]">
-                    Scale Org
+              <Show when={props.teamData?.license?.tier === 'enterprise'}>
+                <div class="rounded-[2.5rem] border border-white/5 bg-[#0d0d0e] p-10 shadow-2xl">
+                  <div class="flex items-center justify-between mb-8">
+                    <h3 class="text-xl font-bold text-white uppercase tracking-widest">Policies</h3>
+                    <Lock size={20} class="text-indigo-500" />
+                  </div>
+                  <div class="space-y-4 mb-6">
+                    <For each={policies()}>
+                      {(policy) => (
+                        <div class="flex items-center justify-between p-4 rounded-2xl bg-white/[0.02] border border-white/[0.03] group">
+                          <div>
+                            <div class="flex items-center gap-2">
+                              <span class={`text-[10px] font-black uppercase px-2 py-0.5 rounded ${
+                                policy.scope === 'runtime' ? 'bg-indigo-500/20 text-indigo-400' :
+                                policy.scope === 'package' ? 'bg-emerald-500/20 text-emerald-400' :
+                                policy.scope === 'security' ? 'bg-rose-500/20 text-rose-400' :
+                                'bg-amber-500/20 text-amber-400'
+                              }`}>{policy.scope}</span>
+                              <span class="font-bold text-white text-sm">{policy.rule}</span>
+                            </div>
+                            <div class="text-xs text-slate-500 mt-1">{policy.value}</div>
+                          </div>
+                          <button
+                            onClick={() => handleDeletePolicy(policy.id)}
+                            class="opacity-0 group-hover:opacity-100 text-rose-500 hover:text-rose-400 transition-all"
+                          >
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                          </button>
+                        </div>
+                      )}
+                    </For>
+                  </div>
+                  <div class="border-t border-white/5 pt-6">
+                    <div class="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-4">Add Policy</div>
+                    <div class="flex gap-3">
+                      <select
+                        value={newPolicyScope()}
+                        onChange={(e) => setNewPolicyScope(e.currentTarget.value)}
+                        class="rounded-xl border border-white/10 bg-black px-3 py-2 text-sm font-bold text-white outline-none"
+                      >
+                        <option value="runtime">Runtime</option>
+                        <option value="package">Package</option>
+                        <option value="security">Security</option>
+                        <option value="network">Network</option>
+                      </select>
+                      <input
+                        type="text"
+                        placeholder="Rule name"
+                        value={newPolicyRule()}
+                        onInput={(e) => setNewPolicyRule(e.currentTarget.value)}
+                        class="flex-1 rounded-xl border border-white/10 bg-black px-3 py-2 text-sm text-white placeholder-slate-600 outline-none"
+                      />
+                      <input
+                        type="text"
+                        placeholder="Value"
+                        value={newPolicyValue()}
+                        onInput={(e) => setNewPolicyValue(e.currentTarget.value)}
+                        class="flex-1 rounded-xl border border-white/10 bg-black px-3 py-2 text-sm text-white placeholder-slate-600 outline-none"
+                      />
+                      <button
+                        onClick={handleCreatePolicy}
+                        disabled={!newPolicyRule() || !newPolicyValue()}
+                        class="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-black text-white hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      >
+                        Add
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </Show>
+
+              <Show when={props.teamData?.license?.tier !== 'enterprise'}>
+                <div class="rounded-[2.5rem] border border-white/5 bg-[#0d0d0e] p-10 shadow-2xl">
+                  <div class="flex items-center justify-between mb-8">
+                    <h3 class="text-xl font-bold text-white uppercase tracking-widest">Policies</h3>
+                    <Lock size={20} class="text-slate-600" />
+                  </div>
+                  <div class="text-center py-12">
+                    <Lock size={48} class="mx-auto text-slate-700 mb-4" />
+                    <p class="text-slate-500 font-medium mb-4">Policy management requires Enterprise tier</p>
+                    <button onClick={() => window.open('https://pyro1121.com/pricing', '_blank')} class="rounded-2xl bg-indigo-600 px-6 py-3 text-sm font-black text-white hover:bg-indigo-500 transition-colors">
+                      Upgrade to Enterprise
+                    </button>
+                  </div>
+                </div>
+              </Show>
+            </div>
+
+            <div class="rounded-[2.5rem] border border-white/5 bg-[#0d0d0e] p-10 shadow-2xl">
+              <div class="flex items-center justify-between mb-8">
+                <h3 class="text-xl font-bold text-white uppercase tracking-widest">Audit Log</h3>
+                <div class="flex gap-3">
+                  <button onClick={() => api.getAdminExportAuditUrl(30)} class="text-xs font-black text-slate-500 hover:text-white transition-colors flex items-center gap-1">
+                    <FileText size={14} />
+                    Export CSV
                   </button>
-                  <button class="flex-1 rounded-2xl border border-white/10 bg-white/[0.03] py-4 text-sm font-black text-white transition-all hover:bg-white/[0.08]">
-                    Billing Portal
+                  <button onClick={loadSettingsData} class="text-xs font-black text-indigo-400 hover:text-indigo-300">
+                    Refresh
                   </button>
                 </div>
               </div>
+              <div class="space-y-3 max-h-[400px] overflow-y-auto custom-scrollbar pr-2">
+                <For each={auditLogs()}>
+                  {(log) => (
+                    <div class="flex items-center gap-4 p-4 rounded-2xl bg-white/[0.02] border border-white/[0.03]">
+                      <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-500/10 text-indigo-500">
+                        <Activity size={18} />
+                      </div>
+                      <div class="flex-1 min-w-0">
+                        <div class="font-bold text-white text-sm truncate">{log.action}</div>
+                        <div class="text-[10px] text-slate-500 flex items-center gap-2 mt-0.5">
+                          <span>{log.resource_type || 'system'}</span>
+                          <span class="w-1 h-1 rounded-full bg-slate-700" />
+                          <span>{api.formatRelativeTime(log.created_at)}</span>
+                        </div>
+                      </div>
+                      <Show when={log.ip_address}>
+                        <div class="text-[10px] font-mono text-slate-600">{log.ip_address}</div>
+                      </Show>
+                    </div>
+                  )}
+                </For>
+                <Show when={auditLogs().length === 0}>
+                  <div class="text-center py-12 text-slate-500 text-sm">No audit logs available</div>
+                </Show>
+              </div>
             </div>
-          </div>
+          </Show>
         </div>
       </Show>
+
+      <Dialog
+        isOpen={confirmDialog().isOpen}
+        onClose={() => setConfirmDialog(prev => ({ ...prev, isOpen: false }))}
+        title={confirmDialog().title}
+        description={confirmDialog().description}
+        onConfirm={confirmDialog().onConfirm}
+        variant={confirmDialog().variant}
+        confirmLabel="Proceed"
+      />
 
       <Show when={showInviteModal()}>
         <div class="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-md p-4" onClick={() => setShowInviteModal(false)}>

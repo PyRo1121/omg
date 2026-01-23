@@ -1,9 +1,9 @@
 use anyhow::{Context, Result};
-use openpgp::Cert;
-use openpgp::Packet;
 use openpgp::parse::Parse;
 use openpgp::parse::{PacketParser, PacketParserResult};
 use openpgp::policy::StandardPolicy;
+use openpgp::Cert;
+use openpgp::Packet;
 use sequoia_openpgp as openpgp;
 use std::path::Path;
 
@@ -107,6 +107,67 @@ impl PgpVerifier {
             Ok(())
         } else {
             anyhow::bail!("No valid signature found for package")
+        }
+    }
+
+    /// Verify data against a detached signature (memory-based)
+    pub fn verify_memory(&self, data: &[u8], signature: &[u8]) -> Result<()> {
+        use std::io::Cursor;
+
+        // Parse signature
+        let mut ppr = PacketParser::from_reader(Cursor::new(signature))?;
+        let mut valid_signature_found = false;
+
+        while let PacketParserResult::Some(pp) = ppr {
+            if let Packet::Signature(sig) = &pp.packet {
+                let algo = sig.hash_algo();
+                let issuers = sig.get_issuers();
+
+                // Calculate hash of data
+                let mut hasher = algo.context()?.for_signature(sig.version());
+                hasher.update(data);
+
+                for cert in &self.certs {
+                    // Check if cert is relevant (optimization)
+                    let mut relevant_cert = issuers.is_empty();
+                    if !relevant_cert {
+                        for issuer_id in &issuers {
+                            if cert.keys().any(|k| k.key().key_handle().aliases(issuer_id)) {
+                                relevant_cert = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    if relevant_cert {
+                        for key in cert
+                            .keys()
+                            .with_policy(&self.policy, None)
+                            .alive()
+                            .revoked(false)
+                            .for_signing()
+                        {
+                            if sig.verify_hash(key.key(), hasher.clone()).is_ok() {
+                                valid_signature_found = true;
+                                break;
+                            }
+                        }
+                    }
+                    if valid_signature_found {
+                        break;
+                    }
+                }
+            }
+            if valid_signature_found {
+                break;
+            }
+            ppr = pp.next()?.1;
+        }
+
+        if valid_signature_found {
+            Ok(())
+        } else {
+            anyhow::bail!("No valid signature found")
         }
     }
 

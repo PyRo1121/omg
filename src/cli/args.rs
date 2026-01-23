@@ -31,7 +31,7 @@ pub enum Commands {
     // PACKAGE MANAGEMENT (Arch + AUR)
     // ═══════════════════════════════════════════════════════════════════════
     /// Search for packages (official repos + AUR)
-    #[command(visible_alias = "s")]
+    #[command(visible_alias = "s", next_help_heading = "Package Management")]
     Search {
         /// Search query
         query: String,
@@ -190,7 +190,7 @@ pub enum Commands {
     // RUNTIME VERSION MANAGEMENT
     // ═══════════════════════════════════════════════════════════════════════
     /// Switch runtime version (e.g., omg use node 20.10.0)
-    #[command(disable_version_flag = true)]
+    #[command(disable_version_flag = true, next_help_heading = "Runtime Management")]
     Use {
         /// Runtime name (node, python, go, rust, ruby, java, bun)
         runtime: String,
@@ -214,6 +214,7 @@ pub enum Commands {
     /// Print shell hook for initialization (add to .zshrc/.bashrc)
     ///
     /// Usage: eval "$(omg hook zsh)"
+    #[command(next_help_heading = "Shell Integration")]
     Hook {
         /// Shell type (bash, zsh, fish)
         shell: String,
@@ -231,6 +232,7 @@ pub enum Commands {
     // DAEMON & CONFIG
     // ═══════════════════════════════════════════════════════════════════════
     /// Start the OMG daemon
+    #[command(next_help_heading = "System & Configuration")]
     Daemon {
         /// Run in foreground (don't daemonize)
         #[arg(short, long)]
@@ -294,6 +296,7 @@ pub enum Commands {
     },
 
     /// Run project scripts (e.g., 'omg run build' runs npm/cargo/make)
+    #[command(next_help_heading = "Development Tools")]
     Run {
         /// The task to run (e.g., build, test, start)
         #[arg(required = true)]
@@ -338,6 +341,7 @@ pub enum Commands {
     // TEAM & ENVIRONMENT
     // ═══════════════════════════════════════════════════════════════════════
     /// Environment management (fingerprinting, drift detection)
+    #[command(next_help_heading = "Team & Enterprise")]
     Env {
         #[command(subcommand)]
         command: EnvCommands,
@@ -388,7 +392,7 @@ pub enum Commands {
     },
 
     /// Launch the interactive TUI dashboard for system monitoring and management
-    #[command(visible_alias = "d")]
+    #[command(visible_alias = "d", next_help_heading = "System & Configuration")]
     Dash,
 
     /// Show usage statistics (time saved, commands used, etc.)
@@ -396,6 +400,17 @@ pub enum Commands {
 
     /// Show system metrics (Prometheus-style)
     Metrics,
+
+    /// Update OMG to the latest version
+    #[command(visible_alias = "up")]
+    SelfUpdate {
+        /// Force update even if already latest
+        #[arg(long)]
+        force: bool,
+        /// Update to a specific version
+        #[arg(long)]
+        version: Option<String>,
+    },
 
     /// Interactive first-run setup wizard
     ///
@@ -932,7 +947,7 @@ pub enum ServerCommands {
     /// Sync/mirror packages from upstream
     Mirror {
         /// Upstream registry URL
-        #[arg(long, default_value = "https://registry.omg.dev")]
+        #[arg(long, default_value = "https://registry.pyro1121.com")]
         upstream: String,
     },
 }

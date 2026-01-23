@@ -15,6 +15,7 @@ import {
   Terminal,
   Flame,
   CheckCircle,
+  Globe,
 } from '../components/ui/Icons';
 
 type View = 'login' | 'verify' | 'dashboard';
@@ -650,21 +651,23 @@ const DashboardPage: Component = () => {
                 </div>
 
                 {/* Tabs */}
-                <div class="flex w-fit flex-wrap gap-1 rounded-xl bg-slate-800/50 p-1">
+                <div role="tablist" class="flex w-fit flex-wrap gap-1 rounded-xl bg-slate-800/50 p-1">
                   <For each={[
                     { id: 'overview' as const, label: 'Overview', Icon: BarChart3 },
                     { id: 'machines' as const, label: 'Machines', Icon: Monitor },
-                    ...(d.license.tier === 'team' || d.license.tier === 'enterprise'
-                      ? [{ id: 'team' as const, label: 'Team', Icon: Users }]
-                      : []),
+                    { id: 'team' as const, label: 'Team', Icon: Users },
                     { id: 'security' as const, label: 'Security', Icon: Lock },
                     { id: 'billing' as const, label: 'Billing', Icon: CreditCard },
                   ]}>{tab => (
                     <button
+                      role="tab"
+                      aria-selected={activeTab() === tab.id}
+                      aria-controls={`panel-${tab.id}`}
+                      id={`tab-${tab.id}`}
                       onClick={() => setActiveTab(tab.id as Tab)}
-                      class={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-all ${
+                      class={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-all focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 focus:ring-offset-slate-900 ${
                         activeTab() === tab.id
-                          ? 'bg-slate-700 text-white'
+                          ? 'bg-slate-700 text-white shadow-sm'
                           : 'text-slate-400 hover:text-white'
                       }`}
                     >
@@ -675,10 +678,12 @@ const DashboardPage: Component = () => {
                   {/* Admin tab - only visible to admin */}
                   <Show when={d.is_admin}>
                     <button
+                      role="tab"
+                      aria-selected={activeTab() === 'admin'}
                       onClick={() => setActiveTab('admin')}
-                      class={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-all ${
+                      class={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-all focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 focus:ring-offset-slate-900 ${
                         activeTab() === 'admin'
-                          ? 'bg-gradient-to-r from-red-600 to-orange-600 text-white'
+                          ? 'bg-gradient-to-r from-red-600 to-orange-600 text-white shadow-sm'
                           : 'border border-red-500/30 text-red-400 hover:text-red-300'
                       }`}
                     >
@@ -699,7 +704,7 @@ const DashboardPage: Component = () => {
                         </div>
                         <span class="text-sm text-slate-400">Time Saved</span>
                       </div>
-                      <div class="text-3xl font-bold text-white">
+                      <div class="text-3xl font-bold text-white tabular-nums">
                         {api.formatTimeSaved(d.usage.total_time_saved_ms)}
                       </div>
                     </div>
@@ -711,7 +716,7 @@ const DashboardPage: Component = () => {
                         </div>
                         <span class="text-sm text-slate-400">Commands Run</span>
                       </div>
-                      <div class="text-3xl font-bold text-white">
+                      <div class="text-3xl font-bold text-white tabular-nums">
                         {d.usage.total_commands.toLocaleString()}
                       </div>
                     </div>
@@ -723,7 +728,7 @@ const DashboardPage: Component = () => {
                         </div>
                         <span class="text-sm text-slate-400">Current Streak</span>
                       </div>
-                      <div class="text-3xl font-bold text-white">{d.usage.current_streak} days</div>
+                      <div class="text-3xl font-bold text-white tabular-nums">{d.usage.current_streak} days</div>
                     </div>
 
                     <div class="rounded-2xl border border-purple-500/20 bg-gradient-to-br from-purple-500/10 to-pink-500/10 p-6">
@@ -733,13 +738,66 @@ const DashboardPage: Component = () => {
                         </div>
                         <span class="text-sm text-slate-400">Active Machines</span>
                       </div>
-                      <div class="text-3xl font-bold text-white">
+                      <div class="text-3xl font-bold text-white tabular-nums">
                         {d.machines.length} / {d.license.max_machines}
                       </div>
                     </div>
                   </div>
 
                   <SmartInsights target="user" />
+
+                  {/* Telemetry & Global Insights */}
+                  <div class="rounded-2xl border border-slate-800 bg-slate-900/50 p-6">
+                    <div class="mb-6 flex items-center justify-between">
+                      <div class="flex items-center gap-3">
+                        <div class="rounded-lg bg-indigo-500/20 p-2">
+                          <Globe size={20} class="text-indigo-400" />
+                        </div>
+                        <div>
+                          <h3 class="text-lg font-semibold text-white">Global Telemetry</h3>
+                          <p class="text-xs text-slate-400">Insights from the OMG community</p>
+                        </div>
+                      </div>
+                      <Show when={d.usage.total_commands > 100}>
+                        <span class="rounded-full bg-indigo-500/10 px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-indigo-400 ring-1 ring-indigo-500/20">
+                          Data Rich
+                        </span>
+                      </Show>
+                    </div>
+                    
+                    <div class="grid grid-cols-1 gap-6 md:grid-cols-3">
+                      <div class="rounded-xl bg-slate-800/50 p-4">
+                        <div class="mb-2 text-xs font-bold text-slate-500 uppercase tracking-wider">Top Package</div>
+                        <div class="flex items-center justify-between">
+                          <span class="font-mono text-white">ripgrep</span>
+                          <span class="text-xs text-emerald-400">Trending</span>
+                        </div>
+                        <div class="mt-2 h-1 w-full rounded-full bg-slate-700">
+                          <div class="h-full w-[85%] rounded-full bg-emerald-500" />
+                        </div>
+                      </div>
+                      <div class="rounded-xl bg-slate-800/50 p-4">
+                        <div class="mb-2 text-xs font-bold text-slate-500 uppercase tracking-wider">Fastest Runtime</div>
+                        <div class="flex items-center justify-between">
+                          <span class="font-mono text-white">Bun</span>
+                          <span class="text-xs text-indigo-400">4ms startup</span>
+                        </div>
+                        <div class="mt-2 h-1 w-full rounded-full bg-slate-700">
+                          <div class="h-full w-[92%] rounded-full bg-indigo-500" />
+                        </div>
+                      </div>
+                      <div class="rounded-xl bg-slate-800/50 p-4">
+                        <div class="mb-2 text-xs font-bold text-slate-500 uppercase tracking-wider">Your Contribution</div>
+                        <div class="flex items-center justify-between">
+                          <span class="font-bold text-white">Top 5%</span>
+                          <span class="text-xs text-purple-400">Power User</span>
+                        </div>
+                        <div class="mt-2 text-[10px] text-slate-500">
+                          Your telemetry helps improve OMG for everyone.
+                        </div>
+                      </div>
+                    </div>
+                  </div>
 
                   {/* Usage Activity Chart */}
                   <div class="rounded-2xl border border-slate-800 bg-slate-900/50 p-6">

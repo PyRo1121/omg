@@ -348,6 +348,119 @@ export async function openBillingPortal(email: string): Promise<{ success: boole
 }
 
 // ============================================
+// Team Controls API (Team/Enterprise tiers)
+// ============================================
+
+export interface Policy {
+  id: string;
+  scope: 'runtime' | 'package' | 'security' | 'network';
+  rule: string;
+  value: string;
+  enforced: boolean;
+  created_at: string;
+}
+
+export interface NotificationSetting {
+  type: string;
+  enabled: boolean;
+  threshold?: number;
+  channels: string[];
+}
+
+export interface TeamAuditLogEntry {
+  id: string;
+  action: string;
+  resource_type: string | null;
+  resource_id: string | null;
+  ip_address: string | null;
+  user_agent: string | null;
+  metadata: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export async function getTeamPolicies(): Promise<{ policies: Policy[] }> {
+  return apiRequest('/api/team/policies');
+}
+
+export async function createTeamPolicy(policy: {
+  scope: string;
+  rule: string;
+  value: string;
+  enforced?: boolean;
+}): Promise<{ success: boolean; policy: Policy }> {
+  return apiRequest('/api/team/policies', {
+    method: 'POST',
+    body: JSON.stringify(policy),
+  });
+}
+
+export async function updateTeamPolicy(
+  id: string,
+  updates: { value?: string; enforced?: boolean }
+): Promise<{ success: boolean }> {
+  return apiRequest('/api/team/policies', {
+    method: 'PUT',
+    body: JSON.stringify({ id, ...updates }),
+  });
+}
+
+export async function deleteTeamPolicy(id: string): Promise<{ success: boolean }> {
+  return apiRequest('/api/team/policies', {
+    method: 'DELETE',
+    body: JSON.stringify({ id }),
+  });
+}
+
+export async function getNotificationSettings(): Promise<{ settings: NotificationSetting[] }> {
+  return apiRequest('/api/team/notifications');
+}
+
+export async function updateNotificationSettings(
+  settings: NotificationSetting[]
+): Promise<{ success: boolean }> {
+  return apiRequest('/api/team/notifications', {
+    method: 'POST',
+    body: JSON.stringify({ settings }),
+  });
+}
+
+export async function revokeTeamMemberAccess(machineId: string): Promise<{ success: boolean }> {
+  return apiRequest('/api/team/members/revoke', {
+    method: 'POST',
+    body: JSON.stringify({ machine_id: machineId }),
+  });
+}
+
+export async function getTeamAuditLogs(params?: {
+  limit?: number;
+  offset?: number;
+  action?: string;
+  resource_type?: string;
+}): Promise<{
+  logs: TeamAuditLogEntry[];
+  total: number;
+  limit: number;
+  offset: number;
+}> {
+  const searchParams = new URLSearchParams();
+  if (params?.limit) searchParams.set('limit', params.limit.toString());
+  if (params?.offset) searchParams.set('offset', params.offset.toString());
+  if (params?.action) searchParams.set('action', params.action);
+  if (params?.resource_type) searchParams.set('resource_type', params.resource_type);
+  return apiRequest(`/api/team/audit-logs?${searchParams}`);
+}
+
+export async function updateAlertThreshold(
+  thresholdType: string,
+  value: number
+): Promise<{ success: boolean }> {
+  return apiRequest('/api/team/thresholds', {
+    method: 'POST',
+    body: JSON.stringify({ threshold_type: thresholdType, value }),
+  });
+}
+
+// ============================================
 // Admin API (only accessible to admin user)
 // ============================================
 

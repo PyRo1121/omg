@@ -410,6 +410,9 @@ async fn async_main(args: Vec<String>) -> Result<()> {
         Commands::Config { key, value } => {
             commands::config(key.as_deref(), value.as_deref())?;
         }
+        Commands::SelfUpdate { force, version } => {
+            omg_lib::cli::self_update::run(force, version).await?;
+        }
         Commands::Completions { shell, stdout } => {
             hooks::completions::generate_completions(&shell, stdout)?;
         }

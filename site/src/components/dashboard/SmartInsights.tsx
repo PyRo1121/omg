@@ -66,7 +66,7 @@ export const SmartInsights: Component<SmartInsightsProps> = (props) => {
         </div>
 
         <Show
-          when={insight.loading}
+          when={!insight.loading}
           fallback={
             <div class="space-y-2 animate-pulse">
               <div class="h-4 w-3/4 rounded bg-slate-800" />
@@ -78,21 +78,21 @@ export const SmartInsights: Component<SmartInsightsProps> = (props) => {
             <div class="space-y-3">
               <div class="flex items-start gap-3">
                 <div class={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${getCategoryColor(getInsightCategory(insight()?.insight || ''))}`}>
-                  <Show when={insight()}>
-                    {(data) => {
-                      const Icon = getCategoryIcon(getInsightCategory(data.insight || ''));
+                  <Show when={insight()?.insight}>
+                    {(insightText) => {
+                      const Icon = getCategoryIcon(getInsightCategory(insightText() || ''));
                       return <Icon size={20} />;
                     }}
                   </Show>
                 </div>
                 <div class="flex-1">
-                  <Show when={insight()}>
-                    {(data) => (
+                  <Show when={insight()?.insight}>
+                    {(insightText) => (
                       <div>
                         <p class={`text-sm leading-relaxed ${showFull() ? '' : 'line-clamp-2'}`}>
-                          {data.insight}
+                          {insightText()}
                         </p>
-                        <Show when={data.insight.length > 100}>
+                        <Show when={(insightText()?.length || 0) > 100}>
                           <button
                             onClick={() => setShowFull(!showFull())}
                             class="mt-2 text-xs font-medium text-indigo-400 hover:text-indigo-300 transition-colors"
@@ -105,13 +105,13 @@ export const SmartInsights: Component<SmartInsightsProps> = (props) => {
                   </Show>
                 </div>
               </div>
-              <div class="flex items-center justify-between pt-2">
+                <div class="flex items-center justify-between pt-2">
                 <div class="flex items-center gap-1.5 text-[10px] font-medium text-indigo-400/80 uppercase tracking-widest">
                   <Sparkles size={10} />
-                  <span>Llama 3 · Workers AI</span>
+                  <span>{insight()?.generated_by || 'Workers AI'}</span>
                 </div>
                 <span class="text-[10px] text-slate-500 italic">
-                  {insight()?.timestamp ? new Date(insight().timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                  {insight()?.timestamp ? new Date(insight()!.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
                 </span>
               </div>
             </div>
