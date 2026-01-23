@@ -130,8 +130,10 @@ pub struct UsageStats {
     /// Last month (YYYY-MM)
     pub last_month: String,
     /// SBOMs generated (Pro+)
+    #[serde(default)]
     pub sbom_generated: u64,
     /// Vulnerabilities found (Pro+)
+    #[serde(default)]
     pub vulnerabilities_found: u64,
     /// Last sync timestamp
     pub last_sync: i64,

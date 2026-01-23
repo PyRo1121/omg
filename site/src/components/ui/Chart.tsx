@@ -46,19 +46,22 @@ export const BarChart: Component<BarChartProps> = props => {
                 </span>
               </Show>
               <Show when={item.value > 0}>
-                <div class="pointer-events-none absolute bottom-full left-1/2 z-30 mb-3 -translate-x-1/2 scale-90 rounded-[1rem] border border-white/10 bg-[#0a0a0b]/90 px-4 py-3 text-xs whitespace-nowrap text-white opacity-0 shadow-2xl backdrop-blur-xl transition-all duration-300 group-hover:scale-100 group-hover:opacity-100">
-                  <div class="flex items-center gap-2">
-                    <div class={`h-2 w-2 rounded-full ${props.gradient === 'emerald' ? 'bg-emerald-500' : 'bg-indigo-500'}`} />
-                    <span class="font-black">
-                      {props.tooltipFormatter
-                        ? props.tooltipFormatter(item.value, item.label)
-                        : item.value.toLocaleString()}
-                    </span>
+                <div class="pointer-events-none absolute bottom-full left-1/2 z-30 mb-3 -translate-x-1/2 scale-95 rounded-[1.25rem] border border-white/10 bg-[#0a0a0b]/95 p-3 text-xs whitespace-nowrap text-white opacity-0 shadow-[0_20px_50px_rgba(0,0,0,0.5)] backdrop-blur-md ring-1 ring-white/5 transition-all duration-300 group-hover:scale-100 group-hover:opacity-100">
+                  <div class="flex flex-col gap-1">
+                    <div class="text-[10px] font-bold uppercase tracking-widest text-slate-500">{item.label}</div>
+                    <div class="flex items-center gap-2">
+                      <div class={`h-2 w-2 rounded-full ${props.gradient === 'emerald' ? 'bg-emerald-500' : 'bg-indigo-500'}`} />
+                      <span class="text-sm font-black tabular-nums">
+                        {props.tooltipFormatter
+                          ? props.tooltipFormatter(item.value, item.label)
+                          : item.value.toLocaleString()}
+                      </span>
+                    </div>
                   </div>
                   <Show when={item.secondaryValue !== undefined}>
-                    <div class="mt-1.5 flex items-center gap-2 border-t border-white/5 pt-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                    <div class="mt-2 flex items-center gap-2 border-t border-white/5 pt-2 text-[10px] font-bold uppercase tracking-wider text-slate-500">
                       <span>Volume:</span>
-                      <span class="text-slate-300">
+                      <span class="text-slate-300 tabular-nums">
                         {props.secondaryTooltipFormatter
                           ? props.secondaryTooltipFormatter(item.secondaryValue!, item.label)
                           : item.secondaryValue}
@@ -334,6 +337,22 @@ export const AreaChart: Component<AreaChartProps> = props => {
               fill={color}
               class="opacity-0 transition-opacity group-hover:opacity-100"
             />
+            <foreignObject
+              x={point.x - 60}
+              y={point.y - 60}
+              width="120"
+              height="50"
+              class="pointer-events-none opacity-0 transition-opacity group-hover:opacity-100"
+            >
+              <div class="flex flex-col items-center justify-center">
+                <div class="rounded-xl border border-white/10 bg-[#0a0a0b]/95 p-2 text-[10px] shadow-2xl backdrop-blur-md ring-1 ring-white/5">
+                  <div class="font-bold uppercase tracking-widest text-slate-500">{point.label}</div>
+                  <div class="font-black text-white tabular-nums">
+                    {props.tooltipFormatter ? props.tooltipFormatter(point.value, point.label) : point.value.toLocaleString()}
+                  </div>
+                </div>
+              </div>
+            </foreignObject>
             <circle
               cx={point.x}
               cy={point.y}

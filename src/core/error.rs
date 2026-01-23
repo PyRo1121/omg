@@ -34,6 +34,14 @@ pub enum OmgError {
     #[error("Permission denied: {0}")]
     PermissionDenied(String),
 
+    #[error("Rate limit exceeded")]
+    RateLimitExceeded {
+        /// Seconds to wait before retrying (from Retry-After header)
+        retry_after: Option<u64>,
+        /// Human-readable message
+        message: String,
+    },
+
     #[error("{0}")]
     Other(String),
 }
@@ -78,6 +86,9 @@ impl OmgError {
             Self::DatabaseError(_) => {
                 Some("Database may be corrupted. Try: rm -rf ~/.local/share/omg/db && omg sync")
             }
+            Self::RateLimitExceeded { .. } => {
+                Some("Wait for the cooldown period, then retry your request")
+            }
             Self::IoError(_) | Self::Other(_) => None,
         }
     }
@@ -114,6 +125,9 @@ pub fn suggest_for_anyhow(err: &anyhow::Error) -> Option<&'static str> {
     }
     if msg.contains("daemon") {
         return Some("Start the daemon with: omgd start");
+    }
+    if msg.contains("rate limit") || msg.contains("too many requests") {
+        return Some("Wait for the cooldown period, then retry your request");
     }
     if msg.contains("no such file") || msg.contains("file not found") {
         return Some("Check that the file path is correct and the file exists");

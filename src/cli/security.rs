@@ -110,11 +110,9 @@ pub async fn generate_sbom(output: Option<String>, include_vulns: bool) -> Resul
 }
 
 /// View audit log entries
-pub fn view_audit_log(limit: usize, severity_filter: Option<String>) -> Result<()> {
+pub fn view_audit_log(limit: usize, severity_filter: Option<String>, export: Option<String>) -> Result<()> {
     // Require Team tier for audit logs
     license::require_feature("audit-log")?;
-
-    println!("{} Security Audit Log\n", "OMG".cyan().bold());
 
     let Ok(logger) = AuditLogger::new() else {
         println!(
@@ -140,6 +138,37 @@ pub fn view_audit_log(limit: usize, severity_filter: Option<String>) -> Result<(
     } else {
         logger.get_recent(limit).unwrap_or_default()
     };
+
+    if let Some(export_path) = export {
+        println!("{} Exporting audit log to {}...", "OMG".cyan().bold(), export_path.white());
+        let path = std::path::PathBuf::from(&export_path);
+        let format = if export_path.ends_with(".csv") { "csv" } else { "json" };
+        
+        match format {
+            "csv" => {
+                let mut wtr = csv::Writer::from_path(&path)?;
+                wtr.write_record(&["Timestamp", "Severity", "Event", "Description", "Resource"])?;
+                for entry in &entries {
+                    wtr.write_record(&[
+                        entry.timestamp.to_string(),
+                        entry.severity.to_string(),
+                        format!("{:?}", entry.event_type),
+                        entry.description.clone(),
+                        entry.resource.clone(),
+                    ])?;
+                }
+                wtr.flush()?;
+            }
+            _ => {
+                let json = serde_json::to_string_pretty(&entries)?;
+                std::fs::write(&path, json)?;
+            }
+        }
+        println!("{} Export successful", "✓".green());
+        return Ok(());
+    }
+
+    println!("{} Security Audit Log\n", "OMG".cyan().bold());
 
     if entries.is_empty() {
         println!("  {} No audit entries found.", "ℹ".blue());
