@@ -21,8 +21,8 @@ This plan follows the project's TDD protocol: Write Test -> Implement -> Refacto
 - [x] Task: Conductor - User Manual Verification 'Phase 2: Client Refactor' (Protocol in workflow.md) [f2ebdaa]
 
 ## Phase 3: Verification & Benchmarking
-- [ ] Task: Add comprehensive integration suite for Debian/Ubuntu
-    - [ ] Implement Docker-based smoke tests for Debian search operations
+- [x] Task: Add comprehensive integration suite for Debian/Ubuntu [2509a55]
+    - [x] Implement Docker-based smoke tests for Debian search operations
 - [ ] Task: Performance benchmarking
     - [ ] Run `benchmark.sh` and verify sub-30ms performance for Debian searches
 - [ ] Task: Conductor - User Manual Verification 'Phase 3: Verification & Benchmarking' (Protocol in workflow.md)
