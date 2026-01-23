@@ -30,6 +30,9 @@ jobs:
       
       - name: Formatting
         run: cargo fmt --all -- --check
+
+      - name: Clippy (Core)
+        run: cargo clippy --all-targets --no-default-features -- -D warnings
       
       - name: Spell Check
         uses: crate-ci/typos@master
@@ -174,6 +177,7 @@ jobs:
         run: |
           . /root/.cargo/env
           cargo build --release --no-default-features --features debian
+          cargo clippy --all-targets --no-default-features --features debian -- -D warnings
           cargo test --no-default-features --features debian --lib
 
       - name: Smoke Test
@@ -236,6 +240,7 @@ jobs:
       - name: Build & Test
         run: |
           cargo build --release --no-default-features --features debian
+          cargo clippy --all-targets --no-default-features --features debian -- -D warnings
           cargo test --no-default-features --features debian --lib
 
       - name: Smoke Test
