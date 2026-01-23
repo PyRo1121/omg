@@ -17,17 +17,17 @@
     - Commit: 20e90e5
 - [x] Task: Conductor - User Manual Verification 'Phase 1: Workflow Analysis & Quick Fixes' (Protocol in workflow.md)
 
-## Phase 2: Enhanced Quality Gates
+## Phase 2: Enhanced Quality Gates [checkpoint: 5aab353]
 - [x] Task: Integrate `cargo-audit` into CI
     - [x] Create a new workflow or job to run `cargo audit`.
     - [x] Configure it to fail on vulnerability findings.
 - [x] Task: Enforce Code Coverage
     - [x] Update `ci.yml` to generate coverage reports (e.g., using `tarpaulin`).
     - [x] Add a step to fail the build if coverage is below 80%.
-- [~] Task: Strict Linting Enforcement
-    - [ ] Update CI to run `cargo clippy --all-targets --all-features -- -D warnings`.
-    - [ ] Ensure `cargo fmt --check` is running and enforced.
-- [ ] Task: Conductor - User Manual Verification 'Phase 2: Enhanced Quality Gates' (Protocol in workflow.md)
+- [x] Task: Strict Linting Enforcement
+    - [x] Update CI to run `cargo clippy --all-targets --all-features -- -D warnings` (implemented per-job).
+    - [x] Ensure `cargo fmt --check` is running and enforced.
+- [x] Task: Conductor - User Manual Verification 'Phase 2: Enhanced Quality Gates' (Protocol in workflow.md)
 
 ## Phase 3: Production-Readiness & Stub Implementation
 - [ ] Task: Codebase Audit for Stubs
