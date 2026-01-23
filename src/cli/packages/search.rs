@@ -274,12 +274,31 @@ async fn fetch_packages(query: &str, _detailed: bool, _interactive: bool) -> Sea
                 aur_packages_basic = Some(aur_basic);
             }
         }
+    } else {
+        // Debian Daemon Search
+        if let Ok(mut client) = DaemonClient::connect().await
+            && let Ok(res) = client.debian_search(query, Some(50)).await
+        {
+            daemon_used = true;
+            for name in res {
+                official_packages.push(crate::package_managers::SyncPackage {
+                    name,
+                    version: crate::package_managers::parse_version_or_zero("0.0.0"), // TODO: Fetch full info
+                    description: "Fetched via daemon".to_string(),
+                    repo: "apt".to_string(),
+                    download_size: 0,
+                    installed: false,
+                });
+            }
+        }
     }
 
     if use_debian_backend() {
         #[cfg(feature = "debian")]
         {
-            official_packages = apt_search_sync(query).unwrap_or_default();
+            if !daemon_used {
+                official_packages = apt_search_sync(query).unwrap_or_default();
+            }
         }
     } else if !daemon_used {
         // 2. Fallback: Direct libalpm query + Network

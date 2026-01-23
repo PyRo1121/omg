@@ -381,6 +381,22 @@ impl DaemonClient {
             _ => anyhow::bail!("Invalid response type"),
         }
     }
+
+    /// Search for Debian packages via daemon
+    pub async fn debian_search(&mut self, query: &str, limit: Option<usize>) -> Result<Vec<String>> {
+        let id = self.request_id.fetch_add(1, Ordering::SeqCst);
+        match self
+            .call(Request::DebianSearch {
+                id,
+                query: query.to_string(),
+                limit,
+            })
+            .await?
+        {
+            ResponseResult::DebianSearch(res) => Ok(res),
+            _ => anyhow::bail!("Invalid response type"),
+        }
+    }
 }
 
 /// Pooled sync client that automatically returns connection to pool on drop
