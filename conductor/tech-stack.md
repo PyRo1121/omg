@@ -22,5 +22,7 @@
 ## Testing & Quality Assurance
 - **Unit & Integration:** `cargo test` with a strict TDD protocol.
 - **Property-Based Testing:** [Proptest](https://docs.rs/proptest/latest/proptest/) for verifying parsers and CLI logic.
-- **Benchmarking:** [Criterion](https://bheisler.github.io/criterion.rs/book/index.html) for performance regression tracking.
+- **Benchmarking:** [Criterion](https://bheisler.github.io/criterion.rs/book/index.html) for performance regression tracking and `benchmark.sh` for system-wide metrics.
 - **CLI Verification:** `assert_cmd` and `predicates` for integration testing.
+- **Code Coverage:** [Cargo-Tarpaulin](https://github.com/xd00964/tarpaulin) enforced at >80% threshold in CI.
+- **Security Auditing:** [Cargo-Audit](https://github.com/rustsec/rustsec) for dependency vulnerability scanning.
