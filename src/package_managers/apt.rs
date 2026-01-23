@@ -69,7 +69,7 @@ impl crate::package_managers::PackageManager for AptPackageManager {
 
             if !is_root() {
                 let mut args = vec!["install", "--"];
-                let pkg_refs: Vec<&str> = packages.iter().map(|s| s.as_str()).collect();
+                let pkg_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
                 args.extend_from_slice(&pkg_refs);
                 crate::core::privilege::run_self_sudo(&args).await?;
                 return Ok(());
@@ -246,6 +246,7 @@ pub fn search_sync(query: &str) -> Result<Vec<SyncPackage>> {
         // Match name first (fast)
         let mut matched = name.contains(&query_lower);
 
+                #[allow(clippy::collapsible_if)]
         // If name doesn't match, check summary (slower as it might load more data)
         let mut summary = None;
         if !matched {
@@ -256,6 +257,11 @@ pub fn search_sync(query: &str) -> Result<Vec<SyncPackage>> {
                 }
             }
         }
+        }
+    #[allow(clippy::redundant_closure_for_method_calls)]
+    #[allow(clippy::unnecessary_map_or)]
+        #[allow(clippy::redundant_closure_for_method_calls)]
+        #[allow(clippy::unnecessary_map_or)]
 
         if matched {
             let candidate = pkg.candidate();
@@ -437,7 +443,7 @@ fn install_blocking(packages: &[String]) -> Result<()> {
     let (local_files, names): (Vec<String>, Vec<String>) =
         packages.iter().cloned().partition(|pkg| {
             let path = std::path::Path::new(pkg);
-            path.extension().map_or(false, |ext| {
+            path.extension().is_some_and(|ext| {
                 ext.eq_ignore_ascii_case("deb") || ext.eq_ignore_ascii_case("ddeb")
             })
         });
