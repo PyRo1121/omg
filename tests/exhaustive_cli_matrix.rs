@@ -11,10 +11,12 @@ use common::*;
 use serial_test::serial;
 use tempfile::TempDir;
 
+#[cfg(feature = "arch")]
 fn run_arch(args: &[&str]) -> CommandResult {
     run_omg_with_env(args, &[("OMG_TEST_DISTRO", "arch"), ("OMG_TEST_MODE", "1")])
 }
 
+#[cfg(feature = "debian")]
 fn run_debian(args: &[&str]) -> CommandResult {
     run_omg_with_env(
         args,
@@ -26,7 +28,7 @@ fn run_debian(args: &[&str]) -> CommandResult {
 // ARCH LINUX MATRIX
 // ═══════════════════════════════════════════════════════════════════════════════
 
-#[cfg(test)]
+#[cfg(all(test, feature = "arch"))]
 mod arch_matrix {
     use super::*;
 
@@ -107,7 +109,7 @@ mod arch_matrix {
 // DEBIAN MATRIX
 // ═══════════════════════════════════════════════════════════════════════════════
 
-#[cfg(test)]
+#[cfg(all(test, feature = "debian"))]
 mod debian_matrix {
     use super::*;
 
@@ -231,7 +233,7 @@ mod runtime_matrix {
     #[test]
     #[serial]
     fn test_doctor_command() {
-        let res = run_arch(&["doctor"]);
+        let res = run_omg(&["doctor"]);
         res.assert_success();
         res.assert_stdout_contains("Checking system health");
     }
