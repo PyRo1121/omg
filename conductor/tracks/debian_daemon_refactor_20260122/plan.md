@@ -12,7 +12,7 @@ This plan follows the project's TDD protocol: Write Test -> Implement -> Refacto
 - [x] Task: Conductor - User Manual Verification 'Phase 1: Daemon Integration & IPC' (Protocol in workflow.md) [76108d5]
 
 ## Phase 2: Client Refactor
-- [~] Task: Update `omg search` to route Debian queries via the daemon
+- [x] Task: Update `omg search` to route Debian queries via the daemon [f95f015]
     - [ ] Write failing integration tests for `omg search` on Debian systems
     - [ ] Implement client-side routing to `omgd` for Debian searches
 - [ ] Task: Implement result caching for Debian searches
