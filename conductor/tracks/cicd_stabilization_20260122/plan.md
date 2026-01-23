@@ -29,7 +29,7 @@
     - [x] Ensure `cargo fmt --check` is running and enforced.
 - [x] Task: Conductor - User Manual Verification 'Phase 2: Enhanced Quality Gates' (Protocol in workflow.md)
 
-## Phase 3: Production-Readiness & Stub Implementation
+## Phase 3: Production-Readiness & Stub Implementation [checkpoint: 60eade2]
 - [x] Task: Codebase Audit for Stubs
     - [x] Search for `TODO`, `FIXME`, `unimplemented!()`, and stubbed functions.
     - [x] Create a prioritized list of incomplete features.
