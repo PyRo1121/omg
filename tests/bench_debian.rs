@@ -33,11 +33,11 @@ async fn bench_debian_search_performance() {
 
     // Benchmark
     let start = Instant::now();
-    let iterations = 100;
+    let iterations: u32 = 100;
 
     for i in 0..iterations {
         let req = Request::DebianSearch {
-            id: i as u64,
+            id: u64::from(i),
             query: "apt".to_string(),
             limit: Some(10),
         };
@@ -45,14 +45,13 @@ async fn bench_debian_search_performance() {
     }
 
     let duration = start.elapsed();
-    let avg_ms = duration.as_secs_f64() * 1000.0 / iterations as f64;
+    let avg_ms = duration.as_secs_f64() * 1000.0 / f64::from(iterations);
 
-    println!("Average search time: {:.4} ms", avg_ms);
+    println!("Average search time: {avg_ms:.4} ms");
 
     // Requirement: sub-30ms
     assert!(
         avg_ms < 30.0,
-        "Search performance too slow: {:.4} ms > 30ms",
-        avg_ms
+        "Search performance too slow: {avg_ms:.4} ms > 30ms"
     );
 }
