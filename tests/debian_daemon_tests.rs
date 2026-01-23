@@ -1,4 +1,9 @@
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
+use omg_lib::daemon::handlers::DaemonState;
+#[cfg(any(feature = "debian", feature = "debian-pure"))]
+use std::sync::Arc;
+
+#[cfg(any(feature = "debian", feature = "debian-pure"))]
 #[test]
 fn test_daemon_initialization_debian_mock() {
     let temp_dir = tempfile::tempdir().unwrap();
@@ -15,8 +20,6 @@ fn test_daemon_initialization_debian_mock() {
     // We expect this to succeed if integration is correct,
     // but it currently fails because debian_db doesn't handle test mode in get_detailed_packages
     // or PackageIndex::new_apt doesn't handle the error gracefully.
-
-    use omg_lib::daemon::handlers::DaemonState;
 
     // Initialize daemon state
     let state_result = DaemonState::new();
@@ -41,6 +44,11 @@ fn test_daemon_initialization_debian_mock() {
 }
 
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
+use omg_lib::daemon::handlers::handle_request;
+#[cfg(any(feature = "debian", feature = "debian-pure"))]
+use omg_lib::daemon::protocol::{Request, Response, ResponseResult};
+
+#[cfg(any(feature = "debian", feature = "debian-pure"))]
 #[tokio::test]
 async fn test_handle_debian_search() {
     let temp_dir = tempfile::tempdir().unwrap();
@@ -51,10 +59,6 @@ async fn test_handle_debian_search() {
         std::env::set_var("OMG_TEST_DISTRO", "debian");
         std::env::set_var("OMG_DAEMON_DATA_DIR", &temp_path);
     }
-
-    use omg_lib::daemon::handlers::{DaemonState, handle_request};
-    use omg_lib::daemon::protocol::{Request, Response, ResponseResult};
-    use std::sync::Arc;
 
     let state = Arc::new(DaemonState::new().unwrap());
 
@@ -73,9 +77,9 @@ async fn test_handle_debian_search() {
                 assert!(!pkgs.is_empty());
                 assert_eq!(pkgs[0].name, "apt");
             } else {
-                panic!("Expected DebianSearch result, got {:?}", result);
+                panic!("Expected DebianSearch result, got {result:?}");
             }
         }
-        Response::Error { message, .. } => panic!("Search failed: {}", message),
+        Response::Error { message, .. } => panic!("Search failed: {message}"),
     }
 }
