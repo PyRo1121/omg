@@ -21,7 +21,7 @@ This guide documents every OMG command with detailed explanations, examples, and
 | **Shell Integration** | `hook`, `completions` |
 | **Security & Audit** | `audit`, `status`, `doctor` |
 | **Task Runner** | `run` |
-| **Project Management** | `new`, `tool`, `init` |
+| **Project Management** | `new`, `tool`, `init`, `self-update` |
 | **Environment & Snapshots** | `env`, `snapshot`, `diff` |
 | **Team Collaboration** | `team` |
 | **Container Management** | `container` |
@@ -603,6 +603,13 @@ omg audit [SUBCOMMAND]
 | `policy` | Show security policy status |
 | `slsa <pkg>` | Check SLSA provenance |
 
+**Options for `log`:**
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--limit` | `-l` | Number of entries to show (default: 20) |
+| `--severity` | `-s` | Filter by severity (debug, info, warning, error, critical) |
+| `--export` | `-e` | Export logs to a file (CSV or JSON) |
+
 **Examples:**
 ```bash
 # Vulnerability scan (default)
@@ -621,6 +628,10 @@ omg audit secrets -p /path/to/project
 omg audit log
 omg audit log --limit 50
 omg audit log --severity error
+
+# Export audit logs
+omg audit log --export audit.csv
+omg audit log --export security_report.json
 
 # Verify log integrity
 omg audit verify
@@ -680,10 +691,11 @@ omg run <task> [-- <args...>] [OPTIONS]
 ```
 
 **Options:**
-| Option | Description |
-|--------|-------------|
-| `--list` | List available tasks |
-| `--runtime-backend <backend>` | Force runtime backend (native, mise, native-then-mise) |
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--watch` | `-w` | Watch mode: re-run task on file changes |
+| `--parallel` | `-p` | Run multiple comma-separated tasks in parallel |
+| `--runtime-backend <backend>` | | Force runtime backend (native, mise, native-then-mise) |
 
 **Supported Project Files:**
 | File | Runtime | Example |
@@ -705,10 +717,13 @@ omg run <task> [-- <args...>] [OPTIONS]
 omg run dev
 
 # Run tests with arguments
-omg run test -- --watch
+omg run test -- --verbose
 
-# List available tasks
-omg run --list
+# Watch mode - re-run on file changes
+omg run test --watch
+
+# Run multiple tasks in parallel
+omg run build,test,lint --parallel
 
 # Force mise backend
 omg run --runtime-backend mise dev
@@ -768,6 +783,9 @@ omg tool <SUBCOMMAND>
 | `install <name>` | Install a tool |
 | `list` | List installed tools |
 | `remove <name>` | Remove a tool |
+| `update <name>` | Update a tool (or `all` to update everything) |
+| `search <query>` | Search for tools in the registry |
+| `registry` | Show all available tools grouped by category |
 
 **Examples:**
 ```bash
@@ -782,12 +800,35 @@ omg tool list
 
 # Remove a tool
 omg tool remove ripgrep
+
+# Update all tools
+omg tool update all
+
+# Search for docker-related tools
+omg tool search docker
+
+# Browse all available tools
+omg tool registry
 ```
 
+**Tool Registry:**
+
+OMG includes a curated registry of 60+ popular developer tools across categories:
+- **search**: ripgrep, fd, fzf
+- **files**: bat, eza
+- **git**: delta, lazygit
+- **system**: htop, btop, dust, duf, procs
+- **dev**: hyperfine, tokei, just, watchexec
+- **node**: yarn, pnpm, tsx, nodemon, prettier, eslint
+- **rust**: cargo-watch, cargo-edit, cargo-nextest, bacon
+- **python**: black, ruff, mypy, poetry
+- **docker**: dive, lazydocker
+- **deploy**: vercel, netlify-cli, wrangler
+
 **Tool Resolution:**
-1. Check system package manager (pacman)
-2. Fall back to cargo/npm/pip/go as appropriate
-3. Install to `~/.local/share/omg/tools/`
+1. Check the built-in registry for optimal source
+2. Fall back to interactive selection if not in registry
+3. Install to isolated `~/.local/share/omg/tools/`
 
 ---
 
@@ -823,6 +864,30 @@ omg init --skip-shell
 2. Daemon startup preference
 3. Initial environment capture
 4. Completion installation
+
+---
+
+### omg self-update
+
+Update OMG to the latest version.
+
+```bash
+omg self-update [aliases: up]
+```
+
+**Features:**
+- **Atomic Binary Replacement**: Replaces the current binary with the latest version from `releases.pyro1121.com`.
+- **Progress Tracking**: Real-time progress bar showing download speed and estimated time remaining.
+- **Verification**: Automatically verifies the signature of the downloaded binary before installation.
+
+**Examples:**
+```bash
+# Update OMG
+omg self-update
+
+# Using alias
+omg up
+```
 
 ---
 

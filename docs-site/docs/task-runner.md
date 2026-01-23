@@ -63,15 +63,70 @@ Tasks allow you to interact with your project's lifecycle without needing to rem
 
 ### How Tasks Are Resolved
 
-The system uses a sophisticated 11-tier discovery engine to determine the correct execution path:
+The system uses a sophisticated 11-tier discovery engine to determine the correct execution path, now enhanced with an intelligent priority hierarchy and ambiguity resolution:
 
 1.  **Project Identification**: The system performs a breadth-first search for configuration patterns across 11 distinct project types, including Rust (Cargo), Node.js/Bun, Python (Poetry/Pipenv), Java (Maven/Gradle), PHP (Composer), and Deno.
-2.  **Runtime Activation**: Before execution, the system detects and activates the required runtime version from files like `.nvmrc` or `rust-toolchain.toml`.
-3.  **Manager Selection**: For multi-manager ecosystems (like JavaScript), the system follows a strict priority logic:
+2.  **Ecosystem Priority**: If a task name exists in multiple ecosystems (e.g., both `Cargo.toml` and `package.json`), OMG uses a weighted priority system:
+    *   **Rust (Cargo)**: 100
+    *   **JavaScript/TypeScript (Node/Bun)**: 90
+    *   **Python (Poetry/Pipenv)**: 80
+    *   **Go (Task)**: 75
+    *   **Ruby (Rake)**: 70
+    *   **Java (Maven/Gradle)**: 60
+    *   **PHP (Composer)**: 50
+    *   **Make**: 40
+3.  **Ambiguity Resolution**: If priorities are equal or user preferences are not defined, OMG will:
+    *   **Interactive Prompt**: Ask you which ecosystem you intended to use.
+    *   **Explicit Override**: Respect the `--using <ecosystem>` flag (e.g., `omg run test --using node`).
+    *   **Multi-Execution**: Run across all detected ecosystems if the `--all` flag is provided.
+4.  **Project Configuration**: You can permanently resolve ambiguity by creating a `.omg.toml` file in your project root:
+    ```toml
+    [scripts]
+    test = "rust"
+    build = "node"
+    ```
+5.  **Runtime Activation**: Before execution, the system detects and activates the required runtime version from files like `.nvmrc` or `rust-toolchain.toml`.
+6.  **Manager Selection**: For multi-manager ecosystems (like JavaScript), the system follows a strict priority logic:
     *   Explicit `packageManager` field in the configuration.
     *   Lockfile detection (prioritizing modern alternatives like `bun.lockb` or `pnpm-lock.yaml`).
     *   System default (falling back to standard managers if no preference is found).
-4.  **Task Matching**: Discovered scripts or targets are matched against the user request and executed within the optimized environment.
+7.  **Task Matching**: Discovered scripts or targets are matched against the user request and executed within the optimized environment.
+
+### 🔄 Resolution Flow
+
+```mermaid
+flowchart TD
+    Start([omg run task]) --> Detect[Scan for Project Files]
+    Detect --> Match{Task Matches?}
+    Match -- No --> Fallback[Smart Guessing]
+    Match -- Yes --> Config{Config in .omg.toml?}
+    
+    Config -- Yes --> Exec[Execute with Configured Ecosystem]
+    Config -- No --> Multi{Multiple Matches?}
+    
+    Multi -- No --> Exec
+    Multi -- Yes --> Priority{Priority Difference?}
+    
+    Priority -- Yes --> High[Pick Highest Priority] --> Exec
+    Priority -- No --> All{--all flag?}
+    
+    All -- Yes --> ExecAll[Run in All Ecosystems]
+    All -- No --> Using{--using flag?}
+    
+    Using -- Yes --> ExecUsing[Run Specific Ecosystem]
+    Using -- No --> Prompt[Interactive Selection] --> Exec
+```
+
+---
+
+## 🛠️ Advanced Options
+
+| Flag | Description | Example |
+|------|-------------|---------|
+| `--using` | Force a specific ecosystem | `omg run test --using rs` |
+| `--all` | Run task in all detected ecosystems | `omg run build --all` |
+| `--watch`, `-w` | Re-run on file changes | `omg run test --watch` |
+| `--parallel`, `-p` | Run multiple tasks in parallel | `omg run build,test -p` |
 
 ---
 

@@ -304,9 +304,23 @@ omg audit log -l 50
 # Filter by severity
 omg audit log -s error
 
+# Export logs to CSV
+omg audit log --export security_audit.csv
+
+# Export logs to JSON
+omg audit log --export security_audit.json
+
 # Verify log integrity
 omg audit verify
 ```
+
+### Export Capabilities
+
+OMG supports exporting audit logs for compliance reporting:
+- **CSV**: Best for spreadsheets and manual review (includes Timestamp, Severity, Event, Description, Resource).
+- **JSON**: Best for automated processing and security dashboards.
+
+The export command requires **Team** or **Enterprise** tier.
 
 ### Event Types
 
