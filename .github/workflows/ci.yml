@@ -102,7 +102,7 @@ jobs:
       - name: Bootstrap System
         run: |
           pacman -Syu --noconfirm
-          pacman -S --noconfirm base-devel git rust cargo pkgconf openssl libarchive clang clippy rustfmt
+          pacman -S --noconfirm base-devel git rust cargo pkgconf openssl libarchive clang
       
       - uses: actions/checkout@v4
       - name: Git Ownership fix
