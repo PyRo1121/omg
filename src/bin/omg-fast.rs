@@ -27,7 +27,7 @@ fn main() {
     if (cmd == "s" || cmd == "search") && args.len() >= 3 {
         let query = &args[2];
         // SECURITY: Basic validation for minimal binary
-        if query.len() > 100 || query.chars().any(|c| c.is_control()) {
+        if query.len() > 100 || query.chars().any(char::is_control) {
             eprintln!("Invalid search query");
             std::process::exit(1);
         }

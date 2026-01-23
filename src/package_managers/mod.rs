@@ -184,7 +184,10 @@ pub use debian_db::{
     list_explicit_fast as apt_list_explicit_fast, search_fast as apt_search_fast,
 };
 
-#[cfg(all(any(feature = "debian", feature = "debian-pure"), not(feature = "debian")))]
+#[cfg(all(
+    any(feature = "debian", feature = "debian-pure"),
+    not(feature = "debian")
+))]
 pub use debian_db::list_installed_fast as apt_list_installed_fast;
 
 #[cfg(all(feature = "debian", feature = "debian-pure"))]

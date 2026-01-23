@@ -223,8 +223,7 @@ fn try_fast_hooks(args: &[String]) -> bool {
                     let shell = args
                         .iter()
                         .find(|a| !a.starts_with('-') && *a != "hook-env")
-                        .map(String::as_str)
-                        .unwrap_or("");
+                        .map_or("", String::as_str);
                     if hooks::hook_env(shell).is_ok() {
                         return true;
                     }

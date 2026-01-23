@@ -26,9 +26,10 @@ jobs:
       - name: Install Dependencies
         run: |
           pacman -Syu --noconfirm
-          pacman -S --noconfirm base-devel git rust cargo pkgconf openssl libarchive clang bc python
+          pacman -S --noconfirm base-devel git rust cargo pkgconf openssl libarchive clang bc python python-pip
           # Note: yay is an AUR package and cannot be installed via pacman
           # OMG benchmarks compare against pacman directly, not yay
+          # python3 is provided by the 'python' package on Arch
 
       - uses: actions/checkout@v4
 

@@ -169,7 +169,9 @@ fn rebuild_index() -> Result<DebianPackageIndex> {
             let path = entry.path();
             let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             if filename.contains("_Packages")
-                && !path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("diff"))
+                && !path
+                    .extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("diff"))
             {
                 pkg_files.push(path);
             }
@@ -203,12 +205,18 @@ fn parse_packages_file_sync(path: &Path) -> Result<Vec<DebianPackage>> {
     let file = fs::File::open(path)?;
     let reader = BufReader::new(file);
 
-    let content = if path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("lz4")) {
+    let content = if path
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("lz4"))
+    {
         let mut decoder = lz4_flex::frame::FrameDecoder::new(reader);
         let mut buf = String::new();
         decoder.read_to_string(&mut buf)?;
         buf
-    } else if path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("gz")) {
+    } else if path
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("gz"))
+    {
         let mut decoder = flate2::read::GzDecoder::new(reader);
         let mut buf = String::new();
         decoder.read_to_string(&mut buf)?;
