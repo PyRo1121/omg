@@ -5,14 +5,14 @@ This plan follows the project's TDD protocol: Write Test -> Implement -> Refacto
 ## Phase 1: Daemon Integration & IPC [checkpoint: 76108d5]
 - [x] Task: Define Debian-specific IPC message types in `omg-lib` [82b3e6b]
     - [ ] Write failing unit tests for Debian search request/response serialization
-    - [ ] Implement `DebianSearch` variants in the IPC protocol
+    - [x] Implement `DebianSearch` variants in the IPC protocol [dcfef33]
 - [x] Task: Integrate `debian-packaging` indexing into `omgd` [1cff35e]
     - [ ] Write failing tests for Debian index initialization in the daemon
     - [ ] Implement background indexing for APT packages in `omgd`
 - [x] Task: Conductor - User Manual Verification 'Phase 1: Daemon Integration & IPC' (Protocol in workflow.md) [76108d5]
 
 ## Phase 2: Client Refactor
-- [ ] Task: Update `omg search` to route Debian queries via the daemon
+- [~] Task: Update `omg search` to route Debian queries via the daemon
     - [ ] Write failing integration tests for `omg search` on Debian systems
     - [ ] Implement client-side routing to `omgd` for Debian searches
 - [ ] Task: Implement result caching for Debian searches
