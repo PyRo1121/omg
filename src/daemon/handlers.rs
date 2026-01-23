@@ -167,14 +167,16 @@ async fn handle_debian_search(
     }
 
     // Run search in blocking task
-    let _query_clone = query.clone();
+    #[cfg(any(feature = "debian", feature = "debian-pure"))]
+    let query_clone = query.clone();
     let results = tokio::task::spawn_blocking(move || {
         #[cfg(any(feature = "debian", feature = "debian-pure"))]
         {
-            crate::package_managers::apt_search_fast(&_query_clone).map(|pkgs| {
+            crate::package_managers::apt_search_fast(&query_clone).map(|pkgs| {
                 pkgs.into_iter()
                     .map(|p| PackageInfo {
                         name: p.name,
+                        #[allow(clippy::implicit_clone)]
                         version: p.version.to_string(),
                         description: p.description,
                         source: "apt".to_string(),

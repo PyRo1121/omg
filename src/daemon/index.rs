@@ -69,7 +69,10 @@ impl PackageIndex {
         {
             Self::new_apt()
         }
-        #[cfg(all(feature = "arch", not(any(feature = "debian", feature = "debian-pure"))))]
+        #[cfg(all(
+            feature = "arch",
+            not(any(feature = "debian", feature = "debian-pure"))
+        ))]
         {
             Self::new_alpm()
         }

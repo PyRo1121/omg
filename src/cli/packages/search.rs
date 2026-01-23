@@ -30,7 +30,7 @@ struct SearchResults {
     #[cfg(feature = "arch")]
     aur_packages_basic: Option<Vec<crate::core::Package>>,
     #[cfg(not(feature = "arch"))]
-    _phantom: std::marker::PhantomData<()>
+    _phantom: std::marker::PhantomData<()>,
 }
 
 /// Display search results with formatting and truncation
@@ -115,7 +115,10 @@ fn display_aur_results(
                     style::version(&pkg.version),
                     style::info(&format!("↑{}", pkg.num_votes)),
                     style::info(&format!("{:.1}%", pkg.popularity)),
-                    style::dim(&truncate(pkg.description.as_deref().unwrap_or_default(), 40)),
+                    style::dim(&truncate(
+                        pkg.description.as_deref().unwrap_or_default(),
+                        40
+                    )),
                     out_of_date
                 )?;
             }
@@ -189,7 +192,10 @@ async fn handle_interactive_selection(
                     style::package(&pkg.name),
                     style::version(&pkg.version),
                     style::warning("AUR"),
-                    style::dim(&truncate(pkg.description.as_deref().unwrap_or_default(), 40))
+                    style::dim(&truncate(
+                        pkg.description.as_deref().unwrap_or_default(),
+                        40
+                    ))
                 ));
                 pkgs_to_install.push(pkg.name.clone());
             }
@@ -232,7 +238,11 @@ async fn handle_interactive_selection(
 }
 
 /// Fetch packages from all sources (daemon, local, AUR)
-async fn fetch_packages(query: &str, #[allow(unused_variables)] detailed: bool, #[allow(unused_variables)] interactive: bool) -> SearchResults {
+async fn fetch_packages(
+    query: &str,
+    #[allow(unused_variables)] detailed: bool,
+    #[allow(unused_variables)] interactive: bool,
+) -> SearchResults {
     let mut official_packages: Vec<crate::package_managers::SyncPackage> = Vec::new();
     #[cfg(feature = "arch")]
     let mut aur_packages_detailed: Option<Vec<crate::package_managers::AurPackageDetail>> = None;

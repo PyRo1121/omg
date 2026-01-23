@@ -1,5 +1,7 @@
+#[cfg(feature = "arch")]
 use omg_lib::package_managers::pacman_db;
 
+#[cfg(feature = "arch")]
 #[test]
 fn bench_pure_rust_update_check() {
     use std::time::Instant;

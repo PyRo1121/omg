@@ -1,7 +1,7 @@
 FROM debian:bookworm
 
 # Install build dependencies
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     build-essential \
     pkg-config \
@@ -15,15 +15,20 @@ RUN apt-get update && apt-get install -y \
     libbz2-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# Create non-root user
+RUN useradd -m -s /bin/bash omguser
+USER omguser
+WORKDIR /home/omguser/omg
+
 # Install Rust
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-ENV PATH="/root/.cargo/bin:${PATH}"
+ENV PATH="/home/omguser/.cargo/bin:${PATH}"
 
 # Set working directory
-WORKDIR /omg
+WORKDIR /home/omguser/omg
 
 # Copy source
-COPY . .
+COPY --chown=omguser:omguser . .
 
 # Build with debian feature
 RUN cargo build --release --no-default-features --features debian

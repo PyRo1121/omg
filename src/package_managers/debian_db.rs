@@ -106,12 +106,11 @@ pub fn ensure_index_loaded() -> Result<()> {
     let cache_path = paths::cache_dir().join("debian_index_v4.bin");
 
     // SAFE: Read file into memory and use rkyv for zero-allocation access
-    if cache_path.exists() {
-        if let Ok(bytes) = fs::read(&cache_path) {
-            if let Ok(idx) = rkyv::from_bytes::<DebianPackageIndex, rkyv::rancor::Error>(&bytes) {
-                index = Some(idx);
-            }
-        }
+    if cache_path.exists()
+        && let Ok(bytes) = fs::read(&cache_path)
+        && let Ok(idx) = rkyv::from_bytes::<DebianPackageIndex, rkyv::rancor::Error>(&bytes)
+    {
+        index = Some(idx);
     }
 
     if index.is_none() {
@@ -169,7 +168,9 @@ fn rebuild_index() -> Result<DebianPackageIndex> {
         for entry in entries.flatten() {
             let path = entry.path();
             let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if filename.contains("_Packages") && !filename.ends_with(".diff") {
+            if filename.contains("_Packages")
+                && !path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("diff"))
+            {
                 pkg_files.push(path);
             }
         }
@@ -199,16 +200,15 @@ fn rebuild_index() -> Result<DebianPackageIndex> {
 }
 
 fn parse_packages_file_sync(path: &Path) -> Result<Vec<DebianPackage>> {
-    let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
     let file = fs::File::open(path)?;
     let reader = BufReader::new(file);
 
-    let content = if filename.ends_with(".lz4") {
+    let content = if path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("lz4")) {
         let mut decoder = lz4_flex::frame::FrameDecoder::new(reader);
         let mut buf = String::new();
         decoder.read_to_string(&mut buf)?;
         buf
-    } else if filename.ends_with(".gz") {
+    } else if path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("gz")) {
         let mut decoder = flate2::read::GzDecoder::new(reader);
         let mut buf = String::new();
         decoder.read_to_string(&mut buf)?;
@@ -270,8 +270,8 @@ fn parse_paragraph_str(paragraph: &str) -> Result<DebianPackage> {
                 "Depends" => {
                     depends = value
                         .split(',')
-                        .map(|d| d.trim().split_whitespace().next().unwrap_or("").to_string())
-                        .collect()
+                        .map(|d| d.split_whitespace().next().unwrap_or("").to_string())
+                        .collect();
                 }
                 "Filename" => filename = value.to_string(),
                 "Size" => size = value.parse().unwrap_or(0),
@@ -326,7 +326,7 @@ pub fn get_detailed_packages() -> Result<Vec<DebianPackage>> {
     Ok(index.packages.clone())
 }
 
-    pub fn search_fast(query: &str) -> Result<Vec<Package>> {
+pub fn search_fast(query: &str) -> Result<Vec<Package>> {
     if crate::core::paths::test_mode() {
         return Ok(vec![Package {
             name: "apt".to_string(),
@@ -335,7 +335,8 @@ pub fn get_detailed_packages() -> Result<Vec<DebianPackage>> {
             source: PackageSource::Official,
             installed: true,
         }]);
-    }    ensure_index_loaded()?;
+    }
+    ensure_index_loaded()?;
     let guard = DEBIAN_INDEX_CACHE.read();
     let index = guard.index.as_ref().context("Index not loaded")?;
 
@@ -361,12 +362,12 @@ pub fn get_detailed_packages() -> Result<Vec<DebianPackage>> {
             Ok(i) => i,
             Err(i) => i.saturating_sub(1),
         };
-        if seen_indices.insert(pkg_idx) {
-            if let Some(pkg) = index.packages.get(pkg_idx) {
-                let mut p = pkg.to_package();
-                p.installed = guard.installed_set.contains(&p.name);
-                results.push(p);
-            }
+        if seen_indices.insert(pkg_idx)
+            && let Some(pkg) = index.packages.get(pkg_idx)
+        {
+            let mut p = pkg.to_package();
+            p.installed = guard.installed_set.contains(&p.name);
+            results.push(p);
         }
         if results.len() >= 100 {
             break;
@@ -375,7 +376,7 @@ pub fn get_detailed_packages() -> Result<Vec<DebianPackage>> {
     Ok(results)
 }
 
-    pub fn get_info_fast(name: &str) -> Result<Option<Package>> {
+pub fn get_info_fast(name: &str) -> Result<Option<Package>> {
     if crate::core::paths::test_mode() {
         return Ok(Some(Package {
             name: name.to_string(),
@@ -384,7 +385,8 @@ pub fn get_detailed_packages() -> Result<Vec<DebianPackage>> {
             source: PackageSource::Official,
             installed: true,
         }));
-    }    ensure_index_loaded()?;
+    }
+    ensure_index_loaded()?;
     let guard = DEBIAN_INDEX_CACHE.read();
     let index = guard.index.as_ref().context("Index not loaded")?;
     if let Some(pkg) = index.get(name) {
@@ -510,7 +512,6 @@ pub fn get_counts_fast() -> Result<(usize, usize, usize, usize)> {
 }
 
 #[cfg(test)]
-
 mod tests {
 
     use super::*;

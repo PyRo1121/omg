@@ -26,7 +26,7 @@ jobs:
       - name: Install Dependencies
         run: |
           pacman -Syu --noconfirm
-          pacman -S --noconfirm base-devel git rust cargo pkgconf openssl libarchive clang bc
+          pacman -S --noconfirm base-devel git rust cargo pkgconf openssl libarchive clang bc python
           # Note: yay is an AUR package and cannot be installed via pacman
           # OMG benchmarks compare against pacman directly, not yay
 
