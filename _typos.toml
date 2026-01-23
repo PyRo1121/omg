@@ -6,4 +6,4 @@ extend-ignore-re = [
 ]
 
 [files]
-extend-exclude = ["errors.txt"]
+extend-exclude = ["errors.txt", "cargo_tree_debian.txt"]
