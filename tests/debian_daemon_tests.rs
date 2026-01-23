@@ -1,11 +1,15 @@
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
 #[test]
 fn test_daemon_initialization_debian_mock() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let temp_path = temp_dir.path().to_str().unwrap().to_string();
+
     // Set test mode to trigger mock paths
     unsafe {
         std::env::set_var("OMG_TEST_MODE", "true");
         // Also set mock distro to debian to ensure correct package manager selection
         std::env::set_var("OMG_TEST_DISTRO", "debian");
+        std::env::set_var("OMG_DAEMON_DATA_DIR", &temp_path);
     }
 
     // We expect this to succeed if integration is correct, 
@@ -32,9 +36,13 @@ fn test_daemon_initialization_debian_mock() {
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
 #[tokio::test]
 async fn test_handle_debian_search() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let temp_path = temp_dir.path().to_str().unwrap().to_string();
+    
     unsafe {
         std::env::set_var("OMG_TEST_MODE", "true");
         std::env::set_var("OMG_TEST_DISTRO", "debian");
+        std::env::set_var("OMG_DAEMON_DATA_DIR", &temp_path);
     }
 
     use omg_lib::daemon::handlers::{DaemonState, handle_request};

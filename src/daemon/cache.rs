@@ -15,6 +15,8 @@ static KEY_EXPLICIT_COUNT: LazyLock<String> = LazyLock::new(|| "explicit_count".
 pub struct PackageCache {
     /// Search results cache: query -> packages
     cache: Cache<String, Vec<PackageInfo>>,
+    /// Debian search results cache: query -> package names
+    debian_cache: Cache<String, Vec<String>>,
     /// Detailed info cache: pkgname -> info
     detailed_cache: Cache<String, DetailedPackageInfo>,
     /// Negative cache for missing package info
@@ -45,6 +47,10 @@ impl PackageCache {
             .max_capacity(max_size as u64)
             .time_to_live(ttl)
             .build();
+        let debian_cache = Cache::builder()
+            .max_capacity(max_size as u64)
+            .time_to_live(ttl)
+            .build();
         let detailed_cache = Cache::builder()
             .max_capacity(max_size as u64)
             .time_to_live(ttl)
@@ -64,6 +70,7 @@ impl PackageCache {
 
         Self {
             cache,
+            debian_cache,
             detailed_cache,
             info_miss_cache,
             max_size,
@@ -125,6 +132,18 @@ impl PackageCache {
         self.cache.insert(query, packages);
     }
 
+    /// Get cached Debian search results
+    #[inline]
+    #[must_use]
+    pub fn get_debian(&self, query: &str) -> Option<Vec<String>> {
+        self.debian_cache.get(query)
+    }
+
+    /// Store Debian search results in cache
+    pub fn insert_debian(&self, query: String, packages: Vec<String>) {
+        self.debian_cache.insert(query, packages);
+    }
+
     /// Get cache statistics
     #[must_use]
     pub fn stats(&self) -> CacheStats {
@@ -137,6 +156,7 @@ impl PackageCache {
     /// Clear the entire cache
     pub fn clear(&self) {
         self.cache.invalidate_all();
+        self.debian_cache.invalidate_all();
         self.detailed_cache.invalidate_all();
         self.info_miss_cache.invalidate_all();
         self.system_status.invalidate_all();

@@ -151,20 +151,29 @@ pub async fn handle_request(state: Arc<DaemonState>, request: Request) -> Respon
 
 /// Handle Debian search request
 async fn handle_debian_search(
-    _state: Arc<DaemonState>,
+    state: Arc<DaemonState>,
     id: RequestId,
     query: String,
     limit: Option<usize>,
 ) -> Response {
     let limit = limit.unwrap_or(DEFAULT_SEARCH_LIMIT).min(MAX_SEARCH_LIMIT);
 
+    // Check cache first
+    if let Some(cached) = state.cache.get_debian(&query) {
+        return Response::Success {
+            id,
+            result: ResponseResult::DebianSearch(cached.into_iter().take(limit).collect()),
+        };
+    }
+
     // Run search in blocking task
+    let state_clone = Arc::clone(&state);
+    let query_clone = query.clone();
     let results = tokio::task::spawn_blocking(move || {
         #[cfg(any(feature = "debian", feature = "debian-pure"))]
         {
-            crate::package_managers::apt_search_fast(&query).map(|pkgs| {
+            crate::package_managers::apt_search_fast(&query_clone).map(|pkgs| {
                 pkgs.into_iter()
-                    .take(limit)
                     .map(|p| p.name)
                     .collect::<Vec<String>>()
             })
@@ -177,10 +186,13 @@ async fn handle_debian_search(
     .await;
 
     match results {
-        Ok(Ok(pkgs)) => Response::Success {
-            id,
-            result: ResponseResult::DebianSearch(pkgs),
-        },
+        Ok(Ok(pkgs)) => {
+            state.cache.insert_debian(query, pkgs.clone());
+            Response::Success {
+                id,
+                result: ResponseResult::DebianSearch(pkgs.into_iter().take(limit).collect()),
+            }
+        }
         Ok(Err(e)) => Response::Error {
             id,
             code: error_codes::INTERNAL_ERROR,
