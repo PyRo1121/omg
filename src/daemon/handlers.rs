@@ -167,12 +167,11 @@ async fn handle_debian_search(
     }
 
     // Run search in blocking task
-    let state_clone = Arc::clone(&state);
-    let query_clone = query.clone();
+    let _query_clone = query.clone();
     let results = tokio::task::spawn_blocking(move || {
         #[cfg(any(feature = "debian", feature = "debian-pure"))]
         {
-            crate::package_managers::apt_search_fast(&query_clone).map(|pkgs| {
+            crate::package_managers::apt_search_fast(&_query_clone).map(|pkgs| {
                 pkgs.into_iter()
                     .map(|p| p.name)
                     .collect::<Vec<String>>()
@@ -180,7 +179,7 @@ async fn handle_debian_search(
         }
         #[cfg(not(any(feature = "debian", feature = "debian-pure")))]
         {
-            Err(anyhow::anyhow!("Debian backend disabled"))
+            Err::<Vec<String>, _>(anyhow::anyhow!("Debian backend disabled"))
         }
     })
     .await;

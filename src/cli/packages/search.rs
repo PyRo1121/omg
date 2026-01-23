@@ -229,7 +229,7 @@ async fn handle_interactive_selection(
 }
 
 /// Fetch packages from all sources (daemon, local, AUR)
-async fn fetch_packages(query: &str, _detailed: bool, _interactive: bool) -> SearchResults {
+async fn fetch_packages(query: &str, detailed: bool, interactive: bool) -> SearchResults {
     let mut official_packages: Vec<crate::package_managers::SyncPackage> = Vec::new();
     #[cfg(feature = "arch")]
     let mut aur_packages_detailed: Option<Vec<crate::package_managers::AurPackageDetail>> = None;
@@ -237,7 +237,24 @@ async fn fetch_packages(query: &str, _detailed: bool, _interactive: bool) -> Sea
     let mut aur_packages_basic: Option<Vec<crate::core::Package>> = None;
 
     let mut daemon_used = false;
-    if !use_debian_backend() {
+    if use_debian_backend() {
+        // Debian Daemon Search
+        if let Ok(mut client) = DaemonClient::connect().await
+            && let Ok(res) = client.debian_search(query, Some(50)).await
+        {
+            daemon_used = true;
+            for name in res {
+                official_packages.push(crate::package_managers::SyncPackage {
+                    name,
+                    version: crate::package_managers::parse_version_or_zero("0.0.0"), // TODO: Fetch full info
+                    description: "Fetched via daemon".to_string(),
+                    repo: "apt".to_string(),
+                    download_size: 0,
+                    installed: false,
+                });
+            }
+        }
+    } else {
         // 1. Try Daemon (Ultra Fast, Cached, Pooled)
         if let Ok(mut client) = DaemonClient::connect().await
             && let Ok(res) = client.search(query, Some(50)).await
@@ -274,23 +291,6 @@ async fn fetch_packages(query: &str, _detailed: bool, _interactive: bool) -> Sea
                 aur_packages_basic = Some(aur_basic);
             }
         }
-    } else {
-        // Debian Daemon Search
-        if let Ok(mut client) = DaemonClient::connect().await
-            && let Ok(res) = client.debian_search(query, Some(50)).await
-        {
-            daemon_used = true;
-            for name in res {
-                official_packages.push(crate::package_managers::SyncPackage {
-                    name,
-                    version: crate::package_managers::parse_version_or_zero("0.0.0"), // TODO: Fetch full info
-                    description: "Fetched via daemon".to_string(),
-                    repo: "apt".to_string(),
-                    download_size: 0,
-                    installed: false,
-                });
-            }
-        }
     }
 
     if use_debian_backend() {
@@ -310,12 +310,12 @@ async fn fetch_packages(query: &str, _detailed: bool, _interactive: bool) -> Sea
         // Search AUR (Arch only)
         #[cfg(feature = "arch")]
         {
-            if _detailed || _interactive {
+            if detailed || interactive {
                 let pb = style::spinner("Searching AUR...");
                 let res = search_detailed(query).await.unwrap_or_default();
                 pb.finish_and_clear();
                 aur_packages_detailed = Some(res);
-            } else if !_interactive {
+            } else if !interactive {
                 let aur = AurClient::new();
                 aur_packages_basic = Some(aur.search(query).await.unwrap_or_default());
             }
