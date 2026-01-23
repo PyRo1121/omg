@@ -189,7 +189,7 @@ omg daemon
 
 # 3. Check for blocking operations
 time omg hook-env -s zsh
-# Should be <10ms
+# Should be &lt;10ms
 
 # 4. Minimize version file checks
 # Only place version files in project roots

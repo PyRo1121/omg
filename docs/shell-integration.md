@@ -193,7 +193,7 @@ version = "3.12"
 ```json
 {
   "engines": {
-    "node": ">=18 <21",
+    "node": ">=18 &lt;21",
     "bun": ">=1.0"
   },
   "volta": {

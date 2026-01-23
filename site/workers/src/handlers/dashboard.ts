@@ -183,7 +183,7 @@ export async function handleGetDashboard(request: Request, env: Env): Promise<Re
   `).first<{ dimension: string }>();
 
   // Calculate user percentile
-  const userTotalCommands = Number(totalUsage?.total_commands) || 0;
+  const userTotalCommands = Number(usageStats?.total_commands) || 0;
   const rankResult = await env.DB.prepare(`
     SELECT COUNT(*) as better_users FROM (
       SELECT SUM(commands_run) as total FROM usage_daily GROUP BY license_id HAVING total > ?

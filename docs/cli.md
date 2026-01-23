@@ -21,7 +21,7 @@ This guide documents every OMG command with detailed explanations, examples, and
 | **Shell Integration** | `hook`, `completions` |
 | **Security & Audit** | `audit`, `status`, `doctor` |
 | **Task Runner** | `run` |
-| **Project Management** | `new`, `tool`, `init` |
+| **Project Management** | `new`, `tool`, `init`, `self-update` |
 | **Environment & Snapshots** | `env`, `snapshot`, `diff` |
 | **Team Collaboration** | `team` |
 | **Container Management** | `container` |
@@ -603,6 +603,13 @@ omg audit [SUBCOMMAND]
 | `policy` | Show security policy status |
 | `slsa <pkg>` | Check SLSA provenance |
 
+**Options for `log`:**
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--limit` | `-l` | Number of entries to show (default: 20) |
+| `--severity` | `-s` | Filter by severity (debug, info, warning, error, critical) |
+| `--export` | `-e` | Export logs to a file (CSV or JSON) |
+
 **Examples:**
 ```bash
 # Vulnerability scan (default)
@@ -621,6 +628,10 @@ omg audit secrets -p /path/to/project
 omg audit log
 omg audit log --limit 50
 omg audit log --severity error
+
+# Export audit logs
+omg audit log --export audit.csv
+omg audit log --export security_report.json
 
 # Verify log integrity
 omg audit verify
@@ -853,6 +864,30 @@ omg init --skip-shell
 2. Daemon startup preference
 3. Initial environment capture
 4. Completion installation
+
+---
+
+### omg self-update
+
+Update OMG to the latest version.
+
+```bash
+omg self-update [aliases: up]
+```
+
+**Features:**
+- **Atomic Binary Replacement**: Replaces the current binary with the latest version from `releases.pyro1121.com`.
+- **Progress Tracking**: Real-time progress bar showing download speed and estimated time remaining.
+- **Verification**: Automatically verifies the signature of the downloaded binary before installation.
+
+**Examples:**
+```bash
+# Update OMG
+omg self-update
+
+# Using alias
+omg up
+```
 
 ---
 

@@ -86,12 +86,20 @@ Most developers bolt security on as an afterthought. OMG has it built in:
 ### It Runs Your Tasks Intelligently
 
 ```bash
-omg run dev      # Detects package.json → runs npm/yarn/pnpm/bun
-omg run build    # Detects Cargo.toml → runs cargo build
-omg run test     # Detects Makefile → runs make test
+omg run dev      # Detects priority: Rust > Node > Python
+omg run test     # Ambiguity? Interactive prompt asks your preference
+omg run build --all # Run build script in EVERY detected ecosystem
 ```
 
-One command works across all your projects, regardless of what language they're written in.
+One command works across all your projects, now with a smart priority hierarchy and interactive ambiguity resolution.
+
+### Stay Up to Date Effortlessly
+
+```bash
+omg self-update  # Updates OMG with a beautiful progress bar
+```
+
+Never miss an improvement with the atomic self-updater.
 
 ---
 
@@ -179,7 +187,8 @@ omg run dev                 # Run your project
 - **[Package Management](./packages.md)** — Search, install, update, remove
 - **[Runtime Management](./runtimes.md)** — Node, Python, Rust, Go, Ruby, Java, Bun
 - **[Shell Integration](./shell-integration.md)** — Hooks, completions, PATH management
-- **[Task Runner](./task-runner.md)** — Unified task execution
+- **[Task Runner](./task-runner.md)** — Unified task execution with smart detection
+- **[Enterprise & Fleet](./enterprise.md)** — Fleet control and compliance at scale
 
 ### Advanced Features
 - **[Security & Compliance](./security.md)** — Vulnerability scanning, SBOM, audit logs
