@@ -4,10 +4,10 @@
 //! require `unwrap()` or `expect()`. This module helps eliminate panic-prone patterns
 //! throughout the codebase while maintaining performance and ergonomics.
 
+use anyhow::{Context, Result};
 use std::num::{NonZeroU32, NonZeroU64, NonZeroUsize};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use anyhow::{Context, Result};
 use thiserror::Error;
 
 /// Error types for safe operations
@@ -86,12 +86,12 @@ pub fn unwrap_or_exit<T>(option: Option<T>, context: &str) -> T {
 /// Validate that a path is safe for file operations
 pub fn validate_path<P: AsRef<Path>>(path: P) -> Result<PathBuf> {
     let path = path.as_ref();
-    
+
     // Check for empty path
     if path.as_os_str().is_empty() {
         return Err(anyhow::anyhow!("Path cannot be empty"));
     }
-    
+
     // Check for null bytes
     if let Some(path_str) = path.to_str() {
         if path_str.contains('\0') {
@@ -100,72 +100,76 @@ pub fn validate_path<P: AsRef<Path>>(path: P) -> Result<PathBuf> {
     } else {
         return Err(anyhow::anyhow!("Path contains invalid UTF-8"));
     }
-    
+
     // Normalize the path
-    let normalized = path.canonicalize()
+    let normalized = path
+        .canonicalize()
         .with_context(|| format!("Failed to canonicalize path: {}", path.display()))?;
-    
+
     Ok(normalized)
 }
 
 /// Safe file write with atomic operations
-pub async fn atomic_write_file<P: AsRef<Path>, C: AsRef<[u8]>>(
-    path: P,
-    contents: C,
-) -> Result<()> {
+pub async fn atomic_write_file<P: AsRef<Path>, C: AsRef<[u8]>>(path: P, contents: C) -> Result<()> {
     let path = path.as_ref();
     let contents = contents.as_ref();
-    
+
     // Validate path first
     validate_path(path)?;
-    
+
     // Create parent directory if it doesn't exist
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent)
             .await
             .with_context(|| format!("Failed to create parent directory: {}", parent.display()))?;
     }
-    
+
     // Write to temporary file first
     let temp_path = path.with_extension("tmp");
     tokio::fs::write(&temp_path, contents)
         .await
         .with_context(|| format!("Failed to write to temporary file: {}", temp_path.display()))?;
-    
+
     // Atomic rename
-    tokio::fs::rename(&temp_path, path)
-        .await
-        .with_context(|| format!("Failed to rename {} to {}", temp_path.display(), path.display()))?;
-    
+    tokio::fs::rename(&temp_path, path).await.with_context(|| {
+        format!(
+            "Failed to rename {} to {}",
+            temp_path.display(),
+            path.display()
+        )
+    })?;
+
     Ok(())
 }
 
 /// Safe synchronous file write with atomic operations
-pub fn atomic_write_file_sync<P: AsRef<Path>, C: AsRef<[u8]>>(
-    path: P,
-    contents: C,
-) -> Result<()> {
+pub fn atomic_write_file_sync<P: AsRef<Path>, C: AsRef<[u8]>>(path: P, contents: C) -> Result<()> {
     let path = path.as_ref();
     let contents = contents.as_ref();
-    
+
     // Validate path first
     validate_path(path)?;
-    
+
     // Create parent directory if it doesn't exist
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("Failed to create parent directory: {}", parent.display()))?;
     }
-    
+
     // Write to temporary file first
     let temp_path = path.with_extension("tmp");
     std::fs::write(&temp_path, contents)
         .with_context(|| format!("Failed to write to temporary file: {}", temp_path.display()))?;
-    
+
     // Atomic rename
-    std::fs::rename(&temp_path, path)
-        .with_context(|| format!("Failed to rename {} to {}", temp_path.display(), path.display()))?;
-    
+    std::fs::rename(&temp_path, path).with_context(|| {
+        format!(
+            "Failed to rename {} to {}",
+            temp_path.display(),
+            path.display()
+        )
+    })?;
+
     Ok(())
 }
 
@@ -183,17 +187,17 @@ impl<T> TransactionGuard<T> {
             committed: false,
         }
     }
-    
+
     /// Get a reference to the inner transaction
     pub fn inner(&self) -> &T {
         self.inner.as_ref().expect("Transaction already consumed")
     }
-    
+
     /// Get a mutable reference to the inner transaction
     pub fn inner_mut(&mut self) -> &mut T {
         self.inner.as_mut().expect("Transaction already consumed")
     }
-    
+
     /// Commit the transaction (preventing rollback)
     pub fn commit(mut self) -> T {
         self.committed = true;
@@ -223,17 +227,17 @@ impl AtomicCounter {
             value: AtomicU64::new(initial),
         }
     }
-    
+
     /// Increment and return the new value
     pub fn increment(&self) -> u64 {
         self.value.fetch_add(1, Ordering::SeqCst) + 1
     }
-    
+
     /// Get the current value
     pub fn get(&self) -> u64 {
         self.value.load(Ordering::SeqCst)
     }
-    
+
     /// Reset to a specific value
     pub fn reset(&self, new_value: u64) {
         self.value.store(new_value, Ordering::SeqCst);
@@ -255,11 +259,14 @@ impl RateLimiterConfig {
             burst_size: nonzero_u32(200, "rate limiter burst size")?,
         })
     }
-    
+
     /// Create with custom values
     pub fn with_values(requests_per_second: u32, burst_size: u32) -> Result<Self> {
         Ok(Self {
-            requests_per_second: nonzero_u32(requests_per_second, "rate limiter requests per second")?,
+            requests_per_second: nonzero_u32(
+                requests_per_second,
+                "rate limiter requests per second",
+            )?,
             burst_size: nonzero_u32(burst_size, "rate limiter burst size")?,
         })
     }
@@ -292,14 +299,19 @@ mod tests {
     fn test_nonzero_u32_zero() {
         let result = nonzero_u32(0, "test");
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("value must be > 0, got 0"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("value must be > 0, got 0")
+        );
     }
 
     #[test]
     fn test_nonzero_u32_or_default() {
         let nz1 = nonzero_u32_or_default(0, 100);
         assert_eq!(nz1.get(), 100);
-        
+
         let nz2 = nonzero_u32_or_default(50, 100);
         assert_eq!(nz2.get(), 50);
     }
@@ -317,7 +329,12 @@ mod tests {
         let option: Option<i32> = None;
         let result = expect_or(option, "test value");
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Expected value for test value"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Expected value for test value")
+        );
     }
 
     #[test]
@@ -353,10 +370,10 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let file_path = temp_dir.path().join("test.txt");
         let content = b"Hello, world!";
-        
+
         let result = atomic_write_file(&file_path, content).await;
         assert!(result.is_ok());
-        
+
         let read_content = fs::read_to_string(&file_path).await.unwrap();
         assert_eq!(read_content, "Hello, world!");
     }
@@ -366,10 +383,10 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let file_path = temp_dir.path().join("test.txt");
         let content = b"Hello, world!";
-        
+
         let result = atomic_write_file_sync(&file_path, content);
         assert!(result.is_ok());
-        
+
         let read_content = std::fs::read_to_string(&file_path).unwrap();
         assert_eq!(read_content, "Hello, world!");
     }
@@ -393,11 +410,11 @@ mod tests {
     fn test_atomic_counter() {
         let counter = AtomicCounter::new(10);
         assert_eq!(counter.get(), 10);
-        
+
         let new_value = counter.increment();
         assert_eq!(new_value, 11);
         assert_eq!(counter.get(), 11);
-        
+
         counter.reset(5);
         assert_eq!(counter.get(), 5);
     }
@@ -406,7 +423,7 @@ mod tests {
     fn test_rate_limiter_config_new() {
         let config = RateLimiterConfig::new();
         assert!(config.is_ok());
-        
+
         let config = config.unwrap();
         assert_eq!(config.requests_per_second.get(), 100);
         assert_eq!(config.burst_size.get(), 200);
@@ -416,7 +433,7 @@ mod tests {
     fn test_rate_limiter_config_with_values() {
         let config = RateLimiterConfig::with_values(50, 150);
         assert!(config.is_ok());
-        
+
         let config = config.unwrap();
         assert_eq!(config.requests_per_second.get(), 50);
         assert_eq!(config.burst_size.get(), 150);
@@ -426,7 +443,12 @@ mod tests {
     fn test_rate_limiter_config_zero_values() {
         let config = RateLimiterConfig::with_values(0, 0);
         assert!(config.is_err());
-        assert!(config.unwrap_err().to_string().contains("value must be > 0"));
+        assert!(
+            config
+                .unwrap_err()
+                .to_string()
+                .contains("value must be > 0")
+        );
     }
 
     #[test]

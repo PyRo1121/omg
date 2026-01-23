@@ -152,7 +152,8 @@ pub fn view_audit_log(
         let path = std::path::PathBuf::from(&export_path);
         let format = if std::path::Path::new(&export_path)
             .extension()
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("csv")) {
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("csv"))
+        {
             "csv"
         } else {
             "json"

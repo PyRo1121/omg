@@ -28,21 +28,19 @@ static SYNC_POOL: OnceLock<Mutex<Option<SyncUnixStream>>> = OnceLock::new();
 pub fn get_pooled_sync() -> Result<SyncUnixStream> {
     let pool = SYNC_POOL.get_or_init(|| Mutex::new(None));
     let mut guard = pool.lock();
-    
+
     if let Some(stream) = guard.take() {
         // Connection exists - return it
         return Ok(stream);
     }
-    
+
     // Show connection spinner while establishing connection
     tracing::debug!("Connecting to daemon...");
-    
+
     let socket_path = default_socket_path();
     SyncUnixStream::connect(&socket_path)
         .with_context(|| format!("Failed to connect to daemon at {}", socket_path.display()))
 }
-
-
 
 /// Get the default socket path
 #[must_use]
