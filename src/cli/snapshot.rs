@@ -266,21 +266,37 @@ pub async fn restore(id: &str, dry_run: bool, yes: bool) -> Result<()> {
     if !to_install.is_empty() || !to_remove.is_empty() {
         println!();
         if !yes {
-            println!(
-                "  {} Package changes found ({} to install, {} to remove):",
-                "⚠".yellow(),
-                to_install.len(),
-                to_remove.len()
-            );
+            // Check if we're in interactive mode
+            if console::user_attended() {
+                println!(
+                    "  {} Package changes found ({} to install, {} to remove):",
+                    "⚠".yellow(),
+                    to_install.len(),
+                    to_remove.len()
+                );
 
-            let confirm = dialoguer::Confirm::new()
-                .with_prompt("Do you want to apply these package changes?")
-                .default(false)
-                .interact()?;
+                let confirm = dialoguer::Confirm::new()
+                    .with_prompt("Do you want to apply these package changes?")
+                    .default(false)
+                    .interact()?;
 
-            if !confirm {
-                println!("  {} Package changes skipped", "ℹ".blue());
-                return Ok(());
+                if !confirm {
+                    println!("  {} Package changes skipped", "ℹ".blue());
+                    return Ok(());
+                }
+            } else {
+                // Non-interactive mode: show clear error message
+                println!(
+                    "  {} Package changes found ({} to install, {} to remove):",
+                    "⚠".yellow(),
+                    to_install.len(),
+                    to_remove.len()
+                );
+                anyhow::bail!(
+                    "This command requires an interactive terminal or the --yes flag.\n\
+                     For automation, use: omg snapshot restore {id} --yes\n\
+                     Or run: sudo omg snapshot restore {id} --yes"
+                );
             }
         }
 

@@ -370,6 +370,98 @@ mod package_management {
     }
 
     #[test]
+    fn test_update_check_shows_real_updates() {
+        if !destructive_tests_enabled() {
+            eprintln!("Skipping destructive test (set OMG_RUN_DESTRUCTIVE_TESTS=1)");
+            return;
+        }
+
+        let (success, stdout, stderr) = run_omg(&["update", "--check"]);
+        let combined = format!("{stdout}{stderr}");
+
+        assert!(success, "Update check should succeed");
+        assert!(!combined.is_empty(), "Update check should produce output");
+
+        // Verify update detection code path is exercised
+        // Should report either updates available or system up to date
+        assert!(
+            combined.contains("updates") ||
+                combined.contains("up to date") ||
+                combined.contains("System is up to date") ||
+                combined.contains("Found") ||
+                combined.contains("✓"),
+            "Should report update status. Output:\n{combined}"
+        );
+
+        // Verify version comparison happens
+        // If updates exist, should show version information (old → new format)
+        if combined.contains("update") || combined.to_lowercase().contains("updates") {
+            assert!(
+                combined.contains("→") ||
+                    combined.contains("->") ||
+                    combined.contains("→") ||
+                    (combined.contains('.') && combined.len() > 50),
+                "When updates exist, should show version information. Output:\n{combined}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_update_with_yes_flag() {
+        if !destructive_tests_enabled() {
+            eprintln!("Skipping destructive test (set OMG_RUN_DESTRUCTIVE_TESTS=1)");
+            return;
+        }
+
+        let (success, stdout, stderr) = run_omg(&["update", "--yes"]);
+        let combined = format!("{stdout}{stderr}";
+
+        // Should complete without hanging
+        assert!(!combined.is_empty(), "Should produce output");
+
+        // Should show progress or completion message
+        assert!(
+            combined.contains("update") ||
+                combined.contains("upgrade") ||
+                combined.contains("system") ||
+                combined.contains("up to date") ||
+                combined.contains("✓"),
+            "Should show update progress or completion. Output:\n{combined}"
+        );
+    }
+
+    #[test]
+    fn test_non_interactive_without_yes_fails_gracefully() {
+        if !destructive_tests_enabled() {
+            eprintln!("Skipping destructive test (set OMG_RUN_DESTRUCTIVE_TESTS=1)");
+            return;
+        }
+
+        // Test that running in non-interactive mode without --yes
+        // gives a helpful error message
+        let (success, stdout, stderr) = run_omg_with_env(
+            &["update"],
+            &[("CI", "true"), ("OMG_NON_INTERACTIVE", "1")]
+        );
+
+        let combined = format!("{stdout}{stderr}";
+
+        // Should fail without --yes in non-interactive mode
+        assert!(!success, "Should fail without TTY and --yes");
+
+        // Should provide helpful error message
+        assert!(
+            combined.contains("interactive") ||
+                combined.contains("--yes") ||
+                combined.contains("terminal") ||
+                combined.contains("TTY") ||
+                combined.contains("requires") ||
+                combined.contains("sudo"),
+            "Should provide helpful error message about interactive mode. Output:\n{combined}"
+        );
+    }
+
+    #[test]
     fn test_status_command() {
         let (success, stdout, _) = run_omg(&["status"]);
         assert!(success, "Status should succeed");

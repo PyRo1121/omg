@@ -4,6 +4,9 @@
 //!
 //! Run: cargo test --test `arch_tests` --features arch
 //! With system tests: `OMG_RUN_SYSTEM_TESTS=1` cargo test --test `arch_tests` --features arch
+//!
+//! Note: System tests require real package operations and will modify your system!
+//! Only run these tests in disposable containers or development environments.
 
 #![cfg(feature = "arch")]
 #![allow(clippy::doc_markdown)]
@@ -151,7 +154,38 @@ mod pacman_integration {
         require_arch!();
 
         let result = run_omg(&["update", "--check"]);
-        // Should work without making changes
+        result.assert_success();
+        assert!(!result.stderr_contains("panicked at"), "Should not panic");
+    }
+
+    #[test]
+    fn test_update_check_with_mock_updates() {
+        let project = TestProject::new();
+
+        mock_install("firefox", "122.0").ok();
+        mock_available("firefox", "123.0").ok();
+
+        let result = project.run(&["update", "--check"]);
+        result.assert_success();
+
+        assert!(
+            result.stdout_contains("up to date") || result.stdout_contains("firefox"),
+            "Should report up to date or show firefox in updates"
+        );
+        assert!(!result.stderr_contains("panicked at"), "Should not panic");
+    }
+
+    #[test]
+    fn test_update_check_no_updates_when_current() {
+        let project = TestProject::new();
+
+        mock_install("firefox", "123.0").ok();
+        mock_available("firefox", "123.0").ok();
+
+        let result = project.run(&["update", "--check"]);
+        result.assert_success();
+
+        assert!(result.stdout_contains("up to date"), "Should report up to date");
         assert!(!result.stderr_contains("panicked at"), "Should not panic");
     }
 

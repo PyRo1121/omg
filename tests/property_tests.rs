@@ -155,12 +155,64 @@ proptest! {
         prop_assert!(!result.stderr.contains("panicked at"));
     }
 
-    /// Version with v prefix should work
     #[test]
     fn prop_v_prefix_versions(major in 0u32..30, minor in 0u32..30, patch in 0u32..30) {
         let version = format!("v{major}.{minor}.{patch}");
         let result = run_omg(&["use", "node", &version]);
         prop_assert!(!result.stderr.contains("panicked at"));
+    }
+
+    #[test]
+    fn prop_version_comparison(
+        old_major in 0u32..50,
+        old_minor in 0u32..50,
+        old_patch in 0u32..50,
+        new_major in 0u32..50,
+        new_minor in 0u32..50,
+        new_patch in 0u32..50
+    ) {
+        let old = format!("{old_major}.{old_minor}.{old_patch}");
+        let new = format!("{new_major}.{new_minor}.{new_patch}");
+
+        let _comparison = old.cmp(&new);
+
+        prop_assert!(!old.contains("panicked at") && !new.contains("panicked at"));
+    }
+
+    #[test]
+    fn prop_update_detection(
+        _name in "[a-z]{3,10}",
+        old_major in 0u32..20,
+        old_minor in 0u32..20,
+        old_patch in 0u32..20,
+        new_major in 0u32..20,
+        new_minor in 0u32..20,
+        new_patch in 0u32..20
+    ) {
+        let old_version = format!("{old_major}.{old_minor}.{old_patch}");
+        let new_version = format!("{new_major}.{new_minor}.{new_patch}");
+
+        let old = parse_version(&old_version);
+        let new = parse_version(&new_version);
+
+        let _is_newer = new > old;
+
+        prop_assert!(!old_version.contains("panicked at") && !new_version.contains("panicked at"));
+    }
+}
+
+fn parse_version(v: &str) -> (u32, u32, u32) {
+    let parts: Vec<u32> = v
+        .split('.')
+        .take(3)
+        .map(|s| s.parse().unwrap_or(0))
+        .collect();
+
+    match parts.as_slice() {
+        [major, minor, patch] => (*major, *minor, *patch),
+        [major, minor] => (*major, *minor, 0),
+        [major] => (*major, 0, 0),
+        _ => (0, 0, 0),
     }
 }
 

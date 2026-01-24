@@ -48,28 +48,43 @@ pub async fn install(packages: &[String], yes: bool) -> Result<()> {
                         );
                         println!("{}", style::arrow("Did you mean one of these?"));
 
-                        let selection = Select::with_theme(&ColorfulTheme::default())
-                            .with_prompt("Select a replacement (or Esc to abort)")
-                            .default(0)
-                            .items(&suggestions)
-                            .interact_opt()?;
+                        // Check if we're in interactive mode
+                        if console::user_attended() {
+                            let selection = Select::with_theme(&ColorfulTheme::default())
+                                .with_prompt("Select a replacement (or Esc to abort)")
+                                .default(0)
+                                .items(&suggestions)
+                                .interact_opt()?;
 
-                        if let Some(index) = selection {
-                            let new_pkg = suggestions[index].clone();
-                            println!(
-                                "{} Replacing '{}' with '{}'\n",
-                                style::success("✓"),
-                                pkg_name,
-                                new_pkg
-                            );
+                            if let Some(index) = selection {
+                                let new_pkg = suggestions[index].clone();
+                                println!(
+                                    "{} Replacing '{}' with '{}'\n",
+                                    style::success("✓"),
+                                    pkg_name,
+                                    new_pkg
+                                );
 
-                            // Replace in list
-                            if let Some(pos) =
-                                packages_to_install.iter().position(|x| x == pkg_name)
-                            {
-                                packages_to_install[pos] = new_pkg;
-                                continue; // Retry loop with new package list
+                                // Replace in list
+                                if let Some(pos) =
+                                    packages_to_install.iter().position(|x| x == pkg_name)
+                                {
+                                    packages_to_install[pos] = new_pkg;
+                                    continue; // Retry loop with new package list
+                                }
                             }
+                        } else {
+                            // Non-interactive mode: show suggestions and abort with helpful message
+                            println!("\n  Suggested alternatives:");
+                            for (i, suggestion) in suggestions.iter().enumerate().take(5) {
+                                println!("    {}. {}", i + 1, suggestion);
+                            }
+                            if suggestions.len() > 5 {
+                                println!("    ... and {} more", suggestions.len() - 5);
+                            }
+                            anyhow::bail!(
+                                "Package '{pkg_name}' not found. Re-run in interactive mode to select a replacement, or use the correct package name."
+                            );
                         }
                     }
                 }

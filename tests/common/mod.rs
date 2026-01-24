@@ -10,6 +10,8 @@ pub mod fixtures;
 pub mod mocks;
 pub mod runners;
 
+use anyhow::Result;
+use serde_json;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -470,6 +472,142 @@ pub fn is_package_installed(name: &str) -> bool {
         Some("apt") => run_shell(&format!("dpkg -l {name} 2>/dev/null | grep -q '^ii'")).success,
         _ => false,
     }
+}
+
+pub fn mock_install(package: &str, version: &str) -> Result<()> {
+    use std::env;
+    use std::fs;
+
+    if env::var("OMG_TEST_MODE").as_deref() != Ok("1") {
+        eprintln!("Warning: mock_install requires OMG_TEST_MODE=1");
+        return Ok(());
+    }
+
+    let path = env::var("OMG_DATA_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            PathBuf::from(env::var("HOME").unwrap_or_default())
+                .join(".local/share/omg")
+        })
+        .join("mock_state.json");
+
+    let mut state: serde_json::Value = fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_else(|| serde_json::json!({
+            "installed": [],
+            "available": {}
+        }));
+
+    if let Some(installed) = state["installed"].as_array_mut() {
+        if !installed.iter().any(|v| v.as_str() == Some(package)) {
+            installed.push(serde_json::json!(package));
+        }
+    }
+
+    if let Some(available) = state["available"].as_object_mut() {
+        available.insert(package.to_string(), serde_json::json!(version.to_string()));
+    }
+
+    let path = env::var("OMG_DATA_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            PathBuf::from(env::var("HOME").unwrap_or_default()).join(".local/share/omg")
+        })
+        .join("mock_state.json");
+
+    let mut state: serde_json::Value = fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_else(|| {
+            serde_json::json!({
+                "installed": [],
+                "available": {}
+            })
+        });
+
+    if let Some(installed) = state["installed"].as_array_mut() {
+        if !installed.iter().any(|v| v.as_str() == Some(package)) {
+            installed.push(serde_json::json!(package));
+        }
+    }
+
+    if let Some(available) = state["available"].as_object_mut() {
+        available.insert(package.to_string(), serde_json::json!(version));
+    }
+
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).ok();
+    }
+    fs::write(&path, serde_json::to_string_pretty(&state)?).map_err(|e| anyhow::anyhow!(e))?;
+
+    Ok(())
+}
+
+pub fn mock_available(package: &str, version: &str) -> Result<()> {
+    use std::env;
+    use std::fs;
+
+    if env::var("OMG_TEST_MODE").as_deref() != Ok("1") {
+        eprintln!("Warning: mock_available requires OMG_TEST_MODE=1");
+        return Ok(());
+    }
+
+    let path = env::var("OMG_DATA_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            PathBuf::from(env::var("HOME").unwrap_or_default())
+                .join(".local/share/omg")
+        })
+        .join("mock_state.json");
+
+    let mut state: serde_json::Value = fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_else(|| serde_json::json!({
+            "installed": [],
+            "available": {}
+        }));
+
+    if let Some(available) = state["available"].as_object_mut() {
+        available.insert(package.to_string(), serde_json::json!(version.to_string()));
+    }
+
+    let path = env::var("OMG_DATA_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            PathBuf::from(env::var("HOME").unwrap_or_default()).join(".local/share/omg")
+        })
+        .join("mock_state.json");
+
+    let mut state: serde_json::Value = fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_else(|| {
+            serde_json::json!({
+                "installed": [],
+                "available": {}
+            })
+        });
+
+    if let Some(available) = state["available"].as_object_mut() {
+        available.insert(package.to_string(), serde_json::json!(version));
+    }
+
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).ok();
+    }
+    fs::write(&path, serde_json::to_string_pretty(&state)?).map_err(|e| anyhow::anyhow!(e))?;
+
+    Ok(())
+}
+
+pub fn create_update_scenario(updates: Vec<(&str, &str, &str)>) -> Result<()> {
+    for (name, installed, available) in updates {
+        mock_install(name, installed)?;
+        mock_available(name, available)?;
+    }
+    Ok(())
 }
 
 /// Get installed package version (distro-agnostic)

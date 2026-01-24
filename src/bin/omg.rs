@@ -305,6 +305,9 @@ fn main() -> Result<()> {
 /// This eliminates the overhead of creating a new runtime for each command
 #[allow(clippy::too_many_lines)]
 async fn async_main(args: Vec<String>) -> Result<()> {
+    // Initialize theme before any output
+    omg_lib::cli::style::init_theme();
+
     // Start analytics timer
     let cmd_start = omg_lib::core::analytics::start_timer();
 
@@ -722,8 +725,8 @@ async fn async_main(args: Vec<String>) -> Result<()> {
         Commands::History { limit } => {
             commands::history(limit)?;
         }
-        Commands::Rollback { id } => {
-            commands::rollback(id).await?;
+        Commands::Rollback { id, yes } => {
+            commands::rollback(id, yes).await?;
         }
         Commands::Dash => {
             omg_lib::cli::tui::run().await?;

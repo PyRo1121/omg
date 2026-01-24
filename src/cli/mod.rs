@@ -27,6 +27,7 @@ pub mod self_update;
 pub mod size;
 pub mod snapshot;
 pub mod style;
+pub mod tables;
 pub mod team;
 pub mod tool;
 pub mod tui;

@@ -61,15 +61,26 @@ pub async fn update(check_only: bool, yes: bool) -> Result<()> {
         return Ok(());
     }
 
-    if !yes
-        && console::user_attended()
-        && !Confirm::with_theme(&ColorfulTheme::default())
-            .with_prompt("\nProceed with system upgrade?")
-            .default(true)
-            .interact()?
-    {
-        println!("{}", style::dim("Upgrade cancelled."));
-        return Ok(());
+    // Handle confirmation in both interactive and non-interactive modes
+    if !yes {
+        if console::user_attended() {
+            // Interactive mode: show confirmation dialog
+            if !Confirm::with_theme(&ColorfulTheme::default())
+                .with_prompt("\nProceed with system upgrade?")
+                .default(true)
+                .interact()?
+            {
+                println!("{}", style::dim("Upgrade cancelled."));
+                return Ok(());
+            }
+        } else {
+            // Non-interactive mode: either auto-confirm (if --yes) or show helpful error
+            anyhow::bail!(
+                "This command requires an interactive terminal or the --yes flag.\n\
+                 For automation/CI, use: omg update --yes\n\
+                 Or run: sudo omg update"
+            );
+        }
     }
 
     println!("\n{} Executing system upgrade...", style::arrow("→"));
