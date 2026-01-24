@@ -81,6 +81,9 @@ async fn test_mock_package_manager_logic() {
 
     // Test info
     let info = pm.info("test-pkg").await.unwrap().unwrap();
+    #[cfg(not(feature = "arch"))]
     assert_eq!(info.version, "1.0.0");
+    #[cfg(feature = "arch")]
+    assert_eq!(info.version.to_string(), "1.0.0");
     assert!(info.installed);
 }
