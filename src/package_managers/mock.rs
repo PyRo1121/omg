@@ -17,6 +17,7 @@ use crate::package_managers::types::{UpdateInfo, parse_version_or_zero};
 #[derive(Serialize, Deserialize, Default, Clone)]
 struct MockState {
     installed: HashSet<String>,
+    available: HashMap<String, String>,
 }
 
 /// Mock package database
@@ -85,13 +86,42 @@ impl MockPackageManager {
         }
     }
 
+    pub fn set_installed_version(&self, name: &str, version: &str) -> Result<()> {
+        let mut state = Self::load_state(self.distro_name);
+        state.installed.insert(name.to_string());
+        state
+            .available
+            .insert(name.to_string(), version.to_string());
+        Self::save_state(&state);
+        Ok(())
+    }
+
+    pub fn set_available_version(&self, name: &str, version: &str) -> Result<()> {
+        let mut state = Self::load_state(self.distro_name);
+        state
+            .available
+            .insert(name.to_string(), version.to_string());
+        Self::save_state(&state);
+        Ok(())
+    }
+
+    pub fn create_update_scenario(&self, updates: &[(&str, &str, &str)]) -> Result<()>
+    where
+        Self: Sized,
+    {
+        for (name, installed, available) in updates {
+            self.set_installed_version(name, installed)?;
+            self.set_available_version(name, available)?;
+        }
+        Ok(())
+    }
+
     fn load_state(distro_name: &str) -> MockState {
         let path = paths::data_dir().join("mock_state.json");
         eprintln!("Mock loading state from {}", path.display());
         if let Ok(data) = fs::read_to_string(&path) {
             serde_json::from_str(&data).unwrap_or_default()
         } else {
-            // Default installed packages
             let mut state = MockState::default();
             state.installed.insert(distro_name.to_string());
             state
@@ -104,6 +134,16 @@ impl MockPackageManager {
         let _ = fs::create_dir_all(path.parent().unwrap());
         if let Ok(data) = serde_json::to_string(state) {
             let _ = fs::write(&path, data);
+        }
+    }
+
+    #[allow(dead_code)]
+    fn is_newer(old: &str, new: &str) -> bool {
+        use std::cmp::Ordering;
+
+        match old.cmp(new) {
+            Ordering::Less => true,
+            _ => false,
         }
     }
 }
@@ -227,7 +267,49 @@ impl PackageManager for MockPackageManager {
     }
 
     fn list_updates(&self) -> BoxFuture<'static, Result<Vec<UpdateInfo>>> {
-        async move { Ok(Vec::new()) }.boxed()
+        let db = self.db.clone();
+        let state = Self::load_state(self.distro_name);
+
+        async move {
+            let pkgs = db.packages.lock().unwrap();
+            let mut updates = Vec::new();
+
+            for pkg_name in &state.installed {
+                if let (Some(pkg), Some(available_ver)) =
+                    (pkgs.get(pkg_name), state.available.get(pkg_name))
+                {
+                    let installed_ver = pkg.version.clone();
+
+                    #[cfg(feature = "arch")]
+                    let is_update_needed = {
+                        use crate::package_managers::types::Version as AlpmVersion;
+                        use std::str::FromStr;
+
+                        let installed = AlpmVersion::from_str(&installed_ver)
+                            .unwrap_or_else(|_| AlpmVersion::from_str("0").unwrap());
+                        let available = AlpmVersion::from_str(available_ver)
+                            .unwrap_or_else(|_| AlpmVersion::from_str("0").unwrap());
+
+                        available > installed
+                    };
+
+                    #[cfg(not(feature = "arch"))]
+                    let is_update_needed = Self::is_newer(&installed_ver, available_ver);
+
+                    if is_update_needed {
+                        updates.push(UpdateInfo {
+                            name: pkg_name.clone(),
+                            old_version: installed_ver.to_string(),
+                            new_version: available_ver.clone(),
+                            repo: pkg.repo.clone(),
+                        });
+                    }
+                }
+            }
+
+            Ok(updates)
+        }
+        .boxed()
     }
 
     fn is_installed(&self, package: &str) -> BoxFuture<'static, bool> {

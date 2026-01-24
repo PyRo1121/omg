@@ -399,8 +399,11 @@ pub enum Commands {
 
     /// Roll back to a previous system state
     Rollback {
-        /// Transaction ID to roll back to (omitted for interactive selection)
+        /// Transaction ID to roll back to (selects most recent if not specified)
         id: Option<String>,
+        /// Auto-confirm without prompting (required in non-interactive mode)
+        #[arg(short = 'y', long)]
+        yes: bool,
     },
 
     /// Launch the interactive TUI dashboard for system monitoring and management

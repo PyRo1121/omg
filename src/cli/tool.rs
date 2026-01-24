@@ -248,7 +248,9 @@ pub async fn install(name: &str) -> Result<()> {
     // 2. Interactive Fallback
     if !user_attended() {
         anyhow::bail!(
-            "Tool '{name}' not in registry. Re-run in an interactive shell to choose a source."
+            "Tool '{name}' not in registry. Re-run in an interactive shell to choose a source.\n\
+             Available sources: Pacman, Cargo, NPM, Pip, Go\n\
+             Example: omg install {name}  # for system installation"
         );
     }
     let choices = vec![

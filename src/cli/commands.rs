@@ -562,7 +562,7 @@ pub fn history(limit: usize) -> Result<()> {
 }
 
 #[allow(clippy::unused_async)]
-pub async fn rollback(id: Option<String>) -> Result<()> {
+pub async fn rollback(id: Option<String>, yes: bool) -> Result<()> {
     if let Some(ref r_id) = id {
         // SECURITY: Validate transaction ID
         if r_id.chars().any(|c| !c.is_ascii_hexdigit()) {
@@ -622,13 +622,24 @@ pub async fn rollback(id: Option<String>) -> Result<()> {
     );
 
     use dialoguer::{Confirm, theme::ColorfulTheme};
-    if !Confirm::with_theme(&ColorfulTheme::default())
-        .with_prompt("Proceed with rollback?")
-        .default(false)
-        .interact()?
-    {
-        return Ok(());
-    }
+        // Check if we're in interactive mode
+        if console::user_attended()
+            && !Confirm::with_theme(&ColorfulTheme::default())
+                .with_prompt("Proceed with rollback?")
+                .default(false)
+                .interact()?
+        {
+            return Ok(());
+        }
+
+        // Non-interactive mode: require --yes flag for destructive operation
+        if !yes {
+            anyhow::bail!(
+                "This destructive command requires --yes flag in non-interactive mode.\n\n\
+                 For automation/CI, use: omg rollback <id> --yes\n\
+                 Or run in interactive mode to select a transaction."
+            );
+        }
 
     // Identify packages that were changed and build install list
     let mut to_install = Vec::new();

@@ -122,7 +122,41 @@ impl PackageManager for PureDebianPackageManager {
     }
 
     fn list_updates(&self) -> BoxFuture<'static, Result<Vec<UpdateInfo>>> {
-        async move { Ok(Vec::new()) }.boxed()
+        async move {
+            // Parse Debian package index and installed packages
+            let index = debian_db::DebianIndex::new();
+            index.ensure_index_loaded().await?;
+
+            let installed = debian_db::list_installed_fast()?;
+            let index_pkgs = index.get_detailed_packages()?;
+
+            let mut updates = Vec::new();
+            let mut installed_map = std::collections::HashMap::new();
+
+            // Build map of installed packages for fast lookup
+            for pkg in &installed {
+                installed_map.insert(pkg.name.clone(), pkg.version.clone());
+            }
+
+            // Find packages with newer versions available
+            for pkg in &index_pkgs {
+                if let Some(installed_ver) = installed_map.get(&pkg.name) {
+                    let available_ver = crate::package_managers::types::parse_version_or_zero(&pkg.version);
+                    let installed_v = crate::package_managers::types::parse_version_or_zero(installed_ver);
+
+                    if available_ver > installed_v {
+                        updates.push(UpdateInfo {
+                            name: pkg.name.clone(),
+                            old_version: installed_ver.clone(),
+                            new_version: pkg.version.clone(),
+                            repo: "official".to_string(),
+                        });
+                    }
+                }
+            }
+
+            Ok(updates)
+        }.boxed()
     }
 
     fn is_installed(&self, package: &str) -> BoxFuture<'static, bool> {

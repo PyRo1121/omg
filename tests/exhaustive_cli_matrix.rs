@@ -168,6 +168,11 @@ mod runtime_matrix {
     #[test]
     #[serial]
     fn test_use_node_detection() {
+        let config = TestConfig::default();
+        if config.skip_if_no_network("test_use_node_detection") {
+            return;
+        }
+
         let project = TestProject::new();
         project.create_file(".nvmrc", "20.0.0");
         let res = project.run(&["use", "node"]);
@@ -178,6 +183,11 @@ mod runtime_matrix {
     #[test]
     #[serial]
     fn test_use_python_detection() {
+        let config = TestConfig::default();
+        if config.skip_if_no_network("test_use_python_detection") {
+            return;
+        }
+
         let project = TestProject::new();
         project.create_file(".python-version", "3.12.0");
         let res = project.run(&["use", "python"]);

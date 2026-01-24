@@ -63,17 +63,59 @@ pub fn elevate_for_operation(operation: &str, args: &[String]) -> std::io::Resul
 /// Run the current executable with sudo and specific arguments asynchronously
 pub async fn run_self_sudo(args: &[&str]) -> anyhow::Result<()> {
     let exe = std::env::current_exe()?;
+
+    // Detect if we're running in development/test mode
+    let is_dev_build = cfg!(debug_assertions)
+        || std::env::var("OMG_TEST_MODE").is_ok()
+        || std::env::var("CARGO_PRIMARY_PACKAGE").is_ok();
+
+    if is_dev_build {
+        anyhow::bail!(
+            "Privilege elevation is not supported in development builds.\n\
+             \n\
+             For development, either:\n\
+             1. Run with appropriate sudo permissions: sudo {} {:?}\n\
+             2. Install the release binary: cargo install --path .\n\
+             3. Build and install release binary: cargo build --release && sudo cp target/release/omg /usr/local/bin/\n\
+             \n\
+             In production, this command will automatically elevate when needed.",
+            exe.display(),
+            args
+        );
+    }
+
+    // Try non-interactive sudo first (-n flag)
     let status = tokio::process::Command::new("sudo")
+        .arg("-n")
         .arg("--")
-        .arg(exe)
+        .arg(&exe)
         .args(args)
         .status()
-        .await?;
+        .await;
 
-    if !status.success() {
-        anyhow::bail!("Elevated command failed");
+    match status {
+        Ok(s) if s.success() => Ok(()),
+        Ok(s) => anyhow::bail!("Elevated command failed with exit code: {s}"),
+        Err(e) => {
+            // If -n failed, provide helpful guidance
+            if e.kind() == std::io::ErrorKind::PermissionDenied {
+                anyhow::bail!(
+                    "This operation requires sudo privileges.\n\
+                     \n\
+                     For automation/CI, configure sudo with NOPASSWD or use:\n\
+                     sudo -n {} {:?}\n\
+                     \n\
+                     For interactive use, run:\n\
+                     sudo {} {:?}",
+                    exe.display(),
+                    args,
+                    exe.display(),
+                    args
+                );
+            }
+            anyhow::bail!("Failed to elevate privileges: {e}")
+        }
     }
-    Ok(())
 }
 
 /// Execute a closure that requires root, elevating if needed

@@ -141,13 +141,43 @@ impl PackageService {
                     anyhow::bail!("Package not found: {pkg}");
                 }
             }
+
+            let result = self.backend.install(packages).await;
+            if let Some(history) = &self.history {
+                let _ = history.add_transaction(TransactionType::Install, changes, result.is_ok());
+            }
+            result
         }
 
-        let result = self.backend.install(packages).await;
-        if let Some(history) = &self.history {
-            let _ = history.add_transaction(TransactionType::Install, changes, result.is_ok());
+        // Fallback for Arch without AUR (shouldn't happen in practice)
+        #[cfg(feature = "arch")]
+        {
+            for pkg in packages {
+                if let Ok(Some(info)) = self.backend.info(pkg).await {
+                    let grade = self
+                        .policy
+                        .assign_grade(&info.name, &info.version, false, true)
+                        .await;
+                    self.policy.check_package(&info.name, false, None, grade)?;
+
+                    changes.push(PackageChange {
+                        name: info.name,
+                        old_version: None,
+                        #[allow(clippy::implicit_clone)]
+                        new_version: Some(info.version.to_string()),
+                        source: self.backend.name().to_string(),
+                    });
+                } else {
+                    anyhow::bail!("Package not found: {pkg}");
+                }
+            }
+
+            let result = self.backend.install(packages).await;
+            if let Some(history) = &self.history {
+                let _ = history.add_transaction(TransactionType::Install, changes, result.is_ok());
+            }
+            result
         }
-        result
     }
 
     /// Remove packages

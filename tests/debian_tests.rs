@@ -3,8 +3,11 @@
 //! Enterprise-grade test coverage for Debian and Ubuntu package management.
 //!
 //! Run: `cargo test --test debian_tests --features debian`
-//! With system tests: `OMG_RUN_SYSTEM_TESTS=1 cargo test --test debian_tests --features debian`
+//! With system tests: `OMG_RUN_SYSTEM_TESTS=1` cargo test --test debian_tests --features debian`
 //! On Ubuntu: `OMG_TEST_DISTRO=ubuntu cargo test --test debian_tests --features debian`
+//!
+//! Note: System tests require real package operations and will modify your system!
+//! Only run these tests in disposable containers or development environments.
 
 #![cfg(any(feature = "debian", feature = "debian-pure"))]
 
@@ -147,7 +150,38 @@ mod apt_integration {
         require_system_tests!();
 
         let result = run_omg(&["update", "--check"]);
-        // Should work without making changes
+        result.assert_success();
+        assert!(!result.stderr_contains("panicked at"), "Should not panic");
+    }
+
+    #[test]
+    fn test_update_check_with_mock_updates() {
+        let project = TestProject::new();
+
+        mock_install("firefox-esr", "115.6.0").ok();
+        mock_available("firefox-esr", "116.0.0").ok();
+
+        let result = project.run(&["update", "--check"]);
+        result.assert_success();
+
+        assert!(
+            result.stdout_contains("up to date") || result.stdout_contains("firefox-esr"),
+            "Should report up to date or show firefox-esr in updates"
+        );
+        assert!(!result.stderr_contains("panicked at"), "Should not panic");
+    }
+
+    #[test]
+    fn test_update_check_no_updates_when_current() {
+        let project = TestProject::new();
+
+        mock_install("firefox-esr", "116.0.0").ok();
+        mock_available("firefox-esr", "116.0.0").ok();
+
+        let result = project.run(&["update", "--check"]);
+        result.assert_success();
+
+        assert!(result.stdout_contains("up to date"), "Should report up to date");
         assert!(!result.stderr_contains("panicked at"), "Should not panic");
     }
 

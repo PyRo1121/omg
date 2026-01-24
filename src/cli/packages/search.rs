@@ -220,6 +220,14 @@ async fn handle_interactive_selection(
 
     println!("{}", style::arrow("Select packages to install:"));
 
+    if !console::user_attended() {
+        anyhow::bail!(
+            "Interactive mode requires an interactive terminal.\n\
+             For automation, use: omg install <package1> <package2> ...\n\
+             Example: omg install firefox vim"
+        );
+    }
+
     let selections = MultiSelect::with_theme(&ColorfulTheme::default())
         .items(&items)
         .interact()?;
