@@ -486,18 +486,19 @@ pub fn mock_install(package: &str, version: &str) -> Result<()> {
     let path = env::var("OMG_DATA_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| {
-            PathBuf::from(env::var("HOME").unwrap_or_default())
-                .join(".local/share/omg")
+            PathBuf::from(env::var("HOME").unwrap_or_default()).join(".local/share/omg")
         })
         .join("mock_state.json");
 
     let mut state: serde_json::Value = fs::read_to_string(&path)
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_else(|| serde_json::json!({
-            "installed": [],
-            "available": {}
-        }));
+        .unwrap_or_else(|| {
+            serde_json::json!({
+                "installed": [],
+                "available": {}
+            })
+        });
 
     if let Some(installed) = state["installed"].as_array_mut() {
         if !installed.iter().any(|v| v.as_str() == Some(package)) {
@@ -556,18 +557,19 @@ pub fn mock_available(package: &str, version: &str) -> Result<()> {
     let path = env::var("OMG_DATA_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| {
-            PathBuf::from(env::var("HOME").unwrap_or_default())
-                .join(".local/share/omg")
+            PathBuf::from(env::var("HOME").unwrap_or_default()).join(".local/share/omg")
         })
         .join("mock_state.json");
 
     let mut state: serde_json::Value = fs::read_to_string(&path)
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_else(|| serde_json::json!({
-            "installed": [],
-            "available": {}
-        }));
+        .unwrap_or_else(|| {
+            serde_json::json!({
+                "installed": [],
+                "available": {}
+            })
+        });
 
     if let Some(available) = state["available"].as_object_mut() {
         available.insert(package.to_string(), serde_json::json!(version.to_string()));

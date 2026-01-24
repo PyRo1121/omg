@@ -622,24 +622,24 @@ pub async fn rollback(id: Option<String>, yes: bool) -> Result<()> {
     );
 
     use dialoguer::{Confirm, theme::ColorfulTheme};
-        // Check if we're in interactive mode
-        if console::user_attended()
-            && !Confirm::with_theme(&ColorfulTheme::default())
-                .with_prompt("Proceed with rollback?")
-                .default(false)
-                .interact()?
-        {
-            return Ok(());
-        }
+    // Check if we're in interactive mode
+    if console::user_attended()
+        && !Confirm::with_theme(&ColorfulTheme::default())
+            .with_prompt("Proceed with rollback?")
+            .default(false)
+            .interact()?
+    {
+        return Ok(());
+    }
 
-        // Non-interactive mode: require --yes flag for destructive operation
-        if !yes {
-            anyhow::bail!(
-                "This destructive command requires --yes flag in non-interactive mode.\n\n\
+    // Non-interactive mode: require --yes flag for destructive operation
+    if !yes {
+        anyhow::bail!(
+            "This destructive command requires --yes flag in non-interactive mode.\n\n\
                  For automation/CI, use: omg rollback <id> --yes\n\
                  Or run in interactive mode to select a transaction."
-            );
-        }
+        );
+    }
 
     // Identify packages that were changed and build install list
     let mut to_install = Vec::new();

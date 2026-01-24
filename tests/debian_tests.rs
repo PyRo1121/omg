@@ -181,7 +181,10 @@ mod apt_integration {
         let result = project.run(&["update", "--check"]);
         result.assert_success();
 
-        assert!(result.stdout_contains("up to date"), "Should report up to date");
+        assert!(
+            result.stdout_contains("up to date"),
+            "Should report up to date"
+        );
         assert!(!result.stderr_contains("panicked at"), "Should not panic");
     }
 
