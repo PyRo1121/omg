@@ -105,29 +105,25 @@ fn try_fast_info(args: &[String]) -> bool {
 
 /// Ultra-fast path for completions (bypasses tokio entirely)
 fn try_fast_completions(args: &[String]) -> Result<bool> {
-    if has_help_flag(args) {
-        // Check if --all flag is also present
-        let use_all = has_all_flag(args);
-
-        // Parse CLI to get the all flag
-        let cli = Cli::try_parse_from(args.iter()).unwrap_or(Cli {
-            verbose: 0,
-            quiet: false,
-            all: use_all,
-            command: Commands::Status { fast: false },
-        });
-
-        // Use the new tiered help system
-        omg_lib::cli::help::print_help(&cli, use_all)?;
-        return Ok(true);
-    }
-
     // Check for "omg completions <shell>" or "omg completions <shell> --stdout"
     if args.len() >= 3 && args[1] == "completions" {
         let shell = &args[2];
         // Skip if shell looks like a flag
         if shell.starts_with('-') {
             return Ok(false);
+        }
+
+        // Check if --help flag is also present
+        if has_help_flag(args) {
+            let use_all = has_all_flag(args);
+            let cli = Cli::try_parse_from(args.iter()).unwrap_or(Cli {
+                verbose: 0,
+                quiet: false,
+                all: use_all,
+                command: Commands::Status { fast: false },
+            });
+            omg_lib::cli::help::print_help(&cli, use_all)?;
+            return Ok(true);
         }
 
         let stdout = args.iter().any(|a| a == "--stdout");
