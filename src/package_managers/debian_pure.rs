@@ -141,8 +141,10 @@ impl PackageManager for PureDebianPackageManager {
             // Find packages with newer versions available
             for pkg in &index_pkgs {
                 if let Some(installed_ver) = installed_map.get(&pkg.name) {
-                    let available_ver = crate::package_managers::types::parse_version_or_zero(&pkg.version);
-                    let installed_v = crate::package_managers::types::parse_version_or_zero(installed_ver);
+                    let available_ver =
+                        crate::package_managers::types::parse_version_or_zero(&pkg.version);
+                    let installed_v =
+                        crate::package_managers::types::parse_version_or_zero(installed_ver);
 
                     if available_ver > installed_v {
                         updates.push(UpdateInfo {
@@ -156,7 +158,8 @@ impl PackageManager for PureDebianPackageManager {
             }
 
             Ok(updates)
-        }.boxed()
+        }
+        .boxed()
     }
 
     fn is_installed(&self, package: &str) -> BoxFuture<'static, bool> {
