@@ -3,8 +3,11 @@
 //! This file focuses on obscure error paths and "absolute everything" testing.
 
 use omg_lib::core::security::validation;
+
+#[cfg(not(feature = "arch"))]
 use omg_lib::package_managers::types::parse_version_or_zero;
 #[test]
+#[cfg(not(feature = "arch"))]
 fn test_version_parsing_edge_cases() {
     // Standard versions
     assert_eq!(parse_version_or_zero("1.2.3"), "1.2.3");

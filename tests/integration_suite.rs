@@ -385,10 +385,10 @@ mod package_management {
     fn test_clean_help() {
         let (success, stdout, stderr) = run_omg(&["clean", "--help"]);
         assert!(success, "Clean help should succeed");
-        let output = format!("{}{}", stdout, stderr);
+        let output = format!("{stdout}{stderr}");
         // Debug output
         if !output.contains("orphans") && !output.contains("cache") {
-            eprintln!("Clean help output:\n{}", output);
+            eprintln!("Clean help output:\n{output}");
         }
         // At minimum, the command should succeed and produce some output
         assert!(!output.is_empty(), "Clean help should produce output");
