@@ -1812,6 +1812,11 @@ mod stress_tests {
 
     #[test]
     fn test_rapid_version_detection() {
+        if !system_tests_enabled() {
+            eprintln!("Skipping system test (set OMG_RUN_SYSTEM_TESTS=1)");
+            return;
+        }
+
         let temp_dir = TempDir::new().unwrap();
         let mut f = File::create(temp_dir.path().join(".nvmrc")).unwrap();
         writeln!(f, "20.10.0").unwrap();
