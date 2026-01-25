@@ -351,9 +351,6 @@ impl PackageServiceBuilder {
             self.aur_client
         };
 
-        #[cfg(not(feature = "arch"))]
-        let aur_client: Option<crate::package_managers::AurClient> = None;
-
         PackageService {
             backend: self.backend,
             policy: self.policy.unwrap_or_default(),
