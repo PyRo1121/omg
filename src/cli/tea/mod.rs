@@ -242,7 +242,7 @@ impl<M: Model> Program<M> {
     }
 
     /// Check if there are more commands to process
-    #[allow(clippy::unnecessary_wraps)]
+    #[allow(clippy::unnecessary_wraps, clippy::unused_self)]
     fn next_cmd(&self) -> io::Result<Option<Cmd<M::Msg>>> {
         // For now, we process commands synchronously
         // In the future, this could check a queue or channel

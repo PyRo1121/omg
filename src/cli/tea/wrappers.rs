@@ -1,6 +1,10 @@
 //! Integration wrappers for Elm-based models
 
-use crate::cli::tea::{InfoModel, InstallModel, Model, Program, StatusModel};
+use crate::cli::tea::{InfoModel, InstallModel, Program, StatusModel};
+
+// Import Model trait for use in test modules
+#[cfg(test)]
+use crate::cli::tea::Model;
 
 /// Run status command using Elm Architecture
 pub fn run_status_elm(fast: bool) -> Result<(), std::io::Error> {
