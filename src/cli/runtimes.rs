@@ -82,7 +82,10 @@ pub async fn use_version(runtime: &str, version: Option<&str>) -> Result<()> {
         }
     };
 
-    ui::print_header("OMG", &format!("Switching {} to version {}", runtime, version));
+    ui::print_header(
+        "OMG",
+        &format!("Switching {} to version {}", runtime, version),
+    );
     ui::print_spacer();
 
     crate::core::usage::track_runtime_switch(runtime);
@@ -480,7 +483,10 @@ pub async fn list_versions(runtime: Option<&str>, available: bool) -> Result<()>
             _ => {
                 // Auto-install mise if not available
                 if !MISE.is_available() {
-                    ui::print_tip(&format!("{} is not natively supported, installing mise...", rt));
+                    ui::print_tip(&format!(
+                        "{} is not natively supported, installing mise...",
+                        rt
+                    ));
                     MISE.ensure_installed().await?;
                 }
                 mise_list_versions(rt, available)?;

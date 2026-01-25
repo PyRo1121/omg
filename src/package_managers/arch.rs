@@ -1,9 +1,9 @@
-use futures::future::{BoxFuture, Future};
-use futures::FutureExt;
-use owo_colors::OwoColorize;
 use anyhow::Result as AnyhowResult;
+use futures::FutureExt;
+use futures::future::{BoxFuture, Future};
+use owo_colors::OwoColorize;
 
-use crate::core::{is_root, privilege, Package, PackageSource};
+use crate::core::{Package, PackageSource, is_root, privilege};
 use crate::package_managers::{get_system_status, invalidate_caches, traits::PackageManager};
 
 /// Arch Linux package manager (ALPM) implementation

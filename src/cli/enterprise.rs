@@ -1,6 +1,8 @@
 //! `omg enterprise` - Enterprise features (reports, policies, compliance)
 
-use crate::cli::{CliContext, CommandRunner, EnterpriseCommands, EnterprisePolicyCommands, ServerCommands};
+use crate::cli::{
+    CliContext, CommandRunner, EnterpriseCommands, EnterprisePolicyCommands, ServerCommands,
+};
 use anyhow::Result;
 use async_trait::async_trait;
 use owo_colors::OwoColorize;
@@ -20,33 +22,25 @@ impl CommandRunner for EnterpriseCommands {
                 format,
             } => reports(report_type, format, ctx).await,
             EnterpriseCommands::Policy { command } => match command {
-                EnterprisePolicyCommands::Set { scope, rule } => {
-                    policy::set(scope, rule, ctx)
-                }
+                EnterprisePolicyCommands::Set { scope, rule } => policy::set(scope, rule, ctx),
                 EnterprisePolicyCommands::Show { scope } => {
                     policy::show(scope.as_deref(), ctx).await
                 }
-                EnterprisePolicyCommands::Inherit { from, to } => {
-                    policy::inherit(from, to, ctx)
-                }
+                EnterprisePolicyCommands::Inherit { from, to } => policy::inherit(from, to, ctx),
             },
             EnterpriseCommands::AuditExport {
                 format,
                 period,
                 output,
             } => audit_export(format, period.as_deref(), output, ctx),
-            EnterpriseCommands::LicenseScan { export } => {
-                license_scan(export.as_deref(), ctx)
-            }
+            EnterpriseCommands::LicenseScan { export } => license_scan(export.as_deref(), ctx),
             EnterpriseCommands::Server { command } => match command {
                 ServerCommands::Init {
                     license,
                     storage,
                     domain,
                 } => server::init(license, storage, domain, ctx),
-                ServerCommands::Mirror { upstream } => {
-                    server::mirror(upstream, ctx).await
-                }
+                ServerCommands::Mirror { upstream } => server::mirror(upstream, ctx).await,
             },
         }
     }

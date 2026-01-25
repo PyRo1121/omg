@@ -12,7 +12,9 @@ impl CommandRunner for AuditCommands {
         ui::print_spacer();
         match self {
             AuditCommands::Scan => scan(ctx).await,
-            AuditCommands::Sbom { output, vulns } => generate_sbom(output.clone(), *vulns, ctx).await,
+            AuditCommands::Sbom { output, vulns } => {
+                generate_sbom(output.clone(), *vulns, ctx).await
+            }
             AuditCommands::Secrets { path } => scan_secrets(path.clone(), ctx),
             AuditCommands::Log {
                 limit,
@@ -47,8 +49,7 @@ pub async fn scan(_ctx: &CliContext) -> Result<()> {
             } else {
                 ui::print_warning(format!(
                     "Found {} vulnerabilities ({} high severity)",
-                    res.total_vulnerabilities,
-                    res.high_severity
+                    res.total_vulnerabilities, res.high_severity
                 ));
                 println!();
                 for (pkg, vulns) in res.vulnerabilities {

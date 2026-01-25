@@ -4,13 +4,13 @@
 
 use crate::cli::tui::app::{App, Tab};
 use ratatui::{
+    Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{
         Block, BorderType, Borders, Cell, Clear, Gauge, List, ListItem, Paragraph, Row, Table, Tabs,
     },
-    Frame,
 };
 
 // Modern color palette (inspired by Catppuccin/Tokyo Night)
