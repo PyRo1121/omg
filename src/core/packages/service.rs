@@ -233,6 +233,7 @@ impl PackageService {
 
     /// List available updates
     pub async fn list_updates(&self) -> Result<Vec<UpdateInfo>> {
+        #[allow(unused_mut)]
         let mut updates = self.backend.list_updates().await?;
 
         #[cfg(feature = "arch")]
@@ -351,7 +352,7 @@ impl PackageServiceBuilder {
         };
 
         #[cfg(not(feature = "arch"))]
-        let aur_client = None;
+        let aur_client: Option<crate::package_managers::AurClient> = None;
 
         PackageService {
             backend: self.backend,
