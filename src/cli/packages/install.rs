@@ -4,6 +4,7 @@ use anyhow::Result;
 use dialoguer::Select;
 use std::sync::Arc;
 
+use crate::cli::tea::run_install_elm;
 use crate::cli::{style, ui};
 use crate::core::client::DaemonClient;
 use crate::core::packages::PackageService;
@@ -15,6 +16,17 @@ pub async fn install(packages: &[String], yes: bool) -> Result<()> {
         anyhow::bail!("No packages specified");
     }
 
+    // Try modern Elm UI first
+    if let Err(e) = run_install_elm(packages.to_vec(), yes) {
+        eprintln!("Warning: Elm UI failed, falling back to basic mode: {e}");
+        install_fallback(packages, yes).await
+    } else {
+        Ok(())
+    }
+}
+
+/// Fallback implementation using original approach
+async fn install_fallback(packages: &[String], yes: bool) -> Result<()> {
     let pm = Arc::from(get_package_manager());
     let service = PackageService::new(pm);
 

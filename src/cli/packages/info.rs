@@ -2,6 +2,7 @@
 
 use anyhow::Result;
 
+use crate::cli::tea::run_info_elm;
 use crate::cli::{style, ui};
 use crate::core::client::DaemonClient;
 use crate::core::env::distro::use_debian_backend;
@@ -156,6 +157,16 @@ fn display_detailed_info(info: &crate::daemon::protocol::DetailedPackageInfo) {
 }
 
 pub async fn info(package: &str) -> Result<()> {
+    // Try modern Elm UI first
+    if let Err(e) = run_info_elm(package.to_string()) {
+        eprintln!("Warning: Elm UI failed, falling back to basic mode: {e}");
+        info_fallback(package).await
+    } else {
+        Ok(())
+    }
+}
+
+async fn info_fallback(package: &str) -> Result<()> {
     // Try sync path first
     if info_sync(package)? {
         return Ok(());

@@ -4,6 +4,7 @@ use anyhow::Result;
 use dialoguer::MultiSelect;
 use std::io::Write;
 
+use crate::cli::tea::run_search_elm;
 use crate::cli::{style, ui};
 use crate::core::client::DaemonClient;
 use crate::core::env::distro::use_debian_backend;
@@ -496,6 +497,21 @@ pub async fn search(query: &str, detailed: bool, interactive: bool) -> Result<()
         anyhow::bail!("Search query contains invalid characters");
     }
 
+    // Try modern Elm UI first (only for standard search, not interactive yet)
+    if !interactive && !detailed {
+        if let Err(e) = run_search_elm(query.to_string()) {
+            eprintln!("Warning: Elm UI failed, falling back to basic mode: {e}");
+            search_fallback(query, detailed, interactive).await
+        } else {
+            Ok(())
+        }
+    } else {
+        // Interactive/Detailed modes still use the old path for now
+        search_fallback(query, detailed, interactive).await
+    }
+}
+
+async fn search_fallback(query: &str, detailed: bool, interactive: bool) -> Result<()> {
     // Try sync path first
     if search_sync_cli(query, detailed, interactive)? {
         return Ok(());
