@@ -140,10 +140,10 @@ impl AurClient {
                 })
                 .await?;
 
-                if let Ok(packages) = result {
-                    if !packages.is_empty() {
-                        return Ok(packages);
-                    }
+                if let Ok(packages) = result
+                    && !packages.is_empty()
+                {
+                    return Ok(packages);
                 }
             }
         }

@@ -196,7 +196,7 @@ impl Model for InstallModel {
             }
             InstallMsg::Complete => {
                 self.state = InstallState::Complete;
-                Components::complete(&format!(
+                Components::complete(format!(
                     "Successfully installed {} package(s)!",
                     self.packages.len()
                 ))
