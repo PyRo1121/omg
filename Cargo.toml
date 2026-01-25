@@ -1,6 +1,6 @@
 [package]
 name = "omg"
-version = "0.1.96"
+version = "0.1.98"
 edition = "2024"
 rust-version = "1.92"
 description = "The Fastest Unified Package Manager for Arch Linux + All Language Runtimes"
@@ -223,5 +223,6 @@ debian = ["debian-packaging", "winnow", "gzp", "ar", "rust-apt"]
 debian-pure = ["debian-packaging", "winnow", "gzp", "ar"]
 
 license = [] # Enable license/subscription features (Pro, Team, Enterprise tiers)
+proptest = [] # Enable property-based tests
 docker_tests = [] # Enable tests that require running as root (e.g. in Docker)
 sequoia-openpgp = ["dep:sequoia-openpgp"]
