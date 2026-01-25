@@ -19,7 +19,7 @@ use omg_lib::cli::{
     CiCommands, Cli, Commands, ContainerCommands, MigrateCommands, SnapshotCommands, commands,
 };
 use omg_lib::cli::{blame, ci, diff, migrate, outdated, pin, size, snapshot, why};
-use omg_lib::core::{elevate_if_needed, is_root};
+use omg_lib::core::{elevate_if_needed, is_root, set_yes_flag};
 use omg_lib::hooks;
 
 fn has_help_flag(args: &[String]) -> bool {
@@ -262,6 +262,19 @@ async fn async_main(args: Vec<String>) -> Result<()> {
     omg_lib::cli::style::init_theme();
     let cmd_start = omg_lib::core::analytics::start_timer();
     let cli = Cli::parse_from(&args);
+
+    // Set the yes flag globally based on command
+    let yes_flag = matches!(
+        &cli.command,
+        Commands::Install { yes: true, .. }
+            | Commands::Remove { yes: true, .. }
+            | Commands::Update { yes: true, .. }
+            | Commands::Rollback { yes: true, .. }
+            | Commands::Snapshot {
+                command: SnapshotCommands::Restore { yes: true, .. }
+            }
+    );
+    set_yes_flag(yes_flag);
 
     // SECURITY: Validate package names
     match &cli.command {

@@ -1,6 +1,5 @@
 use ahash::AHashMap;
 use anyhow::Result;
-use memchr::memmem;
 use parking_lot::RwLock;
 
 use crate::daemon::db::PersistentCache;
@@ -44,9 +43,11 @@ pub struct PackageIndex {
     pool: StringPool,
     /// Maps package name to index in `items`
     name_to_idx: AHashMap<String, usize>,
-    /// Contiguous lowercased search text for all packages
+    /// Contiguous lowercased search text for all packages (reserved for future use)
+    #[allow(dead_code)]
     search_buffer: Vec<u8>,
-    /// Starting offset of each package in `search_buffer`
+    /// Starting offset of each package in `search_buffer` (reserved for future use)
+    #[allow(dead_code)]
     package_offsets: Vec<u32>,
     /// Reader-writer lock for package lookups
     lock: RwLock<()>,
@@ -61,6 +62,66 @@ struct CompactPackageInfo {
     download_size: u64,
     repo_offset: u32,
     source_offset: u32,
+}
+
+/// Relevance score for a search match
+/// Higher scores = better matches
+///
+/// Ordering: We use reverse sort (b.cmp(a)), so:
+/// - Higher rank values are better (4 > 3 > 2 > 1 > 0)
+/// - Lower `name_len` is better (shorter = more specific)
+/// - Lower idx is better (stable sort tiebreaker)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RelevanceScore {
+    /// Primary rank: exact name match > prefix match > word boundary > substring
+    rank: u8,
+    /// Secondary sort: shorter package names preferred (more specific)
+    /// We use reverse length for proper ordering with reverse sort
+    name_len_rev: usize, // usize::MAX - name_len, so shorter names have higher values
+    /// Package index (tiebreaker for stable sorting)
+    /// We use reverse index for proper ordering with reverse sort
+    idx_rev: usize, // usize::MAX - idx, so earlier indices have higher values
+}
+
+impl RelevanceScore {
+    const EXACT_NAME_MATCH: u8 = 4;
+    const PREFIX_MATCH: u8 = 3;
+    const WORD_BOUNDARY_MATCH: u8 = 2;
+    const SUBSTRING_MATCH: u8 = 1;
+    const DESCRIPTION_ONLY: u8 = 0;
+
+    fn new(rank: u8, name_len: usize, idx: usize) -> Self {
+        Self {
+            rank,
+            name_len_rev: usize::MAX.saturating_sub(name_len),
+            idx_rev: usize::MAX.saturating_sub(idx),
+        }
+    }
+}
+
+impl PartialOrd for RelevanceScore {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for RelevanceScore {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        // Compare by rank first (higher is better)
+        match self.rank.cmp(&other.rank) {
+            std::cmp::Ordering::Equal => {
+                // Then by name_len_rev (higher = shorter name = better)
+                match self.name_len_rev.cmp(&other.name_len_rev) {
+                    std::cmp::Ordering::Equal => {
+                        // Finally by idx_rev (higher = earlier index = better)
+                        self.idx_rev.cmp(&other.idx_rev)
+                    }
+                    other => other,
+                }
+            }
+            other => other,
+        }
+    }
 }
 
 impl PackageIndex {
@@ -200,38 +261,97 @@ impl PackageIndex {
             return Vec::new();
         }
         let query_lower = query.to_ascii_lowercase();
-        let finder = memmem::Finder::new(query_lower.as_bytes());
-        let mut results = Vec::with_capacity(limit);
-        let mut current_pkg_idx = 0;
-        let mut current_pkg_end = 0;
 
-        for match_idx in finder.find_iter(&self.search_buffer) {
-            if (match_idx as u32) < current_pkg_end {
-                continue;
-            }
+        // Collect all matches with relevance scores
+        let mut scored_matches: Vec<(RelevanceScore, usize)> = Vec::new();
 
-            let search_slice = &self.package_offsets[current_pkg_idx..];
-            let relative_idx = match search_slice.binary_search(&(match_idx as u32)) {
-                Ok(i) => i,
-                Err(i) => i.saturating_sub(1),
-            };
-            let pkg_idx = current_pkg_idx + relative_idx;
-            current_pkg_idx = pkg_idx;
-            current_pkg_end = self.package_offsets[pkg_idx + 1];
+        // Check each package for matches
+        for (idx, item) in self.items.iter().enumerate() {
+            let name = self.pool.get(item.name_offset);
+            let description = self.pool.get(item.description_offset);
+            let name_lower = name.to_ascii_lowercase();
 
-            if let Some(item) = self.items.get(pkg_idx) {
-                results.push(PackageInfo {
+            // Score this package
+            let score =
+                if let Some(name_score) = Self::score_name_match(&query_lower, &name_lower, idx) {
+                    name_score
+                } else if description.to_ascii_lowercase().contains(&query_lower) {
+                    // Match in description only (lowest priority)
+                    RelevanceScore::new(RelevanceScore::DESCRIPTION_ONLY, name.len(), idx)
+                } else {
+                    continue; // No match at all
+                };
+
+            scored_matches.push((score, idx));
+        }
+
+        // Sort by relevance (higher scores first)
+        scored_matches.sort_by(|a, b| b.0.cmp(&a.0));
+
+        // Convert to PackageInfo, respecting limit
+        scored_matches
+            .into_iter()
+            .take(limit)
+            .filter_map(|(_, idx)| {
+                let item = self.items.get(idx)?;
+                Some(PackageInfo {
                     name: self.pool.get(item.name_offset).to_string(),
                     version: self.pool.get(item.version_offset).to_string(),
                     description: self.pool.get(item.description_offset).to_string(),
                     source: self.pool.get(item.source_offset).to_string(),
-                });
-            }
-            if results.len() >= limit {
-                break;
+                })
+            })
+            .collect()
+    }
+
+    /// Score a name match, returning Some(score) if there's a match, None otherwise
+    fn score_name_match(query_lower: &str, name_lower: &str, idx: usize) -> Option<RelevanceScore> {
+        // 1. Exact match (highest priority)
+        if query_lower == name_lower {
+            return Some(RelevanceScore::new(
+                RelevanceScore::EXACT_NAME_MATCH,
+                name_lower.len(),
+                idx,
+            ));
+        }
+
+        // 2. Prefix match (e.g., "brave" matches "brave-browser")
+        if name_lower.starts_with(query_lower) {
+            return Some(RelevanceScore::new(
+                RelevanceScore::PREFIX_MATCH,
+                name_lower.len(),
+                idx,
+            ));
+        }
+
+        // 3. Word boundary match (e.g., "brave" matches "brave-browser" or "my-brave-app")
+        // Check if query appears at start of name or after a separator (-, _, ., space)
+        for (pos, _) in name_lower.match_indices(query_lower) {
+            // At word boundary if at position 0 or preceded by separator
+            if pos == 0
+                || name_lower.as_bytes()[pos - 1].is_ascii_whitespace()
+                || name_lower.as_bytes()[pos - 1] == b'-'
+                || name_lower.as_bytes()[pos - 1] == b'_'
+                || name_lower.as_bytes()[pos - 1] == b'.'
+            {
+                return Some(RelevanceScore::new(
+                    RelevanceScore::WORD_BOUNDARY_MATCH,
+                    name_lower.len(),
+                    idx,
+                ));
             }
         }
-        results
+
+        // 4. Simple substring match (e.g., "rav" matches "brave")
+        if name_lower.contains(query_lower) {
+            return Some(RelevanceScore::new(
+                RelevanceScore::SUBSTRING_MATCH,
+                name_lower.len(),
+                idx,
+            ));
+        }
+
+        None
     }
 
     pub fn get(&self, name: &str) -> Option<DetailedPackageInfo> {
@@ -329,5 +449,45 @@ mod tests {
             let off = pool.intern(&s);
             assert_eq!(pool.get(off), s);
         }
+    }
+
+    #[test]
+    fn test_relevance_score_ordering() {
+        // Test that RelevanceScore sorts correctly
+        let idx1 = 0;
+        let idx2 = 1;
+        let idx3 = 2;
+
+        let exact = RelevanceScore::new(RelevanceScore::EXACT_NAME_MATCH, 5, idx1);
+        let prefix = RelevanceScore::new(RelevanceScore::PREFIX_MATCH, 5, idx2);
+        let word_boundary = RelevanceScore::new(RelevanceScore::WORD_BOUNDARY_MATCH, 5, idx3);
+        let substring = RelevanceScore::new(RelevanceScore::SUBSTRING_MATCH, 5, 0);
+        let description = RelevanceScore::new(RelevanceScore::DESCRIPTION_ONLY, 5, 0);
+
+        // Higher ranks should come first (higher value = better)
+        assert!(exact > prefix);
+        assert!(prefix > word_boundary);
+        assert!(word_boundary > substring);
+        assert!(substring > description);
+    }
+
+    #[test]
+    fn test_relevance_score_tiebreaker() {
+        // When ranks are equal, shorter names should come first
+        let short = RelevanceScore::new(RelevanceScore::PREFIX_MATCH, 5, 0);
+        let long = RelevanceScore::new(RelevanceScore::PREFIX_MATCH, 15, 0);
+
+        // Shorter name (len=5) should have higher value than longer name (len=15)
+        assert!(short > long);
+    }
+
+    #[test]
+    fn test_relevance_score_stable_sort() {
+        // When rank and length are equal, lower index should come first
+        let first = RelevanceScore::new(RelevanceScore::PREFIX_MATCH, 10, 0);
+        let second = RelevanceScore::new(RelevanceScore::PREFIX_MATCH, 10, 1);
+
+        // Lower index should have higher value (comes first in results)
+        assert!(first > second);
     }
 }

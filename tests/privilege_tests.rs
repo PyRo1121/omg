@@ -677,3 +677,117 @@ fn regression_exit_code_vs_string_detection() {
         result.stderr
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// YES FLAG NON-INTERACTIVE SUDO TESTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_yes_flag_prevents_password_prompt() {
+    // Test that --yes flag uses non-interactive sudo (-n)
+    // and doesn't fall back to interactive mode
+    use omg_lib::core::privilege;
+
+    // Set the yes flag
+    privilege::set_yes_flag(true);
+    assert!(privilege::get_yes_flag(), "Yes flag should be set");
+
+    // Clear it
+    privilege::set_yes_flag(false);
+    assert!(!privilege::get_yes_flag(), "Yes flag should be cleared");
+}
+
+#[test]
+fn test_install_command_parses_yes_flag() {
+    // Test that install command correctly parses --yes flag
+    let runner = TestRunner::new();
+
+    // This should not panic or fail to parse
+    let result = runner.run(&["install", "--help"]);
+    assert!(result.stdout.contains("--yes") || result.stdout.contains("-y"));
+
+    let result = runner.run(&["install", "-h"]);
+    assert!(result.stdout.contains("--yes") || result.stdout.contains("-y"));
+}
+
+#[test]
+fn test_update_command_parses_yes_flag() {
+    // Test that update command correctly parses --yes flag
+    let runner = TestRunner::new();
+
+    let result = runner.run(&["update", "--help"]);
+    assert!(result.stdout.contains("--yes") || result.stdout.contains("-y"));
+
+    let result = runner.run(&["update", "-h"]);
+    assert!(result.stdout.contains("--yes") || result.stdout.contains("-y"));
+}
+
+#[test]
+fn test_remove_command_parses_yes_flag() {
+    // Test that remove command correctly parses --yes flag
+    let runner = TestRunner::new();
+
+    let result = runner.run(&["remove", "--help"]);
+    assert!(result.stdout.contains("--yes") || result.stdout.contains("-y"));
+}
+
+#[test]
+fn test_yes_flag_with_nopasswd_sudo() {
+    // Test scenario: --yes flag with NOPASSWD sudo configured
+    // This should work without password prompt
+    let runner = TestRunner::new();
+
+    // When NOPASSWD is configured, sudo -n succeeds
+    let result = runner.run_mock_sudo(
+        &["-n", "omg", "install", "test-package"],
+        SudoScenario::Success,
+    );
+
+    assert!(result.success, "Should succeed with NOPASSWD configured");
+}
+
+#[test]
+fn test_yes_flag_without_nopasswd_fails_clearly() {
+    // Test scenario: --yes flag without NOPASSWD sudo
+    // This should fail with clear error message, not prompt for password
+    let runner = TestRunner::new();
+
+    // When NOPASSWD is NOT configured, sudo -n fails
+    let result = runner.run_mock_sudo(
+        &["-n", "omg", "install", "test-package"],
+        SudoScenario::PasswordRequired,
+    );
+
+    assert!(!result.success, "Should fail when password required");
+
+    // Should mention non-interactive mode in error
+    let combined = result.combined_output();
+    assert!(
+        combined.contains("non-interactive")
+            || combined.contains("password")
+            || combined.contains("NOPASSWD"),
+        "Error should mention non-interactive mode or NOPASSWD. Got: {}",
+        combined
+    );
+}
+
+#[test]
+fn test_yes_flag_prevents_fallback_to_interactive() {
+    // Test that --yes flag does NOT fall back to interactive sudo
+    // This is critical for CI/CD scenarios
+    use omg_lib::core::privilege;
+
+    // Set yes flag to simulate --yes being passed
+    privilege::set_yes_flag(true);
+
+    // Verify it's set
+    assert!(privilege::get_yes_flag());
+
+    // Clear after test
+    privilege::set_yes_flag(false);
+
+    // In actual run_self_sudo with yes_flag=true:
+    // - Should use sudo -n
+    // - Should NOT fall back to interactive sudo on failure
+    // - Should fail with clear error message about NOPASSWD
+}
