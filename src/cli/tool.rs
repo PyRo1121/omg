@@ -262,7 +262,8 @@ pub async fn install(name: &str) -> Result<()> {
     }
 
     // 2. Interactive Fallback
-    if !user_attended() {
+    // In test mode or non-interactive terminals, fail immediately
+    if !user_attended() || std::env::var("OMG_TEST_MODE").is_ok() {
         anyhow::bail!(
             "Tool '{name}' not in registry. Re-run in an interactive shell to choose a source.\n\
              Available sources: Pacman, Cargo, NPM, Pip, Go\n\
