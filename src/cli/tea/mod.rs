@@ -73,6 +73,7 @@
 
 mod cmd;
 mod renderer;
+// mod lipgloss_renderer;  // TODO: Re-enable when lipgloss API is stable
 
 // Model implementations
 mod info_model;
@@ -85,6 +86,16 @@ mod wrappers;
 
 pub use cmd::{Cmd, cmd};
 pub use renderer::Renderer;
+
+// Re-export lip-gloss renderer (when stable)
+// pub use lipgloss_renderer::LipGlossRenderer;
+// pub use lipgloss_renderer::Theme;
+
+// Re-export configuration types for convenience
+pub use cmd::{
+    BorderStyle, PanelConfig, ProgressConfig, ProgressStyle, SpinnerConfig, SpinnerStyle,
+    StyledTextConfig, TableAlignment, TableConfig, TextStyle,
+};
 
 // Re-export models
 pub use info_model::{InfoModel, InfoMsg, InfoSource};
@@ -170,13 +181,18 @@ impl<M: Model> Program<M> {
     pub fn run(mut self) -> io::Result<()> {
         // Initialize
         let init_cmd = self.model.init();
+
+        // Render initial view to show loading state
+        self.render()?;
+        self.renderer.flush()?;
+
         self.process_cmd(init_cmd)?;
 
         // Process subscriptions
         let sub_cmd = self.model.subscription();
         self.process_cmd(sub_cmd)?;
 
-        // Render initial view
+        // Render final view
         self.render()?;
 
         // Process any pending commands
@@ -246,6 +262,37 @@ impl<M: Model> Program<M> {
             Cmd::Card(title, content) => {
                 self.renderer.card(&title, &content)?;
             }
+            Cmd::Progress(_config) => {
+                // Progress bars are handled by the renderer's progress tracking
+                // For now, we just acknowledge them - the renderer manages the state
+            }
+            Cmd::Spinner(_config) => {
+                // Spinners are handled by the renderer's progress tracking
+                // For now, we just acknowledge them - the renderer manages the state
+            }
+            Cmd::Table(config) => {
+                // Tables would need specialized handling in the renderer
+                // For now, fall back to simple rendering
+                eprintln!("{:?}", config);
+            }
+            Cmd::StyledText(config) => {
+                // Styled text would need the LipGlossRenderer
+                // For now, just print the text
+                eprintln!("{}", config.text);
+            }
+            Cmd::Panel(config) => {
+                // Panels would need specialized handling in the renderer
+                // For now, fall back to simple rendering
+                if let Some(title) = &config.title {
+                    eprintln!("\n[{title}]");
+                }
+                for line in &config.content {
+                    eprintln!("{}{}", " ".repeat(config.padding), line);
+                }
+            }
+            Cmd::Spacer => {
+                self.renderer.println("")?;
+            }
         }
         Ok(())
     }
@@ -261,7 +308,11 @@ impl<M: Model> Program<M> {
     /// Render the current view
     fn render(&mut self) -> io::Result<()> {
         let view = self.model.view();
-        self.renderer.render(&view)
+        if !view.trim().is_empty() {
+            self.renderer.render(&view)
+        } else {
+            Ok(())
+        }
     }
 }
 

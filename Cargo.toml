@@ -103,6 +103,7 @@ indicatif = "0.18.3"
 owo-colors = "4.2.3"
 console = "0.16.2"
 supports-color = "3.0.0"
+# lipgloss = "0.1"  # TODO: Add back when API is stable
 
 # Interactive prompts
 dialoguer = "0.12.0"
@@ -155,6 +156,7 @@ ahash = "0.8.12"
 uuid = { version = "1.19", features = ["v4"] }
 ratatui = "0.28"
 crossterm = "0.27"
+# terminal_size = "0.4"  # TODO: Add back when using lipgloss
 rust-apt = { version = "0.9.0", optional = true }
 rustix = { version = "0.38", features = ["fs", "process"] }
 

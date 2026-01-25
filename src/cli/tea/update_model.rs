@@ -104,7 +104,7 @@ pub struct UpdateModel {
 impl Default for UpdateModel {
     fn default() -> Self {
         Self {
-            state: UpdateState::Idle,
+            state: UpdateState::Checking,
             updates: Vec::new(),
             error: None,
             check_only: false,

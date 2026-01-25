@@ -9,6 +9,7 @@ use crate::cli::{style, ui};
 use crate::core::client::DaemonClient;
 use crate::core::packages::PackageService;
 use crate::package_managers::get_package_manager;
+use crate::cli::packages::execute_cmd;
 
 /// Install packages with Graded Security
 pub async fn install(packages: &[String], yes: bool) -> Result<()> {
@@ -52,11 +53,14 @@ async fn install_fallback(packages: &[String], yes: bool) -> Result<()> {
                     let suggestions = try_get_suggestions(pkg_name).await;
 
                     if !suggestions.is_empty() {
-                        println!(
-                            "\n{}",
-                            style::warning(&format!("Package '{pkg_name}' not found."))
-                        );
-                        println!("{}", style::arrow("Did you mean one of these?"));
+                        use crate::cli::components::Components;
+
+                        println!();
+                        execute_cmd(Components::error_with_suggestion(
+                            format!("Package '{pkg_name}' not found."),
+                            "Did you mean one of these?",
+                        ));
+                        println!();
 
                         // Check if we're in interactive mode
                         if console::user_attended() {

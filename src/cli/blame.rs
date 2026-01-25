@@ -3,6 +3,7 @@
 use anyhow::Result;
 use owo_colors::OwoColorize;
 
+use crate::cli::tea::Cmd;
 use crate::core::history::{HistoryManager, TransactionType};
 
 /// Show package installation history
@@ -10,26 +11,49 @@ pub fn run(package: &str) -> Result<()> {
     // SECURITY: Validate package name
     crate::core::security::validate_package_name(package)?;
 
-    println!(
-        "{} Package history for {}\n",
-        "OMG".cyan().bold(),
-        package.yellow()
-    );
+    let cmd = build_blame_output(package)?;
+    crate::cli::packages::execute_cmd(cmd);
+
+    Ok(())
+}
+
+fn build_blame_output(package: &str) -> Result<Cmd<()>> {
+    use crate::cli::components::Components;
 
     // First check if package is installed
     let (is_installed, version, install_reason) = get_package_info(package)?;
 
     if !is_installed {
-        println!("  {} Package '{}' is not installed", "✗".red(), package);
-        return Ok(());
+        return Ok(Components::error_with_suggestion(
+            format!("Package '{}' is not installed", package),
+            "Try 'omg search' to find available packages",
+        ));
     }
 
-    println!("  {} {}", "Package:".bold(), package.cyan());
+    let mut commands = vec![
+        Components::header("Package History", package),
+        Components::spacer(),
+    ];
+
+    // Package info
     if let Some(ver) = &version {
-        println!("  {} {}", "Version:".bold(), ver);
+        commands.push(Components::kv_list(
+            Some("Package Information"),
+            vec![
+                ("Name", package),
+                ("Version", ver),
+                ("Install Reason", &install_reason),
+            ],
+        ));
+    } else {
+        commands.push(Components::kv_list(
+            Some("Package Information"),
+            vec![
+                ("Name", package),
+                ("Install Reason", &install_reason),
+            ],
+        ));
     }
-    println!("  {} {}", "Install reason:".bold(), install_reason);
-    println!();
 
     // Search transaction history
     let history = HistoryManager::new()?;
@@ -41,49 +65,59 @@ pub fn run(package: &str) -> Result<()> {
         .collect();
 
     if relevant.is_empty() {
-        println!("  {} No transaction history found", "○".dimmed());
-        println!("  (Package may have been installed before OMG tracking began)");
+        commands.push(Components::spacer());
+        commands.push(Components::muted(
+            "No transaction history found (Package may have been installed before OMG tracking began)",
+        ));
     } else {
-        println!("  {}", "Transaction history:".bold());
-        for txn in relevant.iter().rev().take(10) {
-            // Safe: we filtered for transactions containing this package above
-            let Some(change) = txn.changes.iter().find(|c| c.name == package) else {
-                continue;
-            };
-            let action = match txn.transaction_type {
-                TransactionType::Install => "installed".green().to_string(),
-                TransactionType::Remove => "removed".red().to_string(),
-                TransactionType::Update => "updated".blue().to_string(),
-                TransactionType::Sync => "synced".dimmed().to_string(),
-            };
+        let txn_content: Vec<String> = relevant
+            .iter()
+            .rev()
+            .take(10)
+            .filter_map(|txn| {
+                // Safe: we filtered for transactions containing this package above
+                let Some(change) = txn.changes.iter().find(|c| c.name == package) else {
+                    return None;
+                };
 
-            let version_info = match (&change.old_version, &change.new_version) {
-                (None, Some(new)) => format!("→ {new}"),
-                (Some(old), Some(new)) => format!("{old} → {new}"),
-                (Some(old), None) => format!("{old} → (removed)"),
-                (None, None) => String::new(),
-            };
+                let action = match txn.transaction_type {
+                    TransactionType::Install => "installed",
+                    TransactionType::Remove => "removed",
+                    TransactionType::Update => "updated",
+                    TransactionType::Sync => "synced",
+                };
 
-            let time = format_timestamp(txn.timestamp.as_second());
-            println!(
-                "    {} {} {} {}",
-                time.dimmed(),
-                action,
-                version_info.cyan(),
-                format!("({})", change.source).dimmed()
-            );
-        }
+                let version_info = match (&change.old_version, &change.new_version) {
+                    (None, Some(new)) => format!("→ {new}"),
+                    (Some(old), Some(new)) => format!("{old} → {new}"),
+                    (Some(old), None) => format!("{old} → (removed)"),
+                    (None, None) => String::new(),
+                };
+
+                let time = format_timestamp(txn.timestamp.as_second());
+                Some(format!("{} {} {} ({})", time, action, version_info, change.source))
+            })
+            .collect();
+
+        commands.push(Components::spacer());
+        commands.push(Components::card(
+            format!("Transaction History ({})", relevant.len()),
+            txn_content,
+        ));
 
         if relevant.len() > 10 {
-            println!("    ... and {} more transactions", relevant.len() - 10);
+            commands.push(Components::muted(format!(
+                "... and {} more transactions",
+                relevant.len() - 10
+            )));
         }
     }
 
     // Show what requires this package
-    println!();
-    show_required_by(package)?;
+    commands.push(Components::spacer());
+    commands.push(show_required_by(package)?);
 
-    Ok(())
+    Ok(Cmd::batch(commands))
 }
 
 #[cfg(feature = "arch")]
@@ -147,8 +181,9 @@ fn get_package_info(_package: &str) -> Result<(bool, Option<String>, String)> {
 }
 
 #[cfg(feature = "arch")]
-fn show_required_by(package: &str) -> Result<()> {
+fn show_required_by(package: &str) -> Result<Cmd<()>> {
     use alpm::Alpm;
+    use crate::cli::components::Components;
 
     let handle = Alpm::new("/", "/var/lib/pacman")
         .map_err(|e| anyhow::anyhow!("Failed to open ALPM: {e}"))?;
@@ -166,30 +201,19 @@ fn show_required_by(package: &str) -> Result<()> {
     }
 
     if required_by.is_empty() {
-        println!(
-            "  {} Nothing depends on this package",
-            "Required by:".bold()
-        );
+        Ok(Components::info("Nothing depends on this package"))
     } else {
-        println!(
-            "  {} ({} packages)",
-            "Required by:".bold(),
-            required_by.len()
-        );
-        for req in required_by.iter().take(5) {
-            println!("    {} {}", "→".blue(), req);
-        }
-        if required_by.len() > 5 {
-            println!("    ... and {} more", required_by.len() - 5);
-        }
+        Ok(Components::card(
+            format!("Required by ({} packages)", required_by.len()),
+            required_by,
+        ))
     }
-
-    Ok(())
 }
 
 #[cfg(all(feature = "debian", not(feature = "arch")))]
-fn show_required_by(package: &str) -> Result<()> {
+fn show_required_by(package: &str) -> Result<Cmd<()>> {
     use std::process::Command;
+    use crate::cli::components::Components;
 
     let output = Command::new("apt-cache")
         .args(["rdepends", "--installed", "--", package])
@@ -200,28 +224,24 @@ fn show_required_by(package: &str) -> Result<()> {
         .lines()
         .skip(2) // Skip header
         .filter(|l| !l.trim().is_empty())
-        .take(10)
+        .map(|l| l.trim().to_string())
         .collect();
 
     if deps.is_empty() {
-        println!(
-            "  {} Nothing depends on this package",
-            "Required by:".bold()
-        );
+        Ok(Components::info("Nothing depends on this package"))
     } else {
-        println!("  {} ({} packages)", "Required by:".bold(), deps.len());
-        for dep in &deps {
-            println!("    {} {}", "→".blue(), dep.trim());
-        }
+        Ok(Components::card(
+            format!("Required by ({} packages)", deps.len()),
+            deps,
+        ))
     }
-
-    Ok(())
 }
 
 #[cfg(not(any(feature = "arch", feature = "debian")))]
 #[allow(clippy::unnecessary_wraps)]
-fn show_required_by(_package: &str) -> Result<()> {
-    Ok(())
+fn show_required_by(_package: &str) -> Result<Cmd<()>> {
+    use crate::cli::components::Components;
+    Ok(Components::info("Dependency information not available"))
 }
 
 fn format_timestamp(ts: i64) -> String {

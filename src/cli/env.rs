@@ -1,9 +1,10 @@
 use crate::cli::{CliContext, CommandRunner, EnvCommands};
+use crate::cli::components::Components;
+use crate::cli::tea::Cmd;
 use crate::core::env::fingerprint::{DriftReport, EnvironmentState};
 use crate::core::http::shared_client;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use owo_colors::OwoColorize;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -24,33 +25,69 @@ impl CommandRunner for EnvCommands {
 
 /// Capture environment state
 pub async fn capture() -> Result<()> {
-    println!("{} Capturing environment state...", "OMG".cyan().bold());
+    use crate::cli::packages::execute_cmd;
+
+    execute_cmd(Components::loading("Capturing environment state..."));
 
     let state = EnvironmentState::capture().await?;
     state.save("omg.lock")?;
 
-    println!("{} Environment state saved to omg.lock", "✓".green());
-    println!("  Hash: {}", state.hash.dimmed());
+    execute_cmd(Cmd::batch([
+        Components::success("Environment state captured"),
+        Components::kv_list(
+            Some("Capture Details"),
+            vec![
+                ("File", "omg.lock"),
+                ("Hash", &state.hash[..16]),
+                ("Packages", &state.packages.len().to_string()),
+            ],
+        ),
+        Components::complete("Environment state saved to omg.lock"),
+    ]));
+
     Ok(())
 }
 
 /// Check for environment drift
 pub async fn check() -> Result<()> {
+    use crate::cli::packages::execute_cmd;
+
     if !std::path::Path::new("omg.lock").exists() {
-        anyhow::bail!("No omg.lock file found. Run 'omg env capture' first.");
+        execute_cmd(Components::error_with_suggestion(
+            "No omg.lock file found",
+            "Run 'omg env capture' to create an environment lockfile",
+        ));
+        anyhow::bail!("No omg.lock file found");
     }
 
-    println!("{} Checking for environment drift...", "OMG".cyan().bold());
+    execute_cmd(Components::loading("Checking for environment drift..."));
 
     let expected = EnvironmentState::load("omg.lock")?;
     let current = EnvironmentState::capture().await?;
 
     let report = DriftReport::compare(&expected, &current);
-    report.print();
 
     if report.has_drift {
-        anyhow::bail!("Environment drift detected")
+        execute_cmd(Cmd::batch([
+            Components::warning("Environment drift detected"),
+            Components::spacer(),
+            Cmd::println("  The following differences were found:"),
+        ]));
+        report.print();
+        anyhow::bail!("Environment drift detected");
     }
+
+    execute_cmd(Cmd::batch([
+        Components::success("Environment is in sync"),
+        Components::spacer(),
+        Components::kv_list(
+            Some("Environment Status"),
+            vec![
+                ("Lockfile", "omg.lock"),
+                ("Status", "No drift detected"),
+            ],
+        ),
+    ]));
 
     Ok(())
 }
@@ -81,13 +118,20 @@ struct GistFileResponse {
 
 /// Share environment state to GitHub Gist
 pub async fn share(description: String, public: bool) -> Result<()> {
+    use crate::cli::packages::execute_cmd;
+
     // SECURITY: Validate description
     if description.len() > 1000 {
+        execute_cmd(Components::error("Description too long (max 1000 characters)"));
         anyhow::bail!("Description too long");
     }
 
     if !std::path::Path::new("omg.lock").exists() {
-        anyhow::bail!("No omg.lock file found. Run 'omg env capture' first.");
+        execute_cmd(Components::error_with_suggestion(
+            "No omg.lock file found",
+            "Run 'omg env capture' to create an environment lockfile",
+        ));
+        anyhow::bail!("No omg.lock file found");
     }
 
     let token =
@@ -103,7 +147,7 @@ pub async fn share(description: String, public: bool) -> Result<()> {
         files,
     };
 
-    println!("{} Uploading to GitHub Gist...", "OMG".cyan().bold());
+    execute_cmd(Components::loading("Uploading to GitHub Gist..."));
 
     let client = shared_client();
 
@@ -117,24 +161,37 @@ pub async fn share(description: String, public: bool) -> Result<()> {
     if !response.status().is_success() {
         let status = response.status();
         let text = response.text().await?;
+        execute_cmd(Components::error(&format!("Failed to create gist: {} - {}", status, text)));
         anyhow::bail!("Failed to create gist: {status} - {text}");
     }
 
     let gist_resp: GistResponse = response.json().await?;
-    println!("{} Environment shared successfully!", "✓".green());
-    println!("  URL: {}", gist_resp.html_url.underline());
+
+    execute_cmd(Cmd::batch([
+        Components::success("Environment shared successfully!"),
+        Components::kv_list(
+            Some("Gist Details"),
+            vec![
+                ("URL", &gist_resp.html_url),
+                ("Visibility", &(if public { "Public".to_string() } else { "Private".to_string() })),
+            ],
+        ),
+    ]));
 
     Ok(())
 }
 
 /// Sync environment from Gist
 pub async fn sync(url_or_id: String) -> Result<()> {
+    use crate::cli::packages::execute_cmd;
+
     // SECURITY: Basic validation for input
     if url_or_id.len() > 255 || url_or_id.chars().any(char::is_control) {
+        execute_cmd(Components::error("Invalid Gist URL or ID"));
         anyhow::bail!("Invalid Gist URL or ID");
     }
 
-    println!("{} Syncing environment...", "OMG".cyan().bold());
+    execute_cmd(Components::loading("Syncing environment..."));
 
     let client = shared_client();
 
@@ -159,7 +216,9 @@ pub async fn sync(url_or_id: String) -> Result<()> {
     let response = req.send().await?;
 
     if !response.status().is_success() {
-        anyhow::bail!("Failed to fetch Gist: {}", response.status());
+        let status = response.status();
+        execute_cmd(Components::error(&format!("Failed to fetch Gist: {}", status)));
+        anyhow::bail!("Failed to fetch Gist: {}", status);
     }
 
     let gist_resp: GistResponse = response.json().await?;
@@ -173,11 +232,18 @@ pub async fn sync(url_or_id: String) -> Result<()> {
         };
 
         std::fs::write("omg.lock", content)?;
-        println!("{} omg.lock updated from Gist", "✓".green());
+        execute_cmd(Cmd::batch([
+            Components::success("omg.lock updated from Gist"),
+            Components::info("Running environment check..."),
+        ]));
 
         // Auto-check
         check().await?;
     } else {
+        execute_cmd(Components::error_with_suggestion(
+            "Gist does not contain omg.lock",
+            "Ensure the Gist was created with 'omg env share'",
+        ));
         anyhow::bail!("Gist does not contain omg.lock");
     }
 

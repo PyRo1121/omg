@@ -1,25 +1,28 @@
 //! `omg size` - Show disk usage by packages
 
 use anyhow::Result;
-#[allow(unused_imports)]
-use owo_colors::OwoColorize;
+
+use crate::cli::tea::Cmd;
 
 /// Show disk usage analysis
 pub fn run(tree: Option<&str>, limit: usize) -> Result<()> {
     if let Some(package) = tree {
         // SECURITY: Validate package name
         crate::core::security::validate_package_name(package)?;
-        show_package_tree(package)
+        let cmd = show_package_tree(package)?;
+        crate::cli::packages::execute_cmd(cmd);
+        Ok(())
     } else {
-        show_top_packages(limit)
+        let cmd = show_top_packages(limit)?;
+        crate::cli::packages::execute_cmd(cmd);
+        Ok(())
     }
 }
 
 #[cfg(feature = "arch")]
-fn show_top_packages(limit: usize) -> Result<()> {
+fn show_top_packages(limit: usize) -> Result<Cmd<()>> {
     use alpm::Alpm;
-
-    println!("{} Disk Usage Analysis\n", "OMG".cyan().bold());
+    use crate::cli::components::Components;
 
     let handle = Alpm::new("/", "/var/lib/pacman")
         .map_err(|e| anyhow::anyhow!("Failed to open ALPM: {e}"))?;
@@ -34,53 +37,45 @@ fn show_top_packages(limit: usize) -> Result<()> {
     packages.sort_by(|a, b| b.1.cmp(&a.1));
 
     let total: i64 = packages.iter().map(|(_, s)| s).sum();
-    let total_str = format_size(total);
 
-    println!("  {} (by installed size)", "Top packages:".bold());
-    println!();
-
+    let mut content = Vec::new();
     for (i, (name, size)) in packages.iter().take(limit).enumerate() {
         let size_str = format_size(*size);
         let bar = generate_bar(*size, packages[0].1, 20);
-        println!(
-            "  {:>3}. {} {:>10}  {}",
-            i + 1,
-            bar.blue(),
-            size_str.cyan(),
-            name
-        );
+        content.push(format!("{:>3}. {} {:>10}  {}", i + 1, bar, size_str, name));
     }
 
-    println!();
-    println!(
-        "  {} {} in {} packages",
-        "Total:".bold(),
-        total_str.green(),
-        packages.len()
-    );
+    let mut commands = vec![
+        Components::header("Disk Usage Analysis", "by installed size"),
+        Components::spacer(),
+        Components::card(format!("Top {} Packages", limit), content),
+        Components::spacer(),
+        Components::kv_list(
+            Some("Summary"),
+            vec![
+                ("Total Disk Usage", &format_size(total)),
+                ("Number of Packages", &packages.len().to_string()),
+            ],
+        ),
+    ];
 
     // Show cache size
     if let Ok(cache_size) = get_cache_size() {
-        println!(
-            "  {} {} (run 'omg clean --cache' to clear)",
-            "Cache:".bold(),
-            format_size(cache_size).yellow()
-        );
+        commands.push(Components::spacer());
+        commands.push(Components::info(format!(
+            "Cache: {} (run 'omg clean --cache' to clear)",
+            format_size(cache_size)
+        )));
     }
 
-    Ok(())
+    Ok(Cmd::batch(commands))
 }
 
 #[cfg(feature = "arch")]
-fn show_package_tree(package: &str) -> Result<()> {
+fn show_package_tree(package: &str) -> Result<Cmd<()>> {
     use alpm::Alpm;
     use std::collections::HashSet;
-
-    println!(
-        "{} Size tree for {}\n",
-        "OMG".cyan().bold(),
-        package.yellow()
-    );
+    use crate::cli::components::Components;
 
     let handle = Alpm::new("/", "/var/lib/pacman")
         .map_err(|e| anyhow::anyhow!("Failed to open ALPM: {e}"))?;
@@ -92,11 +87,6 @@ fn show_package_tree(package: &str) -> Result<()> {
         .map_err(|_| anyhow::anyhow!("Package '{package}' not installed"))?;
 
     let pkg_size = pkg.isize();
-    println!(
-        "  {} {} (package itself)",
-        package.yellow().bold(),
-        format_size(pkg_size).cyan()
-    );
 
     // Get dependencies and their sizes
     let mut visited = HashSet::new();
@@ -121,35 +111,58 @@ fn show_package_tree(package: &str) -> Result<()> {
 
     dep_sizes.sort_by(|a, b| b.1.cmp(&a.1));
 
+    let mut commands = vec![
+        Components::header("Package Size Tree", package),
+        Components::spacer(),
+    ];
+
+    // Package info
+    commands.push(Components::kv_list(
+        Some("Package Size"),
+        vec![
+            (package, format_size(pkg_size)),
+            ("Type", "installed package".to_string()),
+        ],
+    ));
+
+    // Dependencies
     if !dep_sizes.is_empty() {
-        println!();
-        println!("  {}", "Dependencies:".bold());
-        for (name, size) in dep_sizes.iter().take(10) {
-            println!("    ├─ {} {}", name, format_size(*size).dimmed());
-        }
+        let dep_content: Vec<String> = dep_sizes
+            .iter()
+            .take(10)
+            .map(|(name, size)| format!("├─ {} {}", name, format_size(*size)))
+            .collect();
+
+        commands.push(Components::spacer());
+        commands.push(Components::card(
+            format!("Dependencies ({} total)", dep_sizes.len()),
+            dep_content,
+        ));
+
         if dep_sizes.len() > 10 {
-            println!("    └─ ... and {} more", dep_sizes.len() - 10);
+            commands.push(Components::muted(format!("... and {} more dependencies", dep_sizes.len() - 10)));
         }
     }
 
-    println!();
+    // Total footprint
     let total = pkg_size + total_dep_size;
-    println!(
-        "  {} {} (package: {}, deps: {})",
-        "Total footprint:".bold(),
-        format_size(total).green(),
-        format_size(pkg_size),
-        format_size(total_dep_size)
-    );
+    commands.push(Components::spacer());
+    commands.push(Components::kv_list(
+        Some("Total Footprint"),
+        vec![
+            ("Combined Total", &format_size(total)),
+            ("Package Size", &format_size(pkg_size)),
+            ("Dependencies", &format_size(total_dep_size)),
+        ],
+    ));
 
-    Ok(())
+    Ok(Cmd::batch(commands))
 }
 
 #[cfg(all(feature = "debian", not(feature = "arch")))]
-fn show_top_packages(limit: usize) -> Result<()> {
+fn show_top_packages(limit: usize) -> Result<Cmd<()>> {
     use std::process::Command;
-
-    println!("{} Disk Usage Analysis\n", "OMG".cyan().bold());
+    use crate::cli::components::Components;
 
     let output = Command::new("dpkg-query")
         .args(["-W", "-f=${Installed-Size}\t${Package}\n"])
@@ -173,41 +186,32 @@ fn show_top_packages(limit: usize) -> Result<()> {
 
     let total: i64 = packages.iter().map(|(_, s)| s).sum();
 
-    println!("  {} (by installed size)", "Top packages:".bold());
-    println!();
-
+    let mut content = Vec::new();
     for (i, (name, size)) in packages.iter().take(limit).enumerate() {
         let size_str = format_size(*size);
         let bar = generate_bar(*size, packages[0].1, 20);
-        println!(
-            "  {:>3}. {} {:>10}  {}",
-            i + 1,
-            bar.blue(),
-            size_str.cyan(),
-            name
-        );
+        content.push(format!("{:>3}. {} {:>10}  {}", i + 1, bar, size_str, name));
     }
 
-    println!();
-    println!(
-        "  {} {} in {} packages",
-        "Total:".bold(),
-        format_size(total).green(),
-        packages.len()
-    );
-
-    Ok(())
+    Ok(Cmd::batch(vec![
+        Components::header("Disk Usage Analysis", "by installed size"),
+        Components::spacer(),
+        Components::card(format!("Top {} Packages", limit), content),
+        Components::spacer(),
+        Components::kv_list(
+            Some("Summary"),
+            vec![
+                ("Total Disk Usage", &format_size(total)),
+                ("Number of Packages", &packages.len().to_string()),
+            ],
+        ),
+    ]))
 }
 
 #[cfg(all(feature = "debian", not(feature = "arch")))]
-fn show_package_tree(package: &str) -> Result<()> {
+fn show_package_tree(package: &str) -> Result<Cmd<()>> {
     use std::process::Command;
-
-    println!(
-        "{} Size tree for {}\n",
-        "OMG".cyan().bold(),
-        package.yellow()
-    );
+    use crate::cli::components::Components;
 
     // Get package size
     let output = Command::new("dpkg-query")
@@ -215,7 +219,10 @@ fn show_package_tree(package: &str) -> Result<()> {
         .output()?;
 
     if !output.status.success() {
-        anyhow::bail!("Package '{package}' not installed");
+        return Ok(Components::error_with_suggestion(
+            format!("Package '{}' not installed", package),
+            "Try 'omg search' to find available packages",
+        ));
     }
 
     let size: i64 = String::from_utf8_lossy(&output.stdout)
@@ -223,12 +230,6 @@ fn show_package_tree(package: &str) -> Result<()> {
         .parse()
         .unwrap_or(0)
         * 1024;
-
-    println!(
-        "  {} {} (package itself)",
-        package.yellow().bold(),
-        format_size(size).cyan()
-    );
 
     // Get dependencies
     let deps_output = Command::new("apt-cache")
@@ -267,33 +268,53 @@ fn show_package_tree(package: &str) -> Result<()> {
     dep_sizes.sort_by(|a, b| b.1.cmp(&a.1));
     let total_deps: i64 = dep_sizes.iter().map(|(_, s)| s).sum();
 
+    let mut commands = vec![
+        Components::header("Package Size Tree", package),
+        Components::spacer(),
+        Components::kv_list(
+            Some("Package Size"),
+            vec![
+                (package, format_size(size)),
+                ("Type", "installed package".to_string()),
+            ],
+        ),
+    ];
+
     if !dep_sizes.is_empty() {
-        println!();
-        println!("  {}", "Dependencies:".bold());
-        for (name, dep_size) in dep_sizes.iter().take(10) {
-            println!("    ├─ {} {}", name, format_size(*dep_size).dimmed());
-        }
+        let dep_content: Vec<String> = dep_sizes
+            .iter()
+            .take(10)
+            .map(|(name, dep_size)| format!("├─ {} {}", name, format_size(*dep_size)))
+            .collect();
+
+        commands.push(Components::spacer());
+        commands.push(Components::card(
+            format!("Dependencies ({} total)", dep_sizes.len()),
+            dep_content,
+        ));
     }
 
-    println!();
-    println!(
-        "  {} {} (package: {}, deps: {})",
-        "Total footprint:".bold(),
-        format_size(size + total_deps).green(),
-        format_size(size),
-        format_size(total_deps)
-    );
+    let total = size + total_deps;
+    commands.push(Components::spacer());
+    commands.push(Components::kv_list(
+        Some("Total Footprint"),
+        vec![
+            ("Combined Total", &format_size(total)),
+            ("Package Size", &format_size(size)),
+            ("Dependencies", &format_size(total_deps)),
+        ],
+    ));
 
-    Ok(())
+    Ok(Cmd::batch(commands))
 }
 
 #[cfg(not(any(feature = "arch", feature = "debian")))]
-fn show_top_packages(_limit: usize) -> Result<()> {
+fn show_top_packages(_limit: usize) -> Result<Cmd<()>> {
     anyhow::bail!("Size analysis requires arch or debian feature")
 }
 
 #[cfg(not(any(feature = "arch", feature = "debian")))]
-fn show_package_tree(_package: &str) -> Result<()> {
+fn show_package_tree(_package: &str) -> Result<Cmd<()>> {
     anyhow::bail!("Size analysis requires arch or debian feature")
 }
 

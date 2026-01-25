@@ -3,9 +3,10 @@
 use crate::cli::{
     CliContext, CommandRunner, EnterpriseCommands, EnterprisePolicyCommands, ServerCommands,
 };
+use crate::cli::components::Components;
+use crate::cli::tea::Cmd;
 use anyhow::Result;
 use async_trait::async_trait;
-use owo_colors::OwoColorize;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -48,23 +49,29 @@ impl CommandRunner for EnterpriseCommands {
 
 /// Generate executive reports
 pub async fn reports(report_type: &str, format: &str, _ctx: &CliContext) -> Result<()> {
+    use crate::cli::packages::execute_cmd;
+
     // SECURITY: Validate report type and format
     let valid_types = ["monthly", "quarterly", "custom"];
     let valid_formats = ["json", "csv", "html", "pdf"];
     if !valid_types.contains(&report_type.to_lowercase().as_str()) {
+        execute_cmd(Components::error_with_suggestion(
+            &format!("Invalid report type: {}", report_type),
+            "Valid types: monthly, quarterly, custom",
+        ));
         anyhow::bail!("Invalid report type: {report_type}");
     }
     if !valid_formats.contains(&format.to_lowercase().as_str()) {
+        execute_cmd(Components::error_with_suggestion(
+            &format!("Invalid report format: {}", format),
+            "Valid formats: json, csv, html, pdf",
+        ));
         anyhow::bail!("Invalid report format: {format}");
     }
 
     license::require_feature("enterprise-reports")?;
 
-    println!(
-        "{} Generating {} report...\n",
-        "OMG".cyan().bold(),
-        report_type.yellow()
-    );
+    execute_cmd(Components::loading(&format!("Generating {} report...", report_type)));
 
     let report = generate_report(report_type).await;
     let filename = format!(
@@ -78,15 +85,29 @@ pub async fn reports(report_type: &str, format: &str, _ctx: &CliContext) -> Resu
     let content = serde_json::to_string_pretty(&report)?;
     fs::write(&filename, &content)?;
 
-    println!("  {} Generated {}", "✓".green(), filename.cyan());
-    println!();
-    println!("  {}", "Report Contents:".bold());
-    println!("    - Executive Summary");
-    println!("    - Compliance Score Trend");
-    println!("    - Vulnerability Remediation Timeline");
-    println!("    - Team Adoption Metrics");
-    println!("    - Cost Savings Analysis");
-    println!("    - Recommendations");
+    let report_sections = vec![
+        "Executive Summary".to_string(),
+        "Compliance Score Trend".to_string(),
+        "Vulnerability Remediation Timeline".to_string(),
+        "Team Adoption Metrics".to_string(),
+        "Cost Savings Analysis".to_string(),
+        "Recommendations".to_string(),
+    ];
+
+    execute_cmd(Cmd::batch([
+        Components::success(&format!("Generated {}", filename)),
+        Components::spacer(),
+        Components::kv_list(
+            Some("Report Details"),
+            vec![
+                ("Type", report_type),
+                ("Format", format),
+                ("File", &filename),
+            ],
+        ),
+        Components::spacer(),
+        Components::card("Report Contents", report_sections),
+    ]));
 
     Ok(())
 }
@@ -98,25 +119,31 @@ pub fn audit_export(
     output: &str,
     _ctx: &CliContext,
 ) -> Result<()> {
+    use crate::cli::packages::execute_cmd;
+
     // SECURITY: Validate all inputs
     let valid_frameworks = ["soc2", "iso27001", "fedramp", "hipaa", "pci-dss"];
     if !valid_frameworks.contains(&format.to_lowercase().as_str()) {
+        execute_cmd(Components::error_with_suggestion(
+            &format!("Invalid compliance framework: {}", format),
+            "Valid frameworks: soc2, iso27001, fedramp, hipaa, pci-dss",
+        ));
         anyhow::bail!("Invalid compliance framework: {format}");
     }
     if let Some(p) = period
         && (p.len() > 64 || p.chars().any(|c| !c.is_ascii_alphanumeric() && c != '-'))
     {
+        execute_cmd(Components::error("Invalid period format"));
         anyhow::bail!("Invalid period format");
     }
-    crate::core::security::validate_relative_path(output)?;
+    if let Err(e) = crate::core::security::validate_relative_path(output) {
+        execute_cmd(Components::error(&format!("Invalid output path: {}", e)));
+        return Err(e.into());
+    }
 
     license::require_feature("audit-export")?;
 
-    println!(
-        "{} Exporting {} audit evidence...\n",
-        "OMG".cyan().bold(),
-        format.yellow()
-    );
+    execute_cmd(Components::loading(&format!("Exporting {} audit evidence...", format)));
 
     let period_str = period.unwrap_or("current");
     fs::create_dir_all(output)?;
@@ -130,93 +157,124 @@ pub fn audit_export(
         ("sbom-inventory.json", generate_sbom_json()),
     ];
 
-    println!("  {}", "Generated files:".bold());
+    let mut file_list = vec![];
     for (filename, content) in &files {
         let path = Path::new(output).join(filename);
         fs::write(&path, content)?;
-        println!("    {} {}", "✓".green(), path.display());
+        file_list.push(format!("{}", path.display()));
     }
 
-    println!();
-    println!("  Framework: {}", format.cyan());
-    println!("  Period: {period_str}");
-    println!("  Output: {}", output.cyan());
-    println!();
-    println!("  {} Ready for auditor review", "✓".green());
+    execute_cmd(Cmd::batch([
+        Components::success("Audit evidence exported"),
+        Components::spacer(),
+        Components::kv_list(
+            Some("Export Details"),
+            vec![
+                ("Framework", format),
+                ("Period", period_str),
+                ("Output", output),
+            ],
+        ),
+        Components::spacer(),
+        Components::card("Generated Files", file_list),
+        Components::spacer(),
+        Components::complete("Ready for auditor review"),
+    ]));
 
     Ok(())
 }
 
 /// Scan for license compliance issues
 pub fn license_scan(export: Option<&str>, _ctx: &CliContext) -> Result<()> {
+    use crate::cli::packages::execute_cmd;
+
     if let Some(fmt) = export {
         // SECURITY: Validate export format
         let valid_formats = ["json", "csv", "spdx"];
         if !valid_formats.contains(&fmt.to_lowercase().as_str()) {
+            execute_cmd(Components::error_with_suggestion(
+                &format!("Invalid license export format: {}", fmt),
+                "Valid formats: json, csv, spdx",
+            ));
             anyhow::bail!("Invalid license export format: {fmt}");
         }
     }
 
     license::require_feature("license-scan")?;
 
-    println!("{} License Compliance Scan\n", "OMG".cyan().bold());
-
     let scan = perform_license_scan();
 
     // Display results
-    println!("  {}", "License Inventory:".bold());
+    let mut license_inventory = vec![];
     for (license, count) in &scan.by_license {
         let pct = (*count as f32 / scan.total as f32) * 100.0;
-        println!("    {}: {} packages ({:.0}%)", license.cyan(), count, pct);
+        license_inventory.push(format!("{}: {} packages ({:.0}%)", license, count, pct));
     }
 
-    println!();
-
-    if !scan.violations.is_empty() {
-        println!("  {} Policy Violations:", "⚠".yellow());
-        for violation in &scan.violations {
-            println!(
-                "    {} {} - {}",
-                "✗".red(),
-                violation.package.yellow(),
-                violation.reason
-            );
-        }
-        println!();
+    let mut violations = vec![];
+    for violation in &scan.violations {
+        violations.push(format!("{} - {}", violation.package, violation.reason));
     }
 
-    if !scan.unknown.is_empty() {
-        println!("  {} Unknown Licenses:", "?".yellow());
-        for pkg in scan.unknown.iter().take(5) {
-            println!("    {} {}", "?".yellow(), pkg);
-        }
-        if scan.unknown.len() > 5 {
-            println!("    ... and {} more", scan.unknown.len() - 5);
-        }
-        println!();
+    let mut unknown = vec![];
+    for pkg in scan.unknown.iter().take(5) {
+        unknown.push(pkg.clone());
+    }
+    if scan.unknown.len() > 5 {
+        unknown.push(format!("... and {} more", scan.unknown.len() - 5));
     }
 
-    // Export if requested
-    if let Some(format) = export {
-        let filename = format!(
-            "license-scan-{}.{}",
-            jiff::Timestamp::now().as_second(),
-            format
-        );
-        let content = match format {
-            "csv" => generate_license_csv(&scan),
-            _ => serde_json::to_string_pretty(&scan)?, // Default to SPDX-compatible JSON
-        };
-        fs::write(&filename, content)?;
-        println!("  {} Exported to {}", "✓".green(), filename.cyan());
-    }
+    execute_cmd(Cmd::batch([
+        Components::header("License Compliance Scan", &format!("{} total packages", scan.total)),
+        Components::spacer(),
+        Components::card("License Inventory", license_inventory),
+        if !violations.is_empty() {
+            Cmd::batch([
+                Components::spacer(),
+                Components::card("Policy Violations", violations),
+            ])
+        } else {
+            Cmd::none()
+        },
+        if !unknown.is_empty() {
+            Cmd::batch([
+                Components::spacer(),
+                Components::card("Unknown Licenses", unknown),
+            ])
+        } else {
+            Cmd::none()
+        },
+        if let Some(format) = export {
+            Cmd::batch([
+                Components::spacer(),
+                {
+                    let filename = format!(
+                        "license-scan-{}.{}",
+                        jiff::Timestamp::now().as_second(),
+                        format
+                    );
+                    let content = match format {
+                        "csv" => generate_license_csv(&scan),
+                        _ => serde_json::to_string_pretty(&scan)?,
+                    };
+                    fs::write(&filename, content)?;
+                    Components::success(&format!("Exported to {}", filename))
+                },
+            ])
+        } else {
+            Cmd::none()
+        },
+    ]));
 
     Ok(())
 }
 
 /// Enterprise policy management
 pub mod policy {
-    use super::{CliContext, OwoColorize, Result, license};
+    use super::{CliContext, Result, license};
+    use crate::cli::components::Components;
+    use crate::cli::tea::Cmd;
+    use crate::cli::packages::execute_cmd;
 
     pub fn set(scope: &str, rule: &str, _ctx: &CliContext) -> Result<()> {
         // SECURITY: Validate scope and rule
@@ -225,22 +283,28 @@ pub mod policy {
                 .chars()
                 .any(|c| !c.is_ascii_alphanumeric() && c != ':' && c != '-')
         {
+            execute_cmd(Components::error("Invalid policy scope"));
             anyhow::bail!("Invalid policy scope");
         }
         if rule.len() > 1024 {
+            execute_cmd(Components::error("Policy rule too long (max 1024 characters)"));
             anyhow::bail!("Policy rule too long");
         }
 
         license::require_feature("enterprise-policy")?;
 
-        println!("{} Setting policy rule...\n", "OMG".cyan().bold());
-
-        println!("  Scope: {}", scope.cyan());
-        println!("  Rule: {}", rule.yellow());
-        println!();
-        println!("  {} Policy rule set", "✓".green());
-        println!();
-        println!("  {} This rule will be enforced on next sync", "ℹ".blue());
+        execute_cmd(Cmd::batch([
+            Components::loading("Setting policy rule..."),
+            Components::kv_list(
+                Some("Policy Rule Set"),
+                vec![
+                    ("Scope", scope),
+                    ("Rule", rule),
+                ],
+            ),
+            Components::spacer(),
+            Components::info("This rule will be enforced on next sync"),
+        ]));
 
         Ok(())
     }
@@ -251,39 +315,44 @@ pub mod policy {
                 || s.chars()
                     .any(|c| !c.is_ascii_alphanumeric() && c != ':' && c != '-'))
         {
+            execute_cmd(Components::error("Invalid policy scope"));
             anyhow::bail!("Invalid policy scope");
         }
 
         license::require_feature("policy")?;
 
-        println!("{} Policy Configuration\n", "OMG".cyan().bold());
-
         let policies = license::fetch_policies().await?;
 
         if policies.is_empty() {
-            println!("  {} No active policies found", "○".dimmed());
-            println!("  Enterprise policies can be configured in the dashboard.");
+            execute_cmd(Cmd::batch([
+                Components::header("Policy Configuration", "No active policies"),
+                Components::spacer(),
+                Components::info("Enterprise policies can be configured in the dashboard"),
+            ]));
             return Ok(());
         }
 
-        for p in policies {
+        let mut policy_list = vec![];
+        let policy_count = policies.len();
+        for p in &policies {
             if let Some(s) = scope
                 && p.scope != s
             {
                 continue;
             }
 
-            println!("  {} (Scope: {})", p.rule.bold(), p.scope.cyan());
-            println!(
-                "    Enforced: {}",
-                if p.enforced {
-                    "Yes".green().to_string()
-                } else {
-                    "No (Audit only)".yellow().to_string()
-                }
-            );
-            println!();
+            let enforced = if p.enforced { "Yes" } else { "No (Audit only)" };
+            policy_list.push(format!("{} (Scope: {}) - Enforced: {}", p.rule, p.scope, enforced));
         }
+
+        execute_cmd(Cmd::batch([
+            Components::header(
+                "Policy Configuration",
+                &format!("{} active policies", policy_count),
+            ),
+            Components::spacer(),
+            Components::card("Active Policies", policy_list),
+        ]));
 
         Ok(())
     }
@@ -295,6 +364,7 @@ pub mod policy {
                 .chars()
                 .any(|c| !c.is_ascii_alphanumeric() && c != ':' && c != '-')
         {
+            execute_cmd(Components::error("Invalid source scope"));
             anyhow::bail!("Invalid source scope");
         }
         if to.len() > 64
@@ -302,22 +372,16 @@ pub mod policy {
                 .chars()
                 .any(|c| !c.is_ascii_alphanumeric() && c != ':' && c != '-')
         {
+            execute_cmd(Components::error("Invalid target scope"));
             anyhow::bail!("Invalid target scope");
         }
 
         license::require_feature("enterprise-policy")?;
 
-        println!("{} Setting policy inheritance...\n", "OMG".cyan().bold());
-
-        println!("  From: {}", from.cyan());
-        println!("  To: {}", to.cyan());
-        println!();
-        println!(
-            "  {} {} now inherits policies from {}",
-            "✓".green(),
-            to,
-            from
-        );
+        execute_cmd(Cmd::batch([
+            Components::loading("Setting policy inheritance..."),
+            Components::success(&format!("{} now inherits policies from {}", to, from)),
+        ]));
 
         Ok(())
     }
@@ -325,7 +389,10 @@ pub mod policy {
 
 /// Self-hosted server management
 pub mod server {
-    use super::{CliContext, OwoColorize, Result, license};
+    use super::{CliContext, Result, license};
+    use crate::cli::components::Components;
+    use crate::cli::tea::Cmd;
+    use crate::cli::packages::execute_cmd;
 
     pub fn init(license_key: &str, storage: &str, domain: &str, _ctx: &CliContext) -> Result<()> {
         // SECURITY: Validate all inputs
@@ -334,48 +401,43 @@ pub mod server {
                 .chars()
                 .any(|c| !c.is_ascii_alphanumeric() && c != '-')
         {
+            execute_cmd(Components::error("Invalid license key format"));
             anyhow::bail!("Invalid license key format");
         }
-        crate::core::security::validate_relative_path(storage)?;
+        if let Err(e) = crate::core::security::validate_relative_path(storage) {
+            execute_cmd(Components::error(&format!("Invalid storage path: {}", e)));
+            return Err(e.into());
+        }
         if domain.len() > 255
             || domain
                 .chars()
                 .any(|c| !c.is_ascii_alphanumeric() && c != '.' && c != '-')
         {
+            execute_cmd(Components::error("Invalid domain name"));
             anyhow::bail!("Invalid domain name");
         }
 
         license::require_feature("self-hosted")?;
 
-        println!(
-            "{} Initializing self-hosted OMG server...\n",
-            "OMG".cyan().bold()
-        );
+        execute_cmd(Components::loading("Initializing self-hosted OMG server..."));
 
-        println!("  License: {}...", &license_key[..8.min(license_key.len())]);
-        println!("  Storage: {}", storage.cyan());
-        println!("  Domain: {}", domain.cyan());
-        println!();
+        // Validate license and create directories
+        let config_details = vec![
+            ("License", &license_key[..8.min(license_key.len())]),
+            ("Storage", storage),
+            ("Domain", domain),
+        ];
 
-        // Validate license
-        println!("  {} Validating license...", "→".blue());
-        println!("  {} Creating storage directories...", "→".blue());
-        println!("  {} Generating TLS certificates...", "→".blue());
-        println!("  {} Initializing database...", "→".blue());
-        println!();
-
-        println!("  {} Server initialized!", "✓".green());
-        println!();
-        println!("  {}", "Next steps:".bold());
-        println!("    1. Start server: {}", "omgd --server".cyan());
-        println!(
-            "    2. Configure clients: {}",
-            format!("omg config set registry.url https://{domain}").cyan()
-        );
-        println!(
-            "    3. Sync packages: {}",
-            "omg enterprise server mirror".cyan()
-        );
+        execute_cmd(Cmd::batch([
+            Components::kv_list(Some("Server Configuration"), config_details),
+            Components::spacer(),
+            Components::success("Server initialized!"),
+            Components::spacer(),
+            Components::header("Next Steps", ""),
+            Cmd::println("  1. Start server: omgd --server"),
+            Cmd::println(&format!("  2. Configure clients: omg config set registry.url https://{}", domain)),
+            Cmd::println("  3. Sync packages: omg enterprise server mirror"),
+        ]));
 
         Ok(())
     }
@@ -383,40 +445,52 @@ pub mod server {
     pub async fn mirror(upstream: &str, _ctx: &CliContext) -> Result<()> {
         // SECURITY: Basic URL validation
         if !upstream.starts_with("https://") {
+            execute_cmd(Components::error_with_suggestion(
+                "Only HTTPS upstreams allowed for security",
+                "Use https:// instead of http://",
+            ));
             anyhow::bail!("Only HTTPS upstreams allowed for security");
         }
         if upstream.len() > 1024 || upstream.chars().any(char::is_control) {
+            execute_cmd(Components::error("Invalid upstream URL"));
             anyhow::bail!("Invalid upstream URL");
         }
 
         license::require_feature("self-hosted")?;
 
-        println!("{} Syncing from upstream...\n", "OMG".cyan().bold());
-
-        println!("  Upstream: {}", upstream.cyan());
-        println!();
-        println!("  {} Fetching package index...", "→".blue());
+        execute_cmd(Components::loading("Syncing from upstream..."));
 
         let pm = crate::package_managers::get_package_manager();
         pm.sync().await?;
 
-        println!("  {} Downloading new packages...", "→".blue());
-        println!("  {} Verifying signatures...", "→".blue());
-        println!();
-
         // Check for updates to show meaningful status
         let updates = pm.list_updates().await.unwrap_or_default();
 
-        println!("  {} Mirror check complete!", "✓".green());
         if updates.is_empty() {
-            println!("    Status: Up to date");
+            execute_cmd(Cmd::batch([
+                Components::success("Mirror check complete!"),
+                Components::kv_list(
+                    Some("Sync Status"),
+                    vec![
+                        ("Upstream", upstream),
+                        ("Status", "Up to date"),
+                        ("Last sync", "Just now"),
+                    ],
+                ),
+            ]));
         } else {
-            println!(
-                "    Status: {} updates available",
-                updates.len().to_string().yellow()
-            );
+            execute_cmd(Cmd::batch([
+                Components::success("Mirror check complete!"),
+                Components::kv_list(
+                    Some("Sync Status"),
+                    vec![
+                        ("Upstream", upstream),
+                        ("Updates available", &updates.len().to_string()),
+                        ("Last sync", "Just now"),
+                    ],
+                ),
+            ]));
         }
-        println!("    Last sync: Just now");
 
         Ok(())
     }

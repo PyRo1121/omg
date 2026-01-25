@@ -8,6 +8,7 @@ use async_trait::async_trait;
 mod args;
 pub mod blame;
 pub mod ci;
+pub mod components;
 pub mod commands;
 pub mod container;
 pub mod diff;

@@ -47,6 +47,24 @@ pub enum Cmd<M> {
 
     /// Print a styled card with content
     Card(String, Vec<String>),
+
+    /// Create or update a progress bar
+    Progress(ProgressConfig),
+
+    /// Create a temporary spinner
+    Spinner(SpinnerConfig),
+
+    /// Render a styled table
+    Table(TableConfig),
+
+    /// Render styled text with lip-gloss styles
+    StyledText(StyledTextConfig),
+
+    /// Render a bordered panel/box
+    Panel(PanelConfig),
+
+    /// Print a blank line (spacer)
+    Spacer,
 }
 
 impl<M> fmt::Debug for Cmd<M> {
@@ -64,6 +82,12 @@ impl<M> fmt::Debug for Cmd<M> {
             Self::Error(s) => f.debug_tuple("Error").field(&truncate(s, 20)).finish(),
             Self::Header(t, _) => f.debug_tuple("Header").field(t).finish(),
             Self::Card(t, _) => f.debug_tuple("Card").field(t).finish(),
+            Self::Progress(_) => write!(f, "Cmd::Progress(...)"),
+            Self::Spinner(_) => write!(f, "Cmd::Spinner(...)"),
+            Self::Table(_) => write!(f, "Cmd::Table(...)"),
+            Self::StyledText(_) => write!(f, "Cmd::StyledText(...)"),
+            Self::Panel(_) => write!(f, "Cmd::Panel(...)"),
+            Self::Spacer => write!(f, "Cmd::Spacer"),
         }
     }
 }
@@ -74,6 +98,143 @@ fn truncate(s: &str, max_len: usize) -> String {
     } else {
         format!("{}...", &s[..max_len])
     }
+}
+
+/// Configuration for progress bars
+#[derive(Debug, Clone)]
+pub struct ProgressConfig {
+    /// Unique identifier for this progress bar
+    pub id: String,
+    /// Message to display
+    pub message: String,
+    /// Current progress (0-100)
+    pub percent: usize,
+    /// Total length if known
+    pub length: Option<usize>,
+    /// Style of the progress bar
+    pub style: ProgressStyle,
+}
+
+/// Progress bar visual styles
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProgressStyle {
+    /// Default progress bar
+    Default,
+    /// Download style with speed indicator
+    Download,
+    /// Install style with package count
+    Install,
+    /// Spinner only (no bar)
+    Spinner,
+}
+
+/// Configuration for spinners
+#[derive(Debug, Clone)]
+pub struct SpinnerConfig {
+    /// Unique identifier
+    pub id: String,
+    /// Message to display
+    pub message: String,
+    /// Spinner style
+    pub style: SpinnerStyle,
+}
+
+/// Spinner visual styles
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpinnerStyle {
+    /// Dots spinning
+    Dots,
+    /// Arrows
+    Arrows,
+    /// Simple pipe rotation
+    Pipe,
+    /// Moon phases
+    Moon,
+}
+
+/// Configuration for tables
+#[derive(Debug, Clone)]
+pub struct TableConfig {
+    /// Table headers
+    pub headers: Vec<String>,
+    /// Table rows (each row is a vector of cells)
+    pub rows: Vec<Vec<String>>,
+    /// Column alignments
+    pub alignments: Vec<TableAlignment>,
+    /// Border style
+    pub border_style: BorderStyle,
+}
+
+/// Table column alignment
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TableAlignment {
+    Left,
+    Center,
+    Right,
+}
+
+/// Border styles for tables and panels
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BorderStyle {
+    /// No border
+    None,
+    /// Light single-line border
+    Light,
+    /// Heavy double-line border
+    Heavy,
+    /// Rounded corners
+    Rounded,
+    /// Double lines
+    Double,
+}
+
+/// Configuration for styled text
+#[derive(Debug, Clone)]
+pub struct StyledTextConfig {
+    /// The text content
+    pub text: String,
+    /// Text style
+    pub style: TextStyle,
+}
+
+/// Text styling options
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextStyle {
+    /// Plain text
+    Plain,
+    /// Bold text
+    Bold,
+    /// Dimmed/faint text
+    Dim,
+    /// Italic text
+    Italic,
+    /// Underlined text
+    Underline,
+    /// Primary color (accent)
+    Primary,
+    /// Success color (green)
+    Success,
+    /// Warning color (yellow)
+    Warning,
+    /// Error color (red)
+    Error,
+    /// Info color (blue)
+    Info,
+    /// Muted color (gray)
+    Muted,
+}
+
+/// Configuration for bordered panels
+#[derive(Debug, Clone)]
+pub struct PanelConfig {
+    /// Panel title (optional)
+    pub title: Option<String>,
+    /// Panel content
+    pub content: Vec<String>,
+    /// Border style
+    pub border_style: BorderStyle,
+    /// Padding inside the border
+    pub padding: usize,
 }
 
 impl<M> Cmd<M> {
@@ -150,6 +311,73 @@ impl<M> Cmd<M> {
     #[must_use]
     pub fn card(title: impl Into<String>, content: Vec<String>) -> Self {
         Self::Card(title.into(), content)
+    }
+
+    /// Create or update a progress bar
+    #[must_use]
+    pub fn progress(config: ProgressConfig) -> Self {
+        Self::Progress(config)
+    }
+
+    /// Create a simple progress bar
+    #[must_use]
+    pub fn simple_progress(id: impl Into<String>, message: impl Into<String>, percent: usize) -> Self {
+        Self::Progress(ProgressConfig {
+            id: id.into(),
+            message: message.into(),
+            percent,
+            length: None,
+            style: ProgressStyle::Default,
+        })
+    }
+
+    /// Create a temporary spinner
+    #[must_use]
+    pub fn spinner(config: SpinnerConfig) -> Self {
+        Self::Spinner(config)
+    }
+
+    /// Create a simple spinner
+    #[must_use]
+    pub fn simple_spinner(id: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::Spinner(SpinnerConfig {
+            id: id.into(),
+            message: message.into(),
+            style: SpinnerStyle::Dots,
+        })
+    }
+
+    /// Render a styled table
+    #[must_use]
+    pub fn table(config: TableConfig) -> Self {
+        Self::Table(config)
+    }
+
+    /// Render styled text
+    #[must_use]
+    pub fn styled_text(config: StyledTextConfig) -> Self {
+        Self::StyledText(config)
+    }
+
+    /// Render simple bold text
+    #[must_use]
+    pub fn bold(text: impl Into<String>) -> Self {
+        Self::StyledText(StyledTextConfig {
+            text: text.into(),
+            style: TextStyle::Bold,
+        })
+    }
+
+    /// Render a bordered panel
+    #[must_use]
+    pub fn panel(config: PanelConfig) -> Self {
+        Self::Panel(config)
+    }
+
+    /// Print a blank line (spacer)
+    #[must_use]
+    pub fn spacer() -> Self {
+        Self::Spacer
     }
 }
 

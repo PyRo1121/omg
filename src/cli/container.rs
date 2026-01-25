@@ -2,9 +2,10 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
-use owo_colors::OwoColorize;
 
 use crate::cli::{CliContext, CommandRunner, ContainerCommands};
+use crate::cli::components::Components;
+use crate::cli::tea::Cmd;
 use crate::core::container::{
     ContainerConfig, ContainerManager, ContainerRuntime, detect_runtime, dev_container_config,
 };
@@ -87,40 +88,57 @@ fn parse_volumes(volumes: &[String]) -> Vec<(String, String)> {
 
 /// Show container runtime status
 pub fn status() -> Result<()> {
-    println!("{} Container Status\n", "OMG".cyan().bold());
+    use crate::cli::packages::execute_cmd;
 
-    if let Some(runtime) = detect_runtime() {
-        println!("  Runtime: {} ✓", runtime.to_string().green());
-
+    let output = if let Some(runtime) = detect_runtime() {
+        let runtime_str = runtime.to_string();
         let manager = ContainerManager::with_runtime(runtime);
 
         // List running containers
         match manager.list_running() {
             Ok(containers) if !containers.is_empty() => {
-                println!("\n  Running containers:");
-                for c in containers {
-                    println!(
-                        "    {} {} ({})",
-                        "•".cyan(),
-                        c.name.bold(),
-                        c.image.dimmed()
-                    );
-                }
+                let container_list: Vec<String> = containers
+                    .iter()
+                    .map(|c| format!("{} {} ({})", "•", c.name, c.image))
+                    .collect();
+
+                Cmd::batch([
+                    Components::header("Container Status", &format!("Runtime: {}", runtime_str)),
+                    Components::spacer(),
+                    Components::card("Running Containers", container_list),
+                    Components::complete("Container status retrieved"),
+                ])
             }
             Ok(_) => {
-                println!("\n  No running containers");
+                Cmd::batch([
+                    Components::header("Container Status", &format!("Runtime: {}", runtime_str)),
+                    Components::spacer(),
+                    Components::info("No running containers"),
+                ])
             }
             Err(e) => {
-                println!("\n  {} Failed to list containers: {}", "⚠".yellow(), e);
+                Cmd::batch([
+                    Components::header("Container Status", &format!("Runtime: {}", runtime_str)),
+                    Components::spacer(),
+                    Components::error(&format!("Failed to list containers: {}", e)),
+                ])
             }
         }
     } else {
-        println!("  Runtime: {} ✗", "Not found".red());
-        println!("\n  Install Docker or Podman to use container features.");
-        println!("    Docker: https://docs.docker.com/engine/install/");
-        println!("    Podman: https://podman.io/getting-started/installation");
-    }
+        Cmd::batch([
+            Components::header("Container Status", "Runtime: Not found"),
+            Components::spacer(),
+            Components::error_with_suggestion(
+                "No container runtime detected",
+                "Install Docker or Podman to use container features",
+            ),
+            Cmd::println("\n  Installation guides:"),
+            Cmd::println("    Docker: https://docs.docker.com/engine/install/"),
+            Cmd::println("    Podman: https://podman.io/getting-started/installation"),
+        ])
+    };
 
+    execute_cmd(output);
     Ok(())
 }
 
@@ -136,24 +154,30 @@ pub fn run(
     volumes: &[String],
     workdir: Option<String>,
 ) -> Result<()> {
+    use crate::cli::packages::execute_cmd;
+
     // SECURITY: Validate image name and container name
     if image.chars().any(|c| c.is_control() || c == ';') {
+        execute_cmd(Components::error_with_suggestion(
+            "Invalid image name",
+            "Image names must not contain control characters or semicolons",
+        ));
         anyhow::bail!("Invalid image name");
     }
     if let Some(ref n) = name
         && n.chars()
             .any(|c| !c.is_ascii_alphanumeric() && c != '-' && c != '_')
     {
+        execute_cmd(Components::error_with_suggestion(
+            "Invalid container name",
+            "Container names must be alphanumeric with hyphens or underscores only",
+        ));
         anyhow::bail!("Invalid container name");
     }
 
     let manager = ContainerManager::new()?;
 
-    println!(
-        "{} Running in {} container...",
-        "OMG".cyan().bold(),
-        image.cyan()
-    );
+    execute_cmd(Components::loading(&format!("Running in {} container...", image)));
 
     let env_pairs = parse_env_vars(env);
     let volume_pairs = parse_volumes(volumes);
@@ -186,6 +210,8 @@ pub fn shell(
     env: &[String],
     volumes: &[String],
 ) -> Result<()> {
+    use crate::cli::packages::execute_cmd;
+
     let manager = ContainerManager::new()?;
     let cwd = std::env::current_dir()?;
 
@@ -210,18 +236,22 @@ pub fn shell(
         config.workdir = workdir;
     }
 
-    println!(
-        "{} Starting shell in {} container...",
-        "OMG".cyan().bold(),
-        config.image.cyan()
-    );
-    println!("  Mounting: {} → /app", cwd.display().dimmed());
+    let mut details = vec![
+        format!("Image: {}", config.image),
+        format!("Mount: {} → /app", cwd.display()),
+    ];
+
     if !config.env.is_empty() {
-        println!("  Environment: {} var(s)", config.env.len());
+        details.push(format!("Environment: {} variable(s)", config.env.len()));
     }
     if config.volumes.len() > 1 {
-        println!("  Additional mounts: {}", config.volumes.len() - 1);
+        details.push(format!("Additional mounts: {}", config.volumes.len() - 1));
     }
+
+    execute_cmd(Cmd::batch([
+        Components::loading(&format!("Starting shell in {} container...", config.image)),
+        Components::card("Container Configuration", details),
+    ]));
 
     let exit_code = manager.shell(&config)?;
 
@@ -240,12 +270,24 @@ pub fn build(
     build_args: &[String],
     target: &Option<String>,
 ) -> Result<()> {
+    use crate::cli::packages::execute_cmd;
+
     // SECURITY: Validate tag and paths
     if tag.chars().any(|c| c.is_control() || c == ';') {
+        execute_cmd(Components::error_with_suggestion(
+            "Invalid tag name",
+            "Tags must not contain control characters or semicolons",
+        ));
         anyhow::bail!("Invalid tag name");
     }
     if let Some(ref df) = dockerfile {
-        crate::core::security::validate_relative_path(df)?;
+        if let Err(e) = crate::core::security::validate_relative_path(df) {
+            execute_cmd(Components::error_with_suggestion(
+                "Invalid Dockerfile path",
+                &format!("Path validation failed: {}", e),
+            ));
+            return Err(e.into());
+        }
     }
 
     let manager = ContainerManager::new()?;
@@ -255,17 +297,31 @@ pub fn build(
         dockerfile.map_or_else(|| cwd.join("Dockerfile"), std::path::PathBuf::from);
 
     if !dockerfile_path.exists() {
-        anyhow::bail!(
-            "Dockerfile not found: {}. Use -f/--dockerfile to specify a path.",
-            dockerfile_path.display()
-        );
+        let error_msg = format!("Dockerfile not found: {}", dockerfile_path.display());
+        execute_cmd(Components::error_with_suggestion(
+            &error_msg,
+            "Use -f/--dockerfile to specify a path",
+        ));
+        anyhow::bail!("{}", error_msg);
     }
 
-    println!(
-        "{} Building container image: {}",
-        "OMG".cyan().bold(),
-        tag.cyan()
-    );
+    let mut build_details = vec![
+        format!("Tag: {}", tag),
+        format!("Dockerfile: {}", dockerfile_path.display()),
+    ];
+
+    if no_cache {
+        build_details.push("Cache: Disabled".to_string());
+    }
+
+    if let Some(t) = target {
+        build_details.push(format!("Target: {}", t));
+    }
+
+    execute_cmd(Cmd::batch([
+        Components::loading(&format!("Building image: {}", tag)),
+        Components::card("Build Configuration", build_details),
+    ]));
 
     manager.build_with_options(
         &dockerfile_path,
@@ -276,105 +332,119 @@ pub fn build(
         target.as_deref(),
     )?;
 
-    println!("{} Image built successfully!", "✓".green());
+    execute_cmd(Components::complete(&format!("Image {} built successfully", tag)));
 
     Ok(())
 }
 
 /// List running containers
 pub fn list() -> Result<()> {
-    let manager = ContainerManager::new()?;
+    use crate::cli::packages::execute_cmd;
 
-    println!("{} Running Containers\n", "OMG".cyan().bold());
+    let manager = ContainerManager::new()?;
 
     let containers = manager.list_running()?;
 
     if containers.is_empty() {
-        println!("  No running containers");
+        execute_cmd(Cmd::batch([
+            Components::header("Running Containers", "No active containers"),
+            Components::spacer(),
+        ]));
         return Ok(());
     }
 
-    println!(
-        "  {:<12} {:<20} {:<25} {}",
-        "ID".bold(),
-        "NAME".bold(),
-        "IMAGE".bold(),
-        "STATUS".bold()
-    );
+    let container_list: Vec<String> = containers
+        .iter()
+        .map(|c| {
+            format!(
+                "{:<12} {:<20} {:<25} {}",
+                &c.id[..12.min(c.id.len())],
+                c.name,
+                c.image,
+                c.status
+            )
+        })
+        .collect();
 
-    for c in containers {
-        println!(
-            "  {:<12} {:<20} {:<25} {}",
-            &c.id[..12.min(c.id.len())],
-            c.name,
-            c.image,
-            c.status.green()
-        );
-    }
+    execute_cmd(Cmd::batch([
+        Components::header(
+            "Running Containers",
+            &format!("{} container(s) running", containers.len()),
+        ),
+        Components::spacer(),
+        Components::card("Active Containers", container_list),
+    ]));
 
     Ok(())
 }
 
 /// List container images
 pub fn images() -> Result<()> {
-    let manager = ContainerManager::new()?;
+    use crate::cli::packages::execute_cmd;
 
-    println!("{} Container Images\n", "OMG".cyan().bold());
+    let manager = ContainerManager::new()?;
 
     let images = manager.list_images()?;
 
     if images.is_empty() {
-        println!("  No images found");
+        execute_cmd(Cmd::batch([
+            Components::header("Container Images", "No images found"),
+            Components::spacer(),
+        ]));
         return Ok(());
     }
 
-    println!(
-        "  {:<30} {:<15} {:<12} {}",
-        "REPOSITORY".bold(),
-        "TAG".bold(),
-        "ID".bold(),
-        "SIZE".bold()
-    );
+    let image_list: Vec<String> = images
+        .iter()
+        .map(|img| {
+            format!(
+                "{:<30} {:<15} {:<12} {}",
+                img.repository,
+                img.tag,
+                &img.id[..12.min(img.id.len())],
+                img.size
+            )
+        })
+        .collect();
 
-    for img in images {
-        println!(
-            "  {:<30} {:<15} {:<12} {}",
-            img.repository,
-            img.tag,
-            &img.id[..12.min(img.id.len())],
-            img.size
-        );
-    }
+    execute_cmd(Cmd::batch([
+        Components::header(
+            "Container Images",
+            &format!("{} image(s) available", images.len()),
+        ),
+        Components::spacer(),
+        Components::card("Available Images", image_list),
+    ]));
 
     Ok(())
 }
 
 /// Pull a container image
 pub fn pull(image: &str) -> Result<()> {
+    use crate::cli::packages::execute_cmd;
+
     let manager = ContainerManager::new()?;
 
-    println!("{} Pulling image: {}", "OMG".cyan().bold(), image.cyan());
+    execute_cmd(Components::loading(&format!("Pulling image: {}", image)));
 
     manager.pull(image)?;
 
-    println!("{} Image pulled successfully!", "✓".green());
+    execute_cmd(Components::complete(&format!("Image {} pulled successfully", image)));
 
     Ok(())
 }
 
 /// Stop a running container
 pub fn stop(container: &str) -> Result<()> {
+    use crate::cli::packages::execute_cmd;
+
     let manager = ContainerManager::new()?;
 
-    println!(
-        "{} Stopping container: {}",
-        "OMG".cyan().bold(),
-        container.cyan()
-    );
+    execute_cmd(Components::loading(&format!("Stopping container: {}", container)));
 
     manager.stop(container)?;
 
-    println!("{} Container stopped!", "✓".green());
+    execute_cmd(Components::complete(&format!("Container {} stopped", container)));
 
     Ok(())
 }
@@ -395,11 +465,17 @@ pub fn exec(container: &str, command: &[String]) -> Result<()> {
 
 /// Generate a Dockerfile for the current project
 pub fn init(base_image: Option<String>) -> Result<()> {
+    use crate::cli::packages::execute_cmd;
+
     let cwd = std::env::current_dir()?;
     let dockerfile_path = cwd.join("Dockerfile.omg");
 
     if dockerfile_path.exists() {
-        anyhow::bail!("Dockerfile.omg already exists. Remove it first or use a different name.");
+        execute_cmd(Components::error_with_suggestion(
+            "Dockerfile.omg already exists",
+            "Remove it first or use a different name",
+        ));
+        anyhow::bail!("Dockerfile.omg already exists");
     }
 
     let base = base_image.unwrap_or_else(|| "ubuntu:24.04".to_string());
@@ -429,20 +505,20 @@ pub fn init(base_image: Option<String>) -> Result<()> {
 
     std::fs::write(&dockerfile_path, dockerfile)?;
 
-    println!("{} Created Dockerfile.omg", "✓".green());
-    println!("  Base image: {}", base.cyan());
-
+    let mut details = vec![format!("Base image: {}", base)];
     if !runtimes.is_empty() {
-        println!("  Detected runtimes:");
+        details.push("Detected runtimes:".to_string());
         for (rt, ver) in &runtimes {
-            println!("    {} {}", rt.cyan(), ver.dimmed());
+            details.push(format!("  • {}: {}", rt, ver));
         }
     }
 
-    println!(
-        "\n  Build with: {} container build -t myapp .",
-        "omg".cyan()
-    );
+    execute_cmd(Cmd::batch([
+        Components::success("Created Dockerfile.omg"),
+        Components::card("Configuration", details),
+        Cmd::println("\n  Build with:"),
+        Cmd::println("    omg container build -t myapp ."),
+    ]));
 
     Ok(())
 }
