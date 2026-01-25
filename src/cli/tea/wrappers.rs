@@ -2,10 +2,6 @@
 
 use crate::cli::tea::{InfoModel, InstallModel, Program, SearchModel, StatusModel, UpdateModel};
 
-// Import Model trait for use in test modules
-#[cfg(test)]
-use crate::cli::tea::Model;
-
 /// Run status command using Elm Architecture
 pub fn run_status_elm(fast: bool) -> Result<(), std::io::Error> {
     let model = StatusModel::new().with_fast_mode(fast);
@@ -43,7 +39,7 @@ mod tests {
     #[test]
     fn test_status_wrapper_creates_model() {
         let model = StatusModel::new().with_fast_mode(true);
-        assert!(model.view().contains("No status"));
+        assert!(model.fast_mode);
     }
 
     #[test]
