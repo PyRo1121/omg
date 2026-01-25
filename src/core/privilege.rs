@@ -287,14 +287,14 @@ pub async fn run_self_sudo(args: &[&str]) -> anyhow::Result<()> {
             // If sudo -n fails with exit code 1, it means a password is required
             Ok(s) if s.code() == Some(1) => {
                 // Fall back to interactive sudo (allows password prompt)
-                let interactive_status = tokio::process::Command::new("sudo")
+                // Use std::process::Command for interactive fallback to ensure TTY inheritance
+                let status = std::process::Command::new("sudo")
                     .arg("--")
                     .arg(&exe)
                     .args(args)
-                    .status()
-                    .await;
+                    .status();
 
-                match interactive_status {
+                match status {
                     Ok(s) if s.success() => Ok(()),
                     Ok(s) => anyhow::bail!("Elevated command failed with exit code: {s}"),
                     Err(e2) => {
@@ -310,10 +310,8 @@ pub async fn run_self_sudo(args: &[&str]) -> anyhow::Result<()> {
                              username ALL=(ALL) NOPASSWD: ALL\n\
                              \n\
                              Or specify this command specifically:\n\
-                             username ALL=(ALL) NOPASSWD: {}\n\
-                             \n\
-                             For interactive use, ensure you have sudo privileges.",
-                            exe.display()
+                             username ALL=(ALL) NOPASSWD: {exe}",
+                            exe = exe.display()
                         )
                     }
                 }
