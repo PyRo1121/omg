@@ -230,6 +230,9 @@ async fn test_run_detect_and_execute_mock_task() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_tool_install_not_in_registry_fails() -> Result<()> {
+    unsafe {
+        std::env::set_var("OMG_TEST_MODE", "1");
+    }
     let ctx = get_ctx();
     let install_cmd = Commands::Tool {
         command: ToolCommands::Install {
@@ -238,6 +241,10 @@ async fn test_tool_install_not_in_registry_fails() -> Result<()> {
     };
 
     let result = install_cmd.execute(&ctx).await;
+    unsafe {
+        std::env::remove_var("OMG_TEST_MODE");
+    }
+
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("not in registry"));
 
