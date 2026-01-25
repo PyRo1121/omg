@@ -34,7 +34,7 @@ pub enum Commands {
     // ═══════════════════════════════════════════════════════════════════════
     // PACKAGE MANAGEMENT (Arch + AUR)
     // ═══════════════════════════════════════════════════════════════════════
-    /// Search for packages (official repos + AUR)
+    /// Search for packages across system repositories and AUR (22x faster)
     #[command(visible_alias = "s", next_help_heading = "Package Management")]
     Search {
         /// Search query
@@ -47,7 +47,7 @@ pub enum Commands {
         interactive: bool,
     },
 
-    /// Install packages (auto-detects AUR packages)
+    /// Install packages with security grading and auto-AUR detection
     #[command(visible_alias = "i")]
     Install {
         /// Package names to install
@@ -193,7 +193,7 @@ pub enum Commands {
     // ═══════════════════════════════════════════════════════════════════════
     // RUNTIME VERSION MANAGEMENT
     // ═══════════════════════════════════════════════════════════════════════
-    /// Switch runtime version (e.g., omg use node 20.10.0)
+    /// Instantly switch runtime versions (Node, Python, Rust, etc.)
     #[command(disable_version_flag = true, next_help_heading = "Runtime Management")]
     Use {
         /// Runtime name (node, python, go, rust, ruby, java, bun)
@@ -299,7 +299,7 @@ pub enum Commands {
         command: Option<AuditCommands>,
     },
 
-    /// Run project scripts (e.g., 'omg run build' runs npm/cargo/make)
+    /// Run project tasks with auto-detected runtime versions
     #[command(next_help_heading = "Development Tools")]
     Run {
         /// The task to run (e.g., build, test, start)

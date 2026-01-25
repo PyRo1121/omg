@@ -133,9 +133,16 @@ fn try_fast_which(args: &[String]) -> bool {
         }
 
         if let Some(version) = runtimes::resolve_active_version(runtime) {
-            println!("{runtime} {version}");
+            println!(
+                "{} {}",
+                omg_lib::cli::style::runtime(runtime),
+                omg_lib::cli::style::version(&version)
+            );
         } else {
-            println!("{runtime}: no version set (check .tool-versions, .nvmrc, etc.)");
+            println!(
+                "{}: no version set (check .tool-versions, .nvmrc, etc.)",
+                omg_lib::cli::style::runtime(runtime)
+            );
         }
         return true;
     }
