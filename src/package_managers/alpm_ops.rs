@@ -174,10 +174,9 @@ pub fn clean_cache(keep_versions: usize) -> Result<(usize, u64)> {
 
         if let Some(filename) = path.file_name().and_then(|n| n.to_str())
             && (filename.ends_with(".pkg.tar.zst") || filename.ends_with(".pkg.tar.xz"))
+            && let Some(base) = filename.rsplitn(5, '-').last()
         {
-            if let Some(base) = filename.rsplitn(5, '-').last() {
-                packages.entry(base.to_string()).or_default().push(path);
-            }
+            packages.entry(base.to_string()).or_default().push(path);
         }
     }
 
@@ -284,9 +283,9 @@ pub fn execute_transaction(
     if let Some(alpm) = handle {
         configure_mirrors(alpm)?;
         let mp = indicatif::MultiProgress::new();
-        let main_pb = setup_alpm_callbacks(alpm, &mp)?;
-        let mut tx_guard = prepare_alpm_transaction(alpm, packages, remove, sysupgrade)?;
-        commit_alpm_transaction(&mut tx_guard.0, &main_pb)?;
+        let main_pb = setup_alpm_callbacks(alpm, &mp);
+        let tx_guard = prepare_alpm_transaction(alpm, packages, remove, sysupgrade)?;
+        commit_alpm_transaction(tx_guard.0, &main_pb)?;
         return Ok(());
     }
 
@@ -302,9 +301,9 @@ pub fn execute_transaction(
     configure_mirrors(&mut alpm)?;
 
     let mp = indicatif::MultiProgress::new();
-    let main_pb = setup_alpm_callbacks(&mut alpm, &mp)?;
-    let mut tx_guard = prepare_alpm_transaction(&mut alpm, packages, remove, sysupgrade)?;
-    commit_alpm_transaction(&mut tx_guard.0, &main_pb)?;
+    let main_pb = setup_alpm_callbacks(&mut alpm, &mp);
+    let tx_guard = prepare_alpm_transaction(&mut alpm, packages, remove, sysupgrade)?;
+    commit_alpm_transaction(tx_guard.0, &main_pb)?;
 
     Ok(())
 }
@@ -314,7 +313,7 @@ pub fn execute_transaction(
 fn setup_alpm_callbacks(
     alpm: &mut alpm::Alpm,
     mp: &indicatif::MultiProgress,
-) -> Result<indicatif::ProgressBar> {
+) -> indicatif::ProgressBar {
     let main_pb = mp.add(indicatif::ProgressBar::new(100));
     main_pb.set_style(
         indicatif::ProgressStyle::default_bar()
@@ -386,16 +385,16 @@ fn setup_alpm_callbacks(
         }
     });
 
-    Ok(main_pb)
+    main_pb
 }
 
 /// Prepare an ALPM transaction for execution
-fn prepare_alpm_transaction<'a>(
-    alpm: &'a mut alpm::Alpm,
+fn prepare_alpm_transaction(
+    alpm: &mut alpm::Alpm,
     packages: Vec<String>,
     remove: bool,
     sysupgrade: bool,
-) -> Result<AlpmTransaction<'a>> {
+) -> Result<AlpmTransaction<'_>> {
     use alpm::TransFlag;
 
     let mut flags = TransFlag::NEEDED;
