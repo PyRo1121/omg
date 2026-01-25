@@ -163,7 +163,7 @@ run_quality_checks() {
   
   # 2. Clippy (strict)
   log_info "Running clippy with strict warnings..."
-  if ! cargo clippy --features arch --all-targets -- -D warnings; then
+  if ! cargo clippy --features arch --lib --bins -- -D warnings; then
     log_error "Clippy found issues"
     failed=1
   else

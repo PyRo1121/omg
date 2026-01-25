@@ -513,10 +513,10 @@ show_install_location_menu() {
     echo "     Examples:"
     case "$PLATFORM" in
         Windows)
-            echo "       ${CYAN}C:/Users/username/my-agents${NC} or ${CYAN}~/my-agents${NC}"
+            echo -e "       ${CYAN}C:/Users/username/my-agents${NC} or ${CYAN}~/my-agents${NC}"
             ;;
         *)
-            echo "       ${CYAN}/home/username/my-agents${NC} or ${CYAN}~/my-agents${NC}"
+            echo -e "       ${CYAN}/home/username/my-agents${NC} or ${CYAN}~/my-agents${NC}"
             ;;
     esac
     echo ""
