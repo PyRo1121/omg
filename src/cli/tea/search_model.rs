@@ -6,6 +6,7 @@ use crate::cli::style;
 use crate::cli::tea::{Cmd, Model};
 use crate::core::Package;
 use crate::package_managers::SyncPackage;
+use std::fmt::Write;
 
 #[cfg(feature = "arch")]
 use crate::package_managers::AurPackageDetail;
@@ -106,7 +107,7 @@ impl SearchModel {
     }
 
     /// Render a single search result with beautiful styling
-    fn render_result(&self, result: &SearchResult, index: usize) -> String {
+    fn render_result(result: &SearchResult, index: usize) -> String {
         let installed_mark = if result.installed {
             style::dim(" [installed]")
         } else {
@@ -153,7 +154,7 @@ impl SearchModel {
     }
 
     /// Render header with beautiful box drawing
-    fn render_header(&self, title: &str, subtitle: &str) -> String {
+    fn render_header(title: &str, subtitle: &str) -> String {
         format!(
             "\n{} {}\n{} {}\n{}{}\n",
             "┌─".cyan().bold(),
@@ -179,7 +180,7 @@ impl Model for SearchModel {
     fn update(&mut self, msg: Self::Msg) -> Cmd<Self::Msg> {
         match msg {
             SearchMsg::Search(query) => {
-                self.query = query.clone();
+                self.query.clone_from(&query);
                 self.state = SearchState::Searching;
 
                 if query.is_empty() {
@@ -241,7 +242,7 @@ impl Model for SearchModel {
                 let mut output = String::new();
 
                 // Beautiful header
-                output.push_str(&self.render_header(
+                output.push_str(&Self::render_header(
                     "OMG",
                     &format!(
                         "{} results ({:.1}ms)",
@@ -265,9 +266,9 @@ impl Model for SearchModel {
 
                 // Display official packages
                 if !official.is_empty() {
-                    output.push_str(&format!("{}\n", "Official Repositories".cyan().bold()));
+                    let _ = writeln!(output, "{}", "Official Repositories".cyan().bold());
                     for (i, result) in official.iter().enumerate() {
-                        output.push_str(&self.render_result(result, i));
+                        output.push_str(&Self::render_result(result, i));
                         output.push('\n');
                     }
                     if !aur.is_empty() {
@@ -277,19 +278,20 @@ impl Model for SearchModel {
 
                 // Display AUR packages
                 if !aur.is_empty() {
-                    output.push_str(&format!("{}\n", "AUR (Arch User Repository)".cyan().bold()));
+                    let _ = writeln!(output, "{}", "AUR (Arch User Repository)".cyan().bold());
                     for (i, result) in aur.iter().enumerate() {
-                        output.push_str(&self.render_result(result, i));
+                        output.push_str(&Self::render_result(result, i));
                         output.push('\n');
                     }
                 }
 
                 // Footer tip
-                output.push_str(&format!(
+                let _ = write!(
+                    output,
                     "\n{} {}\n",
                     style::arrow("→"),
                     style::command("omg info <package> for details")
-                ));
+                );
 
                 output
             }
