@@ -53,21 +53,29 @@ pub async fn search(query: &str, detailed: bool, _interactive: bool) -> Result<(
         anyhow::bail!("Invalid search query: shell metacharacters detected");
     }
 
+    // Try daemon first for official repos, but always search AUR too
+    let mut display_packages: Vec<DisplayPackage> = Vec::new();
+
     if let Ok(mut client) = DaemonClient::connect().await
         && let Ok(res) = client.search(query, Some(50)).await
     {
-        display_daemon_results(&res, query);
-        return Ok(());
+        // Daemon returned official repo results
+        for pkg in res.packages {
+            display_packages.push(DisplayPackage {
+                name: pkg.name,
+                version: pkg.version,
+                description: pkg.description,
+                source: pkg.source,
+            });
+        }
+    } else {
+        // Fallback to direct package manager for official repos
+        let pm = get_package_manager();
+        let packages = pm.search(query).await?;
+        display_packages.extend(packages.into_iter().map(DisplayPackage::from_package));
     }
 
-    let pm = get_package_manager();
-    let packages = pm.search(query).await?;
-
-    let mut display_packages: Vec<DisplayPackage> = packages
-        .into_iter()
-        .map(DisplayPackage::from_package)
-        .collect();
-
+    // Always search AUR on Arch (not on Debian)
     #[cfg(feature = "arch")]
     if !use_debian_backend() {
         let aur_packages = if detailed {
