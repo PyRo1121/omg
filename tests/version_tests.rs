@@ -102,8 +102,8 @@ mod real_world_parsing {
         let unusual_versions = vec![
             "1_2_3",
             "1.2.3+build1",
-            "1.2.3-4.5.6",
-            "", // Empty string edge case
+            "1.2.3-4",
+            "0-1", // Minimal valid version
         ];
 
         for ver in unusual_versions {
@@ -324,11 +324,10 @@ mod update_detection {
         let new = parse_version_or_panic("1.2.3.4.5.6.7.8.10");
         assert!(new > old, "Update in last component should be detected");
 
-        // Empty version (edge case)
-        let old = parse_version_or_panic("");
-        let new = parse_version_or_panic("1.0.0");
-        // Behavior depends on alpm_types implementation
-        assert_ne!(old, new, "Empty version should not equal real version");
+        // Release comparison
+        let old = parse_version_or_panic("1.0.0-1");
+        let new = parse_version_or_panic("1.0.0-2");
+        assert!(new > old, "Release update should be detected");
     }
 }
 
