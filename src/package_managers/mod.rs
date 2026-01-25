@@ -4,6 +4,8 @@
 //!
 //! - `debian`: Adds rust-apt FFI for all operations (requires libapt-pkg-dev)
 
+use std::sync::Arc;
+
 #[cfg(feature = "arch")]
 pub mod alpm_direct;
 #[cfg(feature = "arch")]
@@ -110,38 +112,38 @@ pub use types::PackageInfo as SyncPkgInfo;
 pub use types::{LocalPackage, SyncPackage};
 
 /// Get the appropriate package manager for the current distribution
-pub fn get_package_manager() -> Box<dyn PackageManager> {
+pub fn get_package_manager() -> Arc<dyn PackageManager> {
     #[allow(unused_imports)]
     use crate::core::env::distro::{Distro, detect_distro};
 
     if crate::core::paths::test_mode() {
         let distro = std::env::var("OMG_TEST_DISTRO").unwrap_or_else(|_| "arch".to_string());
-        return Box::new(mock::MockPackageManager::new(&distro));
+        return Arc::new(mock::MockPackageManager::new(&distro));
     }
 
     match detect_distro() {
         #[cfg(feature = "arch")]
-        Distro::Arch => Box::new(ArchPackageManager::new()),
+        Distro::Arch => Arc::new(ArchPackageManager::new()),
         // debian provides AptPackageManager
         #[cfg(feature = "debian")]
-        Distro::Debian | Distro::Ubuntu => Box::new(AptPackageManager::new()),
+        Distro::Debian | Distro::Ubuntu => Arc::new(AptPackageManager::new()),
         // debian-pure provides PureDebianPackageManager
         #[cfg(all(not(feature = "debian"), feature = "debian-pure"))]
-        Distro::Debian | Distro::Ubuntu => Box::new(debian_pure::PureDebianPackageManager::new()),
+        Distro::Debian | Distro::Ubuntu => Arc::new(debian_pure::PureDebianPackageManager::new()),
         _ => {
             // Fallback or default
             #[cfg(feature = "arch")]
-            return Box::new(ArchPackageManager::new());
+            return Arc::new(ArchPackageManager::new());
 
             #[cfg(all(not(feature = "arch"), feature = "debian"))]
-            return Box::new(AptPackageManager::new());
+            return Arc::new(AptPackageManager::new());
 
             #[cfg(all(
                 not(feature = "arch"),
                 not(feature = "debian"),
                 feature = "debian-pure"
             ))]
-            return Box::new(debian_pure::PureDebianPackageManager::new());
+            return Arc::new(debian_pure::PureDebianPackageManager::new());
 
             #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
             panic!(

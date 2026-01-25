@@ -10,12 +10,11 @@
 
 use omg_lib::core::packages::service::PackageService;
 use omg_lib::package_managers::get_package_manager;
-use std::sync::Arc;
 
 #[test]
 fn test_service_creation() {
     let pm = get_package_manager();
-    let _ = PackageService::new(Arc::from(pm));
+    let _ = PackageService::new(pm);
 
     // Service should be created successfully
     // This test verifies that AUR client initialization works on Arch
@@ -27,7 +26,7 @@ fn test_service_creation() {
 fn test_aur_client_initialization() {
     let pm = get_package_manager();
     let pm_name = pm.name();
-    let _ = PackageService::new(Arc::from(pm));
+    let _ = PackageService::new(pm);
 
     // On Arch, the service should have AUR client initialized if backend is pacman
     if pm_name == "pacman" {
@@ -41,7 +40,7 @@ fn test_aur_client_initialization() {
 #[test]
 fn test_empty_package_list() {
     let pm = get_package_manager();
-    let service = PackageService::new(Arc::from(pm));
+    let service = PackageService::new(pm);
 
     // Runtime test: calling install with empty packages
     // Note: The CLI layer handles empty package validation, so the service
@@ -58,7 +57,7 @@ fn test_empty_package_list() {
 fn test_service_has_backend() {
     let pm = get_package_manager();
     let pm_name = pm.name();
-    let _ = PackageService::new(Arc::from(pm));
+    let _ = PackageService::new(pm);
 
     // Verify the service has a backend
     // This is a compile-time check that the service is properly structured
@@ -73,7 +72,7 @@ fn test_arch_install_logic_compiles() {
 
     let pm = get_package_manager();
     let pm_name = pm.name();
-    let _ = PackageService::new(Arc::from(pm));
+    let _ = PackageService::new(pm);
 
     if pm_name == "pacman" {
         println!("Arch install logic is compiled and available");
@@ -87,7 +86,7 @@ fn test_non_arch_install_logic_compiles() {
 
     let pm = get_package_manager();
     let pm_name = pm.name();
-    let _ = PackageService::new(Arc::from(pm));
+    let _ = PackageService::new(pm);
 
     println!("Non-Arch install logic is compiled for {} backend", pm_name);
 }

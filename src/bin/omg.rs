@@ -319,9 +319,7 @@ async fn async_main(args: Vec<String>) -> Result<()> {
             detailed,
             interactive,
         } => {
-            if !packages::search_sync_cli(query, *detailed, *interactive)? {
-                packages::search(query, *detailed, *interactive).await?;
-            }
+            packages::search(query, *detailed, *interactive).await?;
         }
         Commands::Install { packages, yes } => {
             packages::install(packages, *yes).await?;

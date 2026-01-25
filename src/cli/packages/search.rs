@@ -53,11 +53,11 @@ pub async fn search(query: &str, detailed: bool, _interactive: bool) -> Result<(
         anyhow::bail!("Invalid search query: shell metacharacters detected");
     }
 
-    if let Ok(mut client) = DaemonClient::connect().await {
-        if let Ok(res) = client.search(query, Some(50)).await {
-            display_daemon_results(res, query);
-            return Ok(());
-        }
+    if let Ok(mut client) = DaemonClient::connect().await
+        && let Ok(res) = client.search(query, Some(50)).await
+    {
+        display_daemon_results(&res, query);
+        return Ok(());
     }
 
     let pm = get_package_manager();
@@ -121,25 +121,129 @@ pub async fn search(query: &str, detailed: bool, _interactive: bool) -> Result<(
     Ok(())
 }
 
-/// Synchronous fast-path for search
+/// Attempts to execute package search in a new Tokio runtime from a synchronous context.
+///
+/// This function provides a bridge between synchronous CLI code and the async `search()` function.
+/// It's designed to be called from contexts where no Tokio runtime exists yet, allowing the
+/// async search to execute synchronously by creating a temporary runtime.
+///
+/// # Return Value
+///
+/// Returns `Ok(true)` if the search was successfully executed in this function.
+/// Returns `Ok(false)` if the caller should use the async path instead. This occurs when:
+///   - The query fails basic validation (too long or contains control characters)
+///   - A Tokio runtime already exists in the current context
+///
+/// Returns `Err(_)` if the search itself fails (validation errors beyond basic checks,
+/// runtime creation failures, or search execution errors).
+///
+/// # When to Use This Function
+///
+/// Use this function when:
+/// - You're in a synchronous context (no `.await` available)
+/// - You want to attempt a synchronous search before falling back to async
+/// - You need to integrate async search into legacy sync code
+///
+/// **Do NOT use this function when:**
+/// - You're already inside an async context (just call `search().await` directly)
+/// - You already have a Tokio runtime handle available
+///
+/// # Why Return `Result<bool>` Instead of Executing Directly?
+///
+/// The boolean return value allows callers to implement a fallback strategy:
+/// ```rust,ignore
+/// // Try sync path first, fall back to async if needed
+/// if search_sync_cli(query, detailed, interactive)? {
+///     // Search completed successfully
+/// } else {
+///     // Already in async context, use async path
+///     search(query, detailed, interactive).await?;
+/// }
+/// ```
+///
+/// # Runtime Creation Safety
+///
+/// This function creates a new current-thread runtime using
+/// `tokio::runtime::Builder::new_current_thread()`. This approach:
+///
+/// - Prevents nested runtime panics (the most common issue with `block_on`)
+/// - Avoids the "cannot drop a runtime in a context where blocking is prohibited" error
+/// - Is safe to call from any synchronous context
+///
+/// The check for existing runtime (`Handle::try_current()`) is critical because:
+/// - Attempting to create a runtime inside an existing runtime causes a panic
+/// - Calling `block_on` from within an async context can cause deadlocks
+/// - Returning `false` allows the caller to use the existing async context properly
+///
+/// # Arguments
+///
+/// * `query` - The search query string (max 100 characters, no control chars)
+/// * `detailed` - Whether to perform detailed search (includes AUR details on Arch)
+/// * `interactive` - Interactive mode flag (currently unused but reserved for future use)
+///
+/// # Errors
+///
+/// This function will return an error if:
+/// - Tokio runtime creation fails
+/// - The underlying `search()` function returns an error
+/// - I/O operations fail during search execution
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use crate::cli::packages::search::search_sync_cli;
+///
+/// fn main() -> anyhow::Result<()> {
+///     let query = "firefox";
+///     let detailed = false;
+///     let interactive = false;
+///
+///     // Try synchronous execution
+///     if search_sync_cli(query, detailed, interactive)? {
+///         println!("Search completed synchronously");
+///     } else {
+///         println!("Fallback to async path needed");
+///     }
+///     Ok(())
+/// }
+/// ```
 pub fn search_sync_cli(query: &str, detailed: bool, interactive: bool) -> Result<bool> {
-    // Basic validation
+    // Perform basic validation before attempting any async operations
+    // These checks are lightweight and can fail fast without runtime overhead
     if query.len() > 100 || query.chars().any(char::is_control) {
         return Ok(false);
     }
 
-    // Try to run search using block_on
-    // For a true fast-path we might want a dedicated sync search that only hits the local index
-    // but for now this restores functionality.
+    // Detect if we're already inside a Tokio runtime context
+    //
+    // This check is critical for preventing runtime panics:
+    // - Creating a new runtime inside an existing one causes panic: "cannot create runtime
+    //   from within another runtime"
+    // - Using block_on inside an async context can lead to deadlocks
+    //
+    // When a runtime exists, we return Ok(false) to signal the caller that they should
+    // use the async path directly (call search().await instead of this sync wrapper)
+    if tokio::runtime::Handle::try_current().is_ok() {
+        return Ok(false);
+    }
+
+    // No runtime exists, so we can safely create one and execute the async search
+    // synchronously. Using current_thread runtime because:
+    // - Search operations are I/O bound, not CPU bound
+    // - Avoids overhead of multi-threaded runtime for single operations
+    // - Prevents potential thread-locale issues with package manager commands
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
 
+    // Execute the async search function and block until completion
     rt.block_on(search(query, detailed, interactive))?;
+
+    // Return true to indicate successful completion via the sync path
     Ok(true)
 }
 
-fn display_daemon_results(res: crate::daemon::protocol::SearchResult, query: &str) {
+fn display_daemon_results(res: &crate::daemon::protocol::SearchResult, query: &str) {
     if res.packages.is_empty() {
         use crate::cli::components::Components;
         use crate::cli::packages::execute_cmd;

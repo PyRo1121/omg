@@ -33,6 +33,9 @@ impl PackageService {
     }
 
     /// Install packages, automatically resolving AUR packages if on Arch
+    ///
+    /// The `yes` parameter is accepted for API compatibility but not used at this layer.
+    /// Interactive prompts are handled by the underlying package manager implementations.
     pub async fn install(&self, packages: &[String], _yes: bool) -> Result<()> {
         let mut changes: Vec<PackageChange> = Vec::new();
 

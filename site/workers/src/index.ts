@@ -49,6 +49,7 @@ import {
   handleAdminCohorts,
   handleAdminRevenue,
   handleAdminAuditLog,
+  handleAdminAnalytics,
   handleAdminCRMUsers,
   handleAdminExportUsers,
   handleAdminExportUsage,
@@ -307,6 +308,10 @@ export default {
 
       if (path === '/api/admin/audit-log' && method === 'GET') {
         return handleAdminAuditLog(request, env);
+      }
+
+      if (path === '/api/admin/analytics' && method === 'GET') {
+        return handleAdminAnalytics(request, env);
       }
 
       if (path === '/api/admin/firehose' && method === 'GET') {

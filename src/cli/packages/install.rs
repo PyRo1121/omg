@@ -12,8 +12,26 @@ use crate::package_managers::get_package_manager;
 
 use futures::future::BoxFuture;
 
+/// Extract package name from a "Package not found" error message.
+///
+/// Error format: "Package not found: {name}"
+/// Falls back to substring matching for other error formats.
+fn extract_missing_package(msg: &str, packages: &[String]) -> Option<String> {
+    // Try to parse the standard error format first
+    if let Some(prefix) = msg.strip_prefix("Package not found: ") {
+        let pkg_name = prefix.trim();
+        // Verify this is one of the packages we tried to install
+        if packages.iter().any(|p| p == pkg_name) {
+            return Some(pkg_name.to_string());
+        }
+    }
+
+    // Fallback to substring check for other error formats
+    packages.iter().find(|p| msg.contains(p.as_str())).cloned()
+}
+
 /// Install packages
-pub async fn install(packages: &[String], _yes: bool) -> Result<()> {
+pub async fn install(packages: &[String], yes: bool) -> Result<()> {
     if packages.is_empty() {
         anyhow::bail!("No packages specified");
     }
@@ -26,10 +44,8 @@ pub async fn install(packages: &[String], _yes: bool) -> Result<()> {
     if let Err(e) = pm.install(packages).await {
         let msg = e.to_string();
 
-        if msg.contains("not found") {
-            if let Some(pkg_name) = packages.iter().find(|p| msg.contains(*p)) {
-                return handle_missing_package(pkg_name.to_string(), e).await;
-            }
+        if let Some(pkg_name) = extract_missing_package(&msg, packages) {
+            return handle_missing_package(pkg_name, e, yes).await;
         }
         return Err(e);
     }
@@ -41,6 +57,7 @@ pub async fn install(packages: &[String], _yes: bool) -> Result<()> {
 fn handle_missing_package(
     pkg_name: String,
     original_error: anyhow::Error,
+    yes: bool,
 ) -> BoxFuture<'static, Result<()>> {
     Box::pin(async move {
         let suggestions = try_get_suggestions(&pkg_name).await;
@@ -50,11 +67,12 @@ fn handle_missing_package(
         }
 
         println!();
-        ui::print_error(&format!("Package '{pkg_name}' not found."));
+        ui::print_error(format!("Package '{pkg_name}' not found."));
         println!("Did you mean one of these?");
         println!();
 
-        if console::user_attended() {
+        // Skip interactive prompt when --yes is true
+        if !yes && console::user_attended() {
             let selection = Select::with_theme(&ui::prompt_theme())
                 .with_prompt("Select a replacement (or Esc to abort)")
                 .default(0)
@@ -70,7 +88,7 @@ fn handle_missing_package(
                     new_pkg
                 );
 
-                return install(&[new_pkg], false).await;
+                return install(&[new_pkg], yes).await;
             }
         } else {
             println!("  Suggested alternatives:");
@@ -84,10 +102,10 @@ fn handle_missing_package(
 }
 
 async fn try_get_suggestions(query: &str) -> Vec<String> {
-    if let Ok(mut client) = DaemonClient::connect().await {
-        if let Ok(suggestions) = client.suggest(query, Some(5)).await {
-            return suggestions;
-        }
+    if let Ok(mut client) = DaemonClient::connect().await
+        && let Ok(suggestions) = client.suggest(query, Some(5)).await
+    {
+        return suggestions;
     }
     Vec::new()
 }

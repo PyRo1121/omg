@@ -26,7 +26,7 @@ use parking_lot::RwLock;
 pub struct DaemonState {
     pub cache: PackageCache,
     pub persistent: super::db::PersistentCache,
-    pub package_manager: Box<dyn PackageManager>,
+    pub package_manager: Arc<dyn PackageManager>,
     #[cfg(feature = "arch")]
     pub aur: crate::package_managers::AurClient,
     #[cfg(feature = "arch")]
