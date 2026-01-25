@@ -89,24 +89,24 @@ export const AdminDashboard: Component = () => {
               <div class="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
                 <StatCard
                   title="Total Users"
-                  value={adminData()?.overview.total_users.toLocaleString() || 0}
+                  value={adminData()?.overview?.total_users?.toLocaleString() || '0'}
                   icon={<Users size={20} />}
                   trend={{ value: 8.2, isUp: true }}
                 />
                 <StatCard
                   title="Monthly Revenue"
-                  value={`$${(adminData()?.overview.mrr || 0).toLocaleString()}`}
+                  value={`$${(adminData()?.overview?.mrr || 0).toLocaleString()}`}
                   icon={<CreditCard size={20} />}
                   trend={{ value: 12.5, isUp: true }}
                 />
                 <StatCard
                   title="Active Fleet"
-                  value={adminData()?.overview.active_machines.toLocaleString() || 0}
+                  value={adminData()?.overview?.active_machines?.toLocaleString() || '0'}
                   icon={<Globe size={20} />}
                 />
                 <StatCard
                   title="Command Volume"
-                  value={adminData()?.overview.total_commands.toLocaleString() || 0}
+                  value={adminData()?.overview?.total_commands?.toLocaleString() || '0'}
                   icon={<Zap size={20} />}
                   trend={{ value: 4.1, isUp: true }}
                 />
@@ -155,7 +155,7 @@ export const AdminDashboard: Component = () => {
                   <div class="rounded-3xl border border-white/5 bg-[#0d0d0e] p-8 shadow-2xl">
                     <h3 class="text-lg font-bold text-white uppercase tracking-widest mb-6">Fleet Distribution</h3>
                     <div class="space-y-4">
-                      <For each={adminData()?.fleet.versions}>
+                      <For each={adminData()?.fleet?.versions}>
                         {(v) => (
                           <div>
                             <div class="mb-2 flex justify-between text-[11px] font-black uppercase tracking-widest">
@@ -163,9 +163,9 @@ export const AdminDashboard: Component = () => {
                               <span class="text-white">{v.count} nodes</span>
                             </div>
                             <div class="h-1.5 overflow-hidden rounded-full bg-white/[0.03]">
-                              <div 
-                                class="h-full bg-indigo-500" 
-                                style={{ width: `${(v.count / (adminData()?.overview.active_machines || 1)) * 100}%` }} 
+                              <div
+                                class="h-full bg-indigo-500"
+                                style={{ width: `${(v.count / (adminData()?.overview?.active_machines || 1)) * 100}%` }}
                               />
                             </div>
                           </div>
@@ -224,7 +224,7 @@ export const AdminDashboard: Component = () => {
                     </tr>
                   </thead>
                   <tbody class="divide-y divide-white/5">
-                    <For each={adminData()?.recent_signups}>
+                    <For each={adminData()?.recent_signups || []}>
                       {() => (
                          <tr class="group hover:bg-white/[0.01] transition-colors">
                             <td class="px-6 py-4">
