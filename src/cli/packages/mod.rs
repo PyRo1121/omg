@@ -143,7 +143,10 @@ mod tests {
 
         // Test complex command with header and card
         execute_cmd(Cmd::header("Test", "Header body"));
-        execute_cmd(Cmd::card("Test Card", vec!["line 1".to_string(), "line 2".to_string()]));
+        execute_cmd(Cmd::card(
+            "Test Card",
+            vec!["line 1".to_string(), "line 2".to_string()],
+        ));
 
         // Test styled text
         execute_cmd(Cmd::StyledText(crate::cli::tea::StyledTextConfig {

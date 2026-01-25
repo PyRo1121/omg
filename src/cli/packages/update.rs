@@ -49,8 +49,12 @@ async fn update_fallback(check_only: bool, yes: bool) -> Result<()> {
         .iter()
         .map(|up| {
             let update_label = match (
-                semver::Version::parse(up.old_version.trim_start_matches(|c: char| !c.is_numeric())),
-                semver::Version::parse(up.new_version.trim_start_matches(|c: char| !c.is_numeric())),
+                semver::Version::parse(
+                    up.old_version.trim_start_matches(|c: char| !c.is_numeric()),
+                ),
+                semver::Version::parse(
+                    up.new_version.trim_start_matches(|c: char| !c.is_numeric()),
+                ),
             ) {
                 (Ok(old), Ok(new)) => {
                     if new.major > old.major {

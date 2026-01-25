@@ -42,8 +42,8 @@ pub fn run(package: &str, reverse: bool) -> Result<()> {
 
 #[cfg(feature = "arch")]
 fn show_dependency_chain(package: &str) -> Result<Cmd<()>> {
-    use alpm::Alpm;
     use crate::cli::components::Components;
+    use alpm::Alpm;
 
     let handle = Alpm::new("/", "/var/lib/pacman")
         .map_err(|e| anyhow::anyhow!("Failed to open ALPM: {e}"))?;
@@ -118,7 +118,11 @@ fn show_dependency_chain(package: &str) -> Result<Cmd<()>> {
                 .take(10)
                 .map(|dep| {
                     let installed = localdb.pkg(dep.name().as_bytes()).is_ok();
-                    let status = if installed { "✓ installed" } else { "✗ not installed" };
+                    let status = if installed {
+                        "✓ installed"
+                    } else {
+                        "✗ not installed"
+                    };
                     (dep.name().to_string(), status.to_string())
                 })
                 .collect();
@@ -126,7 +130,10 @@ fn show_dependency_chain(package: &str) -> Result<Cmd<()>> {
             commands.push(Components::kv_list(Some("Dependencies"), dep_list));
 
             if deps.len() > 10 {
-                commands.push(Components::muted(format!("... and {} more dependencies", deps.len() - 10)));
+                commands.push(Components::muted(format!(
+                    "... and {} more dependencies",
+                    deps.len() - 10
+                )));
             }
         }
     }
@@ -134,17 +141,30 @@ fn show_dependency_chain(package: &str) -> Result<Cmd<()>> {
     // Safety assessment
     commands.push(Components::spacer());
     let required_by_count = count_reverse_deps(&handle, package);
-    let (safety_msg, safety_type) = if required_by_count == 0 && matches!(reason, alpm::PackageReason::Depend) {
-        ("YES - orphan dependency".to_string(), "safe")
-    } else if required_by_count > 0 {
-        (format!("NO - {} packages depend on it", required_by_count), "unsafe")
-    } else {
-        ("User decision - explicitly installed".to_string(), "decision")
-    };
+    let (safety_msg, safety_type) =
+        if required_by_count == 0 && matches!(reason, alpm::PackageReason::Depend) {
+            ("YES - orphan dependency".to_string(), "safe")
+        } else if required_by_count > 0 {
+            (
+                format!("NO - {} packages depend on it", required_by_count),
+                "unsafe",
+            )
+        } else {
+            (
+                "User decision - explicitly installed".to_string(),
+                "decision",
+            )
+        };
 
     match safety_type {
-        "safe" => commands.push(Components::success(format!("Safe to remove: {}", safety_msg))),
-        "unsafe" => commands.push(Components::warning(format!("Safe to remove: {}", safety_msg))),
+        "safe" => commands.push(Components::success(format!(
+            "Safe to remove: {}",
+            safety_msg
+        ))),
+        "unsafe" => commands.push(Components::warning(format!(
+            "Safe to remove: {}",
+            safety_msg
+        ))),
         _ => commands.push(Components::info(format!("Safe to remove: {}", safety_msg))),
     }
 
@@ -152,7 +172,11 @@ fn show_dependency_chain(package: &str) -> Result<Cmd<()>> {
 }
 
 #[cfg(feature = "arch")]
-fn build_dependency_path(handle: &alpm::Alpm, from: &str, to: &str) -> Option<Vec<(String, String)>> {
+fn build_dependency_path(
+    handle: &alpm::Alpm,
+    from: &str,
+    to: &str,
+) -> Option<Vec<(String, String)>> {
     // BFS to find shortest path
     let localdb = handle.localdb();
     let mut visited = HashSet::new();
@@ -220,8 +244,8 @@ fn count_reverse_deps(handle: &alpm::Alpm, package: &str) -> usize {
 
 #[cfg(feature = "arch")]
 fn show_reverse_deps(package: &str) -> Result<Cmd<()>> {
-    use alpm::Alpm;
     use crate::cli::components::Components;
+    use alpm::Alpm;
 
     let handle = Alpm::new("/", "/var/lib/pacman")
         .map_err(|e| anyhow::anyhow!("Failed to open ALPM: {e}"))?;
@@ -249,7 +273,10 @@ fn show_reverse_deps(package: &str) -> Result<Cmd<()>> {
     }
 
     let mut commands = vec![
-        Components::header("Reverse Dependencies", format!("packages that depend on {}", package)),
+        Components::header(
+            "Reverse Dependencies",
+            format!("packages that depend on {}", package),
+        ),
         Components::spacer(),
     ];
 
@@ -293,8 +320,8 @@ fn show_reverse_deps(package: &str) -> Result<Cmd<()>> {
 
 #[cfg(all(feature = "debian", not(feature = "arch")))]
 fn show_dependency_chain_debian(package: &str) -> Result<Cmd<()>> {
-    use std::process::Command;
     use crate::cli::components::Components;
+    use std::process::Command;
 
     // Use apt-cache to get dependency info
     let output = Command::new("apt-cache")
@@ -337,8 +364,8 @@ fn show_dependency_chain_debian(package: &str) -> Result<Cmd<()>> {
 
 #[cfg(all(feature = "debian", not(feature = "arch")))]
 fn show_reverse_deps_debian(package: &str) -> Result<Cmd<()>> {
-    use std::process::Command;
     use crate::cli::components::Components;
+    use std::process::Command;
 
     let output = Command::new("apt-cache")
         .args(["rdepends", "--", package])
@@ -363,11 +390,16 @@ fn show_reverse_deps_debian(package: &str) -> Result<Cmd<()>> {
     }
 
     Ok(Cmd::batch(vec![
-        Components::header("Reverse Dependencies", format!("packages that depend on {}", package)),
+        Components::header(
+            "Reverse Dependencies",
+            format!("packages that depend on {}", package),
+        ),
         Components::spacer(),
         Components::kv_list(
             Some(format!("Dependents ({})", deps.len())),
-            deps.into_iter().map(|d| (d.clone(), String::new())).collect(),
+            deps.into_iter()
+                .map(|d| (d.clone(), String::new()))
+                .collect(),
         ),
     ]))
 }

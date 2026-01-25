@@ -21,8 +21,8 @@ pub fn run(tree: Option<&str>, limit: usize) -> Result<()> {
 
 #[cfg(feature = "arch")]
 fn show_top_packages(limit: usize) -> Result<Cmd<()>> {
-    use alpm::Alpm;
     use crate::cli::components::Components;
+    use alpm::Alpm;
 
     let handle = Alpm::new("/", "/var/lib/pacman")
         .map_err(|e| anyhow::anyhow!("Failed to open ALPM: {e}"))?;
@@ -73,9 +73,9 @@ fn show_top_packages(limit: usize) -> Result<Cmd<()>> {
 
 #[cfg(feature = "arch")]
 fn show_package_tree(package: &str) -> Result<Cmd<()>> {
+    use crate::cli::components::Components;
     use alpm::Alpm;
     use std::collections::HashSet;
-    use crate::cli::components::Components;
 
     let handle = Alpm::new("/", "/var/lib/pacman")
         .map_err(|e| anyhow::anyhow!("Failed to open ALPM: {e}"))?;
@@ -140,7 +140,10 @@ fn show_package_tree(package: &str) -> Result<Cmd<()>> {
         ));
 
         if dep_sizes.len() > 10 {
-            commands.push(Components::muted(format!("... and {} more dependencies", dep_sizes.len() - 10)));
+            commands.push(Components::muted(format!(
+                "... and {} more dependencies",
+                dep_sizes.len() - 10
+            )));
         }
     }
 
@@ -161,8 +164,8 @@ fn show_package_tree(package: &str) -> Result<Cmd<()>> {
 
 #[cfg(all(feature = "debian", not(feature = "arch")))]
 fn show_top_packages(limit: usize) -> Result<Cmd<()>> {
-    use std::process::Command;
     use crate::cli::components::Components;
+    use std::process::Command;
 
     let output = Command::new("dpkg-query")
         .args(["-W", "-f=${Installed-Size}\t${Package}\n"])
@@ -210,8 +213,8 @@ fn show_top_packages(limit: usize) -> Result<Cmd<()>> {
 
 #[cfg(all(feature = "debian", not(feature = "arch")))]
 fn show_package_tree(package: &str) -> Result<Cmd<()>> {
-    use std::process::Command;
     use crate::cli::components::Components;
+    use std::process::Command;
 
     // Get package size
     let output = Command::new("dpkg-query")

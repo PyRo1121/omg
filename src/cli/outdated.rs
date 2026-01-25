@@ -117,7 +117,10 @@ pub async fn run(security_only: bool, json: bool) -> Result<()> {
 
     let mut commands = vec![
         Components::spacer(),
-        Components::header("Available Updates", format!("{} packages total", filtered.len())),
+        Components::header(
+            "Available Updates",
+            format!("{} packages total", filtered.len()),
+        ),
         Components::spacer(),
     ];
 
@@ -125,9 +128,10 @@ pub async fn run(security_only: bool, json: bool) -> Result<()> {
     if !security.is_empty() {
         commands.push(Components::card(
             format!("Security Updates (install immediately)",),
-            security.iter().map(|p| {
-                format!("{} {} → {} (CVE)", p.name, p.current_version, p.new_version)
-            }).collect(),
+            security
+                .iter()
+                .map(|p| format!("{} {} → {} (CVE)", p.name, p.current_version, p.new_version))
+                .collect(),
         ));
         commands.push(Components::spacer());
     }
@@ -136,9 +140,10 @@ pub async fn run(security_only: bool, json: bool) -> Result<()> {
     if !major.is_empty() {
         commands.push(Components::card(
             format!("Major Updates (may have breaking changes)"),
-            major.iter().map(|p| {
-                format!("{} {} → ({})", p.name, p.current_version, p.repo)
-            }).collect(),
+            major
+                .iter()
+                .map(|p| format!("{} {} → ({})", p.name, p.current_version, p.repo))
+                .collect(),
         ));
         commands.push(Components::spacer());
     }
@@ -148,13 +153,18 @@ pub async fn run(security_only: bool, json: bool) -> Result<()> {
         let minor_count = minor.len().min(10);
         commands.push(Components::card(
             format!("Minor Updates (new features)"),
-            minor.iter().take(minor_count).map(|p| {
-                format!("{} {} → {}", p.name, p.current_version, p.new_version)
-            }).collect(),
+            minor
+                .iter()
+                .take(minor_count)
+                .map(|p| format!("{} {} → {}", p.name, p.current_version, p.new_version))
+                .collect(),
         ));
 
         if minor.len() > 10 {
-            commands.push(Components::muted(format!("... and {} more minor updates", minor.len() - 10)));
+            commands.push(Components::muted(format!(
+                "... and {} more minor updates",
+                minor.len() - 10
+            )));
         }
         commands.push(Components::spacer());
     }
@@ -164,13 +174,18 @@ pub async fn run(security_only: bool, json: bool) -> Result<()> {
         let patch_count = patch.len().min(5);
         commands.push(Components::card(
             format!("Patch Updates (bug fixes)"),
-            patch.iter().take(patch_count).map(|p| {
-                format!("{} {} → {}", p.name, p.current_version, p.new_version)
-            }).collect(),
+            patch
+                .iter()
+                .take(patch_count)
+                .map(|p| format!("{} {} → {}", p.name, p.current_version, p.new_version))
+                .collect(),
         ));
 
         if patch.len() > 5 {
-            commands.push(Components::muted(format!("... and {} more patch updates", patch.len() - 5)));
+            commands.push(Components::muted(format!(
+                "... and {} more patch updates",
+                patch.len() - 5
+            )));
         }
         commands.push(Components::spacer());
     }
@@ -190,7 +205,9 @@ pub async fn run(security_only: bool, json: bool) -> Result<()> {
     // Actions
     commands.push(Components::info("Run 'omg update' to update all packages"));
     if !security.is_empty() {
-        commands.push(Components::warning("Run 'omg update --security' to update security fixes only"));
+        commands.push(Components::warning(
+            "Run 'omg update --security' to update security fixes only",
+        ));
     }
 
     crate::cli::packages::execute_cmd(Cmd::batch(commands));
