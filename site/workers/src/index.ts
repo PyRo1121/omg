@@ -49,6 +49,7 @@ import {
   handleAdminCohorts,
   handleAdminRevenue,
   handleAdminAuditLog,
+  handleAdminCRMUsers,
   handleAdminExportUsers,
   handleAdminExportUsage,
   handleAdminExportAudit,
