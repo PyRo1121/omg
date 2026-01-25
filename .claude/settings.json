@@ -8,6 +8,7 @@
     "performance-testing-review@claude-code-workflows": true,
     "code-review-ai@claude-code-workflows": true,
     "tdd-workflows@claude-code-workflows": true,
-    "code-documentation@claude-code-workflows": true
+    "code-documentation@claude-code-workflows": true,
+    "web-scripting@claude-code-workflows": true
   }
 }
