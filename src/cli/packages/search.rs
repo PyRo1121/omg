@@ -78,35 +78,24 @@ pub async fn search(query: &str, detailed: bool, _interactive: bool) -> Result<(
     // Always search AUR on Arch (not on Debian)
     #[cfg(feature = "arch")]
     if !use_debian_backend() {
-        println!("DEBUG: Checking AUR for query: '{}'", query); // Temporary debug
         let aur_packages = if detailed {
-            println!("DEBUG: Detailed search path");
             if let Ok(details) = crate::package_managers::search_detailed(query).await {
                 details
                     .into_iter()
                     .map(DisplayPackage::from_aur_detail)
                     .collect()
             } else {
-                println!("DEBUG: Detailed search failed");
                 Vec::new()
             }
         } else {
-            println!("DEBUG: Basic search path");
             let aur = AurClient::new();
-            match aur.search(query).await {
-                Ok(pkgs) => {
-                    println!("DEBUG: AUR returned {} packages", pkgs.len());
-                    pkgs.into_iter().map(DisplayPackage::from_package).collect()
-                }
-                Err(e) => {
-                    println!("DEBUG: AUR search error: {}", e);
-                    Vec::new()
-                }
+            if let Ok(pkgs) = aur.search(query).await {
+                pkgs.into_iter().map(DisplayPackage::from_package).collect()
+            } else {
+                Vec::new()
             }
         };
         display_packages.extend(aur_packages);
-    } else {
-        println!("DEBUG: Skipping AUR (Debian backend detected)");
     }
 
     if display_packages.is_empty() {
