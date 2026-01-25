@@ -13,21 +13,35 @@ export const MachinesView: Component<MachinesViewProps> = (props) => {
   const fleetQuery = useFleetStatus();
   const [error, setError] = createSignal<string | null>(null);
 
-  const handleRevoke = async (machineId: string) => {
-    if (!confirm('Are you sure you want to revoke access for this machine?')) {
+  const handleRevoke = async (machineIds: string[]) => {
+    const isBulk = machineIds.length > 1;
+    const message = isBulk 
+      ? `Are you sure you want to revoke access for ${machineIds.length} machines?`
+      : 'Are you sure you want to revoke access for this machine?';
+
+    if (!confirm(message)) {
       return;
     }
 
     try {
-      const res = await api.revokeMachine(machineId);
-      if (res.success) {
+      setError(null);
+      // Execute all revocations in parallel
+      const results = await Promise.all(
+        machineIds.map(id => api.revokeMachine(id))
+      );
+      
+      const allSuccessful = results.every(res => res.success);
+      
+      if (allSuccessful) {
         fleetQuery.refetch();
         props.onRevoke();
       } else {
-        setError('Failed to revoke machine');
+        const failedCount = results.filter(res => !res.success).length;
+        setError(`Failed to revoke ${failedCount} machine(s)`);
+        fleetQuery.refetch();
       }
     } catch (e) {
-      setError('Network error');
+      setError('Network error during revocation');
     }
   };
 

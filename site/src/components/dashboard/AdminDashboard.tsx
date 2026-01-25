@@ -16,7 +16,7 @@ import {
   AlertCircle
 } from '../ui/Icons';
 import * as api from '../../lib/api';
-import { useAdminDashboard, useAdminFirehose, useAdminAnalytics } from '../../lib/api-hooks';
+import { useAdminDashboard, useAdminFirehose } from '../../lib/api-hooks';
 import { StatCard } from './analytics/StatCard';
 import { CardSkeleton } from '../ui/Skeleton';
 
@@ -28,7 +28,6 @@ export const AdminDashboard: Component = () => {
   // TanStack Queries
   const dashboardQuery = useAdminDashboard();
   const firehoseQuery = useAdminFirehose(50);
-  const analyticsQuery = useAdminAnalytics();
 
   const adminData = () => dashboardQuery.data;
   const events = () => firehoseQuery.data?.events || [];
