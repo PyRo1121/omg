@@ -19,7 +19,7 @@ export function clearSession(): void {
 }
 
 // API request helper with auth
-async function apiRequest<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+export async function apiRequest<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const token = getSessionToken();
 
   const headers: Record<string, string> = {
@@ -45,6 +45,32 @@ async function apiRequest<T>(endpoint: string, options: RequestInit = {}): Promi
   return data as T;
 }
 
+// Generic HTTP helpers
+export async function get<T>(endpoint: string): Promise<T> {
+  return apiRequest<T>(endpoint, { method: 'GET' });
+}
+
+export async function post<T>(endpoint: string, body?: any): Promise<T> {
+  return apiRequest<T>(endpoint, {
+    method: 'POST',
+    body: body ? JSON.stringify(body) : undefined,
+  });
+}
+
+export async function put<T>(endpoint: string, body?: any): Promise<T> {
+  return apiRequest<T>(endpoint, {
+    method: 'PUT',
+    body: body ? JSON.stringify(body) : undefined,
+  });
+}
+
+export async function del<T>(endpoint: string, body?: any): Promise<T> {
+  return apiRequest<T>(endpoint, {
+    method: 'DELETE',
+    body: body ? JSON.stringify(body) : undefined,
+  });
+}
+
 // Custom error class
 export class ApiError extends Error {
   constructor(
@@ -62,6 +88,7 @@ export class ApiError extends Error {
 
 export interface SendCodeResponse {
   success: boolean;
+  status?: string;
   message?: string;
   error?: string;
 }
@@ -553,53 +580,12 @@ export async function getAdminDashboard(): Promise<AdminOverview> {
   return apiRequest('/api/admin/dashboard');
 }
 
-// Comprehensive analytics data
-export interface AdminAnalytics {
-  dau: number;
-  wau: number;
-  mau: number;
-  events_today: number;
-  retention_rate: number;
-  commands_by_type: Array<{ command: string; count: number }>;
-  features_by_usage: Array<{ feature: string; count: number }>;
-  errors_by_type: Array<{ error_type: string; count: number }>;
-  dau_trend: Array<{ date: string; active_users: number }>;
-  commands_trend: Array<{ date: string; commands: number }>;
-  sessions_trend: Array<{ date: string; sessions: number }>;
-  performance: Record<string, { p50: number; p95: number; p99: number; count: number }>;
-  version_distribution: Array<{ version: string; count: number }>;
-  platform_distribution: Array<{ platform: string; count: number }>;
-  // Gold-tier analytics
-  funnel: {
-    installs: number;
-    activated: number;
-    first_command: number;
-    engaged_7d: number;
-    power_users: number;
-  };
-  cohorts: Array<{ cohort_week: string; users: number; active_this_week: number }>;
-  stage_distribution: Array<{ stage: string; count: number }>;
-  geo_distribution: Array<{ timezone: string; users: number }>;
-  churn_risk: {
-    at_risk_users: number;
-  };
-  growth: {
-    new_users_7d: number;
-    new_users_prev_7d: number;
-    growth_rate: number;
-    new_paid_7d: number;
-  };
-  time_saved: {
-    total_ms: number;
-    total_hours: number;
-    trend: Array<{ date: string; time_saved: number }>;
-  };
-  top_errors: Array<{ error_message: string; occurrences: number }>;
-  top_packages: Array<{ package_name: string; install_count: number; search_count: number }>;
-}
-
 export async function getAdminAnalytics(): Promise<AdminAnalytics> {
   return apiRequest('/api/admin/analytics');
+}
+
+export async function getAdminFirehose(limit = 50): Promise<{ events: any[] }> {
+  return apiRequest(`/api/admin/firehose?limit=${limit}`);
 }
 
 export async function getAdminUsers(

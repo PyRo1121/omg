@@ -413,6 +413,77 @@ export async function handleAdminUsers(request: Request, env: Env): Promise<Resp
   });
 }
 
+export async function handleAdminCRMUsers(request: Request, env: Env): Promise<Response> {
+  const result = await validateAdmin(request, env);
+  if (result.error) return result.error;
+  const { context } = result;
+
+  const url = new URL(request.url);
+  const page = parseInt(url.searchParams.get('page') || '1');
+  const limit = Math.min(parseInt(url.searchParams.get('limit') || '50'), 100);
+  const offset = (page - 1) * limit;
+  const search = url.searchParams.get('search') || '';
+
+  let query = `
+    WITH user_stats AS (
+      SELECT 
+        c.id,
+        c.email,
+        c.company,
+        c.created_at,
+        l.tier,
+        l.status as license_status,
+        COUNT(DISTINCT m.id) as machine_count,
+        SUM(u.commands_run) as total_commands,
+        SUM(u.time_saved_ms) as total_time_saved,
+        MAX(u.date) as last_active_date,
+        COUNT(DISTINCT u.date) as active_days_total,
+        (SELECT COUNT(DISTINCT date) FROM usage_daily WHERE license_id = l.id AND date >= date('now', '-30 days')) as active_days_30d
+      FROM customers c
+      LEFT JOIN licenses l ON c.id = l.customer_id
+      LEFT JOIN machines m ON l.id = m.license_id
+      LEFT JOIN usage_daily u ON l.id = u.license_id
+      GROUP BY c.id
+    )
+    SELECT 
+      *,
+      ROUND(
+        (MIN(40, (COALESCE(total_commands, 0) / 100.0) * 4)) + 
+        ((COALESCE(active_days_30d, 0) / 30.0) * 40) +
+        (MIN(20, (COALESCE(machine_count, 0) * 5)))
+      ) as engagement_score,
+      
+      CASE 
+        WHEN last_active_date IS NULL THEN 'new'
+        WHEN last_active_date < date('now', '-14 days') THEN 'churned'
+        WHEN last_active_date < date('now', '-7 days') THEN 'at_risk'
+        WHEN total_commands > 1000 OR active_days_30d > 20 THEN 'power_user'
+        ELSE 'active'
+      END as lifecycle_stage
+    FROM user_stats
+  `;
+
+  const params: (string | number)[] = [];
+  if (search) {
+    query += ` WHERE email LIKE ? OR company LIKE ?`;
+    params.push(`%${search}%`, `%${search}%`);
+  }
+
+  query += ` ORDER BY engagement_score DESC, created_at DESC LIMIT ? OFFSET ?`;
+  params.push(limit, offset);
+
+  const users = await env.DB.prepare(query).bind(...params).all();
+
+  return secureJsonResponse({
+    request_id: context.requestId,
+    users: users.results || [],
+    pagination: {
+      page,
+      limit,
+    }
+  });
+}
+
 // Get detailed user info with Stripe data
 export async function handleAdminUserDetail(request: Request, env: Env): Promise<Response> {
   const result = await validateAdmin(request, env);

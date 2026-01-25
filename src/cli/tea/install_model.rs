@@ -1,13 +1,14 @@
 //! Install Model - Elm Architecture implementation for install command
 //!
 //! Modern, stylish package installation interface with Bubble Tea-inspired UX.
+//!
+//! Modernized to use the unified Components library.
 
-use crate::cli::style;
+use crate::cli::components::Components;
 use crate::cli::tea::{Cmd, Model};
 use crate::core::packages::PackageService;
 use crate::package_managers::get_package_manager;
 use owo_colors::OwoColorize;
-use std::fmt::Write;
 use std::sync::Arc;
 
 /// Installation state machine
@@ -77,19 +78,6 @@ impl InstallModel {
         self.yes = yes;
         self
     }
-
-    /// Render header with beautiful box drawing
-    fn render_header(title: &str, subtitle: &str) -> String {
-        format!(
-            "\n{} {}\n{} {}\n{}{}\n",
-            "┌─".cyan().bold(),
-            title.cyan().bold(),
-            "│".cyan().bold(),
-            subtitle.white(),
-            "└".cyan().bold(),
-            "─".repeat(subtitle.len()).cyan().bold()
-        )
-    }
 }
 
 impl Model for InstallModel {
@@ -106,21 +94,35 @@ impl Model for InstallModel {
         match msg {
             InstallMsg::Resolve => {
                 self.state = InstallState::Resolving;
-
-                // In a real Elm app, we'd do the resolution here.
-                // For now, we assume packages are valid or will fail during execution
-                // to match the existing behavior where PackageService handles validation.
-
-                let pkgs = self.packages.clone();
-                Cmd::Exec(Box::new(move || InstallMsg::PackagesResolved(pkgs)))
+                Cmd::batch([
+                    Components::loading("Resolving packages..."),
+                    // In a real Elm app, we'd do the resolution here.
+                    // For now, we assume packages are valid or will fail during execution
+                    // to match the existing behavior where PackageService handles validation.
+                    Cmd::Exec(Box::new({
+                        let pkgs = self.packages.clone();
+                        move || InstallMsg::PackagesResolved(pkgs)
+                    })),
+                ])
             }
             InstallMsg::PackagesResolved(pkgs) => {
                 self.packages = pkgs;
+
+                let items: Vec<(String, Option<String>)> = self
+                    .packages
+                    .iter()
+                    .map(|p| (p.clone(), Some(String::new())))
+                    .collect();
+                let pkg_list_cmd = Components::package_list(
+                    format!("Installing {} package(s)", self.packages.len()),
+                    items,
+                );
+
                 if self.yes {
-                    Cmd::Exec(Box::new(|| InstallMsg::Execute))
+                    Cmd::batch([pkg_list_cmd, Cmd::Exec(Box::new(|| InstallMsg::Execute))])
                 } else {
                     self.state = InstallState::Confirming;
-                    Cmd::PrintLn(String::new())
+                    Cmd::batch([pkg_list_cmd, Components::confirm("Installation", "Enter")])
                 }
             }
             InstallMsg::Confirm(should_proceed) => {
@@ -128,11 +130,7 @@ impl Model for InstallModel {
                     Cmd::Exec(Box::new(|| InstallMsg::Execute))
                 } else {
                     self.state = InstallState::Complete;
-                    Cmd::batch([
-                        Cmd::PrintLn(String::new()),
-                        Cmd::Warning("Installation cancelled.".to_string()),
-                        Cmd::PrintLn(String::new()),
-                    ])
+                    Components::warning("Installation cancelled.")
                 }
             }
             InstallMsg::Execute => {
@@ -142,121 +140,102 @@ impl Model for InstallModel {
                 let packages = self.packages.clone();
                 let yes = self.yes;
 
-                Cmd::Exec(Box::new(move || {
-                    // This blocks, but in a real async runtime we'd spawn it properly.
-                    // For CLI tools, blocking briefly is often acceptable, but we'll use
-                    // a thread to be safe if a runtime exists.
+                Cmd::batch([
+                    Components::info("Installing packages..."),
+                    Cmd::Exec(Box::new(move || {
+                        // This blocks, but in a real async runtime we'd spawn it properly.
+                        // For CLI tools, blocking briefly is often acceptable, but we'll use
+                        // a thread to be safe if a runtime exists.
 
-                    let result = if tokio::runtime::Handle::try_current().is_ok() {
-                        std::thread::spawn(move || {
-                            let pm = Arc::from(get_package_manager());
-                            let service = PackageService::new(pm);
+                        let packages_task = packages.clone();
+                        let result = if tokio::runtime::Handle::try_current().is_ok() {
+                            std::thread::spawn(move || {
+                                let pm = Arc::from(get_package_manager());
+                                let service = PackageService::new(pm);
+                                let rt = tokio::runtime::Runtime::new().unwrap();
+                                rt.block_on(async { service.install(&packages_task, yes).await })
+                            })
+                            .join()
+                            .unwrap()
+                        } else {
                             let rt = tokio::runtime::Runtime::new().unwrap();
-                            rt.block_on(async { service.install(&packages, yes).await })
-                        })
-                        .join()
-                        .unwrap()
-                    } else {
-                        let rt = tokio::runtime::Runtime::new().unwrap();
-                        rt.block_on(async {
-                            let pm = Arc::from(get_package_manager());
-                            let service = PackageService::new(pm);
-                            service.install(&packages, yes).await
-                        })
-                    };
+                            rt.block_on(async {
+                                let pm = Arc::from(get_package_manager());
+                                let service = PackageService::new(pm);
+                                service.install(&packages, yes).await
+                            })
+                        };
 
-                    match result {
-                        Ok(()) => InstallMsg::Complete,
-                        Err(e) => {
-                            // Basic fuzzy matching hook could go here if we extracted logic from install.rs
-                            // For now, simple error reporting
-                            InstallMsg::Error(e.to_string())
+                        match result {
+                            Ok(()) => InstallMsg::Complete,
+                            Err(e) => {
+                                let msg = e.to_string();
+                                if msg.contains("not found") {
+                                    // Basic extraction of package name from error message if possible
+                                    // ideally the error would be structured
+                                    if let Some(pkg) = packages.iter().find(|p| msg.contains(*p)) {
+                                        // We don't have suggestions here easily without calling the daemon
+                                        // So we just report it as PackageNotFound with empty suggestions
+                                        // The original install.rs logic for suggestions is complex to port
+                                        // fully inside this blocking closure without async/await access
+                                        return InstallMsg::PackageNotFound {
+                                            package: pkg.clone(),
+                                            suggestions: Vec::new(),
+                                        };
+                                    }
+                                }
+                                InstallMsg::Error(e.to_string())
+                            }
                         }
-                    }
-                }))
+                    })),
+                ])
             }
             InstallMsg::Progress(status) => {
                 self.current_status = status;
+                // Spinner update if we had a handle
                 Cmd::none()
             }
             InstallMsg::Complete => {
                 self.state = InstallState::Complete;
-                Cmd::batch([
-                    Cmd::PrintLn(String::new()),
-                    Cmd::Success(format!(
-                        "Successfully installed {} package(s)!",
-                        self.packages.len()
-                    )),
-                    Cmd::PrintLn(String::new()),
-                ])
+                Components::complete(&format!(
+                    "Successfully installed {} package(s)!",
+                    self.packages.len()
+                ))
             }
             InstallMsg::Error(err) => {
                 self.state = InstallState::Failed;
                 self.error = Some(err.clone());
-                Cmd::Error(format!("Installation failed: {err}"))
+                Components::error(format!("Installation failed: {err}"))
             }
             InstallMsg::PackageNotFound {
                 package,
                 suggestions,
             } => {
-                self.state = InstallState::Failed; // Or specialized state
-                self.suggestions = Some((package, suggestions));
-                Cmd::none()
+                self.state = InstallState::Failed;
+                self.suggestions = Some((package.clone(), suggestions.clone()));
+
+                if suggestions.is_empty() {
+                    Components::error(format!("Package '{package}' not found."))
+                } else {
+                    Components::error_with_suggestion(
+                        format!("Package '{package}' not found."),
+                        format!("Did you mean: {}", suggestions.join(", ")),
+                    )
+                }
             }
         }
     }
 
     fn view(&self) -> String {
+        // View is handled by Components/Cmds side-effects
         match self.state {
-            InstallState::Idle => String::new(),
-            InstallState::Resolving => "⟳ Resolving packages...".cyan().dimmed().to_string(),
-            InstallState::Confirming => {
-                let mut output = String::new();
-                output.push_str(&Self::render_header(
-                    "OMG",
-                    &format!("Installing {} package(s)", self.packages.len()),
-                ));
-
-                for pkg in &self.packages {
-                    let _ = writeln!(output, "  {} {}", style::arrow("→"), style::package(pkg));
-                }
-
-                if !self.yes {
-                    let _ = write!(
-                        output,
-                        "\n{} Proceed with installation? · ",
-                        "✓".green().bold()
-                    );
-                }
-                output
-            }
             InstallState::Installing => {
-                format!(
-                    "{} {} {}",
-                    "⟳".cyan(), // Simple spinner for now
-                    self.current_status,
-                    self.packages.join(", ").dimmed()
-                )
+                // Show a simple spinner status if needed, or rely on Components::spinner
+                // Since we don't have a persistent spinner component that updates via view(),
+                // we can return a string here for the render loop.
+                format!("{} {}", "⟳".cyan(), self.current_status)
             }
-            InstallState::Complete => {
-                format!("\n✓ {}\n", "Installation complete!".green().bold())
-            }
-            InstallState::Failed => {
-                if let Some((pkg, suggestions)) = &self.suggestions {
-                    let mut s = format!("\n✗ Package '{}' not found.", pkg.red());
-                    if !suggestions.is_empty() {
-                        s.push_str("\n\nDid you mean one of these?");
-                        for sug in suggestions {
-                            let _ = write!(s, "\n  - {}", style::package(sug));
-                        }
-                    }
-                    s
-                } else if let Some(err) = &self.error {
-                    format!("\n✗ Installation failed: {}\n", err.red())
-                } else {
-                    "\n✗ Installation failed\n".to_string()
-                }
-            }
+            _ => String::new(),
         }
     }
 }

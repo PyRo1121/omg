@@ -34,10 +34,11 @@ interface TeamAnalyticsProps {
   onRevoke: (machineId: string) => void;
   onRefresh: () => void;
   loading?: boolean;
+  initialView?: 'overview' | 'members' | 'security' | 'activity' | 'insights' | 'settings';
 }
 
 export const TeamAnalytics: Component<TeamAnalyticsProps> = props => {
-  const [view, setView] = createSignal<'overview' | 'members' | 'security' | 'activity' | 'insights' | 'settings'>('overview');
+  const [view, setView] = createSignal<'overview' | 'members' | 'security' | 'activity' | 'insights' | 'settings'>(props.initialView || 'overview');
   const [sortBy, setSortBy] = createSignal<'commands' | 'recent' | 'name'>('commands');
   const [filterActive, setFilterActive] = createSignal<boolean | null>(null);
   const [copied, setCopied] = createSignal(false);
@@ -181,33 +182,44 @@ export const TeamAnalytics: Component<TeamAnalyticsProps> = props => {
     return name.slice(0, 2).toUpperCase();
   };
 
-  const securityMetrics = createMemo(() => ({
-    total_vulnerabilities: 12,
-    critical: 0,
-    high: 2,
-    medium: 5,
-    low: 5,
-    compliance_score: 94,
-    signature_verification: 100,
-    sbom_status: 'Healthy',
-    policy_enforcement: 'Active'
-  }));
+  const securityMetrics = createMemo(() => {
+    const members = props.teamData?.members || [];
+    const total = members.length || 1;
+    const active = members.filter(m => m.is_active).length;
+    const compliant = members.filter(m => m.omg_version && m.omg_version.startsWith('1.')).length;
+    
+    return {
+      total_vulnerabilities: 0,
+      critical: 0,
+      high: 0,
+      medium: 0,
+      low: 0,
+      compliance_score: Math.round((compliant / total) * 100),
+      signature_verification: 100,
+      sbom_status: 'Healthy',
+      policy_enforcement: 'Active'
+    };
+  });
 
   const productivityImpact = createMemo(() => {
     const timeSavedMs = props.teamData?.totals?.total_time_saved_ms || 0;
     const hours = Math.floor(timeSavedMs / 3600000);
     const valueUsd = props.teamData?.totals?.total_value_usd || (hours * 85); 
+    
+    const daily = props.teamData?.daily_usage || [];
+    const trend = daily.map(d => d.commands_run);
+    
     return {
       hours_reclaimed: hours,
       developer_value: valueUsd,
-      daily_trend: [4, 6, 5, 8, 7, 9, 10, 8, 7, 11, 12, 10, 14, 13]
+      daily_trend: trend.length > 0 ? trend : [0]
     };
   });
 
   const memberProductivity = createMemo(() => {
     return (props.teamData?.members || []).map(m => ({
       ...m,
-      success_rate: 98.5,
+      success_rate: 100,
       runtime_adoption: 100,
       most_used_runtime: 'Node.js',
       top_contributor: m.total_commands > 1000
@@ -914,11 +926,11 @@ export const TeamAnalytics: Component<TeamAnalyticsProps> = props => {
           <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
             <div class="rounded-[2.5rem] border border-white/5 bg-[#0d0d0e] p-10 shadow-2xl">
               <h3 class="mb-8 text-xl font-bold text-white uppercase tracking-widest">Temporal Density</h3>
-              <ActivityHeatmap data={Array.from({ length: 168 }, (_, i) => ({
-                day: Math.floor(i / 24),
-                hour: i % 24,
-                value: Math.floor(Math.random() * 50) + (i % 24 > 9 && i % 24 < 18 ? 100 : 0)
-              }))} />
+              <ActivityHeatmap data={props.teamData?.daily_usage?.map(d => ({
+                day: new Date(d.date).getDay(),
+                hour: 12,
+                value: d.commands_run
+              })) || []} />
             </div>
 
             <div class="rounded-[2.5rem] border border-white/5 bg-[#0d0d0e] p-8 shadow-2xl">
@@ -1013,20 +1025,33 @@ export const TeamAnalytics: Component<TeamAnalyticsProps> = props => {
               <div class="rounded-[2.5rem] border border-white/5 bg-gradient-to-br from-amber-500/10 to-transparent p-8 shadow-2xl">
                 <h3 class="text-lg font-bold text-white uppercase tracking-widest mb-6">Strategic Advice</h3>
                 <div class="space-y-4">
-                  <div class="flex items-start gap-4 rounded-2xl bg-white/[0.03] p-4 transition-all hover:bg-white/[0.05]">
-                    <div class="text-xl">🚀</div>
-                    <div>
-                      <p class="text-sm font-bold text-white">Accelerate Onboarding</p>
-                      <p class="text-xs text-slate-500 mt-1">3 members haven't activated yet.</p>
+                  <Show when={inactiveMembers().length > 0}>
+                    <div class="flex items-start gap-4 rounded-2xl bg-white/[0.03] p-4 transition-all hover:bg-white/[0.05]">
+                      <div class="text-xl">🚀</div>
+                      <div>
+                        <p class="text-sm font-bold text-white">Accelerate Onboarding</p>
+                        <p class="text-xs text-slate-500 mt-1">{inactiveMembers().length} members haven't been active recently.</p>
+                      </div>
                     </div>
-                  </div>
-                  <div class="flex items-start gap-4 rounded-2xl bg-white/[0.03] p-4 transition-all hover:bg-white/[0.05]">
-                    <div class="text-xl">🛡️</div>
-                    <div>
-                      <p class="text-sm font-bold text-white">Security Patch</p>
-                      <p class="text-xs text-slate-500 mt-1">2 nodes are on legacy version v1.2.x.</p>
+                  </Show>
+                  <Show when={securityMetrics().compliance_score < 100}>
+                    <div class="flex items-start gap-4 rounded-2xl bg-white/[0.03] p-4 transition-all hover:bg-white/[0.05]">
+                      <div class="text-xl">🛡️</div>
+                      <div>
+                        <p class="text-sm font-bold text-white">Security Patch</p>
+                        <p class="text-xs text-slate-500 mt-1">Some nodes are on legacy versions.</p>
+                      </div>
                     </div>
-                  </div>
+                  </Show>
+                  <Show when={inactiveMembers().length === 0 && securityMetrics().compliance_score === 100}>
+                    <div class="flex items-start gap-4 rounded-2xl bg-white/[0.03] p-4 transition-all hover:bg-white/[0.05]">
+                      <div class="text-xl">✨</div>
+                      <div>
+                        <p class="text-sm font-bold text-white">All Systems Nominal</p>
+                        <p class="text-xs text-slate-500 mt-1">Your fleet is fully compliant and active.</p>
+                      </div>
+                    </div>
+                  </Show>
                 </div>
               </div>
             </div>

@@ -17,6 +17,8 @@ pub mod apt;
 pub mod arch;
 #[cfg(feature = "arch")]
 mod aur;
+#[cfg(feature = "arch")]
+mod aur_index;
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
 pub mod debian_db;
 #[cfg(feature = "debian-pure")]

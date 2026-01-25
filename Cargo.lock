@@ -5571,7 +5571,7 @@ dependencies = [
 
 [[package]]
 name = "omg"
-version = "0.1.112"
+version = "0.1.115"
 dependencies = [
  "ahash",
  "alpm",
@@ -5611,6 +5611,7 @@ dependencies = [
  "lz4_flex",
  "lzma-rs",
  "memchr",
+ "memmap2",
  "moka",
  "notify",
  "nucleo-matcher",

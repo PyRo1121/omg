@@ -2,12 +2,11 @@
 //!
 //! Modern, stylish package update interface with Bubble Tea-inspired UX.
 
-use crate::cli::style;
+use crate::cli::components::Components;
 use crate::cli::tea::{Cmd, Model};
 use crate::core::packages::PackageService;
 use crate::package_managers::get_package_manager;
 use semver::Version;
-use std::fmt::Write;
 use std::sync::Arc;
 
 /// Update state machine
@@ -135,48 +134,6 @@ impl UpdateModel {
         self.yes = yes;
         self
     }
-
-    /// Render a single update entry with beautiful styling
-    fn render_update(upd: &UpdatePackage) -> String {
-        format!(
-            "  {:>8} {} {} {} → {}",
-            upd.update_type.styled_label(),
-            style::package(&upd.name),
-            style::dim(&format!("({})", upd.repo)),
-            style::dim(&upd.old_version),
-            style::version(&upd.new_version)
-        )
-    }
-
-    /// Render progress bar for downloads
-    pub fn render_progress_bar(&self, width: usize) -> String {
-        let clamped = self.download_percent.min(100);
-        let filled = (self.download_percent * width / 100).min(width);
-        let empty = width - filled;
-
-        let filled_bar = "█".repeat(filled);
-        let empty_bar = "░".repeat(empty);
-
-        format!(
-            "{}{}{}",
-            filled_bar.green().bold(),
-            empty_bar.dimmed(),
-            format!(" {clamped}%").dimmed()
-        )
-    }
-
-    /// Render header with beautiful box drawing
-    fn render_header(title: &str, subtitle: &str) -> String {
-        format!(
-            "\n{} {}\n{} {}\n{}{}\n",
-            "┌─".cyan().bold(),
-            title.cyan().bold(),
-            "│".cyan().bold(),
-            subtitle.white(),
-            "└".cyan().bold(),
-            "─".repeat(subtitle.len()).cyan().bold()
-        )
-    }
 }
 
 impl Model for UpdateModel {
@@ -240,147 +197,93 @@ impl Model for UpdateModel {
         match msg {
             UpdateMsg::Check => {
                 self.state = UpdateState::Checking;
-                Cmd::Exec(Box::new(|| {
-                    // Async check will be handled in init
-                    UpdateMsg::Check
-                }))
+                // Emit a spinner command
+                Cmd::batch([
+                    Components::loading("Checking for updates..."),
+                    Cmd::Exec(Box::new(|| {
+                        // The actual check is running in the background via init
+                        UpdateMsg::Check // Placeholder, logic is in init
+                    })),
+                ])
             }
             UpdateMsg::UpdatesFound(updates) => {
                 self.updates = updates;
                 self.state = UpdateState::ShowingUpdates;
 
+                let summary_data: Vec<(String, String, String)> = self
+                    .updates
+                    .iter()
+                    .map(|u| (u.name.clone(), u.old_version.clone(), u.new_version.clone()))
+                    .collect();
+
+                let summary_cmd = Components::update_summary(summary_data);
+
                 if self.check_only {
-                    // Show check-only message
                     Cmd::batch([
-                        Cmd::PrintLn(String::new()),
-                        Cmd::Info("Run 'omg update' to install".to_string()),
+                        summary_cmd,
+                        Cmd::spacer(),
+                        Components::info("Run 'omg update' to install"),
                     ])
                 } else if self.yes {
-                    // Auto-confirm and execute
-                    Cmd::Exec(Box::new(|| UpdateMsg::Execute))
+                    Cmd::batch([summary_cmd, Cmd::Exec(Box::new(|| UpdateMsg::Execute))])
                 } else {
-                    // Show confirmation prompt
                     self.state = UpdateState::Confirming;
-                    Cmd::PrintLn(String::new())
+                    Cmd::batch([summary_cmd, Components::confirm("System Upgrade", "Enter")])
                 }
             }
             UpdateMsg::NoUpdates => {
                 self.state = UpdateState::Complete;
-                Cmd::batch([
-                    Cmd::PrintLn(String::new()),
-                    Cmd::Success("System is up to date!".to_string()),
-                    Cmd::PrintLn(String::new()),
-                ])
+                Components::up_to_date()
             }
             UpdateMsg::Confirm(should_proceed) => {
                 if should_proceed {
                     Cmd::Exec(Box::new(|| UpdateMsg::Execute))
                 } else {
                     self.state = UpdateState::Complete;
-                    Cmd::batch([
-                        Cmd::PrintLn(String::new()),
-                        Cmd::Warning("Upgrade cancelled.".to_string()),
-                        Cmd::PrintLn(String::new()),
-                    ])
+                    Components::warning("Upgrade cancelled.")
                 }
             }
             UpdateMsg::Execute => {
                 self.state = UpdateState::Downloading;
-                Cmd::batch([
-                    Cmd::PrintLn(String::new()),
-                    Cmd::Info("→ Executing system upgrade...".to_string()),
-                ])
+                Components::info("Executing system upgrade...")
             }
             UpdateMsg::DownloadProgress { percent } => {
                 self.download_percent = percent.clamp(0, 100);
                 if self.download_percent >= 100 {
                     self.state = UpdateState::Installing;
                 }
-                Cmd::none()
+                // Fallback to info message as progress component is missing
+                Components::info(format!("Downloading... {}%", self.download_percent))
             }
             UpdateMsg::InstallProgress { package } => {
-                self.current_installing = Some(package);
-                Cmd::none()
+                self.current_installing = Some(package.clone());
+                // Fallback to info message
+                Components::info(format!("Installing {}...", package))
             }
             UpdateMsg::Complete => {
                 self.state = UpdateState::Complete;
-                Cmd::Success("System upgrade complete!".to_string())
+                Components::complete("System upgrade complete!")
             }
             UpdateMsg::Error(err) => {
                 self.state = UpdateState::Failed;
                 self.error = Some(err.clone());
-                Cmd::Error(format!("Update failed: {err}"))
+                Components::error(format!("Update failed: {err}"))
             }
         }
     }
 
     fn view(&self) -> String {
+        // View is now minimal as Components handle the output via side-effects (Cmds)
+        // We only use view for static prompts if not handled by Cmds
         match self.state {
-            UpdateState::Idle => String::new(),
-            UpdateState::Checking => "⟳ Checking for updates...".cyan().dimmed().to_string(),
-            UpdateState::ShowingUpdates => {
-                let mut output = String::new();
-
-                // Beautiful header
-                output.push_str(&Self::render_header(
-                    "OMG",
-                    &format!("Found {} update(s)", self.updates.len()),
-                ));
-
-                // Update list
-                for upd in &self.updates {
-                    output.push_str(&Self::render_update(upd));
-                    output.push('\n');
-                }
-
-                // Confirmation prompt
-                if !self.check_only && !self.yes {
-                    let _ = write!(
-                        output,
-                        "\n{} Proceed with system upgrade? · ",
-                        "✓".green().bold()
-                    );
-                }
-
-                output
-            }
             UpdateState::Confirming => {
-                // Already handled in ShowingUpdates
+                // The confirmation prompt is printed via Cmd::batch, but we might need
+                // to render the prompt line here if we want it to persist at the bottom
+                // "Proceed? [Y/n]" is usually handled by the input loop (wrappers.rs)
+                // which prints the prompt.
                 String::new()
             }
-            UpdateState::Downloading => {
-                format!(
-                    "{}\n{} {}",
-                    style::arrow("→→"),
-                    "Downloading packages...".cyan(),
-                    self.render_progress_bar(40)
-                )
-            }
-            UpdateState::Installing => {
-                if let Some(pkg) = &self.current_installing {
-                    format!(
-                        "{} Installing {}...",
-                        style::arrow("→→"),
-                        style::package(pkg)
-                    )
-                } else {
-                    format!("{} Installing updates...", style::arrow("→→"))
-                }
-            }
-            UpdateState::Complete => {
-                if self.updates.is_empty() {
-                    format!("\n✓ {}\n", "System is up to date!".green().bold())
-                } else {
-                    format!("\n✓ {}\n", "System upgrade complete!".green().bold())
-                }
-            }
-            UpdateState::Failed => {
-                if let Some(err) = &self.error {
-                    format!("\n✗ Update failed: {}\n", err.red())
-                } else {
-                    "\n✗ Update failed\n".to_string()
-                }
-            }
+            _ => String::new(),
         }
     }
 }
@@ -416,28 +319,5 @@ mod tests {
             UpdateType::from_versions("1.20.0-1", "1.21.0-1"),
             UpdateType::Minor
         );
-    }
-
-    #[test]
-    fn test_render_progress_bar() {
-        let model = UpdateModel {
-            download_percent: 50,
-            ..Default::default()
-        };
-        let bar = model.render_progress_bar(10);
-        // Should have 5 filled and 5 empty at 50%
-        assert!(bar.contains('█'));
-        assert!(bar.contains('░'));
-    }
-
-    #[test]
-    fn test_progress_bar_clamping() {
-        let model = UpdateModel {
-            download_percent: 150, // Over 100
-            ..Default::default()
-        };
-        let bar = model.render_progress_bar(10);
-        // Should clamp to 100%
-        assert!(bar.contains("100%"));
     }
 }

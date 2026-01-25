@@ -23,9 +23,10 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use tokio::fs as tokio_fs;
 use tokio::process::Command;
-use tracing::instrument;
+use tracing::{instrument, warn};
 use which::which;
 
+use super::aur_index::{AurIndex, build_index};
 use super::pkgbuild::PkgBuild;
 use crate::config::{AurBuildMethod, Settings};
 use crate::core::http::shared_client;
@@ -111,6 +112,42 @@ impl AurClient {
             anyhow::bail!("Search query contains invalid control characters");
         }
 
+        // Try fast binary index first if enabled and available
+        if self.settings.aur.use_metadata_archive {
+            let index_path = self.metadata_index_path();
+            if index_path.exists() {
+                let index_path_clone = index_path.clone();
+                let query_clone = query.to_string();
+                let result = tokio::task::spawn_blocking(move || -> Result<Vec<Package>> {
+                    let index = AurIndex::open(&index_path_clone)?;
+                    let entries = index.search(&query_clone, 50);
+                    Ok(entries
+                        .into_iter()
+                        .map(|e| Package {
+                            name: e.name.as_str().to_string(),
+                            version: crate::package_managers::parse_version_or_zero(
+                                e.version.as_str(),
+                            ),
+                            description: e
+                                .description
+                                .as_ref()
+                                .map(|s| s.as_str().to_string())
+                                .unwrap_or_default(),
+                            source: PackageSource::Aur,
+                            installed: false,
+                        })
+                        .collect())
+                })
+                .await?;
+
+                if let Ok(packages) = result {
+                    if !packages.is_empty() {
+                        return Ok(packages);
+                    }
+                }
+            }
+        }
+
         let url = format!("{AUR_RPC_URL}?v=5&type=search&arg={query}");
 
         let response: AurResponse = self.client.get(&url).send().await?.json().await?;
@@ -150,6 +187,37 @@ impl AurClient {
         // SECURITY: Validate package name
         crate::core::security::validate_package_name(package)?;
 
+        // Try fast binary index first
+        let index_path = self.metadata_index_path();
+        if index_path.exists() {
+            let index_path_clone = index_path.clone();
+            let package_clone = package.to_string();
+            let result = tokio::task::spawn_blocking(move || -> Result<Option<Package>> {
+                let index = AurIndex::open(&index_path_clone)?;
+                if let Some(entry) = index.get(&package_clone) {
+                    return Ok(Some(Package {
+                        name: entry.name.as_str().to_string(),
+                        version: crate::package_managers::parse_version_or_zero(
+                            entry.version.as_str(),
+                        ),
+                        description: entry
+                            .description
+                            .as_ref()
+                            .map(|s| s.as_str().to_string())
+                            .unwrap_or_default(),
+                        source: PackageSource::Aur,
+                        installed: false,
+                    }));
+                }
+                Ok(None)
+            })
+            .await?;
+
+            if let Ok(Some(pkg)) = result {
+                return Ok(Some(pkg));
+            }
+        }
+
         let url = format!("{AUR_RPC_URL}?v=5&type=info&arg={package}");
 
         let response: AurResponse = self.client.get(&url).send().await?.json().await?;
@@ -174,12 +242,41 @@ impl AurClient {
             return Ok(Vec::new());
         }
 
-        // 2. Query AUR for ALL foreign packages - AUR only returns packages that exist there
-        // Packages not in AUR (custom repo only) simply won't be in the response
-        let mut updates = Vec::new();
+        let mut local_pkgs = Vec::new();
+        for name in &foreign_packages {
+            if let Some(pkg) = pacman_db::get_local_package(name)? {
+                local_pkgs.push((name.clone(), pkg.version));
+            }
+        }
 
-        // Try metadata archive first (faster for bulk queries)
+        // 2. Try fast binary index first
+        let index_path = self.metadata_index_path();
+        if index_path.exists() {
+            let index_path_clone = index_path.clone();
+            let result = tokio::task::spawn_blocking(
+                move || -> Result<Option<Vec<(String, Version, Version)>>> {
+                    let index = match AurIndex::open(&index_path_clone) {
+                        Ok(idx) => idx,
+                        Err(e) => {
+                            warn!("Failed to open AUR index: {}. Will fallback to JSON.", e);
+                            return Ok(None);
+                        }
+                    };
+
+                    Ok(Some(index.get_updates(&local_pkgs)))
+                },
+            )
+            .await?;
+
+            if let Ok(Some(updates)) = result {
+                tracing::debug!("AUR update check completed via binary index");
+                return Ok(updates);
+            }
+        }
+
+        // 3. Fallback to metadata archive (slower JSON)
         if let Some(archive) = self.load_metadata_archive().await? {
+            let mut updates = Vec::new();
             let names: HashSet<&str> = foreign_packages.iter().map(String::as_str).collect();
             let mut seen_names = HashSet::new();
 
@@ -211,7 +308,7 @@ impl AurClient {
             return Ok(updates);
         }
 
-        // Fallback: Query AUR RPC directly
+        // 4. Fallback: Query AUR RPC directly
         self.query_aur_updates(&foreign_packages).await
     }
 
@@ -364,7 +461,23 @@ impl AurClient {
         let cache_path_clone = cache_path.clone();
         tokio::task::spawn_blocking(move || Self::read_metadata_archive(&cache_path_clone))
             .await?
-            .map(Some)
+            .map(|res| {
+                // Spawn background task to rebuild binary index
+                let index_path = self.metadata_index_path();
+                let cache_path = self.metadata_cache_path();
+                tokio::spawn(async move {
+                    let result =
+                        tokio::task::spawn_blocking(move || build_index(&cache_path, &index_path))
+                            .await;
+
+                    match result {
+                        Ok(Err(e)) => warn!("Failed to build AUR index: {}", e),
+                        Err(e) => warn!("Failed to spawn index build: {}", e),
+                        Ok(Ok(())) => tracing::debug!("AUR index rebuilt successfully"),
+                    }
+                });
+                Some(res)
+            })
     }
 
     fn read_metadata_archive(path: &Path) -> Result<AurResponse> {
@@ -386,6 +499,12 @@ impl AurClient {
         self.build_dir
             .join("_meta")
             .join("packages-meta-ext-v1.json.gz.meta")
+    }
+
+    fn metadata_index_path(&self) -> PathBuf {
+        self.build_dir
+            .join("_meta")
+            .join("packages-meta-ext-v1.rkyv")
     }
 
     fn chunk_aur_names(names: &[String]) -> Vec<Vec<String>> {

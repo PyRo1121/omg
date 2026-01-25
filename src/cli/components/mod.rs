@@ -8,7 +8,19 @@ use crate::cli::tea::Cmd;
 /// Component library for reusable UI elements
 pub struct Components;
 
+impl Default for Components {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Components {
+    /// Create a new component library instance
+    #[must_use]
+    pub fn new() -> Self {
+        Self
+    }
+
     /// Create a styled header for command output
     #[must_use]
     pub fn header<M>(title: impl Into<String>, body: impl Into<String>) -> Cmd<M> {
@@ -158,9 +170,9 @@ impl Components {
     #[must_use]
     pub fn loading<M>(message: impl Into<String>) -> Cmd<M> {
         Cmd::batch([
-            Cmd::spacer(),
-            Cmd::info(format!("⟳ {}", message.into())),
-            Cmd::spacer(),
+            Self::spacer(),
+            Self::info(format!("⟳ {}", message.into())),
+            Self::spacer(),
         ])
     }
 
@@ -168,9 +180,9 @@ impl Components {
     #[must_use]
     pub fn no_results<M>(query: impl Into<String>) -> Cmd<M> {
         Cmd::batch([
-            Cmd::spacer(),
+            Self::spacer(),
             Self::muted(format!("No results found for '{}'", query.into())),
-            Cmd::spacer(),
+            Self::spacer(),
         ])
     }
 
@@ -178,9 +190,9 @@ impl Components {
     #[must_use]
     pub fn up_to_date<M>() -> Cmd<M> {
         Cmd::batch([
-            Cmd::spacer(),
-            Cmd::success("Everything is up to date!"),
-            Cmd::spacer(),
+            Self::spacer(),
+            Self::success("Everything is up to date!"),
+            Self::spacer(),
         ])
     }
 
@@ -188,10 +200,10 @@ impl Components {
     #[must_use]
     pub fn permission_error<M>(command: impl Into<String>) -> Cmd<M> {
         Cmd::batch([
-            Cmd::spacer(),
-            Cmd::error("Permission denied"),
+            Self::spacer(),
+            Self::error("Permission denied"),
             Self::muted(format!("Try running: sudo {}", command.into())),
-            Cmd::spacer(),
+            Self::spacer(),
         ])
     }
 
@@ -199,10 +211,10 @@ impl Components {
     #[must_use]
     pub fn confirm<M>(message: impl Into<String>, action: impl Into<String>) -> Cmd<M> {
         Cmd::batch([
-            Cmd::spacer(),
+            Self::spacer(),
             Self::bold(message.into()),
             Self::muted(format!("Proceed? ({} or --yes to skip)", action.into())),
-            Cmd::spacer(),
+            Self::spacer(),
         ])
     }
 
@@ -210,9 +222,9 @@ impl Components {
     #[must_use]
     pub fn complete<M>(message: impl Into<String>) -> Cmd<M> {
         Cmd::batch([
-            Cmd::spacer(),
-            Cmd::success(format!("✓ {}", message.into())),
-            Cmd::spacer(),
+            Self::spacer(),
+            Self::success(format!("✓ {}", message.into())),
+            Self::spacer(),
         ])
     }
 
@@ -223,10 +235,10 @@ impl Components {
         suggestion: impl Into<String>,
     ) -> Cmd<M> {
         Cmd::batch([
-            Cmd::spacer(),
-            Cmd::error(error.into()),
-            Cmd::info(format!("💡 {}", suggestion.into())),
-            Cmd::spacer(),
+            Self::spacer(),
+            Self::error(error.into()),
+            Self::info(format!("💡 {}", suggestion.into())),
+            Self::spacer(),
         ])
     }
 
@@ -234,16 +246,20 @@ impl Components {
     #[must_use]
     pub fn welcome<M>(command: &str, description: &str) -> Cmd<M> {
         Cmd::batch([
-            Cmd::spacer(),
-            Cmd::header(command, description),
-            Cmd::spacer(),
+            Self::spacer(),
+            Self::header(command, description),
+            Self::spacer(),
         ])
     }
 
     /// Section header for grouping related output
     #[must_use]
     pub fn section<M>(title: impl Into<String>) -> Cmd<M> {
-        Cmd::batch([Cmd::spacer(), Cmd::header(title.into(), ""), Cmd::spacer()])
+        Cmd::batch([
+            Self::spacer(),
+            Self::header(title.into(), ""),
+            Self::spacer(),
+        ])
     }
 }
 

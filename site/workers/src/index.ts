@@ -71,6 +71,7 @@ import {
 } from './handlers/team-controls';
 
 import { handleFleetPush } from './handlers/fleet';
+import { handleGetFirehose } from './handlers/firehose';
 
 export interface Env {
   DB: D1Database;
@@ -305,6 +306,14 @@ export default {
 
       if (path === '/api/admin/audit-log' && method === 'GET') {
         return handleAdminAuditLog(request, env);
+      }
+
+      if (path === '/api/admin/firehose' && method === 'GET') {
+        return handleGetFirehose(request, env);
+      }
+
+      if (path === '/api/admin/crm/users' && method === 'GET') {
+        return handleAdminCRMUsers(request, env);
       }
 
       if (path === '/api/admin/export/users' && method === 'GET') {

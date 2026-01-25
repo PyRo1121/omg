@@ -22,8 +22,17 @@ export default {
 
       const response = await fetch(docsUrl.toString(), {
         method: request.method,
-        headers: request.headers,
+        headers: {
+          'Accept': request.headers.get('Accept') || '*/*',
+          'Accept-Encoding': request.headers.get('Accept-Encoding') || 'gzip, deflate, br',
+          'Accept-Language': request.headers.get('Accept-Language') || 'en-US,en;q=0.9',
+          'Cache-Control': request.headers.get('Cache-Control') || '',
+          'Connection': 'keep-alive',
+          'Host': new URL(env.DOCS_SITE).host,
+          'User-Agent': request.headers.get('User-Agent') || 'Mozilla/5.0',
+        },
         body: request.method !== 'GET' && request.method !== 'HEAD' ? request.body : undefined,
+        redirect: 'follow',
       });
 
       // Clone response with modified headers
@@ -45,8 +54,17 @@ export default {
     const mainUrl = new URL(path + url.search, env.MAIN_SITE);
     return fetch(mainUrl.toString(), {
       method: request.method,
-      headers: request.headers,
+      headers: {
+        'Accept': request.headers.get('Accept') || '*/*',
+        'Accept-Encoding': request.headers.get('Accept-Encoding') || 'gzip, deflate, br',
+        'Accept-Language': request.headers.get('Accept-Language') || 'en-US,en;q=0.9',
+        'Cache-Control': request.headers.get('Cache-Control') || '',
+        'Connection': 'keep-alive',
+        'Host': new URL(env.MAIN_SITE).host,
+        'User-Agent': request.headers.get('User-Agent') || 'Mozilla/5.0',
+      },
       body: request.method !== 'GET' && request.method !== 'HEAD' ? request.body : undefined,
+      redirect: 'follow',
     });
   },
 };

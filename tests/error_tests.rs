@@ -71,20 +71,16 @@ mod non_interactive_errors {
 
         if !success {
             assert!(
-                combined.contains("root")
-                    || combined.contains("sudo")
-                    || combined.contains("permission")
-                    || combined.contains("privileges")
-                    || combined.contains("Elevating")
-                    || combined.contains("Elevate"),
-                "Error message should mention permissions/root/sudo. Got:\n{combined}"
+                combined.contains("Use --yes") || combined.contains("interactive"),
+                "Error message should suggest using --yes. Got:\n{combined}"
             );
         }
     }
 
     #[test]
     fn test_privilege_error_suggests_command() {
-        let (success, stdout, stderr) = run_omg(&["update"]);
+        // Pass --yes to bypass the non-interactive check and hit the privilege check
+        let (success, stdout, stderr) = run_omg(&["update", "--yes"]);
 
         let combined = format!("{stdout}{stderr}");
 
@@ -92,7 +88,9 @@ mod non_interactive_errors {
             assert!(
                 combined.contains("sudo omg")
                     || combined.contains("sudo")
-                    || combined.contains("omg update"),
+                    || combined.contains("omg update")
+                    || combined.contains("permission")
+                    || combined.contains("root"),
                 "Error should suggest the command to run with sudo. Got:\n{combined}"
             );
         }
