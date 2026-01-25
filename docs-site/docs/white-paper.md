@@ -17,33 +17,33 @@ sidebar_position: 100
 
 ## Table of Contents
 
-1.  **[Executive Summary](#executive-summary)**
-2.  **[Chapter 1: The Engineering Crisis & Philosophy](#chapter-1-the-engineering-crisis--philosophy)**
-3.  **[Chapter 2: The Core Engine (omgd)](#chapter-2-the-core-engine-omgd)**
-4.  **[Chapter 3: Low-Latency IPC Protocol (Deep Dive)](#chapter-3-low-latency-ipc-protocol-deep-dive)**
-5.  **[Chapter 4: The Three-Tier Caching Architecture (Deep Dive)](#chapter-4-the-three-tier-caching-architecture-deep-dive)**
-6.  **[Chapter 5: Unified Backend Abstraction (Deep Dive)](#chapter-5-unified-backend-abstraction-deep-dive)**
-7.  **[Chapter 6: Native Runtime Management](#chapter-6-native-runtime-management)**
-8.  **[Chapter 7: Hardware-Limited Performance Analysis](#chapter-7-hardware-limited-performance-analysis)**
-9.  **[Chapter 8: Cryptographic Integrity & Supply Chain Security (Deep Dive)](#chapter-8-cryptographic-integrity--supply-chain-security-deep-dive)**
-10. **[Chapter 9: The omg.lock Ecosystem & Team Sync (Deep Dive)](#chapter-9-the-omglock-ecosystem--team-sync-deep-dive)**
-11. **[Chapter 10: Future Horizons](#chapter-10-future-horizons)**
-12. **[Chapter 11: Real-World Case Studies](#chapter-11-real-world-case-studies-in-engineering-excellence)**
-13. **[Chapter 12: Technical Specification - Data Structures](#chapter-12-technical-specification---low-level-data-structures--algorithms)**
-14. **[Chapter 13: Rust Engineering Philosophy](#chapter-13-the-rust-engineering-philosophy-safety-without-compromise)**
-15. **[Chapter 14: Organization-Scale Adoption](#chapter-14-organization-scale-adoption--governance)**
-16. **[Chapter 15: Quantitative Analysis of the Brain Tax](#chapter-15-quantitative-analysis-of-the-brain-tax-deep-neurobiological-analysis)**
-17. **[Chapter 16: Comparative Architecture](#chapter-16-comparative-architecture---omg-vs-the-world)**
-18. **[Chapter 17: Implementation Guide](#chapter-17-implementation-guide-for-systems-integrators)**
-19. **[Chapter 18: Conclusion](#chapter-18-conclusion-building-for-the-next-decade)**
-20. **[Chapter 19: Road to 1.0 - Sovereignty](#chapter-19-the-road-to-10---a-vision-for-global-software-supply-chain-sovereignty)**
-21. **[Chapter 20: Engineering Standards & TDD](#chapter-20-engineering-standards--tdd-protocols-the-omg-way)**
-22. **[Chapter 21: Final Conclusion](#chapter-21-final-conclusion-defining-the-next-decade)**
-23. **[Chapter 22: Mathematics of Performance](#chapter-22-the-mathematics-of-performance---complexity-analysis--proofs)**
-24. **[Chapter 23: Economics of Speed](#chapter-23-the-economics-of-speed-reclaiming-the-engineering-workday)**
-25. **[Chapter 24: Rust 2024 Implementation Details](#chapter-24-implementation-details---the-rust-2024-feature-set-in-omg)**
-26. **[Chapter 25: Post-Quantum Cryptography](#chapter-25-future-proofing---transitioning-to-post-quantum-cryptography-pqc)**
-27. **[Appendices](#appendix-a-detailed-performance-benchmarks)**
+1.  **Executive Summary**
+2.  **Chapter 1: The Engineering Crisis & Philosophy**
+3.  **Chapter 2: The Core Engine (omgd)**
+4.  **Chapter 3: Low-Latency IPC Protocol (Deep Dive)**
+5.  **Chapter 4: The Three-Tier Caching Architecture (Deep Dive)**
+6.  **Chapter 5: Unified Backend Abstraction (Deep Dive)**
+7.  **Chapter 6: Native Runtime Management**
+8.  **Chapter 7: Hardware-Limited Performance Analysis**
+9.  **Chapter 8: Cryptographic Integrity & Supply Chain Security (Deep Dive)**
+10. **Chapter 9: The omg.lock Ecosystem & Team Sync (Deep Dive)**
+11. **Chapter 10: Future Horizons**
+12. **Chapter 11: Real-World Case Studies**
+13. **Chapter 12: Technical Specification - Data Structures**
+14. **Chapter 13: Rust Engineering Philosophy**
+15. **Chapter 14: Organization-Scale Adoption**
+16. **Chapter 15: Quantitative Analysis of the Brain Tax**
+17. **Chapter 16: Comparative Architecture**
+18. **Chapter 17: Implementation Guide**
+19. **Chapter 18: Conclusion**
+20. **Chapter 19: Road to 1.0 - Sovereignty**
+21. **Chapter 20: Engineering Standards & TDD**
+22. **Chapter 21: Final Conclusion**
+23. **Chapter 22: Mathematics of Performance**
+24. **Chapter 23: Economics of Speed**
+25. **Chapter 24: Rust 2024 Implementation Details**
+26. **Chapter 25: Post-Quantum Cryptography**
+27. **Appendices**
 
 ---
 
