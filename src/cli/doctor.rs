@@ -121,7 +121,40 @@ async fn check_daemon() -> bool {
     if crate::core::paths::test_mode() {
         return true;
     }
-    DaemonClient::connect().await.is_ok()
+
+    match DaemonClient::connect().await {
+        Ok(_) => true,
+        Err(e) => {
+            // Provide diagnostic feedback
+            let socket_path = crate::core::client::default_socket_path();
+            if socket_path.exists() {
+                println!(
+                    "    {} Socket exists at {}, but connection failed: {}",
+                    style::warning("⚠"),
+                    socket_path.display(),
+                    e
+                );
+            } else {
+                // Heuristic: Check if XDG_RUNTIME_DIR might be mismatched
+                // If sudo strips it, it defaults to /tmp/omg.sock, but real socket is in /run/user/<uid>/
+                let uid = whoami::uid();
+                let common_path = std::path::PathBuf::from(format!("/run/user/{}/omg.sock", uid));
+                if common_path.exists() && common_path != socket_path {
+                    println!(
+                        "    {} Daemon socket found at {} but client is looking at {}!",
+                        style::warning("⚠"),
+                        common_path.display(),
+                        socket_path.display()
+                    );
+                    println!(
+                        "      Hint: Try setting XDG_RUNTIME_DIR=/run/user/{}",
+                        uid
+                    );
+                }
+            }
+            false
+        }
+    }
 }
 
 fn check_path() -> bool {
