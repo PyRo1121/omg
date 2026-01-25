@@ -267,8 +267,42 @@ pub async fn run_self_sudo(args: &[&str]) -> anyhow::Result<()> {
 
         match status {
             Ok(s) if s.success() => Ok(()),
+            // If sudo -n fails with exit code 1, it means a password is required
+            Ok(s) if s.code() == Some(1) => {
+                // Fall back to interactive sudo (allows password prompt)
+                let interactive_status = tokio::process::Command::new("sudo")
+                    .arg("--")
+                    .arg(&exe)
+                    .args(args)
+                    .status()
+                    .await;
+
+                match interactive_status {
+                    Ok(s) if s.success() => Ok(()),
+                    Ok(s) => anyhow::bail!("Elevated command failed with exit code: {s}"),
+                    Err(e2) => {
+                        anyhow::bail!(
+                            "Failed to run with sudo privileges.\n\
+                             \n\
+                             Error: {e2}\n\
+                             \n\
+                             For automation/CI, configure sudo with NOPASSWD:\n\
+                             sudo visudo\n\
+                             \n\
+                             And add line (replace username):\n\
+                             username ALL=(ALL) NOPASSWD: ALL\n\
+                             \n\
+                             Or specify this command specifically:\n\
+                             username ALL=(ALL) NOPASSWD: {}\n\
+                             \n\
+                             For interactive use, ensure you have sudo privileges.",
+                            exe.display()
+                        )
+                    }
+                }
+            }
             Ok(s) => {
-                // Command ran but failed with non-zero exit code
+                // Command ran but failed with other non-zero exit code
                 anyhow::bail!("Elevated command failed with exit code: {s}")
             }
             Err(e) => {

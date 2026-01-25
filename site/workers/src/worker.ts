@@ -30,7 +30,7 @@ import {
 } from './handlers/license';
 import {
   handleAdminDashboard,
-  handleAdminUsers,
+  handleAdminCRMUsers,
   handleAdminUserDetail,
   handleAdminUpdateUser,
   handleAdminActivity,
@@ -195,7 +195,7 @@ export default {
 
       // Admin: List users
       if (path === '/api/admin/users' && request.method === 'GET') {
-        return handleAdminUsers(request, env);
+        return handleAdminCRMUsers(request, env);
       }
 
       // Admin: User detail

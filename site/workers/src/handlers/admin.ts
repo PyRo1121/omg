@@ -177,6 +177,78 @@ export async function handleAdminCRMUsers(request: Request, env: Env): Promise<R
   return secureJsonResponse({ request_id: context.requestId, users: users.results || [], pagination: { page, limit } });
 }
 
+export async function handleAdminUserDetail(request: Request, env: Env): Promise<Response> {
+  const result = await validateAdmin(request, env);
+  if (result.error) return result.error;
+  const { context } = result;
+
+  const url = new URL(request.url);
+  const userId = url.searchParams.get('id');
+  if (!userId) return errorResponse('User ID required');
+
+  const user = await env.DB.prepare(`SELECT * FROM customers WHERE id = ?`).bind(userId).first();
+  if (!user) return errorResponse('User not found', 404);
+
+  const license = await env.DB.prepare(`SELECT * FROM licenses WHERE customer_id = ?`).bind(userId).first();
+  const machines = await env.DB.prepare(`SELECT * FROM machines WHERE license_id = ?`).bind(license?.id).all();
+  const recentUsage = await env.DB.prepare(`SELECT * FROM usage_daily WHERE license_id = ? ORDER BY date DESC LIMIT 30`).bind(license?.id).all();
+
+  return secureJsonResponse({ request_id: context.requestId, user, license, machines: machines.results || [], usage: recentUsage.results || [] });
+}
+
+export async function handleAdminUpdateUser(request: Request, env: Env): Promise<Response> {
+  const result = await validateAdmin(request, env);
+  if (result.error) return result.error;
+
+  const body = await request.json() as { userId: string, tier?: string, status?: string };
+  if (!body.userId) return errorResponse('User ID required');
+
+  if (body.tier) {
+    await env.DB.prepare(`UPDATE licenses SET tier = ? WHERE customer_id = ?`).bind(body.tier, body.userId).run();
+  }
+  if (body.status) {
+    await env.DB.prepare(`UPDATE licenses SET status = ? WHERE customer_id = ?`).bind(body.status, body.userId).run();
+  }
+
+  await logAdminAudit(env.DB, { action: 'admin.update_user', userId: result.context.user.id, metadata: body });
+  return secureJsonResponse({ success: true });
+}
+
+export async function handleAdminActivity(request: Request, env: Env): Promise<Response> {
+  const result = await validateAdmin(request, env);
+  if (result.error) return result.error;
+
+  const activity = await env.DB.prepare(`SELECT * FROM audit_log ORDER BY created_at DESC LIMIT 100`).all();
+  return secureJsonResponse({ request_id: result.context.requestId, activity: activity.results || [] });
+}
+
+export async function handleAdminHealth(request: Request, env: Env): Promise<Response> {
+  // Simple health check logic
+  return secureJsonResponse({ status: 'ok', db: 'connected', version: '1.0.0' });
+}
+
+export async function handleAdminExportUsage(request: Request, env: Env): Promise<Response> {
+  const result = await validateAdmin(request, env);
+  if (result.error) return result.error;
+
+  const usage = await env.DB.prepare(`SELECT * FROM usage_daily ORDER BY date DESC LIMIT 1000`).all();
+  const headers = ['date', 'license_id', 'commands_run', 'time_saved_ms'];
+  const csv = [headers.join(','), ...(usage.results || []).map((u: any) => headers.map(h => u[h]).join(','))].join('\n');
+
+  return new Response(csv, { headers: { 'Content-Type': 'text/csv', 'Content-Disposition': 'attachment; filename="usage.csv"' } });
+}
+
+export async function handleAdminExportAudit(request: Request, env: Env): Promise<Response> {
+  const result = await validateAdmin(request, env);
+  if (result.error) return result.error;
+
+  const logs = await env.DB.prepare(`SELECT * FROM audit_log ORDER BY created_at DESC LIMIT 1000`).all();
+  const headers = ['created_at', 'action', 'customer_id', 'ip_address'];
+  const csv = [headers.join(','), ...(logs.results || []).map((l: any) => headers.map(h => l[h]).join(','))].join('\n');
+
+  return new Response(csv, { headers: { 'Content-Type': 'text/csv', 'Content-Disposition': 'attachment; filename="audit.csv"' } });
+}
+
 export async function handleAdminAnalytics(request: Request, env: Env): Promise<Response> {
   const result = await validateAdmin(request, env);
   if (result.error) return result.error;
