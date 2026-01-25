@@ -8,6 +8,7 @@ use std::time::Duration;
 use tempfile::TempDir;
 
 /// Test context builder for setting up isolated test environments
+#[allow(clippy::struct_field_names)]
 pub struct TestContext {
     temp_dir: Option<TempDir>,
     data_dir: PathBuf,
