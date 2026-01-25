@@ -1,41 +1,38 @@
-import { Component, For, Show, createSignal, createMemo, createEffect } from 'solid-js';
+import { Component, For, Show, createSignal, createMemo, Switch, Match } from 'solid-js';
 import * as api from '../../lib/api';
 import { 
   useTeamData, 
   useTeamPolicies, 
   useNotificationSettings, 
-  useTeamAuditLogs 
+  useTeamAuditLogs,
+  useRevokeMachine,
+  useCreatePolicy,
+  useDeletePolicy,
+  useUpdateThreshold,
+  useUpdateNotifications
 } from '../../lib/api-hooks';
 import { StatCard } from './analytics/StatCard';
 import { RoiChart } from './analytics/RoiChart';
 import { SecurityScore } from './analytics/SecurityScore';
-import { MetricCard } from '../ui/Card';
-import { StatusBadge, TierBadge } from '../ui/Badge';
-import { BarChart, DonutChart, LiveIndicator, ActivityHeatmap } from '../ui/Chart';
-import { Dialog } from '../ui/Dialog';
+import { StatusBadge } from '../ui/Badge';
+import { DonutChart, LiveIndicator } from '../ui/Chart';
 import { CardSkeleton } from '../ui/Skeleton';
 import { SmartInsights } from './SmartInsights';
 import {
   Users,
   BarChart3,
-  TrendingUp,
   Settings,
-  AlertTriangle,
-  FileText,
-  Lightbulb,
   DollarSign,
   Shield,
   Zap,
   Clock,
-  CheckCircle,
   Activity,
-  Cpu,
-  Globe,
   Lock,
-  Target,
-  Package,
   RefreshCw,
-  Crown
+  Crown,
+  Plus,
+  Trash2,
+  Bell
 } from '../ui/Icons';
 
 interface TeamAnalyticsProps {
@@ -48,16 +45,28 @@ interface TeamAnalyticsProps {
 }
 
 export const TeamAnalytics: Component<TeamAnalyticsProps> = props => {
-  const [view, setView] = createSignal<'overview' | 'members' | 'security' | 'activity' | 'insights' | 'settings'>(props.initialView || 'overview');
+  const [view, setView] = createSignal<string>(props.initialView || 'overview');
   const [sortBy, setSortBy] = createSignal<'commands' | 'recent' | 'name'>('commands');
   const [filterActive, setFilterActive] = createSignal<boolean | null>(null);
   const [alertThreshold, setAlertThreshold] = createSignal(100);
+  
+  // Forms state
+  const [newPolicyScope, setNewPolicyScope] = createSignal('runtime');
+  const [newPolicyRule, setNewPolicyRule] = createSignal('');
+  const [newPolicyValue, setNewPolicyValue] = createSignal('');
 
   // TanStack Queries
   const teamQuery = useTeamData();
   const policiesQuery = useTeamPolicies();
   const notificationsQuery = useNotificationSettings();
   const auditLogsQuery = useTeamAuditLogs({ limit: 20 });
+
+  // Mutations
+  const revokeMutation = useRevokeMachine();
+  const createPolicyMutation = useCreatePolicy();
+  const deletePolicyMutation = useDeletePolicy();
+  const updateThresholdMutation = useUpdateThreshold();
+  const updateNotifMutation = useUpdateNotifications();
 
   const teamData = () => teamQuery.data || props.teamData;
   const isRefreshing = () => teamQuery.isFetching;
@@ -71,7 +80,7 @@ export const TeamAnalytics: Component<TeamAnalyticsProps> = props => {
     
     return {
       compliance_score: Math.round((compliant / total) * 100),
-      critical: 0,
+      critical: members.filter(m => m.omg_version && !m.omg_version.startsWith('1.')).length,
       high: 0,
       medium: 0,
       low: 0,
@@ -94,7 +103,19 @@ export const TeamAnalytics: Component<TeamAnalyticsProps> = props => {
     };
   });
 
-  const teamProductivityScore = () => 84; // Placeholder or calculate from data
+  const sortedMembers = createMemo(() => {
+    let members = [...(teamData()?.members || [])];
+    
+    if (filterActive() !== null) {
+      members = members.filter(m => m.is_active === filterActive());
+    }
+
+    return members.sort((a, b) => {
+      if (sortBy() === 'commands') return b.total_commands - a.total_commands;
+      if (sortBy() === 'recent') return new Date(b.last_seen_at).getTime() - new Date(a.last_seen_at).getTime();
+      return (a.user_email || '').localeCompare(b.user_email || '');
+    });
+  });
 
   const seatUsage = () => {
     const used = teamData()?.totals?.active_machines || 0;
@@ -105,31 +126,20 @@ export const TeamAnalytics: Component<TeamAnalyticsProps> = props => {
     ];
   };
 
-  const activityByDay = () => {
-    const daily = teamData()?.daily_usage || [];
-    const last14Days = Array.from({ length: 14 }, (_, i) => {
-      const date = new Date();
-      date.setDate(date.getDate() - (13 - i));
-      return date.toISOString().split('T')[0];
+  const handleCreatePolicy = async (e: Event) => {
+    e.preventDefault();
+    if (!newPolicyRule() || !newPolicyValue()) return;
+    await createPolicyMutation.mutateAsync({
+      scope: newPolicyScope(),
+      rule: newPolicyRule(),
+      value: newPolicyValue(),
+      enforced: true
     });
-
-    return last14Days.map(date => {
-      const dayData = daily.filter(d => d.date === date);
-      const total = dayData.reduce((sum, d) => sum + d.commands_run, 0);
-      return {
-        label: new Date(date).toLocaleDateString('en-US', { weekday: 'short' }).slice(0, 2),
-        value: total,
-      };
-    });
+    setNewPolicyRule('');
+    setNewPolicyValue('');
   };
 
-  // Tier check
-  const isFreeOrPro = () => {
-    const tier = teamData()?.license?.tier;
-    return tier === 'free' || tier === 'pro';
-  };
-
-  if (isFreeOrPro()) {
+  if (teamData()?.license?.tier === 'free' || teamData()?.license?.tier === 'pro') {
     return (
       <div class="flex flex-col items-center justify-center py-20 text-center animate-in fade-in duration-700">
         <div class="mb-8 flex h-24 w-24 items-center justify-center rounded-3xl bg-gradient-to-br from-indigo-500 to-purple-600 shadow-2xl shadow-indigo-500/20">
@@ -151,7 +161,6 @@ export const TeamAnalytics: Component<TeamAnalyticsProps> = props => {
 
   return (
     <div class="space-y-8 pb-20">
-      {/* Header */}
       <div class="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
         <div class="flex items-start gap-5">
           <div class="relative flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 via-blue-600 to-indigo-700 shadow-2xl shadow-indigo-500/20">
@@ -182,14 +191,13 @@ export const TeamAnalytics: Component<TeamAnalyticsProps> = props => {
         </div>
       </div>
 
-      {/* Tabs */}
       <div class="flex items-center gap-1 overflow-x-auto no-scrollbar rounded-[1.5rem] border border-white/5 bg-white/[0.02] p-1.5 backdrop-blur-xl">
         <For each={[
-          { id: 'overview' as const, label: 'Value & ROI', Icon: BarChart3, color: 'text-indigo-400' },
-          { id: 'members' as const, label: 'Fleet & Members', Icon: Users, color: 'text-emerald-400' },
-          { id: 'security' as const, label: 'Compliance', Icon: Shield, color: 'text-rose-400' },
-          { id: 'activity' as const, label: 'Execution', Icon: Zap, color: 'text-amber-400' },
-          { id: 'settings' as const, label: 'Control', Icon: Settings, color: 'text-slate-400' },
+          { id: 'overview', label: 'Value & ROI', Icon: BarChart3, color: 'text-indigo-400' },
+          { id: 'members', label: 'Fleet & Members', Icon: Users, color: 'text-emerald-400' },
+          { id: 'security', label: 'Compliance', Icon: Shield, color: 'text-rose-400' },
+          { id: 'activity', label: 'Execution', Icon: Zap, color: 'text-amber-400' },
+          { id: 'settings', label: 'Control', Icon: Settings, color: 'text-slate-400' },
         ]}>{tab => (
           <button
             onClick={() => setView(tab.id)}
@@ -205,147 +213,236 @@ export const TeamAnalytics: Component<TeamAnalyticsProps> = props => {
         )}</For>
       </div>
 
-      <Show when={teamQuery.isLoading}>
-        <div class="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
-          <CardSkeleton />
-          <CardSkeleton />
-          <CardSkeleton />
-          <CardSkeleton />
-        </div>
-      </Show>
+      <Switch>
+        <Match when={teamQuery.isLoading}>
+          <div class="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
+            <CardSkeleton /> <CardSkeleton /> <CardSkeleton /> <CardSkeleton />
+          </div>
+        </Match>
 
-      <Show when={teamQuery.isSuccess}>
-        <Switch>
-          <Match when={view() === 'overview'}>
-            <div class="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-              <div class="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
-                <StatCard 
-                  title="Efficiency Reclaimed"
-                  value={`${productivityImpact().hours_reclaimed} Hours`}
-                  icon={<Clock size={20} />}
-                  description="Total developer time saved across the organization."
-                  class="border-emerald-500/20 bg-emerald-500/[0.03]"
-                />
-                
-                <StatCard 
-                  title="Financial ROI"
-                  value={`$${productivityImpact().developer_value.toLocaleString()}`}
-                  icon={<DollarSign size={20} />}
-                  description="Economic value generated from automation gains."
-                  class="border-indigo-500/20 bg-indigo-500/[0.03]"
-                  trend={{ value: 12.4, isUp: true }}
-                />
-
-                <StatCard 
-                  title="Execution Volume"
-                  value={(teamData()?.totals?.total_commands || 0).toLocaleString()}
-                  icon={<Zap size={22} />}
-                  description="Total operations executed globally."
-                  class="border-amber-500/20 bg-amber-500/[0.03]"
-                />
-
-                <div class="relative overflow-hidden rounded-[2rem] border border-white/5 bg-[#0d0d0e] p-8 shadow-2xl">
-                  <div class="mb-4 flex items-center justify-between">
-                    <h3 class="text-sm font-bold text-white uppercase tracking-widest">Seat Utilization</h3>
-                    <span class="text-[10px] font-black text-slate-500">{seatUsage()[0].value} / {teamData()?.license?.max_seats || 30}</span>
-                  </div>
-                  <div class="flex items-center justify-center py-2">
-                    <DonutChart data={seatUsage()} size={140} thickness={16} centerLabel="Seats" centerValue={seatUsage()[0].value} />
-                  </div>
-                </div>
-              </div>
-
-              <div class="grid grid-cols-1 gap-6 lg:grid-cols-3">
-                <div class="lg:col-span-2">
-                  <RoiChart 
-                    data={productivityImpact().daily_trend} 
-                    peakVelocity={teamProductivityScore()}
+        <Match when={teamQuery.isSuccess}>
+          <Switch>
+            <Match when={view() === 'overview'}>
+              <div class="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                <div class="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
+                  <StatCard 
+                    title="Efficiency Reclaimed"
+                    value={`${productivityImpact().hours_reclaimed} Hours`}
+                    icon={<Clock size={20} />}
+                    description="Total developer time saved across the organization."
+                    class="border-emerald-500/20 bg-emerald-500/[0.03]"
                   />
-                </div>
-                <SecurityScore 
-                  score={securityMetrics().compliance_score}
-                  critical={securityMetrics().critical}
-                  high={securityMetrics().high}
-                  medium={securityMetrics().medium}
-                  low={securityMetrics().low}
-                />
-              </div>
-
-              <SmartInsights target="team" />
-            </div>
-          </Match>
-
-          <Match when={view() === 'members'}>
-             <div class="rounded-[2.5rem] border border-white/5 bg-[#0d0d0e] p-10">
-                <h3 class="text-2xl font-black text-white mb-6">Team Fleet</h3>
-                <p class="text-slate-400">View and manage all active nodes in your organization.</p>
-                {/* Simplified member list for now to keep file size reasonable */}
-                <div class="mt-8 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                  <For each={teamData()?.members}>
-                    {member => (
-                      <div class="p-6 rounded-2xl bg-white/[0.02] border border-white/5">
-                        <div class="flex justify-between items-start mb-4">
-                          <div class="h-10 w-10 rounded-full bg-slate-800 flex items-center justify-center font-bold text-white">
-                            {member.user_email?.[0].toUpperCase()}
-                          </div>
-                          <StatusBadge status={member.is_active ? 'active' : 'inactive'} />
-                        </div>
-                        <div class="text-sm font-bold text-white">{member.user_email}</div>
-                        <div class="text-xs text-slate-500 mt-1">{member.hostname} • {member.os}</div>
-                        <div class="mt-4 flex justify-between items-center text-[10px] font-black uppercase tracking-widest text-slate-500">
-                          <span>Total Ops</span>
-                          <span class="text-white">{member.total_commands.toLocaleString()}</span>
-                        </div>
-                      </div>
-                    )}
-                  </For>
-                </div>
-             </div>
-          </Match>
-
-          <Match when={view() === 'settings'}>
-            <div class="space-y-6">
-              <div class="rounded-[2.5rem] border border-white/5 bg-[#0d0d0e] p-10">
-                <h3 class="text-2xl font-black text-white mb-6">Organization Controls</h3>
-                <div class="space-y-8">
-                  <div>
-                    <label class="block text-sm font-bold text-slate-400 uppercase tracking-widest mb-4">Activity Thresholds</label>
-                    <div class="flex items-center gap-4">
-                      <input 
-                        type="range" min="10" max="1000" step="10" 
-                        value={alertThreshold()} 
-                        onInput={e => setAlertThreshold(parseInt(e.currentTarget.value))}
-                        class="flex-1"
-                      />
-                      <span class="text-xl font-black text-white w-20 text-right">{alertThreshold()}</span>
+                  <StatCard 
+                    title="Financial ROI"
+                    value={`$${productivityImpact().developer_value.toLocaleString()}`}
+                    icon={<DollarSign size={20} />}
+                    description="Economic value generated from automation gains."
+                    class="border-indigo-500/20 bg-indigo-500/[0.03]"
+                    trend={{ value: 12.4, isUp: true }}
+                  />
+                  <StatCard 
+                    title="Execution Volume"
+                    value={(teamData()?.totals?.total_commands || 0).toLocaleString()}
+                    icon={<Zap size={22} />}
+                    description="Total operations executed globally."
+                    class="border-amber-500/20 bg-amber-500/[0.03]"
+                  />
+                  <div class="relative overflow-hidden rounded-[2rem] border border-white/5 bg-[#0d0d0e] p-8 shadow-2xl">
+                    <div class="mb-4 flex items-center justify-between">
+                      <h3 class="text-sm font-bold text-white uppercase tracking-widest">Seat Utilization</h3>
+                      <span class="text-[10px] font-black text-slate-500">{seatUsage()[0].value} / {teamData()?.license?.max_seats || 30}</span>
+                    </div>
+                    <div class="flex items-center justify-center py-2">
+                      <DonutChart data={seatUsage()} size={140} thickness={16} centerLabel="Seats" centerValue={seatUsage()[0].value} />
                     </div>
                   </div>
-                  
-                  <div class="pt-6 border-t border-white/5">
-                    <h4 class="text-lg font-bold text-white mb-4">Security Policies</h4>
-                    <For each={policiesQuery.data?.policies || []}>
-                      {policy => (
-                        <div class="flex items-center justify-between py-3 border-b border-white/5">
-                          <div class="flex items-center gap-3">
-                            <Lock size={16} class="text-indigo-400" />
-                            <span class="text-sm text-slate-300">{policy.rule}: {policy.value}</span>
+                </div>
+
+                <div class="grid grid-cols-1 gap-6 lg:grid-cols-3">
+                  <div class="lg:col-span-2">
+                    <RoiChart data={productivityImpact().daily_trend} peakVelocity={84} />
+                  </div>
+                  <SecurityScore 
+                    score={securityMetrics().compliance_score}
+                    critical={securityMetrics().critical}
+                    high={securityMetrics().high}
+                    medium={securityMetrics().medium}
+                    low={securityMetrics().low}
+                  />
+                </div>
+                <SmartInsights target="team" />
+              </div>
+            </Match>
+
+            <Match when={view() === 'members'}>
+               <div class="space-y-6">
+                 <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-2">
+                    <div class="flex rounded-2xl bg-white/[0.03] p-1.5 border border-white/5">
+                      <button onClick={() => setFilterActive(null)} class={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${filterActive() === null ? 'bg-white text-black' : 'text-slate-400'}`}>All</button>
+                      <button onClick={() => setFilterActive(true)} class={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${filterActive() === true ? 'bg-emerald-500 text-white' : 'text-slate-400'}`}>Online</button>
+                    </div>
+                    <select value={sortBy()} onChange={e => setSortBy(e.currentTarget.value as any)} class="bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-sm font-bold text-white outline-none">
+                      <option value="commands">Ops Volume</option>
+                      <option value="recent">Last Seen</option>
+                      <option value="name">Email</option>
+                    </select>
+                 </div>
+                 
+                 <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                    <For each={sortedMembers()}>
+                      {member => (
+                        <div class="p-6 rounded-3xl bg-[#0d0d0e] border border-white/5 group hover:border-white/10 transition-all">
+                          <div class="flex justify-between items-start mb-4">
+                            <div class="h-10 w-10 rounded-xl bg-gradient-to-br from-slate-700 to-slate-800 flex items-center justify-center font-bold text-white shadow-lg">
+                              {member.user_email?.[0].toUpperCase()}
+                            </div>
+                            <div class="flex flex-col items-end">
+                              <StatusBadge status={member.is_active ? 'active' : 'inactive'} />
+                              <span class="text-[9px] font-mono text-slate-500 mt-1 uppercase tracking-widest">{api.formatRelativeTime(member.last_seen_at)}</span>
+                            </div>
                           </div>
-                          <StatusBadge status={policy.enforced ? 'enforced' : 'audit'} />
+                          <div class="text-sm font-bold text-white truncate">{member.user_email}</div>
+                          <div class="text-xs text-slate-500 mt-1 truncate">{member.hostname} • {member.os}</div>
+                          <div class="mt-6 pt-4 border-t border-white/5 flex justify-between items-center">
+                            <div>
+                               <div class="text-[9px] font-black uppercase tracking-widest text-slate-500">Throughput</div>
+                               <div class="text-lg font-black text-indigo-400">{member.total_commands.toLocaleString()}</div>
+                            </div>
+                            <button 
+                              onClick={() => { if(confirm('Revoke node access?')) revokeMutation.mutate(member.machine_id) }}
+                              disabled={revokeMutation.isPending}
+                              class="p-2 rounded-lg hover:bg-rose-500/10 text-slate-600 hover:text-rose-500 transition-all"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </div>
                         </div>
                       )}
                     </For>
+                 </div>
+               </div>
+            </Match>
+
+            <Match when={view() === 'settings'}>
+              <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                <div class="lg:col-span-2 space-y-8">
+                  {/* Policies Section */}
+                  <div class="rounded-3xl border border-white/5 bg-[#0d0d0e] p-8 shadow-2xl">
+                    <div class="flex items-center justify-between mb-8">
+                      <h3 class="text-xl font-bold text-white uppercase tracking-widest">Fleet Policies</h3>
+                      <Shield size={20} class="text-indigo-400" />
+                    </div>
+                    
+                    <form onSubmit={handleCreatePolicy} class="grid grid-cols-1 sm:grid-cols-4 gap-3 mb-8">
+                      <select value={newPolicyScope()} onChange={e => setNewPolicyScope(e.currentTarget.value)} class="sm:col-span-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm font-bold text-white outline-none">
+                        <option value="runtime">Runtime</option>
+                        <option value="package">Package</option>
+                        <option value="security">Security</option>
+                      </select>
+                      <input value={newPolicyRule()} onInput={e => setNewPolicyRule(e.currentTarget.value)} placeholder="Rule (e.g. min-version)" class="sm:col-span-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm font-medium text-white outline-none" />
+                      <input value={newPolicyValue()} onInput={e => setNewPolicyValue(e.currentTarget.value)} placeholder="Value (e.g. 20.x)" class="sm:col-span-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-sm font-medium text-white outline-none" />
+                      <button type="submit" disabled={createPolicyMutation.isPending} class="rounded-xl bg-white text-black font-bold text-sm hover:scale-[1.02] transition-all flex items-center justify-center gap-2">
+                        <Plus size={16} /> Add
+                      </button>
+                    </form>
+
+                    <div class="space-y-4">
+                      <For each={policiesQuery.data?.policies || []}>
+                        {policy => (
+                          <div class="flex items-center justify-between p-4 rounded-2xl bg-white/[0.02] border border-white/5 group">
+                            <div class="flex items-center gap-4">
+                              <div class="h-8 w-8 rounded-lg bg-indigo-500/10 flex items-center justify-center text-indigo-400">
+                                <Lock size={16} />
+                              </div>
+                              <div>
+                                <div class="text-sm font-bold text-white uppercase tracking-wider">{policy.scope} Policy</div>
+                                <div class="text-xs text-slate-500 font-medium">{policy.rule}: <span class="text-slate-300">{policy.value}</span></div>
+                              </div>
+                            </div>
+                            <div class="flex items-center gap-4">
+                               <StatusBadge status={policy.enforced ? 'enforced' : 'audit'} />
+                               <button onClick={() => deletePolicyMutation.mutate(policy.id)} class="p-2 opacity-0 group-hover:opacity-100 transition-opacity text-slate-600 hover:text-rose-500">
+                                 <Trash2 size={16} />
+                               </button>
+                            </div>
+                          </div>
+                        )}
+                      </For>
+                    </div>
+                  </div>
+
+                  {/* Audit Logs */}
+                  <div class="rounded-3xl border border-white/5 bg-[#0d0d0e] p-8 shadow-2xl">
+                    <h3 class="text-xl font-bold text-white uppercase tracking-widest mb-6">Security Audit</h3>
+                    <div class="space-y-4">
+                      <For each={auditLogsQuery.data?.logs || []}>
+                        {log => (
+                          <div class="flex items-center gap-4 text-sm py-2 border-b border-white/5">
+                            <div class="text-slate-500 font-mono text-[10px] w-32">{new Date(log.created_at).toLocaleString()}</div>
+                            <div class="text-indigo-400 font-bold w-32 uppercase tracking-tighter">{log.action}</div>
+                            <div class="text-slate-300 flex-1 truncate">{log.resource_type || 'System'} {log.resource_id}</div>
+                          </div>
+                        )}
+                      </For>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="space-y-8">
+                  {/* Thresholds */}
+                  <div class="rounded-3xl border border-white/5 bg-[#0d0d0e] p-8 shadow-2xl">
+                    <h3 class="text-lg font-bold text-white uppercase tracking-widest mb-6">Activity Monitor</h3>
+                    <div class="space-y-6">
+                      <div>
+                        <div class="flex justify-between mb-4">
+                          <span class="text-xs font-bold text-slate-400">Node Inactivity (Ops)</span>
+                          <span class="text-xs font-black text-indigo-400">{alertThreshold()}</span>
+                        </div>
+                        <input type="range" min="10" max="1000" step="10" value={alertThreshold()} onInput={e => setAlertThreshold(parseInt(e.currentTarget.value))} class="w-full" />
+                        <button 
+                          onClick={() => updateThresholdMutation.mutate({ type: 'low_activity', value: alertThreshold() })}
+                          disabled={updateThresholdMutation.isPending}
+                          class="mt-4 w-full py-2 rounded-xl bg-white/5 border border-white/10 text-xs font-bold text-white hover:bg-white/10 transition-all"
+                        >
+                          Save Threshold
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Notifications */}
+                  <div class="rounded-3xl border border-white/5 bg-[#0d0d0e] p-8 shadow-2xl">
+                    <div class="flex items-center gap-3 mb-6">
+                      <Bell size={18} class="text-amber-400" />
+                      <h3 class="text-lg font-bold text-white uppercase tracking-widest">Alerts</h3>
+                    </div>
+                    <div class="space-y-4">
+                      <For each={notificationsQuery.data?.settings || []}>
+                        {notif => (
+                          <div class="flex items-center justify-between">
+                            <span class="text-xs font-bold text-slate-400 uppercase tracking-widest">{notif.type.replace('_', ' ')}</span>
+                            <button 
+                              onClick={() => {
+                                const updated = (notificationsQuery.data?.settings || []).map(n => n.type === notif.type ? { ...n, enabled: !n.enabled } : n);
+                                updateNotifMutation.mutate(updated);
+                              }}
+                              class={`w-10 h-5 rounded-full relative transition-all ${notif.enabled ? 'bg-indigo-500' : 'bg-slate-700'}`}
+                            >
+                              <div class={`absolute top-1 w-3 h-3 rounded-full bg-white transition-all ${notif.enabled ? 'left-6' : 'left-1'}`} />
+                            </button>
+                          </div>
+                        )}
+                      </For>
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
-          </Match>
-        </Switch>
-      </Show>
+            </Match>
+          </Switch>
+        </Match>
+      </Switch>
     </div>
   );
 };
-
-// Sub-components used in Match views
-import { Switch, Match } from 'solid-js';
 
 export default TeamAnalytics;
