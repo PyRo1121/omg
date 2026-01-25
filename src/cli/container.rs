@@ -1,8 +1,8 @@
 //! Container CLI commands
 
 use anyhow::Result;
-use owo_colors::OwoColorize;
 use async_trait::async_trait;
+use owo_colors::OwoColorize;
 
 use crate::cli::{CliContext, CommandRunner, ContainerCommands};
 use crate::core::container::{
@@ -45,13 +45,7 @@ impl CommandRunner for ContainerCommands {
                 no_cache,
                 build_arg,
                 target,
-            } => build(
-                dockerfile.clone(),
-                tag,
-                *no_cache,
-                build_arg,
-                target,
-            ),
+            } => build(dockerfile.clone(), tag, *no_cache, build_arg, target),
             ContainerCommands::List => list(),
             ContainerCommands::Images => images(),
             ContainerCommands::Pull { image } => pull(image),

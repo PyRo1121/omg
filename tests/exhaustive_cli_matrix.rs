@@ -370,9 +370,9 @@ mod fleet_matrix {
             let stderr = &res.stderr;
             assert!(
                 stderr.contains("login")
-                || stderr.contains("license")
-                || stderr.contains("Failed to fetch")
-                || stderr.contains("404"),
+                    || stderr.contains("license")
+                    || stderr.contains("Failed to fetch")
+                    || stderr.contains("404"),
                 "Expected auth/network error, got: {}",
                 stderr
             );

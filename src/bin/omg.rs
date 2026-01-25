@@ -18,9 +18,7 @@ use omg_lib::cli::security;
 use omg_lib::cli::{
     CiCommands, Cli, Commands, ContainerCommands, MigrateCommands, SnapshotCommands, commands,
 };
-use omg_lib::cli::{
-    blame, ci, diff, migrate, outdated, pin, size, snapshot, why,
-};
+use omg_lib::cli::{blame, ci, diff, migrate, outdated, pin, size, snapshot, why};
 use omg_lib::core::{elevate_if_needed, is_root};
 use omg_lib::hooks;
 
@@ -221,14 +219,30 @@ fn try_fast_hooks(args: &[String]) -> bool {
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
 
-    if try_fast_explicit_count(&args) { return Ok(()); }
-    if try_fast_search(&args) { return Ok(()); }
-    if try_fast_info(&args) { return Ok(()); }
-    if try_fast_completions(&args)? { return Ok(()); }
-    if try_fast_which(&args) { return Ok(()); }
-    if try_fast_list(&args) { return Ok(()); }
-    if try_fast_status(&args) { return Ok(()); }
-    if try_fast_hooks(&args) { return Ok(()); }
+    if try_fast_explicit_count(&args) {
+        return Ok(());
+    }
+    if try_fast_search(&args) {
+        return Ok(());
+    }
+    if try_fast_info(&args) {
+        return Ok(());
+    }
+    if try_fast_completions(&args)? {
+        return Ok(());
+    }
+    if try_fast_which(&args) {
+        return Ok(());
+    }
+    if try_fast_list(&args) {
+        return Ok(());
+    }
+    if try_fast_status(&args) {
+        return Ok(());
+    }
+    if try_fast_hooks(&args) {
+        return Ok(());
+    }
 
     let result = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -254,19 +268,25 @@ async fn async_main(args: Vec<String>) -> Result<()> {
         Commands::Install { packages, .. } | Commands::Remove { packages, .. } => {
             omg_lib::core::security::validate_package_names(packages)?;
         }
-        Commands::Info { package } | Commands::Why { package, .. } | Commands::Blame { package } => {
+        Commands::Info { package }
+        | Commands::Why { package, .. }
+        | Commands::Blame { package } => {
             omg_lib::core::security::validate_package_name(package)?;
         }
         _ => {}
     }
 
     tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into()))
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::from_default_env()
+                .add_directive(tracing::Level::INFO.into()),
+        )
         .with_target(false)
         .with_ansi(console::colors_enabled())
         .init();
 
-    if omg_lib::core::telemetry::is_first_run() && !omg_lib::core::telemetry::is_telemetry_opt_out() {
+    if omg_lib::core::telemetry::is_first_run() && !omg_lib::core::telemetry::is_telemetry_opt_out()
+    {
         tokio::spawn(async {
             let _ = omg_lib::core::telemetry::ping_install().await;
         });
@@ -433,13 +453,7 @@ async fn async_main(args: Vec<String>) -> Result<()> {
                     build_arg,
                     target,
                 } => {
-                    container::build(
-                        dockerfile.clone(),
-                        tag,
-                        *no_cache,
-                        build_arg,
-                        target,
-                    )?;
+                    container::build(dockerfile.clone(), tag, *no_cache, build_arg, target)?;
                 }
                 ContainerCommands::List => {
                     container::list()?;
@@ -568,7 +582,13 @@ async fn async_main(args: Vec<String>) -> Result<()> {
     let cmd_duration = omg_lib::core::analytics::end_timer(cmd_start);
     let cmd_name = std::env::args().nth(1).unwrap_or_default();
     let subcmd = std::env::args().nth(2);
-    omg_lib::core::analytics::track_command(&cmd_name, subcmd.as_deref(), cmd_duration, true, Some(&omg_lib::core::telemetry::get_backend()));
+    omg_lib::core::analytics::track_command(
+        &cmd_name,
+        subcmd.as_deref(),
+        cmd_duration,
+        true,
+        Some(&omg_lib::core::telemetry::get_backend()),
+    );
     omg_lib::core::analytics::maybe_heartbeat();
     omg_lib::core::analytics::maybe_flush().await;
     omg_lib::core::usage::maybe_sync_background();

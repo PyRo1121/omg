@@ -88,7 +88,10 @@ pub fn info_sync(package: &str) -> Result<bool> {
 pub async fn info_aur(package: &str) -> Result<()> {
     let aur = AurClient::new();
     let Some(info) = aur.info(package).await? else {
-        ui::print_error(&format!("Package '{}' not found in official repos or AUR.", package));
+        ui::print_error(&format!(
+            "Package '{}' not found in official repos or AUR.",
+            package
+        ));
         return Ok(());
     };
 
@@ -187,7 +190,10 @@ pub async fn info(package: &str) -> Result<()> {
 
         ui::print_kv("Name", &style::package(&pkg.name));
         ui::print_kv("Version", &style::version(&pkg.version));
-        ui::print_kv("Description", pkg.description.as_deref().unwrap_or_default());
+        ui::print_kv(
+            "Description",
+            pkg.description.as_deref().unwrap_or_default(),
+        );
         ui::print_kv("Maintainer", pkg.maintainer.as_deref().unwrap_or("orphan"));
         ui::print_kv("Votes", &pkg.num_votes.to_string());
         ui::print_kv("Popularity", &format!("{:.2}%", pkg.popularity));

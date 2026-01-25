@@ -3,8 +3,8 @@
 //! Provides high-polish components like cards, tips, and contextual headers.
 //! Implements a "Lip Gloss" compatible API using owo-colors for the Bubble Tea feel.
 
-use std::fmt::Display;
 use owo_colors::OwoColorize;
+use std::fmt::Display;
 
 /// Color palette matching standard TUI needs
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -179,11 +179,7 @@ pub fn print_step(step: usize, total: usize, msg: &str) {
         .foreground(Color::White);
     let msg_style = Style::new().foreground(Color::Gray);
 
-    println!(
-        "{} {}",
-        step_style.render(&step_str),
-        msg_style.render(msg)
-    );
+    println!("{} {}", step_style.render(&step_str), msg_style.render(msg));
 }
 
 /// Print a key-value pair with consistent formatting.
@@ -210,9 +206,9 @@ pub fn prompt_theme() -> dialoguer::theme::ColorfulTheme {
 
 /// Wrap a block of text in a "Charm-style" bordered card.
 pub fn print_card(title: &str, content: Vec<String>) {
+    use comfy_table::Table;
     use comfy_table::modifiers::UTF8_ROUND_CORNERS;
     use comfy_table::presets::UTF8_FULL;
-    use comfy_table::Table;
 
     let mut table = Table::new();
     table

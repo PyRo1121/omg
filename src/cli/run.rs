@@ -16,7 +16,8 @@ pub struct RunCommand {
 #[async_trait]
 impl CommandRunner for RunCommand {
     async fn execute(&self, _ctx: &CliContext) -> Result<()> {
-        let backend = self.runtime_backend
+        let backend = self
+            .runtime_backend
             .as_deref()
             .map(str::parse::<RuntimeBackend>)
             .transpose()
@@ -27,7 +28,13 @@ impl CommandRunner for RunCommand {
         } else if self.parallel {
             task_runner::run_tasks_parallel(&self.task, &self.args, backend).await?;
         } else {
-            task_runner::run_task_advanced(&self.task, &self.args, backend, self.using.as_deref(), self.all)?;
+            task_runner::run_task_advanced(
+                &self.task,
+                &self.args,
+                backend,
+                self.using.as_deref(),
+                self.all,
+            )?;
         }
         Ok(())
     }

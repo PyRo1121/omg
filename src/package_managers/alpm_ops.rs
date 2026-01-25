@@ -311,7 +311,10 @@ pub fn execute_transaction(
 
 /// Setup ALPM callbacks for progress bars
 #[allow(clippy::expect_used)]
-fn setup_alpm_callbacks(alpm: &mut alpm::Alpm, mp: &indicatif::MultiProgress) -> Result<indicatif::ProgressBar> {
+fn setup_alpm_callbacks(
+    alpm: &mut alpm::Alpm,
+    mp: &indicatif::MultiProgress,
+) -> Result<indicatif::ProgressBar> {
     let main_pb = mp.add(indicatif::ProgressBar::new(100));
     main_pb.set_style(
         indicatif::ProgressStyle::default_bar()
@@ -503,7 +506,7 @@ fn commit_alpm_transaction(alpm: &mut alpm::Alpm, main_pb: &indicatif::ProgressB
     main_pb.set_message("Committing transaction...");
     alpm.trans_commit()
         .context("Transaction failed to commit. Run 'omg cleanup' if issue persists.")?;
-    
+
     main_pb.finish_with_message("Transaction successful");
 
     Ok(())

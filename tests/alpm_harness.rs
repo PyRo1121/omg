@@ -4,12 +4,12 @@
 
 use alpm::Alpm;
 use anyhow::Result;
-use flate2::write::GzEncoder;
 use flate2::Compression;
+use flate2::write::GzEncoder;
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use tar::{Builder, EntryType, Header};
-use tempfile::{tempdir, TempDir};
+use tempfile::{TempDir, tempdir};
 
 pub struct HarnessPkg {
     pub name: String,

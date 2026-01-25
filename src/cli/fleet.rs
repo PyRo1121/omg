@@ -13,8 +13,12 @@ impl CommandRunner for FleetCommands {
     async fn execute(&self, ctx: &CliContext) -> Result<()> {
         match self {
             FleetCommands::Status => status(ctx).await,
-            FleetCommands::Push { team, message } => push(team.as_deref(), message.as_deref(), ctx).await,
-            FleetCommands::Remediate { dry_run, confirm } => remediate(*dry_run, *confirm, ctx).await,
+            FleetCommands::Push { team, message } => {
+                push(team.as_deref(), message.as_deref(), ctx).await
+            }
+            FleetCommands::Remediate { dry_run, confirm } => {
+                remediate(*dry_run, *confirm, ctx).await
+            }
         }
     }
 }
