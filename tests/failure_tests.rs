@@ -78,8 +78,9 @@ fn test_permission_denied_on_cache_fails_gracefully() -> Result<()> {
     // Ensure we reset permissions so harness can be cleaned up
     scopeguard::defer! {
         if let Ok(meta) = std::fs::metadata(&sync_dir) {
+            use std::os::unix::fs::PermissionsExt;
             let mut p = meta.permissions();
-            p.set_readonly(false);
+            p.set_mode(0o755); // Restore standard directory permissions
             let _ = std::fs::set_permissions(&sync_dir, p);
         }
     }
