@@ -7,6 +7,7 @@ use crate::cli::tea::{Cmd, Model};
 use crate::core::packages::PackageService;
 use crate::package_managers::get_package_manager;
 use semver::Version;
+use std::fmt::Write;
 use std::sync::Arc;
 
 /// Update state machine
@@ -136,7 +137,7 @@ impl UpdateModel {
     }
 
     /// Render a single update entry with beautiful styling
-    fn render_update(&self, upd: &UpdatePackage) -> String {
+    fn render_update(upd: &UpdatePackage) -> String {
         format!(
             "  {:>8} {} {} {} → {}",
             upd.update_type.styled_label(),
@@ -165,7 +166,7 @@ impl UpdateModel {
     }
 
     /// Render header with beautiful box drawing
-    fn render_header(&self, title: &str, subtitle: &str) -> String {
+    fn render_header(title: &str, subtitle: &str) -> String {
         format!(
             "\n{} {}\n{} {}\n{}{}\n",
             "┌─".cyan().bold(),
@@ -321,22 +322,24 @@ impl Model for UpdateModel {
                 let mut output = String::new();
 
                 // Beautiful header
-                output.push_str(
-                    &self.render_header("OMG", &format!("Found {} update(s)", self.updates.len())),
-                );
+                output.push_str(&Self::render_header(
+                    "OMG",
+                    &format!("Found {} update(s)", self.updates.len()),
+                ));
 
                 // Update list
                 for upd in &self.updates {
-                    output.push_str(&self.render_update(upd));
+                    output.push_str(&Self::render_update(upd));
                     output.push('\n');
                 }
 
                 // Confirmation prompt
                 if !self.check_only && !self.yes {
-                    output.push_str(&format!(
+                    let _ = write!(
+                        output,
                         "\n{} Proceed with system upgrade? · ",
                         "✓".green().bold()
-                    ));
+                    );
                 }
 
                 output
