@@ -10,6 +10,7 @@ pub mod blame;
 pub mod ci;
 pub mod commands;
 pub mod container;
+pub mod tea;
 pub mod diff;
 pub mod doctor;
 pub mod enterprise;
