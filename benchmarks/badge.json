@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
   "label": "search",
-  "message": "9.00ms (24.6x faster)",
+  "message": "8.20ms (28.2x faster)",
   "color": "brightgreen"
 }
