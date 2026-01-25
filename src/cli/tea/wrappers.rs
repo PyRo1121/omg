@@ -1,6 +1,8 @@
 //! Integration wrappers for Elm-based models
 
-use crate::cli::tea::{InfoModel, InstallModel, Program, SearchModel, StatusModel, UpdateModel};
+use crate::cli::tea::{
+    InfoModel, InstallModel, Program, RemoveModel, SearchModel, StatusModel, UpdateModel,
+};
 
 /// Run status command using Elm Architecture
 pub fn run_status_elm(fast: bool) -> Result<(), std::io::Error> {
@@ -17,6 +19,18 @@ pub fn run_info_elm(package: String) -> Result<(), std::io::Error> {
 /// Run install command using Elm Architecture
 pub fn run_install_elm(packages: Vec<String>, yes: bool) -> Result<(), std::io::Error> {
     let model = InstallModel::new(packages).with_yes(yes);
+    Program::new(model).run()
+}
+
+/// Run remove command using Elm Architecture
+pub fn run_remove_elm(
+    packages: Vec<String>,
+    recursive: bool,
+    yes: bool,
+) -> Result<(), std::io::Error> {
+    let model = RemoveModel::new(packages)
+        .with_recursive(recursive)
+        .with_yes(yes);
     Program::new(model).run()
 }
 
