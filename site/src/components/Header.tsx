@@ -32,37 +32,40 @@ const Header: Component = () => {
     <>
       <header class="pointer-events-auto fixed top-0 right-0 left-0 z-50 border-b border-white/5 bg-[#0f0f23]/80 backdrop-blur-lg">
         <nav class="relative mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
-          <a href="/" class="flex items-center gap-3" aria-label="OMG Package Manager - Home">
+          <A href="/" class="flex items-center gap-3" aria-label="OMG Package Manager - Home">
             <div class="flex h-8 w-8 items-center justify-center overflow-hidden rounded-lg">
               <img
                 src="/logo-globe.png"
-                alt="OMG Package Manager Logo - Fastest Linux Package Manager"
+                alt="OMG Package Manager Logo"
                 class="h-8 w-8 object-cover"
                 width="32"
                 height="32"
               />
             </div>
             <span class="text-xl font-bold">OMG</span>
-          </a>
+          </A>
 
           <div class="hidden items-center gap-8 md:flex">
-            <a
-              href="/docs/"
+            <A
+              href="/docs"
               class="text-slate-400 transition-colors hover:text-white"
+              activeClass="text-white"
             >
               Docs
-            </a>
-            <a href="#features" class="text-slate-400 transition-colors hover:text-white">
+            </A>
+            <a href="/#features" class="text-slate-400 transition-colors hover:text-white">
               Features
             </a>
-            <a href="#benchmarks" class="text-slate-400 transition-colors hover:text-white">
+            <a href="/#benchmarks" class="text-slate-400 transition-colors hover:text-white">
               Benchmarks
             </a>
-            <a href="#pricing" class="text-slate-400 transition-colors hover:text-white">
+            <a href="/#pricing" class="text-slate-400 transition-colors hover:text-white">
               Pricing
             </a>
             <a
               href="https://github.com/PyRo1121/omg/"
+              target="_blank"
+              rel="noopener noreferrer"
               class="text-slate-400 transition-colors hover:text-white"
             >
               GitHub
@@ -80,6 +83,7 @@ const Header: Component = () => {
             <A
               href="/dashboard"
               class="flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm text-slate-400 transition-colors hover:bg-slate-800/50 hover:text-white"
+              activeClass="bg-slate-800 text-white"
             >
               <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path
@@ -91,10 +95,10 @@ const Header: Component = () => {
               </svg>
               Dashboard
             </A>
-            <a href="#install" class="btn-secondary px-4 py-2 text-sm">
+            <a href="/#install" class="btn-secondary px-4 py-2 text-sm">
               Install
             </a>
-            <a href="#pricing" class="btn-primary px-4 py-2 text-sm">
+            <a href="/#pricing" class="btn-primary px-4 py-2 text-sm">
               Get Pro
             </a>
           </div>
@@ -117,16 +121,16 @@ const Header: Component = () => {
         {menuOpen() && (
           <div class="border-t border-white/5 bg-[#1a1a2e] px-6 py-4 md:hidden">
             <div class="flex flex-col gap-4">
-              <a href="/docs/" class="text-slate-400 hover:text-white">
+              <A href="/docs" class="text-slate-400 hover:text-white">
                 Docs
-              </a>
-              <a href="#features" class="text-slate-400 hover:text-white">
+              </A>
+              <a href="/#features" class="text-slate-400 hover:text-white" onClick={() => setMenuOpen(false)}>
                 Features
               </a>
-              <a href="#benchmarks" class="text-slate-400 hover:text-white">
+              <a href="/#benchmarks" class="text-slate-400 hover:text-white" onClick={() => setMenuOpen(false)}>
                 Benchmarks
               </a>
-              <a href="#pricing" class="text-slate-400 hover:text-white">
+              <a href="/#pricing" class="text-slate-400 hover:text-white" onClick={() => setMenuOpen(false)}>
                 Pricing
               </a>
               <a href="https://github.com/PyRo1121/omg/" class="text-slate-400 hover:text-white">
@@ -135,10 +139,10 @@ const Header: Component = () => {
               <A href="/dashboard" class="text-slate-400 hover:text-white">
                 Dashboard
               </A>
-              <a href="#install" class="btn-secondary px-4 py-2 text-center text-sm">
+              <a href="/#install" class="btn-secondary px-4 py-2 text-center text-sm" onClick={() => setMenuOpen(false)}>
                 Install
               </a>
-              <a href="#pricing" class="btn-primary px-4 py-2 text-center text-sm">
+              <a href="/#pricing" class="btn-primary px-4 py-2 text-center text-sm" onClick={() => setMenuOpen(false)}>
                 Get Pro
               </a>
             </div>
@@ -195,76 +199,6 @@ const Header: Component = () => {
                   <kbd class="rounded border border-slate-600 bg-slate-800 px-2 py-1 text-xs text-slate-300">
                     Esc
                   </kbd>
-                </div>
-              </div>
-
-              <div class="mt-4 border-t border-slate-700 pt-4">
-                <div class="mb-4 text-sm text-slate-400">CLI Commands</div>
-                <div class="space-y-3 font-mono text-sm">
-                  <div class="flex items-center justify-between">
-                    <span class="text-cyan-400">omg s &lt;query&gt;</span>
-                    <span class="text-slate-500">Search packages</span>
-                  </div>
-                  <div class="flex items-center justify-between">
-                    <span class="text-cyan-400">omg i &lt;pkg&gt;</span>
-                    <span class="text-slate-500">Install package</span>
-                  </div>
-                  <div class="flex items-center justify-between">
-                    <span class="text-cyan-400">omg u</span>
-                    <span class="text-slate-500">Update system</span>
-                  </div>
-                  <div class="flex items-center justify-between">
-                    <span class="text-cyan-400">omg dash</span>
-                    <span class="text-slate-500">Open TUI</span>
-                  </div>
-                  <div class="flex items-center justify-between">
-                    <span class="text-cyan-400">omg stats</span>
-                    <span class="text-slate-500">View usage stats</span>
-                  </div>
-                </div>
-              </div>
-
-              <div class="mt-4 border-t border-slate-700 pt-4">
-                <div class="mb-4 text-sm text-slate-400">TUI Dashboard (omg dash)</div>
-                <div class="space-y-2 text-sm">
-                  <div class="flex items-center justify-between">
-                    <span class="text-slate-300">Navigate tabs</span>
-                    <div class="flex gap-1">
-                      <kbd class="rounded border border-slate-600 bg-slate-800 px-2 py-0.5 text-xs">
-                        1
-                      </kbd>
-                      <kbd class="rounded border border-slate-600 bg-slate-800 px-2 py-0.5 text-xs">
-                        2
-                      </kbd>
-                      <kbd class="rounded border border-slate-600 bg-slate-800 px-2 py-0.5 text-xs">
-                        3
-                      </kbd>
-                      <kbd class="rounded border border-slate-600 bg-slate-800 px-2 py-0.5 text-xs">
-                        4
-                      </kbd>
-                      <kbd class="rounded border border-slate-600 bg-slate-800 px-2 py-0.5 text-xs">
-                        5
-                      </kbd>
-                    </div>
-                  </div>
-                  <div class="flex items-center justify-between">
-                    <span class="text-slate-300">Search packages</span>
-                    <kbd class="rounded border border-slate-600 bg-slate-800 px-2 py-0.5 text-xs">
-                      /
-                    </kbd>
-                  </div>
-                  <div class="flex items-center justify-between">
-                    <span class="text-slate-300">Update system</span>
-                    <kbd class="rounded border border-slate-600 bg-slate-800 px-2 py-0.5 text-xs">
-                      U
-                    </kbd>
-                  </div>
-                  <div class="flex items-center justify-between">
-                    <span class="text-slate-300">Quit</span>
-                    <kbd class="rounded border border-slate-600 bg-slate-800 px-2 py-0.5 text-xs">
-                      Q
-                    </kbd>
-                  </div>
                 </div>
               </div>
             </div>
