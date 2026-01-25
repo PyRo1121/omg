@@ -1,11 +1,11 @@
 import { Component, createResource, Show } from 'solid-js';
-import { getHighlighter, Highlighter } from 'shiki';
+import { createHighlighter, Highlighter } from 'shiki';
 
 let highlighterPromise: Promise<Highlighter> | null = null;
 
 const getSharedHighlighter = () => {
   if (!highlighterPromise) {
-    highlighterPromise = getHighlighter({
+    highlighterPromise = createHighlighter({
       themes: ['github-dark'],
       langs: ['javascript', 'typescript', 'tsx', 'bash', 'json', 'yaml', 'markdown', 'rust'],
     });

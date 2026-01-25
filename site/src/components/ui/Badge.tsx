@@ -69,9 +69,12 @@ export const StatusBadge: Component<{ status: string; pulse?: boolean }> = props
       case 'pending':
       case 'trial':
         return 'warning';
+      case 'offline':
+        return 'neutral';
       case 'inactive':
       case 'suspended':
       case 'failed':
+      case 'compromised':
         return 'error';
       default:
         return 'neutral';
