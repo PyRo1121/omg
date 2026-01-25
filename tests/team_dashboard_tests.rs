@@ -1,3 +1,9 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::pedantic,
+    clippy::nursery
+)]
 //! Comprehensive test suite for Team Dashboard TUI functionality
 //!
 //! This module tests:

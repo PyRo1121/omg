@@ -1,3 +1,9 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::pedantic,
+    clippy::nursery
+)]
 //! End-to-End Tests for OMG CLI
 //!
 //! Comprehensive E2E test infrastructure validating the complete user journey:

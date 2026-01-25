@@ -240,7 +240,27 @@ impl PackageService {
 
     /// List available updates
     pub async fn list_updates(&self) -> Result<Vec<UpdateInfo>> {
-        let updates = self.backend.list_updates().await?;
+        let mut updates = self.backend.list_updates().await?;
+
+        #[cfg(feature = "arch")]
+        if let Some(aur) = &self.aur_client {
+            match aur.get_update_list().await {
+                Ok(aur_updates) => {
+                    for (name, old, new) in aur_updates {
+                        updates.push(UpdateInfo {
+                            name,
+                            old_version: old.to_string(),
+                            new_version: new.to_string(),
+                            repo: "aur".to_string(),
+                        });
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to check AUR for updates: {}", e);
+                }
+            }
+        }
+
         Ok(updates)
     }
 

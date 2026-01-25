@@ -1,3 +1,9 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::pedantic,
+    clippy::nursery
+)]
 //! Comprehensive Debian/Ubuntu Integration Tests
 //!
 //! Enterprise-grade test coverage for Debian and Ubuntu package management.

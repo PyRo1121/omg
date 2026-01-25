@@ -1,3 +1,9 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::pedantic,
+    clippy::nursery
+)]
 //! Production-Ready Version Tests
 //!
 //! Tests REAL version parsing and comparison logic from alpm_types::Version.
@@ -50,7 +56,7 @@ mod real_world_parsing {
         ];
 
         for ver in versions {
-            let v = parse_version_or_panic(ver);
+            let _ = parse_version_or_panic(ver);
             // Just verify it parses successfully
             // (AlpmVersion doesn't expose as_str(), so we just ensure no panic)
         }
@@ -70,7 +76,7 @@ mod real_world_parsing {
         ];
 
         for ver in package_versions {
-            let v = parse_version_or_panic(ver);
+            let _ = parse_version_or_panic(ver);
         }
     }
 
@@ -85,7 +91,7 @@ mod real_world_parsing {
         ];
 
         for ver in aur_versions {
-            let v = parse_version_or_panic(ver);
+            let _ = parse_version_or_panic(ver);
         }
     }
 
@@ -101,7 +107,7 @@ mod real_world_parsing {
         ];
 
         for ver in unusual_versions {
-            let v = parse_version_or_panic(ver);
+            let _ = parse_version_or_panic(ver);
         }
     }
 
@@ -109,7 +115,7 @@ mod real_world_parsing {
     #[test]
     fn test_very_long_version_strings() {
         let long_ver = "1.2.3.4.5.6.7.8.9.10.11.12.13.14.15.16.17.18.19.20";
-        let v = parse_version_or_panic(long_ver);
+        let _ = parse_version_or_panic(long_ver);
     }
 }
 
@@ -145,8 +151,8 @@ mod version_comparison {
     #[test]
     fn test_unequal_length_comparison() {
         // More components vs fewer components
-        let v1 = parse_version_or_panic("1.0");
-        let v2 = parse_version_or_panic("1.0.0");
+        let _v1 = parse_version_or_panic("1.0");
+        let _v2 = parse_version_or_panic("1.0.0");
         // Should handle gracefully (behavior depends on alpm_types)
 
         let v1 = parse_version_or_panic("1.2");
@@ -172,16 +178,16 @@ mod version_comparison {
     #[test]
     fn test_prerelease_comparison() {
         // Stable vs pre-release
-        let v1 = parse_version_or_panic("1.0.0");
-        let v2 = parse_version_or_panic("1.0.0alpha");
+        let _v1 = parse_version_or_panic("1.0.0");
+        let _v2 = parse_version_or_panic("1.0.0alpha");
         // Stable should be greater than pre-release
 
-        let v1 = parse_version_or_panic("1.0.0alpha");
-        let v2 = parse_version_or_panic("1.0.0beta");
+        let _v1 = parse_version_or_panic("1.0.0alpha");
+        let _v2 = parse_version_or_panic("1.0.0beta");
         // Beta should be greater than alpha
 
-        let v1 = parse_version_or_panic("1.0.0beta");
-        let v2 = parse_version_or_panic("1.0.0rc1");
+        let _v1 = parse_version_or_panic("1.0.0beta");
+        let _v2 = parse_version_or_panic("1.0.0rc1");
         // RC should be greater than beta
     }
 
@@ -338,17 +344,17 @@ mod parse_version_or_zero_tests {
     #[test]
     fn test_never_panics() {
         // Valid versions
-        let v = parse_version_or_zero("1.2.3");
+        let _ = parse_version_or_zero("1.2.3");
 
         // Empty string (edge case) - should not panic
-        let v = parse_version_or_zero("");
+        let _ = parse_version_or_zero("");
 
         // Very long version
         let long_ver = "1.2.3.4.5.6.7.8.9.10.11.12.13.14.15.16.17.18.19.20";
-        let v = parse_version_or_zero(long_ver);
+        let _ = parse_version_or_zero(long_ver);
 
         // Version with special characters
-        let v = parse_version_or_zero("1.0.0alpha1+build2-3");
+        let _ = parse_version_or_zero("1.0.0alpha1+build2-3");
     }
 
     /// Test that parse_version_or_zero returns valid Version type
@@ -363,7 +369,7 @@ mod parse_version_or_zero_tests {
         ];
 
         for ver in versions {
-            let parsed = parse_version_or_zero(ver);
+            let _parsed = parse_version_or_zero(ver);
             // Should always return a valid Version object
             // (AlpmVersion is actual type, we just verify it exists)
         }

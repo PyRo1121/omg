@@ -1224,6 +1224,7 @@ pub async fn run_tasks_parallel(
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use std::fs;

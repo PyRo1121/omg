@@ -4,6 +4,7 @@ use std::sync::LazyLock;
 use anyhow::{Context, Result};
 use owo_colors::OwoColorize;
 
+use crate::cli::ui;
 use crate::runtimes::{
     BunManager, GoManager, JavaManager, MiseManager, NodeManager, PythonManager, RubyManager,
     RustManager, SUPPORTED_RUNTIMES,
@@ -81,12 +82,8 @@ pub async fn use_version(runtime: &str, version: Option<&str>) -> Result<()> {
         }
     };
 
-    println!(
-        "{} Switching {} to version {}\n",
-        "OMG".cyan().bold(),
-        runtime.green(),
-        version.yellow()
-    );
+    ui::print_header("OMG", &format!("Switching {} to version {}", runtime, version));
+    ui::print_spacer();
 
     crate::core::usage::track_runtime_switch(runtime);
 
@@ -237,91 +234,71 @@ fn mise_list_all() -> Result<()> {
 /// List installed versions - PURE NATIVE (no external tools)
 pub fn list_versions_sync(runtime: Option<&str>) -> Result<()> {
     if let Some(rt) = runtime {
-        println!("{} {} versions:\n", "OMG".cyan().bold(), rt.green());
+        ui::print_header("OMG", &format!("{} versions", rt));
+        ui::print_spacer();
 
         match rt.to_lowercase().as_str() {
             "node" | "nodejs" => {
                 let mgr = NodeManager::new();
                 let current = mgr.current_version();
                 for v in mgr.list_installed().unwrap_or_default() {
-                    let marker = if Some(&v) == current.as_ref() {
-                        "→"
-                    } else {
-                        " "
-                    };
-                    println!("  {} {}", marker.green(), v);
+                    let is_active = Some(&v) == current.as_ref();
+                    let meta = if is_active { Some("(active)") } else { None };
+                    ui::print_list_item(&v, meta);
                 }
             }
             "python" => {
                 let mgr = PythonManager::new();
                 let current = mgr.current_version();
                 for v in mgr.list_installed().unwrap_or_default() {
-                    let marker = if Some(&v) == current.as_ref() {
-                        "→"
-                    } else {
-                        " "
-                    };
-                    println!("  {} {}", marker.green(), v);
+                    let is_active = Some(&v) == current.as_ref();
+                    let meta = if is_active { Some("(active)") } else { None };
+                    ui::print_list_item(&v, meta);
                 }
             }
             "rust" => {
                 let mgr = RustManager::new();
                 let current = mgr.current_version();
                 for v in mgr.list_installed().unwrap_or_default() {
-                    let marker = if Some(&v) == current.as_ref() {
-                        "→"
-                    } else {
-                        " "
-                    };
-                    println!("  {} {}", marker.green(), v);
+                    let is_active = Some(&v) == current.as_ref();
+                    let meta = if is_active { Some("(active)") } else { None };
+                    ui::print_list_item(&v, meta);
                 }
             }
             "go" | "golang" => {
                 let mgr = GoManager::new();
                 let current = mgr.current_version();
                 for v in mgr.list_installed().unwrap_or_default() {
-                    let marker = if Some(&v) == current.as_ref() {
-                        "→"
-                    } else {
-                        " "
-                    };
-                    println!("  {} {}", marker.green(), v);
+                    let is_active = Some(&v) == current.as_ref();
+                    let meta = if is_active { Some("(active)") } else { None };
+                    ui::print_list_item(&v, meta);
                 }
             }
             "ruby" => {
                 let mgr = RubyManager::new();
                 let current = mgr.current_version();
                 for v in mgr.list_installed().unwrap_or_default() {
-                    let marker = if Some(&v) == current.as_ref() {
-                        "→"
-                    } else {
-                        " "
-                    };
-                    println!("  {} {}", marker.green(), v);
+                    let is_active = Some(&v) == current.as_ref();
+                    let meta = if is_active { Some("(active)") } else { None };
+                    ui::print_list_item(&v, meta);
                 }
             }
             "java" | "jdk" => {
                 let mgr = JavaManager::new();
                 let current = mgr.current_version();
                 for v in mgr.list_installed().unwrap_or_default() {
-                    let marker = if Some(&v) == current.as_ref() {
-                        "→"
-                    } else {
-                        " "
-                    };
-                    println!("  {} {}", marker.green(), v);
+                    let is_active = Some(&v) == current.as_ref();
+                    let meta = if is_active { Some("(active)") } else { None };
+                    ui::print_list_item(&v, meta);
                 }
             }
             "bun" | "bunjs" => {
                 let mgr = BunManager::new();
                 let current = mgr.current_version();
                 for v in mgr.list_installed().unwrap_or_default() {
-                    let marker = if Some(&v) == current.as_ref() {
-                        "→"
-                    } else {
-                        " "
-                    };
-                    println!("  {} {}", marker.green(), v);
+                    let is_active = Some(&v) == current.as_ref();
+                    let meta = if is_active { Some("(active)") } else { None };
+                    ui::print_list_item(&v, meta);
                 }
             }
             _ => {
@@ -331,36 +308,40 @@ pub fn list_versions_sync(runtime: Option<&str>) -> Result<()> {
         }
     } else {
         // List all installed runtimes
-        println!("{} Installed runtime versions:\n", "OMG".cyan().bold());
+        ui::print_header("OMG", "Installed runtime versions");
+        ui::print_spacer();
 
         if let Some(v) = NodeManager::new().current_version() {
-            println!("  {} Node.js {}", "●".green(), v);
+            ui::print_list_item("Node.js", Some(&v));
         }
         if let Some(v) = PythonManager::new().current_version() {
-            println!("  {} Python {}", "●".green(), v);
+            ui::print_list_item("Python", Some(&v));
         }
         if let Some(v) = RustManager::new().current_version() {
-            println!("  {} Rust {}", "●".green(), v);
+            ui::print_list_item("Rust", Some(&v));
         }
         if let Some(v) = GoManager::new().current_version() {
-            println!("  {} Go {}", "●".green(), v);
+            ui::print_list_item("Go", Some(&v));
         }
         if let Some(v) = RubyManager::new().current_version() {
-            println!("  {} Ruby {}", "●".green(), v);
+            ui::print_list_item("Ruby", Some(&v));
         }
         if let Some(v) = JavaManager::new().current_version() {
-            println!("  {} Java {}", "●".green(), v);
+            ui::print_list_item("Java", Some(&v));
         }
         if let Some(v) = BunManager::new().current_version() {
-            println!("  {} Bun {}", "●".green(), v);
+            ui::print_list_item("Bun", Some(&v));
         }
 
         if MISE.is_available() {
-            println!("\n{} Mise runtimes:\n", "OMG".cyan().bold());
+            ui::print_spacer();
+            ui::print_header("MISE", "Additional Runtimes");
+            ui::print_spacer();
             mise_list_all()?;
         }
     }
 
+    ui::print_spacer();
     Ok(())
 }
 
@@ -371,7 +352,8 @@ pub async fn list_versions(runtime: Option<&str>, available: bool) -> Result<()>
     }
 
     if let Some(rt) = runtime {
-        println!("{} {} versions:\n", "OMG".cyan().bold(), rt.green());
+        ui::print_header("OMG", &format!("{} versions", rt));
+        ui::print_spacer();
 
         match rt.to_lowercase().as_str() {
             "node" | "nodejs" => {
@@ -382,17 +364,14 @@ pub async fn list_versions(runtime: Option<&str>, available: bool) -> Result<()>
                         let lts = crate::runtimes::node::get_lts_name(v)
                             .map(|s| format!(" ({})", s.cyan()))
                             .unwrap_or_default();
-                        println!("  {} {}{}", "●".dimmed(), v.version, lts);
+                        ui::print_list_item(&v.version, Some(&lts));
                     }
                 } else {
                     let current = mgr.current_version();
                     for v in mgr.list_installed().unwrap_or_default() {
-                        let marker = if Some(&v) == current.as_ref() {
-                            "→"
-                        } else {
-                            " "
-                        };
-                        println!("  {} {}", marker.green(), v);
+                        let is_active = Some(&v) == current.as_ref();
+                        let meta = if is_active { Some("(active)") } else { None };
+                        ui::print_list_item(&v, meta);
                     }
                 }
             }
@@ -404,17 +383,14 @@ pub async fn list_versions(runtime: Option<&str>, available: bool) -> Result<()>
                         "→".blue()
                     );
                     for v in mgr.list_available().await?.iter().take(20) {
-                        println!("  {} {}", "●".dimmed(), v.version);
+                        ui::print_list_item(&v.version, None);
                     }
                 } else {
                     let current = mgr.current_version();
                     for v in mgr.list_installed().unwrap_or_default() {
-                        let marker = if Some(&v) == current.as_ref() {
-                            "→"
-                        } else {
-                            " "
-                        };
-                        println!("  {} {}", marker.green(), v);
+                        let is_active = Some(&v) == current.as_ref();
+                        let meta = if is_active { Some("(active)") } else { None };
+                        ui::print_list_item(&v, meta);
                     }
                 }
             }
@@ -423,17 +399,14 @@ pub async fn list_versions(runtime: Option<&str>, available: bool) -> Result<()>
                 if available {
                     println!("{} Available remote versions:", "→".blue());
                     for v in mgr.list_available().await?.iter().take(20) {
-                        println!("  {} {} ({})", "●".dimmed(), v.version, v.channel.dimmed());
+                        ui::print_list_item(&v.version, Some(&v.channel));
                     }
                 } else {
                     let current = mgr.current_version();
                     for v in mgr.list_installed().unwrap_or_default() {
-                        let marker = if Some(&v) == current.as_ref() {
-                            "→"
-                        } else {
-                            " "
-                        };
-                        println!("  {} {}", marker.green(), v);
+                        let is_active = Some(&v) == current.as_ref();
+                        let meta = if is_active { Some("(active)") } else { None };
+                        ui::print_list_item(&v, meta);
                     }
                 }
             }
@@ -443,17 +416,14 @@ pub async fn list_versions(runtime: Option<&str>, available: bool) -> Result<()>
                     println!("{} Available remote versions:", "→".blue());
                     for v in mgr.list_available().await?.iter().take(20) {
                         let stable = if v.stable { " (stable)" } else { "" };
-                        println!("  {} {}{}", "●".dimmed(), v.version, stable.green());
+                        ui::print_list_item(&v.version, Some(stable));
                     }
                 } else {
                     let current = mgr.current_version();
                     for v in mgr.list_installed().unwrap_or_default() {
-                        let marker = if Some(&v) == current.as_ref() {
-                            "→"
-                        } else {
-                            " "
-                        };
-                        println!("  {} {}", marker.green(), v);
+                        let is_active = Some(&v) == current.as_ref();
+                        let meta = if is_active { Some("(active)") } else { None };
+                        ui::print_list_item(&v, meta);
                     }
                 }
             }
@@ -462,17 +432,14 @@ pub async fn list_versions(runtime: Option<&str>, available: bool) -> Result<()>
                 if available {
                     println!("{} Available remote versions (ruby-builder):", "→".blue());
                     for v in mgr.list_available().await?.iter().take(20) {
-                        println!("  {} {}", "●".dimmed(), v.version);
+                        ui::print_list_item(&v.version, None);
                     }
                 } else {
                     let current = mgr.current_version();
                     for v in mgr.list_installed().unwrap_or_default() {
-                        let marker = if Some(&v) == current.as_ref() {
-                            "→"
-                        } else {
-                            " "
-                        };
-                        println!("  {} {}", marker.green(), v);
+                        let is_active = Some(&v) == current.as_ref();
+                        let meta = if is_active { Some("(active)") } else { None };
+                        ui::print_list_item(&v, meta);
                     }
                 }
             }
@@ -482,17 +449,14 @@ pub async fn list_versions(runtime: Option<&str>, available: bool) -> Result<()>
                     println!("{} Available remote versions (Adoptium):", "→".blue());
                     for v in mgr.list_available().await?.iter().take(20) {
                         let lts = if v.lts { " (LTS)" } else { "" };
-                        println!("  {} {}{}", "●".dimmed(), v.version, lts.green());
+                        ui::print_list_item(&v.version, Some(lts));
                     }
                 } else {
                     let current = mgr.current_version();
                     for v in mgr.list_installed().unwrap_or_default() {
-                        let marker = if Some(&v) == current.as_ref() {
-                            "→"
-                        } else {
-                            " "
-                        };
-                        println!("  {} {}", marker.green(), v);
+                        let is_active = Some(&v) == current.as_ref();
+                        let meta = if is_active { Some("(active)") } else { None };
+                        ui::print_list_item(&v, meta);
                     }
                 }
             }
@@ -502,28 +466,21 @@ pub async fn list_versions(runtime: Option<&str>, available: bool) -> Result<()>
                     println!("{} Available remote versions:", "→".blue());
                     for v in mgr.list_available().await?.iter().take(20) {
                         let pre = if v.prerelease { " (pre-release)" } else { "" };
-                        println!("  {} {}{}", "●".dimmed(), v.version, pre.yellow());
+                        ui::print_list_item(&v.version, Some(pre));
                     }
                 } else {
                     let current = mgr.current_version();
                     for v in mgr.list_installed().unwrap_or_default() {
-                        let marker = if Some(&v) == current.as_ref() {
-                            "→"
-                        } else {
-                            " "
-                        };
-                        println!("  {} {}", marker.green(), v);
+                        let is_active = Some(&v) == current.as_ref();
+                        let meta = if is_active { Some("(active)") } else { None };
+                        ui::print_list_item(&v, meta);
                     }
                 }
             }
             _ => {
                 // Auto-install mise if not available
                 if !MISE.is_available() {
-                    println!(
-                        "{} {} is not natively supported, installing mise...\n",
-                        "→".blue(),
-                        rt.yellow()
-                    );
+                    ui::print_tip(&format!("{} is not natively supported, installing mise...", rt));
                     MISE.ensure_installed().await?;
                 }
                 mise_list_versions(rt, available)?;
@@ -531,7 +488,8 @@ pub async fn list_versions(runtime: Option<&str>, available: bool) -> Result<()>
         }
     } else {
         // List all installed runtimes
-        println!("{} Installed runtime versions:\n", "OMG".cyan().bold());
+        ui::print_header("OMG", "Installed runtime versions");
+        ui::print_spacer();
 
         let (node_res, py_res, rust_res, go_res, ruby_res, java_res, bun_res) = tokio::join!(
             tokio::task::spawn_blocking(|| NodeManager::new().current_version()),
@@ -544,32 +502,35 @@ pub async fn list_versions(runtime: Option<&str>, available: bool) -> Result<()>
         );
 
         if let Ok(Some(v)) = node_res {
-            println!("  {} Node.js {}", "●".green(), v);
+            ui::print_list_item("Node.js", Some(&v));
         }
         if let Ok(Some(v)) = py_res {
-            println!("  {} Python {}", "●".green(), v);
+            ui::print_list_item("Python", Some(&v));
         }
         if let Ok(Some(v)) = rust_res {
-            println!("  {} Rust {}", "●".green(), v);
+            ui::print_list_item("Rust", Some(&v));
         }
         if let Ok(Some(v)) = go_res {
-            println!("  {} Go {}", "●".green(), v);
+            ui::print_list_item("Go", Some(&v));
         }
         if let Ok(Some(v)) = ruby_res {
-            println!("  {} Ruby {}", "●".green(), v);
+            ui::print_list_item("Ruby", Some(&v));
         }
         if let Ok(Some(v)) = java_res {
-            println!("  {} Java {}", "●".green(), v);
+            ui::print_list_item("Java", Some(&v));
         }
         if let Ok(Some(v)) = bun_res {
-            println!("  {} Bun {}", "●".green(), v);
+            ui::print_list_item("Bun", Some(&v));
         }
 
         if MISE.is_available() {
-            println!("\n{} Mise runtimes:\n", "OMG".cyan().bold());
+            ui::print_spacer();
+            ui::print_header("MISE", "Additional Runtimes");
+            ui::print_spacer();
             mise_list_all()?;
         }
     }
 
+    ui::print_spacer();
     Ok(())
 }

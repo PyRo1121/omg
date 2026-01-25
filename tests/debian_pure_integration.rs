@@ -1,3 +1,9 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::pedantic,
+    clippy::nursery
+)]
 //! Integration tests for Pure Rust Debian implementation
 //!
 //! This verifies that the `PureDebianPackageManager` works correctly

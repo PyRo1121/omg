@@ -82,6 +82,7 @@ impl DaemonState {
     }
 }
 
+#[allow(clippy::expect_used)]
 impl Default for DaemonState {
     fn default() -> Self {
         Self::new().expect("Failed to initialize DaemonState")

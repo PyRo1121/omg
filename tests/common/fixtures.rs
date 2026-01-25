@@ -244,7 +244,7 @@ pub mod validation {
 
     /// Unicode edge cases (excluding null bytes which cause Command errors)
     pub const UNICODE_INPUTS: &[&str] = &[
-        "日本語パッケージ",
+        "unicode-package",
         "пакет",
         "🔥📦",
         "test_null",

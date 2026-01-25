@@ -650,6 +650,7 @@ fn manifest_component_url(manifest: &toml::Value, component: &str, target: &str)
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

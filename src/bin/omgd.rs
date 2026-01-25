@@ -94,6 +94,7 @@ async fn main() -> Result<()> {
     match result {
         Ok(run_result) => run_result?,
         Err(e) => {
+            #[allow(clippy::option_if_let_else)]
             let msg = if let Some(s) = e.downcast_ref::<&str>() {
                 format!("Daemon panicked: {s}")
             } else if let Some(s) = e.downcast_ref::<String>() {

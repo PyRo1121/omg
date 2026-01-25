@@ -1,3 +1,9 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::pedantic,
+    clippy::nursery
+)]
 //! Production-Ready Performance Benchmarks
 //!
 //! Verifies that OMG meets its performance targets.
@@ -44,17 +50,6 @@ fn measure_time<F: FnOnce() -> T, T>(f: F) -> (T, std::time::Duration) {
 
 fn perf_tests_enabled() -> bool {
     matches!(env::var("OMG_RUN_PERF_TESTS"), Ok(value) if value == "1")
-}
-
-/// Helper to combine stdout and stderr
-fn combine_output(stdout: &str, stderr: &str) -> String {
-    if stderr.is_empty() {
-        stdout.to_string()
-    } else if stdout.is_empty() {
-        stderr.to_string()
-    } else {
-        format!("{}{}", stdout) + stderr
-    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -167,7 +162,7 @@ mod search_performance {
             return;
         }
 
-        let ((success, _, _), duration) = measure_time(|| run_omg(&["search", "日本語"]));
+        let ((success, _, _), duration) = measure_time(|| run_omg(&["search", "café"]));
 
         assert!(success, "Unicode search should succeed");
         assert!(

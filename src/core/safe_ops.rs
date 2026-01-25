@@ -4,6 +4,8 @@
 //! require `unwrap()` or `expect()`. This module helps eliminate panic-prone patterns
 //! throughout the codebase while maintaining performance and ergonomics.
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use anyhow::{Context, Result};
 use std::num::{NonZeroU32, NonZeroU64, NonZeroUsize};
 use std::path::{Path, PathBuf};

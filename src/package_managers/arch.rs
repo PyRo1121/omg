@@ -1,40 +1,53 @@
-use anyhow::Result as AnyhowResult;
+use futures::future::{BoxFuture, Future};
 use futures::FutureExt;
-use futures::future::BoxFuture;
 use owo_colors::OwoColorize;
+use anyhow::Result as AnyhowResult;
 
-use crate::core::{Package, PackageSource, is_root};
+use crate::core::{is_root, privilege, Package, PackageSource};
 use crate::package_managers::{get_system_status, invalidate_caches, traits::PackageManager};
 
-/// Official Arch Linux package manager with enhanced UX
-pub struct OfficialPackageManager;
+/// Arch Linux package manager (ALPM) implementation
+pub struct ArchPackageManager;
 
-impl OfficialPackageManager {
+impl ArchPackageManager {
     #[must_use]
     pub const fn new() -> Self {
         Self
     }
-
-    pub async fn sync_databases(&self) -> AnyhowResult<()> {
-        if !is_root() {
-            crate::core::privilege::run_self_sudo(&["sync"]).await?;
-            invalidate_caches();
-            return Ok(());
-        }
-
-        crate::package_managers::sync_databases_parallel().await?;
-        invalidate_caches();
-        Ok(())
-    }
 }
 
-impl Default for OfficialPackageManager {
+impl Default for ArchPackageManager {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl PackageManager for OfficialPackageManager {
+/// Helper to run a privileged operation, either directly or via sudo.
+async fn run_privileged_operation<F, Fut>(
+    command: &str,
+    packages: &[String],
+    operation: F,
+) -> AnyhowResult<()>
+where
+    F: FnOnce() -> Fut,
+    Fut: Future<Output = AnyhowResult<()>>,
+{
+    if !is_root() {
+        println!("{} Elevating privileges for {command}...", "→".blue());
+        let mut args = vec![command, "--"];
+        let pkg_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
+        args.extend_from_slice(&pkg_refs);
+        privilege::run_self_sudo(&args).await?;
+        invalidate_caches();
+        return Ok(());
+    }
+
+    operation().await?;
+    invalidate_caches();
+    Ok(())
+}
+
+impl PackageManager for ArchPackageManager {
     fn name(&self) -> &'static str {
         "pacman"
     }
@@ -45,7 +58,6 @@ impl PackageManager for OfficialPackageManager {
             // Offload ALPM search to blocking thread
             tokio::task::spawn_blocking(move || {
                 // Direct ALPM search is handled by search_sync in alpm_direct.rs
-                // but we'll keep this structure for trait compatibility
                 let results = crate::package_managers::search_sync(&query)?;
                 Ok(results
                     .into_iter()
@@ -66,37 +78,20 @@ impl PackageManager for OfficialPackageManager {
     fn install(&self, packages: &[String]) -> BoxFuture<'static, AnyhowResult<()>> {
         let packages = packages.to_vec();
         async move {
-            // SECURITY: Validate package names
             crate::core::security::validate_package_names(&packages)?;
-
             if packages.is_empty() {
                 return Ok(());
             }
 
-            if !is_root() {
-                println!("{} Elevating privileges to install packages...", "→".blue());
-                let mut args = vec!["install", "--"];
-                let pkg_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
-                args.extend_from_slice(&pkg_refs);
-                crate::core::privilege::run_self_sudo(&args).await?;
-                invalidate_caches();
-                return Ok(());
-            }
-
-            println!(
-                "{} Installing {} package(s)...",
-                "OMG".cyan().bold(),
-                packages.len()
-            );
-            for pkg in &packages {
-                println!("  {} {}", "→".dimmed(), pkg);
-            }
-            println!();
-
-            // LIGHTNING FAST: Direct libalpm transaction
-            crate::package_managers::execute_transaction(packages, false, false)?;
-            invalidate_caches();
-            Ok(())
+            let pkgs_clone = packages.clone();
+            run_privileged_operation("install", &packages, || async move {
+                tokio::task::spawn_blocking(move || {
+                    crate::package_managers::execute_transaction(pkgs_clone, false, false, None)
+                })
+                .await??;
+                Ok(())
+            })
+            .await
         }
         .boxed()
     }
@@ -104,59 +99,48 @@ impl PackageManager for OfficialPackageManager {
     fn remove(&self, packages: &[String]) -> BoxFuture<'static, AnyhowResult<()>> {
         let packages = packages.to_vec();
         async move {
-            // SECURITY: Validate package names
             crate::core::security::validate_package_names(&packages)?;
-
             if packages.is_empty() {
                 return Ok(());
             }
 
-            if !is_root() {
-                println!("{} Elevating privileges to remove packages...", "→".blue());
-                let mut args = vec!["remove", "--"];
-                let pkg_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
-                args.extend_from_slice(&pkg_refs);
-                crate::core::privilege::run_self_sudo(&args).await?;
-                invalidate_caches();
-                return Ok(());
-            }
-
-            println!(
-                "{} Removing {} package(s)...",
-                "OMG".cyan().bold(),
-                packages.len()
-            );
-            for pkg in &packages {
-                println!("  {} {}", "→".dimmed(), pkg);
-            }
-            println!();
-
-            crate::package_managers::execute_transaction(packages, true, false)?;
-            invalidate_caches();
-            Ok(())
+            let pkgs_clone = packages.clone();
+            run_privileged_operation("remove", &packages, || async move {
+                tokio::task::spawn_blocking(move || {
+                    crate::package_managers::execute_transaction(pkgs_clone, true, false, None)
+                })
+                .await??;
+                Ok(())
+            })
+            .await
         }
         .boxed()
     }
 
     fn update(&self) -> BoxFuture<'static, AnyhowResult<()>> {
         async move {
-            if !is_root() {
-                println!("{} Elevating privileges to update system...", "→".blue());
-                crate::core::privilege::run_self_sudo(&["update"]).await?;
-                invalidate_caches();
-                return Ok(());
-            }
-
-            println!("{} Starting full system upgrade...", "OMG".cyan().bold());
-            crate::package_managers::execute_transaction(Vec::new(), false, true)?;
-            invalidate_caches();
-            Ok(())
+            run_privileged_operation("update", &[], || async {
+                println!("{} Starting full system upgrade...", "OMG".cyan().bold());
+                tokio::task::spawn_blocking(move || {
+                    crate::package_managers::execute_transaction(Vec::new(), false, true, None)
+                })
+                .await??;
+                Ok(())
+            })
+            .await
         }
         .boxed()
     }
 
     fn sync(&self) -> BoxFuture<'static, AnyhowResult<()>> {
-        async move { OfficialPackageManager::new().sync_databases().await }.boxed()
+        async move {
+            run_privileged_operation("sync", &[], || async {
+                crate::package_managers::sync_databases_parallel().await?;
+                Ok(())
+            })
+            .await
+        }
+        .boxed()
     }
 
     fn info(&self, package: &str) -> BoxFuture<'static, AnyhowResult<Option<Package>>> {
@@ -220,24 +204,8 @@ impl PackageManager for OfficialPackageManager {
     fn list_updates(
         &self,
     ) -> BoxFuture<'static, AnyhowResult<Vec<crate::package_managers::types::UpdateInfo>>> {
-        async move {
-            tokio::task::spawn_blocking(move || {
-                let updates = crate::package_managers::get_update_list()?;
-                Ok(updates
-                    .into_iter()
-                    .map(
-                        |(name, old, new)| crate::package_managers::types::UpdateInfo {
-                            name,
-                            old_version: old.to_string(),
-                            new_version: new.to_string(),
-                            repo: "official".to_string(),
-                        },
-                    )
-                    .collect())
-            })
-            .await?
-        }
-        .boxed()
+        async move { tokio::task::spawn_blocking(crate::package_managers::get_update_list).await? }
+            .boxed()
     }
 
     fn is_installed(&self, package: &str) -> BoxFuture<'static, bool> {
@@ -266,7 +234,7 @@ pub async fn remove_orphans() -> AnyhowResult<()> {
         println!("  {} {}", "→".dimmed(), pkg);
     }
 
-    crate::package_managers::execute_transaction(orphans, true, false)?;
+    crate::package_managers::execute_transaction(orphans, true, false, None)?;
     invalidate_caches();
     Ok(())
 }

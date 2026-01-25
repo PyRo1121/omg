@@ -1,10 +1,10 @@
 //! Search functionality for packages
 
 use anyhow::Result;
-use dialoguer::{MultiSelect, theme::ColorfulTheme};
+use dialoguer::MultiSelect;
 use std::io::Write;
 
-use crate::cli::style;
+use crate::cli::{style, ui};
 use crate::core::client::DaemonClient;
 use crate::core::env::distro::use_debian_backend;
 use crate::daemon::protocol::{Request, ResponseResult};
@@ -40,16 +40,18 @@ fn display_results(
     limit: usize,
     writer: &mut impl Write,
 ) -> Result<()> {
-    writeln!(writer, "{}", style::header(header))?;
+    writeln!(writer, "\n{}", style::header(header))?;
     for pkg in packages.iter().take(limit) {
         writeln!(writer, "{}", pkg.display_format())?;
     }
 
     if packages.len() > limit {
         let more = packages.len() - limit;
-        write!(writer, "  {}", style::dim("(+"))?;
-        write!(writer, "{more}")?;
-        writeln!(writer, "{})", style::dim(" more packages..."))?;
+        writeln!(
+            writer,
+            "  {}",
+            style::dim(&format!("(+{more} more packages...)"))
+        )?;
     }
 
     Ok(())
@@ -228,7 +230,7 @@ async fn handle_interactive_selection(
         );
     }
 
-    let selections = MultiSelect::with_theme(&ColorfulTheme::default())
+    let selections = MultiSelect::with_theme(&crate::cli::ui::prompt_theme())
         .items(&items)
         .interact()?;
 
@@ -549,11 +551,9 @@ pub async fn search(query: &str, detailed: bool, interactive: bool) -> Result<()
         )?;
     }
 
-    println!(
-        "{} {}",
-        style::arrow("Use"),
-        style::command("omg info <package> for details")
-    );
+    ui::print_spacer();
+    ui::print_tip("Use 'omg info <package>' for detailed information.");
+    ui::print_spacer();
 
     Ok(())
 }

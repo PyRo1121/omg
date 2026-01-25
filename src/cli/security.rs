@@ -1,41 +1,56 @@
+use crate::cli::{AuditCommands, CliContext, CommandRunner, ui};
 use crate::core::client::DaemonClient;
 use crate::core::license;
 use crate::core::security::{AuditLogger, AuditSeverity, SbomGenerator, SecurityPolicy};
 use anyhow::Result;
+use async_trait::async_trait;
 use owo_colors::OwoColorize;
 
+#[async_trait]
+impl CommandRunner for AuditCommands {
+    async fn execute(&self, ctx: &CliContext) -> Result<()> {
+        ui::print_spacer();
+        match self {
+            AuditCommands::Scan => scan(ctx).await,
+            AuditCommands::Sbom { output, vulns } => generate_sbom(output.clone(), *vulns, ctx).await,
+            AuditCommands::Secrets { path } => scan_secrets(path.clone(), ctx),
+            AuditCommands::Log {
+                limit,
+                severity,
+                export,
+            } => view_audit_log(*limit, severity.clone(), export.clone(), ctx),
+            AuditCommands::Verify => verify_audit_log(ctx),
+            AuditCommands::Policy => show_policy(ctx),
+            AuditCommands::Slsa { package } => check_slsa(package, ctx).await,
+        }?;
+        ui::print_spacer();
+        Ok(())
+    }
+}
+
 /// Perform security audit (vulnerability scan)
-pub async fn scan() -> Result<()> {
+pub async fn scan(_ctx: &CliContext) -> Result<()> {
     // Require Pro tier for vulnerability scanning
     license::require_feature("audit")?;
 
-    println!(
-        "{} Performing system security audit...\n",
-        "OMG".cyan().bold()
-    );
+    ui::print_header("Secure", "Vulnerability Scan");
 
     let Ok(mut client) = DaemonClient::connect().await else {
-        println!(
-            "{} Daemon not running. Security audit requires the daemon.",
-            "✗".red()
-        );
+        ui::print_error("Daemon not running. Security audit requires the daemon.");
         return Ok(());
     };
 
     match client.security_audit().await {
         Ok(res) => {
             if res.total_vulnerabilities == 0 {
-                println!(
-                    "{} No vulnerabilities found in scanned packages.",
-                    "✓".green()
-                );
+                ui::print_success("No vulnerabilities found in scanned packages.");
             } else {
-                println!(
-                    "{} Found {} vulnerabilities ({} high severity):\n",
-                    "⚠".red().bold(),
+                ui::print_warning(format!(
+                    "Found {} vulnerabilities ({} high severity)",
                     res.total_vulnerabilities,
-                    res.high_severity.to_string().red().bold()
-                );
+                    res.high_severity
+                ));
+                println!();
                 for (pkg, vulns) in res.vulnerabilities {
                     println!("  {} ({} issues):", pkg.white().bold(), vulns.len());
                     for vuln in vulns {
@@ -53,10 +68,11 @@ pub async fn scan() -> Result<()> {
                     }
                     println!();
                 }
+                ui::print_tip("Run 'omg audit sbom' to generate a full security report.");
             }
         }
         Err(e) => {
-            println!("{} Audit failed: {}", "✗".red(), e);
+            ui::print_error(format!("Audit failed: {e}"));
         }
     }
 
@@ -64,7 +80,11 @@ pub async fn scan() -> Result<()> {
 }
 
 /// Generate SBOM (Software Bill of Materials)
-pub async fn generate_sbom(output: Option<String>, include_vulns: bool) -> Result<()> {
+pub async fn generate_sbom(
+    output: Option<String>,
+    include_vulns: bool,
+    _ctx: &CliContext,
+) -> Result<()> {
     // Require Pro tier for SBOM generation
     license::require_feature("sbom")?;
 
@@ -114,6 +134,7 @@ pub fn view_audit_log(
     limit: usize,
     severity_filter: Option<String>,
     export: Option<String>,
+    _ctx: &CliContext,
 ) -> Result<()> {
     // Require Team tier for audit logs
     license::require_feature("audit-log")?;
@@ -219,7 +240,7 @@ pub fn view_audit_log(
 }
 
 /// Verify audit log integrity
-pub fn verify_audit_log() -> Result<()> {
+pub fn verify_audit_log(_ctx: &CliContext) -> Result<()> {
     println!("{} Verifying Audit Log Integrity...\n", "OMG".cyan().bold());
 
     let Ok(logger) = AuditLogger::new() else {
@@ -257,7 +278,7 @@ pub fn verify_audit_log() -> Result<()> {
 }
 
 /// Show security policy status
-pub fn show_policy() -> Result<()> {
+pub fn show_policy(_ctx: &CliContext) -> Result<()> {
     println!("{} Security Policy Status\n", "OMG".cyan().bold());
 
     let policy = SecurityPolicy::load_default().unwrap_or_default();
@@ -309,7 +330,7 @@ pub fn show_policy() -> Result<()> {
 }
 
 /// Scan for leaked secrets
-pub fn scan_secrets(path: Option<String>) -> Result<()> {
+pub fn scan_secrets(path: Option<String>, _ctx: &CliContext) -> Result<()> {
     // Require Pro tier for secret scanning
     license::require_feature("secrets")?;
 
@@ -399,7 +420,7 @@ pub fn scan_secrets(path: Option<String>) -> Result<()> {
 }
 
 /// Check SLSA provenance for a package
-pub async fn check_slsa(package: &str) -> Result<()> {
+pub async fn check_slsa(package: &str, _ctx: &CliContext) -> Result<()> {
     // Require Enterprise tier for SLSA verification
     license::require_feature("slsa")?;
 
@@ -455,9 +476,4 @@ pub async fn check_slsa(package: &str) -> Result<()> {
     }
 
     Ok(())
-}
-
-/// Legacy function for backward compatibility
-pub async fn audit() -> Result<()> {
-    scan().await
 }

@@ -46,6 +46,7 @@ src/
   daemon/server.rs, cache.rs    # Unix socket server and LRU cache
   package_managers/traits.rs    # PackageManager trait
   package_managers/arch.rs      # Arch pacman implementation
+  package_managers/alpm_ops.rs  # Direct libalpm operations
   package_managers/aur.rs       # AUR client
   runtimes/node.rs, python.rs, go.rs, rust.rs, ruby.rs, java.rs, bun.rs
   config/settings.rs            # Configuration with serde

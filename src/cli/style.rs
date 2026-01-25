@@ -330,6 +330,7 @@ pub fn duration(ms: u64) -> String {
 /// Create a spinner for indeterminate progress
 #[must_use]
 #[allow(clippy::expect_used)]
+#[allow(clippy::literal_string_with_formatting_args)]
 pub fn spinner(msg: &str) -> ProgressBar {
     let pb = ProgressBar::new_spinner();
 
@@ -360,6 +361,7 @@ pub fn spinner(msg: &str) -> ProgressBar {
 /// Create a progress bar for determinate progress
 #[must_use]
 #[allow(clippy::expect_used)]
+#[allow(clippy::literal_string_with_formatting_args)]
 pub fn progress_bar(total: u64, msg: &str) -> ProgressBar {
     let pb = ProgressBar::new(total);
 
@@ -382,6 +384,7 @@ pub fn progress_bar(total: u64, msg: &str) -> ProgressBar {
 /// Create a download progress bar with speed and ETA
 #[must_use]
 #[allow(clippy::expect_used)]
+#[allow(clippy::literal_string_with_formatting_args)]
 pub fn download_bar(total: u64, filename: &str) -> ProgressBar {
     let pb = ProgressBar::new(total);
 
@@ -476,8 +479,10 @@ pub fn init_theme() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     #[test]
+    #[serial]
     fn test_no_color_disables_colors() {
         unsafe { env::set_var("NO_COLOR", "1") };
         assert!(!colors_enabled());
@@ -485,6 +490,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_omg_colors_always_enables() {
         unsafe { env::set_var("OMG_COLORS", "always") };
         assert!(colors_enabled());
@@ -492,6 +498,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_omg_colors_never_disables() {
         unsafe { env::set_var("OMG_COLORS", "never") };
         assert!(!colors_enabled());
@@ -499,6 +506,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_unicode_icons() {
         unsafe { env::set_var("OMG_UNICODE", "1") };
         assert_eq!(icon("✓", "OK"), "✓");

@@ -13,6 +13,7 @@ use owo_colors::OwoColorize;
 use sha2::{Digest, Sha256};
 
 /// Progress bar style for downloads
+#[allow(clippy::expect_used)]
 pub fn download_progress_style() -> ProgressStyle {
     ProgressStyle::default_bar()
         .template(
@@ -23,6 +24,7 @@ pub fn download_progress_style() -> ProgressStyle {
 }
 
 /// Progress bar style for extraction
+#[allow(clippy::expect_used)]
 pub fn extract_progress_style() -> ProgressStyle {
     ProgressStyle::default_spinner()
         .template("{spinner:.green} {msg}")
@@ -30,6 +32,7 @@ pub fn extract_progress_style() -> ProgressStyle {
 }
 
 /// Download a file with progress bar and optional checksum verification
+#[allow(clippy::unwrap_used)]
 pub async fn download_with_progress(
     client: &reqwest::Client,
     url: &str,
@@ -396,6 +399,7 @@ pub fn print_already_installed(runtime: &str, version: &str) {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
     use tempfile::TempDir;

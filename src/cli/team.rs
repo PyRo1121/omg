@@ -1,13 +1,67 @@
 //! Team collaboration CLI commands
 
+use crate::cli::{
+    CliContext, CommandRunner, GoldenPathCommands, NotifyCommands, TeamCommands, TeamRoleCommands,
+};
 use anyhow::Result;
+use async_trait::async_trait;
 use owo_colors::OwoColorize;
 
 use crate::core::env::team::{TeamStatus, TeamWorkspace};
 use crate::core::license;
 
+#[async_trait]
+impl CommandRunner for TeamCommands {
+    async fn execute(&self, ctx: &CliContext) -> Result<()> {
+        match self {
+            TeamCommands::Init { team_id, name } => init(team_id, name.as_deref(), ctx),
+            TeamCommands::Join { url } => join(url, ctx).await,
+            TeamCommands::Status => status(ctx).await,
+            TeamCommands::Push => push(ctx).await,
+            TeamCommands::Pull => pull(ctx).await,
+            TeamCommands::Members => members(ctx).await,
+            TeamCommands::Dashboard => dashboard(ctx).await,
+            TeamCommands::Invite { email, role } => invite(email.as_deref(), role, ctx),
+            TeamCommands::Roles { command } => match command {
+                TeamRoleCommands::List => roles::list(ctx),
+                TeamRoleCommands::Assign { member, role } => roles::assign(member, role, ctx),
+                TeamRoleCommands::Remove { member } => roles::remove(member, ctx),
+            },
+            TeamCommands::Propose { message } => propose(message, ctx).await,
+            TeamCommands::Proposals => list_proposals(ctx).await,
+            TeamCommands::Review { id, approve, .. } => review(*id, *approve, ctx).await,
+            TeamCommands::GoldenPath { command } => match command {
+                GoldenPathCommands::Create {
+                    name,
+                    node,
+                    python,
+                    packages,
+                } => golden_path::create(
+                    name,
+                    node.as_deref(),
+                    python.as_deref(),
+                    packages.as_deref(),
+                    ctx,
+                ),
+                GoldenPathCommands::List => golden_path::list(ctx),
+                GoldenPathCommands::Delete { name } => golden_path::delete(name, ctx),
+            },
+            TeamCommands::Compliance { export, enforce } => {
+                compliance(export.as_deref(), *enforce, ctx)
+            }
+            TeamCommands::Activity { days } => activity(*days, ctx).await,
+            TeamCommands::Notify { command } => match command {
+                NotifyCommands::Add { notify_type, url } => team_notify::add(notify_type, url, ctx),
+                NotifyCommands::List => team_notify::list(ctx),
+                NotifyCommands::Remove { id } => team_notify::remove(id, ctx),
+                NotifyCommands::Test { id } => team_notify::test(id, ctx),
+            },
+        }
+    }
+}
+
 /// Initialize a new team workspace
-pub fn init(team_id: &str, name: Option<&str>) -> Result<()> {
+pub fn init(team_id: &str, name: Option<&str>, _ctx: &CliContext) -> Result<()> {
     // SECURITY: Validate team_id
     if team_id
         .chars()
@@ -48,7 +102,7 @@ pub fn init(team_id: &str, name: Option<&str>) -> Result<()> {
 }
 
 /// Join an existing team by setting remote URL
-pub async fn join(remote_url: &str) -> Result<()> {
+pub async fn join(remote_url: &str, _ctx: &CliContext) -> Result<()> {
     // SECURITY: Basic URL validation
     if !remote_url.starts_with("https://") {
         anyhow::bail!("Only HTTPS URLs allowed for security");
@@ -88,7 +142,7 @@ pub async fn join(remote_url: &str) -> Result<()> {
 }
 
 /// Show team status
-pub async fn status() -> Result<()> {
+pub async fn status(_ctx: &CliContext) -> Result<()> {
     let cwd = std::env::current_dir()?;
     let workspace = TeamWorkspace::new(&cwd);
 
@@ -105,7 +159,7 @@ pub async fn status() -> Result<()> {
 }
 
 /// Push local environment to team lock
-pub async fn push() -> Result<()> {
+pub async fn push(_ctx: &CliContext) -> Result<()> {
     let cwd = std::env::current_dir()?;
     let workspace = TeamWorkspace::new(&cwd);
 
@@ -127,7 +181,7 @@ pub async fn push() -> Result<()> {
 }
 
 /// Pull team lock and check for drift
-pub async fn pull() -> Result<()> {
+pub async fn pull(_ctx: &CliContext) -> Result<()> {
     let cwd = std::env::current_dir()?;
     let workspace = TeamWorkspace::new(&cwd);
 
@@ -150,7 +204,7 @@ pub async fn pull() -> Result<()> {
 }
 
 /// List team members
-pub async fn members() -> Result<()> {
+pub async fn members(_ctx: &CliContext) -> Result<()> {
     // Require Team tier for team features
     license::require_feature("team-sync")?;
 
@@ -311,13 +365,13 @@ fn extract_team_id(url: &str) -> String {
 }
 
 /// Interactive team dashboard (TUI)
-pub async fn dashboard() -> Result<()> {
+pub async fn dashboard(_ctx: &CliContext) -> Result<()> {
     license::require_feature("team-sync")?;
     crate::cli::tui::run_with_tab(crate::cli::tui::app::Tab::Team).await
 }
 
 /// Generate team invite link
-pub fn invite(email: Option<&str>, role: &str) -> Result<()> {
+pub fn invite(email: Option<&str>, role: &str, _ctx: &CliContext) -> Result<()> {
     // SECURITY: Validate role and email
     let valid_roles = ["admin", "lead", "developer", "readonly"];
     if !valid_roles.contains(&role) {
@@ -355,9 +409,9 @@ pub fn invite(email: Option<&str>, role: &str) -> Result<()> {
 
 /// Manage team roles
 pub mod roles {
-    use super::{OwoColorize, Result, license};
+    use super::{CliContext, OwoColorize, Result, license};
 
-    pub fn list() -> Result<()> {
+    pub fn list(_ctx: &CliContext) -> Result<()> {
         license::require_feature("team-sync")?;
 
         println!("{} Team Roles\n", "OMG".cyan().bold());
@@ -380,7 +434,7 @@ pub mod roles {
         Ok(())
     }
 
-    pub fn assign(member: &str, role: &str) -> Result<()> {
+    pub fn assign(member: &str, role: &str, _ctx: &CliContext) -> Result<()> {
         // SECURITY: Validate role and member
         let valid_roles = ["admin", "lead", "developer", "readonly"];
         if !valid_roles.contains(&role) {
@@ -403,7 +457,7 @@ pub mod roles {
         Ok(())
     }
 
-    pub fn remove(member: &str) -> Result<()> {
+    pub fn remove(member: &str, _ctx: &CliContext) -> Result<()> {
         license::require_feature("team-sync")?;
 
         println!("{} Removing role...\n", "OMG".cyan().bold());
@@ -414,7 +468,7 @@ pub mod roles {
 }
 
 /// Propose environment changes for review
-pub async fn propose(message: &str) -> Result<()> {
+pub async fn propose(message: &str, _ctx: &CliContext) -> Result<()> {
     license::require_feature("team-sync")?;
 
     println!("{} Creating proposal...\n", "OMG".cyan().bold());
@@ -455,7 +509,7 @@ pub async fn propose(message: &str) -> Result<()> {
 }
 
 /// Review and approve/reject a proposal
-pub async fn review(proposal_id: u32, approve: bool) -> Result<()> {
+pub async fn review(proposal_id: u32, approve: bool, _ctx: &CliContext) -> Result<()> {
     license::require_feature("team-sync")?;
 
     let status = if approve { "approved" } else { "rejected" };
@@ -478,7 +532,7 @@ pub async fn review(proposal_id: u32, approve: bool) -> Result<()> {
 }
 
 /// List pending team proposals
-pub async fn list_proposals() -> Result<()> {
+pub async fn list_proposals(_ctx: &CliContext) -> Result<()> {
     license::require_feature("team-sync")?;
 
     println!("{} Team Proposals\n", "OMG".cyan().bold());
@@ -518,7 +572,7 @@ pub async fn list_proposals() -> Result<()> {
 
 /// Manage golden path templates
 pub mod golden_path {
-    use super::{OwoColorize, Result, license};
+    use super::{CliContext, OwoColorize, Result, license};
     use serde::{Deserialize, Serialize};
     use std::collections::HashMap;
 
@@ -566,6 +620,7 @@ pub mod golden_path {
         node: Option<&str>,
         python: Option<&str>,
         packages: Option<&str>,
+        _ctx: &CliContext,
     ) -> Result<()> {
         // SECURITY: Validate all inputs
         if name.chars().any(|c| !c.is_ascii_alphanumeric() && c != '-') {
@@ -634,7 +689,7 @@ pub mod golden_path {
         Ok(())
     }
 
-    pub fn list() -> Result<()> {
+    pub fn list(_ctx: &CliContext) -> Result<()> {
         license::require_feature("team-sync")?;
 
         println!("{} Golden Path Templates\n", "OMG".cyan().bold());
@@ -672,7 +727,7 @@ pub mod golden_path {
         Ok(())
     }
 
-    pub fn delete(name: &str) -> Result<()> {
+    pub fn delete(name: &str, _ctx: &CliContext) -> Result<()> {
         license::require_feature("team-sync")?;
 
         let mut config = GoldenPathConfig::load()?;
@@ -692,7 +747,7 @@ pub mod golden_path {
 }
 
 /// Check compliance status
-pub fn compliance(export: Option<&str>, enforce: bool) -> Result<()> {
+pub fn compliance(export: Option<&str>, enforce: bool, _ctx: &CliContext) -> Result<()> {
     license::require_feature("team-sync")?;
 
     println!("{} Compliance Status\n", "OMG".cyan().bold());
@@ -719,7 +774,7 @@ pub fn compliance(export: Option<&str>, enforce: bool) -> Result<()> {
 }
 
 /// Show team activity stream
-pub async fn activity(days: u32) -> Result<()> {
+pub async fn activity(days: u32, _ctx: &CliContext) -> Result<()> {
     license::require_feature("team-sync")?;
 
     println!(
@@ -758,8 +813,8 @@ pub async fn activity(days: u32) -> Result<()> {
 }
 
 /// Manage webhook notifications
-pub mod notify {
-    use super::{OwoColorize, Result, license};
+pub mod team_notify {
+    use super::{CliContext, OwoColorize, Result, license};
     use serde::{Deserialize, Serialize};
 
     #[derive(Debug, Serialize, Deserialize)]
@@ -770,7 +825,7 @@ pub mod notify {
         pub created_at: i64,
     }
 
-    pub fn add(notify_type: &str, url: &str) -> Result<()> {
+    pub fn add(notify_type: &str, url: &str, _ctx: &CliContext) -> Result<()> {
         // SECURITY: Validate type and URL
         let valid_types = ["slack", "discord", "webhook"];
         if !valid_types.contains(&notify_type) {
@@ -799,7 +854,7 @@ pub mod notify {
         Ok(())
     }
 
-    pub fn list() -> Result<()> {
+    pub fn list(_ctx: &CliContext) -> Result<()> {
         license::require_feature("team-sync")?;
 
         println!("{} Configured Notifications\n", "OMG".cyan().bold());
@@ -820,7 +875,7 @@ pub mod notify {
         Ok(())
     }
 
-    pub fn remove(id: &str) -> Result<()> {
+    pub fn remove(id: &str, _ctx: &CliContext) -> Result<()> {
         license::require_feature("team-sync")?;
 
         println!("{} Removing notification...\n", "OMG".cyan().bold());
@@ -829,7 +884,7 @@ pub mod notify {
         Ok(())
     }
 
-    pub fn test(id: &str) -> Result<()> {
+    pub fn test(id: &str, _ctx: &CliContext) -> Result<()> {
         license::require_feature("team-sync")?;
 
         println!("{} Testing notification '{}'...\n", "OMG".cyan().bold(), id);

@@ -1,3 +1,9 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::pedantic,
+    clippy::nursery
+)]
 //! Integration tests for safe operations module
 //!
 //! This module tests the safe operations in more realistic scenarios

@@ -1,3 +1,9 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::pedantic,
+    clippy::nursery
+)]
 //! Security and Compliance Test Suite
 //!
 //! Enterprise-grade security testing for Fortune 500 compliance.

@@ -1,10 +1,23 @@
 //! `omg fleet` - Multi-machine fleet management (Enterprise)
 
+use crate::cli::{CliContext, CommandRunner, FleetCommands};
 use anyhow::Result;
+use async_trait::async_trait;
 use owo_colors::OwoColorize;
 use serde::{Deserialize, Serialize};
 
 use crate::core::license;
+
+#[async_trait]
+impl CommandRunner for FleetCommands {
+    async fn execute(&self, ctx: &CliContext) -> Result<()> {
+        match self {
+            FleetCommands::Status => status(ctx).await,
+            FleetCommands::Push { team, message } => push(team.as_deref(), message.as_deref(), ctx).await,
+            FleetCommands::Remediate { dry_run, confirm } => remediate(*dry_run, *confirm, ctx).await,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MachineStatus {
@@ -17,7 +30,7 @@ pub struct MachineStatus {
 }
 
 /// Show fleet status
-pub async fn status() -> Result<()> {
+pub async fn status(_ctx: &CliContext) -> Result<()> {
     license::require_feature("fleet")?;
 
     println!("{} Fleet Status\n", "OMG".cyan().bold());
@@ -120,7 +133,7 @@ fn parse_timestamp(s: &str) -> i64 {
 }
 
 /// Push configuration to fleet
-pub async fn push(team: Option<&str>, message: Option<&str>) -> Result<()> {
+pub async fn push(team: Option<&str>, message: Option<&str>, _ctx: &CliContext) -> Result<()> {
     if let Some(t) = team {
         // SECURITY: Validate team identifier
         if t.chars()
@@ -215,7 +228,7 @@ pub async fn push(team: Option<&str>, message: Option<&str>) -> Result<()> {
 }
 
 /// Auto-remediate drift across fleet
-pub async fn remediate(dry_run: bool, confirm: bool) -> Result<()> {
+pub async fn remediate(dry_run: bool, confirm: bool, _ctx: &CliContext) -> Result<()> {
     license::require_feature("fleet")?;
 
     println!(

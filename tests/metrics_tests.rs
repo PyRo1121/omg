@@ -1,3 +1,9 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::pedantic,
+    clippy::nursery
+)]
 use omg_lib::core::metrics::GLOBAL_METRICS;
 use omg_lib::daemon::handlers::{DaemonState, handle_request};
 use omg_lib::daemon::protocol::{Request, Response, ResponseResult};

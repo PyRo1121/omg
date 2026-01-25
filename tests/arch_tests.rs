@@ -1,3 +1,9 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::pedantic,
+    clippy::nursery
+)]
 //! Comprehensive Arch Linux Integration Tests
 //!
 //! Enterprise-grade test coverage for Arch Linux package management.
@@ -162,8 +168,8 @@ mod pacman_integration {
     fn test_update_check_with_mock_updates() {
         let project = TestProject::new();
 
-        mock_install("firefox", "122.0").ok();
-        mock_available("firefox", "123.0").ok();
+        project.mock_install("firefox", "122.0").ok();
+        project.mock_available("firefox", "123.0").ok();
 
         let result = project.run(&["update", "--check"]);
         result.assert_success();
@@ -178,17 +184,15 @@ mod pacman_integration {
     #[test]
     fn test_update_check_no_updates_when_current() {
         let project = TestProject::new();
+        project.with_security_policy(policies::STRICT_POLICY);
 
-        mock_install("firefox", "123.0").ok();
-        mock_available("firefox", "123.0").ok();
+        project.mock_install("firefox", "123.0").ok();
+        project.mock_available("firefox", "123.0").ok();
 
         let result = project.run(&["update", "--check"]);
         result.assert_success();
 
-        assert!(
-            result.stdout_contains("up to date"),
-            "Should report up to date"
-        );
+        result.assert_stdout_contains("up to date");
         assert!(!result.stderr_contains("panicked at"), "Should not panic");
     }
 

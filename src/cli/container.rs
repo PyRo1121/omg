@@ -2,10 +2,65 @@
 
 use anyhow::Result;
 use owo_colors::OwoColorize;
+use async_trait::async_trait;
 
+use crate::cli::{CliContext, CommandRunner, ContainerCommands};
 use crate::core::container::{
     ContainerConfig, ContainerManager, ContainerRuntime, detect_runtime, dev_container_config,
 };
+
+#[async_trait]
+impl CommandRunner for ContainerCommands {
+    async fn execute(&self, _ctx: &CliContext) -> Result<()> {
+        match self {
+            ContainerCommands::Status => status(),
+            ContainerCommands::Run {
+                image,
+                command,
+                name,
+                detach,
+                interactive,
+                env,
+                volume,
+                workdir,
+            } => run(
+                image,
+                command,
+                name.clone(),
+                *detach,
+                *interactive,
+                env,
+                volume,
+                workdir.clone(),
+            ),
+            ContainerCommands::Shell {
+                image,
+                workdir,
+                env,
+                volume,
+            } => shell(image.clone(), workdir.clone(), env, volume),
+            ContainerCommands::Build {
+                dockerfile,
+                tag,
+                no_cache,
+                build_arg,
+                target,
+            } => build(
+                dockerfile.clone(),
+                tag,
+                *no_cache,
+                build_arg,
+                target,
+            ),
+            ContainerCommands::List => list(),
+            ContainerCommands::Images => images(),
+            ContainerCommands::Pull { image } => pull(image),
+            ContainerCommands::Stop { container } => stop(container),
+            ContainerCommands::Exec { container, command } => exec(container, command),
+            ContainerCommands::Init { base } => init(base.clone()),
+        }
+    }
+}
 
 /// Parse environment variables from KEY=VALUE format
 fn parse_env_vars(env: &[String]) -> Vec<(String, String)> {

@@ -1,3 +1,9 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::pedantic,
+    clippy::nursery
+)]
 //! Production-Ready Update Command Tests
 //!
 //! Tests REAL update detection and update command functionality.
@@ -47,7 +53,7 @@ fn combine_output(stdout: &str, stderr: &str) -> String {
     } else if stdout.is_empty() {
         stderr.to_string()
     } else {
-        format!("{}{}", stdout) + stderr
+        format!("{}{}", stdout, stderr)
     }
 }
 
@@ -98,8 +104,10 @@ mod update_check {
 
         let (success, stdout, stderr) = run_omg_update(&["--check"]);
         assert!(success, "Update check should succeed");
-        assert!(!stdout.is_empty() || !stderr.is_empty(),
-                   "Update check should produce output");
+        assert!(
+            !stdout.is_empty() || !stderr.is_empty(),
+            "Update check should produce output"
+        );
     }
 
     /// Test that update check reports update status
@@ -117,11 +125,11 @@ mod update_check {
 
         // Should report either updates available or system up to date
         assert!(
-            combined.contains("update") ||
-                combined.contains("up to date") ||
-                combined.contains("System is up to date") ||
-                combined.contains("Found") ||
-                combined.to_lowercase().contains("updates"),
+            combined.contains("update")
+                || combined.contains("up to date")
+                || combined.contains("System is up to date")
+                || combined.contains("Found")
+                || combined.to_lowercase().contains("updates"),
             "Update check should report status. Got:\n{combined}"
         );
     }
@@ -139,9 +147,13 @@ mod update_check {
 
         // Should not contain execution messages
         let combined = combine_output(&stdout, &stderr);
-        assert!(!combined.contains("Executing") && !combined.contains("Installing") &&
-                   !combined.contains("Upgrading") && !combined.contains("Downloading"),
-                   "Update check should not execute changes. Got:\n{combined}");
+        assert!(
+            !combined.contains("Executing")
+                && !combined.contains("Installing")
+                && !combined.contains("Upgrading")
+                && !combined.contains("Downloading"),
+            "Update check should not execute changes. Got:\n{combined}"
+        );
     }
 }
 
@@ -156,26 +168,30 @@ mod yes_flag {
     #[test]
     fn test_yes_flag_accepted() {
         // This just verifies the flag is parsed, doesn't actually run update
-        let (success, _stdout, _stderr) = run_omg_update(&["--yes"]);
+        let (_success, _stdout, _stderr) = run_omg_update(&["--yes"]);
         // May succeed or fail (depends on root, daemon, etc.)
         // Should not panic or hang
-        assert!(_stdout.len() > 0 || _stderr.len() > 0,
-                   "Command should produce output");
+        assert!(
+            !_stdout.is_empty() || !_stderr.is_empty(),
+            "Command should produce output"
+        );
     }
 
     /// Test that -y short flag works
     #[test]
     fn test_short_yes_flag() {
-        let (success, _stdout, _stderr) = run_omg_update(&["-y"]);
+        let (_success, _stdout, _stderr) = run_omg_update(&["-y"]);
         // Should be equivalent to --yes
-        assert!(_stdout.len() > 0 || _stderr.len() > 0,
-                   "Command should produce output");
+        assert!(
+            !_stdout.is_empty() || !_stderr.is_empty(),
+            "Command should produce output"
+        );
     }
 
     /// Test that --yes and --check can be combined
     #[test]
     fn test_yes_and_check_flags() {
-        let (success, stdout, stderr) = run_omg_update(&["--check", "--yes"]);
+        let (_success, stdout, stderr) = run_omg_update(&["--check", "--yes"]);
         let combined = combine_output(&stdout, &stderr);
 
         // Should work (though --yes is redundant with --check)
@@ -199,10 +215,8 @@ mod non_interactive {
         }
 
         // Set CI environment variable to simulate non-interactive environment
-        let (success, stdout, stderr) = run_omg_update_with_env(
-            &[],
-            &[("CI", "true"), ("OMG_NON_INTERACTIVE", "1")]
-        );
+        let (success, stdout, stderr) =
+            run_omg_update_with_env(&[], &[("CI", "true"), ("OMG_NON_INTERACTIVE", "1")]);
 
         let combined = combine_output(&stdout, &stderr);
 
@@ -211,12 +225,12 @@ mod non_interactive {
 
         // Should show helpful error message
         assert!(
-            combined.contains("interactive") ||
-                combined.contains("--yes") ||
-                combined.contains("terminal") ||
-                combined.contains("TTY") ||
-                combined.contains("automation") ||
-                combined.contains("CI"),
+            combined.contains("interactive")
+                || combined.contains("--yes")
+                || combined.contains("terminal")
+                || combined.contains("TTY")
+                || combined.contains("automation")
+                || combined.contains("CI"),
             "Should show helpful error about interactive mode. Got:\n{combined}"
         );
     }
@@ -229,17 +243,17 @@ mod non_interactive {
             return;
         }
 
-        let (success, stdout, stderr) = run_omg_update_with_env(
-            &["--yes"],
-            &[("CI", "1")]
-        );
+        let (_success, stdout, stderr) = run_omg_update_with_env(&["--yes"], &[("CI", "1")]);
 
         let combined = combine_output(&stdout, &stderr);
 
         // Should not complain about interactive mode
-        assert!(!combined.contains("interactive") && !combined.contains("TTY") &&
-                   !combined.contains("requires an interactive terminal"),
-                   "Should not complain about interactive mode with --yes. Got:\n{combined}");
+        assert!(
+            !combined.contains("interactive")
+                && !combined.contains("TTY")
+                && !combined.contains("requires an interactive terminal"),
+            "Should not complain about interactive mode with --yes. Got:\n{combined}"
+        );
     }
 
     /// Test that sudo command is suggested in non-interactive mode
@@ -250,20 +264,18 @@ mod non_interactive {
             return;
         }
 
-        let (success, stdout, stderr) = run_omg_update_with_env(
-            &[],
-            &[("CI", "1")]
-        );
+        let (_success, stdout, stderr) = run_omg_update_with_env(&[], &[("CI", "1")]);
 
         let combined = combine_output(&stdout, &stderr);
 
         // Should suggest sudo or --yes
         assert!(
-            combined.contains("sudo") ||
-                combined.contains("--yes") ||
-                combined.contains("root") ||
-                combined.contains("privileges"),
-            "Should mention sudo or --yes. Got:\n{combined}");
+            combined.contains("sudo")
+                || combined.contains("--yes")
+                || combined.contains("root")
+                || combined.contains("privileges"),
+            "Should mention sudo or --yes. Got:\n{combined}"
+        );
     }
 }
 
@@ -281,12 +293,12 @@ mod error_handling {
 
         assert!(!success, "Invalid flag should fail");
 
-        let combined = format!("{stdout}{stderr}";
+        let combined = format!("{stdout}{stderr}");
         assert!(
-            combined.contains("error") ||
-                combined.contains("unrecognized") ||
-                combined.contains("unknown") ||
-                combined.contains("invalid"),
+            combined.contains("error")
+                || combined.contains("unrecognized")
+                || combined.contains("unknown")
+                || combined.contains("invalid"),
             "Should report error for invalid flag"
         );
     }
@@ -294,11 +306,13 @@ mod error_handling {
     /// Test that too many arguments are handled
     #[test]
     fn test_too_many_arguments() {
-        let (success, stdout, stderr) = run_omg_update(&["--check", "extra", "arguments"]);
+        let (_success, stdout, stderr) = run_omg_update(&["--check", "extra", "arguments"]);
 
         // May succeed or fail depending on implementation
-        assert!(!stdout.is_empty() || !stderr.is_empty(),
-                   "Should produce output");
+        assert!(
+            !stdout.is_empty() || !stderr.is_empty(),
+            "Should produce output"
+        );
     }
 
     /// Test that command handles missing daemon gracefully
@@ -306,11 +320,13 @@ mod error_handling {
     fn test_handles_missing_daemon() {
         // We set OMG_DISABLE_DAEMON=1 in run_omg_update, so this tests
         // that the CLI falls back to direct mode properly
-        let (success, stdout, stderr) = run_omg_update(&["--check"]);
+        let (_success, stdout, stderr) = run_omg_update(&["--check"]);
 
         // Should work without daemon
-        assert!(!stdout.is_empty() || !stderr.is_empty(),
-                   "Should produce output without daemon");
+        assert!(
+            !stdout.is_empty() || !stderr.is_empty(),
+            "Should produce output without daemon"
+        );
     }
 }
 
@@ -334,8 +350,10 @@ mod performance {
         let elapsed = start.elapsed();
 
         assert!(success, "Update check should succeed");
-        assert!(!stdout.is_empty() || !stderr.is_empty(),
-                   "Should produce output");
+        assert!(
+            !stdout.is_empty() || !stderr.is_empty(),
+            "Should produce output"
+        );
 
         // Update check should be fast (even without daemon)
         // Direct ALPM operations should complete in <500ms on most systems
@@ -361,8 +379,10 @@ mod performance {
         let elapsed = start.elapsed();
 
         assert!(success, "Update with --yes should succeed");
-        assert!(!stdout.is_empty() || !stderr.is_empty(),
-                   "Should produce output");
+        assert!(
+            !stdout.is_empty() || !stderr.is_empty(),
+            "Should produce output"
+        );
 
         // Even with actual updates, should complete in reasonable time
         // (may be slower if there are many updates)
@@ -392,25 +412,23 @@ mod integration_scenarios {
         // Step 1: Check for updates
         let (success1, stdout1, stderr1) = run_omg_update(&["--check"]);
         assert!(success1, "Update check should succeed");
-        let has_updates = stdout1.contains("update") ||
-                          stdout1.contains("update") ||
-                          stdout1.to_lowercase().contains("updates");
+        let has_updates = stdout1.contains("update")
+            || stdout1.contains("update")
+            || stdout1.to_lowercase().contains("updates");
 
-        let combined1 = format!("{stdout1}{stderr1}";
+        let combined1 = format!("{stdout1}{stderr1}");
 
         // Step 2: If there are updates, the output should show them
         if has_updates {
             assert!(
-                combined1.contains("Found") ||
-                    combined1.contains("→") ||
-                    combined1.contains("->"),
+                combined1.contains("Found") || combined1.contains("→") || combined1.contains("->"),
                 "Should show available updates. Got:\n{combined1}"
             );
         } else {
             assert!(
-                combined1.contains("up to date") ||
-                    combined1.contains("System is up to date") ||
-                    combined1.contains("✓"),
+                combined1.contains("up to date")
+                    || combined1.contains("System is up to date")
+                    || combined1.contains("✓"),
                 "Should show system up to date. Got:\n{combined1}"
             );
         }
@@ -426,16 +444,16 @@ mod integration_scenarios {
 
         // This test requires actual root/sudo, so we just verify it doesn't crash
         let (success, stdout, stderr) = run_omg_update(&["--yes"]);
-        let combined = format!("{stdout}{stderr}";
+        let combined = format!("{stdout}{stderr}");
 
         // May fail if not root, but should show meaningful error
         if !success {
             assert!(
-                combined.contains("root") ||
-                    combined.contains("sudo") ||
-                    combined.contains("permission") ||
-                    combined.contains("privileges") ||
-                    combined.contains("Elevating"),
+                combined.contains("root")
+                    || combined.contains("sudo")
+                    || combined.contains("permission")
+                    || combined.contains("privileges")
+                    || combined.contains("Elevating"),
                 "Should mention sudo/root if permission denied. Got:\n{combined}"
             );
         }
@@ -450,17 +468,17 @@ mod integration_scenarios {
         }
 
         let (success, stdout, stderr) = run_omg_update(&["--check"]);
-        let combined = format!("{stdout}{stderr}";
+        let combined = format!("{stdout}{stderr}");
 
         assert!(success, "Update check should succeed");
 
         // Should handle both cases: updates available or system up to date
         // (we can't control which case happens in a real system)
         assert!(
-            combined.contains("up to date") ||
-                combined.contains("update") ||
-                combined.contains("Found") ||
-                combined.contains("✓"),
+            combined.contains("up to date")
+                || combined.contains("update")
+                || combined.contains("Found")
+                || combined.contains("✓"),
             "Should handle no updates case gracefully. Got:\n{combined}"
         );
     }
@@ -482,16 +500,21 @@ mod output_format {
         }
 
         let (success, stdout, stderr) = run_omg_update(&["--check"]);
-        let combined = format!("{stdout}{stderr}";
+        let combined = format!("{stdout}{stderr}");
 
         assert!(success, "Update check should succeed");
 
         // Output should not be empty
-        assert!(!combined.trim().is_empty(),
-                   "Output should not be empty. Got:\n{combined}");
+        assert!(
+            !combined.trim().is_empty(),
+            "Output should not be empty. Got:\n{combined}"
+        );
 
         // Output should be printable ASCII
-        assert!(combined.is_ascii(), "Output should be ASCII. Got:\n{combined}");
+        assert!(
+            combined.is_ascii(),
+            "Output should be ASCII. Got:\n{combined}"
+        );
     }
 
     /// Test that update shows version information
@@ -503,7 +526,7 @@ mod output_format {
         }
 
         let (success, stdout, stderr) = run_omg_update(&["--check"]);
-        let combined = format!("{stdout}{stderr}";
+        let combined = format!("{stdout}{stderr}");
 
         assert!(success, "Update check should succeed");
 
@@ -512,10 +535,10 @@ mod output_format {
         if combined.contains("update") || combined.to_lowercase().contains("updates") {
             // Look for version patterns like "1.0.0" or arrows
             assert!(
-                combined.contains("→") ||
-                    combined.contains("->") ||
-                    combined.contains("→") ||
-                    combined.contains('.') && combined.len() > 10,
+                combined.contains("→")
+                    || combined.contains("->")
+                    || combined.contains("→")
+                    || combined.contains('.') && combined.len() > 10,
                 "Should show version information. Got:\n{combined}"
             );
         }
