@@ -1,0 +1,200 @@
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:08.5291004Z [1m[92m    Checking[0m futures v0.3.31
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:08.5855872Z [1m[92m    Checking[0m jsonwebtoken v10.2.0
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:09.7969331Z [1m[92m    Checking[0m dialoguer v0.12.0
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:09.8949983Z [1m[92m    Checking[0m dashmap v5.5.3
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:10.3007622Z [1m[92m    Checking[0m gix-config v0.47.1
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:10.3180091Z [1m[92m    Checking[0m crossterm v0.27.0
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:11.2646971Z [1m[92m    Checking[0m nucleo-matcher v0.3.1
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:11.7687119Z [1m[92m    Checking[0m clap_complete v4.5.65
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:11.8362331Z [1m[92m    Checking[0m gix-pathspec v0.13.0
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:11.8720931Z [1m[92m    Checking[0m alpm-db v0.2.1 (https://gitlab.archlinux.org/archlinux/alpm/alpm.git#b5463fcd)
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:12.2586286Z [1m[92m    Checking[0m alpm-pkginfo v0.6.1 (https://gitlab.archlinux.org/archlinux/alpm/alpm.git#b5463fcd)
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:12.2726203Z [1m[92m    Checking[0m alpm-repo-db v0.1.1 (https://gitlab.archlinux.org/archlinux/alpm/alpm.git#b5463fcd)
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:12.8123624Z [1m[92m    Checking[0m ruzstd v0.8.2
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:12.9850684Z [1m[92m    Checking[0m lz4_flex v0.12.0
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:13.2264547Z [1m[92m    Checking[0m gix-shallow v0.6.0
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:13.3713150Z [1m[92m    Checking[0m gix-negotiate v0.22.0
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:13.3831069Z [1m[92m   Compiling[0m maybe-async v0.2.10
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:13.6326847Z [1m[92m   Compiling[0m async-trait v0.1.89
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:13.8995363Z [1m[92m    Checking[0m io-close v0.3.7
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:13.9874058Z [1m[92m    Checking[0m wait-timeout v0.2.1
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:14.1111867Z [1m[92m    Checking[0m whoami v2.0.2
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:14.3846031Z [1m[92m   Compiling[0m eyre v0.6.12
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:15.0805362Z [1m[92m   Compiling[0m camino v1.2.2
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:16.0756016Z [1m[92m    Checking[0m gix-worktree-state v0.21.0
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:16.3519967Z [1m[92m    Checking[0m gix-submodule v0.21.0
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:16.6756840Z [1m[92m    Checking[0m gix-odb v0.71.1
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:21.5780716Z [1m[92m   Compiling[0m sequoia-openpgp v2.2.0-pqc.1
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:27.7247758Z [1m[92m    Checking[0m gix-protocol v0.52.1
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:28.6002084Z [1m[92m    Checking[0m gix-discover v0.42.0
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:28.9299628Z [1m[92m    Checking[0m gix-diff v0.54.1
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:29.1624536Z [1m[92m    Checking[0m serde_spanned v0.6.9
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:29.2675677Z [1m[92m    Checking[0m toml_datetime v0.6.11
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:29.5180867Z [1m[92m   Compiling[0m fs-err v2.11.0
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:29.7305184Z [1m[92m   Compiling[0m fs-err v3.2.2
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:29.9444107Z [1m[92m    Checking[0m wasmparser v0.207.0
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:32.6261249Z [1m[92m    Checking[0m fixedbitset v0.5.7
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:32.8948018Z [1m[92m   Compiling[0m cpp_demangle v0.4.5
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:34.5180383Z [1m[92m    Checking[0m toml_write v0.1.2
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:34.6864468Z [1m[92m    Checking[0m indenter v0.3.4
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:34.7536532Z [1m[92m    Checking[0m topological-sort v0.2.2
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:34.8640612Z [1m[92m    Checking[0m binfarce v0.2.1
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:35.4666873Z [1m[92m    Checking[0m auditable-extract v0.3.5
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:35.5754535Z [1m[92m    Checking[0m auditable-serde v0.9.0
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:36.0589630Z [1m[92m    Checking[0m toml_edit v0.22.27
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:38.2280343Z [1m[92m    Checking[0m petgraph v0.8.3
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:38.4509034Z [1m[92m    Checking[0m gix v0.74.1
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:39.0181805Z [1m[92m    Checking[0m omg v0.1.136 (/__w/omg/omg)
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:40.9478817Z [1m[92m   Compiling[0m synstructure v0.12.6
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:42.0279437Z [1m[92m    Checking[0m half v2.7.1
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:42.3519871Z [1m[92m   Compiling[0m equator-macro v0.4.2
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:43.5864423Z [1m[92m   Compiling[0m alloca v0.4.0
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:44.0219761Z [1m[92m    Checking[0m smol_str v0.3.5
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:44.2324297Z [1m[92m    Checking[0m toml-span v0.6.0
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:44.8254780Z [1m[92m   Compiling[0m symbolic-demangle v12.17.1
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:44.9847450Z [1m[92m    Checking[0m rustc-stable-hash v0.1.2
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:45.1253283Z [1m[92m    Checking[0m ciborium-io v0.2.2
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:45.1837807Z [1m[92m    Checking[0m predicates-core v1.0.9
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:45.3019589Z [1m[92m    Checking[0m plotters-backend v0.3.7
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:45.5526260Z [1m[92m    Checking[0m plotters-svg v0.3.7
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:45.6943584Z [1m[92m    Checking[0m ciborium-ll v0.2.2
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:45.8826229Z [1m[92m    Checking[0m tame-index v0.24.1
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:47.1927724Z [1m[92m    Checking[0m cargo-lock v11.0.1
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:48.3648264Z [1m[92m    Checking[0m toml v0.8.23
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:48.7060469Z [1m[92m   Compiling[0m abscissa_derive v0.8.2
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:51.1029238Z [1m[92m    Checking[0m color-eyre v0.6.5
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:51.1189545Z [1m[92m    Checking[0m equator v0.4.2
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:51.3708914Z [1m[92m    Checking[0m auditable-info v0.10.0
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:51.4954550Z [1m[92m    Checking[0m rgb v0.8.52
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:51.5090406Z [1m[92m    Checking[0m num-format v0.4.4
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:51.9373823Z [1m[92m    Checking[0m symbolic-common v12.17.1
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:52.2679279Z [1m[92m    Checking[0m quitters v0.1.0
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:52.2761202Z [1m[92m    Checking[0m float-cmp v0.10.0
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:52.3597058Z [1m[92m    Checking[0m platforms v3.7.0
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:52.3778434Z [1m[92m    Checking[0m cvss v2.2.0
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:52.5855753Z [1m[92m    Checking[0m secrecy v0.10.3
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:52.6891689Z [1m[92m    Checking[0m is-terminal v0.4.17
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:52.6898268Z [1m[92m    Checking[0m quick-xml v0.26.0
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:52.7505028Z [1m[92m    Checking[0m difflib v0.4.0
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:53.0386294Z [1m[92m    Checking[0m normalize-line-endings v0.3.0
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:53.0953729Z [1m[92m   Compiling[0m pprof v0.15.0
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:53.2482587Z [1m[92m    Checking[0m cast v0.3.0
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:53.3207045Z [1m[92m    Checking[0m canonical-path v2.0.2
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:53.3298420Z [1m[92m    Checking[0m termcolor v1.4.1
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:53.4328764Z [1m[92m    Checking[0m bit-vec v0.8.0
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:53.4467502Z [1m[92m   Compiling[0m assert_cmd v2.1.2
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:53.6111352Z [1m[92m    Checking[0m str_stack v0.1.0
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:53.6717729Z [1m[92m    Checking[0m termtree v0.5.1
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:53.7100215Z [1m[92m    Checking[0m sdd v3.0.10
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:53.7726078Z [1m[92m    Checking[0m quick-error v1.2.3
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:53.7874444Z [1m[92m    Checking[0m predicates-tree v1.0.12
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:53.8379925Z [1m[92m    Checking[0m rusty-fork v0.3.1
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:53.8873595Z [1m[92m    Checking[0m inferno v0.11.21
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:53.9628680Z [1m[92m    Checking[0m scc v2.4.0
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:54.0488064Z [1m[92m    Checking[0m bit-set v0.8.0
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:54.1959484Z [1m[92m    Checking[0m abscissa_core v0.8.2
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:54.7817780Z [1m[92m    Checking[0m criterion-plot v0.8.1
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:54.8325951Z [1m[92m    Checking[0m rustsec v0.31.0
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:55.1983740Z [1m[92m    Checking[0m predicates v3.1.3
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:55.7209017Z [1m[92m    Checking[0m aligned-vec v0.6.4
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:55.8441277Z [1m[92m    Checking[0m ciborium v0.2.2
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:55.9312020Z [1m[92m    Checking[0m plotters v0.3.7
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:56.3909176Z [1m[92m    Checking[0m nix v0.26.4
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:56.5594478Z [1m[92m    Checking[0m rand_xorshift v0.4.0
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:56.6607939Z [1m[92m    Checking[0m tinytemplate v1.2.1
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:56.9945088Z [1m[92m   Compiling[0m serial_test_derive v3.3.1
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:57.2570736Z [1m[92m    Checking[0m page_size v0.6.0
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:57.3215539Z [1m[92m    Checking[0m display-error-chain v0.2.2
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:57.4107234Z [1m[92m    Checking[0m iana-time-zone v0.1.64
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:57.5421378Z [1m[92m    Checking[0m unarray v0.1.4
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:57.6169342Z [1m[92m    Checking[0m anes v0.1.6
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:57.6579210Z [1m[92m    Checking[0m oorandom v11.1.5
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:57.8375159Z [1m[92m    Checking[0m criterion v0.8.1
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:08:58.1206127Z [1m[92m    Checking[0m proptest v1.9.0
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:00.2774633Z [1m[92m    Checking[0m chrono v0.4.43
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:01.4399753Z [1m[92m    Checking[0m cargo-audit v0.22.0
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:04.2612638Z [1m[92m    Checking[0m serial_test v3.3.1
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:05.0097241Z [1m[91merror[0m[1m: variables can be used directly in the `format!` string[0m
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:05.0098618Z   [1m[94m--> [0msrc/bin/perf_audit.rs:22:5
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:05.0099134Z    [1m[94m|[0m
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:05.0099913Z [1m[94m22[0m [1m[94m|[0m     println!("detect_distro(): {:?} (distro: {:?})", duration, distro);
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:05.0100982Z    [1m[94m|[0m     [1m[91m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:05.0101665Z    [1m[94m|[0m
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:05.0102854Z    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.92.0/index.html#uninlined_format_args
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:05.0134485Z    [1m[94m= [0m[1mnote[0m: `-D clippy::uninlined-format-args` implied by `-D warnings`
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:05.0135888Z    [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[allow(clippy::uninlined_format_args)]`
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:05.0136778Z [1m[96mhelp[0m: change this to
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:05.0137244Z    [1m[94m|[0m
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:05.0138038Z [1m[94m22[0m [91m- [0m    println!("detect_distro(): {:?} (distro: {:?})"[91m, duration, distro[0m);
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:05.0139341Z [1m[94m22[0m [92m+ [0m    println!("detect_distro(): {[92mduration[0m:?} (distro: {[92mdistro[0m:?})");
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:05.0140226Z    [1m[94m|[0m
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:05.0140424Z 
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:05.0140928Z [1m[91merror[0m[1m: variables can be used directly in the `format!` string[0m
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:05.0141719Z   [1m[94m--> [0msrc/bin/perf_audit.rs:36:5
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:05.0142200Z    [1m[94m|[0m
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:05.0142797Z [1m[94m36[0m [1m[94m|[0m     println!("Arg collection: {:?}", duration);
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:05.0143829Z    [1m[94m|[0m     [1m[91m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:05.0144756Z    [1m[94m|[0m
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:05.0145897Z    [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.92.0/index.html#uninlined_format_args
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:05.0147056Z [1m[96mhelp[0m: change this to
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:05.0147485Z    [1m[94m|[0m
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:05.0148136Z [1m[94m36[0m [91m- [0m    println!("Arg collection: {:?}"[91m, duration[0m);
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:05.0149073Z [1m[94m36[0m [92m+ [0m    println!("Arg collection: {[92mduration[0m:?}");
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:05.0149748Z    [1m[94m|[0m
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:05.0149949Z 
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:05.0299201Z [1m[91merror[0m: could not compile `omg` (bin "perf_audit" test) due to 2 previous errors
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:05.0300628Z [1m[33mwarning[0m: build failed, waiting for other jobs to finish...
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:18.7532052Z [1m[91merror[0m[1m: variables can be used directly in the `format!` string[0m
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:18.7533925Z    [1m[94m--> [0msrc/core/privilege.rs:475:13
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:18.7534725Z     [1m[94m|[0m
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:18.7535122Z [1m[94m475[0m [1m[94m|[0m [1m[91m/[0m             assert!(
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:18.7535673Z [1m[94m476[0m [1m[94m|[0m [1m[91m|[0m                 checker.elevate(op, &args).is_ok(),
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:18.7536283Z [1m[94m477[0m [1m[94m|[0m [1m[91m|[0m                 "Operation {} should succeed",
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:18.7536781Z [1m[94m478[0m [1m[94m|[0m [1m[91m|[0m                 op
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:18.7537197Z [1m[94m479[0m [1m[94m|[0m [1m[91m|[0m             );
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:18.7537553Z     [1m[94m|[0m [1m[91m|_____________^[0m
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:18.7537842Z     [1m[94m|[0m
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:18.7538538Z     [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.92.0/index.html#uninlined_format_args
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:18.7539574Z     [1m[94m= [0m[1mnote[0m: `-D clippy::uninlined-format-args` implied by `-D warnings`
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:18.7540309Z     [1m[94m= [0m[1mhelp[0m: to override `-D warnings` add `#[allow(clippy::uninlined_format_args)]`
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:18.7540687Z 
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:18.7544873Z [1m[91merror[0m[1m: variables can be used directly in the `format!` string[0m
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:18.7546050Z    [1m[94m--> [0msrc/core/privilege.rs:488:13
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:18.7546563Z     [1m[94m|[0m
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:18.7547079Z [1m[94m488[0m [1m[94m|[0m [1m[91m/[0m             assert!(
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:18.7547956Z [1m[94m489[0m [1m[94m|[0m [1m[91m|[0m                 elevate_for_operation(op, &args).is_err(),
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:18.7548922Z [1m[94m490[0m [1m[94m|[0m [1m[91m|[0m                 "Operation {} should be rejected",
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:18.7549742Z [1m[94m491[0m [1m[94m|[0m [1m[91m|[0m                 op
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:18.7550408Z [1m[94m492[0m [1m[94m|[0m [1m[91m|[0m             );
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:18.7551008Z     [1m[94m|[0m [1m[91m|_____________^[0m
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:18.7551463Z     [1m[94m|[0m
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:18.7552568Z     [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.92.0/index.html#uninlined_format_args
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:18.7553713Z 
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:21.1832762Z [1m[91merror[0m: could not compile `omg` (lib test) due to 2 previous errors
+Lint (Arch)	Clippy (Arch)	2026-01-25T21:09:21.3547353Z ##[error]Process completed with exit code 101.
+Test Status	Check results	﻿2026-01-25T21:18:02.4235949Z ##[group]Run echo "Lint Arch: failure"
+Test Status	Check results	2026-01-25T21:18:02.4237210Z [36;1mecho "Lint Arch: failure"[0m
+Test Status	Check results	2026-01-25T21:18:02.4238304Z [36;1mecho "Lint Debian: failure"[0m
+Test Status	Check results	2026-01-25T21:18:02.4239291Z [36;1mecho "Test Matrix: failure"[0m
+Test Status	Check results	2026-01-25T21:18:02.4240474Z [36;1mecho "Integration: success"[0m
+Test Status	Check results	2026-01-25T21:18:02.4241406Z [36;1m[0m
+Test Status	Check results	2026-01-25T21:18:02.4242531Z [36;1mif [[ "failure" != "success" ]] || \[0m
+Test Status	Check results	2026-01-25T21:18:02.4243741Z [36;1m   [[ "failure" != "success" ]] || \[0m
+Test Status	Check results	2026-01-25T21:18:02.4244758Z [36;1m   [[ "failure" != "success" ]] || \[0m
+Test Status	Check results	2026-01-25T21:18:02.4245884Z [36;1m   [[ "success" != "success" ]]; then[0m
+Test Status	Check results	2026-01-25T21:18:02.4247053Z [36;1m  echo "::error::One or more test jobs failed"[0m
+Test Status	Check results	2026-01-25T21:18:02.4248178Z [36;1m  exit 1[0m
+Test Status	Check results	2026-01-25T21:18:02.4248923Z [36;1mfi[0m
+Test Status	Check results	2026-01-25T21:18:02.4249793Z [36;1m[0m
+Test Status	Check results	2026-01-25T21:18:02.4250717Z [36;1mecho "::notice::All test jobs passed successfully!"[0m
+Test Status	Check results	2026-01-25T21:18:02.5078224Z shell: /usr/bin/bash -e {0}
+Test Status	Check results	2026-01-25T21:18:02.5079441Z env:
+Test Status	Check results	2026-01-25T21:18:02.5079972Z   CARGO_TERM_COLOR: always
+Test Status	Check results	2026-01-25T21:18:02.5080542Z   RUST_BACKTRACE: 1
+Test Status	Check results	2026-01-25T21:18:02.5081050Z ##[endgroup]
+Test Status	Check results	2026-01-25T21:18:02.5263896Z Lint Arch: failure
+Test Status	Check results	2026-01-25T21:18:02.5264561Z Lint Debian: failure
+Test Status	Check results	2026-01-25T21:18:02.5265076Z Test Matrix: failure
+Test Status	Check results	2026-01-25T21:18:02.5265535Z Integration: success
+Test Status	Check results	2026-01-25T21:18:02.5296301Z ##[error]One or more test jobs failed
+Test Status	Check results	2026-01-25T21:18:02.5314472Z ##[error]Process completed with exit code 1.

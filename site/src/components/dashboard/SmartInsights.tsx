@@ -111,7 +111,7 @@ export const SmartInsights: Component<SmartInsightsProps> = (props) => {
                   <span>{insight()?.generated_by || 'Workers AI'}</span>
                 </div>
                 <span class="text-[10px] text-slate-500 italic">
-                  {insight()?.timestamp ? new Date(insight()!.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                  {insight()?.timestamp ? new Date(insight()?.timestamp || '').toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
                 </span>
               </div>
             </div>

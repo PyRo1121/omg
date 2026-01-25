@@ -11,27 +11,25 @@ fn main() {
     let settings = Settings::load();
     let duration = start.elapsed();
     println!(
-        "Settings::load(): {:?} (ok: {})",
-        duration,
+        "Settings::load(): {duration:?} (ok: {})",
         settings.is_ok()
     );
 
     let start = Instant::now();
     let distro = detect_distro();
     let duration = start.elapsed();
-    println!("detect_distro(): {:?} (distro: {:?})", duration, distro);
+    println!("detect_distro(): {duration:?} (distro: {distro:?})");
 
     let start = Instant::now();
     let versions = omg_lib::hooks::detect_versions(Path::new("."));
     let duration = start.elapsed();
     println!(
-        "hooks::detect_versions(\".\"): {:?} (found: {})",
-        duration,
+        "hooks::detect_versions(\".\"): {duration:?} (found: {})",
         versions.len()
     );
 
     let start = Instant::now();
     let _args: Vec<String> = std::env::args().collect();
     let duration = start.elapsed();
-    println!("Arg collection: {:?}", duration);
+    println!("Arg collection: {duration:?}");
 }

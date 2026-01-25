@@ -126,8 +126,31 @@ async fn check_daemon() -> bool {
         Ok(_) => true,
         Err(e) => {
             // Provide diagnostic feedback
-            let socket_path = crate::core::client::default_socket_path();
+            let socket_path = crate::core::paths::socket_path();
             if socket_path.exists() {
+                // Check if it's a permission issue (common under sudo)
+                let metadata = std::fs::metadata(&socket_path);
+                if let Ok(meta) = metadata {
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::MetadataExt;
+                        let socket_uid = meta.uid();
+                        let current_uid = rustix::process::getuid().as_raw();
+
+                        if socket_uid != current_uid {
+                            println!(
+                                "    {} Socket exists at {}, but belongs to UID {} (you are UID {})",
+                                style::error("✗"),
+                                socket_path.display(),
+                                socket_uid,
+                                current_uid
+                            );
+                            println!("      Hint: The daemon was likely started by a different user. Try restarting it.");
+                            return false;
+                        }
+                    }
+                }
+
                 println!(
                     "    {} Socket exists at {}, but connection failed: {}",
                     style::warning("⚠"),
@@ -135,25 +158,19 @@ async fn check_daemon() -> bool {
                     e
                 );
             } else {
-                // Heuristic: Check if XDG_RUNTIME_DIR might be mismatched
-                // If sudo strips it, it defaults to /tmp/omg.sock, but real socket is in /run/user/<uid>/
-                let uid = std::process::Command::new("id")
-                    .arg("-u")
-                    .output()
-                    .ok()
-                    .and_then(|out| String::from_utf8(out.stdout).ok())
-                    .and_then(|s| s.trim().parse::<u32>().ok())
-                    .unwrap_or(1000); // Default to 1000 if check fails
-
-                let common_path = std::path::PathBuf::from(format!("/run/user/{uid}/omg.sock"));
-                if common_path.exists() && common_path != socket_path {
-                    println!(
-                        "    {} Daemon socket found at {} but client is looking at {}!",
-                        style::warning("⚠"),
-                        common_path.display(),
-                        socket_path.display()
-                    );
-                    println!("      Hint: Try setting XDG_RUNTIME_DIR=/run/user/{uid}");
+                // Check if we can find it in common locations despite environment
+                #[cfg(unix)]
+                {
+                    let uid = rustix::process::getuid().as_raw();
+                    let common_path = std::path::PathBuf::from(format!("/run/user/{uid}/omg.sock"));
+                    if common_path.exists() {
+                        println!(
+                            "    {} Daemon socket found at {} but client failed to connect!",
+                            style::warning("⚠"),
+                            common_path.display()
+                        );
+                        println!("      Hint: Check if the daemon process is actually alive.");
+                    }
                 }
             }
             false

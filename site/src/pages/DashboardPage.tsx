@@ -82,7 +82,7 @@ const DashboardPage: Component = () => {
       const data = await api.getDashboard();
       setDashboard(data);
       
-      if (['team', 'enterprise'].includes(data.license.tier)) {
+      if (data?.license?.tier && ['team', 'enterprise'].includes(data.license.tier)) {
         await loadTeamData();
       }
     } catch (e) {
@@ -152,8 +152,9 @@ const DashboardPage: Component = () => {
   };
 
   const copyLicense = () => {
-    if (dashboard()?.license.license_key) {
-      navigator.clipboard.writeText(dashboard()!.license.license_key);
+    const key = dashboard()?.license?.license_key;
+    if (key) {
+      navigator.clipboard.writeText(key);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     }
@@ -385,7 +386,7 @@ const DashboardPage: Component = () => {
                   <span class="text-xs text-slate-500 uppercase tracking-wider">{dashboard()?.license.tier} Plan</span>
                 </div>
                 <div class="w-10 h-10 rounded-full bg-gradient-to-br from-slate-700 to-slate-800 border border-white/10 flex items-center justify-center">
-                  <span class="text-lg font-bold text-white">{dashboard()?.user.email[0].toUpperCase()}</span>
+                  <span class="text-lg font-bold text-white">{(dashboard()?.user?.email?.[0] || 'U').toUpperCase()}</span>
                 </div>
               </div>
                 </div>
@@ -406,14 +407,14 @@ const DashboardPage: Component = () => {
                         <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
                           <div>
                             <h2 class="text-2xl font-bold text-white mb-2">Welcome back, Developer</h2>
-                            <p class="text-blue-100/80">You're running on the <span class="font-bold text-white">{dashboard()?.license.tier}</span> tier.</p>
+                            <p class="text-blue-100/80">You're running on the <span class="font-bold text-white">{dashboard()?.license?.tier || 'Free'}</span> tier.</p>
                           </div>
                           <div class="flex items-center gap-3 bg-white/10 rounded-xl p-1 pr-4 border border-white/10 hover:bg-white/15 transition-colors cursor-pointer group" onClick={copyLicense}>
                             <div class="bg-black/50 p-2 rounded-lg text-xs font-mono text-slate-300">
                               LICENSE_KEY
                             </div>
                             <span class="font-mono text-white tracking-wide">
-                              {dashboard()?.license.license_key.slice(0, 12)}...
+                              {dashboard()?.license?.license_key?.slice(0, 12) || '••••••••••••'}...
                             </span>
                             <Show when={copied()} fallback={<span class="text-xs text-blue-200 opacity-0 group-hover:opacity-100 transition-opacity">Copy</span>}>
                               <CheckCircle class="w-4 h-4 text-green-400" />
@@ -536,27 +537,18 @@ const DashboardPage: Component = () => {
                 </Show>
 
                 <Show when={activeTab() === 'team'}>
-                  <TeamAnalytics 
-                    teamData={teamData()} 
-                    licenseKey={dashboard()?.license.license_key || ''}
-                    onRevoke={(id) => api.revokeMachine(id).then(loadTeamData)}
-                    onRefresh={loadTeamData}
-                  />
-                </Show>
-
-                <Show when={activeTab() === 'team'}>
-                  <TeamAnalytics 
-                    teamData={teamData()} 
-                    licenseKey={dashboard()?.license.license_key || ''}
+                  <TeamAnalytics
+                    teamData={teamData()}
+                    licenseKey={dashboard()?.license?.license_key || ''}
                     onRevoke={(id) => api.revokeMachine(id).then(loadTeamData)}
                     onRefresh={loadTeamData}
                   />
                 </Show>
 
                 <Show when={activeTab() === 'security'}>
-                  <TeamAnalytics 
-                    teamData={teamData()} 
-                    licenseKey={dashboard()?.license.license_key || ''}
+                  <TeamAnalytics
+                    teamData={teamData()}
+                    licenseKey={dashboard()?.license?.license_key || ''}
                     onRevoke={(id) => api.revokeMachine(id).then(loadTeamData)}
                     onRefresh={loadTeamData}
                     initialView="security"
@@ -569,21 +561,21 @@ const DashboardPage: Component = () => {
                       <h3 class="mb-6 text-2xl font-black text-white tracking-tight uppercase tracking-widest">Billing & Subscription</h3>
                       <p class="text-slate-400 mb-8">Manage your subscription, payment methods, and view invoices.</p>
                       <div class="flex gap-4">
-                        <button 
-                          onClick={() => window.open('https://pyro1121.com/pricing', '_blank')} 
+                        <button
+                          onClick={() => window.open('https://pyro1121.com/pricing', '_blank')}
                           class="rounded-2xl bg-white px-8 py-4 text-sm font-black text-black transition-all hover:scale-[1.02]"
                         >
                           View Plans
                         </button>
-                        <button 
+                        <button
                           onClick={async () => {
                             try {
-                              const res = await api.openBillingPortal(dashboard()?.user.email || '');
+                              const res = await api.openBillingPortal(dashboard()?.user?.email || '');
                               if (res.url) window.open(res.url, '_blank');
                             } catch (e) {
                               console.error('Failed to open billing portal:', e);
                             }
-                          }} 
+                          }}
                           class="rounded-2xl border border-white/10 bg-white/[0.03] px-8 py-4 text-sm font-black text-white transition-all hover:bg-white/[0.08]"
                         >
                           Customer Portal
@@ -594,16 +586,16 @@ const DashboardPage: Component = () => {
                     <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
                       <div class={`${glassPanel} p-8`}>
                         <div class="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Current Tier</div>
-                        <div class="text-2xl font-black text-indigo-400 uppercase">{dashboard()?.license.tier}</div>
+                        <div class="text-2xl font-black text-indigo-400 uppercase">{dashboard()?.license?.tier || 'Free'}</div>
                       </div>
                       <div class={`${glassPanel} p-8`}>
                         <div class="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Status</div>
-                        <div class="text-2xl font-black text-emerald-400 uppercase">{dashboard()?.license.status}</div>
+                        <div class="text-2xl font-black text-emerald-400 uppercase">{dashboard()?.license?.status || 'Active'}</div>
                       </div>
                       <div class={`${glassPanel} p-8`}>
                         <div class="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Next Renewal</div>
                         <div class="text-2xl font-black text-white">
-                          {dashboard()?.license.expires_at ? new Date(dashboard()!.license.expires_at).toLocaleDateString() : 'N/A'}
+                          {dashboard()?.license?.expires_at ? new Date(dashboard()!.license.expires_at).toLocaleDateString() : 'N/A'}
                         </div>
                       </div>
                     </div>
