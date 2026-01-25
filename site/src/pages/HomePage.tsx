@@ -1,7 +1,7 @@
 import { Component, createSignal, onMount, Show, For } from 'solid-js';
 import Header from '../components/Header';
 import Hero from '../components/Hero';
-import Features from '../components/Features';
+import FeatureGrid from '../components/landing/FeatureGrid';
 import RuntimeEcosystem from '../components/RuntimeEcosystem';
 import Benchmarks from '../components/Benchmarks';
 import Pricing from '../components/Pricing';
@@ -90,11 +90,13 @@ const HomePage: Component = () => {
       <Header />
       <main>
         <Hero />
-        <Features />
-        <RuntimeEcosystem />
-        <Benchmarks />
-        <Installation />
-        <Pricing />
+        <div class="relative z-10">
+          <FeatureGrid />
+          <RuntimeEcosystem />
+          <Benchmarks />
+          <Installation />
+          <Pricing />
+        </div>
       </main>
       <Footer />
 
