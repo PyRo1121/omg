@@ -40,20 +40,10 @@
 //!     count: usize,
 //! }
 //!
+//! #[derive(Debug)]
 //! enum MyMsg {
 //!     Increment,
 //!     Decrement,
-//! }
-//!
-//! impl Msg for MyMsg {}
-//!
-//! impl std::fmt::Debug for MyMsg {
-//!     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//!         match self {
-//!             MyMsg::Increment => write!(f, "Increment"),
-//!             MyMsg::Decrement => write!(f, "Decrement"),
-//!         }
-//!     }
 //! }
 //!
 //! impl Model for MyModel {
