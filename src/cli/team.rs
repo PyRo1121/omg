@@ -186,7 +186,7 @@ pub async fn status(_ctx: &CliContext) -> Result<()> {
     )];
 
     if let Some(ref url) = team_status.config.remote_url {
-        details.push(format!("Remote: {}", url));
+        details.push(format!("Remote: {url}"));
     }
 
     details.push(format!(
@@ -219,7 +219,7 @@ pub async fn status(_ctx: &CliContext) -> Result<()> {
     execute_cmd(Cmd::batch([
         Components::header(
             "Team Status",
-            &format!(
+            format!(
                 "{}/{} members in sync",
                 team_status.in_sync_count(),
                 team_status.members.len()
@@ -335,8 +335,8 @@ pub async fn members(_ctx: &CliContext) -> Result<()> {
             hostname,
             &member.machine_id[..8.min(member.machine_id.len())]
         ));
-        member_list.push(format!("  Last active: {}", last_sync));
-        member_list.push(format!("  Platform: {}", platform));
+        member_list.push(format!("  Last active: {last_sync}"));
+        member_list.push(format!("  Platform: {platform}"));
     }
 
     let in_sync_count = members
@@ -350,7 +350,7 @@ pub async fn members(_ctx: &CliContext) -> Result<()> {
     execute_cmd(Cmd::batch([
         Components::header(
             "Team Members",
-            &format!("{} member(s), {} in sync", members.len(), in_sync_count),
+            format!("{} member(s), {} in sync", members.len(), in_sync_count),
         ),
         Components::spacer(),
         Components::card("Active Members", member_list),
@@ -421,7 +421,7 @@ pub fn invite(email: Option<&str>, role: &str, _ctx: &CliContext) -> Result<()> 
     let valid_roles = ["admin", "lead", "developer", "readonly"];
     if !valid_roles.contains(&role) {
         execute_cmd(Components::error_with_suggestion(
-            &format!("Invalid role: {}", role),
+            format!("Invalid role: {role}"),
             "Valid roles: admin, lead, developer, readonly",
         ));
         anyhow::bail!("Invalid role: {role}");
@@ -452,7 +452,7 @@ pub fn invite(email: Option<&str>, role: &str, _ctx: &CliContext) -> Result<()> 
         Components::card("Invite URL", vec![invite_url.clone()]),
         Components::spacer(),
         Components::info("Share this link with your teammate"),
-        Components::info(&format!("They can join with: omg team join {}", invite_url)),
+        Components::info(format!("They can join with: omg team join {invite_url}")),
     ]));
 
     Ok(())
@@ -488,7 +488,7 @@ pub mod roles {
         // SECURITY: Validate role and member
         let valid_roles = ["admin", "lead", "developer", "readonly"];
         if !valid_roles.contains(&role) {
-            execute_cmd(Components::error(&format!("Invalid role: {}", role)));
+            execute_cmd(Components::error(format!("Invalid role: {role}")));
             anyhow::bail!("Invalid role: {role}");
         }
         if member.len() > 128 || member.chars().any(char::is_control) {
@@ -500,7 +500,7 @@ pub mod roles {
 
         execute_cmd(Cmd::batch([
             Components::loading("Assigning role..."),
-            Components::success(&format!("{} is now a {}", member, role)),
+            Components::success(format!("{member} is now a {role}")),
         ]));
 
         Ok(())
@@ -511,7 +511,7 @@ pub mod roles {
 
         execute_cmd(Cmd::batch([
             Components::loading("Removing role..."),
-            Components::success(&format!("Removed role from {}", member)),
+            Components::success(format!("Removed role from {member}")),
         ]));
 
         Ok(())
@@ -550,7 +550,7 @@ pub async fn propose(message: &str, _ctx: &CliContext) -> Result<()> {
     let proposal_id = license::propose_change(message, &state).await?;
 
     execute_cmd(Cmd::batch([
-        Components::success(&format!("Proposal #{} created", proposal_id)),
+        Components::success(format!("Proposal #{proposal_id} created")),
         Components::kv_list(
             Some("Proposal Details"),
             vec![
@@ -560,10 +560,7 @@ pub async fn propose(message: &str, _ctx: &CliContext) -> Result<()> {
         ),
         Components::spacer(),
         Components::info("Notified reviewers for approval"),
-        Components::info(&format!(
-            "Check status with: omg team review {}",
-            proposal_id
-        )),
+        Components::info(format!("Check status with: omg team review {proposal_id}")),
     ]));
 
     Ok(())
@@ -578,9 +575,8 @@ pub async fn review(proposal_id: u32, approve: bool, _ctx: &CliContext) -> Resul
     let status = if approve { "approved" } else { "rejected" };
     let status_str = if approve { "APPROVE" } else { "REJECT" };
 
-    execute_cmd(Components::loading(&format!(
-        "Reviewing proposal #{} -> {}...",
-        proposal_id, status_str
+    execute_cmd(Components::loading(format!(
+        "Reviewing proposal #{proposal_id} -> {status_str}..."
     )));
 
     license::review_proposal(proposal_id, status).await?;
@@ -613,15 +609,12 @@ pub async fn list_proposals(_ctx: &CliContext) -> Result<()> {
         let email = p["creator_email"].as_str().unwrap_or("unknown");
         let date = p["created_at"].as_str().unwrap_or("");
 
-        proposal_list.push(format!("#{} [{}] {} - {}", id, status, msg, email));
-        proposal_list.push(format!("  Created: {}", date));
+        proposal_list.push(format!("#{id} [{status}] {msg} - {email}"));
+        proposal_list.push(format!("  Created: {date}"));
     }
 
     execute_cmd(Cmd::batch([
-        Components::header(
-            "Team Proposals",
-            &format!("{} proposal(s)", proposals.len()),
-        ),
+        Components::header("Team Proposals", format!("{} proposal(s)", proposals.len())),
         Components::spacer(),
         Components::card("Pending Proposals", proposal_list),
     ]));
@@ -692,23 +685,23 @@ pub mod golden_path {
             ));
             anyhow::bail!("Invalid template name (alphanumeric and hyphens only)");
         }
-        if let Some(v) = node {
-            if let Err(e) = crate::core::security::validate_version(v) {
-                execute_cmd(Components::error(&format!("Invalid Node version: {}", e)));
-                return Err(e.into());
-            }
+        if let Some(v) = node
+            && let Err(e) = crate::core::security::validate_version(v)
+        {
+            execute_cmd(Components::error(format!("Invalid Node version: {e}")));
+            return Err(e);
         }
-        if let Some(v) = python {
-            if let Err(e) = crate::core::security::validate_version(v) {
-                execute_cmd(Components::error(&format!("Invalid Python version: {}", e)));
-                return Err(e.into());
-            }
+        if let Some(v) = python
+            && let Err(e) = crate::core::security::validate_version(v)
+        {
+            execute_cmd(Components::error(format!("Invalid Python version: {e}")));
+            return Err(e);
         }
         if let Some(p) = packages {
             for pkg in p.split(',') {
                 if let Err(e) = crate::core::security::validate_package_name(pkg.trim()) {
-                    execute_cmd(Components::error(&format!("Invalid package name: {}", e)));
-                    return Err(e.into());
+                    execute_cmd(Components::error(format!("Invalid package name: {e}")));
+                    return Err(e);
                 }
             }
         }
@@ -743,22 +736,21 @@ pub mod golden_path {
 
         let mut details = vec![format!("Template: {}", name)];
         if let Some(v) = node {
-            details.push(format!("Node: {}", v));
+            details.push(format!("Node: {v}"));
         }
         if let Some(v) = python {
-            details.push(format!("Python: {}", v));
+            details.push(format!("Python: {v}"));
         }
         if let Some(p) = packages {
-            details.push(format!("Packages: {}", p));
+            details.push(format!("Packages: {p}"));
         }
 
         execute_cmd(Cmd::batch([
-            Components::success(&format!("Golden path '{}' created!", name)),
+            Components::success(format!("Golden path '{name}' created!")),
             Components::card("Template Details", details),
             Components::spacer(),
-            Components::info(&format!(
-                "Developers can now use: omg new {} <project-name>",
-                name
+            Components::info(format!(
+                "Developers can now use: omg new {name} <project-name>"
             )),
         ]));
 
@@ -800,7 +792,7 @@ pub mod golden_path {
             execute_cmd(Cmd::batch([
                 Components::header(
                     "Golden Path Templates",
-                    &format!("{} custom template(s)", config.templates.len()),
+                    format!("{} custom template(s)", config.templates.len()),
                 ),
                 Components::spacer(),
                 Components::card("Available Templates", template_list),
@@ -819,12 +811,9 @@ pub mod golden_path {
 
         if config.templates.len() < original_len {
             config.save()?;
-            execute_cmd(Components::success(&format!("Deleted template '{}'", name)));
+            execute_cmd(Components::success(format!("Deleted template '{name}'")));
         } else {
-            execute_cmd(Components::warning(&format!(
-                "Template '{}' not found",
-                name
-            )));
+            execute_cmd(Components::warning(format!("Template '{name}' not found")));
         }
 
         Ok(())
@@ -863,7 +852,7 @@ pub fn compliance(export: Option<&str>, enforce: bool, _ctx: &CliContext) -> Res
         if let Some(path) = export {
             Cmd::batch([
                 Components::spacer(),
-                Components::success(&format!("Exported to {}", path)),
+                Components::success(format!("Exported to {path}")),
             ])
         } else {
             Cmd::none()
@@ -884,7 +873,7 @@ pub async fn activity(days: u32, _ctx: &CliContext) -> Result<()> {
     if logs.is_empty() {
         execute_cmd(Cmd::batch([
             Components::header(
-                &format!("Team Activity (last {} days)", days),
+                format!("Team Activity (last {days} days)"),
                 "No recent activity",
             ),
             Components::spacer(),
@@ -902,8 +891,8 @@ pub async fn activity(days: u32, _ctx: &CliContext) -> Result<()> {
 
     execute_cmd(Cmd::batch([
         Components::header(
-            &format!("Team Activity (last {} days)", days),
-            &format!("{} event(s)", event_count),
+            format!("Team Activity (last {days} days)"),
+            format!("{event_count} event(s)"),
         ),
         Components::spacer(),
         Components::card("Recent Activity", activity_list),
@@ -932,9 +921,8 @@ pub mod team_notify {
         // SECURITY: Validate type and URL
         let valid_types = ["slack", "discord", "webhook"];
         if !valid_types.contains(&notify_type) {
-            execute_cmd(Components::error(&format!(
-                "Invalid notification type: {}",
-                notify_type
+            execute_cmd(Components::error(format!(
+                "Invalid notification type: {notify_type}"
             )));
             anyhow::bail!("Invalid notification type: {notify_type}");
         }
@@ -961,7 +949,7 @@ pub mod team_notify {
                 ],
             ),
             Components::spacer(),
-            Components::info(&format!("Test it with: omg team notify test {}", id)),
+            Components::info(format!("Test it with: omg team notify test {id}")),
         ]));
 
         Ok(())
@@ -990,7 +978,7 @@ pub mod team_notify {
 
         execute_cmd(Cmd::batch([
             Components::loading("Removing notification..."),
-            Components::success(&format!("Removed '{}'", id)),
+            Components::success(format!("Removed '{id}'")),
         ]));
 
         Ok(())
@@ -1000,7 +988,7 @@ pub mod team_notify {
         license::require_feature("team-sync")?;
 
         execute_cmd(Cmd::batch([
-            Components::loading(&format!("Testing notification '{}'...", id)),
+            Components::loading(format!("Testing notification '{id}'...")),
             Components::success("Test message sent!"),
         ]));
 

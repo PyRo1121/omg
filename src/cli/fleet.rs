@@ -97,17 +97,17 @@ pub async fn status(_ctx: &CliContext) -> Result<()> {
     execute_cmd(Cmd::batch([
         Components::header(
             "Fleet Status",
-            &format!("{} machine(s) in fleet", total_machines),
+            format!("{total_machines} machine(s) in fleet"),
         ),
         Components::spacer(),
         Components::status_summary(status_items),
-        if !machine_list.is_empty() {
+        if machine_list.is_empty() {
+            Cmd::none()
+        } else {
             Cmd::batch([
                 Components::spacer(),
                 Components::card("Active Machines", machine_list),
             ])
-        } else {
-            Cmd::none()
         },
         Components::spacer(),
         Cmd::println("Manage your fleet at: https://pyro1121.com/dashboard"),
@@ -157,7 +157,7 @@ pub async fn push(team: Option<&str>, message: Option<&str>, _ctx: &CliContext) 
     let target = team.unwrap_or("all machines");
     let msg = message.unwrap_or("Fleet push");
 
-    execute_cmd(Components::loading(&format!("Pushing to {}...", target)));
+    execute_cmd(Components::loading(format!("Pushing to {target}...")));
 
     // Fetch members to get a real count
     let members = license::fetch_team_members().await.unwrap_or_default();
@@ -197,7 +197,7 @@ pub async fn push(team: Option<&str>, message: Option<&str>, _ctx: &CliContext) 
                         "Fleet API endpoint not yet active (404). Config saved locally.",
                     ));
                 } else {
-                    execute_cmd(Components::error(&format!(
+                    execute_cmd(Components::error(format!(
                         "Fleet push failed: {}",
                         res.status()
                     )));
@@ -207,9 +207,8 @@ pub async fn push(team: Option<&str>, message: Option<&str>, _ctx: &CliContext) 
         }
         Err(e) => {
             // Network error
-            execute_cmd(Components::error(&format!(
-                "Failed to connect to fleet server: {}",
-                e
+            execute_cmd(Components::error(format!(
+                "Failed to connect to fleet server: {e}"
             )));
             anyhow::bail!("Failed to connect to fleet server: {e}");
         }
@@ -270,7 +269,7 @@ pub async fn remediate(dry_run: bool, confirm: bool, _ctx: &CliContext) -> Resul
         return Ok(());
     }
 
-    execute_cmd(Components::loading(&format!(
+    execute_cmd(Components::loading(format!(
         "Remediating {} machines...",
         drifted_count + runtime_updates + policy_fixes
     )));

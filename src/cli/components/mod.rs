@@ -81,7 +81,7 @@ impl Components {
 
         Cmd::batch([
             Cmd::styled_text(crate::cli::tea::StyledTextConfig {
-                text: format!("[{}/{}] {}", step, total, icon),
+                text: format!("[{step}/{total}] {icon}"),
                 style,
             }),
             Cmd::println(format!(" {}", message.into())),
