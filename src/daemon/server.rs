@@ -33,8 +33,7 @@ const CLIENT_RATE_LIMIT_HZ: u32 = 50;
 const CLIENT_BURST_SIZE: u32 = 100;
 
 /// Run the daemon server
-pub async fn run(listener: UnixListener) -> Result<()> {
-    let state = Arc::new(DaemonState::new()?);
+pub async fn run(listener: UnixListener, state: Arc<DaemonState>) -> Result<()> {
     let shutdown_token = CancellationToken::new();
 
     // START BACKGROUND WORKER
