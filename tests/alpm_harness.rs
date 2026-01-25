@@ -1,6 +1,12 @@
 //! ALPM Test Harness
 //!
 //! Provides a fully isolated pacman/alpm environment for testing.
+//!
+//! # Note
+//! This module is used across multiple test files. The dead_code warnings
+//! are suppressed because the harness is only used in integration tests.
+
+#![allow(dead_code)]
 
 use alpm::Alpm;
 use anyhow::Result;
