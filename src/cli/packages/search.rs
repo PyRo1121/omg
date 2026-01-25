@@ -251,42 +251,6 @@ pub fn search_sync_cli(query: &str, detailed: bool, interactive: bool) -> Result
     Ok(true)
 }
 
-fn display_daemon_results(res: &crate::daemon::protocol::SearchResult, query: &str) {
-    if res.packages.is_empty() {
-        use crate::cli::components::Components;
-        use crate::cli::packages::execute_cmd;
-        execute_cmd(Components::no_results(query));
-        return;
-    }
-
-    println!("\n{}", style::header("OMG (Cached)"));
-
-    for pkg in res.packages.iter().take(20) {
-        let source = if pkg.source == "official" {
-            style::info(&pkg.source)
-        } else {
-            style::warning(&pkg.source)
-        };
-
-        println!(
-            "  {} {} ({}) - {}",
-            style::package(&pkg.name),
-            style::version(&pkg.version),
-            source,
-            style::dim(&crate::cli::packages::common::truncate(
-                &pkg.description,
-                50
-            ))
-        );
-    }
-    if res.packages.len() > 20 {
-        println!(
-            "  {}",
-            style::dim(&format!("(+{} more packages...)", res.packages.len() - 20))
-        );
-    }
-    println!();
-}
 
 fn format_package(pkg: &DisplayPackage) -> String {
     let source_style = if pkg.source == "AUR" {
