@@ -11,7 +11,6 @@ pub mod mocks;
 pub mod runners;
 
 use anyhow::Result;
-use serde_json;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -310,6 +309,9 @@ pub fn run_shell(cmd: &str) -> CommandResult {
 #[allow(dead_code)]
 pub struct TestProject {
     pub dir: TempDir,
+    pub data_dir: TempDir,
+    pub config_dir: TempDir,
+    pub pacman_root: TempDir,
     pub config: TestConfig,
 }
 
@@ -319,6 +321,9 @@ impl TestProject {
         init_test_env();
         Self {
             dir: TempDir::new().expect("Failed to create temp dir"),
+            data_dir: TempDir::new().expect("Failed to create data dir"),
+            config_dir: TempDir::new().expect("Failed to create config dir"),
+            pacman_root: TempDir::new().expect("Failed to create pacman root"),
             config: TestConfig::default(),
         }
     }
@@ -327,6 +332,9 @@ impl TestProject {
         init_test_env();
         Self {
             dir: TempDir::new().expect("Failed to create temp dir"),
+            data_dir: TempDir::new().expect("Failed to create data dir"),
+            config_dir: TempDir::new().expect("Failed to create config dir"),
+            pacman_root: TempDir::new().expect("Failed to create pacman root"),
             config,
         }
     }
@@ -336,11 +344,43 @@ impl TestProject {
     }
 
     pub fn run(&self, args: &[&str]) -> CommandResult {
-        run_omg_in_dir(args, self.path())
+        let data_dir = self.data_dir.path().to_str().unwrap();
+        let config_dir = self.config_dir.path().to_str().unwrap();
+        let pacman_root = self.pacman_root.path().to_str().unwrap();
+        run_omg_with_options(
+            args,
+            Some(self.path()),
+            &[
+                ("OMG_DATA_DIR", data_dir),
+                ("OMG_CONFIG_DIR", config_dir),
+                ("OMG_PACMAN_ROOT", pacman_root),
+            ],
+        )
     }
 
     pub fn run_with_env(&self, args: &[&str], env_vars: &[(&str, &str)]) -> CommandResult {
-        run_omg_with_options(args, Some(self.path()), env_vars)
+        let data_dir = self.data_dir.path().to_str().unwrap();
+        let config_dir = self.config_dir.path().to_str().unwrap();
+        let pacman_root = self.pacman_root.path().to_str().unwrap();
+        let mut vars = env_vars.to_vec();
+        if !vars.iter().any(|(k, _)| *k == "OMG_DATA_DIR") {
+            vars.push(("OMG_DATA_DIR", data_dir));
+        }
+        if !vars.iter().any(|(k, _)| *k == "OMG_CONFIG_DIR") {
+            vars.push(("OMG_CONFIG_DIR", config_dir));
+        }
+        if !vars.iter().any(|(k, _)| *k == "OMG_PACMAN_ROOT") {
+            vars.push(("OMG_PACMAN_ROOT", pacman_root));
+        }
+        run_omg_with_options(args, Some(self.path()), &vars)
+    }
+
+    pub fn mock_install(&self, package: &str, version: &str) -> Result<()> {
+        update_mock_state(self.data_dir.path(), package, version, true)
+    }
+
+    pub fn mock_available(&self, package: &str, version: &str) -> Result<()> {
+        update_mock_state(self.data_dir.path(), package, version, false)
     }
 
     /// Create a file in the project
@@ -427,8 +467,11 @@ impl TestProject {
     }
 
     pub fn with_security_policy(&self, policy: &str) -> &Self {
-        self.create_dir(".config/omg");
-        self.create_file(".config/omg/policy.toml", policy);
+        let path = self.config_dir.path().join("omg/policy.toml");
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(&path, policy).unwrap();
         self
     }
 
@@ -474,67 +517,34 @@ pub fn is_package_installed(name: &str) -> bool {
     }
 }
 
-pub fn mock_install(package: &str, version: &str) -> Result<()> {
-    use std::env;
-    use std::fs;
-
-    if env::var("OMG_TEST_MODE").as_deref() != Ok("1") {
-        eprintln!("Warning: mock_install requires OMG_TEST_MODE=1");
-        return Ok(());
-    }
-
-    let path = env::var("OMG_DATA_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            PathBuf::from(env::var("HOME").unwrap_or_default()).join(".local/share/omg")
-        })
-        .join("mock_state.json");
+fn update_mock_state(
+    data_dir: &Path,
+    package: &str,
+    version: &str,
+    is_install: bool,
+) -> Result<()> {
+    let path = data_dir.join("mock_state.json");
 
     let mut state: serde_json::Value = fs::read_to_string(&path)
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_else(|| {
             serde_json::json!({
-                "installed": [],
+                "installed": {},
                 "available": {}
             })
         });
 
-    if let Some(installed) = state["installed"].as_array_mut() {
-        if !installed.iter().any(|v| v.as_str() == Some(package)) {
-            installed.push(serde_json::json!(package));
+    if is_install {
+        if let Some(installed) = state["installed"].as_object_mut() {
+            installed.insert(package.to_string(), serde_json::json!(version.to_string()));
         }
-    }
-
-    if let Some(available) = state["available"].as_object_mut() {
+        // Also make it available if installed
+        if let Some(available) = state["available"].as_object_mut() {
+            available.insert(package.to_string(), serde_json::json!(version.to_string()));
+        }
+    } else if let Some(available) = state["available"].as_object_mut() {
         available.insert(package.to_string(), serde_json::json!(version.to_string()));
-    }
-
-    let path = env::var("OMG_DATA_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            PathBuf::from(env::var("HOME").unwrap_or_default()).join(".local/share/omg")
-        })
-        .join("mock_state.json");
-
-    let mut state: serde_json::Value = fs::read_to_string(&path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_else(|| {
-            serde_json::json!({
-                "installed": [],
-                "available": {}
-            })
-        });
-
-    if let Some(installed) = state["installed"].as_array_mut() {
-        if !installed.iter().any(|v| v.as_str() == Some(package)) {
-            installed.push(serde_json::json!(package));
-        }
-    }
-
-    if let Some(available) = state["available"].as_object_mut() {
-        available.insert(package.to_string(), serde_json::json!(version));
     }
 
     if let Some(parent) = path.parent() {
@@ -545,9 +555,25 @@ pub fn mock_install(package: &str, version: &str) -> Result<()> {
     Ok(())
 }
 
+pub fn mock_install(package: &str, version: &str) -> Result<()> {
+    use std::env;
+
+    if env::var("OMG_TEST_MODE").as_deref() != Ok("1") {
+        eprintln!("Warning: mock_install requires OMG_TEST_MODE=1");
+        return Ok(());
+    }
+
+    let path = env::var("OMG_DATA_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            PathBuf::from(env::var("HOME").unwrap_or_default()).join(".local/share/omg")
+        });
+
+    update_mock_state(&path, package, version, true)
+}
+
 pub fn mock_available(package: &str, version: &str) -> Result<()> {
     use std::env;
-    use std::fs;
 
     if env::var("OMG_TEST_MODE").as_deref() != Ok("1") {
         eprintln!("Warning: mock_available requires OMG_TEST_MODE=1");
@@ -558,50 +584,9 @@ pub fn mock_available(package: &str, version: &str) -> Result<()> {
         .map(PathBuf::from)
         .unwrap_or_else(|_| {
             PathBuf::from(env::var("HOME").unwrap_or_default()).join(".local/share/omg")
-        })
-        .join("mock_state.json");
-
-    let mut state: serde_json::Value = fs::read_to_string(&path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_else(|| {
-            serde_json::json!({
-                "installed": [],
-                "available": {}
-            })
         });
 
-    if let Some(available) = state["available"].as_object_mut() {
-        available.insert(package.to_string(), serde_json::json!(version.to_string()));
-    }
-
-    let path = env::var("OMG_DATA_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            PathBuf::from(env::var("HOME").unwrap_or_default()).join(".local/share/omg")
-        })
-        .join("mock_state.json");
-
-    let mut state: serde_json::Value = fs::read_to_string(&path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_else(|| {
-            serde_json::json!({
-                "installed": [],
-                "available": {}
-            })
-        });
-
-    if let Some(available) = state["available"].as_object_mut() {
-        available.insert(package.to_string(), serde_json::json!(version));
-    }
-
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).ok();
-    }
-    fs::write(&path, serde_json::to_string_pretty(&state)?).map_err(|e| anyhow::anyhow!(e))?;
-
-    Ok(())
+    update_mock_state(&path, package, version, false)
 }
 
 pub fn create_update_scenario(updates: Vec<(&str, &str, &str)>) -> Result<()> {

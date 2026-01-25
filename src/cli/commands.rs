@@ -11,8 +11,10 @@ use crate::package_managers::PackageManager;
 #[cfg(feature = "debian")]
 use crate::package_managers::{apt_get_system_status, apt_list_all_package_names};
 
-use crate::cli::style;
+use crate::cli::{style, ui};
 use crate::core::env::distro::use_debian_backend;
+use dialoguer::{Confirm, Select};
+use ratatui::prelude::Stylize;
 
 #[cfg(feature = "arch")]
 use crate::package_managers::get_system_status;
@@ -23,7 +25,7 @@ pub use super::packages::{
     clean, explicit, explicit_sync, info, info_sync, install, remove, search, sync, update,
 };
 pub use super::runtimes::{list_versions, use_version};
-pub use super::security::audit;
+// pub use super::security::audit;
 
 pub async fn complete(_shell: &str, current: &str, last: &str, full: Option<&str>) -> Result<()> {
     let db = crate::core::Database::open(crate::core::Database::default_path()?)?;
@@ -204,10 +206,8 @@ fn output_suggestions(
 
 pub fn status_sync() -> Result<()> {
     let _start = std::time::Instant::now();
-    let mut stdout = std::io::BufWriter::new(std::io::stdout());
-    use std::io::Write;
 
-    writeln!(stdout, "{} System Status\n", style::header("OMG"))?;
+    ui::print_header("System", "Current Status");
 
     // ULTRA FAST: Try binary status file first (zero IPC, sub-ms)
     let (total, explicit, orphans, updates, security_vulnerabilities, cached_runtimes) =
@@ -269,74 +269,57 @@ pub fn status_sync() -> Result<()> {
             }
         };
 
+    let mut content = Vec::new();
+
+    // Packages
+    content.push(format!(
+        "Packages:  {} total ({} explicit)",
+        total.to_string().cyan(),
+        explicit.to_string().cyan()
+    ));
+
+    // Updates
     if updates > 0 {
-        writeln!(
-            stdout,
-            "  {} {} updates available",
-            style::warning("Updates:"),
-            updates
-        )?;
+        content.push(format!(
+            "Updates:   {} available",
+            updates.to_string().yellow().bold()
+        ));
     } else {
-        writeln!(
-            stdout,
-            "  {} System is up to date",
-            style::success("Updates:")
-        )?;
+        content.push(format!("Updates:   {}", "Up to date".green()));
     }
 
-    writeln!(
-        stdout,
-        "  {} {} total ({} explicit)",
-        style::success("Packages:"),
-        total,
-        explicit
-    )?;
-
+    // Orphans
     if orphans > 0 {
-        writeln!(
-            stdout,
-            "  {} {} packages",
-            style::warning("Orphans:"),
-            orphans
-        )?;
+        content.push(format!(
+            "Orphans:   {} packages",
+            orphans.to_string().yellow()
+        ));
     }
 
-    // Zero-Trust Security Status
+    // Security
     if security_vulnerabilities > 0 {
-        writeln!(
-            stdout,
-            "  {} {} vulnerabilities found!",
-            style::error("Security:"),
-            security_vulnerabilities
-        )?;
-        writeln!(
-            stdout,
-            "  {} Run '{}' for details",
-            style::dim("→"),
-            style::warning("omg audit")
-        )?;
+        content.push(format!(
+            "Security:  {} vulnerabilities found!",
+            security_vulnerabilities.to_string().red().bold()
+        ));
     } else {
-        writeln!(
-            stdout,
-            "  {} No known vulnerabilities",
-            style::success("Security:")
-        )?;
+        content.push(format!("Security:  {}", "No known issues".green()));
     }
 
-    // Daemon status
+    // Daemon
     let socket = crate::core::client::default_socket_path();
-    if socket.exists() {
-        writeln!(stdout, "  {} Running", style::success("Daemon:"))?;
+    let daemon_status = if socket.exists() {
+        "Running".green()
     } else {
-        writeln!(stdout, "  {} Not running", style::dim("Daemon:"))?;
-    }
+        "Offline".gray()
+    };
+    content.push(format!("Daemon:    {}", daemon_status));
+
+    ui::print_card("Overview", content);
 
     // Runtimes - INSTANT FROM CACHE
-    writeln!(
-        stdout,
-        "\n{} Runtimes:\n",
-        style::dim("────────────────────")
-    )?;
+    ui::print_spacer();
+    println!("{}", "Runtimes:".bold());
 
     if let Some(versions) = cached_runtimes {
         for (rt_name, v) in versions {
@@ -350,7 +333,7 @@ pub fn status_sync() -> Result<()> {
                 "ruby" => "Ruby",
                 _ => &rt_name,
             };
-            writeln!(stdout, "  {} {} {}", style::success("●"), label, v)?;
+            ui::print_list_item(label, Some(&v));
         }
     } else {
         // Fallback to local probing if daemon is down
@@ -366,12 +349,20 @@ pub fn status_sync() -> Result<()> {
                     "ruby" => "Ruby",
                     _ => rt_name,
                 };
-                writeln!(stdout, "  {} {} {}", style::success("●"), label, v)?;
+                ui::print_list_item(label, Some(&v));
             }
         }
     }
 
-    stdout.flush()?;
+    if updates > 0 {
+        ui::print_tip("Run 'omg update --check' to see detailed package changes.");
+    } else if security_vulnerabilities > 0 {
+        ui::print_tip("Run 'omg audit' to identify and fix security issues.");
+    } else {
+        ui::print_tip("Your system is healthy! Run 'omg dash' for an interactive view.");
+    }
+
+    ui::print_spacer();
     Ok(())
 }
 
@@ -584,10 +575,9 @@ pub async fn rollback(id: Option<String>, yes: bool) -> Result<()> {
             anyhow::bail!("No history entries available for rollback");
         }
 
-        println!(
-            "{} Select a transaction to roll back to:\n",
-            style::header("OMG")
-        );
+        ui::print_header("OMG", "Rollback Transaction");
+        ui::print_spacer();
+
         let options: Vec<String> = entries
             .iter()
             .rev()
@@ -603,8 +593,7 @@ pub async fn rollback(id: Option<String>, yes: bool) -> Result<()> {
             })
             .collect();
 
-        use dialoguer::{Select, theme::ColorfulTheme};
-        let selection = Select::with_theme(&ColorfulTheme::default())
+        let selection = Select::with_theme(&ui::prompt_theme())
             .items(&options)
             .default(0)
             .interact()?;
@@ -621,10 +610,9 @@ pub async fn rollback(id: Option<String>, yes: bool) -> Result<()> {
         style::info(&target.id[..8])
     );
 
-    use dialoguer::{Confirm, theme::ColorfulTheme};
     // Check if we're in interactive mode
     if console::user_attended()
-        && !Confirm::with_theme(&ColorfulTheme::default())
+        && !Confirm::with_theme(&ui::prompt_theme())
             .with_prompt("Proceed with rollback?")
             .default(false)
             .interact()?
@@ -666,7 +654,7 @@ pub async fn rollback(id: Option<String>, yes: bool) -> Result<()> {
                 style::info("→"),
                 to_install.len()
             );
-            let pacman = crate::package_managers::OfficialPackageManager::new();
+            let pacman = crate::package_managers::ArchPackageManager::new();
             pacman.install(&to_install).await?;
             println!("{}", style::success("✓ Rollback completed successfully"));
         }

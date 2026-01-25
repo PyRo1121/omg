@@ -1,9 +1,26 @@
+use crate::cli::{CliContext, CommandRunner, EnvCommands};
 use crate::core::env::fingerprint::{DriftReport, EnvironmentState};
 use crate::core::http::shared_client;
 use anyhow::{Context, Result};
+use async_trait::async_trait;
 use owo_colors::OwoColorize;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+#[async_trait]
+impl CommandRunner for EnvCommands {
+    async fn execute(&self, _ctx: &CliContext) -> Result<()> {
+        match self {
+            EnvCommands::Capture => capture().await,
+            EnvCommands::Check => check().await,
+            EnvCommands::Share {
+                description,
+                public,
+            } => share(description.clone(), *public).await,
+            EnvCommands::Sync { url } => sync(url.clone()).await,
+        }
+    }
+}
 
 /// Capture environment state
 pub async fn capture() -> Result<()> {

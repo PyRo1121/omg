@@ -1,4 +1,6 @@
+use crate::cli::{CliContext, CommandRunner, ToolCommands};
 use anyhow::{Context, Result};
+use async_trait::async_trait;
 use console::user_attended;
 use dialoguer::{Select, theme::ColorfulTheme};
 use std::fs;
@@ -7,6 +9,20 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::cli::style;
+
+#[async_trait]
+impl CommandRunner for ToolCommands {
+    async fn execute(&self, _ctx: &CliContext) -> Result<()> {
+        match self {
+            ToolCommands::Install { name } => install(name).await,
+            ToolCommands::List => list(),
+            ToolCommands::Remove { name } => remove(name),
+            ToolCommands::Update { name } => update(name).await,
+            ToolCommands::Search { query } => search(query),
+            ToolCommands::Registry => registry(),
+        }
+    }
+}
 
 /// Tool registry - maps common tool names to their optimal installation source
 /// Format: (name, source, description, category)

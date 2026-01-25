@@ -15,6 +15,28 @@ thread_local! {
     static ALPM_HANDLE: RefCell<Option<Alpm>> = const { RefCell::new(None) };
 }
 
+// Create a new Alpm handle.
+fn create_alpm_handle() -> Result<Alpm> {
+    let root = paths::pacman_root().to_string_lossy().into_owned();
+    let db_path = paths::pacman_db_dir().to_string_lossy().into_owned();
+    let alpm = Alpm::new(root, db_path).context("Failed to initialize ALPM handle")?;
+
+    // Register sync databases
+    for db_name in &["core", "extra", "multilib"] {
+        let _ = alpm.register_syncdb(*db_name, SigLevel::USE_DEFAULT);
+    }
+    Ok(alpm)
+}
+
+/// Execute a function with a provided ALPM handle.
+/// This is pub(crate) for testing purposes, allowing injection of a mock handle.
+pub(crate) fn with_alpm_handle<F, R>(alpm: &Alpm, f: F) -> Result<R>
+where
+    F: FnOnce(&Alpm) -> Result<R>,
+{
+    f(alpm)
+}
+
 /// Get a cached ALPM handle or create a new one for this thread
 #[allow(clippy::expect_used)]
 pub fn with_handle<F, R>(f: F) -> Result<R>
@@ -24,20 +46,15 @@ where
     ALPM_HANDLE.with(|cell| {
         let mut maybe_handle = cell.borrow_mut();
         if maybe_handle.is_none() {
-            let root = paths::pacman_root().to_string_lossy().into_owned();
-            let db_path = paths::pacman_db_dir().to_string_lossy().into_owned();
-            let alpm = Alpm::new(root, db_path).context("Failed to initialize ALPM handle")?;
-
-            // Register sync databases
-            for db_name in &["core", "extra", "multilib"] {
-                let _ = alpm.register_syncdb(*db_name, SigLevel::USE_DEFAULT);
-            }
-            *maybe_handle = Some(alpm);
+            *maybe_handle = Some(create_alpm_handle()?);
         }
 
-        f(maybe_handle
-            .as_ref()
-            .expect("ALPM handle initialized above"))
+        with_alpm_handle(
+            maybe_handle
+                .as_ref()
+                .expect("ALPM handle initialized above"),
+            f,
+        )
     })
 }
 
@@ -50,15 +67,7 @@ where
     ALPM_HANDLE.with(|cell| {
         let mut maybe_handle = cell.borrow_mut();
         if maybe_handle.is_none() {
-            let root = paths::pacman_root().to_string_lossy().into_owned();
-            let db_path = paths::pacman_db_dir().to_string_lossy().into_owned();
-            let alpm = Alpm::new(root, db_path).context("Failed to initialize ALPM handle")?;
-
-            // Register sync databases
-            for db_name in &["core", "extra", "multilib"] {
-                let _ = alpm.register_syncdb(*db_name, SigLevel::USE_DEFAULT);
-            }
-            *maybe_handle = Some(alpm);
+            *maybe_handle = Some(create_alpm_handle()?);
         }
 
         f(maybe_handle
@@ -69,27 +78,6 @@ where
 
 /// Search local database (installed packages) - INSTANT
 pub fn search_local(query: &str) -> Result<Vec<LocalPackage>> {
-    if paths::test_mode() {
-        let query_lower = query.to_lowercase();
-        // Use cached search for test mode - much faster than re-parsing
-        let packages = pacman_db::search_local_cached(&query_lower)?;
-        let results = packages
-            .into_iter()
-            .map(|pkg| LocalPackage {
-                name: pkg.name,
-                version: pkg.version,
-                description: pkg.desc,
-                install_size: 0,
-                reason: if pkg.explicit {
-                    "explicit"
-                } else {
-                    "dependency"
-                },
-            })
-            .collect();
-        return Ok(results);
-    }
-
     with_handle(|handle| {
         let localdb = handle.localdb();
         let query_lower = query.to_lowercase();
@@ -121,26 +109,6 @@ pub fn search_local(query: &str) -> Result<Vec<LocalPackage>> {
 
 /// Search sync databases (available packages) - FAST (<10ms)
 pub fn search_sync(query: &str) -> Result<Vec<SyncPackage>> {
-    if paths::test_mode() {
-        // search_sync_fast already uses cache and filters
-        let packages = pacman_db::search_sync_fast(query)?;
-        let results = packages
-            .into_iter()
-            .map(|pkg| {
-                let installed = pacman_db::is_installed_cached(&pkg.name);
-                SyncPackage {
-                    name: pkg.name,
-                    version: pkg.version,
-                    description: pkg.desc,
-                    repo: pkg.repo,
-                    download_size: i64::try_from(pkg.csize).unwrap_or(i64::MAX),
-                    installed,
-                }
-            })
-            .collect();
-        return Ok(results);
-    }
-
     with_handle(|handle| {
         let query_lower = query.to_lowercase();
         let mut results = Vec::new();
@@ -172,43 +140,6 @@ pub fn search_sync(query: &str) -> Result<Vec<SyncPackage>> {
 
 /// Get package info - INSTANT (<1ms)
 pub fn get_package_info(name: &str) -> Result<Option<PackageInfo>> {
-    if paths::test_mode() {
-        // Use cached lookup instead of re-parsing
-        if let Some(pkg) = pacman_db::get_local_package(name)? {
-            return Ok(Some(PackageInfo {
-                name: pkg.name,
-                version: pkg.version.clone(),
-                description: pkg.desc,
-                url: None,
-                size: 0,
-                install_size: None,
-                download_size: None,
-                repo: "local".to_string(),
-                depends: Vec::new(),
-                licenses: Vec::new(),
-                installed: true,
-            }));
-        }
-
-        if let Some(pkg) = pacman_db::get_sync_package(name)? {
-            return Ok(Some(PackageInfo {
-                name: pkg.name,
-                version: pkg.version.clone(),
-                description: pkg.desc,
-                url: Some(pkg.url),
-                size: pkg.isize,
-                install_size: Some(i64::try_from(pkg.isize).unwrap_or(i64::MAX)),
-                download_size: Some(pkg.csize),
-                repo: pkg.repo,
-                depends: pkg.depends,
-                licenses: Vec::new(),
-                installed: false,
-            }));
-        }
-
-        return Ok(None);
-    }
-
     with_handle(|handle| {
         // Try local first
         if let Ok(pkg) = handle.localdb().pkg(name) {
@@ -260,26 +191,6 @@ pub fn get_package_info(name: &str) -> Result<Option<PackageInfo>> {
 
 /// List all installed packages - INSTANT
 pub fn list_installed_fast() -> Result<Vec<LocalPackage>> {
-    if paths::test_mode() {
-        // Use cached list instead of re-parsing
-        let packages = pacman_db::list_local_cached()?;
-        let results = packages
-            .into_iter()
-            .map(|pkg| LocalPackage {
-                name: pkg.name,
-                version: pkg.version,
-                description: pkg.desc,
-                install_size: 0,
-                reason: if pkg.explicit {
-                    "explicit"
-                } else {
-                    "dependency"
-                },
-            })
-            .collect();
-        return Ok(results);
-    }
-
     with_handle(|handle| {
         let localdb = handle.localdb();
 
@@ -304,10 +215,6 @@ pub fn list_installed_fast() -> Result<Vec<LocalPackage>> {
 
 /// List explicitly installed packages - INSTANT
 pub fn list_explicit_fast() -> Result<Vec<String>> {
-    if paths::test_mode() {
-        return Ok(vec!["pacman".to_string(), "git".to_string()]);
-    }
-
     // Prefer cached local DB parsing for speed (works in normal mode too)
     if let Ok(packages) = pacman_db::list_local_cached() {
         let results: Vec<String> = packages
@@ -333,10 +240,6 @@ pub fn list_explicit_fast() -> Result<Vec<String>> {
 
 /// List orphan packages - INSTANT
 pub fn list_orphans_fast() -> Result<Vec<String>> {
-    if paths::test_mode() {
-        return Ok(Vec::new());
-    }
-
     with_handle(|handle| {
         let results = handle
             .localdb()
@@ -352,20 +255,11 @@ pub fn list_orphans_fast() -> Result<Vec<String>> {
 
 /// Check if package is installed - INSTANT
 pub fn is_installed_fast(name: &str) -> Result<bool> {
-    if paths::test_mode() {
-        return Ok(name == "pacman" || name == "git");
-    }
-
     with_handle(|handle| Ok(handle.localdb().pkg(name).is_ok()))
 }
 
 /// Get counts - INSTANT
 pub fn get_counts() -> Result<(usize, usize, usize)> {
-    if paths::test_mode() {
-        let (total, explicit, deps) = pacman_db::get_counts_fast()?;
-        return Ok((total, explicit, deps));
-    }
-
     with_handle(|handle| {
         let pkgs = handle.localdb().pkgs();
 
@@ -385,10 +279,6 @@ pub fn get_counts() -> Result<(usize, usize, usize)> {
 
 /// List all known package names (local + sync) for completion - FAST
 pub fn list_all_package_names() -> Result<Vec<String>> {
-    if paths::test_mode() {
-        return pacman_db::list_all_names_cached();
-    }
-
     with_handle(|handle| {
         let mut names = std::collections::HashSet::new();
 

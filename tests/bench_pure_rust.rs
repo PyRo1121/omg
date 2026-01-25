@@ -1,3 +1,9 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::pedantic,
+    clippy::nursery
+)]
 #[cfg(feature = "arch")]
 use omg_lib::package_managers::pacman_db;
 

@@ -1,11 +1,11 @@
 //! Update functionality for packages
 
 use anyhow::Result;
-use dialoguer::{Confirm, theme::ColorfulTheme};
+use dialoguer::Confirm;
 use owo_colors::OwoColorize;
 use std::sync::Arc;
 
-use crate::cli::style;
+use crate::cli::{style, ui};
 use crate::core::packages::PackageService;
 use crate::package_managers::get_package_manager;
 
@@ -19,15 +19,14 @@ pub async fn update(check_only: bool, yes: bool) -> Result<()> {
     pb.finish_and_clear();
 
     if updates.is_empty() {
-        println!("{} System is up to date!", style::success("✓"));
+        ui::print_spacer();
+        ui::print_success("System is up to date!");
+        ui::print_spacer();
         return Ok(());
     }
 
-    println!(
-        "{} Found {} update(s):",
-        style::header("OMG"),
-        style::info(&updates.len().to_string())
-    );
+    ui::print_header("OMG", &format!("Found {} update(s)", updates.len()));
+    ui::print_spacer();
 
     for up in &updates {
         let update_label = match (
@@ -65,12 +64,14 @@ pub async fn update(check_only: bool, yes: bool) -> Result<()> {
     if !yes {
         if console::user_attended() {
             // Interactive mode: show confirmation dialog
-            if !Confirm::with_theme(&ColorfulTheme::default())
+            if !Confirm::with_theme(&ui::prompt_theme())
                 .with_prompt("\nProceed with system upgrade?")
                 .default(true)
                 .interact()?
             {
-                println!("{}", style::dim("Upgrade cancelled."));
+                ui::print_spacer();
+                ui::print_warning("Upgrade cancelled.");
+                ui::print_spacer();
                 return Ok(());
             }
         } else {

@@ -1,3 +1,9 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::pedantic,
+    clippy::nursery
+)]
 //! Property-Based and Fuzz Testing for OMG
 //!
 //! Uses proptest for property-based testing to discover edge cases.

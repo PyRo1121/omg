@@ -368,10 +368,9 @@ impl AurClient {
     }
 
     fn read_metadata_archive(path: &Path) -> Result<AurResponse> {
-        let mut file = File::open(path)?;
-        let mut buf = Vec::new();
-        file.read_to_end(&mut buf)?;
-        let decoder = GzDecoder::new(&buf[..]);
+        let file = File::open(path)?;
+        let reader = BufReader::new(file);
+        let decoder = GzDecoder::new(reader);
         // The metadata archive is a raw JSON array, not wrapped in {"results": [...]}
         let results: Vec<AurPackage> = serde_json::from_reader(decoder)?;
         Ok(AurResponse { results })
@@ -1648,6 +1647,7 @@ pub struct AurPackageDetail {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use std::path::PathBuf;

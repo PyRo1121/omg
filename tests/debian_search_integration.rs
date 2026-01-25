@@ -1,3 +1,9 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::pedantic,
+    clippy::nursery
+)]
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
 use assert_cmd::Command;
 

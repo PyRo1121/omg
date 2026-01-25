@@ -1,3 +1,9 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::pedantic,
+    clippy::nursery
+)]
 //! Integration tests for omg install command
 //!
 //! Tests both official and AUR package installation on Arch Linux

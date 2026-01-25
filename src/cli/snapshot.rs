@@ -267,14 +267,14 @@ pub async fn restore(id: &str, dry_run: bool, yes: bool) -> Result<()> {
         println!();
         if !yes {
             // Check if we're in interactive mode
-            if console::user_attended() {
-                println!(
-                    "  {} Package changes found ({} to install, {} to remove):",
-                    "⚠".yellow(),
-                    to_install.len(),
-                    to_remove.len()
-                );
+            println!(
+                "  {} Package changes found ({} to install, {} to remove):",
+                "⚠".yellow(),
+                to_install.len(),
+                to_remove.len()
+            );
 
+            if console::user_attended() {
                 let confirm = dialoguer::Confirm::new()
                     .with_prompt("Do you want to apply these package changes?")
                     .default(false)
@@ -286,12 +286,6 @@ pub async fn restore(id: &str, dry_run: bool, yes: bool) -> Result<()> {
                 }
             } else {
                 // Non-interactive mode: show clear error message
-                println!(
-                    "  {} Package changes found ({} to install, {} to remove):",
-                    "⚠".yellow(),
-                    to_install.len(),
-                    to_remove.len()
-                );
                 anyhow::bail!(
                     "This command requires an interactive terminal or the --yes flag.\n\
                      For automation, use: omg snapshot restore {id} --yes\n\

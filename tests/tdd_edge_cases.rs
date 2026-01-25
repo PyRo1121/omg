@@ -1,3 +1,9 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::pedantic,
+    clippy::nursery
+)]
 //! Edge case testing for the TDD suite
 //!
 //! This file focuses on obscure error paths and "absolute everything" testing.

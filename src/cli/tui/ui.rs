@@ -4,13 +4,13 @@
 
 use crate::cli::tui::app::{App, Tab};
 use ratatui::{
-    Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{
         Block, BorderType, Borders, Cell, Clear, Gauge, List, ListItem, Paragraph, Row, Table, Tabs,
     },
+    Frame,
 };
 
 // Modern color palette (inspired by Catppuccin/Tokyo Night)
@@ -308,19 +308,22 @@ fn draw_health_cards(f: &mut Frame, area: Rect, app: &App) {
     if let Some(c) = cards.first() {
         let card = Paragraph::new(vec![
             Line::from(""),
+            Line::from(vec![
+                Span::styled("󰏗 ", Style::default().fg(colors::ACCENT_BLUE)),
+                Span::styled(
+                    format!("{total_packages}"),
+                    Style::default()
+                        .fg(colors::FG_PRIMARY)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]),
             Line::from(Span::styled(
-                format!("{total_packages}"),
-                Style::default()
-                    .fg(colors::ACCENT_CYAN)
-                    .add_modifier(Modifier::BOLD),
-            )),
-            Line::from(Span::styled(
-                "Packages",
+                "System Packages",
                 Style::default().fg(colors::FG_MUTED),
             )),
         ])
         .alignment(Alignment::Center)
-        .block(styled_block("󰏗 Total"));
+        .block(styled_block("Inventory"));
         f.render_widget(card, *c);
     }
 
@@ -331,19 +334,27 @@ fn draw_health_cards(f: &mut Frame, area: Rect, app: &App) {
         } else {
             colors::ACCENT_GREEN
         };
+        let status_icon = if updates > 0 { "󰚰 " } else { "󰄬 " };
         let card = Paragraph::new(vec![
             Line::from(""),
+            Line::from(vec![
+                Span::styled(status_icon, Style::default().fg(color)),
+                Span::styled(
+                    format!("{updates}"),
+                    Style::default().fg(color).add_modifier(Modifier::BOLD),
+                ),
+            ]),
             Line::from(Span::styled(
-                format!("{updates}"),
-                Style::default().fg(color).add_modifier(Modifier::BOLD),
-            )),
-            Line::from(Span::styled(
-                "Updates",
+                if updates > 0 {
+                    "Updates Available"
+                } else {
+                    "System Up-to-date"
+                },
                 Style::default().fg(colors::FG_MUTED),
             )),
         ])
         .alignment(Alignment::Center)
-        .block(styled_block(" Updates"));
+        .block(styled_block("Maintainability"));
         f.render_widget(card, *c);
     }
 
@@ -354,19 +365,23 @@ fn draw_health_cards(f: &mut Frame, area: Rect, app: &App) {
         } else {
             colors::ACCENT_GREEN
         };
+        let status_icon = if orphans > 0 { "󰃤 " } else { "󰄬 " };
         let card = Paragraph::new(vec![
             Line::from(""),
+            Line::from(vec![
+                Span::styled(status_icon, Style::default().fg(color)),
+                Span::styled(
+                    format!("{orphans}"),
+                    Style::default().fg(color).add_modifier(Modifier::BOLD),
+                ),
+            ]),
             Line::from(Span::styled(
-                format!("{orphans}"),
-                Style::default().fg(color).add_modifier(Modifier::BOLD),
-            )),
-            Line::from(Span::styled(
-                "Orphans",
+                "Orphan Packages",
                 Style::default().fg(colors::FG_MUTED),
             )),
         ])
         .alignment(Alignment::Center)
-        .block(styled_block("󰃤 Orphans"));
+        .block(styled_block("Hygiene"));
         f.render_widget(card, *c);
     }
 
@@ -377,28 +392,27 @@ fn draw_health_cards(f: &mut Frame, area: Rect, app: &App) {
         } else {
             colors::ACCENT_RED
         };
-        let title = if vulns == 0 {
-            "󰒃 Security"
-        } else {
-            "󰀦 Security"
-        };
+        let status_icon = if vulns == 0 { "󰒃 " } else { "󰀦 " };
         let card = Paragraph::new(vec![
             Line::from(""),
+            Line::from(vec![
+                Span::styled(status_icon, Style::default().fg(color)),
+                Span::styled(
+                    if vulns == 0 {
+                        "Secure".to_string()
+                    } else {
+                        format!("{vulns} CVEs")
+                    },
+                    Style::default().fg(color).add_modifier(Modifier::BOLD),
+                ),
+            ]),
             Line::from(Span::styled(
-                if vulns == 0 {
-                    "Secure".to_string()
-                } else {
-                    format!("{vulns} CVEs")
-                },
-                Style::default().fg(color).add_modifier(Modifier::BOLD),
-            )),
-            Line::from(Span::styled(
-                "Security",
+                "Compliance Status",
                 Style::default().fg(colors::FG_MUTED),
             )),
         ])
         .alignment(Alignment::Center)
-        .block(styled_block(title));
+        .block(styled_block("Security"));
         f.render_widget(card, *c);
     }
 }

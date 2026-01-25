@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used)]
+
 use super::*;
 
 #[test]
@@ -11,7 +13,7 @@ fn test_cache_basic_ops() {
     };
 
     // Insert
-    cache.insert("query".to_string(), vec![pkg.clone()]);
+    cache.insert("query".to_string(), vec![pkg]);
 
     // Get
     let res = cache.get("query").unwrap();
@@ -67,7 +69,7 @@ fn test_system_status_cache() {
         runtime_versions: vec![],
     };
 
-    cache.update_status(status.clone());
+    cache.update_status(status);
     let cached = cache.get_status().unwrap();
     assert_eq!(cached.total_packages, 100);
 }

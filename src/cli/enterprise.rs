@@ -1,6 +1,8 @@
 //! `omg enterprise` - Enterprise features (reports, policies, compliance)
 
+use crate::cli::{CliContext, CommandRunner, EnterpriseCommands, EnterprisePolicyCommands, ServerCommands};
 use anyhow::Result;
+use async_trait::async_trait;
 use owo_colors::OwoColorize;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -9,8 +11,49 @@ use std::path::Path;
 
 use crate::core::license;
 
+#[async_trait]
+impl CommandRunner for EnterpriseCommands {
+    async fn execute(&self, ctx: &CliContext) -> Result<()> {
+        match self {
+            EnterpriseCommands::Reports {
+                report_type,
+                format,
+            } => reports(report_type, format, ctx).await,
+            EnterpriseCommands::Policy { command } => match command {
+                EnterprisePolicyCommands::Set { scope, rule } => {
+                    policy::set(scope, rule, ctx)
+                }
+                EnterprisePolicyCommands::Show { scope } => {
+                    policy::show(scope.as_deref(), ctx).await
+                }
+                EnterprisePolicyCommands::Inherit { from, to } => {
+                    policy::inherit(from, to, ctx)
+                }
+            },
+            EnterpriseCommands::AuditExport {
+                format,
+                period,
+                output,
+            } => audit_export(format, period.as_deref(), output, ctx),
+            EnterpriseCommands::LicenseScan { export } => {
+                license_scan(export.as_deref(), ctx)
+            }
+            EnterpriseCommands::Server { command } => match command {
+                ServerCommands::Init {
+                    license,
+                    storage,
+                    domain,
+                } => server::init(license, storage, domain, ctx),
+                ServerCommands::Mirror { upstream } => {
+                    server::mirror(upstream, ctx).await
+                }
+            },
+        }
+    }
+}
+
 /// Generate executive reports
-pub async fn reports(report_type: &str, format: &str) -> Result<()> {
+pub async fn reports(report_type: &str, format: &str, _ctx: &CliContext) -> Result<()> {
     // SECURITY: Validate report type and format
     let valid_types = ["monthly", "quarterly", "custom"];
     let valid_formats = ["json", "csv", "html", "pdf"];
@@ -55,7 +98,12 @@ pub async fn reports(report_type: &str, format: &str) -> Result<()> {
 }
 
 /// Export audit evidence for compliance
-pub fn audit_export(format: &str, period: Option<&str>, output: &str) -> Result<()> {
+pub fn audit_export(
+    format: &str,
+    period: Option<&str>,
+    output: &str,
+    _ctx: &CliContext,
+) -> Result<()> {
     // SECURITY: Validate all inputs
     let valid_frameworks = ["soc2", "iso27001", "fedramp", "hipaa", "pci-dss"];
     if !valid_frameworks.contains(&format.to_lowercase().as_str()) {
@@ -106,7 +154,7 @@ pub fn audit_export(format: &str, period: Option<&str>, output: &str) -> Result<
 }
 
 /// Scan for license compliance issues
-pub fn license_scan(export: Option<&str>) -> Result<()> {
+pub fn license_scan(export: Option<&str>, _ctx: &CliContext) -> Result<()> {
     if let Some(fmt) = export {
         // SECURITY: Validate export format
         let valid_formats = ["json", "csv", "spdx"];
@@ -174,9 +222,9 @@ pub fn license_scan(export: Option<&str>) -> Result<()> {
 
 /// Enterprise policy management
 pub mod policy {
-    use super::{OwoColorize, Result, license};
+    use super::{CliContext, OwoColorize, Result, license};
 
-    pub fn set(scope: &str, rule: &str) -> Result<()> {
+    pub fn set(scope: &str, rule: &str, _ctx: &CliContext) -> Result<()> {
         // SECURITY: Validate scope and rule
         if scope.len() > 64
             || scope
@@ -203,7 +251,7 @@ pub mod policy {
         Ok(())
     }
 
-    pub async fn show(scope: Option<&str>) -> Result<()> {
+    pub async fn show(scope: Option<&str>, _ctx: &CliContext) -> Result<()> {
         if let Some(s) = scope
             && (s.len() > 64
                 || s.chars()
@@ -246,7 +294,7 @@ pub mod policy {
         Ok(())
     }
 
-    pub fn inherit(from: &str, to: &str) -> Result<()> {
+    pub fn inherit(from: &str, to: &str, _ctx: &CliContext) -> Result<()> {
         // SECURITY: Validate scopes
         if from.len() > 64
             || from
@@ -283,9 +331,9 @@ pub mod policy {
 
 /// Self-hosted server management
 pub mod server {
-    use super::{OwoColorize, Result, license};
+    use super::{CliContext, OwoColorize, Result, license};
 
-    pub fn init(license_key: &str, storage: &str, domain: &str) -> Result<()> {
+    pub fn init(license_key: &str, storage: &str, domain: &str, _ctx: &CliContext) -> Result<()> {
         // SECURITY: Validate all inputs
         if license_key.len() > 128
             || license_key
@@ -338,7 +386,7 @@ pub mod server {
         Ok(())
     }
 
-    pub async fn mirror(upstream: &str) -> Result<()> {
+    pub async fn mirror(upstream: &str, _ctx: &CliContext) -> Result<()> {
         // SECURITY: Basic URL validation
         if !upstream.starts_with("https://") {
             anyhow::bail!("Only HTTPS upstreams allowed for security");
@@ -399,17 +447,18 @@ struct ReportSummary {
 }
 
 async fn generate_report(report_type: &str) -> Report {
-    let mut machine_count = 0;
-    if let Ok(members) = license::fetch_team_members().await {
-        machine_count = members.len();
-    }
+    let machine_count = if let Ok(members) = license::fetch_team_members().await {
+        members.len()
+    } else {
+        0
+    };
 
     let metrics = crate::core::metrics::GLOBAL_METRICS.snapshot();
 
     // Calculate a real compliance score based on validation failures and security audits
     let base_score = 100.0;
     let penalty =
-        (metrics.validation_failures as f32 * 0.5) + (metrics.rate_limit_hits as f32 * 0.1);
+        (metrics.validation_failures as f32).mul_add(0.5, metrics.rate_limit_hits as f32 * 0.1);
     let compliance_score = (base_score - penalty).max(0.0);
 
     Report {

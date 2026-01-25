@@ -1,10 +1,10 @@
 //! Install functionality for packages
 
 use anyhow::Result;
-use dialoguer::{Select, theme::ColorfulTheme};
+use dialoguer::Select;
 use std::sync::Arc;
 
-use crate::cli::style;
+use crate::cli::{style, ui};
 use crate::core::client::DaemonClient;
 use crate::core::packages::PackageService;
 use crate::package_managers::get_package_manager;
@@ -18,12 +18,10 @@ pub async fn install(packages: &[String], yes: bool) -> Result<()> {
     let pm = Arc::from(get_package_manager());
     let service = PackageService::new(pm);
 
-    println!(
-        "{} Analyzing {} package(s) with {} model...\n",
-        style::header("OMG"),
-        packages.len(),
-        style::success("Graded Security")
-    );
+    ui::print_header("OMG", &format!("Installing {} package(s)", packages.len()));
+    ui::print_spacer();
+
+    ui::print_step(1, 2, "Analyzing packages with Graded Security...");
 
     let mut packages_to_install = packages.to_vec();
 
@@ -50,7 +48,7 @@ pub async fn install(packages: &[String], yes: bool) -> Result<()> {
 
                         // Check if we're in interactive mode
                         if console::user_attended() {
-                            let selection = Select::with_theme(&ColorfulTheme::default())
+                            let selection = Select::with_theme(&ui::prompt_theme())
                                 .with_prompt("Select a replacement (or Esc to abort)")
                                 .default(0)
                                 .items(&suggestions)

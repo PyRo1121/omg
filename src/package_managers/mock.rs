@@ -3,10 +3,12 @@
 //! Enabled only when `OMG_TEST_MODE=1` is set.
 //! Persists state to a JSON file in `OMG_DATA_DIR` to allow stateful tests across CLI runs.
 
+#![allow(clippy::unwrap_used)]
+
 use anyhow::Result;
 use futures::future::{BoxFuture, FutureExt};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fs;
 use std::sync::{Arc, Mutex};
 
@@ -16,7 +18,7 @@ use crate::package_managers::types::{UpdateInfo, parse_version_or_zero};
 
 #[derive(Serialize, Deserialize, Default, Clone)]
 struct MockState {
-    installed: HashSet<String>,
+    installed: HashMap<String, String>,
     available: HashMap<String, String>,
 }
 
@@ -88,7 +90,9 @@ impl MockPackageManager {
 
     pub fn set_installed_version(&self, name: &str, version: &str) -> Result<()> {
         let mut state = Self::load_state(self.distro_name);
-        state.installed.insert(name.to_string());
+        state
+            .installed
+            .insert(name.to_string(), version.to_string());
         state
             .available
             .insert(name.to_string(), version.to_string());
@@ -120,10 +124,38 @@ impl MockPackageManager {
         let path = paths::data_dir().join("mock_state.json");
         eprintln!("Mock loading state from {}", path.display());
         if let Ok(data) = fs::read_to_string(&path) {
+            // Handle migration from old format (HashSet) to new format (HashMap)
+            // This is a bit tricky with serde.
+            // For now, let's assume clean state or compatible format.
+            // If we encounter a HashSet, serde will fail.
+            // We can try to parse as Value first.
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&data)
+                && let Some(installed_arr) = val.get("installed").and_then(|v| v.as_array())
+            {
+                // Old format: installed is array of strings
+                let mut installed_map = HashMap::new();
+                for v in installed_arr {
+                    if let Some(s) = v.as_str() {
+                        installed_map.insert(s.to_string(), "0".to_string());
+                    }
+                }
+                let available: HashMap<String, String> =
+                    serde_json::from_value(val["available"].clone()).unwrap_or_default();
+                return MockState {
+                    installed: installed_map,
+                    available,
+                };
+            }
             serde_json::from_str(&data).unwrap_or_default()
         } else {
             let mut state = MockState::default();
-            state.installed.insert(distro_name.to_string());
+            // Default installed packages need a version.
+            // We don't know the version here easily without db access.
+            // But load_state is static.
+            // Let's just use "0" for default installed.
+            state
+                .installed
+                .insert(distro_name.to_string(), "0".to_string());
             state
         }
     }
@@ -139,12 +171,7 @@ impl MockPackageManager {
 
     #[allow(dead_code)]
     fn is_newer(old: &str, new: &str) -> bool {
-        use std::cmp::Ordering;
-
-        match old.cmp(new) {
-            Ordering::Less => true,
-            _ => false,
-        }
+        matches!(old.cmp(new), std::cmp::Ordering::Less)
     }
 }
 
@@ -169,7 +196,7 @@ impl PackageManager for MockPackageManager {
                     version: parse_version_or_zero(&p.version),
                     description: p.description.clone(),
                     source: PackageSource::Official,
-                    installed: state.installed.contains(&p.name),
+                    installed: state.installed.contains_key(&p.name),
                 })
                 .collect())
         }
@@ -179,10 +206,19 @@ impl PackageManager for MockPackageManager {
     fn install(&self, packages: &[String]) -> BoxFuture<'static, Result<()>> {
         let packages = packages.to_vec();
         let distro_name = self.distro_name;
+        let db = self.db.clone();
         async move {
             let mut state = Self::load_state(distro_name);
+            let pkgs = db.packages.lock().unwrap();
             for pkg in packages {
-                state.installed.insert(pkg);
+                // Use available version if present, otherwise db version, otherwise "0"
+                let version = state
+                    .available
+                    .get(&pkg)
+                    .or_else(|| pkgs.get(&pkg).map(|p| &p.version))
+                    .cloned()
+                    .unwrap_or_else(|| "0".to_string());
+                state.installed.insert(pkg, version);
             }
             Self::save_state(&state);
             Ok(())
@@ -223,7 +259,7 @@ impl PackageManager for MockPackageManager {
                 version: parse_version_or_zero(&p.version),
                 description: p.description.clone(),
                 source: PackageSource::Official,
-                installed: state.installed.contains(&p.name),
+                installed: state.installed.contains_key(&p.name),
             }))
         }
         .boxed()
@@ -237,13 +273,25 @@ impl PackageManager for MockPackageManager {
             Ok(state
                 .installed
                 .iter()
-                .filter_map(|name| pkgs.get(name))
-                .map(|p| Package {
-                    name: p.name.clone(),
-                    version: parse_version_or_zero(&p.version),
-                    description: p.description.clone(),
-                    source: PackageSource::Official,
-                    installed: true,
+                .map(|(name, version)| {
+                    if let Some(p) = pkgs.get(name) {
+                        Package {
+                            name: p.name.clone(),
+                            version: parse_version_or_zero(version),
+                            description: p.description.clone(),
+                            source: PackageSource::Official,
+                            installed: true,
+                        }
+                    } else {
+                        // Package installed but not in db (e.g. manually added to mock state)
+                        Package {
+                            name: name.clone(),
+                            version: parse_version_or_zero(version),
+                            description: "Mock package".to_string(),
+                            source: PackageSource::Official,
+                            installed: true,
+                        }
+                    }
                 })
                 .collect())
         }
@@ -263,7 +311,7 @@ impl PackageManager for MockPackageManager {
 
     fn list_explicit(&self) -> BoxFuture<'static, Result<Vec<String>>> {
         let state = Self::load_state(self.distro_name);
-        async move { Ok(state.installed.into_iter().collect()) }.boxed()
+        async move { Ok(state.installed.keys().cloned().collect()) }.boxed()
     }
 
     fn list_updates(&self) -> BoxFuture<'static, Result<Vec<UpdateInfo>>> {
@@ -274,18 +322,19 @@ impl PackageManager for MockPackageManager {
             let pkgs = db.packages.lock().unwrap();
             let mut updates = Vec::new();
 
-            for pkg_name in &state.installed {
-                if let (Some(pkg), Some(available_ver)) =
-                    (pkgs.get(pkg_name), state.available.get(pkg_name))
-                {
-                    let installed_ver = pkg.version.clone();
+            for (pkg_name, installed_ver) in &state.installed {
+                if let Some(available_ver) = state.available.get(pkg_name) {
+                    // Use repo from db if available, else "unknown"
+                    let repo = pkgs
+                        .get(pkg_name)
+                        .map_or_else(|| "unknown".to_string(), |p| p.repo.clone());
 
                     #[cfg(feature = "arch")]
                     let is_update_needed = {
                         use crate::package_managers::types::Version as AlpmVersion;
                         use std::str::FromStr;
 
-                        let installed = AlpmVersion::from_str(&installed_ver)
+                        let installed = AlpmVersion::from_str(installed_ver)
                             .unwrap_or_else(|_| AlpmVersion::from_str("0").unwrap());
                         let available = AlpmVersion::from_str(available_ver)
                             .unwrap_or_else(|_| AlpmVersion::from_str("0").unwrap());
@@ -294,14 +343,14 @@ impl PackageManager for MockPackageManager {
                     };
 
                     #[cfg(not(feature = "arch"))]
-                    let is_update_needed = Self::is_newer(&installed_ver, available_ver);
+                    let is_update_needed = Self::is_newer(installed_ver, available_ver);
 
                     if is_update_needed {
                         updates.push(UpdateInfo {
                             name: pkg_name.clone(),
-                            old_version: installed_ver.to_string(),
+                            old_version: installed_ver.clone(),
                             new_version: available_ver.clone(),
-                            repo: pkg.repo.clone(),
+                            repo,
                         });
                     }
                 }
@@ -315,7 +364,7 @@ impl PackageManager for MockPackageManager {
     fn is_installed(&self, package: &str) -> BoxFuture<'static, bool> {
         let package = package.to_string();
         let state = Self::load_state(self.distro_name);
-        async move { state.installed.contains(&package) }.boxed()
+        async move { state.installed.contains_key(&package) }.boxed()
     }
 }
 

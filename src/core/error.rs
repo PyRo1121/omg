@@ -137,6 +137,7 @@ pub fn suggest_for_anyhow(err: &anyhow::Error) -> Option<&'static str> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

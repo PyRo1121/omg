@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 
-use crate::cli::style;
+use crate::cli::ui;
 use crate::core::client::DaemonClient;
 use crate::daemon::protocol::{Request, ResponseResult};
 
@@ -87,22 +87,16 @@ fn display_explicit_list(mut packages: Vec<String>) -> Result<()> {
     use std::io::Write;
     let mut stdout = std::io::BufWriter::new(std::io::stdout());
 
-    writeln!(
-        stdout,
-        "{} Explicitly installed packages:\n",
-        style::header("OMG")
-    )?;
+    ui::print_header("OMG", "Explicitly installed packages");
+    ui::print_spacer();
 
     for pkg in &packages {
-        writeln!(stdout, "  {}", style::package(pkg))?;
+        ui::print_list_item(pkg, None);
     }
 
-    writeln!(
-        stdout,
-        "\n{} {} packages",
-        style::success("Total:"),
-        packages.len()
-    )?;
+    ui::print_spacer();
+    ui::print_success(&format!("Total: {} packages", packages.len()));
+    ui::print_spacer();
     stdout.flush()?;
     Ok(())
 }

@@ -1,3 +1,9 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::pedantic,
+    clippy::nursery
+)]
 //! Logic tests for package manager abstraction
 //!
 //! These tests verify that the package manager abstraction works across

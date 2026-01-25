@@ -3,6 +3,10 @@
 use anyhow::Result;
 use owo_colors::OwoColorize;
 use serde::Serialize;
+use std::sync::Arc;
+
+use crate::core::packages::PackageService;
+use crate::package_managers::get_package_manager;
 
 #[derive(Debug, Serialize)]
 pub struct OutdatedPackage {
@@ -11,6 +15,7 @@ pub struct OutdatedPackage {
     pub new_version: String,
     pub is_security: bool,
     pub update_type: UpdateType,
+    pub repo: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -33,15 +38,17 @@ impl std::fmt::Display for UpdateType {
 }
 
 /// Show outdated packages
-pub fn run(security_only: bool, json: bool) -> Result<()> {
+pub async fn run(security_only: bool, json: bool) -> Result<()> {
     // SECURITY: This command has no string inputs, but we validate environment state
     if !json {
         println!("{} Checking for updates...\n", "OMG".cyan().bold());
     }
 
-    let outdated = get_outdated_packages()?;
+    let pm = Arc::from(get_package_manager());
+    let service = PackageService::new(pm);
+    let updates = service.list_updates().await?;
 
-    if outdated.is_empty() {
+    if updates.is_empty() {
         if json {
             println!("[]");
         } else {
@@ -49,6 +56,36 @@ pub fn run(security_only: bool, json: bool) -> Result<()> {
         }
         return Ok(());
     }
+
+    let mut outdated: Vec<OutdatedPackage> = updates
+        .into_iter()
+        .map(|u| {
+            let update_type = classify_update(&u.old_version, &u.new_version);
+            // Simple CVE check - in reality would query a vulnerability database
+            let is_security = u.name.contains("openssl")
+                || u.name.contains("glibc")
+                || u.name.contains("linux")
+                || u.name.contains("curl");
+
+            OutdatedPackage {
+                name: u.name,
+                current_version: u.old_version,
+                new_version: u.new_version,
+                is_security,
+                update_type,
+                repo: u.repo,
+            }
+        })
+        .collect();
+
+    outdated.sort_by(|a, b| {
+        // Security first, then by update type, then by name
+        match (a.is_security, b.is_security) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => a.name.cmp(&b.name),
+        }
+    });
 
     let filtered: Vec<_> = if security_only {
         outdated.into_iter().filter(|p| p.is_security).collect()
@@ -100,10 +137,11 @@ pub fn run(security_only: bool, json: bool) -> Result<()> {
         );
         for pkg in &major {
             println!(
-                "    {} {} → {}",
+                "    {} {} → {} {}",
                 pkg.name,
                 pkg.current_version.dimmed(),
-                pkg.new_version.cyan()
+                pkg.new_version.cyan(),
+                format!("({})", pkg.repo).dimmed()
             );
         }
         println!();
@@ -113,10 +151,11 @@ pub fn run(security_only: bool, json: bool) -> Result<()> {
         println!("  {} (new features)", "Minor Updates".blue().bold());
         for pkg in minor.iter().take(10) {
             println!(
-                "    {} {} → {}",
+                "    {} {} → {} {}",
                 pkg.name,
                 pkg.current_version.dimmed(),
-                pkg.new_version
+                pkg.new_version,
+                format!("({})", pkg.repo).dimmed()
             );
         }
         if minor.len() > 10 {
@@ -129,10 +168,11 @@ pub fn run(security_only: bool, json: bool) -> Result<()> {
         println!("  {} (bug fixes)", "Patch Updates".dimmed().bold());
         for pkg in patch.iter().take(5) {
             println!(
-                "    {} {} → {}",
+                "    {} {} → {} {}",
                 pkg.name,
                 pkg.current_version.dimmed(),
-                pkg.new_version
+                pkg.new_version,
+                format!("({})", pkg.repo).dimmed()
             );
         }
         if patch.len() > 5 {
@@ -157,109 +197,6 @@ pub fn run(security_only: bool, json: bool) -> Result<()> {
     }
 
     Ok(())
-}
-
-#[cfg(feature = "arch")]
-fn get_outdated_packages() -> Result<Vec<OutdatedPackage>> {
-    use alpm::Alpm;
-
-    let handle = Alpm::new("/", "/var/lib/pacman")
-        .map_err(|e| anyhow::anyhow!("Failed to open ALPM: {e}"))?;
-
-    let localdb = handle.localdb();
-    let mut outdated = Vec::new();
-
-    // Get sync databases
-    let syncdbs: Vec<_> = handle.syncdbs().into_iter().collect();
-
-    for local_pkg in localdb.pkgs() {
-        let name = local_pkg.name();
-        let local_ver = local_pkg.version().to_string();
-
-        // Find in sync dbs
-        for syncdb in &syncdbs {
-            if let Ok(sync_pkg) = syncdb.pkg(name.as_bytes()) {
-                let sync_ver: String = sync_pkg.version().to_string();
-                if sync_ver != local_ver {
-                    // Determine update type
-                    let update_type = classify_update(&local_ver, &sync_ver);
-                    // Simple CVE check - in reality would query a vulnerability database
-                    let is_security = name.contains("openssl")
-                        || name.contains("glibc")
-                        || name.contains("linux")
-                        || name.contains("curl");
-
-                    outdated.push(OutdatedPackage {
-                        name: name.to_string(),
-                        current_version: local_ver.clone(),
-                        new_version: sync_ver,
-                        is_security,
-                        update_type,
-                    });
-                }
-                break;
-            }
-        }
-    }
-
-    outdated.sort_by(|a, b| {
-        // Security first, then by update type, then by name
-        match (a.is_security, b.is_security) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            _ => a.name.cmp(&b.name),
-        }
-    });
-
-    Ok(outdated)
-}
-
-#[cfg(all(feature = "debian", not(feature = "arch")))]
-fn get_outdated_packages() -> Result<Vec<OutdatedPackage>> {
-    use std::process::Command;
-
-    let output = Command::new("apt")
-        .args(["list", "--upgradable", "--"])
-        .output()?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut outdated = Vec::new();
-
-    for line in stdout.lines().skip(1) {
-        // Skip "Listing..." header
-        // Format: package/source version [upgradable from: old_version]
-        if let Some((pkg_part, rest)) = line.split_once('/') {
-            let name = pkg_part.to_string();
-            let parts: Vec<_> = rest.split_whitespace().collect();
-            if parts.len() >= 4 {
-                let new_version = parts[0].to_string();
-                let old_version = parts
-                    .get(3)
-                    .map(|s| s.trim_end_matches(']').to_string())
-                    .unwrap_or_default();
-
-                let update_type = classify_update(&old_version, &new_version);
-                let is_security = name.contains("openssl") || name.contains("linux");
-
-                outdated.push(OutdatedPackage {
-                    name,
-                    current_version: old_version,
-                    new_version,
-                    is_security,
-                    update_type,
-                });
-            }
-        }
-    }
-
-    Ok(outdated)
-}
-
-#[cfg(not(any(feature = "arch", feature = "debian")))]
-#[allow(clippy::unnecessary_wraps)]
-fn get_outdated_packages() -> Result<Vec<OutdatedPackage>> {
-    // This is a stub for when features are disabled
-    Ok(Vec::new())
 }
 
 #[allow(dead_code)]

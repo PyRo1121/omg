@@ -14,14 +14,14 @@ pub mod alpm_worker;
 #[cfg(feature = "debian")]
 pub mod apt;
 #[cfg(feature = "arch")]
+pub mod arch;
+#[cfg(feature = "arch")]
 mod aur;
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
 pub mod debian_db;
 #[cfg(feature = "debian-pure")]
 pub mod debian_pure;
 pub mod mock;
-#[cfg(feature = "arch")]
-mod official;
 #[cfg(feature = "arch")]
 pub mod pacman_db;
 #[cfg(feature = "arch")]
@@ -90,11 +90,9 @@ pub use alpm_ops::{
     get_update_download_list, get_update_list, list_orphans_direct, sync_dbs,
 };
 #[cfg(feature = "arch")]
-pub use aur::{AurClient, AurPackageDetail, search_detailed};
+pub use arch::{ArchPackageManager, is_installed, list_explicit, list_orphans, remove_orphans};
 #[cfg(feature = "arch")]
-pub use official::{
-    OfficialPackageManager, is_installed, list_explicit, list_orphans, remove_orphans,
-};
+pub use aur::{AurClient, AurPackageDetail, search_detailed};
 #[cfg(feature = "arch")]
 pub use pacman_db::{
     check_updates_cached, get_local_package, get_potential_aur_packages, invalidate_caches,
@@ -121,7 +119,7 @@ pub fn get_package_manager() -> Box<dyn PackageManager> {
 
     match detect_distro() {
         #[cfg(feature = "arch")]
-        Distro::Arch => Box::new(OfficialPackageManager::new()),
+        Distro::Arch => Box::new(ArchPackageManager::new()),
         // debian provides AptPackageManager
         #[cfg(feature = "debian")]
         Distro::Debian | Distro::Ubuntu => Box::new(AptPackageManager::new()),
@@ -131,7 +129,7 @@ pub fn get_package_manager() -> Box<dyn PackageManager> {
         _ => {
             // Fallback or default
             #[cfg(feature = "arch")]
-            return Box::new(OfficialPackageManager::new());
+            return Box::new(ArchPackageManager::new());
 
             #[cfg(all(not(feature = "arch"), feature = "debian"))]
             return Box::new(AptPackageManager::new());

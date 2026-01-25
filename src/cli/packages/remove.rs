@@ -3,6 +3,7 @@
 use anyhow::Result;
 use std::sync::Arc;
 
+use crate::cli::ui;
 use crate::core::packages::PackageService;
 use crate::package_managers::get_package_manager;
 
@@ -22,7 +23,14 @@ pub async fn remove(packages: &[String], recursive: bool, _yes: bool) -> Result<
     let pm = Arc::from(get_package_manager());
     let service = PackageService::new(pm);
 
+    ui::print_header("OMG", &format!("Removing {} package(s)", packages.len()));
+    ui::print_spacer();
+
     service.remove(packages, recursive).await?;
+
+    ui::print_spacer();
+    ui::print_success("Packages removed successfully");
+    ui::print_spacer();
 
     Ok(())
 }

@@ -97,6 +97,8 @@ This document provides a high-level overview of OMG's architecture, component in
 │  ┌─────────────┐      ┌─────────────┐      ┌─────────────┐             │
 │  │   libalpm   │      │  rust-apt   │      │  AUR HTTP   │             │
 │  │   (Arch)    │      │  (Debian)   │      │   Client    │             │
+│  │   Direct    │      │  (Native)   │      │             │             │
+│  │   Bindings  │      │             │      │             │             │
 │  └─────────────┘      └─────────────┘      └─────────────┘             │
 │         │                     │                     │                   │
 │         ▼                     ▼                     ▼                   │
@@ -201,6 +203,15 @@ User: omg use node 20.10.0
          ▼
     Shell hook updates PATH
 ```
+
+---
+
+## 🧩 Package Manager Integration
+
+OMG interacts with system package managers using direct library bindings whenever possible to avoid the overhead of spawning subprocesses.
+
+### Arch Linux (libalpm)
+The `ArchPackageManager` implementation uses direct FFI bindings to `libalpm` (via the `alpm` crate). This allows OMG to perform package searches, dependency resolution, and transaction management directly within the process memory space, bypassing the `pacman` CLI entirely. This is a key factor in achieving sub-10ms query performance.
 
 ---
 

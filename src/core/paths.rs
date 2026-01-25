@@ -1,6 +1,33 @@
 //! Shared filesystem paths with test-friendly overrides.
 
+use parking_lot::RwLock;
 use std::path::PathBuf;
+use std::sync::OnceLock;
+
+#[derive(Default, Debug)]
+struct PathOverrides {
+    pacman_root: Option<PathBuf>,
+    pacman_db_dir: Option<PathBuf>,
+}
+
+static OVERRIDES: OnceLock<RwLock<PathOverrides>> = OnceLock::new();
+
+fn get_overrides() -> &'static RwLock<PathOverrides> {
+    OVERRIDES.get_or_init(|| RwLock::new(PathOverrides::default()))
+}
+
+/// Set path overrides for testing. Safe and thread-safe.
+pub fn set_test_overrides(root: Option<PathBuf>, db_dir: Option<PathBuf>) {
+    let mut guard = get_overrides().write();
+    guard.pacman_root = root;
+    guard.pacman_db_dir = db_dir;
+}
+
+/// Reset all path overrides.
+pub fn reset_test_overrides() {
+    let mut guard = get_overrides().write();
+    *guard = PathOverrides::default();
+}
 
 fn env_path(var: &str) -> Option<PathBuf> {
     std::env::var_os(var).map(PathBuf::from)
@@ -48,12 +75,20 @@ pub fn cache_dir() -> PathBuf {
 /// Pacman root directory (default: /).
 #[must_use]
 pub fn pacman_root() -> PathBuf {
+    let guard = get_overrides().read();
+    if let Some(ref root) = guard.pacman_root {
+        return root.clone();
+    }
     env_path("OMG_PACMAN_ROOT").unwrap_or_else(|| PathBuf::from("/"))
 }
 
 /// Pacman database directory (default: /var/lib/pacman).
 #[must_use]
 pub fn pacman_db_dir() -> PathBuf {
+    let guard = get_overrides().read();
+    if let Some(ref db) = guard.pacman_db_dir {
+        return db.clone();
+    }
     env_path("OMG_PACMAN_DB_DIR").unwrap_or_else(|| pacman_root().join("var/lib/pacman"))
 }
 

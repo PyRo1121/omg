@@ -1,3 +1,9 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::pedantic,
+    clippy::nursery
+)]
 //! Unit tests for PackageService install logic
 //!
 //! Tests the service layer's install method without actually installing packages

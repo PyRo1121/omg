@@ -1,3 +1,9 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::pedantic,
+    clippy::nursery
+)]
 //! OMG Exhaustive CLI Matrix Test Suite
 //!
 //! This suite verifies every single CLI command across all supported OS flavors
@@ -306,9 +312,95 @@ mod boundary_matrix {
 
     #[test]
     #[serial]
+
     fn test_empty_search() {
         let res = run_omg(&["search", ""]);
         // Should not crash, output might vary but success/failure is fine as long as no panic
+        assert!(!res.combined_output().contains("panic"));
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TEAM MATRIX
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[cfg(test)]
+mod team_matrix {
+    use super::*;
+
+    #[test]
+    #[serial]
+    fn test_team_status_no_team() {
+        // Should report not in a team workspace
+        let res = run_omg(&["team", "status"]);
+        res.assert_failure();
+        res.assert_stderr_contains("Not a team workspace");
+    }
+
+    #[test]
+    #[serial]
+    fn test_team_init() {
+        let project = TestProject::new();
+        // Init a new team
+        let res = project.run(&["team", "init", "test-team-id"]);
+        res.assert_success();
+        // Check for team config file (omg/team.toml seems standard)
+        // If not, we just check the directory exists which is safer
+        assert!(project.path().join(".omg").exists());
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// FLEET MATRIX
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[cfg(test)]
+mod fleet_matrix {
+    use super::*;
+
+    #[test]
+    #[serial]
+    fn test_fleet_status() {
+        let res = run_omg(&["fleet", "status"]);
+        // Might fail if not logged in or no license, but we check it runs
+        if res.success {
+            // Good
+        } else {
+            // If it fails, it should be a graceful error about auth or backend connection
+            let stderr = &res.stderr;
+            assert!(
+                stderr.contains("login")
+                || stderr.contains("license")
+                || stderr.contains("Failed to fetch")
+                || stderr.contains("404"),
+                "Expected auth/network error, got: {}",
+                stderr
+            );
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CONTAINER MATRIX
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[cfg(test)]
+mod container_matrix {
+    use super::*;
+
+    #[test]
+    #[serial]
+    fn test_container_status() {
+        let res = run_omg(&["container", "status"]);
+        // Should check for docker/podman presence
+        // We accept failure if docker isn't running in the test env
+        assert!(!res.combined_output().contains("panic"));
+    }
+
+    #[test]
+    #[serial]
+    fn test_container_list() {
+        let res = run_omg(&["container", "list"]);
         assert!(!res.combined_output().contains("panic"));
     }
 }
