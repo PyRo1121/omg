@@ -95,7 +95,7 @@ fn display_explicit_list(mut packages: Vec<String>) -> Result<()> {
     }
 
     ui::print_spacer();
-    ui::print_success(&format!("Total: {} packages", packages.len()));
+    ui::print_success(format!("Total: {} packages", packages.len()));
     ui::print_spacer();
     stdout.flush()?;
     Ok(())

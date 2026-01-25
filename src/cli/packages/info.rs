@@ -88,9 +88,8 @@ pub fn info_sync(package: &str) -> Result<bool> {
 pub async fn info_aur(package: &str) -> Result<()> {
     let aur = AurClient::new();
     let Some(info) = aur.info(package).await? else {
-        ui::print_error(&format!(
-            "Package '{}' not found in official repos or AUR.",
-            package
+        ui::print_error(format!(
+            "Package '{package}' not found in official repos or AUR."
         ));
         return Ok(());
     };
@@ -133,7 +132,7 @@ pub async fn info_aur(package: &str) -> Result<()> {
 }
 
 /// Helper to display detailed info from daemon
-fn display_detailed_info(info: &crate::daemon::protocol::DetailedPackageInfo) -> Result<()> {
+fn display_detailed_info(info: &crate::daemon::protocol::DetailedPackageInfo) {
     ui::print_kv("Name", &style::package(&info.name));
     ui::print_kv("Version", &style::version(&info.version));
     ui::print_kv("Description", &info.description);
@@ -154,7 +153,6 @@ fn display_detailed_info(info: &crate::daemon::protocol::DetailedPackageInfo) ->
     if !info.depends.is_empty() {
         ui::print_kv("Depends", &info.depends.join(", "));
     }
-    Ok(())
 }
 
 pub async fn info(package: &str) -> Result<()> {
@@ -175,7 +173,7 @@ pub async fn info(package: &str) -> Result<()> {
     // 3. Try AUR directly as final fallback (Arch only)
     #[cfg(feature = "arch")]
     {
-        ui::print_header("OMG", &format!("Package info for '{}'", package));
+        ui::print_header("OMG", &format!("Package info for '{package}'"));
         ui::print_spacer();
 
         let pb = style::spinner("Searching AUR...");
@@ -184,7 +182,7 @@ pub async fn info(package: &str) -> Result<()> {
         pb.finish_and_clear();
 
         let Some(pkg) = details.into_iter().find(|p| p.name == package) else {
-            ui::print_error(&format!("Package '{package}' not found"));
+            ui::print_error(format!("Package '{package}' not found"));
             return Ok(());
         };
 

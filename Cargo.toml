@@ -39,7 +39,6 @@ clap_complete = "4.5"
 # Error handling
 anyhow = "1.0.100"
 thiserror = "2.0.17"
-miette = { version = "7.6", features = ["fancy"] }
 async-trait = "0.1"
 
 # Async runtime
@@ -106,8 +105,6 @@ indicatif = "0.18.3"
 owo-colors = "4.2.3"
 console = "0.16.2"
 supports-color = "3.0.0"
-lipgloss = "0.1"
-anstyle = "1.0.10"
 
 # Interactive prompts
 dialoguer = "0.12.0"
@@ -124,7 +121,6 @@ atty = "0.2"
 # Cryptography
 sha2 = "0.10.9"
 hex = "0.4.3"
-base64 = "0.22.1"
 
 # Date & Time
 jiff = { version = "0.2.18", features = ["serde"] }
@@ -158,8 +154,6 @@ rayon = "1.11.0"
 sequoia-openpgp = { version = "2.2.0-pqc.1", default-features = false, features = ["crypto-rust", "allow-experimental-crypto", "allow-variable-time-crypto"], optional = true }
 nucleo-matcher = "0.3.1"
 dirs = "6.0.0"
-libc = "0.2.180"
-memmap2 = "0.9"
 ahash = "0.8.12"
 uuid = { version = "1.19", features = ["v4"] }
 ratatui = "0.28"
@@ -174,7 +168,6 @@ gzp = { version = "2.0", optional = true }               # Parallel gzip/zstd de
 ar = { version = "0.9", optional = true }                # Pure Rust .ar archive parsing
 rkyv = { version = "0.8", features = ["bytecheck"] }              # Zero-copy deserialization
 whoami = "2.0.2"
-urlencoding = "2.1.3"
 governor = "0.10.4"
 jsonwebtoken = { version = "10.2.0", default-features = false, features = ["rust_crypto"] }
 sentry = { version = "0.46.1", features = ["anyhow", "tracing"] }
