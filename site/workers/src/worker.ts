@@ -18,7 +18,8 @@ import {
   handleGetAuditLog,
   handleGetTeamMembers,
   handleRevokeTeamMember,
-  handleGetAdminAnalytics,
+  handleGetTeamPolicies,
+  handleGetNotifications,
 } from './handlers/dashboard';
 import {
   handleValidateLicense,
@@ -151,6 +152,31 @@ export default {
       // Team: Get members and usage (Team+ only)
       if (path === '/api/team/members' && request.method === 'GET') {
         return handleGetTeamMembers(request, env);
+      }
+
+      // Fleet: Status (Alias for team members, used by dashboard)
+      if (path === '/api/fleet/status' && request.method === 'GET') {
+        return handleGetTeamMembers(request, env);
+      }
+
+      // Team: Analytics (Alias for dashboard data for now)
+      if (path === '/api/team/analytics' && request.method === 'GET') {
+        return handleGetDashboard(request, env);
+      }
+
+      // Team: Policies (Placeholder)
+      if (path === '/api/team/policies' && request.method === 'GET') {
+        return handleGetTeamPolicies(request, env);
+      }
+
+      // Team: Notifications (Placeholder)
+      if (path === '/api/team/notifications' && request.method === 'GET') {
+        return handleGetNotifications(request, env);
+      }
+
+      // Team: Audit Logs (Alias)
+      if (path === '/api/team/audit-logs' && request.method === 'GET') {
+        return handleGetAuditLog(request, env);
       }
 
       // Team: Revoke member access (Team+ only)
