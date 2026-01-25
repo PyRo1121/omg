@@ -194,7 +194,7 @@ impl Model for StatusModel {
 
     fn view(&self) -> String {
         match self.state {
-            StatusState::Idle => String::new(),
+            StatusState::Idle => "No status data available".to_string(),
             StatusState::Loading => "⟳ Gathering system status...".cyan().dimmed().to_string(),
             StatusState::Complete => {
                 if let Some(data) = &self.data {
