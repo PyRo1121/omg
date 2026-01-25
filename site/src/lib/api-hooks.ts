@@ -1,4 +1,4 @@
-import { createQuery } from '@tanstack/solid-query';
+import { createQuery, createMutation, useQueryClient } from '@tanstack/solid-query';
 import * as api from './api';
 import { apiRequest } from './api';
 
@@ -45,20 +45,6 @@ export function useFleetStatus() {
   }));
 }
 
-export function useTeamAnalytics() {
-  return createQuery(() => ({
-    queryKey: ['team-analytics'],
-    queryFn: () => api.getAdminAnalytics(),
-  }));
-}
-
-export function useDashboardData() {
-  return createQuery(() => ({
-    queryKey: ['dashboard'],
-    queryFn: () => api.getDashboard(),
-  }));
-}
-
 export function useAdminDashboard() {
   return createQuery(() => ({
     queryKey: ['admin-dashboard'],
@@ -70,13 +56,62 @@ export function useAdminFirehose(limit = 50) {
   return createQuery(() => ({
     queryKey: ['admin-firehose', limit],
     queryFn: () => api.getAdminFirehose(limit),
-    refetchInterval: 5000, // Real-time polling
+    refetchInterval: 5000,
   }));
 }
 
-export function useAdminAnalytics() {
-  return createQuery(() => ({
-    queryKey: ['admin-analytics'],
-    queryFn: () => api.getAdminAnalytics(),
+// Mutations
+export function useRevokeMachine() {
+  const queryClient = useQueryClient();
+  return createMutation(() => ({
+    mutationFn: (machineId: string) => api.revokeMachine(machineId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['team-data'] });
+      queryClient.invalidateQueries({ queryKey: ['fleet-status'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+    },
+  }));
+}
+
+export function useCreatePolicy() {
+  const queryClient = useQueryClient();
+  return createMutation(() => ({
+    mutationFn: (policy: { scope: string; rule: string; value: string; enforced?: boolean }) => 
+      api.createTeamPolicy(policy),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['team-policies'] });
+    },
+  }));
+}
+
+export function useDeletePolicy() {
+  const queryClient = useQueryClient();
+  return createMutation(() => ({
+    mutationFn: (id: string) => api.deleteTeamPolicy(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['team-policies'] });
+    },
+  }));
+}
+
+export function useUpdateThreshold() {
+  const queryClient = useQueryClient();
+  return createMutation(() => ({
+    mutationFn: ({ type, value }: { type: string; value: number }) => 
+      api.updateAlertThreshold(type, value),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['team-data'] });
+    },
+  }));
+}
+
+export function useUpdateNotifications() {
+  const queryClient = useQueryClient();
+  return createMutation(() => ({
+    mutationFn: (settings: api.NotificationSetting[]) => 
+      api.updateNotificationSettings(settings),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['notification-settings'] });
+    },
   }));
 }
