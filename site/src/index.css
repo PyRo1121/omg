@@ -396,3 +396,23 @@ pre {
 .delay-300 { animation-delay: 300ms; }
 .delay-400 { animation-delay: 400ms; }
 .delay-500 { animation-delay: 500ms; }
+
+/* Shiki Highlighting Overrides */
+.shiki-wrapper pre {
+  margin: 0 !important;
+  padding: 1.25rem !important;
+  background-color: transparent !important;
+  overflow-x: auto;
+}
+
+.shiki-wrapper code {
+  padding: 0 !important;
+  background-color: transparent !important;
+  font-size: 0.875rem !important;
+  line-height: 1.7142857 !important;
+}
+
+.prose pre {
+  background-color: #0d1117 !important;
+  border: 1px solid rgba(99, 102, 241, 0.2);
+}

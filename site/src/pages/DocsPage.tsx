@@ -4,6 +4,7 @@ import { SolidMarkdown } from 'solid-markdown';
 import { getAllDocs, getDocBySlug } from '../lib/docs';
 import GlassCard from '../components/ui/GlassCard';
 import Header from '../components/Header';
+import CodeBlock from '../components/docs/CodeBlock';
 
 const DocsPage: Component = () => {
   const params = useParams();
@@ -28,9 +29,10 @@ const DocsPage: Component = () => {
                 {(doc) => (
                   <A
                     href={`/docs/${doc.slug}`}
-                    class="px-3 py-2 rounded-lg text-sm transition-colors"
-                    activeClass="bg-indigo-500/20 text-indigo-300 border border-indigo-500/30"
+                    class="px-3 py-2 text-sm transition-all duration-200 border-l-2 border-transparent"
+                    activeClass="bg-indigo-500/20 text-indigo-300 border-l-indigo-400 font-medium"
                     inactiveClass="text-slate-400 hover:text-white hover:bg-white/5"
+                    end={doc.slug === 'index'}
                   >
                     {doc.title}
                   </A>
@@ -49,7 +51,13 @@ const DocsPage: Component = () => {
                   {currentDoc()?.metadata.title}
                 </h1>
                 <div class="markdown-content">
-                  <SolidMarkdown children={currentDoc()?.content} />
+                  <SolidMarkdown 
+                    children={currentDoc()?.content} 
+                    components={{
+                      code: CodeBlock,
+                      pre: (props) => <div class="relative group my-6">{props.children}</div>
+                    }}
+                  />
                 </div>
               </>
             ) : (
