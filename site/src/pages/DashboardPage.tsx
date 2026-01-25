@@ -1,5 +1,6 @@
 import { Component, createSignal, createEffect, Show, For, onMount, Switch, Match } from 'solid-js';
 import { A } from '@solidjs/router';
+import { animate, stagger } from 'motion';
 import * as api from '../lib/api';
 import { TeamAnalytics } from '../components/dashboard/TeamAnalytics';
 import { AdminDashboard } from '../components/dashboard/AdminDashboard';
@@ -48,6 +49,25 @@ const DashboardPage: Component = () => {
   const [adminData, setAdminData] = createSignal<api.AdminOverview | null>(null);
   const [adminUsers, setAdminUsers] = createSignal<api.AdminUser[]>([]);
   const [adminActivity, setAdminActivity] = createSignal<api.AdminActivity[]>([]);
+
+  // Entrance animations
+  createEffect(() => {
+    if (view() === 'dashboard' && dashboard()) {
+      // Stagger nav items
+      animate(
+        "nav button",
+        { opacity: [0, 1], x: [-20, 0] },
+        { delay: stagger(0.05), duration: 0.5, easing: [0.16, 1, 0.3, 1] }
+      );
+
+      // Animate main content area
+      animate(
+        "main > div",
+        { opacity: [0, 1], y: [10, 0] },
+        { duration: 0.6, easing: [0.16, 1, 0.3, 1] }
+      );
+    }
+  });
 
   // Check for existing session
   onMount(async () => {

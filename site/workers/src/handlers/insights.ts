@@ -19,16 +19,27 @@ export async function handleGetSmartInsights(request: Request, env: Env): Promis
     
     if (target === 'admin' && isAdmin) {
       const stats = await env.DB.prepare(`
-        SELECT 
+        SELECT
           (SELECT COUNT(*) FROM customers) as users,
           (SELECT SUM(value) FROM analytics_daily WHERE metric = 'total_commands') as cmds,
           (SELECT SUM(value) FROM analytics_daily WHERE metric = 'total_time_saved_ms') as time_ms,
-          (SELECT dimension FROM analytics_daily WHERE metric = 'errors' ORDER BY value DESC LIMIT 1) as top_error
+          (SELECT dimension FROM analytics_daily WHERE metric = 'errors' ORDER BY value DESC LIMIT 1) as top_error,
+          (SELECT COUNT(DISTINCT omg_version) FROM machines WHERE is_active = 1) as version_drift_count
       `).first();
+
+      const errorStats = await env.DB.prepare(`
+        SELECT error_message, occurrences FROM analytics_errors ORDER BY occurrences DESC LIMIT 3
+      `).all();
+
+      const topErrors = errorStats.results?.map((e: any) => `${e.error_message} (${e.occurrences}x)`).join(', ') || 'None';
       const timeHours = Math.round((Number(stats?.time_ms) || 0) / 3600000);
-      contextData = `Platform Stats: ${stats?.users} total users, ${stats?.cmds?.toLocaleString()} commands executed, ${timeHours} hours saved system-wide. Top error: ${stats?.top_error || 'None'}.`;
-      additionalContext = `OMG provides unified package management across Arch Linux, Debian, Ubuntu, and 8 language runtimes (Node.js, Python, Rust, Go, Ruby, Java, Bun, and 100+ more via mise). Key metrics include 22x faster searches than pacman/yay, 59-483x faster than apt-cache/Nala.`;
-    } else {
+
+      contextData = `Platform Stats: ${stats?.users} total users, ${stats?.cmds?.toLocaleString()} commands executed, ${timeHours} hours saved system-wide.
+      Version Drift: ${stats?.version_drift_count} different OMG versions active in fleet.
+      Top Error Patterns: ${topErrors}.`;
+
+      additionalContext = `OMG provides unified package management across Arch Linux, Debian, Ubuntu, and 8 language runtimes. We are currently targeting sub-10ms search performance and 100% fleet compliance.`;
+    } else if (target === 'team') {
       const usage = await env.DB.prepare(`
         SELECT SUM(commands_run) as cmds, SUM(time_saved_ms) as time
           FROM usage_daily 
