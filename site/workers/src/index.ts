@@ -30,6 +30,7 @@ import {
   handleGetAuditLog,
   handleGetTeamMembers,
   handleRevokeTeamMember,
+  handleGetAdminAnalytics,
 } from './handlers/dashboard';
 
 import {
@@ -49,7 +50,6 @@ import {
   handleAdminCohorts,
   handleAdminRevenue,
   handleAdminAuditLog,
-  handleAdminAnalytics,
   handleAdminCRMUsers,
   handleAdminExportUsers,
   handleAdminExportUsage,
@@ -88,6 +88,7 @@ export interface Env {
   STRIPE_ENT_PRICE_ID?: string;
   META_API_KEY?: string;
   ACCOUNT_ID?: string;
+  ADMIN_RATE_LIMITER?: any;
 }
 
 export default {
@@ -306,12 +307,12 @@ export default {
         return handleAdminRevenue(request, env);
       }
 
-      if (path === '/api/admin/audit-log' && method === 'GET') {
-        return handleAdminAuditLog(request, env);
+      if (path === '/api/admin/analytics' && method === 'GET') {
+        return handleGetAdminAnalytics(request, env);
       }
 
-      if (path === '/api/admin/analytics' && method === 'GET') {
-        return handleAdminAnalytics(request, env);
+      if (path === '/api/admin/audit-log' && method === 'GET') {
+        return handleAdminAuditLog(request, env);
       }
 
       if (path === '/api/admin/firehose' && method === 'GET') {

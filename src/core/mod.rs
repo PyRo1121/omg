@@ -31,5 +31,5 @@ pub use archive::{
 };
 pub use database::Database;
 pub use error::{OmgError, Result};
-pub use privilege::{elevate_if_needed, is_root};
+pub use privilege::{elevate_if_needed, get_yes_flag, is_root, set_yes_flag};
 pub use types::*;

@@ -9,6 +9,20 @@ use std::env;
 use std::os::unix::process::CommandExt;
 #[cfg(not(test))]
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Global flag to track if --yes was specified for non-interactive mode
+static YES_FLAG: AtomicBool = AtomicBool::new(false);
+
+/// Set the yes flag globally (call this at the start of main if --yes is present)
+pub fn set_yes_flag(value: bool) {
+    YES_FLAG.store(value, Ordering::SeqCst);
+}
+
+/// Check if the yes flag is set
+pub fn get_yes_flag() -> bool {
+    YES_FLAG.load(Ordering::SeqCst)
+}
 
 /// Trait for privilege checking and elevation (for dependency injection)
 pub trait PrivilegeChecker: Send + Sync {
@@ -142,8 +156,17 @@ pub fn elevate_if_needed(args: &[String]) -> std::io::Result<()> {
     {
         let exe = env::current_exe()?;
 
-        // Use sudo to re-execute ourselves
-        let err = Command::new("sudo")
+        // Check if --yes or -y flag is present for non-interactive mode
+        let yes_flag = args.iter().any(|a| a == "--yes" || a == "-y");
+
+        let mut cmd = Command::new("sudo");
+
+        // Add -n flag for non-interactive mode when --yes is specified
+        if yes_flag {
+            cmd.arg("-n");
+        }
+
+        let err = cmd
             .arg("--")
             .arg(&exe)
             .args(args.get(1..).unwrap_or_default())
@@ -193,61 +216,102 @@ pub async fn run_self_sudo(args: &[&str]) -> anyhow::Result<()> {
         );
     }
 
-    // Try non-interactive sudo first (-n flag) for automation/CI scenarios
-    let status = tokio::process::Command::new("sudo")
-        .arg("-n")
-        .arg("--")
-        .arg(&exe)
-        .args(args)
-        .status()
-        .await;
+    // Check if --yes flag is set for non-interactive mode
+    let yes_flag = get_yes_flag();
 
-    match status {
-        Ok(s) if s.success() => Ok(()),
-        Ok(s) => {
-            // Command ran but failed with non-zero exit code
-            anyhow::bail!("Elevated command failed with exit code: {s}")
-        }
-        Err(e) => {
-            // Check if this is a permission denied error from sudo -n
-            // (which happens when password is required)
-            if e.kind() == std::io::ErrorKind::PermissionDenied
-                || e.to_string().contains("permission denied")
-                || e.to_string().contains("no tty present")
-            {
-                // Fall back to interactive sudo (allows password prompt)
-                let interactive_status = tokio::process::Command::new("sudo")
-                    .arg("--")
-                    .arg(&exe)
-                    .args(args)
-                    .status()
-                    .await;
+    // If --yes is specified, use only non-interactive sudo (-n flag)
+    // Otherwise, try -n first and fall back to interactive mode
+    if yes_flag {
+        // Non-interactive mode: use -n flag and fail if password required
+        let status = tokio::process::Command::new("sudo")
+            .arg("-n")
+            .arg("--")
+            .arg(&exe)
+            .args(args)
+            .status()
+            .await;
 
-                return match interactive_status {
-                    Ok(s) if s.success() => Ok(()),
-                    Ok(s) => anyhow::bail!("Elevated command failed with exit code: {s}"),
-                    Err(e2) => {
-                        anyhow::bail!(
-                            "Failed to run with sudo privileges.\n\
-                             \n\
-                             Error: {e2}\n\
-                             \n\
-                             For automation/CI, configure sudo with NOPASSWD:\n\
-                             sudo visudo\n\
-                             \n\
-                             And add line (replace username):\n\
-                             username ALL=(ALL) NOPASSWD: ALL\n\
-                             \n\
-                             Or specify this command specifically:\n\
-                             username ALL=(ALL) NOPASSWD: {}\n\
-                             \n\
-                             For interactive use, ensure you have sudo privileges.",
-                            exe.display()
-                        )
-                    }
-                };
+        match status {
+            Ok(s) if s.success() => Ok(()),
+            Ok(s) => {
+                // Command ran but failed with non-zero exit code
+                anyhow::bail!("Elevated command failed with exit code: {s}")
             }
-            anyhow::bail!("Failed to elevate privileges: {e}")
+            Err(e) => {
+                // In non-interactive mode, provide clear error message
+                anyhow::bail!(
+                    "Failed to elevate privileges in non-interactive mode (--yes flag).\n\
+                     \n\
+                     Error: {e}\n\
+                     \n\
+                     For non-interactive sudo, configure NOPASSWD in sudoers:\n\
+                     sudo visudo\n\
+                     \n\
+                     Add line (replace username):\n\
+                     username ALL=(ALL) NOPASSWD: {}\n\
+                     \n\
+                     Or remove --yes flag to allow password prompt.",
+                    exe.display()
+                )
+            }
+        }
+    } else {
+        // Interactive mode: try -n first, fall back to interactive sudo
+        let status = tokio::process::Command::new("sudo")
+            .arg("-n")
+            .arg("--")
+            .arg(&exe)
+            .args(args)
+            .status()
+            .await;
+
+        match status {
+            Ok(s) if s.success() => Ok(()),
+            Ok(s) => {
+                // Command ran but failed with non-zero exit code
+                anyhow::bail!("Elevated command failed with exit code: {s}")
+            }
+            Err(e) => {
+                // Check if this is a permission denied error from sudo -n
+                // (which happens when password is required)
+                if e.kind() == std::io::ErrorKind::PermissionDenied
+                    || e.to_string().contains("permission denied")
+                    || e.to_string().contains("no tty present")
+                {
+                    // Fall back to interactive sudo (allows password prompt)
+                    let interactive_status = tokio::process::Command::new("sudo")
+                        .arg("--")
+                        .arg(&exe)
+                        .args(args)
+                        .status()
+                        .await;
+
+                    return match interactive_status {
+                        Ok(s) if s.success() => Ok(()),
+                        Ok(s) => anyhow::bail!("Elevated command failed with exit code: {s}"),
+                        Err(e2) => {
+                            anyhow::bail!(
+                                "Failed to run with sudo privileges.\n\
+                                 \n\
+                                 Error: {e2}\n\
+                                 \n\
+                                 For automation/CI, configure sudo with NOPASSWD:\n\
+                                 sudo visudo\n\
+                                 \n\
+                                 And add line (replace username):\n\
+                                 username ALL=(ALL) NOPASSWD: ALL\n\
+                                 \n\
+                                 Or specify this command specifically:\n\
+                                 username ALL=(ALL) NOPASSWD: {}\n\
+                                 \n\
+                                 For interactive use, ensure you have sudo privileges.",
+                                exe.display()
+                            )
+                        }
+                    };
+                }
+                anyhow::bail!("Failed to elevate privileges: {e}")
+            }
         }
     }
 }

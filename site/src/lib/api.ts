@@ -580,6 +580,33 @@ export async function getAdminDashboard(): Promise<AdminOverview> {
   return apiRequest('/api/admin/dashboard');
 }
 
+export interface AdminAnalytics {
+  request_id: string;
+  dau: number;
+  wau: number;
+  mau: number;
+  events_today: number;
+  retention_rate: number;
+  commands_by_type: Array<{ command: string; count: number }>;
+  errors_by_type: Array<{ error_type: string; count: number }>;
+  growth: {
+    new_users_7d: number;
+    new_paid_7d: number;
+    growth_rate: number;
+  };
+  time_saved: {
+    total_hours: number;
+  };
+  funnel: {
+    installs: number;
+    activated: number;
+    power_users: number;
+  };
+  churn_risk: {
+    at_risk_users: number;
+  };
+}
+
 export async function getAdminAnalytics(): Promise<AdminAnalytics> {
   return apiRequest('/api/admin/analytics');
 }
@@ -659,67 +686,6 @@ export interface AdminUserDetail {
     invoice_count: number;
     months_subscribed: number;
   };
-  sessions: Array<{
-    id: string;
-    ip_address: string;
-    user_agent: string;
-    created_at: string;
-    expires_at: string;
-  }>;
-  audit_log: Array<{
-    id: string;
-    action: string;
-    resource_type: string | null;
-    ip_address: string | null;
-    created_at: string;
-    metadata: string | null;
-  }>;
-  achievements: Array<{
-    achievement_id: string;
-    unlocked_at: string;
-  }>;
-  subscription: {
-    id: string;
-    status: string;
-    stripe_subscription_id: string | null;
-    current_period_end: string | null;
-    cancel_at_period_end: boolean;
-  } | null;
-  invoices: Array<{
-    id: string;
-    amount_cents: number;
-    status: string;
-    created_at: string;
-  }>;
-  stripe: {
-    customer: {
-      id: string;
-      email: string;
-      balance: number;
-      delinquent: boolean;
-    };
-    subscriptions: Array<{
-      id: string;
-      status: string;
-      current_period_end: number;
-      cancel_at_period_end: boolean;
-      plan: { nickname: string; unit_amount: number; interval: string } | null;
-    }>;
-    payment_methods: Array<{
-      id: string;
-      type: string;
-      card: { brand: string; last4: string; exp_month: number; exp_year: number } | null;
-    }>;
-    invoices: Array<{
-      id: string;
-      number: string;
-      status: string;
-      amount_paid: number;
-      hosted_invoice_url: string;
-      invoice_pdf: string;
-    }>;
-    total_spent: number;
-  } | null;
 }
 
 export async function getAdminUserDetail(userId: string): Promise<AdminUserDetail> {
@@ -748,29 +714,17 @@ export async function getAdminHealth(): Promise<AdminHealth> {
 export interface AdminCohorts {
   request_id: string;
   cohorts: Array<{ 
-    month: string;
-    users: number;
-    retained: number;
-    retention_rate: number;
-    cohort_week?: string; 
-    weeks_since_signup?: number; 
-    active_users?: number;
+    cohort_week: string; 
+    weeks_since_signup: number; 
+    active_users: number;
   }>;
-  cohort_sizes: Array<{ cohort_week: string; size: number }>;
 }
 
 export interface AdminRevenue {
   request_id: string;
   mrr: number;
   arr: number;
-  total_revenue: number;
-  paying_customers: number;
-  arpu: number;
-  monthly: Array<{ month: string; revenue: number; new_subscriptions: number }>;
   monthly_revenue: Array<{ month: string; revenue: number; transactions: number }>;
-  revenue_by_tier: Array<{ tier: string; total_revenue: number; customers: number }>;
-  churn: { churned_30d: number; active: number; rate: string };
-  ltv_by_tier: Array<{ tier: string; avg_ltv: number; max_ltv: number }>;
 }
 
 export interface AdminAuditLogResponse {
@@ -786,7 +740,6 @@ export interface AdminAuditLogResponse {
     metadata: string | null;
     created_at: string;
   }>;
-  action_types: Array<{ action: string; count: number }>;
   pagination: { page: number; limit: number; total: number; pages: number };
 }
 

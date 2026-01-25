@@ -176,8 +176,54 @@ impl AurClient {
             })
             .collect();
 
-        // Sort by popularity (most popular first)
-        packages.sort_by(|a, b| b.name.cmp(&a.name));
+        // Sort by relevance: exact name match > prefix match > word boundary > substring > alphabetical
+        let query_lower = query.to_ascii_lowercase();
+        packages.sort_by(|a, b| {
+            let a_name_lower = a.name.to_ascii_lowercase();
+            let b_name_lower = b.name.to_ascii_lowercase();
+
+            // Exact match check
+            let a_exact = a_name_lower == query_lower;
+            let b_exact = b_name_lower == query_lower;
+            if a_exact != b_exact {
+                return b_exact.cmp(&a_exact); // Exact matches first
+            }
+
+            // Prefix match check
+            let a_prefix = a_name_lower.starts_with(&query_lower);
+            let b_prefix = b_name_lower.starts_with(&query_lower);
+            if a_prefix != b_prefix {
+                return b_prefix.cmp(&a_prefix); // Prefix matches first
+            }
+
+            // Word boundary match check
+            fn has_word_boundary_match(haystack: &str, needle: &str) -> bool {
+                for (pos, _) in haystack.match_indices(needle) {
+                    if pos == 0
+                        || haystack.as_bytes()[pos - 1].is_ascii_whitespace()
+                        || haystack.as_bytes()[pos - 1] == b'-'
+                        || haystack.as_bytes()[pos - 1] == b'_'
+                        || haystack.as_bytes()[pos - 1] == b'.'
+                    {
+                        return true;
+                    }
+                }
+                false
+            }
+
+            let a_word = has_word_boundary_match(&a_name_lower, &query_lower);
+            let b_word = has_word_boundary_match(&b_name_lower, &query_lower);
+            if a_word != b_word {
+                return b_word.cmp(&a_word); // Word boundary matches first
+            }
+
+            // Substring match is implied (since we're from search results)
+            // Final tiebreaker: shorter name (more specific) then alphabetical
+            match a.name.len().cmp(&b.name.len()) {
+                std::cmp::Ordering::Equal => a.name.cmp(&b.name),
+                other => other,
+            }
+        });
 
         Ok(packages)
     }
@@ -1712,7 +1758,7 @@ pub async fn search_detailed(query: &str) -> Result<Vec<AurPackageDetail>> {
         .context("Failed to parse AUR RPC response")?;
 
     // SECURITY: Validate all names in response
-    let results = response
+    let mut results = response
         .results
         .into_iter()
         .filter(|p| {
@@ -1727,7 +1773,54 @@ pub async fn search_detailed(query: &str) -> Result<Vec<AurPackageDetail>> {
                 true
             }
         })
-        .collect();
+        .collect::<Vec<_>>();
+
+    // Sort by relevance: exact name match > prefix match > word boundary > substring > popularity
+    let query_lower = query.to_ascii_lowercase();
+    results.sort_by(|a, b| {
+        let a_name_lower = a.name.to_ascii_lowercase();
+        let b_name_lower = b.name.to_ascii_lowercase();
+
+        // Exact match check
+        let a_exact = a_name_lower == query_lower;
+        let b_exact = b_name_lower == query_lower;
+        if a_exact != b_exact {
+            return b_exact.cmp(&a_exact);
+        }
+
+        // Prefix match check
+        let a_prefix = a_name_lower.starts_with(&query_lower);
+        let b_prefix = b_name_lower.starts_with(&query_lower);
+        if a_prefix != b_prefix {
+            return b_prefix.cmp(&a_prefix);
+        }
+
+        // Word boundary match check
+        fn has_word_boundary_match(haystack: &str, needle: &str) -> bool {
+            for (pos, _) in haystack.match_indices(needle) {
+                if pos == 0
+                    || haystack.as_bytes()[pos - 1].is_ascii_whitespace()
+                    || haystack.as_bytes()[pos - 1] == b'-'
+                    || haystack.as_bytes()[pos - 1] == b'_'
+                    || haystack.as_bytes()[pos - 1] == b'.'
+                {
+                    return true;
+                }
+            }
+            false
+        }
+
+        let a_word = has_word_boundary_match(&a_name_lower, &query_lower);
+        let b_word = has_word_boundary_match(&b_name_lower, &query_lower);
+        if a_word != b_word {
+            return b_word.cmp(&a_word);
+        }
+
+        // Final tiebreaker: popularity (more popular first)
+        b.popularity
+            .partial_cmp(&a.popularity)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     Ok(results)
 }
