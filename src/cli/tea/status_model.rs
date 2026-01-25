@@ -6,10 +6,9 @@ use crate::cli::style;
 use crate::cli::tea::{Cmd, Model};
 use crate::core::client::DaemonClient;
 use crate::daemon::protocol::{Request, ResponseResult};
-use crate::package_managers::{PackageManager, get_package_manager};
+use crate::package_managers::get_package_manager;
 use owo_colors::OwoColorize;
 use std::fmt::Write;
-use std::sync::Arc;
 
 /// Status data structure
 #[derive(Debug, Clone, Default)]
@@ -151,8 +150,7 @@ impl Model for StatusModel {
                             std::thread::spawn(move || {
                                 let rt = tokio::runtime::Runtime::new().unwrap();
                                 rt.block_on(async {
-                                    let pm: Arc<dyn PackageManager> =
-                                        Arc::from(get_package_manager());
+                                    let pm = get_package_manager();
                                     pm.get_status(fast).await
                                 })
                             })
@@ -161,7 +159,7 @@ impl Model for StatusModel {
                         } else {
                             let rt = tokio::runtime::Runtime::new().unwrap();
                             rt.block_on(async {
-                                let pm: Arc<dyn PackageManager> = Arc::from(get_package_manager());
+                                let pm = get_package_manager();
                                 pm.get_status(fast).await
                             })
                         };

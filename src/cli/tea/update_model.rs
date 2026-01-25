@@ -7,7 +7,6 @@ use crate::cli::tea::{Cmd, Model};
 use crate::core::packages::PackageService;
 use crate::package_managers::get_package_manager;
 use semver::Version;
-use std::sync::Arc;
 
 /// Update state machine
 #[derive(Debug, Clone, PartialEq)]
@@ -148,7 +147,7 @@ impl Model for UpdateModel {
             > = if tokio::runtime::Handle::try_current().is_ok() {
                 // Runtime exists: use a thread to avoid nesting
                 std::thread::spawn(|| {
-                    let pm = Arc::from(get_package_manager());
+                    let pm = get_package_manager();
                     let service = PackageService::new(pm);
                     let rt = tokio::runtime::Runtime::new().unwrap();
                     rt.block_on(async { service.list_updates().await })
@@ -159,7 +158,7 @@ impl Model for UpdateModel {
                 // No runtime: create one (production case)
                 let rt = tokio::runtime::Runtime::new().unwrap();
                 rt.block_on(async {
-                    let pm = Arc::from(get_package_manager());
+                    let pm = get_package_manager();
                     let service = PackageService::new(pm);
                     service.list_updates().await
                 })

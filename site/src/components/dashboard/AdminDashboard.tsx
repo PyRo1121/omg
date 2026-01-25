@@ -55,6 +55,9 @@ export const AdminDashboard: Component = () => {
   const [crmUsers, setCrmUsers] = createSignal<any[]>([]);
   const [crmSearch, setCrmSearch] = createSignal('');
   const [crmLoading, setCrmLoading] = createSignal(false);
+  
+  const [cohorts, setCohorts] = createSignal<any[]>([]);
+  const [cohortLoading, setCohortLoading] = createSignal(false);
 
   // Real-time polling
   let pollInterval: ReturnType<typeof setInterval>;
@@ -95,6 +98,27 @@ export const AdminDashboard: Component = () => {
     }
   };
 
+  const fetchAnalytics = async () => {
+    try {
+      const res = await api.get('/api/admin/analytics');
+      setAnalytics(res as any);
+    } catch (e) {
+      console.error('Analytics fetch error:', e);
+    }
+  };
+
+  const fetchCohorts = async () => {
+    setCohortLoading(true);
+    try {
+      const res = await api.get('/api/admin/cohorts');
+      setCohorts((res as any).cohorts || []);
+    } catch (e) {
+      console.error('Cohort fetch error:', e);
+    } finally {
+      setCohortLoading(false);
+    }
+  };
+
   const fetchFirehose = async () => {
     try {
       const response = await api.getAdminFirehose(20);
@@ -104,6 +128,28 @@ export const AdminDashboard: Component = () => {
     } catch (e) {
       console.error('Failed to fetch firehose:', e);
     }
+  };
+
+  const handleCrmSearch = (e: Event) => {
+    const target = e.target as HTMLInputElement;
+    setCrmSearch(target.value);
+  };
+
+  const handleCrmSearchKeyDown = (e: KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      fetchCRM();
+    }
+  };
+
+  const handleCrmExport = async () => {
+    const url = crmExportUrl();
+    if (url) {
+      window.open(url, '_blank');
+    }
+  };
+
+  const handleCrmUserAction = (email: string) => {
+    console.log('User action for:', email);
   };
 
   onMount(() => {
@@ -122,6 +168,10 @@ export const AdminDashboard: Component = () => {
   createEffect(() => {
     if (activeTab() === 'crm') {
       fetchCRM();
+    }
+    if (activeTab() === 'analytics') {
+      fetchAnalytics();
+      fetchCohorts();
     }
   });
 
@@ -388,8 +438,8 @@ export const AdminDashboard: Component = () => {
                   placeholder="Search users by email or company..." 
                   class="w-full bg-slate-900/50 border border-slate-700 rounded-xl py-2.5 pl-11 pr-4 text-white focus:outline-none focus:border-blue-500 transition-all"
                   value={crmSearch()}
-                  onInput={(e) => setCrmSearch(e.currentTarget.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && fetchCRM()}
+                  onInput={handleCrmSearch}
+                  onKeyDown={handleCrmSearchKeyDown}
                 />
               </div>
               <div class="flex items-center gap-3">
@@ -397,7 +447,7 @@ export const AdminDashboard: Component = () => {
                   <Filter class="w-4 h-4" /> Filter
                 </button>
                 <button 
-                  onClick={() => window.open(crmExportUrl(), '_blank')}
+                  onClick={handleCrmExport}
                   class="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 text-white hover:bg-blue-500 transition-all shadow-lg shadow-blue-600/20"
                 >
                   <Download class="w-4 h-4" /> Export CSV
@@ -447,14 +497,21 @@ export const AdminDashboard: Component = () => {
                             </div>
                           </td>
                           <td class="px-6 py-4">
-                            <span class={`px-2 py-0.5 rounded text-[10px] font-black uppercase border ${
-                              user.lifecycle_stage === 'power_user' ? 'bg-purple-500/10 text-purple-400 border-purple-500/20' :
-                              user.lifecycle_stage === 'active' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
-                              user.lifecycle_stage === 'at_risk' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' :
-                              'bg-slate-500/10 text-slate-400 border-slate-500/20'
-                            }`}>
-                              {user.lifecycle_stage.replace('_', ' ')}
-                            </span>
+                            <div class="flex items-center gap-2">
+                              <span class={`px-2 py-0.5 rounded text-[10px] font-black uppercase border ${
+                                user.lifecycle_stage === 'power_user' ? 'bg-purple-500/10 text-purple-400 border-purple-500/20' :
+                                user.lifecycle_stage === 'active' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
+                                user.lifecycle_stage === 'at_risk' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' :
+                                'bg-slate-500/10 text-slate-400 border-slate-500/20'
+                              }`}>
+                                {user.lifecycle_stage.replace('_', ' ')}
+                              </span>
+                              <Show when={user.velocity < 0.2 && user.lifecycle_stage !== 'churned'}>
+                                <div class="flex items-center gap-1 text-[10px] font-bold text-red-400 animate-pulse">
+                                  <ZapOff class="w-3 h-3" /> SLOWING
+                                </div>
+                              </Show>
+                            </div>
                           </td>
                           <td class="px-6 py-4">
                             <div class="flex items-center gap-1.5 text-xs text-slate-300">
@@ -470,7 +527,7 @@ export const AdminDashboard: Component = () => {
                           </td>
                           <td class="px-6 py-4 text-right">
                             <button 
-                              onClick={() => window.open(`mailto:${user.email}`, '_blank')}
+                              onClick={() => handleCrmUserAction(user.email)}
                               class="p-2 rounded-lg hover:bg-white/5 text-slate-500 hover:text-white transition-all"
                             >
                               <ChevronRight class="w-4 h-4" />
@@ -487,36 +544,89 @@ export const AdminDashboard: Component = () => {
         </Match>
 
         <Match when={activeTab() === 'analytics'}>
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-8 animate-fade-in">
+          <div class="space-y-8 animate-fade-in">
             <div class={glassCard}>
               <h3 class="text-lg font-bold text-white mb-6 flex items-center gap-2">
-                <Zap class="w-5 h-5 text-yellow-400" /> Top Commands
+                <Users class="w-5 h-5 text-blue-400" /> Retention Cohorts
               </h3>
-              <div class="space-y-4">
-                <For each={analytics()?.commands_by_type || []}>
-                  {(cmd) => (
-                    <div class="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/5">
-                      <span class="text-sm font-mono text-blue-400">{cmd.command}</span>
-                      <span class="text-xs font-bold text-slate-500">{cmd.count.toLocaleString()} calls</span>
-                    </div>
-                  )}
-                </For>
+              <div class="overflow-x-auto">
+                <table class="w-full text-left border-collapse">
+                  <thead>
+                    <tr class="text-slate-500 text-[10px] uppercase font-bold border-b border-white/5">
+                      <th class="px-4 py-3">Cohort</th>
+                      <th class="px-4 py-3">Size</th>
+                      <For each={Array.from({ length: 12 })}>
+                        {(_, i) => <th class="px-2 py-3 text-center">M{i()}</th>}
+                      </For>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-white/5">
+                    <For each={[...new Set(cohorts().map(c => c.cohort_month))]}>
+                      {(month) => {
+                        const cohortData = cohorts().filter(c => c.cohort_month === month);
+                        const size = cohortData.find(c => c.month_index === 0)?.active_users || 0;
+                        return (
+                          <tr class="text-xs">
+                            <td class="px-4 py-3 text-white font-bold">{month}</td>
+                            <td class="px-4 py-3 text-slate-400 font-mono">{size}</td>
+                            <For each={Array.from({ length: 12 })}>
+                              {(_, i) => {
+                                const data = cohortData.find(c => c.month_index === i());
+                                const percentage = size > 0 ? Math.round((data?.active_users || 0) / size * 100) : 0;
+                                const opacity = percentage / 100;
+                                return (
+                                  <td 
+                                    class="p-1 text-center"
+                                    style={{ 
+                                      'background-color': percentage > 0 ? `rgba(59, 130, 246, ${0.1 + opacity * 0.8})` : 'transparent',
+                                      'color': percentage > 50 ? 'white' : 'rgba(255,255,255,0.5)'
+                                    }}
+                                  >
+                                    {percentage > 0 ? `${percentage}%` : '-'}
+                                  </td>
+                                );
+                              }}
+                            </For>
+                          </tr>
+                        );
+                      }}
+                    </For>
+                  </tbody>
+                </table>
               </div>
             </div>
 
-            <div class={glassCard}>
-              <h3 class="text-lg font-bold text-white mb-6 flex items-center gap-2">
-                <ShieldAlert class="w-5 h-5 text-red-400" /> System Errors
-              </h3>
-              <div class="space-y-4">
-                <For each={analytics()?.errors_by_type || []}>
-                  {(err) => (
-                    <div class="flex items-center justify-between p-3 rounded-xl bg-red-500/5 border border-red-500/10">
-                      <span class="text-sm text-red-400 truncate max-w-[200px]">{err.error_type}</span>
-                      <span class="text-xs font-bold text-red-900/60">{err.count} events</span>
-                    </div>
-                  )}
-                </For>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+              <div class={glassCard}>
+                <h3 class="text-lg font-bold text-white mb-6 flex items-center gap-2">
+                  <Zap class="w-5 h-5 text-yellow-400" /> Top Commands
+                </h3>
+                <div class="space-y-4">
+                  <For each={analytics()?.commands_by_type || []}>
+                    {(cmd) => (
+                      <div class="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/5">
+                        <span class="text-sm font-mono text-blue-400">{cmd.command}</span>
+                        <span class="text-xs font-bold text-slate-500">{cmd.count.toLocaleString()} calls</span>
+                      </div>
+                    )}
+                  </For>
+                </div>
+              </div>
+
+              <div class={glassCard}>
+                <h3 class="text-lg font-bold text-white mb-6 flex items-center gap-2">
+                  <ShieldAlert class="w-5 h-5 text-red-400" /> System Errors
+                </h3>
+                <div class="space-y-4">
+                  <For each={analytics()?.errors_by_type || []}>
+                    {(err) => (
+                      <div class="flex items-center justify-between p-3 rounded-xl bg-red-500/5 border border-red-500/10">
+                        <span class="text-sm text-red-400 truncate max-w-[200px]">{err.error_type}</span>
+                        <span class="text-xs font-bold text-red-900/60">{err.count} events</span>
+                      </div>
+                    )}
+                  </For>
+                </div>
               </div>
             </div>
           </div>
@@ -527,7 +637,7 @@ export const AdminDashboard: Component = () => {
             <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
               <div class={glassCard}>
                 <span class="text-slate-500 text-[10px] uppercase font-black tracking-widest">Monthly Recurring Revenue</span>
-                <div class="text-4xl font-black text-white mt-2">${(analytics()?.growth?.new_paid_7d || 0) * 9 + 450} <span class="text-sm text-slate-500 font-normal">EST</span></div>
+                <div class="text-4xl font-black text-white mt-2">${analytics()?.time_saved?.total_hours ? Math.round(analytics()!.time_saved.total_hours * 0.5) : 450} <span class="text-sm text-slate-500 font-normal">EST</span></div>
               </div>
               <div class={glassCard}>
                 <span class="text-slate-500 text-[10px] uppercase font-black tracking-widest">Growth Rate (7d)</span>
@@ -536,6 +646,65 @@ export const AdminDashboard: Component = () => {
               <div class={glassCard}>
                 <span class="text-slate-500 text-[10px] uppercase font-black tracking-widest">Churn Risk</span>
                 <div class="text-4xl font-black text-amber-400 mt-2">{analytics()?.churn_risk?.at_risk_users || 0} <span class="text-sm text-slate-500 font-normal">USERS</span></div>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+              <div class={glassCard}>
+                <h3 class="text-lg font-bold text-white mb-6 flex items-center gap-2">
+                  <CreditCard class="w-5 h-5 text-indigo-400" /> Revenue by Tier
+                </h3>
+                <div class="space-y-4">
+                  <For each={adminData()?.tiers || []}>
+                    {(tier) => (
+                      <div class="flex items-center justify-between p-4 rounded-xl bg-white/5 border border-white/5">
+                        <div class="flex items-center gap-3">
+                          <div class={`w-2 h-2 rounded-full ${tier.tier === 'enterprise' ? 'bg-amber-500' : tier.tier === 'team' ? 'bg-purple-500' : 'bg-blue-500'}`} />
+                          <span class="text-sm font-bold text-white uppercase tracking-widest">{tier.tier}</span>
+                        </div>
+                        <div class="text-right">
+                          <div class="text-sm font-mono text-white">{tier.count} customers</div>
+                          <div class="text-[10px] text-slate-500 font-bold uppercase">Active Subscriptions</div>
+                        </div>
+                      </div>
+                    )}
+                  </For>
+                </div>
+              </div>
+
+              <div class={glassCard}>
+                <h3 class="text-lg font-bold text-white mb-6 flex items-center gap-2">
+                  <TrendingUp class="w-5 h-5 text-emerald-400" /> Growth Funnel
+                </h3>
+                <div class="space-y-6">
+                  <div class="relative">
+                    <div class="flex justify-between text-[10px] font-black text-slate-500 uppercase mb-2">
+                      <span>Installs</span>
+                      <span>{analytics()?.funnel?.installs || 0}</span>
+                    </div>
+                    <div class="h-2 bg-slate-800 rounded-full overflow-hidden">
+                      <div class="h-full bg-blue-500 w-full" />
+                    </div>
+                  </div>
+                  <div class="relative">
+                    <div class="flex justify-between text-[10px] font-black text-slate-500 uppercase mb-2">
+                      <span>Activated</span>
+                      <span>{analytics()?.funnel?.activated || 0}</span>
+                    </div>
+                    <div class="h-2 bg-slate-800 rounded-full overflow-hidden">
+                      <div class="h-full bg-indigo-500" style={{ width: `${((analytics()?.funnel?.activated || 0) / (analytics()?.funnel?.installs || 1)) * 100}%` }} />
+                    </div>
+                  </div>
+                  <div class="relative">
+                    <div class="flex justify-between text-[10px] font-black text-slate-500 uppercase mb-2">
+                      <span>Power Users</span>
+                      <span>{analytics()?.funnel?.power_users || 0}</span>
+                    </div>
+                    <div class="h-2 bg-slate-800 rounded-full overflow-hidden">
+                      <div class="h-full bg-purple-500" style={{ width: `${((analytics()?.funnel?.power_users || 0) / (analytics()?.funnel?.installs || 1)) * 100}%` }} />
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -554,20 +723,25 @@ export const AdminDashboard: Component = () => {
                     <th class="px-6 py-3">Timestamp</th>
                     <th class="px-6 py-3">Action</th>
                     <th class="px-6 py-3">User</th>
-                    <th class="px-6 py-3">IP Address</th>
+                    <th class="px-6 py-3">Details</th>
                   </tr>
                 </thead>
                 <tbody class="divide-y divide-white/5">
-                  <For each={adminData()?.recent_signups || []}>
+                  <For each={events()}>
                     {(log) => (
                       <tr class="text-xs">
-                        <td class="px-6 py-3 text-slate-500 font-mono">{log.date}</td>
-                        <td class="px-6 py-3"><span class="text-blue-400 font-bold">user.signup</span></td>
-                        <td class="px-6 py-3 text-slate-300">New User Joined</td>
-                        <td class="px-6 py-3 text-slate-500 font-mono">---.---.---.---</td>
+                        <td class="px-6 py-3 text-slate-500 font-mono">{new Date(log.created_at).toLocaleString()}</td>
+                        <td class="px-6 py-3"><span class="text-blue-400 font-bold">{log.event_name}</span></td>
+                        <td class="px-6 py-3 text-slate-300">{log.platform}</td>
+                        <td class="px-6 py-3 text-slate-500 font-mono truncate max-w-xs">{JSON.stringify(log.properties)}</td>
                       </tr>
                     )}
                   </For>
+                  <Show when={!events().length}>
+                    <tr>
+                      <td colspan="4" class="px-6 py-12 text-center text-slate-500 italic">No recent activity found.</td>
+                    </tr>
+                  </Show>
                 </tbody>
               </table>
             </div>

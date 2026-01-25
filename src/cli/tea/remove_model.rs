@@ -8,7 +8,6 @@ use crate::core::packages::PackageService;
 use crate::package_managers::get_package_manager;
 use owo_colors::OwoColorize;
 use std::fmt::Write;
-use std::sync::Arc;
 
 /// Removal state machine
 #[derive(Debug, Clone, PartialEq)]
@@ -136,7 +135,7 @@ impl Model for RemoveModel {
                 Cmd::Exec(Box::new(move || {
                     let result = if tokio::runtime::Handle::try_current().is_ok() {
                         std::thread::spawn(move || {
-                            let pm = Arc::from(get_package_manager());
+                            let pm = get_package_manager();
                             let service = PackageService::new(pm);
                             let rt = tokio::runtime::Runtime::new().unwrap();
                             rt.block_on(async { service.remove(&packages, recursive).await })
@@ -146,7 +145,7 @@ impl Model for RemoveModel {
                     } else {
                         let rt = tokio::runtime::Runtime::new().unwrap();
                         rt.block_on(async {
-                            let pm = Arc::from(get_package_manager());
+                            let pm = get_package_manager();
                             let service = PackageService::new(pm);
                             service.remove(&packages, recursive).await
                         })

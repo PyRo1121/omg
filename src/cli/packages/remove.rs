@@ -1,7 +1,6 @@
 //! Remove functionality for packages
 
 use anyhow::Result;
-use std::sync::Arc;
 
 use crate::cli::tea::run_remove_elm;
 use crate::cli::ui;
@@ -31,7 +30,7 @@ pub async fn remove(packages: &[String], recursive: bool, yes: bool) -> Result<(
 }
 
 async fn remove_fallback(packages: &[String], recursive: bool) -> Result<()> {
-    let pm = Arc::from(get_package_manager());
+    let pm = get_package_manager();
     let service = PackageService::new(pm);
 
     ui::print_header("OMG", &format!("Removing {} package(s)", packages.len()));

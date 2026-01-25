@@ -2,7 +2,6 @@
 
 use anyhow::Result;
 use serde::Serialize;
-use std::sync::Arc;
 
 use crate::cli::tea::Cmd;
 use crate::core::packages::PackageService;
@@ -46,7 +45,7 @@ pub async fn run(security_only: bool, json: bool) -> Result<()> {
         crate::cli::packages::execute_cmd(Components::loading("Checking for updates"));
     }
 
-    let pm = Arc::from(get_package_manager());
+    let pm = get_package_manager();
     let service = PackageService::new(pm);
     let updates = service.list_updates().await?;
 

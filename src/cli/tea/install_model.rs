@@ -9,7 +9,6 @@ use crate::cli::tea::{Cmd, Model};
 use crate::core::packages::PackageService;
 use crate::package_managers::get_package_manager;
 use owo_colors::OwoColorize;
-use std::sync::Arc;
 
 /// Installation state machine
 #[derive(Debug, Clone, PartialEq)]
@@ -150,7 +149,7 @@ impl Model for InstallModel {
                         let packages_task = packages.clone();
                         let result = if tokio::runtime::Handle::try_current().is_ok() {
                             std::thread::spawn(move || {
-                                let pm = Arc::from(get_package_manager());
+                                let pm = get_package_manager();
                                 let service = PackageService::new(pm);
                                 let rt = tokio::runtime::Runtime::new().unwrap();
                                 rt.block_on(async { service.install(&packages_task, yes).await })
@@ -160,7 +159,7 @@ impl Model for InstallModel {
                         } else {
                             let rt = tokio::runtime::Runtime::new().unwrap();
                             rt.block_on(async {
-                                let pm = Arc::from(get_package_manager());
+                                let pm = get_package_manager();
                                 let service = PackageService::new(pm);
                                 service.install(&packages, yes).await
                             })
