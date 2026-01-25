@@ -3,9 +3,9 @@
 use anyhow::Result;
 use async_trait::async_trait;
 
-use crate::cli::{CliContext, CommandRunner, ContainerCommands};
 use crate::cli::components::Components;
 use crate::cli::tea::Cmd;
+use crate::cli::{CliContext, CommandRunner, ContainerCommands};
 use crate::core::container::{
     ContainerConfig, ContainerManager, ContainerRuntime, detect_runtime, dev_container_config,
 };
@@ -109,20 +109,16 @@ pub fn status() -> Result<()> {
                     Components::complete("Container status retrieved"),
                 ])
             }
-            Ok(_) => {
-                Cmd::batch([
-                    Components::header("Container Status", &format!("Runtime: {}", runtime_str)),
-                    Components::spacer(),
-                    Components::info("No running containers"),
-                ])
-            }
-            Err(e) => {
-                Cmd::batch([
-                    Components::header("Container Status", &format!("Runtime: {}", runtime_str)),
-                    Components::spacer(),
-                    Components::error(&format!("Failed to list containers: {}", e)),
-                ])
-            }
+            Ok(_) => Cmd::batch([
+                Components::header("Container Status", &format!("Runtime: {}", runtime_str)),
+                Components::spacer(),
+                Components::info("No running containers"),
+            ]),
+            Err(e) => Cmd::batch([
+                Components::header("Container Status", &format!("Runtime: {}", runtime_str)),
+                Components::spacer(),
+                Components::error(&format!("Failed to list containers: {}", e)),
+            ]),
         }
     } else {
         Cmd::batch([
@@ -177,7 +173,10 @@ pub fn run(
 
     let manager = ContainerManager::new()?;
 
-    execute_cmd(Components::loading(&format!("Running in {} container...", image)));
+    execute_cmd(Components::loading(&format!(
+        "Running in {} container...",
+        image
+    )));
 
     let env_pairs = parse_env_vars(env);
     let volume_pairs = parse_volumes(volumes);
@@ -332,7 +331,10 @@ pub fn build(
         target.as_deref(),
     )?;
 
-    execute_cmd(Components::complete(&format!("Image {} built successfully", tag)));
+    execute_cmd(Components::complete(&format!(
+        "Image {} built successfully",
+        tag
+    )));
 
     Ok(())
 }
@@ -429,7 +431,10 @@ pub fn pull(image: &str) -> Result<()> {
 
     manager.pull(image)?;
 
-    execute_cmd(Components::complete(&format!("Image {} pulled successfully", image)));
+    execute_cmd(Components::complete(&format!(
+        "Image {} pulled successfully",
+        image
+    )));
 
     Ok(())
 }
@@ -440,11 +445,17 @@ pub fn stop(container: &str) -> Result<()> {
 
     let manager = ContainerManager::new()?;
 
-    execute_cmd(Components::loading(&format!("Stopping container: {}", container)));
+    execute_cmd(Components::loading(&format!(
+        "Stopping container: {}",
+        container
+    )));
 
     manager.stop(container)?;
 
-    execute_cmd(Components::complete(&format!("Container {} stopped", container)));
+    execute_cmd(Components::complete(&format!(
+        "Container {} stopped",
+        container
+    )));
 
     Ok(())
 }

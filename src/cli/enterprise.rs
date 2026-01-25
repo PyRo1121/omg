@@ -1,10 +1,10 @@
 //! `omg enterprise` - Enterprise features (reports, policies, compliance)
 
+use crate::cli::components::Components;
+use crate::cli::tea::Cmd;
 use crate::cli::{
     CliContext, CommandRunner, EnterpriseCommands, EnterprisePolicyCommands, ServerCommands,
 };
-use crate::cli::components::Components;
-use crate::cli::tea::Cmd;
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -71,7 +71,10 @@ pub async fn reports(report_type: &str, format: &str, _ctx: &CliContext) -> Resu
 
     license::require_feature("enterprise-reports")?;
 
-    execute_cmd(Components::loading(&format!("Generating {} report...", report_type)));
+    execute_cmd(Components::loading(&format!(
+        "Generating {} report...",
+        report_type
+    )));
 
     let report = generate_report(report_type).await;
     let filename = format!(
@@ -143,7 +146,10 @@ pub fn audit_export(
 
     license::require_feature("audit-export")?;
 
-    execute_cmd(Components::loading(&format!("Exporting {} audit evidence...", format)));
+    execute_cmd(Components::loading(&format!(
+        "Exporting {} audit evidence...",
+        format
+    )));
 
     let period_str = period.unwrap_or("current");
     fs::create_dir_all(output)?;
@@ -225,7 +231,10 @@ pub fn license_scan(export: Option<&str>, _ctx: &CliContext) -> Result<()> {
     }
 
     execute_cmd(Cmd::batch([
-        Components::header("License Compliance Scan", &format!("{} total packages", scan.total)),
+        Components::header(
+            "License Compliance Scan",
+            &format!("{} total packages", scan.total),
+        ),
         Components::spacer(),
         Components::card("License Inventory", license_inventory),
         if !violations.is_empty() {
@@ -245,22 +254,19 @@ pub fn license_scan(export: Option<&str>, _ctx: &CliContext) -> Result<()> {
             Cmd::none()
         },
         if let Some(format) = export {
-            Cmd::batch([
-                Components::spacer(),
-                {
-                    let filename = format!(
-                        "license-scan-{}.{}",
-                        jiff::Timestamp::now().as_second(),
-                        format
-                    );
-                    let content = match format {
-                        "csv" => generate_license_csv(&scan),
-                        _ => serde_json::to_string_pretty(&scan)?,
-                    };
-                    fs::write(&filename, content)?;
-                    Components::success(&format!("Exported to {}", filename))
-                },
-            ])
+            Cmd::batch([Components::spacer(), {
+                let filename = format!(
+                    "license-scan-{}.{}",
+                    jiff::Timestamp::now().as_second(),
+                    format
+                );
+                let content = match format {
+                    "csv" => generate_license_csv(&scan),
+                    _ => serde_json::to_string_pretty(&scan)?,
+                };
+                fs::write(&filename, content)?;
+                Components::success(&format!("Exported to {}", filename))
+            }])
         } else {
             Cmd::none()
         },
@@ -273,8 +279,8 @@ pub fn license_scan(export: Option<&str>, _ctx: &CliContext) -> Result<()> {
 pub mod policy {
     use super::{CliContext, Result, license};
     use crate::cli::components::Components;
-    use crate::cli::tea::Cmd;
     use crate::cli::packages::execute_cmd;
+    use crate::cli::tea::Cmd;
 
     pub fn set(scope: &str, rule: &str, _ctx: &CliContext) -> Result<()> {
         // SECURITY: Validate scope and rule
@@ -287,7 +293,9 @@ pub mod policy {
             anyhow::bail!("Invalid policy scope");
         }
         if rule.len() > 1024 {
-            execute_cmd(Components::error("Policy rule too long (max 1024 characters)"));
+            execute_cmd(Components::error(
+                "Policy rule too long (max 1024 characters)",
+            ));
             anyhow::bail!("Policy rule too long");
         }
 
@@ -297,10 +305,7 @@ pub mod policy {
             Components::loading("Setting policy rule..."),
             Components::kv_list(
                 Some("Policy Rule Set"),
-                vec![
-                    ("Scope", scope),
-                    ("Rule", rule),
-                ],
+                vec![("Scope", scope), ("Rule", rule)],
             ),
             Components::spacer(),
             Components::info("This rule will be enforced on next sync"),
@@ -342,7 +347,10 @@ pub mod policy {
             }
 
             let enforced = if p.enforced { "Yes" } else { "No (Audit only)" };
-            policy_list.push(format!("{} (Scope: {}) - Enforced: {}", p.rule, p.scope, enforced));
+            policy_list.push(format!(
+                "{} (Scope: {}) - Enforced: {}",
+                p.rule, p.scope, enforced
+            ));
         }
 
         execute_cmd(Cmd::batch([
@@ -391,8 +399,8 @@ pub mod policy {
 pub mod server {
     use super::{CliContext, Result, license};
     use crate::cli::components::Components;
-    use crate::cli::tea::Cmd;
     use crate::cli::packages::execute_cmd;
+    use crate::cli::tea::Cmd;
 
     pub fn init(license_key: &str, storage: &str, domain: &str, _ctx: &CliContext) -> Result<()> {
         // SECURITY: Validate all inputs
@@ -419,7 +427,9 @@ pub mod server {
 
         license::require_feature("self-hosted")?;
 
-        execute_cmd(Components::loading("Initializing self-hosted OMG server..."));
+        execute_cmd(Components::loading(
+            "Initializing self-hosted OMG server...",
+        ));
 
         // Validate license and create directories
         let config_details = vec![
@@ -435,7 +445,10 @@ pub mod server {
             Components::spacer(),
             Components::header("Next Steps", ""),
             Cmd::println("  1. Start server: omgd --server"),
-            Cmd::println(&format!("  2. Configure clients: omg config set registry.url https://{}", domain)),
+            Cmd::println(&format!(
+                "  2. Configure clients: omg config set registry.url https://{}",
+                domain
+            )),
             Cmd::println("  3. Sync packages: omg enterprise server mirror"),
         ]));
 

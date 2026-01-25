@@ -4,12 +4,12 @@ use anyhow::Result;
 use dialoguer::Select;
 use std::sync::Arc;
 
+use crate::cli::packages::execute_cmd;
 use crate::cli::tea::run_install_elm;
 use crate::cli::{style, ui};
 use crate::core::client::DaemonClient;
 use crate::core::packages::PackageService;
 use crate::package_managers::get_package_manager;
-use crate::cli::packages::execute_cmd;
 
 /// Install packages with Graded Security
 pub async fn install(packages: &[String], yes: bool) -> Result<()> {

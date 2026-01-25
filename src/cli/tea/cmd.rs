@@ -321,7 +321,11 @@ impl<M> Cmd<M> {
 
     /// Create a simple progress bar
     #[must_use]
-    pub fn simple_progress(id: impl Into<String>, message: impl Into<String>, percent: usize) -> Self {
+    pub fn simple_progress(
+        id: impl Into<String>,
+        message: impl Into<String>,
+        percent: usize,
+    ) -> Self {
         Self::Progress(ProgressConfig {
             id: id.into(),
             message: message.into(),

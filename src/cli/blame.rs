@@ -48,10 +48,7 @@ fn build_blame_output(package: &str) -> Result<Cmd<()>> {
     } else {
         commands.push(Components::kv_list(
             Some("Package Information"),
-            vec![
-                ("Name", package),
-                ("Install Reason", &install_reason),
-            ],
+            vec![("Name", package), ("Install Reason", &install_reason)],
         ));
     }
 
@@ -95,7 +92,10 @@ fn build_blame_output(package: &str) -> Result<Cmd<()>> {
                 };
 
                 let time = format_timestamp(txn.timestamp.as_second());
-                Some(format!("{} {} {} ({})", time, action, version_info, change.source))
+                Some(format!(
+                    "{} {} {} ({})",
+                    time, action, version_info, change.source
+                ))
             })
             .collect();
 
@@ -182,8 +182,8 @@ fn get_package_info(_package: &str) -> Result<(bool, Option<String>, String)> {
 
 #[cfg(feature = "arch")]
 fn show_required_by(package: &str) -> Result<Cmd<()>> {
-    use alpm::Alpm;
     use crate::cli::components::Components;
+    use alpm::Alpm;
 
     let handle = Alpm::new("/", "/var/lib/pacman")
         .map_err(|e| anyhow::anyhow!("Failed to open ALPM: {e}"))?;
@@ -212,8 +212,8 @@ fn show_required_by(package: &str) -> Result<Cmd<()>> {
 
 #[cfg(all(feature = "debian", not(feature = "arch")))]
 fn show_required_by(package: &str) -> Result<Cmd<()>> {
-    use std::process::Command;
     use crate::cli::components::Components;
+    use std::process::Command;
 
     let output = Command::new("apt-cache")
         .args(["rdepends", "--installed", "--", package])

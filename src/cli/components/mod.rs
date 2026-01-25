@@ -243,11 +243,7 @@ impl Components {
     /// Section header for grouping related output
     #[must_use]
     pub fn section<M>(title: impl Into<String>) -> Cmd<M> {
-        Cmd::batch([
-            Cmd::spacer(),
-            Cmd::header(title.into(), ""),
-            Cmd::spacer(),
-        ])
+        Cmd::batch([Cmd::spacer(), Cmd::header(title.into(), ""), Cmd::spacer()])
     }
 }
 
@@ -287,10 +283,8 @@ mod tests {
 
     #[test]
     fn test_components_package_list() {
-        let cmd: Cmd<()> = Components::package_list(
-            "Results",
-            vec![("pkg1", Some("desc")), ("pkg2", None)],
-        );
+        let cmd: Cmd<()> =
+            Components::package_list("Results", vec![("pkg1", Some("desc")), ("pkg2", None)]);
         assert!(matches!(cmd, Cmd::Card(_, _)));
     }
 

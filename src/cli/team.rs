@@ -1,10 +1,10 @@
 //! Team collaboration CLI commands
 
+use crate::cli::components::Components;
+use crate::cli::tea::Cmd;
 use crate::cli::{
     CliContext, CommandRunner, GoldenPathCommands, NotifyCommands, TeamCommands, TeamRoleCommands,
 };
-use crate::cli::components::Components;
-use crate::cli::tea::Cmd;
 use anyhow::Result;
 use async_trait::async_trait;
 
@@ -79,7 +79,9 @@ pub fn init(team_id: &str, name: Option<&str>, _ctx: &CliContext) -> Result<()> 
     if let Some(n) = name
         && (n.len() > 128 || n.chars().any(char::is_control))
     {
-        execute_cmd(Components::error("Invalid team name (too long or contains control characters)"));
+        execute_cmd(Components::error(
+            "Invalid team name (too long or contains control characters)",
+        ));
         anyhow::bail!("Invalid team name");
     }
 
@@ -98,10 +100,7 @@ pub fn init(team_id: &str, name: Option<&str>, _ctx: &CliContext) -> Result<()> 
         Components::success("Team workspace initialized!"),
         Components::kv_list(
             Some("Team Details"),
-            vec![
-                ("Team ID", team_id),
-                ("Name", display_name),
-            ],
+            vec![("Team ID", team_id), ("Name", display_name)],
         ),
         Components::spacer(),
         Components::header("Next Steps", ""),
@@ -181,9 +180,10 @@ pub async fn status(_ctx: &CliContext) -> Result<()> {
 
     let team_status = workspace.update_status().await?;
 
-    let mut details = vec![
-        format!("Team: {} ({})", team_status.config.name, team_status.config.team_id),
-    ];
+    let mut details = vec![format!(
+        "Team: {} ({})",
+        team_status.config.name, team_status.config.team_id
+    )];
 
     if let Some(ref url) = team_status.config.remote_url {
         details.push(format!("Remote: {}", url));
@@ -194,7 +194,10 @@ pub async fn status(_ctx: &CliContext) -> Result<()> {
         if team_status.lock_hash.is_empty() {
             "none".to_string()
         } else {
-            format!("{}...", &team_status.lock_hash[..12.min(team_status.lock_hash.len())])
+            format!(
+                "{}...",
+                &team_status.lock_hash[..12.min(team_status.lock_hash.len())]
+            )
         }
     ));
 
@@ -205,12 +208,23 @@ pub async fn status(_ctx: &CliContext) -> Result<()> {
             "{} {} - {}",
             status_icon,
             member.name,
-            if member.in_sync { "in sync" } else { "drift detected" }
+            if member.in_sync {
+                "in sync"
+            } else {
+                "drift detected"
+            }
         ));
     }
 
     execute_cmd(Cmd::batch([
-        Components::header("Team Status", &format!("{}/{} members in sync", team_status.in_sync_count(), team_status.members.len())),
+        Components::header(
+            "Team Status",
+            &format!(
+                "{}/{} members in sync",
+                team_status.in_sync_count(),
+                team_status.members.len()
+            ),
+        ),
         Components::spacer(),
         Components::card("Team Information", details),
         Components::spacer(),
@@ -291,7 +305,9 @@ pub async fn members(_ctx: &CliContext) -> Result<()> {
         execute_cmd(Cmd::batch([
             Components::header("Team Members", "No members found"),
             Components::spacer(),
-            Components::info("Team members will appear here once they activate with your license key"),
+            Components::info(
+                "Team members will appear here once they activate with your license key",
+            ),
         ]));
         return Ok(());
     }
@@ -446,8 +462,8 @@ pub fn invite(email: Option<&str>, role: &str, _ctx: &CliContext) -> Result<()> 
 pub mod roles {
     use super::{CliContext, Result, license};
     use crate::cli::components::Components;
-    use crate::cli::tea::Cmd;
     use crate::cli::packages::execute_cmd;
+    use crate::cli::tea::Cmd;
 
     pub fn list(_ctx: &CliContext) -> Result<()> {
         license::require_feature("team-sync")?;
@@ -544,7 +560,10 @@ pub async fn propose(message: &str, _ctx: &CliContext) -> Result<()> {
         ),
         Components::spacer(),
         Components::info("Notified reviewers for approval"),
-        Components::info(&format!("Check status with: omg team review {}", proposal_id)),
+        Components::info(&format!(
+            "Check status with: omg team review {}",
+            proposal_id
+        )),
     ]));
 
     Ok(())
@@ -559,7 +578,10 @@ pub async fn review(proposal_id: u32, approve: bool, _ctx: &CliContext) -> Resul
     let status = if approve { "approved" } else { "rejected" };
     let status_str = if approve { "APPROVE" } else { "REJECT" };
 
-    execute_cmd(Components::loading(&format!("Reviewing proposal #{} -> {}...", proposal_id, status_str)));
+    execute_cmd(Components::loading(&format!(
+        "Reviewing proposal #{} -> {}...",
+        proposal_id, status_str
+    )));
 
     license::review_proposal(proposal_id, status).await?;
 
@@ -611,8 +633,8 @@ pub async fn list_proposals(_ctx: &CliContext) -> Result<()> {
 pub mod golden_path {
     use super::{CliContext, Result, license};
     use crate::cli::components::Components;
-    use crate::cli::tea::Cmd;
     use crate::cli::packages::execute_cmd;
+    use crate::cli::tea::Cmd;
     use serde::{Deserialize, Serialize};
     use std::collections::HashMap;
 
@@ -734,7 +756,10 @@ pub mod golden_path {
             Components::success(&format!("Golden path '{}' created!", name)),
             Components::card("Template Details", details),
             Components::spacer(),
-            Components::info(&format!("Developers can now use: omg new {} <project-name>", name)),
+            Components::info(&format!(
+                "Developers can now use: omg new {} <project-name>",
+                name
+            )),
         ]));
 
         Ok(())
@@ -749,11 +774,14 @@ pub mod golden_path {
             execute_cmd(Cmd::batch([
                 Components::header("Golden Path Templates", "No custom templates"),
                 Components::spacer(),
-                Components::card("Default Templates", vec![
-                    "react-app - Node 20, React, ESLint, Prettier".to_string(),
-                    "python-api - Python 3.12, FastAPI, pytest".to_string(),
-                    "go-service - Go 1.21, standard layout".to_string(),
-                ]),
+                Components::card(
+                    "Default Templates",
+                    vec![
+                        "react-app - Node 20, React, ESLint, Prettier".to_string(),
+                        "python-api - Python 3.12, FastAPI, pytest".to_string(),
+                        "go-service - Go 1.21, standard layout".to_string(),
+                    ],
+                ),
                 Components::spacer(),
                 Components::info("Create new: omg team golden-path create <name>"),
             ]));
@@ -793,7 +821,10 @@ pub mod golden_path {
             config.save()?;
             execute_cmd(Components::success(&format!("Deleted template '{}'", name)));
         } else {
-            execute_cmd(Components::warning(&format!("Template '{}' not found", name)));
+            execute_cmd(Components::warning(&format!(
+                "Template '{}' not found",
+                name
+            )));
         }
 
         Ok(())
@@ -822,7 +853,9 @@ pub fn compliance(export: Option<&str>, enforce: bool, _ctx: &CliContext) -> Res
         if enforce {
             Cmd::batch([
                 Components::spacer(),
-                Components::warning("Enforcement mode enabled - Non-compliant operations will be blocked"),
+                Components::warning(
+                    "Enforcement mode enabled - Non-compliant operations will be blocked",
+                ),
             ])
         } else {
             Cmd::none()
@@ -883,8 +916,8 @@ pub async fn activity(days: u32, _ctx: &CliContext) -> Result<()> {
 pub mod team_notify {
     use super::{CliContext, Result, license};
     use crate::cli::components::Components;
-    use crate::cli::tea::Cmd;
     use crate::cli::packages::execute_cmd;
+    use crate::cli::tea::Cmd;
     use serde::{Deserialize, Serialize};
 
     #[derive(Debug, Serialize, Deserialize)]
@@ -899,7 +932,10 @@ pub mod team_notify {
         // SECURITY: Validate type and URL
         let valid_types = ["slack", "discord", "webhook"];
         if !valid_types.contains(&notify_type) {
-            execute_cmd(Components::error(&format!("Invalid notification type: {}", notify_type)));
+            execute_cmd(Components::error(&format!(
+                "Invalid notification type: {}",
+                notify_type
+            )));
             anyhow::bail!("Invalid notification type: {notify_type}");
         }
         if !url.starts_with("https://") || url.len() > 1024 {
@@ -937,10 +973,13 @@ pub mod team_notify {
         execute_cmd(Cmd::batch([
             Components::header("Configured Notifications", "Webhooks and integrations"),
             Components::spacer(),
-            Components::card("Active Notifications", vec![
-                "notify-abc123 - slack - https://hooks.slack.com/...".to_string(),
-                "notify-xyz789 - discord - https://discord.com/api/...".to_string(),
-            ]),
+            Components::card(
+                "Active Notifications",
+                vec![
+                    "notify-abc123 - slack - https://hooks.slack.com/...".to_string(),
+                    "notify-xyz789 - discord - https://discord.com/api/...".to_string(),
+                ],
+            ),
         ]));
 
         Ok(())

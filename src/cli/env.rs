@@ -1,6 +1,6 @@
-use crate::cli::{CliContext, CommandRunner, EnvCommands};
 use crate::cli::components::Components;
 use crate::cli::tea::Cmd;
+use crate::cli::{CliContext, CommandRunner, EnvCommands};
 use crate::core::env::fingerprint::{DriftReport, EnvironmentState};
 use crate::core::http::shared_client;
 use anyhow::{Context, Result};
@@ -82,10 +82,7 @@ pub async fn check() -> Result<()> {
         Components::spacer(),
         Components::kv_list(
             Some("Environment Status"),
-            vec![
-                ("Lockfile", "omg.lock"),
-                ("Status", "No drift detected"),
-            ],
+            vec![("Lockfile", "omg.lock"), ("Status", "No drift detected")],
         ),
     ]));
 
@@ -122,7 +119,9 @@ pub async fn share(description: String, public: bool) -> Result<()> {
 
     // SECURITY: Validate description
     if description.len() > 1000 {
-        execute_cmd(Components::error("Description too long (max 1000 characters)"));
+        execute_cmd(Components::error(
+            "Description too long (max 1000 characters)",
+        ));
         anyhow::bail!("Description too long");
     }
 
@@ -161,7 +160,10 @@ pub async fn share(description: String, public: bool) -> Result<()> {
     if !response.status().is_success() {
         let status = response.status();
         let text = response.text().await?;
-        execute_cmd(Components::error(&format!("Failed to create gist: {} - {}", status, text)));
+        execute_cmd(Components::error(&format!(
+            "Failed to create gist: {} - {}",
+            status, text
+        )));
         anyhow::bail!("Failed to create gist: {status} - {text}");
     }
 
@@ -173,7 +175,14 @@ pub async fn share(description: String, public: bool) -> Result<()> {
             Some("Gist Details"),
             vec![
                 ("URL", &gist_resp.html_url),
-                ("Visibility", &(if public { "Public".to_string() } else { "Private".to_string() })),
+                (
+                    "Visibility",
+                    &(if public {
+                        "Public".to_string()
+                    } else {
+                        "Private".to_string()
+                    }),
+                ),
             ],
         ),
     ]));
@@ -217,7 +226,10 @@ pub async fn sync(url_or_id: String) -> Result<()> {
 
     if !response.status().is_success() {
         let status = response.status();
-        execute_cmd(Components::error(&format!("Failed to fetch Gist: {}", status)));
+        execute_cmd(Components::error(&format!(
+            "Failed to fetch Gist: {}",
+            status
+        )));
         anyhow::bail!("Failed to fetch Gist: {}", status);
     }
 

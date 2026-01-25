@@ -1,8 +1,8 @@
 //! `omg fleet` - Multi-machine fleet management (Enterprise)
 
-use crate::cli::{CliContext, CommandRunner, FleetCommands};
 use crate::cli::components::Components;
 use crate::cli::tea::Cmd;
+use crate::cli::{CliContext, CommandRunner, FleetCommands};
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -73,7 +73,10 @@ pub async fn status(_ctx: &CliContext) -> Result<()> {
 
     let status_items = vec![
         ("Total Machines", total_machines.to_string()),
-        ("Health", format!("{}% {}", compliance_pct as u32, health_bar)),
+        (
+            "Health",
+            format!("{}% {}", compliance_pct as u32, health_bar),
+        ),
         ("Compliant", compliant.to_string()),
         ("With Drift", drifted.to_string()),
         ("Offline", offline.to_string()),
@@ -142,7 +145,9 @@ pub async fn push(team: Option<&str>, message: Option<&str>, _ctx: &CliContext) 
     if let Some(m) = message {
         // SECURITY: Validate message
         if m.len() > 1000 {
-            execute_cmd(Components::error("Push message too long (max 1000 characters)"));
+            execute_cmd(Components::error(
+                "Push message too long (max 1000 characters)",
+            ));
             anyhow::bail!("Push message too long");
         }
     }
@@ -164,7 +169,9 @@ pub async fn push(team: Option<&str>, message: Option<&str>, _ctx: &CliContext) 
         std::fs::read_to_string(lock_path).unwrap_or_default()
     } else {
         // Fallback to capturing current state if no lockfile
-        execute_cmd(Components::warning("No omg.lock found, capturing current state..."));
+        execute_cmd(Components::warning(
+            "No omg.lock found, capturing current state...",
+        ));
         String::new()
     };
 
@@ -186,16 +193,24 @@ pub async fn push(team: Option<&str>, message: Option<&str>, _ctx: &CliContext) 
             if !res.status().is_success() {
                 // If API is not yet ready, we warn but don't fail hard for this demo
                 if res.status() == reqwest::StatusCode::NOT_FOUND {
-                    execute_cmd(Components::warning("Fleet API endpoint not yet active (404). Config saved locally."));
+                    execute_cmd(Components::warning(
+                        "Fleet API endpoint not yet active (404). Config saved locally.",
+                    ));
                 } else {
-                    execute_cmd(Components::error(&format!("Fleet push failed: {}", res.status())));
+                    execute_cmd(Components::error(&format!(
+                        "Fleet push failed: {}",
+                        res.status()
+                    )));
                     anyhow::bail!("Fleet push failed: {}", res.status());
                 }
             }
         }
         Err(e) => {
             // Network error
-            execute_cmd(Components::error(&format!("Failed to connect to fleet server: {}", e)));
+            execute_cmd(Components::error(&format!(
+                "Failed to connect to fleet server: {}",
+                e
+            )));
             anyhow::bail!("Failed to connect to fleet server: {e}");
         }
     }
@@ -266,7 +281,10 @@ pub async fn remediate(dry_run: bool, confirm: bool, _ctx: &CliContext) -> Resul
     execute_cmd(Cmd::batch([
         Components::success("Remediation complete!"),
         Components::status_summary(vec![
-            ("Machines remediated", (drifted_count + runtime_updates + policy_fixes).to_string()),
+            (
+                "Machines remediated",
+                (drifted_count + runtime_updates + policy_fixes).to_string(),
+            ),
             ("Status", "All successful".to_string()),
         ]),
     ]));
