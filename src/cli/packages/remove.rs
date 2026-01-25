@@ -3,12 +3,13 @@
 use anyhow::Result;
 use std::sync::Arc;
 
+use crate::cli::tea::run_remove_elm;
 use crate::cli::ui;
 use crate::core::packages::PackageService;
 use crate::package_managers::get_package_manager;
 
 /// Remove packages
-pub async fn remove(packages: &[String], recursive: bool, _yes: bool) -> Result<()> {
+pub async fn remove(packages: &[String], recursive: bool, yes: bool) -> Result<()> {
     if packages.is_empty() {
         anyhow::bail!("No packages specified");
     }
@@ -20,6 +21,16 @@ pub async fn remove(packages: &[String], recursive: bool, _yes: bool) -> Result<
         }
     }
 
+    // Try modern Elm UI first
+    if let Err(e) = run_remove_elm(packages.to_vec(), recursive, yes) {
+        eprintln!("Warning: Elm UI failed, falling back to basic mode: {e}");
+        remove_fallback(packages, recursive).await
+    } else {
+        Ok(())
+    }
+}
+
+async fn remove_fallback(packages: &[String], recursive: bool) -> Result<()> {
     let pm = Arc::from(get_package_manager());
     let service = PackageService::new(pm);
 
