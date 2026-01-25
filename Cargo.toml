@@ -1,6 +1,6 @@
 [package]
 name = "omg"
-version = "0.1.107"
+version = "0.1.108"
 edition = "2024"
 rust-version = "1.92"
 description = "The Fastest Unified Package Manager for Arch Linux + All Language Runtimes"
@@ -71,9 +71,7 @@ tokio-util = { version = "0.7.18", features = ["io", "codec", "rt"] }
 
 # Archives + compression (PURE RUST - no C deps)
 tar = "0.4.44"
-flate2 = { version = "1.1.8", default-features = false, features = [
-    "zlib-rs",
-] }
+flate2 = { version = "1.0", default-features = false, features = ["rust_backend"] }
 lz4_flex = { version = "0.12", default-features = false, features = [
     "frame",
 ] }
