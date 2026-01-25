@@ -5,12 +5,24 @@ use owo_colors::OwoColorize;
 use std::io::Write;
 
 use crate::cli::style;
+use crate::cli::tea::run_status_elm;
 use crate::core::client::DaemonClient;
 use crate::daemon::protocol::{Request, ResponseResult};
 use crate::package_managers::get_package_manager;
 
 /// Show system package status overview
 pub async fn status(fast: bool) -> Result<()> {
+    // Try modern Elm UI first
+    if let Err(e) = run_status_elm(fast) {
+        eprintln!("Warning: Elm UI failed, falling back to basic mode: {e}");
+        status_fallback(fast).await
+    } else {
+        Ok(())
+    }
+}
+
+/// Fallback implementation using original approach
+async fn status_fallback(fast: bool) -> Result<()> {
     let start = std::time::Instant::now();
 
     // 1. Try Daemon first (Hot Path)

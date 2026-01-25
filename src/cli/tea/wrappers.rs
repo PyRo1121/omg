@@ -1,6 +1,6 @@
 //! Integration wrappers for Elm-based models
 
-use crate::cli::tea::{InfoModel, InstallModel, Program, StatusModel, UpdateModel};
+use crate::cli::tea::{InfoModel, InstallModel, Program, SearchModel, StatusModel, UpdateModel};
 
 // Import Model trait for use in test modules
 #[cfg(test)]
@@ -19,14 +19,20 @@ pub fn run_info_elm(package: String) -> Result<(), std::io::Error> {
 }
 
 /// Run install command using Elm Architecture
-pub fn run_install_elm(packages: Vec<String>) -> Result<(), std::io::Error> {
-    let model = InstallModel::new(packages);
+pub fn run_install_elm(packages: Vec<String>, yes: bool) -> Result<(), std::io::Error> {
+    let model = InstallModel::new(packages).with_yes(yes);
     Program::new(model).run()
 }
 
 /// Run update command using Elm Architecture
 pub fn run_update_elm(check_only: bool, yes: bool) -> Result<(), std::io::Error> {
     let model = UpdateModel::new().with_check_only(check_only).with_yes(yes);
+    Program::new(model).run()
+}
+
+/// Run search command using Elm Architecture
+pub fn run_search_elm(query: String) -> Result<(), std::io::Error> {
+    let model = SearchModel::new().with_query(query);
     Program::new(model).run()
 }
 
@@ -49,7 +55,7 @@ mod tests {
     #[test]
     fn test_install_wrapper_creates_model() {
         let model = InstallModel::new(vec!["pkg1".to_string(), "pkg2".to_string()]);
-        assert_eq!(model.packages().len(), 2);
+        assert_eq!(model.packages.len(), 2);
     }
 
     #[test]
