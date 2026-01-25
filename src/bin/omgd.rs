@@ -66,13 +66,26 @@ async fn main() -> Result<()> {
 
     tracing::info!("Starting OMG daemon (omgd) v{}", env!("CARGO_PKG_VERSION"));
 
-    // Remove existing socket
+    // 1. Initialize State first (this will fail if another daemon is running and has the DB locked)
+    tracing::info!("Initializing daemon state...");
+    let state = std::sync::Arc::new(omg_lib::daemon::handlers::DaemonState::new()?);
+
+    // 2. Check if daemon is already responding on the socket
     if socket_path.exists() {
-        tracing::debug!("Removing existing socket at {:?}", socket_path);
+        if let Ok(mut client) =
+            omg_lib::core::client::DaemonClient::connect_to(socket_path.clone()).await
+            && client.ping().await.is_ok()
+        {
+            anyhow::bail!(
+                "Daemon is already running and responding on {:?}",
+                socket_path
+            );
+        }
+        tracing::debug!("Removing stale socket at {:?}", socket_path);
         std::fs::remove_file(&socket_path)?;
     }
 
-    // Create Unix socket listener
+    // 3. Create Unix socket listener
     let listener = UnixListener::bind(&socket_path)?;
     tracing::info!("Listening on {:?}", socket_path);
 
@@ -87,7 +100,7 @@ async fn main() -> Result<()> {
 
     // Run server
     // Capture panics in Sentry
-    let result = std::panic::AssertUnwindSafe(async { server::run(listener).await })
+    let result = std::panic::AssertUnwindSafe(async { server::run(listener, state).await })
         .catch_unwind()
         .await;
 
