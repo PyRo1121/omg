@@ -21,6 +21,7 @@ pub mod security;
 pub mod sysinfo;
 pub mod task_runner;
 pub mod telemetry;
+pub mod testing;
 mod types;
 pub mod usage;
 

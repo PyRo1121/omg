@@ -76,7 +76,9 @@ mod renderer;
 // Model implementations
 mod info_model;
 mod install_model;
+mod search_model;
 mod status_model;
+mod update_model;
 mod wrappers;
 
 pub use cmd::{Cmd, cmd};
@@ -85,10 +87,12 @@ pub use renderer::Renderer;
 // Re-export models
 pub use info_model::{InfoModel, InfoMsg, InfoSource};
 pub use install_model::{InstallModel, InstallMsg, InstallState};
+pub use search_model::{PackageSource, SearchModel, SearchMsg, SearchResult, SearchState};
 pub use status_model::{StatusData, StatusModel, StatusMsg};
+pub use update_model::{UpdateModel, UpdateMsg, UpdatePackage, UpdateState, UpdateType};
 
 // Re-export wrappers for easy integration
-pub use wrappers::{run_info_elm, run_install_elm, run_status_elm};
+pub use wrappers::{run_info_elm, run_install_elm, run_status_elm, run_update_elm};
 
 use std::fmt;
 use std::io;

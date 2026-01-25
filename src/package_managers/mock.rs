@@ -122,7 +122,6 @@ impl MockPackageManager {
 
     fn load_state(distro_name: &str) -> MockState {
         let path = paths::data_dir().join("mock_state.json");
-        eprintln!("Mock loading state from {}", path.display());
         if let Ok(data) = fs::read_to_string(&path) {
             // Handle migration from old format (HashSet) to new format (HashMap)
             // This is a bit tricky with serde.
