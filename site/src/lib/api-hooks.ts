@@ -41,7 +41,7 @@ export function useAdminEvents() {
 export function useFleetStatus() {
   return createQuery(() => ({
     queryKey: ['fleet-status'],
-    queryFn: () => apiRequest<api.Machine[]>('/api/fleet/status'),
+    queryFn: () => apiRequest<{ members: api.Machine[] }>('/api/fleet/status').then(res => res.members),
   }));
 }
 
