@@ -418,7 +418,6 @@ mod tests {
 
     #[test]
     fn test_render_result() {
-        let model = SearchModel::new();
         let result = SearchResult {
             name: "test-pkg".to_string(),
             version: "1.0.0".to_string(),
@@ -434,7 +433,7 @@ mod tests {
             out_of_date: false,
         };
 
-        let rendered = model.render_result(&result, 0);
+        let rendered = SearchModel::render_result(&result, 0);
         assert!(rendered.contains("test-pkg"));
         assert!(rendered.contains("1.0.0"));
     }
