@@ -1,6 +1,6 @@
 [package]
 name = "omg"
-version = "0.1.89"
+version = "0.1.90"
 edition = "2024"
 rust-version = "1.92"
 description = "The Fastest Unified Package Manager for Arch Linux + All Language Runtimes"
@@ -116,7 +116,6 @@ notify = "7.0"
 
 # Configuration
 home = "0.5.12"
-atty = "0.2"
 
 # Cryptography
 sha2 = "0.10.9"
