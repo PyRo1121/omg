@@ -137,8 +137,15 @@ async fn check_daemon() -> bool {
             } else {
                 // Heuristic: Check if XDG_RUNTIME_DIR might be mismatched
                 // If sudo strips it, it defaults to /tmp/omg.sock, but real socket is in /run/user/<uid>/
-                let uid = whoami::uid();
-                let common_path = std::path::PathBuf::from(format!("/run/user/{}/omg.sock", uid));
+                let uid = std::process::Command::new("id")
+                    .arg("-u")
+                    .output()
+                    .ok()
+                    .and_then(|out| String::from_utf8(out.stdout).ok())
+                    .and_then(|s| s.trim().parse::<u32>().ok())
+                    .unwrap_or(1000); // Default to 1000 if check fails
+
+                let common_path = std::path::PathBuf::from(format!("/run/user/{uid}/omg.sock"));
                 if common_path.exists() && common_path != socket_path {
                     println!(
                         "    {} Daemon socket found at {} but client is looking at {}!",
@@ -146,10 +153,7 @@ async fn check_daemon() -> bool {
                         common_path.display(),
                         socket_path.display()
                     );
-                    println!(
-                        "      Hint: Try setting XDG_RUNTIME_DIR=/run/user/{}",
-                        uid
-                    );
+                    println!("      Hint: Try setting XDG_RUNTIME_DIR=/run/user/{uid}");
                 }
             }
             false
