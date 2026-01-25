@@ -171,7 +171,6 @@ fn manual_mutation_example_privilege_error_detection() {
     // The privilege_tests.rs should have tests that:
     // - Simulate different error types
     // - Verify each error type is handled correctly
-    assert!(true); // Placeholder - real tests in privilege_tests.rs
 }
 
 #[test]
@@ -187,8 +186,6 @@ fn manual_mutation_example_version_comparison() {
     // The property_tests_v2.rs should have:
     // - prop_same_version_patch_or_unknown
     // - prop_major_bump_detected (with strict inequality)
-
-    assert!(true); // Placeholder
 }
 
 #[test]
@@ -204,8 +201,6 @@ fn manual_mutation_example_progress_clamping() {
     // The elm_update_tests.rs has:
     // - test_progress_bar_clamping_above_100
     // - test_extreme_progress_values
-
-    assert!(true); // Placeholder
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -323,7 +318,7 @@ mod mutation_test_examples {
         let value = true;
 
         // Good: Exact assertion
-        assert_eq!(value, true);
+        assert!(value);
 
         // Bad: Just checking truthiness
         // assert!(value); // Would miss true -> false mutation
@@ -357,7 +352,7 @@ mod mutation_test_examples {
         assert_eq!(value, 100);
 
         // Good: Test both sides of boundary
-        assert!(value >= 0 && value <= 100);
+        assert!((0..=100).contains(&value));
 
         // Bad: One-sided check
         // assert!(value <= 100); // Would miss 100 -> 101 mutation
@@ -366,16 +361,15 @@ mod mutation_test_examples {
     #[test]
     fn example_error_path_assertion() {
         // This catches mutations in error handling
-        let result: Result<(), &str> = Err("test error");
+        let _result: Result<(), &str> = Err("test error");
 
         // Good: Verify exact error
-        assert_eq!(result, Err("test error"));
+        assert!(matches!(_result, Err("test error")));
 
         // Good: Verify error type
-        assert!(matches!(result, Err("test error")));
+        assert!(matches!(_result, Err("test error")));
 
         // Good: Check error message
-        result.unwrap_err(); // Would miss removing error
     }
 
     #[test]

@@ -122,14 +122,27 @@ pub fn pacman_mirrorlist_path() -> PathBuf {
     env_path("OMG_PACMAN_MIRRORLIST").unwrap_or_else(|| PathBuf::from("/etc/pacman.d/mirrorlist"))
 }
 
-/// Daemon socket path (default: $`XDG_RUNTIME_DIR/omg.sock` or /tmp/omg.sock).
+/// Daemon socket path (default: $XDG_RUNTIME_DIR/omg.sock, /run/user/<uid>/omg.sock, or /tmp/omg.sock).
 #[must_use]
 pub fn socket_path() -> PathBuf {
     env_path("OMG_SOCKET_PATH").unwrap_or_else(|| {
-        std::env::var("XDG_RUNTIME_DIR").map_or_else(
-            |_| PathBuf::from("/tmp/omg.sock"),
-            |d| PathBuf::from(d).join("omg.sock"),
-        )
+        // 1. Try XDG_RUNTIME_DIR
+        if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
+            return PathBuf::from(runtime_dir).join("omg.sock");
+        }
+
+        // 2. Try common system location (/run/user/<uid>) which is often missing from env under sudo
+        #[cfg(unix)]
+        {
+            let uid = rustix::process::getuid().as_raw();
+            let system_run = PathBuf::from(format!("/run/user/{uid}/omg.sock"));
+            if system_run.exists() {
+                return system_run;
+            }
+        }
+
+        // 3. Fallback to /tmp
+        PathBuf::from("/tmp/omg.sock")
     })
 }
 

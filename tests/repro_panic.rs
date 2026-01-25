@@ -3,7 +3,7 @@ use std::process::{Command, Stdio};
 #[test]
 fn repro_node_latest_panic() {
     let output = Command::new(env!("CARGO_BIN_EXE_omg"))
-        .args(&["use", "node", "latest"])
+        .args(["use", "node", "latest"])
         .env("OMG_TEST_MODE", "1")
         .env("OMG_DISABLE_DAEMON", "1")
         .env("RUST_BACKTRACE", "1")

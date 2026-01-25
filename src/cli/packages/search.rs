@@ -5,7 +5,6 @@ use anyhow::Result;
 use crate::cli::style;
 use crate::core::Package;
 use crate::core::client::DaemonClient;
-use crate::core::env::distro::use_debian_backend;
 use crate::package_managers::get_package_manager;
 
 #[cfg(feature = "arch")]
@@ -27,19 +26,9 @@ impl DisplayPackage {
             source: p.source.to_string(),
         }
     }
-
-    #[cfg(feature = "arch")]
-    fn from_aur_detail(p: crate::package_managers::AurPackageDetail) -> Self {
-        Self {
-            name: p.name,
-            version: p.version,
-            description: p.description.unwrap_or_default(),
-            source: "AUR".to_string(),
-        }
-    }
 }
 
-pub async fn search(query: &str, detailed: bool, _interactive: bool) -> Result<()> {
+pub async fn search(query: &str, _detailed: bool, _interactive: bool) -> Result<()> {
     if query.len() > 100 {
         anyhow::bail!("Search query too long (max 100 characters)");
     }
@@ -53,50 +42,49 @@ pub async fn search(query: &str, detailed: bool, _interactive: bool) -> Result<(
         anyhow::bail!("Invalid search query: shell metacharacters detected");
     }
 
-    // Try daemon first for official repos, but always search AUR too
-    let mut display_packages: Vec<DisplayPackage> = Vec::new();
-
-    if let Ok(mut client) = DaemonClient::connect().await
-        && let Ok(res) = client.search(query, Some(50)).await
-    {
-        // Daemon returned official repo results
-        for pkg in res.packages {
-            display_packages.push(DisplayPackage {
-                name: pkg.name,
-                version: pkg.version,
-                description: pkg.description,
-                source: pkg.source,
-            });
-        }
-    } else {
-        // Fallback to direct package manager for official repos
-        let pm = get_package_manager();
-        let packages = pm.search(query).await?;
-        display_packages.extend(packages.into_iter().map(DisplayPackage::from_package));
-    }
-
-    // Always search AUR on Arch (not on Debian)
-    #[cfg(feature = "arch")]
-    if !use_debian_backend() {
-        let aur_packages = if detailed {
-            if let Ok(details) = crate::package_managers::search_detailed(query).await {
-                details
-                    .into_iter()
-                    .map(DisplayPackage::from_aur_detail)
-                    .collect()
-            } else {
-                Vec::new()
+    // Search official repos (via daemon) and AUR in parallel
+    let official_search = async {
+        let mut results = Vec::new();
+        if let Ok(mut client) = DaemonClient::connect().await
+            && let Ok(res) = client.search(query, Some(50)).await
+        {
+            for pkg in res.packages {
+                results.push(DisplayPackage {
+                    name: pkg.name,
+                    version: pkg.version,
+                    description: pkg.description,
+                    source: pkg.source,
+                });
             }
         } else {
-            let aur = AurClient::new();
-            if let Ok(pkgs) = aur.search(query).await {
-                pkgs.into_iter().map(DisplayPackage::from_package).collect()
-            } else {
-                Vec::new()
+            // Fallback to direct package manager
+            if let Ok(packages) = get_package_manager().search(query).await {
+                results.extend(packages.into_iter().map(DisplayPackage::from_package));
             }
-        };
-        display_packages.extend(aur_packages);
-    }
+        }
+        results
+    };
+
+    #[cfg(feature = "arch")]
+    let aur_search = async {
+        let aur = AurClient::new();
+        if let Ok(pkgs) = aur.search(query).await {
+            pkgs.into_iter()
+                .map(DisplayPackage::from_package)
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        }
+    };
+
+    #[cfg(not(feature = "arch"))]
+    let aur_search = async { Vec::new() };
+
+    // Execute both searches concurrently
+    let (official_packages, aur_packages) = tokio::join!(official_search, aur_search);
+
+    let mut display_packages = official_packages;
+    display_packages.extend(aur_packages);
 
     if display_packages.is_empty() {
         use crate::cli::components::Components;

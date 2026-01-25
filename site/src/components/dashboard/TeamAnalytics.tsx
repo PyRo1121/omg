@@ -111,8 +111,10 @@ export const TeamAnalytics: Component<TeamAnalyticsProps> = props => {
     }
 
     return members.sort((a, b) => {
-      if (sortBy() === 'commands') return b.total_commands - a.total_commands;
-      if (sortBy() === 'recent') return new Date(b.last_seen_at).getTime() - new Date(a.last_seen_at).getTime();
+      if (sortBy() === 'commands') return (b.total_commands || 0) - (a.total_commands || 0);
+      const timeB = b.last_seen_at ? new Date(b.last_seen_at).getTime() : 0;
+      const timeA = a.last_seen_at ? new Date(a.last_seen_at).getTime() : 0;
+      if (sortBy() === 'recent') return timeB - timeA;
       return (a.user_email || '').localeCompare(b.user_email || '');
     });
   });
@@ -240,7 +242,7 @@ export const TeamAnalytics: Component<TeamAnalyticsProps> = props => {
                     class="border-indigo-500/20 bg-indigo-500/[0.03]"
                     trend={{ value: 12.4, isUp: true }}
                   />
-                  <StatCard 
+                  <StatCard
                     title="Execution Volume"
                     value={(teamData()?.totals?.total_commands || 0).toLocaleString()}
                     icon={<Zap size={22} />}
@@ -250,10 +252,10 @@ export const TeamAnalytics: Component<TeamAnalyticsProps> = props => {
                   <div class="relative overflow-hidden rounded-[2rem] border border-white/5 bg-[#0d0d0e] p-8 shadow-2xl">
                     <div class="mb-4 flex items-center justify-between">
                       <h3 class="text-sm font-bold text-white uppercase tracking-widest">Seat Utilization</h3>
-                      <span class="text-[10px] font-black text-slate-500">{seatUsage()[0].value} / {teamData()?.license?.max_seats || 30}</span>
+                      <span class="text-[10px] font-black text-slate-500">{seatUsage()?.[0]?.value || 0} / {teamData()?.license?.max_seats || 30}</span>
                     </div>
                     <div class="flex items-center justify-center py-2">
-                      <DonutChart data={seatUsage()} size={140} thickness={16} centerLabel="Seats" centerValue={seatUsage()[0].value} />
+                      <DonutChart data={seatUsage()} size={140} thickness={16} centerLabel="Seats" centerValue={seatUsage()?.[0]?.value || 0} />
                     </div>
                   </div>
                 </div>
@@ -294,19 +296,19 @@ export const TeamAnalytics: Component<TeamAnalyticsProps> = props => {
                         <div class="p-6 rounded-3xl bg-[#0d0d0e] border border-white/5 group hover:border-white/10 transition-all">
                           <div class="flex justify-between items-start mb-4">
                             <div class="h-10 w-10 rounded-xl bg-gradient-to-br from-slate-700 to-slate-800 flex items-center justify-center font-bold text-white shadow-lg">
-                              {member.user_email?.[0].toUpperCase()}
+                              {(member.user_email?.[0] || 'U').toUpperCase()}
                             </div>
                             <div class="flex flex-col items-end">
                               <StatusBadge status={member.is_active ? 'active' : 'inactive'} />
                               <span class="text-[9px] font-mono text-slate-500 mt-1 uppercase tracking-widest">{api.formatRelativeTime(member.last_seen_at)}</span>
                             </div>
                           </div>
-                          <div class="text-sm font-bold text-white truncate">{member.user_email}</div>
-                          <div class="text-xs text-slate-500 mt-1 truncate">{member.hostname} • {member.os}</div>
+                          <div class="text-sm font-bold text-white truncate">{member.user_email || 'Unknown User'}</div>
+                          <div class="text-xs text-slate-500 mt-1 truncate">{member.hostname || 'Unknown Host'} • {member.os || 'Unknown OS'}</div>
                           <div class="mt-6 pt-4 border-t border-white/5 flex justify-between items-center">
                             <div>
                                <div class="text-[9px] font-black uppercase tracking-widest text-slate-500">Throughput</div>
-                               <div class="text-lg font-black text-indigo-400">{member.total_commands.toLocaleString()}</div>
+                               <div class="text-lg font-black text-indigo-400">{(member.total_commands || 0).toLocaleString()}</div>
                             </div>
                             <button 
                               onClick={() => { if(confirm('Revoke node access?')) revokeMutation.mutate(member.machine_id) }}
@@ -378,9 +380,9 @@ export const TeamAnalytics: Component<TeamAnalyticsProps> = props => {
                       <For each={auditLogsQuery.data?.logs || []}>
                         {log => (
                           <div class="flex items-center gap-4 text-sm py-2 border-b border-white/5">
-                            <div class="text-slate-500 font-mono text-[10px] w-32">{new Date(log.created_at).toLocaleString()}</div>
-                            <div class="text-indigo-400 font-bold w-32 uppercase tracking-tighter">{log.action}</div>
-                            <div class="text-slate-300 flex-1 truncate">{log.resource_type || 'System'} {log.resource_id}</div>
+                            <div class="text-slate-500 font-mono text-[10px] w-32">{log.created_at ? new Date(log.created_at).toLocaleString() : 'N/A'}</div>
+                            <div class="text-indigo-400 font-bold w-32 uppercase tracking-tighter">{log.action || 'ACTION'}</div>
+                            <div class="text-slate-300 flex-1 truncate">{log.resource_type || 'System'} {log.resource_id || ''}</div>
                           </div>
                         )}
                       </For>

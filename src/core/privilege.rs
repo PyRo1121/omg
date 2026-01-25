@@ -234,7 +234,24 @@ pub async fn run_self_sudo(args: &[&str]) -> anyhow::Result<()> {
         match status {
             Ok(s) if s.success() => Ok(()),
             Ok(s) => {
-                // Command ran but failed with non-zero exit code
+                // If sudo -n fails with exit code 1, it often means password is required
+                if s.code() == Some(1) {
+                    anyhow::bail!(
+                        "Privilege elevation failed in non-interactive mode (--yes flag).\n\
+                         \n\
+                         This happens because 'sudo' requires a password, but --yes prevents prompting.\n\
+                         \n\
+                         To fix this, either:\n\
+                         1. Run without --yes to enter your password once.\n\
+                         2. Configure NOPASSWD for omg in your sudoers file:\n\
+                            Run 'sudo visudo' and add:\n\
+                            {user} ALL=(ALL) NOPASSWD: {exe}\n\
+                         \n\
+                         (Replace {user} with your username)",
+                        user = whoami::username().unwrap_or_else(|_| "username".to_string()),
+                        exe = exe.display()
+                    );
+                }
                 anyhow::bail!("Elevated command failed with exit code: {s}")
             }
             Err(e) => {
@@ -474,8 +491,7 @@ mod tests {
         for op in ["install", "remove", "upgrade", "update", "sync", "clean"] {
             assert!(
                 checker.elevate(op, &args).is_ok(),
-                "Operation {} should succeed",
-                op
+                "Operation {op} should succeed"
             );
         }
     }
@@ -487,8 +503,7 @@ mod tests {
         for op in ["search", "info", "status", "evil_command", "rm -rf /"] {
             assert!(
                 elevate_for_operation(op, &args).is_err(),
-                "Operation {} should be rejected",
-                op
+                "Operation {op} should be rejected"
             );
         }
     }

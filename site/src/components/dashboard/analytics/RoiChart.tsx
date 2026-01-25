@@ -59,7 +59,7 @@ export const RoiChart: Component<RoiChartProps> = (rawProps) => {
       padding: { left: 20, right: 20 }
     },
     xaxis: {
-      categories: props.labels || props.data.map((_, i) => `D${i}`),
+      categories: props.labels || (props.data || []).map((_, i) => `D${i}`),
       axisBorder: { show: false },
       axisTicks: { show: false },
       labels: {

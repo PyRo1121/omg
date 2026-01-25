@@ -69,18 +69,16 @@ echo 'Mock sudo: {}'
 exit 0",
                 args.join(" ")
             ),
-            SudoScenario::PasswordRequired => format!(
-                "#!/bin/bash
+            SudoScenario::PasswordRequired => "#!/bin/bash
 # Mock sudo that requires password (exit code 1, no TTY)
 echo 'sudo: a password is required' >&2
 exit 1"
-            ),
-            SudoScenario::PermissionDenied => format!(
-                "#!/bin/bash
+                .to_string(),
+            SudoScenario::PermissionDenied => "#!/bin/bash
 # Mock sudo with permission denied
 echo 'sudo: permission denied' >&2
 exit 1"
-            ),
+                .to_string(),
             SudoScenario::CommandNotFound => {
                 let cmd = args.get(1).unwrap_or(&"command");
                 format!(
@@ -90,12 +88,11 @@ echo \"sudo: {cmd}: command not found\" >&2
 exit 1"
                 )
             }
-            SudoScenario::NoTty => format!(
-                "#!/bin/bash
+            SudoScenario::NoTty => "#!/bin/bash
 # Mock sudo detecting no TTY
 echo 'sudo: no tty present' >&2
 exit 1"
-            ),
+                .to_string(),
         };
 
         // Write the mock sudo script - use a more reliable temp file approach
@@ -349,7 +346,7 @@ fn test_error_message_parsing_password_required() {
 
     for pattern in test_cases {
         // The privilege module should detect these patterns
-        assert!(pattern.len() > 0, "Pattern should not be empty");
+        assert!(!pattern.is_empty(), "Pattern should not be empty");
     }
 }
 
@@ -645,7 +642,7 @@ fn regression_string_matching_error_detection() {
         let contains_permission =
             msg.contains("permission") || msg.contains("password") || msg.contains("tty");
         assert!(
-            contains_permission || msg.len() > 0,
+            contains_permission || !msg.is_empty(),
             "Error message '{}' should be recognized",
             msg
         );
