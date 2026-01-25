@@ -313,7 +313,7 @@ pub fn status_sync() -> Result<()> {
     } else {
         "Offline".gray()
     };
-    content.push(format!("Daemon:    {}", daemon_status));
+    content.push(format!("Daemon:    {daemon_status}"));
 
     ui::print_card("Overview", content);
 

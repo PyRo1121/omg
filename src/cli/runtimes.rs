@@ -84,7 +84,7 @@ pub async fn use_version(runtime: &str, version: Option<&str>) -> Result<()> {
 
     ui::print_header(
         "OMG",
-        &format!("Switching {} to version {}", runtime, version),
+        &format!("Switching {runtime} to version {version}"),
     );
     ui::print_spacer();
 
