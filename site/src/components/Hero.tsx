@@ -14,7 +14,7 @@ const Hero: Component = () => {
           {/* Left: Copy */}
           <div class="text-left">
             {/* Badge */}
-            <div class="mb-8 inline-flex items-center gap-2 rounded-full border border-indigo-500/30 bg-gradient-to-r from-indigo-500/20 to-cyan-500/20 px-4 py-2 text-sm backdrop-blur-sm">
+            <div class="animate-fade-in-up mb-8 inline-flex items-center gap-2 rounded-full border border-indigo-500/30 bg-gradient-to-r from-indigo-500/20 to-cyan-500/20 px-4 py-2 text-sm backdrop-blur-sm">
               <span class="relative flex h-2 w-2">
                 <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
                 <span class="relative inline-flex h-2 w-2 rounded-full bg-green-500" />
@@ -23,7 +23,7 @@ const Hero: Component = () => {
             </div>
 
             {/* Main headline */}
-            <h1 class="mb-6 text-5xl leading-[1.1] font-black tracking-tight md:text-6xl lg:text-7xl">
+            <h1 class="animate-fade-in-up delay-100 mb-6 text-5xl leading-[1.1] font-black tracking-tight md:text-6xl lg:text-7xl">
               <span class="text-white">The Fastest </span>
               <span class="gradient-text">Package Manager</span>
               <br />
@@ -31,14 +31,14 @@ const Hero: Component = () => {
               <span class="text-cyan-400">Linux</span>
             </h1>
 
-            <p class="mb-8 max-w-xl text-xl leading-relaxed text-slate-400 md:text-2xl">
+            <p class="animate-fade-in-up delay-200 mb-8 max-w-xl text-xl leading-relaxed text-slate-400 md:text-2xl">
               Native managers for <span class="font-medium text-white">Node, Python, Go, Rust</span>, and more. 
               Built in Rust for extreme performance.
               <span class="font-semibold text-cyan-400"> 22x faster</span> than standard tools.
             </p>
 
             {/* CTA buttons */}
-            <div class="mb-12 flex flex-col items-start gap-4 sm:flex-row">
+            <div class="animate-fade-in-up delay-300 mb-12 flex flex-col items-start gap-4 sm:flex-row">
               <a href="#install" class="btn-primary group text-lg">
                 <svg
                   class="h-5 w-5 transition-transform group-hover:-translate-y-0.5"
@@ -74,7 +74,7 @@ const Hero: Component = () => {
             </div>
 
             {/* Trust badges */}
-            <div class="flex flex-wrap items-center gap-6 text-sm text-slate-500">
+            <div class="animate-fade-in-up delay-400 flex flex-wrap items-center gap-6 text-sm text-slate-500">
               <div class="flex items-center gap-2">
                 <svg class="h-5 w-5 text-green-500" fill="currentColor" viewBox="0 0 20 20">
                   <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
@@ -91,7 +91,7 @@ const Hero: Component = () => {
           </div>
 
           {/* Right: The 3D Glass Terminal */}
-          <div class="relative">
+          <div class="animate-fade-in-up delay-500 relative">
             <HeroTerminal />
             
             {/* Floating badges around terminal */}

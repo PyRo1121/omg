@@ -48,8 +48,11 @@ const FeatureGrid: Component = () => {
   return (
     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 px-6 max-w-7xl mx-auto py-20">
       <For each={features}>
-        {(feature) => (
-          <GlassCard class="p-8 group hover:border-white/20 transition-all duration-300">
+        {(feature, index) => (
+          <GlassCard 
+            class="p-8 group hover:border-white/20 transition-all duration-300 animate-fade-in-up" 
+            style={{ "animation-delay": `${index() * 100}ms` }}
+          >
             <div class={`mb-4 ${feature.color} opacity-80 group-hover:opacity-100 transition-opacity`}>
               {feature.icon}
             </div>
