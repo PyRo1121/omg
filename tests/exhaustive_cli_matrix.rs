@@ -44,7 +44,12 @@ mod arch_matrix {
         let res = run_arch(&["search", "firefox"]);
         res.assert_success();
         res.assert_stdout_contains("firefox");
-        res.assert_stdout_contains("official");
+        // "Official" vs "official" depends on UI components
+        assert!(
+            res.stdout.to_lowercase().contains("official"),
+            "stdout does not contain 'official' (case-insensitive)\nstdout: {}",
+            res.stdout
+        );
     }
 
     #[test]

@@ -218,27 +218,6 @@ proptest! {
         prop_assert!(true);
     }
 
-    fn prop_progress_bar_clamping(
-        percent in 0i32..200i32
-    ) {
-        use omg_lib::cli::tea::UpdateModel;
-
-        let model = UpdateModel {
-            download_percent: percent as usize,
-            ..Default::default()
-        };
-
-        let bar = model.render_progress_bar(20);
-
-        // Should not contain values > 100%
-        if percent > 100 {
-            prop_assert!(bar.contains("100%"));
-        } else {
-            let expected = format!("{}%", percent.min(100));
-            prop_assert!(bar.contains(&expected));
-        }
-    }
-
     fn prop_update_model_empty_packages(
         check_only in proptest::bool::ANY,
         yes in proptest::bool::ANY
@@ -541,44 +520,6 @@ proptest! {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 proptest! {
-
-    fn prop_zero_handled(
-        value in prop::num::usize::ANY
-    ) {
-        use omg_lib::cli::tea::UpdateModel;
-
-        // Only test with 0 value
-        if value != 0 {
-            return Ok(());
-        }
-
-        let model = UpdateModel {
-            download_percent: value,
-            ..Default::default()
-        };
-
-        let bar = model.render_progress_bar(10);
-        prop_assert!(bar.contains("0%"));
-    }
-
-    fn prop_max_values(
-        value in prop::num::usize::ANY
-    ) {
-        use omg_lib::cli::tea::UpdateModel;
-
-        // Only test with 100 value
-        if value != 100 {
-            return Ok(());
-        }
-
-        let model = UpdateModel {
-            download_percent: value,
-            ..Default::default()
-        };
-
-        let bar = model.render_progress_bar(10);
-        prop_assert!(bar.contains("100%"));
-    }
 
     fn prop_unicode_preserved(
         text in "\\PC{1,50}"

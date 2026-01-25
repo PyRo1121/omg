@@ -474,23 +474,27 @@ pub fn check_updates_cached() -> Result<Vec<(String, Version, Version, String, S
     let sync_cache = SYNC_DB_CACHE.read();
     let local_cache = LOCAL_DB_CACHE.read();
 
-    // Compare versions - pure HashMap lookups, <1ms
-    let mut updates = Vec::new();
-
-    for (name, local_pkg) in &local_cache.packages {
-        if let Some(sync_pkg) = sync_cache.packages.get(name)
-            && local_pkg.version < sync_pkg.version
-        {
-            updates.push((
-                name.clone(),
-                local_pkg.version.clone(),
-                sync_pkg.version.clone(),
-                sync_pkg.repo.clone(),
-                sync_pkg.filename.clone(),
-                sync_pkg.csize,
-            ));
-        }
-    }
+    // Compare versions - Parallelized with Rayon for <1ms update check on 2000+ pkgs
+    let updates: Vec<_> = local_cache
+        .packages
+        .par_iter()
+        .filter_map(|(name, local_pkg)| {
+            if let Some(sync_pkg) = sync_cache.packages.get(name)
+                && local_pkg.version < sync_pkg.version
+            {
+                Some((
+                    name.clone(),
+                    local_pkg.version.clone(),
+                    sync_pkg.version.clone(),
+                    sync_pkg.repo.clone(),
+                    sync_pkg.filename.clone(),
+                    sync_pkg.csize,
+                ))
+            } else {
+                None
+            }
+        })
+        .collect();
 
     Ok(updates)
 }

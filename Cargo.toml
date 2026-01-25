@@ -1,6 +1,6 @@
 [package]
 name = "omg"
-version = "0.1.112"
+version = "0.1.115"
 edition = "2024"
 rust-version = "1.92"
 description = "The Fastest Unified Package Manager for Arch Linux + All Language Runtimes"
@@ -91,6 +91,7 @@ zerocopy = { version = "0.8", features = ["derive"] }
 dashmap = "5.4.0"
 moka = { version = "0.12", features = ["sync"] }
 memchr = "2.7"                                   # SIMD-accelerated string search
+memmap2 = "0.9"
 
 # Logging
 tracing = "0.1.44"

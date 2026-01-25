@@ -42,6 +42,7 @@ import {
   handleAdminAuditLog,
 } from './handlers/admin';
 import { handleGetSmartInsights } from './handlers/insights';
+import { handleGetFirehose } from './handlers/firehose';
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -224,6 +225,11 @@ export default {
       // Admin: View audit log
       if (path === '/api/admin/audit-log' && request.method === 'GET') {
         return handleAdminAuditLog(request, env);
+      }
+
+      // Admin: Real-time event firehose
+      if (path === '/api/admin/firehose' && request.method === 'GET') {
+        return handleGetFirehose(request, env);
       }
 
       // Insights: AI-powered recommendations
