@@ -1,6 +1,6 @@
 //! Integration wrappers for Elm-based models
 
-use crate::cli::tea::{InfoModel, InstallModel, Program, StatusModel};
+use crate::cli::tea::{InfoModel, InstallModel, Program, StatusModel, UpdateModel};
 
 // Import Model trait for use in test modules
 #[cfg(test)]
@@ -24,6 +24,12 @@ pub fn run_install_elm(packages: Vec<String>) -> Result<(), std::io::Error> {
     Program::new(model).run()
 }
 
+/// Run update command using Elm Architecture
+pub fn run_update_elm(check_only: bool, yes: bool) -> Result<(), std::io::Error> {
+    let model = UpdateModel::new().with_check_only(check_only).with_yes(yes);
+    Program::new(model).run()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -44,5 +50,12 @@ mod tests {
     fn test_install_wrapper_creates_model() {
         let model = InstallModel::new(vec!["pkg1".to_string(), "pkg2".to_string()]);
         assert_eq!(model.packages().len(), 2);
+    }
+
+    #[test]
+    fn test_update_wrapper_creates_model() {
+        let model = UpdateModel::new().with_check_only(true).with_yes(false);
+        assert!(model.check_only);
+        assert!(!model.yes);
     }
 }

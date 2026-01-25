@@ -5,12 +5,25 @@ use dialoguer::Confirm;
 use owo_colors::OwoColorize;
 use std::sync::Arc;
 
+use crate::cli::tea::run_update_elm;
 use crate::cli::{style, ui};
 use crate::core::packages::PackageService;
 use crate::package_managers::get_package_manager;
 
-/// Update all packages
+/// Update all packages using modern Elm Architecture
 pub async fn update(check_only: bool, yes: bool) -> Result<()> {
+    // Use the modern Bubble Tea-inspired UI
+    if let Err(e) = run_update_elm(check_only, yes) {
+        // Fallback to original implementation on error
+        eprintln!("Warning: Elm UI failed, falling back to basic mode: {e}");
+        update_fallback(check_only, yes).await
+    } else {
+        Ok(())
+    }
+}
+
+/// Fallback implementation using original approach
+async fn update_fallback(check_only: bool, yes: bool) -> Result<()> {
     let pm = Arc::from(get_package_manager());
     let service = PackageService::new(pm);
 

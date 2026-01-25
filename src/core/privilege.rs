@@ -10,10 +10,119 @@ use std::os::unix::process::CommandExt;
 #[cfg(not(test))]
 use std::process::Command;
 
+/// Trait for privilege checking and elevation (for dependency injection)
+pub trait PrivilegeChecker: Send + Sync {
+    /// Check if running as root
+    fn is_root(&self) -> bool;
+
+    /// Elevate privileges for the given operation and arguments
+    fn elevate(&self, operation: &str, args: &[String]) -> std::io::Result<()>;
+}
+
+/// Default privilege checker using real system calls
+pub struct SystemPrivilegeChecker;
+
+impl PrivilegeChecker for SystemPrivilegeChecker {
+    fn is_root(&self) -> bool {
+        rustix::process::geteuid().is_root()
+    }
+
+    fn elevate(&self, operation: &str, args: &[String]) -> std::io::Result<()> {
+        elevate_for_operation(operation, args)
+    }
+}
+
+/// Mock privilege checker for testing
+#[cfg(test)]
+pub struct MockPrivilegeChecker {
+    pub is_root_value: bool,
+    pub should_elevate: bool,
+    pub elevation_log: std::sync::Arc<std::sync::Mutex<Vec<(String, Vec<String>)>>>,
+}
+
+#[cfg(test)]
+impl Default for MockPrivilegeChecker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+impl MockPrivilegeChecker {
+    pub fn new() -> Self {
+        Self {
+            is_root_value: false,
+            should_elevate: true,
+            elevation_log: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+        }
+    }
+
+    pub fn set_root(&mut self, is_root: bool) {
+        self.is_root_value = is_root;
+    }
+
+    pub fn set_elevation_allowed(&mut self, allowed: bool) {
+        self.should_elevate = allowed;
+    }
+
+    pub fn get_elevation_log(&self) -> Vec<(String, Vec<String>)> {
+        self.elevation_log.lock().unwrap().clone()
+    }
+}
+
+#[cfg(test)]
+impl PrivilegeChecker for MockPrivilegeChecker {
+    fn is_root(&self) -> bool {
+        self.is_root_value
+    }
+
+    fn elevate(&self, operation: &str, args: &[String]) -> std::io::Result<()> {
+        self.elevation_log
+            .lock()
+            .unwrap()
+            .push((operation.to_string(), args.to_vec()));
+
+        if self.should_elevate {
+            Ok(())
+        } else {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "Mock elevation denied",
+            ))
+        }
+    }
+}
+
+/// Global privilege checker (can be swapped in tests)
+#[cfg(test)]
+static PRIVILEGE_CHECKER: std::sync::OnceLock<std::sync::Arc<dyn PrivilegeChecker>> =
+    std::sync::OnceLock::new();
+
+#[cfg(test)]
+pub fn set_privilege_checker(checker: std::sync::Arc<dyn PrivilegeChecker>) {
+    let _ = PRIVILEGE_CHECKER.set(checker);
+}
+
+#[cfg(test)]
+pub fn get_privilege_checker() -> std::sync::Arc<dyn PrivilegeChecker> {
+    PRIVILEGE_CHECKER
+        .get()
+        .cloned()
+        .unwrap_or_else(|| std::sync::Arc::new(SystemPrivilegeChecker))
+}
+
 /// Check if we're running as root
 #[must_use]
 pub fn is_root() -> bool {
-    rustix::process::geteuid().is_root()
+    #[cfg(test)]
+    {
+        get_privilege_checker().is_root()
+    }
+
+    #[cfg(not(test))]
+    {
+        rustix::process::geteuid().is_root()
+    }
 }
 
 /// Re-execute the current command with sudo if not root
@@ -84,7 +193,7 @@ pub async fn run_self_sudo(args: &[&str]) -> anyhow::Result<()> {
         );
     }
 
-    // Try non-interactive sudo first (-n flag)
+    // Try non-interactive sudo first (-n flag) for automation/CI scenarios
     let status = tokio::process::Command::new("sudo")
         .arg("-n")
         .arg("--")
@@ -95,23 +204,48 @@ pub async fn run_self_sudo(args: &[&str]) -> anyhow::Result<()> {
 
     match status {
         Ok(s) if s.success() => Ok(()),
-        Ok(s) => anyhow::bail!("Elevated command failed with exit code: {s}"),
+        Ok(s) => {
+            // Command ran but failed with non-zero exit code
+            anyhow::bail!("Elevated command failed with exit code: {s}")
+        }
         Err(e) => {
-            // If -n failed, provide helpful guidance
-            if e.kind() == std::io::ErrorKind::PermissionDenied {
-                anyhow::bail!(
-                    "This operation requires sudo privileges.\n\
-                     \n\
-                     For automation/CI, configure sudo with NOPASSWD or use:\n\
-                     sudo -n {} {:?}\n\
-                     \n\
-                     For interactive use, run:\n\
-                     sudo {} {:?}",
-                    exe.display(),
-                    args,
-                    exe.display(),
-                    args
-                );
+            // Check if this is a permission denied error from sudo -n
+            // (which happens when password is required)
+            if e.kind() == std::io::ErrorKind::PermissionDenied
+                || e.to_string().contains("permission denied")
+                || e.to_string().contains("no tty present")
+            {
+                // Fall back to interactive sudo (allows password prompt)
+                let interactive_status = tokio::process::Command::new("sudo")
+                    .arg("--")
+                    .arg(&exe)
+                    .args(args)
+                    .status()
+                    .await;
+
+                return match interactive_status {
+                    Ok(s) if s.success() => Ok(()),
+                    Ok(s) => anyhow::bail!("Elevated command failed with exit code: {s}"),
+                    Err(e2) => {
+                        anyhow::bail!(
+                            "Failed to run with sudo privileges.\n\
+                             \n\
+                             Error: {e2}\n\
+                             \n\
+                             For automation/CI, configure sudo with NOPASSWD:\n\
+                             sudo visudo\n\
+                             \n\
+                             And add line (replace username):\n\
+                             username ALL=(ALL) NOPASSWD: ALL\n\
+                             \n\
+                             Or specify this command specifically:\n\
+                             username ALL=(ALL) NOPASSWD: {}\n\
+                             \n\
+                             For interactive use, ensure you have sudo privileges.",
+                            exe.display()
+                        )
+                    }
+                };
             }
             anyhow::bail!("Failed to elevate privileges: {e}")
         }
@@ -170,5 +304,94 @@ mod tests {
         // In a unit test, we can't easily check if it execs sudo without mocking Command
         // but we can verify it returns Ok(()) if we pretend to be root (which we can't easily mock here without restructuring)
         // So we focus on the whitelist logic above which is the critical decision logic.
+    }
+
+    #[test]
+    fn test_mock_privilege_checker_not_root() {
+        let checker = MockPrivilegeChecker::new();
+        assert!(!checker.is_root());
+    }
+
+    #[test]
+    fn test_mock_privilege_checker_set_root() {
+        let mut checker = MockPrivilegeChecker::new();
+        checker.set_root(true);
+        assert!(checker.is_root());
+    }
+
+    #[test]
+    fn test_mock_privilege_checker_elevation_allowed() {
+        let mut checker = MockPrivilegeChecker::new();
+        checker.set_elevation_allowed(true);
+        let args = vec!["omg".to_string(), "install".to_string()];
+        assert!(checker.elevate("install", &args).is_ok());
+    }
+
+    #[test]
+    fn test_mock_privilege_checker_elevation_denied() {
+        let mut checker = MockPrivilegeChecker::new();
+        checker.set_elevation_allowed(false);
+        let args = vec!["omg".to_string(), "install".to_string()];
+        assert!(checker.elevate("install", &args).is_err());
+    }
+
+    #[test]
+    fn test_mock_privilege_checker_logging() {
+        let checker = MockPrivilegeChecker::new();
+        let args = vec![
+            "omg".to_string(),
+            "install".to_string(),
+            "firefox".to_string(),
+        ];
+        let _ = checker.elevate("install", &args);
+
+        let log = checker.get_elevation_log();
+        assert_eq!(log.len(), 1);
+        assert_eq!(log[0].0, "install");
+        assert_eq!(log[0].1, args);
+    }
+
+    #[test]
+    fn test_system_privilege_checker() {
+        let checker = SystemPrivilegeChecker;
+        // Just ensure it doesn't panic
+        let _ = checker.is_root();
+    }
+
+    #[test]
+    fn test_global_privilege_checker() {
+        let mock = std::sync::Arc::new(MockPrivilegeChecker::new());
+        set_privilege_checker(mock.clone());
+
+        let retrieved = get_privilege_checker();
+        // The retrieved checker should work the same as the mock
+        assert_eq!(retrieved.is_root(), mock.is_root());
+    }
+
+    #[test]
+    fn test_all_allowed_operations_succeed() {
+        let checker = MockPrivilegeChecker::new();
+        let args = vec!["omg".to_string(), "install".to_string()];
+
+        for op in ["install", "remove", "upgrade", "update", "sync", "clean"] {
+            assert!(
+                checker.elevate(op, &args).is_ok(),
+                "Operation {} should succeed",
+                op
+            );
+        }
+    }
+
+    #[test]
+    fn test_security_rejection_for_dangerous_operations() {
+        let args = vec!["omg".to_string()];
+        // These should be rejected by the whitelist in elevate_for_operation
+        for op in ["search", "info", "status", "evil_command", "rm -rf /"] {
+            assert!(
+                elevate_for_operation(op, &args).is_err(),
+                "Operation {} should be rejected",
+                op
+            );
+        }
     }
 }

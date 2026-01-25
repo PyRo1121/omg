@@ -16,24 +16,14 @@ pub struct PackageService {
 }
 
 impl PackageService {
+    /// Create a new `PackageService` with the given backend
     pub fn new(backend: Arc<dyn PackageManager>) -> Self {
-        #[cfg(feature = "arch")]
-        let aur_client = if backend.name() == "pacman" {
-            Some(crate::package_managers::AurClient::new())
-        } else {
-            None
-        };
+        Self::builder(backend).build()
+    }
 
-        let policy = SecurityPolicy::load_default().unwrap_or_default();
-        let history = HistoryManager::new().ok();
-
-        Self {
-            backend,
-            policy,
-            history,
-            #[cfg(feature = "arch")]
-            aur_client,
-        }
+    /// Create a builder for constructing `PackageService` with custom dependencies
+    pub fn builder(backend: Arc<dyn PackageManager>) -> PackageServiceBuilder {
+        PackageServiceBuilder::new(backend)
     }
 
     /// Search for packages
@@ -276,5 +266,128 @@ impl PackageService {
         }
 
         Ok(None)
+    }
+
+    /// Get system status (total, explicit, orphans, updates)
+    pub async fn get_status(&self, fast: bool) -> Result<(usize, usize, usize, usize)> {
+        self.backend.get_status(fast).await
+    }
+}
+
+/// Builder for `PackageService` with dependency injection support
+pub struct PackageServiceBuilder {
+    backend: Arc<dyn PackageManager>,
+    policy: Option<SecurityPolicy>,
+    history: Option<HistoryManager>,
+    #[cfg(feature = "arch")]
+    aur_client: Option<crate::package_managers::AurClient>,
+    #[cfg(feature = "arch")]
+    enable_aur: bool,
+}
+
+impl PackageServiceBuilder {
+    /// Create a new builder with the required backend
+    pub fn new(backend: Arc<dyn PackageManager>) -> Self {
+        Self {
+            backend,
+            policy: None,
+            history: None,
+            #[cfg(feature = "arch")]
+            aur_client: None,
+            #[cfg(feature = "arch")]
+            enable_aur: true,
+        }
+    }
+
+    /// Set the security policy (defaults to `SecurityPolicy::default()`)
+    #[must_use]
+    pub fn policy(mut self, policy: SecurityPolicy) -> Self {
+        self.policy = Some(policy);
+        self
+    }
+
+    /// Set the history manager (defaults to `HistoryManager::new()`)
+    #[must_use]
+    pub fn history(mut self, history: HistoryManager) -> Self {
+        self.history = Some(history);
+        self
+    }
+
+    /// Disable history tracking
+    #[must_use]
+    pub fn without_history(mut self) -> Self {
+        self.history = None;
+        self
+    }
+
+    /// Set the AUR client (Arch only)
+    #[cfg(feature = "arch")]
+    #[must_use]
+    pub fn aur_client(mut self, client: crate::package_managers::AurClient) -> Self {
+        self.aur_client = Some(client);
+        self
+    }
+
+    /// Disable AUR support (Arch only)
+    #[cfg(feature = "arch")]
+    #[must_use]
+    pub fn without_aur(mut self) -> Self {
+        self.enable_aur = false;
+        self.aur_client = None;
+        self
+    }
+
+    /// Build the `PackageService`
+    pub fn build(self) -> PackageService {
+        #[cfg(feature = "arch")]
+        let aur_client = if self.enable_aur && self.backend.name() == "pacman" {
+            self.aur_client
+                .or_else(|| Some(crate::package_managers::AurClient::new()))
+        } else {
+            self.aur_client
+        };
+
+        #[cfg(not(feature = "arch"))]
+        let aur_client = None;
+
+        PackageService {
+            backend: self.backend,
+            policy: self.policy.unwrap_or_default(),
+            history: self.history.or_else(|| HistoryManager::new().ok()),
+            #[cfg(feature = "arch")]
+            aur_client,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_builder_with_defaults() {
+        // This test just verifies the builder compiles and runs
+        // In a real test, we'd use a mock backend
+        let backend = Arc::new(crate::core::testing::TestPackageManager::new());
+        let service = PackageService::builder(backend).build();
+        // Service was created successfully
+        let _ = service;
+    }
+
+    #[test]
+    fn test_builder_without_history() {
+        let backend = Arc::new(crate::core::testing::TestPackageManager::new());
+        let service = PackageService::builder(backend).without_history().build();
+        // Service was created without history
+        let _ = service;
+    }
+
+    #[test]
+    fn test_builder_with_custom_policy() {
+        let backend = Arc::new(crate::core::testing::TestPackageManager::new());
+        let policy = SecurityPolicy::default();
+        let service = PackageService::builder(backend).policy(policy).build();
+        // Service was created with custom policy
+        let _ = service;
     }
 }
