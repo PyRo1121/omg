@@ -257,7 +257,7 @@ impl Model for UpdateModel {
             UpdateMsg::InstallProgress { package } => {
                 self.current_installing = Some(package.clone());
                 // Fallback to info message
-                Components::info(format!("Installing {}...", package))
+                Components::info(format!("Installing {package}..."))
             }
             UpdateMsg::Complete => {
                 self.state = UpdateState::Complete;
