@@ -43,18 +43,18 @@ pub fn execute_cmd(cmd: crate::cli::tea::Cmd<()>) {
 
     fn execute_inner(cmd: Cmd<()>) {
         match cmd {
-            Cmd::None => {}
-            Cmd::Msg(_) => {
-                // Messages don't make sense in fallback context
-                // They're for Elm Architecture internal communication
+            Cmd::None
+            | Cmd::Msg(())
+            | Cmd::Exec(_)
+            | Cmd::Progress(_)
+            | Cmd::Spinner(_)
+            | Cmd::Table(_) => {
+                // Not supported or applicable in fallback mode
             }
             Cmd::Batch(cmds) => {
                 for c in cmds {
                     execute_inner(c);
                 }
-            }
-            Cmd::Exec(_) => {
-                // Exec closures would produce messages, not applicable here
             }
             Cmd::Print(output) => {
                 print!("{output}");
@@ -79,15 +79,6 @@ pub fn execute_cmd(cmd: crate::cli::tea::Cmd<()>) {
             }
             Cmd::Card(title, content) => {
                 crate::cli::ui::print_card(&title, content);
-            }
-            Cmd::Progress(_) => {
-                // Progress bars not supported in fallback mode
-            }
-            Cmd::Spinner(_) => {
-                // Spinners not supported in fallback mode
-            }
-            Cmd::Table(_) => {
-                // Tables not supported in fallback mode
             }
             Cmd::StyledText(config) => {
                 // In fallback mode, just print the text without styling

@@ -53,7 +53,7 @@ fn show_dependency_chain(package: &str) -> Result<Cmd<()>> {
     // Check if package is installed
     let Ok(pkg) = localdb.pkg(package) else {
         return Ok(Components::error_with_suggestion(
-            format!("Package '{}' is not installed", package),
+            format!("Package '{package}' is not installed"),
             "Try 'omg search' to find available packages",
         ));
     };
@@ -66,7 +66,7 @@ fn show_dependency_chain(package: &str) -> Result<Cmd<()>> {
     };
 
     let mut commands = vec![
-        Components::header("Package Analysis", format!("for {}", package)),
+        Components::header("Package Analysis", format!("for {package}")),
         Components::spacer(),
         Components::kv_list(
             Some("Package Information"),
@@ -100,11 +100,11 @@ fn show_dependency_chain(package: &str) -> Result<Cmd<()>> {
             ));
 
             // Show one dependency chain
-            if let Some(first_req) = required_by.first() {
-                if let Some(path) = build_dependency_path(&handle, first_req, package) {
-                    commands.push(Components::spacer());
-                    commands.push(Components::kv_list(Some("Dependency Path Example"), path));
-                }
+            if let Some(first_req) = required_by.first()
+                && let Some(path) = build_dependency_path(&handle, first_req, package)
+            {
+                commands.push(Components::spacer());
+                commands.push(Components::kv_list(Some("Dependency Path Example"), path));
             }
         }
     } else {
@@ -146,7 +146,7 @@ fn show_dependency_chain(package: &str) -> Result<Cmd<()>> {
             ("YES - orphan dependency".to_string(), "safe")
         } else if required_by_count > 0 {
             (
-                format!("NO - {} packages depend on it", required_by_count),
+                format!("NO - {required_by_count} packages depend on it"),
                 "unsafe",
             )
         } else {
@@ -157,15 +157,9 @@ fn show_dependency_chain(package: &str) -> Result<Cmd<()>> {
         };
 
     match safety_type {
-        "safe" => commands.push(Components::success(format!(
-            "Safe to remove: {}",
-            safety_msg
-        ))),
-        "unsafe" => commands.push(Components::warning(format!(
-            "Safe to remove: {}",
-            safety_msg
-        ))),
-        _ => commands.push(Components::info(format!("Safe to remove: {}", safety_msg))),
+        "safe" => commands.push(Components::success(format!("Safe to remove: {safety_msg}"))),
+        "unsafe" => commands.push(Components::warning(format!("Safe to remove: {safety_msg}"))),
+        _ => commands.push(Components::info(format!("Safe to remove: {safety_msg}"))),
     }
 
     Ok(Cmd::batch(commands))
@@ -200,11 +194,11 @@ fn build_dependency_path(
             let mut result = Vec::new();
             for (i, p) in path.iter().enumerate() {
                 if i == 0 {
-                    result.push((format!("└─ {}", p), "explicit".to_string()));
+                    result.push((format!("└─ {p}"), "explicit".to_string()));
                 } else if i == path.len() - 1 {
-                    result.push((format!("└─ {}", p), "target package".to_string()));
+                    result.push((format!("└─ {p}"), "target package".to_string()));
                 } else {
-                    result.push((format!("└─ {}", p), "dependency".to_string()));
+                    result.push((format!("└─ {p}"), "dependency".to_string()));
                 }
             }
             return Some(result);
@@ -255,7 +249,7 @@ fn show_reverse_deps(package: &str) -> Result<Cmd<()>> {
     // Check if package is installed
     if localdb.pkg(package).is_err() {
         return Ok(Components::error_with_suggestion(
-            format!("Package '{}' is not installed", package),
+            format!("Package '{package}' is not installed"),
             "Try 'omg search' to find available packages",
         ));
     }
@@ -275,7 +269,7 @@ fn show_reverse_deps(package: &str) -> Result<Cmd<()>> {
     let mut commands = vec![
         Components::header(
             "Reverse Dependencies",
-            format!("packages that depend on {}", package),
+            format!("packages that depend on {package}"),
         ),
         Components::spacer(),
     ];

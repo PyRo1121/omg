@@ -273,7 +273,7 @@ impl<M: Model> Program<M> {
             Cmd::Table(config) => {
                 // Tables would need specialized handling in the renderer
                 // For now, fall back to simple rendering
-                eprintln!("{:?}", config);
+                eprintln!("{config:?}");
             }
             Cmd::StyledText(config) => {
                 // Styled text would need the LipGlossRenderer
@@ -308,10 +308,10 @@ impl<M: Model> Program<M> {
     /// Render the current view
     fn render(&mut self) -> io::Result<()> {
         let view = self.model.view();
-        if !view.trim().is_empty() {
-            self.renderer.render(&view)
-        } else {
+        if view.trim().is_empty() {
             Ok(())
+        } else {
+            self.renderer.render(&view)
         }
     }
 }

@@ -103,21 +103,21 @@ pub fn status() -> Result<()> {
                     .collect();
 
                 Cmd::batch([
-                    Components::header("Container Status", &format!("Runtime: {}", runtime_str)),
+                    Components::header("Container Status", format!("Runtime: {runtime_str}")),
                     Components::spacer(),
                     Components::card("Running Containers", container_list),
                     Components::complete("Container status retrieved"),
                 ])
             }
             Ok(_) => Cmd::batch([
-                Components::header("Container Status", &format!("Runtime: {}", runtime_str)),
+                Components::header("Container Status", format!("Runtime: {runtime_str}")),
                 Components::spacer(),
                 Components::info("No running containers"),
             ]),
             Err(e) => Cmd::batch([
-                Components::header("Container Status", &format!("Runtime: {}", runtime_str)),
+                Components::header("Container Status", format!("Runtime: {runtime_str}")),
                 Components::spacer(),
-                Components::error(&format!("Failed to list containers: {}", e)),
+                Components::error(format!("Failed to list containers: {e}")),
             ]),
         }
     } else {
@@ -173,9 +173,8 @@ pub fn run(
 
     let manager = ContainerManager::new()?;
 
-    execute_cmd(Components::loading(&format!(
-        "Running in {} container...",
-        image
+    execute_cmd(Components::loading(format!(
+        "Running in {image} container..."
     )));
 
     let env_pairs = parse_env_vars(env);
@@ -248,7 +247,7 @@ pub fn shell(
     }
 
     execute_cmd(Cmd::batch([
-        Components::loading(&format!("Starting shell in {} container...", config.image)),
+        Components::loading(format!("Starting shell in {} container...", config.image)),
         Components::card("Container Configuration", details),
     ]));
 
@@ -279,14 +278,14 @@ pub fn build(
         ));
         anyhow::bail!("Invalid tag name");
     }
-    if let Some(ref df) = dockerfile {
-        if let Err(e) = crate::core::security::validate_relative_path(df) {
-            execute_cmd(Components::error_with_suggestion(
-                "Invalid Dockerfile path",
-                &format!("Path validation failed: {}", e),
-            ));
-            return Err(e.into());
-        }
+    if let Some(ref df) = dockerfile
+        && let Err(e) = crate::core::security::validate_relative_path(df)
+    {
+        execute_cmd(Components::error_with_suggestion(
+            "Invalid Dockerfile path",
+            format!("Path validation failed: {e}"),
+        ));
+        return Err(e);
     }
 
     let manager = ContainerManager::new()?;
@@ -301,7 +300,7 @@ pub fn build(
             &error_msg,
             "Use -f/--dockerfile to specify a path",
         ));
-        anyhow::bail!("{}", error_msg);
+        anyhow::bail!("{error_msg}");
     }
 
     let mut build_details = vec![
@@ -314,11 +313,11 @@ pub fn build(
     }
 
     if let Some(t) = target {
-        build_details.push(format!("Target: {}", t));
+        build_details.push(format!("Target: {t}"));
     }
 
     execute_cmd(Cmd::batch([
-        Components::loading(&format!("Building image: {}", tag)),
+        Components::loading(format!("Building image: {tag}")),
         Components::card("Build Configuration", build_details),
     ]));
 
@@ -331,9 +330,8 @@ pub fn build(
         target.as_deref(),
     )?;
 
-    execute_cmd(Components::complete(&format!(
-        "Image {} built successfully",
-        tag
+    execute_cmd(Components::complete(format!(
+        "Image {tag} built successfully"
     )));
 
     Ok(())
@@ -371,7 +369,7 @@ pub fn list() -> Result<()> {
     execute_cmd(Cmd::batch([
         Components::header(
             "Running Containers",
-            &format!("{} container(s) running", containers.len()),
+            format!("{} container(s) running", containers.len()),
         ),
         Components::spacer(),
         Components::card("Active Containers", container_list),
@@ -412,7 +410,7 @@ pub fn images() -> Result<()> {
     execute_cmd(Cmd::batch([
         Components::header(
             "Container Images",
-            &format!("{} image(s) available", images.len()),
+            format!("{} image(s) available", images.len()),
         ),
         Components::spacer(),
         Components::card("Available Images", image_list),
@@ -427,13 +425,12 @@ pub fn pull(image: &str) -> Result<()> {
 
     let manager = ContainerManager::new()?;
 
-    execute_cmd(Components::loading(&format!("Pulling image: {}", image)));
+    execute_cmd(Components::loading(format!("Pulling image: {image}")));
 
     manager.pull(image)?;
 
-    execute_cmd(Components::complete(&format!(
-        "Image {} pulled successfully",
-        image
+    execute_cmd(Components::complete(format!(
+        "Image {image} pulled successfully"
     )));
 
     Ok(())
@@ -445,16 +442,14 @@ pub fn stop(container: &str) -> Result<()> {
 
     let manager = ContainerManager::new()?;
 
-    execute_cmd(Components::loading(&format!(
-        "Stopping container: {}",
-        container
+    execute_cmd(Components::loading(format!(
+        "Stopping container: {container}"
     )));
 
     manager.stop(container)?;
 
-    execute_cmd(Components::complete(&format!(
-        "Container {} stopped",
-        container
+    execute_cmd(Components::complete(format!(
+        "Container {container} stopped"
     )));
 
     Ok(())
@@ -520,7 +515,7 @@ pub fn init(base_image: Option<String>) -> Result<()> {
     if !runtimes.is_empty() {
         details.push("Detected runtimes:".to_string());
         for (rt, ver) in &runtimes {
-            details.push(format!("  • {}: {}", rt, ver));
+            details.push(format!("  • {rt}: {ver}"));
         }
     }
 

@@ -25,7 +25,7 @@ fn build_blame_output(package: &str) -> Result<Cmd<()>> {
 
     if !is_installed {
         return Ok(Components::error_with_suggestion(
-            format!("Package '{}' is not installed", package),
+            format!("Package '{package}' is not installed"),
             "Try 'omg search' to find available packages",
         ));
     }
@@ -73,9 +73,7 @@ fn build_blame_output(package: &str) -> Result<Cmd<()>> {
             .take(10)
             .filter_map(|txn| {
                 // Safe: we filtered for transactions containing this package above
-                let Some(change) = txn.changes.iter().find(|c| c.name == package) else {
-                    return None;
-                };
+                let change = txn.changes.iter().find(|c| c.name == package)?;
 
                 let action = match txn.transaction_type {
                     TransactionType::Install => "installed",

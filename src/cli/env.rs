@@ -160,9 +160,8 @@ pub async fn share(description: String, public: bool) -> Result<()> {
     if !response.status().is_success() {
         let status = response.status();
         let text = response.text().await?;
-        execute_cmd(Components::error(&format!(
-            "Failed to create gist: {} - {}",
-            status, text
+        execute_cmd(Components::error(format!(
+            "Failed to create gist: {status} - {text}"
         )));
         anyhow::bail!("Failed to create gist: {status} - {text}");
     }
@@ -226,11 +225,8 @@ pub async fn sync(url_or_id: String) -> Result<()> {
 
     if !response.status().is_success() {
         let status = response.status();
-        execute_cmd(Components::error(&format!(
-            "Failed to fetch Gist: {}",
-            status
-        )));
-        anyhow::bail!("Failed to fetch Gist: {}", status);
+        execute_cmd(Components::error(format!("Failed to fetch Gist: {status}")));
+        anyhow::bail!("Failed to fetch Gist: {status}");
     }
 
     let gist_resp: GistResponse = response.json().await?;

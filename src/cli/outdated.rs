@@ -127,7 +127,7 @@ pub async fn run(security_only: bool, json: bool) -> Result<()> {
     // Security updates
     if !security.is_empty() {
         commands.push(Components::card(
-            format!("Security Updates (install immediately)",),
+            "Security Updates (install immediately)".to_string(),
             security
                 .iter()
                 .map(|p| format!("{} {} → {} (CVE)", p.name, p.current_version, p.new_version))
@@ -139,7 +139,7 @@ pub async fn run(security_only: bool, json: bool) -> Result<()> {
     // Major updates
     if !major.is_empty() {
         commands.push(Components::card(
-            format!("Major Updates (may have breaking changes)"),
+            "Major Updates (may have breaking changes)".to_string(),
             major
                 .iter()
                 .map(|p| format!("{} {} → ({})", p.name, p.current_version, p.repo))
@@ -152,7 +152,7 @@ pub async fn run(security_only: bool, json: bool) -> Result<()> {
     if !minor.is_empty() {
         let minor_count = minor.len().min(10);
         commands.push(Components::card(
-            format!("Minor Updates (new features)"),
+            "Minor Updates (new features)".to_string(),
             minor
                 .iter()
                 .take(minor_count)
@@ -173,7 +173,7 @@ pub async fn run(security_only: bool, json: bool) -> Result<()> {
     if !patch.is_empty() {
         let patch_count = patch.len().min(5);
         commands.push(Components::card(
-            format!("Patch Updates (bug fixes)"),
+            "Patch Updates (bug fixes)".to_string(),
             patch
                 .iter()
                 .take(patch_count)

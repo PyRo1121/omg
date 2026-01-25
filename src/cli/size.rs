@@ -48,7 +48,7 @@ fn show_top_packages(limit: usize) -> Result<Cmd<()>> {
     let mut commands = vec![
         Components::header("Disk Usage Analysis", "by installed size"),
         Components::spacer(),
-        Components::card(format!("Top {} Packages", limit), content),
+        Components::card(format!("Top {limit} Packages"), content),
         Components::spacer(),
         Components::kv_list(
             Some("Summary"),

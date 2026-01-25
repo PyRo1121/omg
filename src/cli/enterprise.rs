@@ -56,14 +56,14 @@ pub async fn reports(report_type: &str, format: &str, _ctx: &CliContext) -> Resu
     let valid_formats = ["json", "csv", "html", "pdf"];
     if !valid_types.contains(&report_type.to_lowercase().as_str()) {
         execute_cmd(Components::error_with_suggestion(
-            &format!("Invalid report type: {}", report_type),
+            format!("Invalid report type: {report_type}"),
             "Valid types: monthly, quarterly, custom",
         ));
         anyhow::bail!("Invalid report type: {report_type}");
     }
     if !valid_formats.contains(&format.to_lowercase().as_str()) {
         execute_cmd(Components::error_with_suggestion(
-            &format!("Invalid report format: {}", format),
+            format!("Invalid report format: {format}"),
             "Valid formats: json, csv, html, pdf",
         ));
         anyhow::bail!("Invalid report format: {format}");
@@ -71,9 +71,8 @@ pub async fn reports(report_type: &str, format: &str, _ctx: &CliContext) -> Resu
 
     license::require_feature("enterprise-reports")?;
 
-    execute_cmd(Components::loading(&format!(
-        "Generating {} report...",
-        report_type
+    execute_cmd(Components::loading(format!(
+        "Generating {report_type} report..."
     )));
 
     let report = generate_report(report_type).await;
@@ -98,7 +97,7 @@ pub async fn reports(report_type: &str, format: &str, _ctx: &CliContext) -> Resu
     ];
 
     execute_cmd(Cmd::batch([
-        Components::success(&format!("Generated {}", filename)),
+        Components::success(format!("Generated {filename}")),
         Components::spacer(),
         Components::kv_list(
             Some("Report Details"),
@@ -128,7 +127,7 @@ pub fn audit_export(
     let valid_frameworks = ["soc2", "iso27001", "fedramp", "hipaa", "pci-dss"];
     if !valid_frameworks.contains(&format.to_lowercase().as_str()) {
         execute_cmd(Components::error_with_suggestion(
-            &format!("Invalid compliance framework: {}", format),
+            format!("Invalid compliance framework: {format}"),
             "Valid frameworks: soc2, iso27001, fedramp, hipaa, pci-dss",
         ));
         anyhow::bail!("Invalid compliance framework: {format}");
@@ -140,15 +139,14 @@ pub fn audit_export(
         anyhow::bail!("Invalid period format");
     }
     if let Err(e) = crate::core::security::validate_relative_path(output) {
-        execute_cmd(Components::error(&format!("Invalid output path: {}", e)));
-        return Err(e.into());
+        execute_cmd(Components::error(format!("Invalid output path: {e}")));
+        return Err(e);
     }
 
     license::require_feature("audit-export")?;
 
-    execute_cmd(Components::loading(&format!(
-        "Exporting {} audit evidence...",
-        format
+    execute_cmd(Components::loading(format!(
+        "Exporting {format} audit evidence..."
     )));
 
     let period_str = period.unwrap_or("current");
@@ -199,7 +197,7 @@ pub fn license_scan(export: Option<&str>, _ctx: &CliContext) -> Result<()> {
         let valid_formats = ["json", "csv", "spdx"];
         if !valid_formats.contains(&fmt.to_lowercase().as_str()) {
             execute_cmd(Components::error_with_suggestion(
-                &format!("Invalid license export format: {}", fmt),
+                format!("Invalid license export format: {fmt}"),
                 "Valid formats: json, csv, spdx",
             ));
             anyhow::bail!("Invalid license export format: {fmt}");
@@ -214,7 +212,7 @@ pub fn license_scan(export: Option<&str>, _ctx: &CliContext) -> Result<()> {
     let mut license_inventory = vec![];
     for (license, count) in &scan.by_license {
         let pct = (*count as f32 / scan.total as f32) * 100.0;
-        license_inventory.push(format!("{}: {} packages ({:.0}%)", license, count, pct));
+        license_inventory.push(format!("{license}: {count} packages ({pct:.0}%)"));
     }
 
     let mut violations = vec![];
@@ -233,25 +231,25 @@ pub fn license_scan(export: Option<&str>, _ctx: &CliContext) -> Result<()> {
     execute_cmd(Cmd::batch([
         Components::header(
             "License Compliance Scan",
-            &format!("{} total packages", scan.total),
+            format!("{} total packages", scan.total),
         ),
         Components::spacer(),
         Components::card("License Inventory", license_inventory),
-        if !violations.is_empty() {
+        if violations.is_empty() {
+            Cmd::none()
+        } else {
             Cmd::batch([
                 Components::spacer(),
                 Components::card("Policy Violations", violations),
             ])
-        } else {
-            Cmd::none()
         },
-        if !unknown.is_empty() {
+        if unknown.is_empty() {
+            Cmd::none()
+        } else {
             Cmd::batch([
                 Components::spacer(),
                 Components::card("Unknown Licenses", unknown),
             ])
-        } else {
-            Cmd::none()
         },
         if let Some(format) = export {
             Cmd::batch([Components::spacer(), {
@@ -265,7 +263,7 @@ pub fn license_scan(export: Option<&str>, _ctx: &CliContext) -> Result<()> {
                     _ => serde_json::to_string_pretty(&scan)?,
                 };
                 fs::write(&filename, content)?;
-                Components::success(&format!("Exported to {}", filename))
+                Components::success(format!("Exported to {filename}"))
             }])
         } else {
             Cmd::none()
@@ -356,7 +354,7 @@ pub mod policy {
         execute_cmd(Cmd::batch([
             Components::header(
                 "Policy Configuration",
-                &format!("{} active policies", policy_count),
+                format!("{policy_count} active policies"),
             ),
             Components::spacer(),
             Components::card("Active Policies", policy_list),
@@ -388,7 +386,7 @@ pub mod policy {
 
         execute_cmd(Cmd::batch([
             Components::loading("Setting policy inheritance..."),
-            Components::success(&format!("{} now inherits policies from {}", to, from)),
+            Components::success(format!("{to} now inherits policies from {from}")),
         ]));
 
         Ok(())
@@ -413,8 +411,8 @@ pub mod server {
             anyhow::bail!("Invalid license key format");
         }
         if let Err(e) = crate::core::security::validate_relative_path(storage) {
-            execute_cmd(Components::error(&format!("Invalid storage path: {}", e)));
-            return Err(e.into());
+            execute_cmd(Components::error(format!("Invalid storage path: {e}")));
+            return Err(e);
         }
         if domain.len() > 255
             || domain
@@ -445,9 +443,8 @@ pub mod server {
             Components::spacer(),
             Components::header("Next Steps", ""),
             Cmd::println("  1. Start server: omgd --server"),
-            Cmd::println(&format!(
-                "  2. Configure clients: omg config set registry.url https://{}",
-                domain
+            Cmd::println(format!(
+                "  2. Configure clients: omg config set registry.url https://{domain}"
             )),
             Cmd::println("  3. Sync packages: omg enterprise server mirror"),
         ]));
