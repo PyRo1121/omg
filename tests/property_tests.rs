@@ -158,6 +158,9 @@ proptest! {
         alias in prop::sample::select(vec!["lts", "latest", "stable", "current", "lts/*", "lts/iron"])
     ) {
         let result = run_omg(&["use", "node", alias]);
+        if result.stderr.contains("panicked at") {
+            eprintln!("Panic detected in prop_version_aliases: {}", result.stderr);
+        }
         prop_assert!(!result.stderr.contains("panicked at"));
     }
 

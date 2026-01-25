@@ -200,11 +200,7 @@ impl Model for RemoveModel {
                 }
 
                 if !self.yes {
-                    let _ = write!(
-                        output,
-                        "\n{} Proceed with removal? · ",
-                        "✓".green().bold()
-                    );
+                    let _ = write!(output, "\n{} Proceed with removal? · ", "✓".green().bold());
                 }
                 output
             }
