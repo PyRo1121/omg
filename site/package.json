@@ -18,8 +18,15 @@
   },
   "dependencies": {
     "@solidjs/router": "^0.15.4",
+    "@types/three": "^0.182.0",
+    "clsx": "^2.1.1",
     "lucide-solid": "^0.562.0",
-    "solid-js": "^1.9.5"
+    "rehype-highlight": "^7.0.2",
+    "remark-gfm": "^4.0.1",
+    "solid-js": "^1.9.5",
+    "solid-markdown": "^2.1.1",
+    "tailwind-merge": "^3.4.0",
+    "three": "^0.182.0"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.18",
