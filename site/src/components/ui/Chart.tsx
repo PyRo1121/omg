@@ -54,7 +54,7 @@ export const BarChart: Component<BarChartProps> = props => {
                       <span class="text-sm font-black tabular-nums">
                         {props.tooltipFormatter
                           ? props.tooltipFormatter(item.value, item.label)
-                          : item.value.toLocaleString()}
+                          : (item.value ?? 0).toLocaleString()}
                       </span>
                     </div>
                   </div>
@@ -348,7 +348,7 @@ export const AreaChart: Component<AreaChartProps> = props => {
                 <div class="rounded-xl border border-white/10 bg-[#0a0a0b]/95 p-2 text-[10px] shadow-2xl backdrop-blur-md ring-1 ring-white/5">
                   <div class="font-bold uppercase tracking-widest text-slate-500">{point.label}</div>
                   <div class="font-black text-white tabular-nums">
-                    {props.tooltipFormatter ? props.tooltipFormatter(point.value, point.label) : point.value.toLocaleString()}
+                    {props.tooltipFormatter ? props.tooltipFormatter(point.value, point.label) : (point.value ?? 0).toLocaleString()}
                   </div>
                 </div>
               </div>

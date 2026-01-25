@@ -234,9 +234,9 @@ export const TeamAnalytics: Component<TeamAnalyticsProps> = props => {
                     description="Total developer time saved across the organization."
                     class="border-emerald-500/20 bg-emerald-500/[0.03]"
                   />
-                  <StatCard 
+                  <StatCard
                     title="Financial ROI"
-                    value={`$${productivityImpact().developer_value.toLocaleString()}`}
+                    value={`$${(productivityImpact().developer_value ?? 0).toLocaleString()}`}
                     icon={<DollarSign size={20} />}
                     description="Economic value generated from automation gains."
                     class="border-indigo-500/20 bg-indigo-500/[0.03]"
@@ -244,7 +244,7 @@ export const TeamAnalytics: Component<TeamAnalyticsProps> = props => {
                   />
                   <StatCard
                     title="Execution Volume"
-                    value={(teamData()?.totals?.total_commands || 0).toLocaleString()}
+                    value={(teamData()?.totals?.total_commands ?? 0).toLocaleString()}
                     icon={<Zap size={22} />}
                     description="Total operations executed globally."
                     class="border-amber-500/20 bg-amber-500/[0.03]"
@@ -308,7 +308,7 @@ export const TeamAnalytics: Component<TeamAnalyticsProps> = props => {
                           <div class="mt-6 pt-4 border-t border-white/5 flex justify-between items-center">
                             <div>
                                <div class="text-[9px] font-black uppercase tracking-widest text-slate-500">Throughput</div>
-                               <div class="text-lg font-black text-indigo-400">{(member.total_commands || 0).toLocaleString()}</div>
+                               <div class="text-lg font-black text-indigo-400">{(member.total_commands ?? 0).toLocaleString()}</div>
                             </div>
                             <button 
                               onClick={() => { if(confirm('Revoke node access?')) revokeMutation.mutate(member.machine_id) }}

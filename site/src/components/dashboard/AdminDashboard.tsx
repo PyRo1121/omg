@@ -18,6 +18,7 @@ import {
 import * as api from '../../lib/api';
 import { useAdminDashboard, useAdminFirehose } from '../../lib/api-hooks';
 import { StatCard } from './analytics/StatCard';
+import { ActivityHeatmap } from '../ui/Chart';
 import { CardSkeleton } from '../ui/Skeleton';
 
 type AdminTab = 'overview' | 'crm' | 'analytics' | 'revenue' | 'audit';
@@ -89,24 +90,24 @@ export const AdminDashboard: Component = () => {
               <div class="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
                 <StatCard
                   title="Total Users"
-                  value={adminData()?.overview?.total_users?.toLocaleString() || '0'}
+                  value={(adminData()?.overview?.total_users ?? 0).toLocaleString()}
                   icon={<Users size={20} />}
                   trend={{ value: 8.2, isUp: true }}
                 />
                 <StatCard
                   title="Monthly Revenue"
-                  value={`$${(adminData()?.overview?.mrr || 0).toLocaleString()}`}
+                  value={`$${(adminData()?.overview?.mrr ?? 0).toLocaleString()}`}
                   icon={<CreditCard size={20} />}
                   trend={{ value: 12.5, isUp: true }}
                 />
                 <StatCard
                   title="Active Fleet"
-                  value={adminData()?.overview?.active_machines?.toLocaleString() || '0'}
+                  value={(adminData()?.overview?.active_machines ?? 0).toLocaleString()}
                   icon={<Globe size={20} />}
                 />
                 <StatCard
                   title="Command Volume"
-                  value={adminData()?.overview?.total_commands?.toLocaleString() || '0'}
+                  value={(adminData()?.overview?.total_commands ?? 0).toLocaleString()}
                   icon={<Zap size={20} />}
                   trend={{ value: 4.1, isUp: true }}
                 />
@@ -153,25 +154,14 @@ export const AdminDashboard: Component = () => {
                 {/* Platform Health */}
                 <div class="space-y-6">
                   <div class="rounded-3xl border border-white/5 bg-[#0d0d0e] p-8 shadow-2xl">
-                    <h3 class="text-lg font-bold text-white uppercase tracking-widest mb-6">Fleet Distribution</h3>
-                    <div class="space-y-4">
-                      <For each={adminData()?.fleet?.versions}>
-                        {(v) => (
-                          <div>
-                            <div class="mb-2 flex justify-between text-[11px] font-black uppercase tracking-widest">
-                              <span class="text-slate-500">v{v.omg_version}</span>
-                              <span class="text-white">{v.count} nodes</span>
-                            </div>
-                            <div class="h-1.5 overflow-hidden rounded-full bg-white/[0.03]">
-                              <div
-                                class="h-full bg-indigo-500"
-                                style={{ width: `${(v.count / (adminData()?.overview?.active_machines || 1)) * 100}%` }}
-                              />
-                            </div>
-                          </div>
-                        )}
-                      </For>
-                    </div>
+                    <h3 class="text-lg font-bold text-white uppercase tracking-widest mb-6">Global Activity</h3>
+                    <ActivityHeatmap
+                      data={adminData()?.daily_active_users?.map(d => ({
+                        day: new Date(d.date).getDay(),
+                        hour: 12, // Aggregate for simplicity
+                        value: d.commands
+                      })) || []}
+                    />
                   </div>
 
                   <div class="rounded-3xl border border-white/5 bg-gradient-to-br from-indigo-500/10 to-transparent p-8 shadow-2xl">
