@@ -4,7 +4,6 @@ use omg_lib::cli::{CliContext, CommandRunner, Commands, EnvCommands, FleetComman
 use serial_test::serial;
 use std::fs;
 use tempfile::tempdir;
-use dirs; // For license path
 
 fn get_ctx() -> CliContext {
     CliContext {

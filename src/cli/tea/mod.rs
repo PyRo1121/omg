@@ -73,8 +73,22 @@
 mod cmd;
 mod renderer;
 
+// Model implementations
+mod info_model;
+mod install_model;
+mod status_model;
+mod wrappers;
+
 pub use cmd::{Cmd, cmd};
 pub use renderer::Renderer;
+
+// Re-export models
+pub use info_model::{InfoModel, InfoMsg, InfoSource};
+pub use install_model::{InstallModel, InstallMsg, InstallState};
+pub use status_model::{StatusData, StatusModel, StatusMsg};
+
+// Re-export wrappers for easy integration
+pub use wrappers::{run_info_elm, run_install_elm, run_status_elm};
 
 use std::fmt;
 use std::io;
@@ -228,6 +242,7 @@ impl<M: Model> Program<M> {
     }
 
     /// Check if there are more commands to process
+    #[allow(clippy::unnecessary_wraps)]
     fn next_cmd(&self) -> io::Result<Option<Cmd<M::Msg>>> {
         // For now, we process commands synchronously
         // In the future, this could check a queue or channel
@@ -264,7 +279,7 @@ mod tests {
             match msg {
                 CounterMsg::Increment => {
                     self.count += 1;
-                    if self.count % 5 == 0 {
+                    if self.count.is_multiple_of(5) {
                         Cmd::info(format!("Reached {}!", self.count))
                     } else {
                         Cmd::none()
