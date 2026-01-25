@@ -340,13 +340,17 @@ mod team_matrix {
     #[test]
     #[serial]
     fn test_team_init() {
+        clear_license(); // Ensure no license for consistent test behavior
         let project = TestProject::new();
-        // Init a new team
+        // Init a new team - requires license, so we expect failure
         let res = project.run(&["team", "init", "test-team-id"]);
-        res.assert_success();
-        // Check for team config file (omg/team.toml seems standard)
-        // If not, we just check the directory exists which is safer
-        assert!(project.path().join(".omg").exists());
+        // Should fail with tier/license error
+        res.assert_failure();
+        assert!(
+            res.stderr.contains("tier") || res.stderr.contains("license"),
+            "Expected tier/license error, got: {}",
+            res.stderr
+        );
     }
 }
 
@@ -361,6 +365,7 @@ mod fleet_matrix {
     #[test]
     #[serial]
     fn test_fleet_status() {
+        clear_license(); // Ensure no license for consistent test behavior
         let res = run_omg(&["fleet", "status"]);
         // Might fail if not logged in or no license, but we check it runs
         if res.success {
@@ -371,6 +376,7 @@ mod fleet_matrix {
             assert!(
                 stderr.contains("login")
                     || stderr.contains("license")
+                    || stderr.contains("tier")
                     || stderr.contains("Failed to fetch")
                     || stderr.contains("404"),
                 "Expected auth/network error, got: {}",
