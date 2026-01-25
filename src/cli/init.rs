@@ -10,7 +10,7 @@ use crossterm::{
     style::{Color, Print, ResetColor, SetForegroundColor, Stylize},
     terminal::{self, ClearType},
 };
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 use std::process::Command;
 
 use crate::config::Settings;
@@ -98,7 +98,7 @@ impl Default for WizardState {
 /// Run the interactive setup wizard
 pub async fn run_interactive(skip_shell: bool, skip_daemon: bool) -> Result<()> {
     // Check if we are in a non-interactive terminal (e.g. CI)
-    if !atty::is(atty::Stream::Stdout) || !atty::is(atty::Stream::Stdin) {
+    if !std::io::stdout().is_terminal() || !std::io::stdin().is_terminal() {
         println!("Non-interactive terminal detected, running with defaults...");
         return run_defaults().await;
     }
