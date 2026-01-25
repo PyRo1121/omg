@@ -384,6 +384,10 @@ pub fn search_sync_cli(query: &str, detailed: bool, interactive: bool) -> Result
         let sync_time = start.elapsed();
 
         if res.packages.is_empty() {
+            // Use Components for enhanced "no results" message
+            use crate::cli::components::Components;
+            use crate::cli::packages::execute_cmd;
+            execute_cmd(Components::no_results(query));
             return Ok(false);
         }
 

@@ -1,10 +1,10 @@
 //! `omg outdated` - Show what packages would be updated
 
 use anyhow::Result;
-use owo_colors::OwoColorize;
 use serde::Serialize;
 use std::sync::Arc;
 
+use crate::cli::tea::Cmd;
 use crate::core::packages::PackageService;
 use crate::package_managers::get_package_manager;
 
@@ -39,9 +39,11 @@ impl std::fmt::Display for UpdateType {
 
 /// Show outdated packages
 pub async fn run(security_only: bool, json: bool) -> Result<()> {
+    use crate::cli::components::Components;
+
     // SECURITY: This command has no string inputs, but we validate environment state
     if !json {
-        println!("{} Checking for updates...\n", "OMG".cyan().bold());
+        crate::cli::packages::execute_cmd(Components::loading("Checking for updates"));
     }
 
     let pm = Arc::from(get_package_manager());
@@ -52,7 +54,7 @@ pub async fn run(security_only: bool, json: bool) -> Result<()> {
         if json {
             println!("[]");
         } else {
-            println!("  {} All packages are up to date!", "✓".green());
+            crate::cli::packages::execute_cmd(Components::up_to_date());
         }
         return Ok(());
     }
@@ -113,88 +115,85 @@ pub async fn run(security_only: bool, json: bool) -> Result<()> {
         .filter(|p| matches!(p.update_type, UpdateType::Patch) && !p.is_security)
         .collect();
 
+    let mut commands = vec![
+        Components::spacer(),
+        Components::header("Available Updates", format!("{} packages total", filtered.len())),
+        Components::spacer(),
+    ];
+
+    // Security updates
     if !security.is_empty() {
-        println!(
-            "  {} (install immediately)",
-            "Security Updates".red().bold()
-        );
-        for pkg in &security {
-            println!(
-                "    {} {} → {} {}",
-                pkg.name.yellow(),
-                pkg.current_version.dimmed(),
-                pkg.new_version.green(),
-                "(CVE)".red()
-            );
-        }
-        println!();
+        commands.push(Components::card(
+            format!("Security Updates (install immediately)",),
+            security.iter().map(|p| {
+                format!("{} {} → {} (CVE)", p.name, p.current_version, p.new_version)
+            }).collect(),
+        ));
+        commands.push(Components::spacer());
     }
 
+    // Major updates
     if !major.is_empty() {
-        println!(
-            "  {} (may have breaking changes)",
-            "Major Updates".yellow().bold()
-        );
-        for pkg in &major {
-            println!(
-                "    {} {} → {} {}",
-                pkg.name,
-                pkg.current_version.dimmed(),
-                pkg.new_version.cyan(),
-                format!("({})", pkg.repo).dimmed()
-            );
-        }
-        println!();
+        commands.push(Components::card(
+            format!("Major Updates (may have breaking changes)"),
+            major.iter().map(|p| {
+                format!("{} {} → ({})", p.name, p.current_version, p.repo)
+            }).collect(),
+        ));
+        commands.push(Components::spacer());
     }
 
+    // Minor updates
     if !minor.is_empty() {
-        println!("  {} (new features)", "Minor Updates".blue().bold());
-        for pkg in minor.iter().take(10) {
-            println!(
-                "    {} {} → {} {}",
-                pkg.name,
-                pkg.current_version.dimmed(),
-                pkg.new_version,
-                format!("({})", pkg.repo).dimmed()
-            );
-        }
+        let minor_count = minor.len().min(10);
+        commands.push(Components::card(
+            format!("Minor Updates (new features)"),
+            minor.iter().take(minor_count).map(|p| {
+                format!("{} {} → {}", p.name, p.current_version, p.new_version)
+            }).collect(),
+        ));
+
         if minor.len() > 10 {
-            println!("    ... and {} more", minor.len() - 10);
+            commands.push(Components::muted(format!("... and {} more minor updates", minor.len() - 10)));
         }
-        println!();
+        commands.push(Components::spacer());
     }
 
+    // Patch updates
     if !patch.is_empty() {
-        println!("  {} (bug fixes)", "Patch Updates".dimmed().bold());
-        for pkg in patch.iter().take(5) {
-            println!(
-                "    {} {} → {} {}",
-                pkg.name,
-                pkg.current_version.dimmed(),
-                pkg.new_version,
-                format!("({})", pkg.repo).dimmed()
-            );
-        }
+        let patch_count = patch.len().min(5);
+        commands.push(Components::card(
+            format!("Patch Updates (bug fixes)"),
+            patch.iter().take(patch_count).map(|p| {
+                format!("{} {} → {}", p.name, p.current_version, p.new_version)
+            }).collect(),
+        ));
+
         if patch.len() > 5 {
-            println!("    ... and {} more", patch.len() - 5);
+            commands.push(Components::muted(format!("... and {} more patch updates", patch.len() - 5)));
         }
-        println!();
+        commands.push(Components::spacer());
     }
 
     // Summary
-    println!("  {}", "Summary:".bold());
-    println!("    Security: {}", security.len().to_string().red());
-    println!("    Major: {}", major.len().to_string().yellow());
-    println!("    Minor: {}", minor.len().to_string().blue());
-    println!("    Patch: {}", patch.len());
-    println!();
-    println!("  Run {} to update all", "omg update".cyan());
+    commands.push(Components::kv_list(
+        Some("Summary"),
+        vec![
+            ("Security Updates", &security.len().to_string()),
+            ("Major Updates", &major.len().to_string()),
+            ("Minor Updates", &minor.len().to_string()),
+            ("Patch Updates", &patch.len().to_string()),
+        ],
+    ));
+    commands.push(Components::spacer());
+
+    // Actions
+    commands.push(Components::info("Run 'omg update' to update all packages"));
     if !security.is_empty() {
-        println!(
-            "  Run {} to update security fixes only",
-            "omg update --security".cyan()
-        );
+        commands.push(Components::warning("Run 'omg update --security' to update security fixes only"));
     }
+
+    crate::cli::packages::execute_cmd(Cmd::batch(commands));
 
     Ok(())
 }

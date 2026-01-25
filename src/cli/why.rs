@@ -1,37 +1,36 @@
 //! `omg why` - Explain why a package is installed (dependency chain)
 
 use anyhow::Result;
-use owo_colors::OwoColorize;
 #[cfg(feature = "arch")]
 use std::collections::{HashMap, HashSet, VecDeque};
+
+use crate::cli::tea::Cmd;
 
 /// Explain why a package is installed
 pub fn run(package: &str, reverse: bool) -> Result<()> {
     // SECURITY: Validate package name
     crate::core::security::validate_package_name(package)?;
 
-    println!(
-        "{} Analyzing dependencies for {}...\n",
-        "OMG".cyan().bold(),
-        package.yellow()
-    );
-
     #[cfg(feature = "arch")]
     {
-        if reverse {
-            show_reverse_deps(package)?;
+        let cmd = if reverse {
+            show_reverse_deps(package)?
         } else {
-            show_dependency_chain(package)?;
-        }
+            show_dependency_chain(package)?
+        };
+        crate::cli::packages::execute_cmd(cmd);
+        Ok(())
     }
 
     #[cfg(all(feature = "debian", not(feature = "arch")))]
     {
-        if reverse {
-            show_reverse_deps_debian(package)?;
+        let cmd = if reverse {
+            show_reverse_deps_debian(package)?
         } else {
-            show_dependency_chain_debian(package)?;
-        }
+            show_dependency_chain_debian(package)?
+        };
+        crate::cli::packages::execute_cmd(cmd);
+        Ok(())
     }
 
     #[cfg(not(any(feature = "arch", feature = "debian")))]
@@ -39,14 +38,12 @@ pub fn run(package: &str, reverse: bool) -> Result<()> {
         let _ = reverse;
         anyhow::bail!("Package dependency analysis requires arch or debian feature");
     }
-
-    #[cfg(any(feature = "arch", feature = "debian"))]
-    Ok(())
 }
 
 #[cfg(feature = "arch")]
-fn show_dependency_chain(package: &str) -> Result<()> {
+fn show_dependency_chain(package: &str) -> Result<Cmd<()>> {
     use alpm::Alpm;
+    use crate::cli::components::Components;
 
     let handle = Alpm::new("/", "/var/lib/pacman")
         .map_err(|e| anyhow::anyhow!("Failed to open ALPM: {e}"))?;
@@ -55,26 +52,35 @@ fn show_dependency_chain(package: &str) -> Result<()> {
 
     // Check if package is installed
     let Ok(pkg) = localdb.pkg(package) else {
-        println!("  {} Package '{}' is not installed", "✗".red(), package);
-        return Ok(());
+        return Ok(Components::error_with_suggestion(
+            format!("Package '{}' is not installed", package),
+            "Try 'omg search' to find available packages",
+        ));
     };
 
     // Check install reason
     let reason = pkg.reason();
     let reason_str = match reason {
-        alpm::PackageReason::Explicit => "explicitly installed".green().to_string(),
-        alpm::PackageReason::Depend => "installed as a dependency".yellow().to_string(),
+        alpm::PackageReason::Explicit => "explicitly installed",
+        alpm::PackageReason::Depend => "installed as a dependency",
     };
 
-    println!("  {} {}", "Package:".bold(), package.cyan());
-    println!("  {} {}", "Version:".bold(), pkg.version());
-    println!("  {} {}", "Reason:".bold(), reason_str);
-    println!();
+    let mut commands = vec![
+        Components::header("Package Analysis", format!("for {}", package)),
+        Components::spacer(),
+        Components::kv_list(
+            Some("Package Information"),
+            vec![
+                ("Name", package),
+                ("Version", pkg.version().as_str()),
+                ("Reason", reason_str),
+            ],
+        ),
+        Components::spacer(),
+    ];
 
     if matches!(reason, alpm::PackageReason::Depend) {
         // Find what requires this package
-        println!("  {} (what needs this package)", "Required by:".bold());
-
         let mut required_by = Vec::new();
         for db_pkg in localdb.pkgs() {
             for dep in db_pkg.depends() {
@@ -85,70 +91,68 @@ fn show_dependency_chain(package: &str) -> Result<()> {
         }
 
         if required_by.is_empty() {
-            println!("    {} (orphan - can be removed)", "Nothing".dimmed());
+            commands.push(Components::info("Required by: (orphan - can be removed)"));
+            commands.push(Components::success("This package is safe to remove"));
         } else {
-            for req in &required_by {
-                println!("    {} {}", "→".blue(), req);
-            }
-            println!();
+            commands.push(Components::card(
+                format!("Required by ({} packages)", required_by.len()),
+                required_by.clone(),
+            ));
 
             // Show one dependency chain
             if let Some(first_req) = required_by.first() {
-                println!("  {} (example chain)", "Dependency path:".bold());
-                print_dependency_path(&handle, first_req, package);
+                if let Some(path) = build_dependency_path(&handle, first_req, package) {
+                    commands.push(Components::spacer());
+                    commands.push(Components::kv_list(Some("Dependency Path Example"), path));
+                }
             }
         }
     } else {
         // Show what this package depends on
-        println!("  {} (what this package needs)", "Dependencies:".bold());
         let deps: Vec<_> = pkg.depends().into_iter().collect();
         if deps.is_empty() {
-            println!("    {} (no dependencies)", "None".dimmed());
+            commands.push(Components::info("Dependencies: (no dependencies)"));
         } else {
-            for dep in deps.iter().take(10) {
-                let installed = localdb.pkg(dep.name().as_bytes()).is_ok();
-                let status = if installed {
-                    "✓".green().to_string()
-                } else {
-                    "✗".red().to_string()
-                };
-                println!("    {} {}", status, dep.name());
-            }
+            let dep_list: Vec<(String, String)> = deps
+                .iter()
+                .take(10)
+                .map(|dep| {
+                    let installed = localdb.pkg(dep.name().as_bytes()).is_ok();
+                    let status = if installed { "✓ installed" } else { "✗ not installed" };
+                    (dep.name().to_string(), status.to_string())
+                })
+                .collect();
+
+            commands.push(Components::kv_list(Some("Dependencies"), dep_list));
+
             if deps.len() > 10 {
-                println!("    ... and {} more", deps.len() - 10);
+                commands.push(Components::muted(format!("... and {} more dependencies", deps.len() - 10)));
             }
         }
     }
 
     // Safety assessment
-    println!();
+    commands.push(Components::spacer());
     let required_by_count = count_reverse_deps(&handle, package);
-    if required_by_count == 0 && matches!(reason, alpm::PackageReason::Depend) {
-        println!(
-            "  {} {} (orphan dependency)",
-            "Safe to remove:".bold(),
-            "YES".green()
-        );
+    let (safety_msg, safety_type) = if required_by_count == 0 && matches!(reason, alpm::PackageReason::Depend) {
+        ("YES - orphan dependency".to_string(), "safe")
     } else if required_by_count > 0 {
-        println!(
-            "  {} {} ({} packages depend on it)",
-            "Safe to remove:".bold(),
-            "NO".red(),
-            required_by_count
-        );
+        (format!("NO - {} packages depend on it", required_by_count), "unsafe")
     } else {
-        println!(
-            "  {} {} (explicitly installed)",
-            "Safe to remove:".bold(),
-            "User decision".yellow()
-        );
+        ("User decision - explicitly installed".to_string(), "decision")
+    };
+
+    match safety_type {
+        "safe" => commands.push(Components::success(format!("Safe to remove: {}", safety_msg))),
+        "unsafe" => commands.push(Components::warning(format!("Safe to remove: {}", safety_msg))),
+        _ => commands.push(Components::info(format!("Safe to remove: {}", safety_msg))),
     }
 
-    Ok(())
+    Ok(Cmd::batch(commands))
 }
 
 #[cfg(feature = "arch")]
-fn print_dependency_path(handle: &alpm::Alpm, from: &str, to: &str) {
+fn build_dependency_path(handle: &alpm::Alpm, from: &str, to: &str) -> Option<Vec<(String, String)>> {
     // BFS to find shortest path
     let localdb = handle.localdb();
     let mut visited = HashSet::new();
@@ -169,17 +173,17 @@ fn print_dependency_path(handle: &alpm::Alpm, from: &str, to: &str) {
             }
             path.reverse();
 
+            let mut result = Vec::new();
             for (i, p) in path.iter().enumerate() {
-                let indent = "  ".repeat(i + 2);
                 if i == 0 {
-                    println!("{}└─ {} (explicit)", indent, p.cyan());
+                    result.push((format!("└─ {}", p), "explicit".to_string()));
                 } else if i == path.len() - 1 {
-                    println!("{}└─ {} (target)", indent, p.yellow());
+                    result.push((format!("└─ {}", p), "target package".to_string()));
                 } else {
-                    println!("{indent}└─ {p}");
+                    result.push((format!("└─ {}", p), "dependency".to_string()));
                 }
             }
-            return;
+            return Some(result);
         }
 
         if let Ok(pkg) = localdb.pkg(current.as_bytes()) {
@@ -194,7 +198,7 @@ fn print_dependency_path(handle: &alpm::Alpm, from: &str, to: &str) {
         }
     }
 
-    println!("    (could not trace path)");
+    None
 }
 
 #[cfg(feature = "arch")]
@@ -215,8 +219,9 @@ fn count_reverse_deps(handle: &alpm::Alpm, package: &str) -> usize {
 }
 
 #[cfg(feature = "arch")]
-fn show_reverse_deps(package: &str) -> Result<()> {
+fn show_reverse_deps(package: &str) -> Result<Cmd<()>> {
     use alpm::Alpm;
+    use crate::cli::components::Components;
 
     let handle = Alpm::new("/", "/var/lib/pacman")
         .map_err(|e| anyhow::anyhow!("Failed to open ALPM: {e}"))?;
@@ -225,16 +230,11 @@ fn show_reverse_deps(package: &str) -> Result<()> {
 
     // Check if package is installed
     if localdb.pkg(package).is_err() {
-        println!("  {} Package '{}' is not installed", "✗".red(), package);
-        return Ok(());
+        return Ok(Components::error_with_suggestion(
+            format!("Package '{}' is not installed", package),
+            "Try 'omg search' to find available packages",
+        ));
     }
-
-    println!(
-        "  {} (packages that depend on {})",
-        "Reverse dependencies:".bold(),
-        package.yellow()
-    );
-    println!();
 
     let mut dependents: Vec<(String, bool)> = Vec::new();
 
@@ -248,50 +248,53 @@ fn show_reverse_deps(package: &str) -> Result<()> {
         }
     }
 
+    let mut commands = vec![
+        Components::header("Reverse Dependencies", format!("packages that depend on {}", package)),
+        Components::spacer(),
+    ];
+
     if dependents.is_empty() {
-        println!("    {} Nothing depends on this package", "✓".green());
-        println!();
-        println!(
-            "  {} {}",
-            "Safe to remove:".bold(),
-            "YES (if not needed)".green()
-        );
+        commands.push(Components::success("Nothing depends on this package"));
+        commands.push(Components::info("Safe to remove: YES (if not needed)"));
     } else {
         dependents.sort_by(|a, b| b.1.cmp(&a.1)); // Explicit first
 
         let explicit_count = dependents.iter().filter(|(_, e)| *e).count();
         let dep_count = dependents.len() - explicit_count;
 
-        for (name, is_explicit) in &dependents {
-            let marker = if *is_explicit {
-                "[explicit]".green().to_string()
-            } else {
-                "[dependency]".dimmed().to_string()
-            };
-            println!("    {} {} {}", "→".blue(), name, marker);
-        }
+        let dep_list: Vec<(String, String)> = dependents
+            .iter()
+            .map(|(name, is_explicit)| {
+                let marker = if *is_explicit {
+                    "explicit"
+                } else {
+                    "dependency"
+                };
+                (name.clone(), marker.to_string())
+            })
+            .collect();
 
-        println!();
-        println!(
-            "  {} {} ({} explicit, {} dependencies)",
-            "Total dependents:".bold(),
+        commands.push(Components::kv_list(
+            Some(format!("Dependents ({} total)", dependents.len())),
+            dep_list,
+        ));
+
+        commands.push(Components::spacer());
+        commands.push(Components::warning(format!(
+            "Safe to remove: NO (would break {} dependents: {} explicit, {} dependencies)",
             dependents.len(),
             explicit_count,
             dep_count
-        );
-        println!(
-            "  {} {}",
-            "Safe to remove:".bold(),
-            "NO (would break dependents)".red()
-        );
+        )));
     }
 
-    Ok(())
+    Ok(Cmd::batch(commands))
 }
 
 #[cfg(all(feature = "debian", not(feature = "arch")))]
-fn show_dependency_chain_debian(package: &str) -> Result<()> {
+fn show_dependency_chain_debian(package: &str) -> Result<Cmd<()>> {
     use std::process::Command;
+    use crate::cli::components::Components;
 
     // Use apt-cache to get dependency info
     let output = Command::new("apt-cache")
@@ -299,59 +302,72 @@ fn show_dependency_chain_debian(package: &str) -> Result<()> {
         .output()?;
 
     if !output.status.success() {
-        println!("  {} Package '{}' not found", "✗".red(), package);
-        return Ok(());
+        return Ok(Components::error_with_suggestion(
+            format!("Package '{}' not found", package),
+            "Try 'omg search' to find available packages",
+        ));
     }
 
     let deps_str = String::from_utf8_lossy(&output.stdout);
-    println!("  {} {}", "Package:".bold(), package.cyan());
-    println!();
-    println!("  {}", "Dependencies:".bold());
+    let mut deps = Vec::new();
 
     for line in deps_str.lines() {
         let line = line.trim();
         if line.starts_with("Depends:") {
-            let dep = line.strip_prefix("Depends:").unwrap_or("").trim();
-            println!("    {} {}", "→".blue(), dep);
+            if let Some(dep) = line.strip_prefix("Depends:") {
+                deps.push(dep.trim().to_string());
+            }
         }
     }
 
-    Ok(())
+    if deps.is_empty() {
+        Ok(Cmd::batch(vec![
+            Components::header("Package Analysis", package),
+            Components::spacer(),
+            Components::info("No dependencies found"),
+        ]))
+    } else {
+        Ok(Cmd::batch(vec![
+            Components::header("Package Analysis", package),
+            Components::spacer(),
+            Components::card(format!("Dependencies ({})", deps.len()), deps),
+        ]))
+    }
 }
 
 #[cfg(all(feature = "debian", not(feature = "arch")))]
-fn show_reverse_deps_debian(package: &str) -> Result<()> {
+fn show_reverse_deps_debian(package: &str) -> Result<Cmd<()>> {
     use std::process::Command;
+    use crate::cli::components::Components;
 
     let output = Command::new("apt-cache")
         .args(["rdepends", "--", package])
         .output()?;
 
     if !output.status.success() {
-        println!("  {} Package '{}' not found", "✗".red(), package);
-        return Ok(());
+        return Ok(Components::error_with_suggestion(
+            format!("Package '{}' not found", package),
+            "Try 'omg search' to find available packages",
+        ));
     }
 
     let rdeps_str = String::from_utf8_lossy(&output.stdout);
-    println!(
-        "  {} (packages that depend on {})",
-        "Reverse dependencies:".bold(),
-        package.yellow()
-    );
-    println!();
+    let mut deps = Vec::new();
 
-    let mut count = 0;
     for line in rdeps_str.lines().skip(2) {
         // Skip header lines
         let dep = line.trim();
         if !dep.is_empty() && !dep.starts_with("Reverse") {
-            println!("    {} {}", "→".blue(), dep);
-            count += 1;
+            deps.push(dep.to_string());
         }
     }
 
-    println!();
-    println!("  {} {}", "Total dependents:".bold(), count);
-
-    Ok(())
+    Ok(Cmd::batch(vec![
+        Components::header("Reverse Dependencies", format!("packages that depend on {}", package)),
+        Components::spacer(),
+        Components::kv_list(
+            Some(format!("Dependents ({})", deps.len())),
+            deps.into_iter().map(|d| (d.clone(), String::new())).collect(),
+        ),
+    ]))
 }

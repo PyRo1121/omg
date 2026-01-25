@@ -2,7 +2,6 @@
 
 use anyhow::Result;
 use dialoguer::Confirm;
-use owo_colors::OwoColorize;
 use std::sync::Arc;
 
 use crate::cli::tea::run_update_elm;
@@ -41,30 +40,42 @@ async fn update_fallback(check_only: bool, yes: bool) -> Result<()> {
     ui::print_header("OMG", &format!("Found {} update(s)", updates.len()));
     ui::print_spacer();
 
-    for up in &updates {
-        let update_label = match (
-            semver::Version::parse(up.old_version.trim_start_matches(|c: char| !c.is_numeric())),
-            semver::Version::parse(up.new_version.trim_start_matches(|c: char| !c.is_numeric())),
-        ) {
-            (Ok(old), Ok(new)) => {
-                if new.major > old.major {
-                    "MAJOR".red().bold().to_string()
-                } else if new.minor > old.minor {
-                    "minor".yellow().bold().to_string()
-                } else {
-                    "patch".green().bold().to_string()
-                }
-            }
-            _ => "update".dimmed().to_string(),
-        };
+    // Use Components for enhanced display
+    use crate::cli::components::Components;
+    use crate::cli::packages::execute_cmd;
 
+    // Build update summary with Components
+    let update_packages: Vec<(String, String, String)> = updates
+        .iter()
+        .map(|up| {
+            let update_label = match (
+                semver::Version::parse(up.old_version.trim_start_matches(|c: char| !c.is_numeric())),
+                semver::Version::parse(up.new_version.trim_start_matches(|c: char| !c.is_numeric())),
+            ) {
+                (Ok(old), Ok(new)) => {
+                    if new.major > old.major {
+                        format!("MAJOR {}", up.name)
+                    } else if new.minor > old.minor {
+                        format!("minor {}", up.name)
+                    } else {
+                        format!("patch {}", up.name)
+                    }
+                }
+                _ => format!("update {}", up.name),
+            };
+
+            (update_label, up.old_version.clone(), up.new_version.clone())
+        })
+        .collect();
+
+    execute_cmd(Components::update_summary(update_packages));
+
+    // Show repo information separately
+    for up in &updates {
         println!(
-            "  {:>8} {} {} {} → {}",
-            update_label,
-            style::package(&up.name),
+            "  {} {}",
             style::dim(&format!("({})", up.repo)),
-            style::dim(&up.old_version),
-            style::version(&up.new_version)
+            style::package(&up.name)
         );
     }
 
