@@ -33,7 +33,7 @@ pub fn info_sync(package: &str) -> Result<bool> {
         ui::print_header("OMG", "Package Information");
         ui::print_spacer();
 
-        display_detailed_info(&info)?;
+        display_detailed_info(&info);
 
         // Track usage
         crate::core::usage::track_info();

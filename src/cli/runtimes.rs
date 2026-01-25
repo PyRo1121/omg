@@ -82,10 +82,7 @@ pub async fn use_version(runtime: &str, version: Option<&str>) -> Result<()> {
         }
     };
 
-    ui::print_header(
-        "OMG",
-        &format!("Switching {runtime} to version {version}"),
-    );
+    ui::print_header("OMG", &format!("Switching {runtime} to version {version}"));
     ui::print_spacer();
 
     crate::core::usage::track_runtime_switch(runtime);
@@ -237,7 +234,7 @@ fn mise_list_all() -> Result<()> {
 /// List installed versions - PURE NATIVE (no external tools)
 pub fn list_versions_sync(runtime: Option<&str>) -> Result<()> {
     if let Some(rt) = runtime {
-        ui::print_header("OMG", &format!("{} versions", rt));
+        ui::print_header("OMG", &format!("{rt} versions"));
         ui::print_spacer();
 
         match rt.to_lowercase().as_str() {
@@ -355,7 +352,7 @@ pub async fn list_versions(runtime: Option<&str>, available: bool) -> Result<()>
     }
 
     if let Some(rt) = runtime {
-        ui::print_header("OMG", &format!("{} versions", rt));
+        ui::print_header("OMG", &format!("{rt} versions"));
         ui::print_spacer();
 
         match rt.to_lowercase().as_str() {
@@ -484,8 +481,7 @@ pub async fn list_versions(runtime: Option<&str>, available: bool) -> Result<()>
                 // Auto-install mise if not available
                 if !MISE.is_available() {
                     ui::print_tip(&format!(
-                        "{} is not natively supported, installing mise...",
-                        rt
+                        "{rt} is not natively supported, installing mise..."
                     ));
                     MISE.ensure_installed().await?;
                 }

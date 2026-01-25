@@ -36,31 +36,37 @@ impl Style {
         Self::default()
     }
 
+    #[must_use]
     pub fn foreground(mut self, color: Color) -> Self {
         self.fg = Some(color);
         self
     }
 
+    #[must_use]
     pub fn background(mut self, color: Color) -> Self {
         self.bg = Some(color);
         self
     }
 
+    #[must_use]
     pub fn bold(mut self, yes: bool) -> Self {
         self.is_bold = yes;
         self
     }
 
+    #[must_use]
     pub fn italic(mut self, yes: bool) -> Self {
         self.is_italic = yes;
         self
     }
 
+    #[must_use]
     pub fn padding_left(mut self, n: usize) -> Self {
         self.padding_left = n;
         self
     }
 
+    #[must_use]
     pub fn padding_right(mut self, n: usize) -> Self {
         self.padding_right = n;
         self
@@ -92,8 +98,7 @@ impl Style {
                 Color::Yellow => styled.on_yellow().to_string(),
                 Color::Magenta => styled.on_magenta().to_string(),
                 Color::White => styled.on_white().to_string(),
-                Color::Black => styled.on_black().to_string(),
-                Color::Gray => styled.on_black().to_string(), // Fallback
+                Color::Black | Color::Gray => styled.on_black().to_string(), // Fallback
             };
         }
 
@@ -108,7 +113,7 @@ impl Style {
         let left_pad = " ".repeat(self.padding_left);
         let right_pad = " ".repeat(self.padding_right);
 
-        format!("{}{}{}", left_pad, styled, right_pad)
+        format!("{left_pad}{styled}{right_pad}")
     }
 }
 
@@ -131,7 +136,7 @@ pub fn print_list_item(item: &str, metadata: Option<&str>) {
         let meta_style = Style::new().foreground(Color::Gray);
         println!("  {} {} {}", bullet, item, meta_style.render(meta));
     } else {
-        println!("  {} {}", bullet, item);
+        println!("  {bullet} {item}");
     }
 }
 
@@ -173,7 +178,7 @@ pub fn print_warning(msg: impl Display) {
 
 /// Print a step in a multi-step process.
 pub fn print_step(step: usize, total: usize, msg: &str) {
-    let step_str = format!(" {:02}/{:02} ", step, total);
+    let step_str = format!(" {step:02}/{total:02} ");
     let step_style = Style::new()
         .background(Color::Gray) // approximate for bright black
         .foreground(Color::White);
@@ -188,7 +193,7 @@ pub fn print_kv(key: &str, value: &str) {
     println!("  {:>12}: {}", key_style.render(key), value);
 }
 
-/// Get a themed ColorfulTheme for dialoguer prompts.
+/// Get a themed `ColorfulTheme` for dialoguer prompts.
 /// Keeps using console/dialoguer themes as they are specific to that library.
 pub fn prompt_theme() -> dialoguer::theme::ColorfulTheme {
     use dialoguer::theme::ColorfulTheme;
