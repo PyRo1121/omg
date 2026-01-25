@@ -485,130 +485,73 @@ export async function handleAnalytics(request: Request, env: Env): Promise<Respo
 
     // Process events in batch
     const today = new Date().toISOString().split('T')[0];
+    const statements: D1PreparedStatement[] = [];
 
     for (const event of events) {
-      // Store event in analytics_events table
-      await env.DB.prepare(`
+      // Store event
+      statements.push(env.DB.prepare(`
         INSERT INTO analytics_events (id, event_type, event_name, properties, timestamp, session_id, machine_id, license_key, version, platform, duration_ms, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-      `)
-        .bind(
-          crypto.randomUUID(),
-          event.event_type,
-          event.event_name,
-          JSON.stringify(event.properties || {}),
-          event.timestamp,
-          event.session_id,
-          event.machine_id,
-          event.license_key || null,
-          event.version,
-          event.platform,
-          event.duration_ms || null
-        )
-        .run();
+      `).bind(
+        crypto.randomUUID(),
+        event.event_type,
+        event.event_name,
+        JSON.stringify(event.properties || {}),
+        event.timestamp,
+        event.session_id,
+        event.machine_id,
+        event.license_key || null,
+        event.version,
+        event.platform,
+        event.duration_ms || null
+      ));
 
-      // Update aggregated stats
       if (event.event_type === 'command') {
-        // Update daily command stats
-        await env.DB.prepare(`
+        statements.push(env.DB.prepare(`
           INSERT INTO analytics_daily (date, metric, dimension, value)
           VALUES (?, 'commands', ?, 1)
           ON CONFLICT(date, metric, dimension) DO UPDATE SET value = value + 1
-        `).bind(today, event.event_name).run();
+        `).bind(today, event.event_name));
 
-        // Update total commands
-        await env.DB.prepare(`
+        statements.push(env.DB.prepare(`
           INSERT INTO analytics_daily (date, metric, dimension, value)
           VALUES (?, 'total_commands', 'all', 1)
           ON CONFLICT(date, metric, dimension) DO UPDATE SET value = value + 1
-        `).bind(today).run();
+        `).bind(today));
 
-        // Update platform distribution
-        await env.DB.prepare(`
+        statements.push(env.DB.prepare(`
           INSERT INTO analytics_daily (date, metric, dimension, value)
           VALUES (?, 'platform', ?, 1)
           ON CONFLICT(date, metric, dimension) DO UPDATE SET value = value + 1
-        `).bind(today, event.platform).run();
+        `).bind(today, event.platform));
 
-        // Update version distribution
-        await env.DB.prepare(`
+        statements.push(env.DB.prepare(`
           INSERT INTO analytics_daily (date, metric, dimension, value)
           VALUES (?, 'version', ?, 1)
           ON CONFLICT(date, metric, dimension) DO UPDATE SET value = value + 1
-        `).bind(today, event.version).run();
-        
-        // Track specific packages if provided in properties
-        if (event.event_name === 'install' && event.properties?.package) {
-          await env.DB.prepare(`
-            INSERT INTO analytics_packages (package_name, install_count, last_seen_at)
-            VALUES (?, 1, CURRENT_TIMESTAMP)
-            ON CONFLICT(package_name) DO UPDATE SET install_count = install_count + 1, last_seen_at = CURRENT_TIMESTAMP
-          `).bind(event.properties.package).run();
-        }
-
-        if (event.event_name === 'search' && event.properties?.query) {
-          await env.DB.prepare(`
-            INSERT INTO analytics_packages (package_name, search_count, last_seen_at)
-            VALUES (?, 1, CURRENT_TIMESTAMP)
-            ON CONFLICT(package_name) DO UPDATE SET search_count = search_count + 1, last_seen_at = CURRENT_TIMESTAMP
-          `).bind(event.properties.query).run();
-        }
+        `).bind(today, event.version));
       }
 
       if (event.event_type === 'error') {
         const errorMsg = (event.properties?.message as string) || 'unknown error';
-        await env.DB.prepare(`
+        statements.push(env.DB.prepare(`
           INSERT INTO analytics_errors (error_message, occurrences, last_occurred_at)
           VALUES (?, 1, CURRENT_TIMESTAMP)
           ON CONFLICT(error_message) DO UPDATE SET occurrences = occurrences + 1, last_occurred_at = CURRENT_TIMESTAMP
-        `).bind(errorMsg).run();
+        `).bind(errorMsg));
 
-        // Also track error in analytics_daily
         const errorType = (event.properties?.error_type as string) || 'unknown';
-        await env.DB.prepare(`
+        statements.push(env.DB.prepare(`
           INSERT INTO analytics_daily (date, metric, dimension, value)
           VALUES (?, 'errors', ?, 1)
           ON CONFLICT(date, metric, dimension) DO UPDATE SET value = value + 1
-        `).bind(today, errorType).run();
+        `).bind(today, errorType));
       }
+    }
 
-      if (event.event_type === 'session_start') {
-        // Track unique sessions
-        await env.DB.prepare(`
-          INSERT INTO analytics_daily (date, metric, dimension, value)
-          VALUES (?, 'sessions', 'all', 1)
-          ON CONFLICT(date, metric, dimension) DO UPDATE SET value = value + 1
-        `).bind(today).run();
-      }
-
-      if (event.event_type === 'feature') {
-        // Track feature usage
-        await env.DB.prepare(`
-          INSERT INTO analytics_daily (date, metric, dimension, value)
-          VALUES (?, 'features', ?, 1)
-          ON CONFLICT(date, metric, dimension) DO UPDATE SET value = value + 1
-        `).bind(today, event.event_name).run();
-      }
-
-      if (event.event_type === 'performance' && event.duration_ms) {
-        // Regional performance
-        const country = request.headers.get('CF-IPCountry') || 'Unknown';
-        await env.DB.prepare(`
-          INSERT INTO analytics_regional_perf (region, operation, avg_duration_ms, count)
-          VALUES (?, ?, ?, 1)
-          ON CONFLICT(region, operation) DO UPDATE SET 
-            avg_duration_ms = (avg_duration_ms * count + excluded.avg_duration_ms) / (count + 1),
-            count = count + 1
-        `).bind(country, event.event_name, event.duration_ms).run();
-
-        // Track performance metrics (store for percentile calculation)
-        await env.DB.prepare(`
-          INSERT INTO analytics_performance (id, operation, duration_ms, created_at)
-          VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-        `)
-          .bind(crypto.randomUUID(), event.event_name, event.duration_ms)
-          .run();
-      }
+    // Atomic batch execution
+    if (statements.length > 0) {
+      await env.DB.batch(statements);
     }
 
     // Track unique active machines today

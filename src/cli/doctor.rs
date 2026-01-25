@@ -1,4 +1,5 @@
 use anyhow::Result;
+use owo_colors::OwoColorize;
 use tokio::time::Duration;
 
 use crate::cli::style;
@@ -16,20 +17,20 @@ pub async fn run() -> Result<()> {
 
     // 1. OS Check
     if check_os() {
-        println!("  {} Arch Linux detected", style::success("✓"));
+        println!("  {} Arch Linux detected", style::icon("✓", "✓").green());
     } else {
         println!(
             "  {} Non-Arch system detected (some features may fail)",
-            style::warning("⚠")
+            style::icon("⚠", "!").yellow()
         );
         issues += 1;
     }
 
     // 2. Internet Connectivity
     if check_internet().await {
-        println!("  {} Internet connectivity", style::success("✓"));
+        println!("  {} Internet connectivity", style::icon("✓", "✓").green());
     } else {
-        println!("  {} No internet connection", style::error("✗"));
+        println!("  {} No internet connection", style::icon("✗", "✗").red());
         issues += 1;
     }
 
@@ -37,39 +38,39 @@ pub async fn run() -> Result<()> {
     let deps = vec!["git", "curl", "tar", "sudo"];
     for dep in deps {
         if check_command(dep) {
-            println!("  {} Found dependency: {}", style::success("✓"), dep);
+            println!("  {} Found dependency: {}", style::icon("✓", "✓").green(), dep);
         } else {
-            println!("  {} Missing dependency: {}", style::error("✗"), dep);
+            println!("  {} Missing dependency: {}", style::icon("✗", "✗").red(), dep);
             issues += 1;
         }
     }
 
     // 4. Daemon Status
     if check_daemon().await {
-        println!("  {} Daemon is running", style::success("✓"));
+        println!("  {} Daemon is running", style::icon("✓", "✓").green());
     } else {
         println!(
             "  {} Daemon is not running (run 'omg daemon')",
-            style::warning("⚠")
+            style::icon("⚠", "!").yellow()
         );
         // Not a critical issue
     }
 
     // 5. PATH Configuration
     if check_path() {
-        println!("  {} PATH configured correctly", style::success("✓"));
+        println!("  {} PATH configured correctly", style::icon("✓", "✓").green());
     } else {
-        println!("  {} OMG bin directory not in PATH", style::error("✗"));
+        println!("  {} OMG bin directory not in PATH", style::icon("✗", "✗").red());
         issues += 1;
     }
 
     // 6. Shell Hook
     if check_shell_hook() {
-        println!("  {} Shell hook active", style::success("✓"));
+        println!("  {} Shell hook active", style::icon("✓", "✓").green());
     } else {
         println!(
             "  {} Shell hook not detected in environment",
-            style::warning("⚠")
+            style::icon("⚠", "!").yellow()
         );
         // Hard to detect reliably without inspecting shell rc, but we can check env vars if hook sets any?
         // Our hook sets nothing persistent env vars other than PATH.
@@ -152,8 +153,8 @@ async fn check_daemon() -> bool {
                 }
 
                 println!(
-                    "    {} Socket exists at {}, but connection failed: {}",
-                    style::warning("⚠"),
+                    "    {} Socket exists at {}, but connection failed: {:#}",
+                    style::icon("⚠", "!").yellow(),
                     socket_path.display(),
                     e
                 );

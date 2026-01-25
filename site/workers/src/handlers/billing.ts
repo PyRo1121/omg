@@ -98,8 +98,19 @@ export async function handleBillingPortal(request: Request, env: Env): Promise<R
 }
 
 export async function handleStripeWebhook(request: Request, env: Env): Promise<Response> {
+  const signature = request.headers.get('stripe-signature');
+  if (!signature || !env.STRIPE_WEBHOOK_SECRET) {
+    return new Response('Missing signature or secret', { status: 400 });
+  }
+
   const body = await request.text();
-  
+
+  // Verify Stripe signature
+  const isValid = await verifyStripeSignature(body, signature, env.STRIPE_WEBHOOK_SECRET);
+  if (!isValid) {
+    return new Response('Invalid signature', { status: 401 });
+  }
+
   let event;
   try {
     event = JSON.parse(body);

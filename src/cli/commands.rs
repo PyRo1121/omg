@@ -429,7 +429,21 @@ pub fn daemon(foreground: bool) -> Result<()> {
         println!("{} Run 'omgd' directly for daemon mode", style::info("→"));
     } else {
         // Start daemon in background
-        let status = Command::new("omgd")
+        // 1. Try to find omgd in the same directory as the current executable (ensures version match)
+        let omgd_path = if let Ok(exe) = std::env::current_exe()
+            && let Some(dir) = exe.parent()
+        {
+            let local_omgd = dir.join("omgd");
+            if local_omgd.exists() {
+                local_omgd
+            } else {
+                std::path::PathBuf::from("omgd")
+            }
+        } else {
+            std::path::PathBuf::from("omgd")
+        };
+
+        let status = Command::new(omgd_path)
             .arg("--")
             .stdout(Stdio::null())
             .stderr(Stdio::null())

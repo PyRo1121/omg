@@ -435,7 +435,7 @@ const DashboardPage: Component = () => {
                       />
                       <InsightCard
                         title="Commands Run"
-                        value={(dashboard()?.usage?.total_commands || 0).toLocaleString()}
+                        value={(dashboard()?.usage?.total_commands ?? 0).toLocaleString()}
                         icon={Terminal}
                         color="blue"
                         sub="Total executions"
@@ -515,7 +515,7 @@ const DashboardPage: Component = () => {
                                 <div class="flex-1">
                                   <div class="text-sm font-medium text-white">{log.action}</div>
                                   <div class="text-xs text-slate-500 font-mono mt-1">
-                                    {new Date(log.created_at).toLocaleString()} • {log.ip_address}
+                                    {log.created_at ? new Date(log.created_at).toLocaleString() : 'N/A'} • {log.ip_address}
                                   </div>
                                 </div>
                                 <ChevronRight class="w-5 h-5 text-slate-600" />

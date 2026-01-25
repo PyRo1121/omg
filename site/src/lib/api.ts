@@ -812,7 +812,8 @@ export function formatTimeSaved(ms: number): string {
   return `${(ms / 86400000).toFixed(1)} days`;
 }
 
-export function formatDate(dateStr: string): string {
+export function formatDate(dateStr: string | null | undefined): string {
+  if (!dateStr) return 'N/A';
   return new Date(dateStr).toLocaleDateString('en-US', {
     year: 'numeric',
     month: 'short',

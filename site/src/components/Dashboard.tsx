@@ -145,13 +145,23 @@ const Dashboard: Component<{ isOpen: boolean; onClose: () => void }> = props => 
 
       if (data.found) {
         setLicense({
-          license_key: data.license_key,
-          tier: data.tier,
-          expires_at: data.expires_at,
-          status: data.status,
-          used_seats: data.used_seats,
-          max_seats: data.max_seats,
-          usage: data.usage,
+          license_key: data.license_key || '',
+          tier: data.tier || 'free',
+          expires_at: data.expires_at || 'Never',
+          status: data.status || 'active',
+          used_seats: data.used_seats || 0,
+          max_seats: data.max_seats || 1,
+          usage: data.usage || {
+            queries_today: 0,
+            queries_this_month: 0,
+            sbom_generated: 0,
+            vulnerabilities_found: 0,
+            time_saved_ms: 0,
+            total_commands: 0,
+            current_streak: 0,
+            longest_streak: 0,
+            achievements: []
+          },
         });
         setLicenseKey(data.license_key);
         setView('dashboard');
@@ -576,7 +586,7 @@ const Dashboard: Component<{ isOpen: boolean; onClose: () => void }> = props => 
                     ].map(stat => (
                       <div class="rounded-2xl border border-white/[0.05] bg-white/[0.01] p-4 text-center">
                         <p class="text-[10px] font-bold uppercase tracking-wider text-slate-500">{stat.label}</p>
-                        <p class={`mt-1 text-xl font-bold ${stat.color}`}>{stat.value.toLocaleString()}</p>
+                        <p class={`mt-1 text-xl font-bold ${stat.color}`}>{(stat.value ?? 0).toLocaleString()}</p>
                       </div>
                     ))}
                   </div>
