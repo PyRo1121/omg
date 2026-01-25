@@ -385,9 +385,11 @@ mod mutation_test_examples {
         enum State {
             Idle,
             Running,
+            #[allow(dead_code)]
             Done,
         }
 
+        #[allow(unused_assignments)]
         let mut state = State::Idle;
 
         // Transition
