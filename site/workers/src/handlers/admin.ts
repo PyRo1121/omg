@@ -424,6 +424,10 @@ export async function handleAdminCRMUsers(request: Request, env: Env): Promise<R
   const offset = (page - 1) * limit;
   const search = url.searchParams.get('search') || '';
 
+  const isAdminUser = context.user.id === env.ADMIN_USER_ID;
+
+  const isAdminUser = context.user.id === env.ADMIN_USER_ID;
+
   let query = `
     WITH user_stats AS (
       SELECT
@@ -431,8 +435,8 @@ export async function handleAdminCRMUsers(request: Request, env: Env): Promise<R
         c.email,
         c.company,
         c.created_at,
-        l.tier,
-        l.status as license_status,
+        COALESCE(l.tier, 'free') as tier,
+        COALESCE(l.status, 'inactive') as license_status,
         COUNT(DISTINCT m.id) as machine_count,
         SUM(u.commands_run) as total_commands,
         SUM(u.time_saved_ms) as total_time_saved,
@@ -468,11 +472,13 @@ export async function handleAdminCRMUsers(request: Request, env: Env): Promise<R
         ELSE 'active'
       END as lifecycle_stage
     FROM user_stats
+    WHERE id = ? OR ${isAdminUser ? '1=1' : '1=0'}
   `;
 
-  const params: (string | number)[] = [];
+  const params: (string | number)[] = [context.user.id];
+
   if (search) {
-    query += ` WHERE email LIKE ? OR company LIKE ?`;
+    query += ` AND (email LIKE ? OR company LIKE ?)`;
     params.push(`%${search}%`, `%${search}%`);
   }
 
