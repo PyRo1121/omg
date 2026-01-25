@@ -4,7 +4,7 @@
 
 use crate::cli::ui;
 use owo_colors::OwoColorize;
-use std::io::{self, Write, BufWriter};
+use std::io::{self, BufWriter, Write};
 
 /// Renderer for CLI output with styling
 ///
@@ -27,8 +27,7 @@ impl Renderer<BufWriter<io::Stdout>> {
     pub fn new() -> Self {
         Self {
             writer: BufWriter::new(io::stdout()),
-            no_color: std::env::var("NO_COLOR").is_ok()
-                || std::env::var("OMG_NO_COLOR").is_ok(),
+            no_color: std::env::var("NO_COLOR").is_ok() || std::env::var("OMG_NO_COLOR").is_ok(),
         }
     }
 }
@@ -39,8 +38,7 @@ impl<W: Write> Renderer<W> {
     pub fn with_writer(writer: W) -> Self {
         Self {
             writer,
-            no_color: std::env::var("NO_COLOR").is_ok()
-                || std::env::var("OMG_NO_COLOR").is_ok(),
+            no_color: std::env::var("NO_COLOR").is_ok() || std::env::var("OMG_NO_COLOR").is_ok(),
         }
     }
 

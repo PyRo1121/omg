@@ -192,11 +192,7 @@ mod tests {
 
     #[test]
     fn test_cmd_batch() {
-        let cmd: Cmd<()> = Cmd::batch([
-            Cmd::print("a"),
-            Cmd::print("b"),
-            Cmd::none(),
-        ]);
+        let cmd: Cmd<()> = Cmd::batch([Cmd::print("a"), Cmd::print("b"), Cmd::none()]);
         assert!(matches!(cmd, Cmd::Batch(_)));
     }
 
