@@ -184,9 +184,15 @@ export async function handleGetLicense(request: Request, env: Env): Promise<Resp
     .bind(email)
     .first();
 
+  // Mask the license key for public lookup to prevent harvesting
+  const maskKey = (key: string) => {
+    if (key.length <= 8) return '****' + key.slice(-4);
+    return key.slice(0, 4) + '••••' + key.slice(-4);
+  };
+
   return jsonResponse({
     found: true,
-    license_key: result.license_key,
+    license_key: maskKey(result.license_key),
     tier: result.tier,
     status: result.status,
     expires_at: result.expires_at,

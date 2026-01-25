@@ -20,6 +20,8 @@ import { useAdminDashboard, useAdminFirehose } from '../../lib/api-hooks';
 import { StatCard } from './analytics/StatCard';
 import { ActivityHeatmap } from '../ui/Chart';
 import { CardSkeleton } from '../ui/Skeleton';
+import { CommandStream } from './admin/CommandStream';
+import { GlobalPresence } from './admin/GlobalPresence';
 
 type AdminTab = 'overview' | 'crm' | 'analytics' | 'revenue' | 'audit';
 
@@ -114,12 +116,12 @@ export const AdminDashboard: Component = () => {
               </div>
 
               <div class="grid grid-cols-1 gap-6 lg:grid-cols-3">
-                {/* Firehose */}
+                {/* Real-time Command Stream */}
                 <div class="lg:col-span-2 rounded-3xl border border-white/5 bg-[#0d0d0e] p-8 shadow-2xl">
                   <div class="mb-8 flex items-center justify-between">
                     <div>
-                      <h3 class="text-xl font-bold text-white uppercase tracking-widest">Real-time Firehose</h3>
-                      <p class="text-xs text-slate-500 font-medium mt-1">Live stream of global CLI events</p>
+                      <h3 class="text-xl font-bold text-white uppercase tracking-widest">System Command Stream</h3>
+                      <p class="text-xs text-slate-500 font-medium mt-1">Live telemetry and global CLI execution flow</p>
                     </div>
                     <div class="flex items-center gap-2 rounded-full bg-emerald-500/10 px-3 py-1 text-[10px] font-black uppercase text-emerald-400">
                       <div class="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
@@ -127,32 +129,16 @@ export const AdminDashboard: Component = () => {
                     </div>
                   </div>
 
-                  <div class="space-y-3">
-                    <For each={events()}>
-                      {(event) => (
-                        <div class="flex items-center gap-4 rounded-2xl bg-white/[0.02] p-4 border border-white/5 hover:bg-white/[0.04] transition-all">
-                          <div class={`h-10 w-10 rounded-xl flex items-center justify-center ${
-                            event.event_name === 'command_run' ? 'bg-indigo-500/10 text-indigo-400' : 'bg-amber-500/10 text-amber-400'
-                          }`}>
-                            <Terminal size={18} />
-                          </div>
-                          <div class="flex-1 min-w-0">
-                            <div class="flex items-center justify-between">
-                              <span class="text-sm font-bold text-white truncate">{event.event_name}</span>
-                              <span class="text-[10px] font-mono text-slate-500">{api.formatRelativeTime(event.created_at)}</span>
-                            </div>
-                            <div class="text-[10px] text-slate-500 truncate mt-0.5">
-                              {event.platform} • {event.version} • {event.properties?.command || 'internal'}
-                            </div>
-                          </div>
-                        </div>
-                      )}
-                    </For>
-                  </div>
+                  <CommandStream events={events()} />
                 </div>
 
-                {/* Platform Health */}
+                {/* Global Presence & Health */}
                 <div class="space-y-6">
+                  <GlobalPresence
+                    data={adminData()?.geo_distribution || []}
+                    totalNodes={adminData()?.overview?.active_machines || 1}
+                  />
+
                   <div class="rounded-3xl border border-white/5 bg-[#0d0d0e] p-8 shadow-2xl">
                     <h3 class="text-lg font-bold text-white uppercase tracking-widest mb-6">Global Activity</h3>
                     <ActivityHeatmap
@@ -167,11 +153,15 @@ export const AdminDashboard: Component = () => {
                   <div class="rounded-3xl border border-white/5 bg-gradient-to-br from-indigo-500/10 to-transparent p-8 shadow-2xl">
                     <h3 class="text-lg font-bold text-white uppercase tracking-widest mb-4">Command Health</h3>
                     <div class="flex items-end gap-2 h-32">
-                       <div class="flex-1 bg-emerald-500/20 rounded-t-lg relative group" style={{ height: '94%' }}>
-                          <div class="absolute inset-x-0 bottom-full mb-2 opacity-0 group-hover:opacity-100 transition-opacity text-center text-[10px] font-bold text-emerald-400">94% Success</div>
+                       <div class="flex-1 bg-emerald-500/20 rounded-t-lg relative group" style={{ height: `${(adminData()?.overview?.command_health?.success || 94)}%` }}>
+                          <div class="absolute inset-x-0 bottom-full mb-2 opacity-0 group-hover:opacity-100 transition-opacity text-center text-[10px] font-bold text-emerald-400">
+                            {adminData()?.overview?.command_health?.success || 94}% Success
+                          </div>
                        </div>
-                       <div class="flex-1 bg-rose-500/20 rounded-t-lg relative group" style={{ height: '6%' }}>
-                          <div class="absolute inset-x-0 bottom-full mb-2 opacity-0 group-hover:opacity-100 transition-opacity text-center text-[10px] font-bold text-rose-400">6% Error</div>
+                       <div class="flex-1 bg-rose-500/20 rounded-t-lg relative group" style={{ height: `${(adminData()?.overview?.command_health?.failure || 6)}%` }}>
+                          <div class="absolute inset-x-0 bottom-full mb-2 opacity-0 group-hover:opacity-100 transition-opacity text-center text-[10px] font-bold text-rose-400">
+                            {adminData()?.overview?.command_health?.failure || 6}% Error
+                          </div>
                        </div>
                     </div>
                     <div class="mt-4 flex justify-between text-[10px] font-black uppercase tracking-widest text-slate-500">
