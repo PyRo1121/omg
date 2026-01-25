@@ -38,7 +38,7 @@ pub struct AurArchive {
 }
 
 pub struct AurIndex {
-    _mmap: Mmap,
+    mmap: Mmap,
 }
 
 impl AurIndex {
@@ -49,13 +49,13 @@ impl AurIndex {
         let mmap = unsafe { Mmap::map(&file)? };
 
         // For now using unchecked access until rkyv 0.8 validation setup is simplified.
-        Ok(Self { _mmap: mmap })
+        Ok(Self { mmap })
     }
 
     /// Access the archived data
     fn archive(&self) -> &ArchivedAurArchive {
         // SAFE: Index is internal cache.
-        unsafe { rkyv::access_unchecked::<ArchivedAurArchive>(&self._mmap) }
+        unsafe { rkyv::access_unchecked::<ArchivedAurArchive>(&self.mmap) }
     }
 
     /// Check if a package exists in the index
@@ -77,6 +77,7 @@ impl AurIndex {
     }
 
     /// Search for packages matching a query (substring match in name or description)
+    #[allow(clippy::map_unwrap_or)]
     pub fn search(&self, query: &str, limit: usize) -> Vec<&ArchivedAurEntry> {
         let archive = self.archive();
         let query = query.to_lowercase();
@@ -174,7 +175,7 @@ pub fn build_index(json_path: &Path, output_path: &Path) -> Result<()> {
 
     // Serialize to rkyv format
     let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&archive)
-        .map_err(|e| anyhow::anyhow!("Serialization error: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("Serialization error: {e}"))?;
 
     // Use a temporary file for atomic update to avoid corrupting the index
     let parent = output_path.parent().unwrap_or_else(|| Path::new("."));
