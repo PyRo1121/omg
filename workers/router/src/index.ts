@@ -119,23 +119,32 @@ async function handleDocsProxy(request: Request, env: Env, ctx: ExecutionContext
       response = new Response(body, response);
     }
 
-    // Add custom headers
-    const finalResponse = new Response(response.body, response);
-    finalResponse.headers.set('X-Cache', 'MISS');
-    finalResponse.headers.set('X-Proxy', 'Cloudflare-Worker-Router');
-    finalResponse.headers.set('X-Docs-Origin', env.DOCS_SITE);
-
-    // Add security headers
-    finalResponse.headers.set('X-Content-Type-Options', 'nosniff');
-    finalResponse.headers.set('X-Frame-Options', 'SAMEORIGIN');
-    finalResponse.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+    // Build custom headers
+    const headers = new Headers(response.headers);
+    headers.set('X-Cache', 'MISS');
+    headers.set('X-Proxy', 'Cloudflare-Worker-Router');
+    headers.set('X-Docs-Origin', env.DOCS_SITE);
+    headers.set('X-Content-Type-Options', 'nosniff');
+    headers.set('X-Frame-Options', 'SAMEORIGIN');
+    headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
 
     // Cache static assets aggressively
     if (request.method === 'GET' && shouldCache(url.pathname, contentType)) {
       const cacheTtl = getCacheTtl(url.pathname, contentType);
-      finalResponse.headers.set('Cache-Control', `public, max-age=${cacheTtl}, s-maxage=${cacheTtl}`);
+      console.log(`Setting cache TTL for ${url.pathname}: ${cacheTtl}s`);
+      headers.set('Cache-Control', `public, max-age=${cacheTtl}, s-maxage=${cacheTtl}, immutable`);
 
-      // Store in cache
+    }
+
+    // Create final response with custom headers
+    const finalResponse = new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers
+    });
+
+    // Store in cache if applicable
+    if (request.method === 'GET' && shouldCache(url.pathname, contentType)) {
       const cache = caches.default;
       const cacheKey = new Request(targetUrl, request);
       ctx.waitUntil(cache.put(cacheKey, finalResponse.clone()));
@@ -184,6 +193,9 @@ function prepareOriginHeaders(headers: Headers, origin: string): Headers {
   // Set proper Host header for origin
   const originHost = new URL(origin).hostname;
   newHeaders.set('Host', originHost);
+
+  // Set X-Forwarded headers
+  newHeaders.set('X-Forwarded-Proto', 'https');
 
   // Add user agent if missing
   if (!newHeaders.has('User-Agent')) {
@@ -285,7 +297,7 @@ function shouldCache(pathname: string, contentType: string): boolean {
  */
 function getCacheTtl(pathname: string, contentType: string): number {
   // Immutable assets (hashed filenames) - cache for 1 year
-  if (pathname.match(/\.[a-f0-9]{8,}\.(js|css|woff2?|ttf|eot)$/i)) {
+  if (pathname.match(/[a-f0-9]{8,}\.[a-f0-9]{8,}\.(js|css)$/i)) {
     return 31536000; // 1 year
   }
 

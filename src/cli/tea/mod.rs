@@ -73,7 +73,6 @@
 
 mod cmd;
 mod renderer;
-// mod lipgloss_renderer;  // TODO: Re-enable when lipgloss API is stable
 
 // Model implementations
 mod info_model;
