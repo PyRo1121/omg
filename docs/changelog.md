@@ -49,6 +49,20 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - 22x performance story told through visceral design language
 ### ✨ New Features
 
+- **Admin**: Add docs analytics dashboard to admin panel
+
+**New Analytics Tab:**
+
+  - Add DocsAnalytics component with comprehensive metrics visualization
+
+  - Display pageviews, sessions, UTM campaigns, referrers, geography
+
+  - Show top pages with avg time on page
+
+  - Track user interactions (clicks, copies)
+
+  - Monitor page load performance (avg, p95)
+
 - **Api**: World-class docs analytics system
 
 Comprehensive web analytics for omg-docs.pages.dev with production-grade
@@ -224,6 +238,10 @@ Run before pushing to keep changelog up to date with latest commits.
   - Generate full 1203-line changelog from git history
 
 ### 📚 Documentation
+
+- Update changelog
+
+Auto-generated from git history with git-cliff.
 
 - Update changelog
 
