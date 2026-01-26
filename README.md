@@ -256,4 +256,32 @@ make coverage
 ---
 
 ## 📜 License
-AGPL-3.0-or-later © 2026 OMG Team
+
+OMG is licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0-or-later)**.
+
+**Copyright © 2024-2026 OMG Team**
+
+This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+
+### Why AGPL-3.0?
+
+The AGPL ensures that if anyone runs a modified version of OMG as a network service (e.g., SaaS), they must make the source code available to users. This protects the open-source community and ensures transparency.
+
+### Third-Party Components
+
+OMG integrates with and bundles third-party open-source software:
+
+- **[mise](https://github.com/jdx/mise)** - Runtime version management (MIT License, © 2025 Jeff Dickey)
+- Various Rust crates (MIT/Apache-2.0 licenses)
+
+See [NOTICE](NOTICE) and [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md) for complete attribution and license information.
+
+### Files
+
+- [`LICENSE`](LICENSE) - Full AGPL-3.0 license text
+- [`NOTICE`](NOTICE) - Copyright and third-party notices
+- [`THIRD-PARTY-LICENSES.md`](THIRD-PARTY-LICENSES.md) - Third-party license texts
+
+---
+
+**Questions about licensing?** Open an issue or email legal inquiries to the maintainers.

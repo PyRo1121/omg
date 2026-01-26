@@ -618,7 +618,10 @@ copy of the Program in return for a fee.
 
                      END OF TERMS AND CONDITIONS
 
-Copyright (C) 2026 OMG Team
+================================================================================
+
+OMG - Unified Package Manager for Arch Linux + Language Runtimes
+Copyright (C) 2024-2026 OMG Team
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU Affero General Public License as published by
@@ -632,3 +635,34 @@ GNU Affero General Public License for more details.
 
 You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+================================================================================
+
+ADDITIONAL INFORMATION
+
+Source Code Repository: https://github.com/PyRo1121/omg
+Documentation: https://pyro1121.com/docs
+Issue Tracker: https://github.com/PyRo1121/omg/issues
+
+THIRD-PARTY COMPONENTS
+
+This software incorporates components from third-party projects. See the
+NOTICE and THIRD-PARTY-LICENSES.md files for detailed attribution and
+license information for incorporated components, including:
+
+  - mise (MIT License) - Runtime version management
+    Copyright (c) 2025 Jeff Dickey
+    https://github.com/jdx/mise
+
+NETWORK USE REQUIREMENT
+
+As this software is licensed under AGPL-3.0, if you modify this program
+and make it available to users over a network (e.g., as a hosted service),
+you must make the complete source code of your modified version available
+to those users. This ensures users can audit and modify the code running
+on the server.
+
+For more information on AGPL-3.0 network use requirements, see Section 13
+of the license text above.
+
+================================================================================

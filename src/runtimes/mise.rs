@@ -2,6 +2,14 @@
 //!
 //! Downloads and manages mise as a bundled tool - NO EXTERNAL INSTALL REQUIRED.
 //! Mise provides support for 100+ additional runtimes beyond OMG's native managers.
+//!
+//! ## Third-Party Attribution
+//!
+//! This module integrates with mise (https://github.com/jdx/mise)
+//! Copyright (c) 2025 Jeff Dickey, licensed under the MIT License.
+//! See THIRD-PARTY-LICENSES.md for the full mise license text.
+//!
+//! The integration code in this file is part of OMG and licensed under AGPL-3.0.
 
 use anyhow::{Context, Result};
 use indicatif::{ProgressBar, ProgressStyle};
