@@ -140,15 +140,16 @@ pub fn ensure_index_loaded() -> Result<()> {
     if let Ok(entries) = fs::read_dir(lists_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if filename.contains("_Packages")
-                && !path
-                    .extension()
-                    .is_some_and(|ext| ext.eq_ignore_ascii_case("diff"))
-            {
-                if let Ok(meta) = entry.metadata() {
-                    if let Ok(mtime) = meta.modified() {
-                        current_files.insert(path, mtime);
+            if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
+                if filename.contains("_Packages")
+                    && !path
+                        .extension()
+                        .is_some_and(|ext| ext.eq_ignore_ascii_case("diff"))
+                {
+                    if let Ok(meta) = entry.metadata() {
+                        if let Ok(mtime) = meta.modified() {
+                            current_files.insert(path, mtime);
+                        }
                     }
                 }
             }
@@ -220,11 +221,10 @@ pub fn ensure_index_loaded() -> Result<()> {
         index.packages.retain(|pkg| {
             // Keep if package source file hasn't changed
             !changed_files_set.iter().any(|p| {
-                pkg.filename.contains(
-                    p.file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("")
-                )
+                let file_name = p.file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("");
+                pkg.filename.contains(file_name)
             })
         });
 
