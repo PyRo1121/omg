@@ -357,7 +357,11 @@ async fn async_main(args: Vec<String>) -> Result<()> {
         } => {
             packages::remove(pkgs, *recursive, *yes, *dry_run).await?;
         }
-        Commands::Update { check, yes, dry_run } => {
+        Commands::Update {
+            check,
+            yes,
+            dry_run,
+        } => {
             packages::update(*check, *yes, *dry_run).await?;
         }
         Commands::Info { package } => {

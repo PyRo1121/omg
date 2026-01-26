@@ -43,16 +43,22 @@ pub enum AurError {
     #[error("Git pull failed for '{package}'\n  → The local clone may have conflicts\n  → Fix: omg aur clean {package} && omg install {package}", package = .0)]
     GitPullFailed(String),
 
-    #[error("Network error connecting to AUR\n  → Check your internet connection\n  → AUR may be temporarily unavailable\n  → Try again in a few minutes")]
+    #[error(
+        "Network error connecting to AUR\n  → Check your internet connection\n  → AUR may be temporarily unavailable\n  → Try again in a few minutes"
+    )]
     NetworkError(#[from] reqwest::Error),
 
     #[error("Missing build tool: {tool}\n  → Install with: sudo pacman -S {install_pkg}", tool = .tool, install_pkg = .install_pkg)]
     MissingTool { tool: String, install_pkg: String },
 
-    #[error("Sandbox build failed\n  → bubblewrap is not installed\n  → Install: sudo pacman -S bubblewrap\n  → Or enable unsafe builds: omg config set aur.allow_unsafe_builds true")]
+    #[error(
+        "Sandbox build failed\n  → bubblewrap is not installed\n  → Install: sudo pacman -S bubblewrap\n  → Or enable unsafe builds: omg config set aur.allow_unsafe_builds true"
+    )]
     SandboxUnavailable,
 
-    #[error("No package archive found after build for '{0}'\n  → The build may have produced a different package name\n  → Check ~/.cache/omg/aur/_pkgdest/ for the built package")]
+    #[error(
+        "No package archive found after build for '{0}'\n  → The build may have produced a different package name\n  → Check ~/.cache/omg/aur/_pkgdest/ for the built package"
+    )]
     PackageArchiveNotFound(String),
 }
 
@@ -180,7 +186,8 @@ impl AurClient {
 
         let url = format!("{AUR_RPC_URL}?v=5&type=search&arg={query}");
 
-        let response: AurResponse = self.client
+        let response: AurResponse = self
+            .client
             .get(&url)
             .send()
             .await
@@ -306,7 +313,8 @@ impl AurClient {
 
         let url = format!("{AUR_RPC_URL}?v=5&type=info&arg={package}");
 
-        let response: AurResponse = self.client
+        let response: AurResponse = self
+            .client
             .get(&url)
             .send()
             .await
@@ -427,17 +435,21 @@ impl AurClient {
                         url.push_str("&arg[]=");
                         url.push_str(name);
                     }
-                    
+
                     let mut last_error = None;
                     for retry in 0..3u32 {
                         if retry > 0 {
-                            tokio::time::sleep(Duration::from_millis(100 * 2u64.pow(retry - 1))).await;
+                            tokio::time::sleep(Duration::from_millis(100 * 2u64.pow(retry - 1)))
+                                .await;
                         }
-                        
+
                         match client.get(&url).send().await {
                             Ok(resp) => {
                                 if resp.status().is_server_error() {
-                                    last_error = Some(anyhow::anyhow!("AUR server error: {}", resp.status()));
+                                    last_error = Some(anyhow::anyhow!(
+                                        "AUR server error: {}",
+                                        resp.status()
+                                    ));
                                     continue;
                                 }
                                 return resp.json::<AurResponse>().await.map_err(Into::into);
@@ -448,7 +460,8 @@ impl AurClient {
                             Err(e) => return Err(e.into()),
                         }
                     }
-                    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("AUR request failed after retries")))
+                    Err(last_error
+                        .unwrap_or_else(|| anyhow::anyhow!("AUR request failed after retries")))
                 }
             })
             .buffer_unordered(concurrency);
@@ -664,8 +677,12 @@ impl AurClient {
             return Err(AurError::PackageNotFound(package.to_string()).into());
         }
 
-        std::fs::create_dir_all(&self.build_dir)
-            .with_context(|| format!("Failed to create build directory: {}", self.build_dir.display()))?;
+        std::fs::create_dir_all(&self.build_dir).with_context(|| {
+            format!(
+                "Failed to create build directory: {}",
+                self.build_dir.display()
+            )
+        })?;
 
         let pkg_dir = self.build_dir.join(package);
 
@@ -714,10 +731,12 @@ impl AurClient {
                 return Err(AurError::BuildFailed {
                     package: package.to_string(),
                     log_path: log_path.display().to_string(),
-                }.into());
+                }
+                .into());
             }
 
-            let pkg_file = Self::find_built_package(&pkg_dir, &env.pkgdest).await
+            let pkg_file = Self::find_built_package(&pkg_dir, &env.pkgdest)
+                .await
                 .map_err(|_| AurError::PackageArchiveNotFound(package.to_string()))?;
             self.write_cache_key(package, &cache_key).await?;
             pkg_file
@@ -735,8 +754,12 @@ impl AurClient {
     pub async fn build_only(&self, package: &str) -> Result<PathBuf> {
         crate::core::security::validate_package_name(package)?;
 
-        std::fs::create_dir_all(&self.build_dir)
-            .with_context(|| format!("Failed to create build directory: {}", self.build_dir.display()))?;
+        std::fs::create_dir_all(&self.build_dir).with_context(|| {
+            format!(
+                "Failed to create build directory: {}",
+                self.build_dir.display()
+            )
+        })?;
 
         let pkg_dir = self.build_dir.join(package);
         let pkgbuild_path = pkg_dir.join("PKGBUILD");
@@ -784,10 +807,12 @@ impl AurClient {
             return Err(AurError::BuildFailed {
                 package: package.to_string(),
                 log_path: log_path.display().to_string(),
-            }.into());
+            }
+            .into());
         }
 
-        let pkg_file = Self::find_built_package(&pkg_dir, &env.pkgdest).await
+        let pkg_file = Self::find_built_package(&pkg_dir, &env.pkgdest)
+            .await
             .map_err(|_| AurError::PackageArchiveNotFound(package.to_string()))?;
         self.write_cache_key(package, &cache_key).await?;
         Ok(pkg_file)
@@ -936,8 +961,12 @@ impl AurClient {
 
     #[instrument(skip(self))]
     pub async fn build_package_interactive(&self, package: &str) -> Result<PathBuf> {
-        std::fs::create_dir_all(&self.build_dir)
-            .with_context(|| format!("Failed to create build directory: {}", self.build_dir.display()))?;
+        std::fs::create_dir_all(&self.build_dir).with_context(|| {
+            format!(
+                "Failed to create build directory: {}",
+                self.build_dir.display()
+            )
+        })?;
 
         let pkg_dir = self.build_dir.join(package);
         let pkgbuild_path = pkg_dir.join("PKGBUILD");
@@ -992,10 +1021,12 @@ impl AurClient {
             return Err(AurError::BuildFailed {
                 package: package.to_string(),
                 log_path: log_path.display().to_string(),
-            }.into());
+            }
+            .into());
         }
 
-        let pkg_file = Self::find_built_package(&pkg_dir, &env.pkgdest).await
+        let pkg_file = Self::find_built_package(&pkg_dir, &env.pkgdest)
+            .await
             .map_err(|_| AurError::PackageArchiveNotFound(package.to_string()))?;
         self.write_cache_key(package, &cache_key).await?;
         Ok(pkg_file)
@@ -1032,10 +1063,12 @@ impl AurClient {
             return Err(AurError::BuildFailed {
                 package: package.to_string(),
                 log_path: log_path.display().to_string(),
-            }.into());
+            }
+            .into());
         }
 
-        let pkg_file = Self::find_built_package(&pkg_dir, &env.pkgdest).await
+        let pkg_file = Self::find_built_package(&pkg_dir, &env.pkgdest)
+            .await
             .map_err(|_| AurError::PackageArchiveNotFound(package.to_string()))?;
         self.write_cache_key(package, &cache_key).await?;
         Ok(pkg_file)

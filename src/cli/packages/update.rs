@@ -98,14 +98,16 @@ fn update_dry_run(updates: &[UpdateInfo]) -> Result<()> {
     let mut total_download: u64 = 0;
 
     for update in updates.iter().take(50) {
-        let download_size = if let Ok(Some(info)) =
-            crate::package_managers::get_sync_pkg_info(&update.name)
-        {
-            total_download += info.download_size.unwrap_or(0);
-            format!("{:.2} MB", info.download_size.unwrap_or(0) as f64 / 1024.0 / 1024.0)
-        } else {
-            "unknown".to_string()
-        };
+        let download_size =
+            if let Ok(Some(info)) = crate::package_managers::get_sync_pkg_info(&update.name) {
+                total_download += info.download_size.unwrap_or(0);
+                format!(
+                    "{:.2} MB",
+                    info.download_size.unwrap_or(0) as f64 / 1024.0 / 1024.0
+                )
+            } else {
+                "unknown".to_string()
+            };
 
         println!(
             "    {} {} {} {} {} ({})",
@@ -126,20 +128,13 @@ fn update_dry_run(updates: &[UpdateInfo]) -> Result<()> {
     }
 
     ui::print_spacer();
-    println!(
-        "  {} Total updates: {}",
-        style::info("→"),
-        updates.len()
-    );
+    println!("  {} Total updates: {}", style::info("→"), updates.len());
     println!(
         "  {} Estimated download: {:.2} MB",
         style::info("→"),
         total_download as f64 / 1024.0 / 1024.0
     );
-    println!(
-        "\n  {} No changes made (dry run)",
-        style::dim("ℹ")
-    );
+    println!("\n  {} No changes made (dry run)", style::dim("ℹ"));
 
     Ok(())
 }

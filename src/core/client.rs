@@ -220,6 +220,15 @@ impl DaemonClient {
         }
     }
 
+    /// Ping the daemon synchronously
+    pub fn ping_sync(&mut self) -> Result<String> {
+        let id = self.request_id.fetch_add(1, Ordering::SeqCst);
+        match self.call_sync(&Request::Ping { id })? {
+            ResponseResult::Ping(s) => Ok(s),
+            _ => anyhow::bail!("Invalid response type"),
+        }
+    }
+
     /// Search for packages
     pub async fn search(&mut self, query: &str, limit: Option<usize>) -> Result<SearchResult> {
         let id = self.request_id.fetch_add(1, Ordering::SeqCst);

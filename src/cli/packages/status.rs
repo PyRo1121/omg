@@ -28,7 +28,7 @@ pub async fn status_with_json(fast: bool, json: bool) -> Result<()> {
     if json {
         return status_json(fast).await;
     }
-    
+
     if let Err(e) = run_status_elm(fast) {
         eprintln!("Warning: Elm UI failed, falling back to basic mode: {e}");
         status_fallback(fast).await
@@ -39,16 +39,21 @@ pub async fn status_with_json(fast: bool, json: bool) -> Result<()> {
 
 async fn status_json(fast: bool) -> Result<()> {
     let start = std::time::Instant::now();
-    
+
     let (total, explicit, orphans, updates) = if let Ok(mut client) = DaemonClient::connect().await
         && let Ok(ResponseResult::Status(status)) = client.call(Request::Status { id: 0 }).await
     {
-        (status.total_packages, status.explicit_packages, status.orphan_packages, status.updates_available)
+        (
+            status.total_packages,
+            status.explicit_packages,
+            status.orphan_packages,
+            status.updates_available,
+        )
     } else {
         let pm = get_package_manager();
         pm.get_status(fast).await?
     };
-    
+
     let status = StatusJson {
         total_packages: total,
         explicit_packages: explicit,
@@ -56,11 +61,11 @@ async fn status_json(fast: bool) -> Result<()> {
         updates_available: updates,
         query_time_ms: start.elapsed().as_secs_f64() * 1000.0,
     };
-    
+
     if let Ok(json_str) = serde_json::to_string_pretty(&status) {
         println!("{json_str}");
     }
-    
+
     Ok(())
 }
 

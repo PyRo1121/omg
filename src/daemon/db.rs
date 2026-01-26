@@ -38,7 +38,15 @@ impl PersistentCache {
         std::fs::create_dir_all(path)?;
         let db_path = path.join("cache.redb");
 
-        let db = Database::create(&db_path).context("Failed to open redb database")?;
+        let db = Database::create(&db_path).with_context(|| {
+            format!(
+                "Failed to open redb database at {}. \
+                 This usually means another daemon instance is already running. \
+                 Try: killall omgd && rm -f {}",
+                db_path.display(),
+                db_path.display()
+            )
+        })?;
 
         Ok(Self { db })
     }

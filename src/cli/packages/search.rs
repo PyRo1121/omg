@@ -34,7 +34,12 @@ pub async fn search(query: &str, detailed: bool, interactive: bool) -> Result<()
     search_with_json(query, detailed, interactive, false).await
 }
 
-pub async fn search_with_json(query: &str, _detailed: bool, _interactive: bool, json: bool) -> Result<()> {
+pub async fn search_with_json(
+    query: &str,
+    _detailed: bool,
+    _interactive: bool,
+    json: bool,
+) -> Result<()> {
     if query.len() > 100 {
         anyhow::bail!("Search query too long (max 100 characters)");
     }

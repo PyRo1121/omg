@@ -428,6 +428,26 @@ pub fn daemon(foreground: bool) -> Result<()> {
     if foreground {
         println!("{} Run 'omgd' directly for daemon mode", style::info("→"));
     } else {
+        // Check if daemon is already running
+        let socket_path = crate::core::client::default_socket_path();
+        if socket_path.exists() {
+            // Try to connect to verify it's actually running
+            if let Ok(mut client) = crate::core::client::DaemonClient::connect_sync() {
+                // Daemon is running, try a ping to be sure
+                if client.ping_sync().is_ok() {
+                    println!(
+                        "{} Daemon is already running at {}",
+                        style::success("✓"),
+                        socket_path.display()
+                    );
+                    return Ok(());
+                }
+            }
+            // Socket exists but daemon is not responding, remove stale socket
+            tracing::debug!("Removing stale socket at {:?}", socket_path);
+            std::fs::remove_file(&socket_path)?;
+        }
+
         // Start daemon in background
         // 1. Try to find omgd in the same directory as the current executable (ensures version match)
         let omgd_path = if let Ok(exe) = std::env::current_exe()
@@ -450,7 +470,27 @@ pub fn daemon(foreground: bool) -> Result<()> {
             .spawn();
 
         match status {
-            Ok(_) => println!("{} Daemon started", style::success("✓")),
+            Ok(_) => {
+                // Wait briefly and verify daemon actually started
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                if socket_path.exists() {
+                    if let Ok(mut client) = crate::core::client::DaemonClient::connect_sync()
+                        && client.ping_sync().is_ok()
+                    {
+                        println!("{} Daemon started", style::success("✓"));
+                    } else {
+                        println!(
+                            "{} Daemon started but not responding (check logs)",
+                            style::warning("⚠")
+                        );
+                    }
+                } else {
+                    println!(
+                        "{} Daemon started but socket not created (check logs)",
+                        style::warning("⚠")
+                    );
+                }
+            }
             Err(e) => println!("{} Failed to start daemon: {}", style::error("✗"), e),
         }
     }
