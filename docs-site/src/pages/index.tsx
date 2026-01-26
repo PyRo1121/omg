@@ -2,19 +2,22 @@ import React, { useEffect, useState, useRef } from 'react';
 import Layout from '@theme/Layout';
 import Link from '@docusaurus/Link';
 import { motion, AnimatePresence, useInView } from 'framer-motion';
-import { 
-  Zap, 
-  Shield, 
-  Users, 
-  Terminal, 
-  Package, 
-  Layers, 
-  ChevronRight, 
+import {
+  Zap,
+  Shield,
+  Users,
+  Terminal,
+  Package,
+  Layers,
+  ChevronRight,
   Cpu,
   Globe,
-  Clock
+  Clock,
+  Copy,
+  Check
 } from 'lucide-react';
 import styles from './index.module.css';
+import { analytics } from '../lib/analytics';
 
 function SpeedMetric({ value, label, suffix = '' }: { value: string; label: string; suffix?: string }) {
   const ref = useRef(null);
@@ -22,11 +25,12 @@ function SpeedMetric({ value, label, suffix = '' }: { value: string; label: stri
   const [count, setCount] = useState(0);
 
   useEffect(() => {
+    let animationId: number;
+
     if (isInView) {
       const target = parseFloat(value);
       if (isNaN(target)) return;
-      
-      let start = 0;
+
       const duration = 2000;
       const startTime = performance.now();
 
@@ -35,18 +39,24 @@ function SpeedMetric({ value, label, suffix = '' }: { value: string; label: stri
         const progress = Math.min(elapsed / duration, 1);
         const easeOutExpo = 1 - Math.pow(2, -10 * progress);
         const currentCount = easeOutExpo * target;
-        
+
         setCount(currentCount);
 
         if (progress < 1) {
-          requestAnimationFrame(animate);
+          animationId = requestAnimationFrame(animate);
         } else {
           setCount(target);
         }
       };
 
-      requestAnimationFrame(animate);
+      animationId = requestAnimationFrame(animate);
     }
+
+    return () => {
+      if (animationId) {
+        cancelAnimationFrame(animationId);
+      }
+    };
   }, [isInView, value]);
 
   return (
@@ -64,27 +74,53 @@ function SpeedMetric({ value, label, suffix = '' }: { value: string; label: stri
   );
 }
 
+// Terminal demo scenario (defined outside component for stability)
+const TERMINAL_SCENARIO = [
+  { type: 'cmd' as const, text: 'omg search neovim' },
+  { type: 'out' as const, text: '✓ 47 packages found in 6ms' },
+  { type: 'cmd' as const, text: 'omg use node 22' },
+  { type: 'out' as const, text: '✓ Node.js 22.0.0 activated' },
+  { type: 'cmd' as const, text: 'omg run dev' },
+  { type: 'out' as const, text: '→ Detected package.json, using bun' },
+];
+
+// QuickStart code block with copy button
+function QuickStartCodeBlock({ code }: { code: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopied(true);
+      analytics.codeCopy('bash', code);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+    }
+  };
+
+  return (
+    <div className={styles.codeBlock} onClick={handleCopy} role="button" tabIndex={0}>
+      <code>{code}</code>
+      <button className={styles.copyIcon} aria-label={copied ? 'Copied!' : 'Copy code'}>
+        {copied ? <Check size={16} /> : <Copy size={16} />}
+      </button>
+    </div>
+  );
+}
+
 function TerminalDemo() {
   const [displayedLines, setDisplayedLines] = useState<{ type: 'cmd' | 'out'; text: string }[]>([]);
   const [currentText, setCurrentText] = useState('');
   const [currentStep, setCurrentStep] = useState(0);
   const [isTyping, setIsTyping] = useState(true);
 
-  const scenario = [
-    { type: 'cmd', text: 'omg search neovim' },
-    { type: 'out', text: '✓ 47 packages found in 6ms' },
-    { type: 'cmd', text: 'omg use node 22' },
-    { type: 'out', text: '✓ Node.js 22.0.0 activated' },
-    { type: 'cmd', text: 'omg run dev' },
-    { type: 'out', text: '→ Detected package.json, using bun' },
-  ];
-
   useEffect(() => {
     let timeout: NodeJS.Timeout;
 
     const runScenario = async () => {
-      const step = scenario[currentStep];
-      
+      const step = TERMINAL_SCENARIO[currentStep];
+
       if (step.type === 'cmd') {
         setIsTyping(true);
         let i = 0;
@@ -112,13 +148,14 @@ function TerminalDemo() {
     };
 
     const proceed = () => {
-      if (currentStep < scenario.length - 1) {
+      if (currentStep < TERMINAL_SCENARIO.length - 1) {
         setCurrentStep(s => s + 1);
       } else {
+        // Increased delay from 3s to 5s per review recommendation
         timeout = setTimeout(() => {
           setDisplayedLines([]);
           setCurrentStep(0);
-        }, 3000);
+        }, 5000);
       }
     };
 
@@ -162,9 +199,19 @@ function TerminalDemo() {
   );
 }
 
-function FeatureCard({ icon: Icon, title, description, delay }: { icon: any; title: string; description: string; delay: number }) {
+function FeatureCard({
+  icon: Icon,
+  title,
+  description,
+  delay
+}: {
+  icon: React.ComponentType<{ size?: number; strokeWidth?: number; color?: string }>;
+  title: string;
+  description: string;
+  delay: number;
+}) {
   return (
-    <motion.div 
+    <motion.div
       className={styles.featureCard}
       initial={{ opacity: 0, y: 20 }}
       whileInView={{ opacity: 1, y: 0 }}
@@ -172,7 +219,7 @@ function FeatureCard({ icon: Icon, title, description, delay }: { icon: any; tit
       transition={{ delay }}
     >
       <div className={styles.featureIcon}>
-        <Icon size={32} strokeWidth={2} color="#FFED4E" />
+        <Icon size={32} strokeWidth={2} color="#FFED4E" aria-hidden="true" />
       </div>
       <h3>{title}</h3>
       <p>{description}</p>
@@ -214,13 +261,13 @@ export default function Home(): React.JSX.Element {
             animate={{ opacity: 1, x: 0 }}
             transition={{ duration: 0.6 }}
           >
-            <motion.div 
+            <motion.div
               className={styles.badge}
               initial={{ opacity: 0, scale: 0.9 }}
               animate={{ opacity: 1, scale: 1 }}
               transition={{ delay: 0.2 }}
             >
-              <Zap size={14} style={{ marginRight: 8 }} />
+              <Zap size={14} style={{ marginRight: 8 }} aria-hidden="true" />
               22x faster than pacman
             </motion.div>
             <motion.h1
@@ -246,7 +293,7 @@ export default function Home(): React.JSX.Element {
               transition={{ delay: 0.5 }}
             >
               <Link to="/quickstart" className={styles.primaryButton}>
-                Get Started <ChevronRight size={20} style={{ marginLeft: 8 }} />
+                Get Started <ChevronRight size={20} style={{ marginLeft: 8 }} aria-hidden="true" />
               </Link>
               <Link to="/cli" className={styles.secondaryButton}>
                 CLI Reference
@@ -294,31 +341,25 @@ export default function Home(): React.JSX.Element {
             <div className={styles.quickStartStep}>
               <div className={styles.stepNumber}>1</div>
               <h3>Install OMG</h3>
-              <div className={styles.codeBlock}>
-                <code>curl -fsSL https://pyro1121.com/install.sh | bash</code>
-              </div>
+              <QuickStartCodeBlock code="curl -fsSL https://pyro1121.com/install.sh | bash" />
             </div>
 
             <div className={styles.quickStartStep}>
               <div className={styles.stepNumber}>2</div>
               <h3>Add Shell Hook</h3>
-              <div className={styles.codeBlock}>
-                <code>eval "$(omg hook zsh)"</code>
-              </div>
+              <QuickStartCodeBlock code='eval "$(omg hook zsh)"' />
             </div>
 
             <div className={styles.quickStartStep}>
               <div className={styles.stepNumber}>3</div>
               <h3>Install Your First Package</h3>
-              <div className={styles.codeBlock}>
-                <code>omg install ripgrep</code>
-              </div>
+              <QuickStartCodeBlock code="omg install ripgrep" />
             </div>
           </div>
 
-          <div style={{ textAlign: 'center', marginTop: '3rem' }}>
+          <div className={styles.quickStartCta}>
             <Link to="/quickstart" className={styles.secondaryButton}>
-              Full Installation Guide <ChevronRight size={20} style={{ marginLeft: 8 }} />
+              Full Installation Guide <ChevronRight size={20} style={{ marginLeft: 8 }} aria-hidden="true" />
             </Link>
           </div>
         </motion.div>
@@ -415,7 +456,7 @@ export default function Home(): React.JSX.Element {
         <h2>Ready to simplify your workflow?</h2>
         <p>Join thousands of developers who've already made the switch.</p>
         <Link to="/quickstart" className={styles.primaryButton}>
-          Get Started for Free <ChevronRight size={20} style={{ marginLeft: 8 }} />
+          Get Started for Free <ChevronRight size={20} style={{ marginLeft: 8 }} aria-hidden="true" />
         </Link>
       </motion.section>
     </Layout>

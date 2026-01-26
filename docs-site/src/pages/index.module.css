@@ -55,9 +55,9 @@
   align-items: center;
   padding: 0.5rem 1.25rem;
   background: rgba(255, 237, 78, 0.12);
-  border: 2px solid #FFED4E;
+  border: 2px solid #6366f1;
   border-radius: 4px;
-  color: #FFED4E;
+  color: #6366f1;
   font-family: 'Space Grotesk', sans-serif;
   font-size: 0.875rem;
   font-weight: 800;
@@ -101,7 +101,7 @@
   font-style: italic;
   line-height: 1.1;
   margin: 0 0 1.5rem;
-  background: linear-gradient(135deg, #FFED4E 0%, #FF6B00 50%, #FF1E00 100%);
+  background: linear-gradient(135deg, #6366f1 0%, #22d3ee 50%, #a855f7 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -118,7 +118,7 @@
   left: 0;
   width: 50%;
   height: 6px;
-  background: linear-gradient(90deg, #FFED4E 0%, #FF6B00 50%, transparent 100%);
+  background: linear-gradient(90deg, #6366f1 0%, #22d3ee 50%, transparent 100%);
   box-shadow: 0 0 15px rgba(255, 237, 78, 0.5);
   transform: skewX(15deg);
 }
@@ -126,7 +126,7 @@
 .heroSubtitle {
   font-family: 'Manrope', sans-serif;
   font-size: 1.25rem;
-  color: #B8B8B8;
+  color: #94a3b8;
   line-height: 1.7;
   margin-bottom: 2rem;
   font-weight: 500;
@@ -148,7 +148,7 @@
   display: inline-flex;
   align-items: center;
   padding: 1.125rem 2.25rem;
-  background: linear-gradient(135deg, #FFED4E 0%, #FF6B00 100%);
+  background: linear-gradient(135deg, #6366f1 0%, #22d3ee 100%);
   color: #000 !important;
   font-family: 'Space Grotesk', sans-serif;
   font-weight: 800;
@@ -160,7 +160,7 @@
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   box-shadow: 
     0 0 30px rgba(255, 237, 78, 0.4), 
-    0 6px 0 #CCC03E,
+    0 6px 0 #4f46e5,
     0 0 60px rgba(255, 30, 0, 0.2);
   transform: skewX(-3deg);
   position: relative;
@@ -186,7 +186,7 @@
   transform: translateY(-4px) skewX(-3deg);
   box-shadow: 
     0 0 50px rgba(255, 237, 78, 0.6), 
-    0 4px 0 #CCC03E,
+    0 4px 0 #4f46e5,
     0 0 80px rgba(255, 30, 0, 0.3);
 }
 
@@ -194,7 +194,7 @@
   transform: translateY(2px) skewX(-3deg);
   box-shadow: 
     0 0 20px rgba(255, 237, 78, 0.3), 
-    0 0 0 #CCC03E;
+    0 0 0 #4f46e5;
 }
 
 .secondaryButton {
@@ -203,7 +203,7 @@
   padding: 1rem 2rem;
   background: rgba(255, 237, 78, 0.05);
   border: 2px solid rgba(255, 237, 78, 0.3);
-  color: #FFED4E !important;
+  color: #6366f1 !important;
   font-family: 'Space Grotesk', sans-serif;
   font-weight: 700;
   border-radius: 6px;
@@ -215,7 +215,7 @@
 
 .secondaryButton:hover {
   background: rgba(255, 237, 78, 0.12);
-  border-color: #FFED4E;
+  border-color: #6366f1;
   box-shadow: 0 0 20px rgba(255, 237, 78, 0.3);
   transform: translateX(4px);
 }
@@ -274,7 +274,7 @@
   left: 0;
   width: 100%;
   height: 2px;
-  background: linear-gradient(90deg, transparent 0%, #FFED4E 50%, transparent 100%);
+  background: linear-gradient(90deg, transparent 0%, #6366f1 50%, transparent 100%);
   opacity: 0.6;
 }
 
@@ -294,7 +294,7 @@
 }
 
 .prompt {
-  color: #FFED4E;
+  color: #6366f1;
   margin-right: 0.75rem;
   font-weight: 700;
   text-shadow: 0 0 10px rgba(255, 237, 78, 0.5);
@@ -312,7 +312,7 @@
   display: inline-block;
   width: 10px;
   height: 20px;
-  background: #FFED4E;
+  background: #6366f1;
   box-shadow: 0 0 15px rgba(255, 237, 78, 0.8);
   animation: blink 1s step-end infinite;
   vertical-align: middle;
@@ -356,7 +356,7 @@
   font-size: 4rem;
   font-weight: 900;
   font-style: italic;
-  color: #FFED4E;
+  color: #6366f1;
   line-height: 1;
   text-shadow: 0 0 30px rgba(255, 237, 78, 0.5);
   transform: skewX(-5deg);
@@ -364,7 +364,7 @@
 
 .metricSuffix {
   font-size: 2rem;
-  color: #FF6B00;
+  color: #22d3ee;
   margin-left: 0.25rem;
   font-weight: 900;
 }
@@ -372,7 +372,7 @@
 .metricLabel {
   font-family: 'Space Grotesk', sans-serif;
   margin-top: 0.75rem;
-  color: #B8B8B8;
+  color: #94a3b8;
   font-size: 0.875rem;
   font-weight: 700;
   text-transform: uppercase;
@@ -439,7 +439,7 @@
 }
 
 .comparisonBarOmg {
-  background: linear-gradient(90deg, #FFED4E 0%, #FF6B00 50%, #FF1E00 100%);
+  background: linear-gradient(90deg, #6366f1 0%, #22d3ee 50%, #a855f7 100%);
   box-shadow: 0 0 30px rgba(255, 237, 78, 0.6), 0 0 15px rgba(255, 30, 0, 0.4);
   position: relative;
   overflow: hidden;
@@ -557,7 +557,7 @@
   font-style: italic;
   color: #fff;
   margin: 0 0 0.5rem;
-  background: linear-gradient(135deg, #FFED4E 0%, #FF6B00 50%, #FF1E00 100%);
+  background: linear-gradient(135deg, #6366f1 0%, #22d3ee 50%, #a855f7 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -574,6 +574,12 @@
 }
 
 @media (max-width: 1024px) {
+  .quickStartGrid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 768px) {
   .quickStartGrid {
     grid-template-columns: 1fr;
     gap: 2rem;
@@ -598,13 +604,13 @@
   left: 0;
   width: 100%;
   height: 4px;
-  background: linear-gradient(90deg, #FFED4E 0%, #FF6B00 50%, #FF1E00 100%);
+  background: linear-gradient(90deg, #6366f1 0%, #22d3ee 50%, #a855f7 100%);
   opacity: 0;
   transition: opacity 0.3s ease;
 }
 
 .quickStartStep:hover {
-  border-color: #FFED4E;
+  border-color: #6366f1;
   transform: translateY(-6px);
   box-shadow: 0 10px 40px rgba(255, 237, 78, 0.2);
 }
@@ -617,7 +623,7 @@
   width: 48px;
   height: 48px;
   border-radius: 12px;
-  background: linear-gradient(135deg, #FFED4E 0%, #FF6B00 100%);
+  background: linear-gradient(135deg, #6366f1 0%, #22d3ee 100%);
   color: #000;
   font-family: 'Space Grotesk', sans-serif;
   font-size: 1.5rem;
@@ -643,23 +649,63 @@
   border: 1px solid rgba(255, 237, 78, 0.2);
   border-radius: 8px;
   padding: 1rem;
+  padding-right: 3rem;
   font-family: 'JetBrains Mono', monospace;
   font-size: 0.875rem;
-  color: #FFED4E;
+  color: #6366f1;
   overflow-x: auto;
   cursor: pointer;
   transition: all 0.2s ease;
+  position: relative;
+  user-select: text;
 }
 
 .codeBlock:hover {
-  border-color: #FFED4E;
+  border-color: #6366f1;
   box-shadow: 0 0 15px rgba(255, 237, 78, 0.2);
+}
+
+.codeBlock:focus-visible {
+  outline: 2px solid #6366f1;
+  outline-offset: 2px;
 }
 
 .codeBlock code {
   background: none;
   color: inherit;
   padding: 0;
+}
+
+.copyIcon {
+  position: absolute;
+  right: 0.75rem;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: rgba(255, 237, 78, 0.6);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  padding: 0.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.copyIcon:hover {
+  color: #6366f1;
+  transform: translateY(-50%) scale(1.1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .copyIcon:hover {
+    transform: translateY(-50%);
+  }
+}
+
+.quickStartCta {
+  text-align: center;
+  margin-top: 3rem;
 }
 
 /* CTA Section */
