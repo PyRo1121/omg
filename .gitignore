@@ -6,3 +6,4 @@ benchmark_report.md
 node_modules
 dist
 .wrangler
+.worktrees
