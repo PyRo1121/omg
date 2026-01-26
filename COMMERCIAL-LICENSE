@@ -6,33 +6,44 @@
 
 ## Overview
 
-OMG is **source-available commercial software**, not open source.
+OMG is **dual-licensed**: AGPL-3.0 (free) + Commercial (paid).
 
-- ✅ **Free** for individuals and open source projects
-- 💰 **Paid** for companies and commercial use
-- 📖 **Source code** is public for transparency and security
+- ✅ **AGPL-3.0 (FREE):** For individuals, companies, and anyone willing to comply with copyleft
+- 💰 **Commercial License (PAID):** For proprietary use without AGPL obligations
+- 📖 **Source code** is public on GitHub for transparency and security
+
+**Most companies can use OMG for FREE under AGPL-3.0.**
+
+This document explains the PAID commercial license option. If you're okay with AGPL-3.0 copyleft, you don't need to buy anything.
 
 ---
 
 ## Do I Need a Commercial License?
 
-### ✅ YES - You need a commercial license if:
+### ❌ NO - Use AGPL-3.0 (FREE) if:
 
-- You work at a for-profit company (even if using OMG for personal projects at work)
-- You're using OMG on company infrastructure (laptops, servers, CI/CD)
-- You're using OMG to build commercial products
-- You're offering OMG as a service to others
-- Your team/company has any paid employees using OMG
-- You're a contractor/consultant using OMG for client work
+**You're okay with AGPL-3.0 copyleft requirements:**
+- ✅ Using OMG internally at your company (even for-profit companies)
+- ✅ Building products with OMG (if you keep them open source under AGPL)
+- ✅ Offering OMG as a service AND sharing source code with users
+- ✅ Individual personal projects
+- ✅ Open source projects
+- ✅ Educational use
 
-**Simple rule:** If you're making money or working at a company that makes money, you need a license.
+**AGPL-3.0 allows commercial use for FREE.** You only pay if you want proprietary rights.
 
-### ❌ NO - You DON'T need a commercial license if:
+**Simple rule:** If you're willing to keep your modifications open source (AGPL), it's FREE.
 
-- You're an individual using OMG for personal projects
-- You're working on open source projects (non-commercial)
-- You're a student or teacher using OMG for education
-- You're evaluating OMG for potential purchase (30-day trial)
+---
+
+### ✅ YES - Buy Commercial License if:
+
+**You want proprietary use without AGPL copyleft:**
+- 💰 Make proprietary modifications (no source sharing)
+- 💰 Embed OMG in closed-source products you sell
+- 💰 Offer OMG-as-a-Service without sharing source code
+- 💰 Create proprietary forks or derivatives
+- 💰 Avoid AGPL requirements entirely (some companies have "no AGPL" policies)
 
 ---
 
