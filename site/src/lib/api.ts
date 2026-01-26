@@ -775,6 +775,78 @@ export function getAdminExportAuditUrl(days = 30): string {
 }
 
 // ============================================
+// Docs Analytics API
+// ============================================
+
+export interface DocsAnalyticsSummary {
+  total_pageviews: number;
+  total_sessions: number;
+  avg_pages_per_session: string;
+  period_days: number;
+}
+
+export interface DocsPageview {
+  date: string;
+  views: number;
+  sessions: number;
+}
+
+export interface DocsTopPage {
+  path: string;
+  views: number;
+  sessions: number;
+  avg_time: number;
+}
+
+export interface DocsReferrer {
+  referrer: string;
+  sessions: number;
+  pageviews: number;
+}
+
+export interface DocsUTMCampaign {
+  utm_source: string | null;
+  utm_medium: string | null;
+  utm_campaign: string | null;
+  sessions: number;
+  pageviews: number;
+}
+
+export interface DocsGeo {
+  country_code: string;
+  sessions: number;
+  pageviews: number;
+}
+
+export interface DocsInteraction {
+  interaction_type: string;
+  target: string;
+  count: number;
+}
+
+export interface DocsPerformance {
+  path: string;
+  avg_load: number;
+  p95_load: number;
+  samples: number;
+}
+
+export interface DocsAnalyticsDashboard {
+  summary: DocsAnalyticsSummary;
+  pageviews_over_time: DocsPageview[];
+  top_pages: DocsTopPage[];
+  top_referrers: DocsReferrer[];
+  utm_campaigns: DocsUTMCampaign[];
+  geographic: DocsGeo[];
+  top_interactions: DocsInteraction[];
+  performance: DocsPerformance[];
+}
+
+export async function getDocsAnalytics(days = 30): Promise<DocsAnalyticsDashboard> {
+  return get<DocsAnalyticsDashboard>(`/api/docs/analytics/dashboard?days=${days}`);
+}
+
+// ============================================
 // AI Insights API
 // ============================================
 

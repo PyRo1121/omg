@@ -22,6 +22,7 @@ import { ActivityHeatmap } from '../ui/Chart';
 import { CardSkeleton } from '../ui/Skeleton';
 import { CommandStream } from './admin/CommandStream';
 import { GlobalPresence } from './admin/GlobalPresence';
+import { DocsAnalytics } from './admin/DocsAnalytics';
 
 type AdminTab = 'overview' | 'crm' | 'analytics' | 'revenue' | 'audit';
 
@@ -228,6 +229,24 @@ export const AdminDashboard: Component = () => {
                   </tbody>
                 </table>
               </div>
+            </div>
+          </Match>
+
+          <Match when={activeTab() === 'analytics'}>
+            <div class="animate-in fade-in slide-in-from-bottom-4 duration-500">
+              <DocsAnalytics />
+            </div>
+          </Match>
+
+          <Match when={activeTab() === 'revenue'}>
+            <div class="rounded-3xl border border-white/5 bg-[#0d0d0e] p-10 shadow-2xl text-center">
+              <p class="text-slate-400">Revenue analytics coming soon...</p>
+            </div>
+          </Match>
+
+          <Match when={activeTab() === 'audit'}>
+            <div class="rounded-3xl border border-white/5 bg-[#0d0d0e] p-10 shadow-2xl text-center">
+              <p class="text-slate-400">Audit log coming soon...</p>
             </div>
           </Match>
         </Switch>
