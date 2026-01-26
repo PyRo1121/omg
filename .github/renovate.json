@@ -1,0 +1,81 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:base",
+    ":dependencyDashboard",
+    ":semanticCommits",
+    ":automergeDigest"
+  ],
+  "schedule": [
+    "after 10pm every weekday",
+    "before 5am every weekday",
+    "every weekend"
+  ],
+  "timezone": "America/Chicago",
+  "packageRules": [
+    {
+      "matchManagers": [
+        "cargo"
+      ],
+      "groupName": "Rust dependencies",
+      "semanticCommitType": "chore",
+      "semanticCommitScope": "deps"
+    },
+    {
+      "matchDepTypes": [
+        "build-dependencies",
+        "dev-dependencies"
+      ],
+      "matchManagers": [
+        "cargo"
+      ],
+      "groupName": "Rust dev dependencies",
+      "automerge": true,
+      "automergeType": "pr",
+      "minimumReleaseAge": "3 days"
+    },
+    {
+      "matchPackagePatterns": [
+        "^serde"
+      ],
+      "groupName": "serde ecosystem"
+    },
+    {
+      "matchPackagePatterns": [
+        "^tokio"
+      ],
+      "groupName": "tokio ecosystem"
+    },
+    {
+      "matchPackagePatterns": [
+        "^clap"
+      ],
+      "groupName": "clap CLI ecosystem"
+    },
+    {
+      "matchPackageNames": [
+        "clap"
+      ],
+      "enabled": false,
+      "description": "Manually manage clap upgrades due to breaking changes"
+    }
+  ],
+  "vulnerabilityAlerts": {
+    "labels": [
+      "security"
+    ],
+    "addLabels": [
+      "priority"
+    ],
+    "assignees": []
+  },
+  "prConcurrentLimit": 5,
+  "prCreation": "not-pending",
+  "rebaseWhen": "behind-base-branch",
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": [
+      "before 5am on monday"
+    ]
+  }
+}
