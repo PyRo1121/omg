@@ -3,6 +3,8 @@
 //! These tests verify the full update flow using dependency injection
 //! and mock implementations to avoid requiring root or system changes.
 
+#![allow(clippy::implicit_clone)]
+
 use omg_lib::core::packages::PackageService;
 use omg_lib::core::testing::{TestPackageManager, UpdateFixture};
 use omg_lib::package_managers::PackageManager;
