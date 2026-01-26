@@ -124,11 +124,7 @@ pub async fn info_aur(package: &str) -> Result<()> {
 /// Show AUR package information - no-op fallback for non-Arch systems
 #[cfg(not(feature = "arch"))]
 pub async fn info_aur(package: &str) -> Result<()> {
-    println!(
-        "{} AUR is not available on this system.",
-        style::error("Error:")
-    );
-    let _ = package;
+    ui::print_error(format!("Package '{package}' not found"));
     Ok(())
 }
 
@@ -214,6 +210,13 @@ async fn info_fallback(package: &str) -> Result<()> {
         ui::print_spacer();
         ui::print_warning("Source: Arch User Repository (AUR)");
         ui::print_spacer();
+        return Ok(());
+    }
+
+    // Fallback for systems without arch or debian feature enabled
+    #[cfg(not(feature = "arch"))]
+    {
+        ui::print_error(format!("Package '{package}' not found"));
     }
     Ok(())
 }
