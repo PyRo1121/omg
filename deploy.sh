@@ -12,8 +12,12 @@ npm install
 npm run build
 cd ..
 
-echo "🔌 Deploying Backend API..."
+echo "🗄️ Migrating Database Schema..."
 cd site/workers
+bunx wrangler d1 execute omg-licensing --remote --file=./schema-production.sql
+echo "✓ Database migration complete"
+
+echo "🔌 Deploying Backend API..."
 bunx wrangler deploy
 cd ../..
 

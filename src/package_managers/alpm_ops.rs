@@ -294,8 +294,16 @@ pub fn execute_transaction(
     let mut alpm =
         alpm::Alpm::new(root, db_path).context("Failed to initialize ALPM (are you root?)")?;
 
-    for db_name in ["core", "extra", "multilib"] {
-        let _ = alpm.register_syncdb(db_name, alpm::SigLevel::USE_DEFAULT);
+    let repos = crate::core::pacman_conf::get_configured_repos().unwrap_or_else(|_| {
+        vec![
+            "core".to_string(),
+            "extra".to_string(),
+            "multilib".to_string(),
+        ]
+    });
+
+    for db_name in &repos {
+        let _ = alpm.register_syncdb(db_name.as_str(), alpm::SigLevel::USE_DEFAULT);
     }
 
     configure_mirrors(&mut alpm)?;

@@ -66,9 +66,20 @@ async fn main() -> Result<()> {
 
     tracing::info!("Starting OMG daemon (omgd) v{}", env!("CARGO_PKG_VERSION"));
 
-    // 1. Initialize State first (this will fail if another daemon is running and has the DB locked)
     tracing::info!("Initializing daemon state...");
-    let state = std::sync::Arc::new(omg_lib::daemon::handlers::DaemonState::new()?);
+    let state = match omg_lib::daemon::handlers::DaemonState::new() {
+        Ok(s) => std::sync::Arc::new(s),
+        Err(e) => {
+            tracing::error!("Failed to initialize daemon state: {e:#}");
+            eprintln!("\n✗ Daemon startup failed: {e:#}");
+            eprintln!("\nTroubleshooting:");
+            eprintln!("  1. Ensure package databases are synced: sudo omg sync");
+            eprintln!("  2. Check if another daemon is running: pgrep omgd");
+            eprintln!("  3. Remove stale lock files: rm -f ~/.local/share/omg/daemon/*.lock");
+            eprintln!("  4. Check disk space and permissions");
+            return Err(e);
+        }
+    };
 
     // 2. Check if daemon is already responding on the socket
     if socket_path.exists() {
@@ -77,8 +88,8 @@ async fn main() -> Result<()> {
             && client.ping().await.is_ok()
         {
             anyhow::bail!(
-                "Daemon is already running and responding on {:?}",
-                socket_path
+                "Daemon is already running and responding on {}",
+                socket_path.display()
             );
         }
         tracing::debug!("Removing stale socket at {:?}", socket_path);

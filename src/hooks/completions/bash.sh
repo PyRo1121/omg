@@ -13,7 +13,7 @@ _omg_completions() {
     esac
 
     if [[ $COMP_CWORD -eq 1 ]]; then
-        local commands="search install remove update info clean explicit sync use list hook daemon config completions which status doctor audit run new tool env history rollback dash help"
+        local commands="search install remove update info why outdated pin size blame diff snapshot ci migrate clean explicit sync use list hook daemon config completions which status doctor audit run new tool env team container license fleet enterprise history rollback dash help"
         COMPREPLY=( $(compgen -W "$commands" -- "$cur") )
     fi
 }

@@ -1,6 +1,7 @@
 use std::io::Write;
 
 use anyhow::Result;
+use serde::Serialize;
 
 use crate::cli::style;
 use crate::core::Package;
@@ -10,6 +11,7 @@ use crate::package_managers::get_package_manager;
 #[cfg(feature = "arch")]
 use crate::package_managers::AurClient;
 
+#[derive(Serialize)]
 struct DisplayPackage {
     name: String,
     version: String,
@@ -28,7 +30,11 @@ impl DisplayPackage {
     }
 }
 
-pub async fn search(query: &str, _detailed: bool, _interactive: bool) -> Result<()> {
+pub async fn search(query: &str, detailed: bool, interactive: bool) -> Result<()> {
+    search_with_json(query, detailed, interactive, false).await
+}
+
+pub async fn search_with_json(query: &str, _detailed: bool, _interactive: bool, json: bool) -> Result<()> {
     if query.len() > 100 {
         anyhow::bail!("Search query too long (max 100 characters)");
     }
@@ -42,7 +48,6 @@ pub async fn search(query: &str, _detailed: bool, _interactive: bool) -> Result<
         anyhow::bail!("Invalid search query: shell metacharacters detected");
     }
 
-    // Search official repos (via daemon) and AUR in parallel
     let official_search = async {
         let mut results = Vec::new();
         if let Ok(mut client) = DaemonClient::connect().await
@@ -56,11 +61,8 @@ pub async fn search(query: &str, _detailed: bool, _interactive: bool) -> Result<
                     source: pkg.source,
                 });
             }
-        } else {
-            // Fallback to direct package manager
-            if let Ok(packages) = get_package_manager().search(query).await {
-                results.extend(packages.into_iter().map(DisplayPackage::from_package));
-            }
+        } else if let Ok(packages) = get_package_manager().search(query).await {
+            results.extend(packages.into_iter().map(DisplayPackage::from_package));
         }
         results
     };
@@ -80,11 +82,17 @@ pub async fn search(query: &str, _detailed: bool, _interactive: bool) -> Result<
     #[cfg(not(feature = "arch"))]
     let aur_search = async { Vec::new() };
 
-    // Execute both searches concurrently
     let (official_packages, aur_packages) = tokio::join!(official_search, aur_search);
 
     let mut display_packages = official_packages;
     display_packages.extend(aur_packages);
+
+    if json {
+        if let Ok(json_str) = serde_json::to_string_pretty(&display_packages) {
+            println!("{json_str}");
+        }
+        return Ok(());
+    }
 
     if display_packages.is_empty() {
         use crate::cli::components::Components;

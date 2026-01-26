@@ -18,6 +18,7 @@ pub mod env;
 pub mod fleet;
 pub mod help;
 pub mod init;
+pub mod json_output;
 #[cfg(feature = "license")]
 pub mod license;
 pub mod migrate;

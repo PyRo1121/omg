@@ -89,29 +89,38 @@ impl ColorTheme {
     }
 }
 
-/// Global color theme (can be configured at runtime)
-static mut CURRENT_THEME: ColorTheme = ColorTheme {
-    primary: "86",
-    success: "142",
-    warning: "221",
-    error: "203",
-    info: "117",
-    muted: "245",
-};
+use std::sync::atomic::{AtomicU8, Ordering};
+
+const THEME_CATPPUCCIN: u8 = 0;
+const THEME_NORD: u8 = 1;
+const THEME_GRUVBOX: u8 = 2;
+const THEME_DRACULA: u8 = 3;
+
+static CURRENT_THEME: AtomicU8 = AtomicU8::new(THEME_CATPPUCCIN);
 
 /// Get the current color theme
 #[must_use]
 pub fn theme() -> ColorTheme {
-    // SAFETY: This is only called from the main thread during CLI output
-    unsafe { CURRENT_THEME }
+    match CURRENT_THEME.load(Ordering::Relaxed) {
+        THEME_NORD => ColorTheme::nord(),
+        THEME_GRUVBOX => ColorTheme::gruvbox(),
+        THEME_DRACULA => ColorTheme::dracula(),
+        _ => ColorTheme::catppuccin(),
+    }
 }
 
 /// Set the color theme
-pub fn set_theme(theme: ColorTheme) {
-    // SAFETY: This is only called during startup before any multi-threading
-    unsafe {
-        CURRENT_THEME = theme;
-    }
+pub fn set_theme(new_theme: ColorTheme) {
+    let theme_id = if new_theme.primary == ColorTheme::nord().primary {
+        THEME_NORD
+    } else if new_theme.primary == ColorTheme::gruvbox().primary {
+        THEME_GRUVBOX
+    } else if new_theme.primary == ColorTheme::dracula().primary {
+        THEME_DRACULA
+    } else {
+        THEME_CATPPUCCIN
+    };
+    CURRENT_THEME.store(theme_id, Ordering::Relaxed);
 }
 
 /// Detect if colors should be enabled

@@ -37,40 +37,47 @@ pub struct DaemonState {
 }
 
 impl DaemonState {
-    /// Create a new daemon state
-    ///
-    /// # Errors
-    /// Returns an error if the persistent cache or package index cannot be initialized.
     pub fn new() -> anyhow::Result<Self> {
         let data_dir = crate::core::paths::daemon_data_dir();
-        let persistent = super::db::PersistentCache::new(&data_dir)
-            .context("Failed to initialize persistent cache (redb)")?;
+        tracing::info!("Initializing daemon data directory: {:?}", data_dir);
 
-        // Use cached index loading for instant startup
+        let persistent = super::db::PersistentCache::new(&data_dir).with_context(|| {
+            format!(
+                "Failed to initialize persistent cache at {}. \
+                 Check permissions and disk space.",
+                data_dir.display()
+            )
+        })?;
+
         let index = PackageIndex::new_with_cache(&persistent)
             .or_else(|e| {
-                tracing::warn!("Failed to load cached index: {e}, building fresh");
+                tracing::warn!("Failed to load cached index: {e}, building fresh index...");
                 PackageIndex::new()
             })
-            .context("Failed to build package index")?;
+            .with_context(|| {
+                "Failed to build package index. Ensure package databases are synced (run 'omg sync')."
+            })?;
+
+        tracing::info!("Package index loaded: {} packages", index.len());
 
         let cache = PackageCache::default();
 
-        // Pre-warm caches from persistent storage for instant first queries
         if let Ok(Some(status)) = persistent.get_status() {
             cache.update_status(status);
             tracing::debug!("Pre-warmed status cache from persistent storage");
         }
 
-        // Rate limit: 100 requests per second with burst of 200
         let quota = Quota::per_second(crate::core::safe_ops::nonzero_u32_or_default(100, 1))
             .allow_burst(crate::core::safe_ops::nonzero_u32_or_default(200, 1));
         let rate_limiter = Arc::new(RateLimiter::direct(quota));
 
+        let pm = get_package_manager();
+        tracing::info!("Using package manager: {}", pm.name());
+
         Ok(Self {
             cache,
             persistent,
-            package_manager: get_package_manager(),
+            package_manager: pm,
             #[cfg(feature = "arch")]
             aur: AurClient::new(),
             #[cfg(feature = "arch")]

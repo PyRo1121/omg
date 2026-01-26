@@ -3,19 +3,24 @@
 //! Provides a fully isolated pacman/alpm environment for testing.
 //!
 //! # Note
-//! This module is used across multiple test files. The dead_code warnings
+//! This module is used across multiple test files. The `dead_code` warnings
 //! are suppressed because the harness is only used in integration tests.
 
 #![allow(dead_code)]
+#![allow(clippy::doc_markdown)]
+#![allow(clippy::uninlined_format_args)]
+#![allow(clippy::must_use_candidate)]
+#![allow(clippy::missing_errors_doc)]
+#![allow(clippy::missing_panics_doc)]
 
 use alpm::Alpm;
 use anyhow::Result;
-use flate2::Compression;
 use flate2::write::GzEncoder;
+use flate2::Compression;
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use tar::{Builder, EntryType, Header};
-use tempfile::{TempDir, tempdir};
+use tempfile::{tempdir, TempDir};
 
 pub struct HarnessPkg {
     pub name: String,

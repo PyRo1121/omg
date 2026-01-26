@@ -10,10 +10,7 @@ fn main() {
     let start = Instant::now();
     let settings = Settings::load();
     let duration = start.elapsed();
-    println!(
-        "Settings::load(): {duration:?} (ok: {})",
-        settings.is_ok()
-    );
+    println!("Settings::load(): {duration:?} (ok: {})", settings.is_ok());
 
     let start = Instant::now();
     let distro = detect_distro();

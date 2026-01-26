@@ -15,7 +15,7 @@ We take the security of OMG very seriously. If you believe you have found a secu
 
 **Do not open a public GitHub issue for security vulnerabilities.**
 
-Please send security reports to: `security@example.com` (Note: Replace with actual security contact)
+Please send security reports to: `olen@latham.cloud`
 
 ### What we need from you
 

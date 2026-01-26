@@ -311,11 +311,11 @@ impl App {
 
     pub async fn install_package(&self, package_name: &str) -> Result<()> {
         let packages = vec![package_name.to_string()];
-        crate::cli::packages::install(&packages, false).await
+        crate::cli::packages::install(&packages, false, false).await
     }
 
     pub async fn update_system(&self) -> Result<()> {
-        crate::cli::packages::update(false, false).await
+        crate::cli::packages::update(false, false, false).await
     }
 
     pub async fn clean_cache(&self) -> Result<()> {

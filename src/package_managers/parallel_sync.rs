@@ -22,9 +22,17 @@ use crate::core::{
     paths,
 };
 
-/// Standard Arch Linux repositories
-const REPOS: &[&str] = &["core", "extra", "multilib"];
 const MIRROR_CACHE_TTL_SECS: u64 = 6 * 60 * 60;
+
+fn get_configured_repos() -> Vec<String> {
+    crate::core::pacman_conf::get_configured_repos().unwrap_or_else(|_| {
+        vec![
+            "core".to_string(),
+            "extra".to_string(),
+            "multilib".to_string(),
+        ]
+    })
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 struct MirrorCache {
@@ -113,8 +121,9 @@ fn build_db_url(mirror_template: &str, repo: &str) -> String {
         + ".db"
 }
 
-/// Download a single database file with progress and failover
-/// Uses If-Modified-Since to skip unchanged databases (major speedup!)
+const MAX_RETRIES: u32 = 3;
+const INITIAL_BACKOFF_MS: u64 = 100;
+
 #[allow(clippy::literal_string_with_formatting_args, clippy::expect_used)]
 async fn download_db(
     client: &Client,
@@ -128,7 +137,6 @@ async fn download_db(
     );
     pb.set_message(repo_name.clone());
 
-    // Get existing file's modification time for conditional request
     let existing_mtime = if dest.exists() {
         tokio::fs::metadata(dest)
             .await
@@ -145,68 +153,110 @@ async fn download_db(
 
     let mut last_error = None;
 
-    for (i, url) in urls.iter().enumerate() {
-        if i > 0 {
-            pb.set_message(format!("{} (mirror {})", repo_name, i + 1));
+    for (mirror_idx, url) in urls.iter().enumerate() {
+        if mirror_idx > 0 {
+            pb.set_message(format!("{} (mirror {})", repo_name, mirror_idx + 1));
         }
 
-        // Build request with If-Modified-Since if we have existing file
-        let mut req = client.get(url);
-        if let Some(ref mtime) = existing_mtime {
-            req = req.header(reqwest::header::IF_MODIFIED_SINCE, mtime);
-        }
+        for retry in 0..MAX_RETRIES {
+            if retry > 0 {
+                let backoff = Duration::from_millis(INITIAL_BACKOFF_MS * 2u64.pow(retry - 1));
+                pb.set_message(format!("{repo_name} (retry {retry})"));
+                tokio::time::sleep(backoff).await;
+            }
 
-        let response = match req.send().await {
-            Ok(resp) => resp,
-            Err(e) => {
-                last_error = Some(anyhow::anyhow!("Failed to connect to {url}: {e}"));
+            let mut req = client.get(url);
+            if let Some(ref mtime) = existing_mtime {
+                req = req.header(reqwest::header::IF_MODIFIED_SINCE, mtime);
+            }
+
+            let response = match req.send().await {
+                Ok(resp) => resp,
+                Err(e) => {
+                    last_error = Some(anyhow::anyhow!("Failed to connect to {url}: {e}"));
+                    if e.is_timeout() || e.is_connect() {
+                        continue;
+                    }
+                    break;
+                }
+            };
+
+            if response.status() == reqwest::StatusCode::NOT_MODIFIED {
+                pb.finish_with_message(format!("{repo_name} ✓"));
+                return Ok(());
+            }
+
+            if response.status().is_server_error() {
+                last_error = Some(anyhow::anyhow!("HTTP {}: {}", response.status(), url));
                 continue;
             }
-        };
 
-        // 304 Not Modified - database unchanged, skip download!
-        if response.status() == reqwest::StatusCode::NOT_MODIFIED {
+            if !response.status().is_success() {
+                last_error = Some(anyhow::anyhow!("HTTP {}: {}", response.status(), url));
+                break;
+            }
+
+            let total_size = response.content_length().unwrap_or(0);
+            if total_size > 0 {
+                pb.set_length(total_size);
+                pb.set_style(
+                    ProgressStyle::default_bar()
+                        .template(
+                            "  {spinner:.green} {msg:12} [{bar:30.cyan/blue}] {bytes}/{total_bytes}",
+                        )
+                        .expect("valid template")
+                        .progress_chars("█▓▒░"),
+                );
+            }
+
+            let temp_path = dest.with_extension("db.part");
+            let file_result = File::create(&temp_path).await;
+            let mut file = match file_result {
+                Ok(f) => f,
+                Err(e) => {
+                    last_error = Some(anyhow::anyhow!("Failed to create {}: {e}", temp_path.display()));
+                    break;
+                }
+            };
+
+            let mut response = response;
+            let mut download_failed = false;
+            while let Some(chunk_result) = response.chunk().await.transpose() {
+                match chunk_result {
+                    Ok(chunk) => {
+                        if let Err(e) = file.write_all(&chunk).await {
+                            last_error = Some(anyhow::anyhow!("Write error: {e}"));
+                            download_failed = true;
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        last_error = Some(anyhow::anyhow!("Download interrupted: {e}"));
+                        download_failed = true;
+                        break;
+                    }
+                }
+            }
+
+            if download_failed {
+                let _ = tokio::fs::remove_file(&temp_path).await;
+                continue;
+            }
+
+            if let Err(e) = file.flush().await {
+                last_error = Some(anyhow::anyhow!("Flush error: {e}"));
+                let _ = tokio::fs::remove_file(&temp_path).await;
+                continue;
+            }
+
+            if let Err(e) = tokio::fs::rename(&temp_path, dest).await {
+                last_error = Some(anyhow::anyhow!("Rename error: {e}"));
+                continue;
+            }
+
             pb.finish_with_message(format!("{repo_name} ✓"));
             return Ok(());
         }
-
-        if !response.status().is_success() {
-            last_error = Some(anyhow::anyhow!("HTTP {}: {}", response.status(), url));
-            continue;
-        }
-
-        // If we got here, we have a successful response - download it
-        let total_size = response.content_length().unwrap_or(0);
-        if total_size > 0 {
-            pb.set_length(total_size);
-            pb.set_style(
-                ProgressStyle::default_bar()
-                    .template(
-                        "  {spinner:.green} {msg:12} [{bar:30.cyan/blue}] {bytes}/{total_bytes}",
-                    )
-                    .expect("valid template")
-                    .progress_chars("█▓▒░"),
-            );
-        }
-
-        // Download to temp file first
-        let temp_path = dest.with_extension("db.part");
-        let mut file = File::create(&temp_path)
-            .await
-            .with_context(|| format!("Failed to create {}", temp_path.display()))?;
-
-        let mut response = response;
-        while let Some(chunk) = response.chunk().await? {
-            file.write_all(&chunk).await?;
-        }
-
-        file.flush().await?;
-
-        // Atomically move to final location
-        tokio::fs::rename(&temp_path, dest).await?;
-
-        pb.finish_with_message(format!("{repo_name} ✓"));
-        return Ok(());
     }
 
     pb.finish_with_message(format!("{repo_name} failed"));
@@ -238,21 +288,29 @@ pub async fn sync_databases_parallel() -> Result<()> {
     let mp = MultiProgress::new();
     let client = download_client().clone();
 
-    // Collect all repos to sync (standard + custom)
+    // Collect all repos to sync from pacman.conf
     let mut repos_to_sync: Vec<(String, Vec<String>, PathBuf)> = Vec::new();
+    let configured_repos = get_configured_repos();
 
-    // Standard repos
-    for repo in REPOS {
-        let repo_urls: Vec<String> = mirrors
-            .iter()
-            .map(|m| build_db_url(m, repo))
-            .take(5) // Only try top 5 mirrors for sanity
+    // Standard repos (use mirrorlist)
+    let standard_repos: std::collections::HashSet<&str> =
+        ["core", "extra", "multilib", "core-testing", "extra-testing", "multilib-testing"]
+            .into_iter()
             .collect();
-        let dest = sync_dir.join(format!("{repo}.db"));
-        repos_to_sync.push(((*repo).to_string(), repo_urls, dest));
+
+    for repo in &configured_repos {
+        if standard_repos.contains(repo.as_str()) {
+            let repo_urls: Vec<String> = mirrors
+                .iter()
+                .map(|m| build_db_url(m, repo))
+                .take(5)
+                .collect();
+            let dest = sync_dir.join(format!("{repo}.db"));
+            repos_to_sync.push((repo.clone(), repo_urls, dest));
+        }
     }
 
-    // Custom repos from pacman.conf
+    // Custom repos from pacman.conf (have their own Server= lines)
     if let Ok(custom_repos) = get_custom_repos() {
         for (repo_name, repo_url) in custom_repos {
             let urls = vec![format!("{}/{}.db", repo_url, repo_name)];
@@ -451,7 +509,7 @@ pub async fn select_fastest_mirrors(count: usize) -> Result<Vec<String>> {
     Ok(mirrors.into_iter().take(count).collect())
 }
 
-/// Download a single package file with progress and failover
+/// Download a single package file with progress, failover, and retry logic
 async fn download_package(
     client: &Client,
     job: DownloadJob,
@@ -474,45 +532,89 @@ async fn download_package(
 
     let mut last_error = None;
 
-    for (i, mirror) in mirrors.iter().enumerate() {
+    for (mirror_idx, mirror) in mirrors.iter().enumerate() {
         let url = build_pkg_url(mirror, &job.repo, &job.filename);
 
-        if i > 0 {
-            pb.set_message(format!("{} (mirror {})", job.name, i + 1));
+        if mirror_idx > 0 {
+            pb.set_message(format!("{} (mirror {})", job.name, mirror_idx + 1));
         }
 
-        let mut response = match client.get(&url).send().await {
-            Ok(resp) => resp,
-            Err(e) => {
-                last_error = Some(anyhow::anyhow!("Connection failed: {e}"));
+        for retry in 0..MAX_RETRIES {
+            if retry > 0 {
+                let backoff = Duration::from_millis(INITIAL_BACKOFF_MS * 2u64.pow(retry - 1));
+                pb.set_message(format!("{} (retry {})", job.name, retry));
+                tokio::time::sleep(backoff).await;
+            }
+
+            let response = match client.get(&url).send().await {
+                Ok(resp) => resp,
+                Err(e) => {
+                    last_error = Some(anyhow::anyhow!("Connection failed: {e}"));
+                    if e.is_timeout() || e.is_connect() {
+                        continue;
+                    }
+                    break;
+                }
+            };
+
+            if response.status().is_server_error() {
+                last_error = Some(anyhow::anyhow!("HTTP {}", response.status()));
                 continue;
             }
-        };
 
-        if !response.status().is_success() {
-            last_error = Some(anyhow::anyhow!("HTTP {}", response.status()));
-            continue;
+            if !response.status().is_success() {
+                last_error = Some(anyhow::anyhow!("HTTP {}", response.status()));
+                break;
+            }
+
+            // Download to temp file
+            let temp_path = dest.with_extension("part");
+            let file_result = File::create(&temp_path).await;
+            let mut file = match file_result {
+                Ok(f) => f,
+                Err(e) => {
+                    last_error = Some(anyhow::anyhow!("Failed to create {}: {e}", temp_path.display()));
+                    break;
+                }
+            };
+
+            let mut response = response;
+            let mut download_failed = false;
+            while let Some(chunk_result) = response.chunk().await.transpose() {
+                match chunk_result {
+                    Ok(chunk) => {
+                        if let Err(e) = file.write_all(&chunk).await {
+                            last_error = Some(anyhow::anyhow!("Write error: {e}"));
+                            download_failed = true;
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        last_error = Some(anyhow::anyhow!("Download interrupted: {e}"));
+                        download_failed = true;
+                        break;
+                    }
+                }
+            }
+
+            if download_failed {
+                let _ = tokio::fs::remove_file(&temp_path).await;
+                continue;
+            }
+
+            if let Err(e) = file.flush().await {
+                last_error = Some(anyhow::anyhow!("Flush error: {e}"));
+                let _ = tokio::fs::remove_file(&temp_path).await;
+                continue;
+            }
+
+            if let Err(e) = tokio::fs::rename(&temp_path, &dest).await {
+                last_error = Some(anyhow::anyhow!("Rename error: {e}"));
+                continue;
+            }
+
+            return Ok(dest);
         }
-
-        // Got successful response
-        let _total_size = response.content_length().unwrap_or(job.size);
-
-        // Download to temp file
-        let temp_path = dest.with_extension("part");
-        let mut file = File::create(&temp_path)
-            .await
-            .with_context(|| format!("Failed to create {}", temp_path.display()))?;
-
-        while let Some(chunk) = response.chunk().await? {
-            file.write_all(&chunk).await?;
-        }
-
-        file.flush().await?;
-
-        // Atomically move to final location
-        tokio::fs::rename(&temp_path, &dest).await?;
-
-        return Ok(dest);
     }
     Err(last_error.unwrap_or_else(|| anyhow::anyhow!("No mirrors available")))
 }
