@@ -20,9 +20,9 @@ export async function handleValidateLicense(request: Request, env: Env): Promise
     try {
       const body = (await request.json()) as any;
       licenseKey = body.key || body.license_key;
-      machineId = body.machine_id;
-      userName = body.user_name;
-      userEmail = body.user_email;
+      machineId = body.machine_id ?? null;
+      userName = body.user_name ?? null;
+      userEmail = body.user_email ?? null;
     } catch (e) {
       return errorResponse('Invalid JSON body');
     }

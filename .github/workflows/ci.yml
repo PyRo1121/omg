@@ -123,8 +123,11 @@ jobs:
       - name: Run clippy
         run: cargo clippy --all-targets --features ${{ env.ARCH_FEATURES }} -- -D warnings -W clippy::pedantic
 
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
       - name: Run unit tests
-        run: cargo test --lib --features ${{ env.ARCH_FEATURES }} --locked
+        run: cargo nextest run --lib --features ${{ env.ARCH_FEATURES }} --locked
 
       - name: Show sccache stats
         run: sccache --show-stats
@@ -229,10 +232,13 @@ jobs:
           export PATH="$CARGO_HOME/bin:$PATH"
           cargo clippy --all-targets --no-default-features --features ${{ env.DEBIAN_FEATURES }} -- -D warnings -W clippy::pedantic
 
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
       - name: Run unit tests
         run: |
           export PATH="$CARGO_HOME/bin:$PATH"
-          cargo test --lib --no-default-features --features ${{ env.DEBIAN_FEATURES }} --locked
+          cargo nextest run --lib --no-default-features --features ${{ env.DEBIAN_FEATURES }} --locked
 
       - name: Show sccache stats
         run: |
@@ -336,10 +342,13 @@ jobs:
           export PATH="$HOME/.cargo/bin:$PATH"
           cargo clippy --all-targets --no-default-features --features ${{ env.DEBIAN_FEATURES }} -- -D warnings -W clippy::pedantic
 
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
       - name: Run unit tests
         run: |
           export PATH="$HOME/.cargo/bin:$PATH"
-          cargo test --lib --no-default-features --features ${{ env.DEBIAN_FEATURES }} --locked
+          cargo nextest run --lib --no-default-features --features ${{ env.DEBIAN_FEATURES }} --locked
 
       - name: Show sccache stats
         run: |

@@ -4,6 +4,7 @@
 
 ![Installs](https://img.shields.io/endpoint?url=https://api.pyro1121.com/api/badge/installs&style=flat-square&cacheSeconds=60)
 [![Benchmark](https://img.shields.io/badge/search-6ms%20(22x%20faster)-brightgreen?style=flat-square)](benchmark.sh)
+[![codecov](https://codecov.io/gh/pyro1121/omg/branch/main/graph/badge.svg?style=flat-square)](https://codecov.io/gh/pyro1121/omg)
 [![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue?style=flat-square)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.92%2B-orange?style=flat-square)](https://www.rust-lang.org)
 

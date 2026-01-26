@@ -44,8 +44,11 @@ impl Tier {
         s.parse().unwrap_or(Self::Free)
     }
 
+    /// Returns the string representation of this tier
+    ///
+    /// # Rust 2026: const fn for compile-time evaluation
     #[must_use]
-    pub fn as_str(&self) -> &'static str {
+    pub const fn as_str(&self) -> &'static str {
         match self {
             Self::Free => "free",
             Self::Pro => "pro",
@@ -54,8 +57,11 @@ impl Tier {
         }
     }
 
+    /// Returns the display name of this tier
+    ///
+    /// # Rust 2026: const fn for compile-time evaluation
     #[must_use]
-    pub fn display_name(&self) -> &'static str {
+    pub const fn display_name(&self) -> &'static str {
         match self {
             Self::Free => "Free",
             Self::Pro => "Pro",
@@ -64,8 +70,11 @@ impl Tier {
         }
     }
 
+    /// Returns the pricing string for this tier
+    ///
+    /// # Rust 2026: const fn for compile-time evaluation
     #[must_use]
-    pub fn price(&self) -> &'static str {
+    pub const fn price(&self) -> &'static str {
         match self {
             Self::Free => "Free",
             Self::Pro => "$9/mo",
@@ -118,8 +127,11 @@ pub enum Feature {
 }
 
 impl Feature {
+    /// Returns the minimum tier required for this feature
+    ///
+    /// # Rust 2026: const fn for compile-time tier validation
     #[must_use]
-    pub fn required_tier(&self) -> Tier {
+    pub const fn required_tier(&self) -> Tier {
         match self {
             // Free
             Self::Packages
@@ -142,7 +154,10 @@ impl Feature {
         }
     }
 
-    #[allow(clippy::should_implement_trait)]
+    #[expect(
+        clippy::should_implement_trait,
+        reason = "Returns Option instead of Result for convenience"
+    )]
     #[must_use]
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
@@ -169,8 +184,11 @@ impl Feature {
         }
     }
 
+    /// Returns the string representation of this feature
+    ///
+    /// # Rust 2026: const fn for compile-time evaluation
     #[must_use]
-    pub fn as_str(&self) -> &'static str {
+    pub const fn as_str(&self) -> &'static str {
         match self {
             Self::Packages => "packages",
             Self::Runtimes => "runtimes",
@@ -194,8 +212,11 @@ impl Feature {
         }
     }
 
+    /// Returns the display name of this feature
+    ///
+    /// # Rust 2026: const fn for compile-time evaluation
     #[must_use]
-    pub fn display_name(&self) -> &'static str {
+    pub const fn display_name(&self) -> &'static str {
         match self {
             Self::Packages => "Package Management",
             Self::Runtimes => "Runtime Version Switching",
@@ -458,12 +479,16 @@ pub async fn validate_license_with_user(
         .await
         .context("Failed to connect to license server")?;
 
-    let license: LicenseResponse = response
-        .json()
+    let response_text = response
+        .text()
         .await
-        .context("Failed to parse license response")?;
+        .context("Failed to read license response body")?;
 
-    Ok(license)
+    tracing::debug!("License API raw response: {}", response_text);
+
+    serde_json::from_str(&response_text).context(format!(
+        "Failed to parse license response. Raw response: {response_text}"
+    ))
 }
 
 /// Fetch team members associated with this license

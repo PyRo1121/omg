@@ -3,16 +3,15 @@
 use crate::cli::components::Components;
 use crate::cli::tea::Cmd;
 use crate::cli::{
-    CliContext, CommandRunner, GoldenPathCommands, NotifyCommands, TeamCommands, TeamRoleCommands,
+    CliContext, GoldenPathCommands, LocalCommandRunner, NotifyCommands, TeamCommands,
+    TeamRoleCommands,
 };
 use anyhow::Result;
-use async_trait::async_trait;
 
 use crate::core::env::team::TeamWorkspace;
 use crate::core::license;
 
-#[async_trait]
-impl CommandRunner for TeamCommands {
+impl LocalCommandRunner for TeamCommands {
     async fn execute(&self, ctx: &CliContext) -> Result<()> {
         match self {
             TeamCommands::Init { team_id, name } => init(team_id, name.as_deref(), ctx),

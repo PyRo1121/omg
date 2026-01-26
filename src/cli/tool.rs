@@ -1,6 +1,5 @@
-use crate::cli::{CliContext, CommandRunner, ToolCommands};
+use crate::cli::{CliContext, LocalCommandRunner, ToolCommands};
 use anyhow::{Context, Result};
-use async_trait::async_trait;
 use console::user_attended;
 use dialoguer::{Select, theme::ColorfulTheme};
 use std::fs;
@@ -10,8 +9,7 @@ use std::process::Command;
 
 use crate::cli::style;
 
-#[async_trait]
-impl CommandRunner for ToolCommands {
+impl LocalCommandRunner for ToolCommands {
     async fn execute(&self, _ctx: &CliContext) -> Result<()> {
         match self {
             ToolCommands::Install { name } => install(name).await,

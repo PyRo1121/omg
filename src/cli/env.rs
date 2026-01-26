@@ -1,15 +1,13 @@
 use crate::cli::components::Components;
 use crate::cli::tea::Cmd;
-use crate::cli::{CliContext, CommandRunner, EnvCommands};
+use crate::cli::{CliContext, EnvCommands, LocalCommandRunner};
 use crate::core::env::fingerprint::{DriftReport, EnvironmentState};
 use crate::core::http::shared_client;
 use anyhow::{Context, Result};
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-#[async_trait]
-impl CommandRunner for EnvCommands {
+impl LocalCommandRunner for EnvCommands {
     async fn execute(&self, _ctx: &CliContext) -> Result<()> {
         match self {
             EnvCommands::Capture => capture().await,
