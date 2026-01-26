@@ -114,6 +114,21 @@ where
     })
 }
 
+/// Clear the thread-local ALPM handle cache.
+///
+/// This should be called when paths change (e.g., in tests that set different
+/// `OMG_DATA_DIR` or `OMG_PACMAN_DB_DIR` environment variables) to avoid
+/// memory corruption from using handles that reference deleted directories.
+///
+/// # Safety
+/// This function is safe but must be called before any other ALPM operations
+/// when environment paths have changed.
+pub fn clear_alpm_cache() {
+    ALPM_HANDLE.with(|cell| {
+        let _ = cell.borrow_mut().take();
+    });
+}
+
 /// Search local database (installed packages) - INSTANT
 pub fn search_local(query: &str) -> Result<Vec<LocalPackage>> {
     with_handle(|handle| {
