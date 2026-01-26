@@ -85,8 +85,8 @@ pub fn list_explicit_fast() -> anyhow::Result<Vec<String>> {
 
 #[cfg(feature = "arch")]
 pub use alpm_direct::{
-    get_counts, get_package_info, is_installed_fast, list_installed_fast, list_orphans_fast,
-    search_local,
+    clear_alpm_cache, get_counts, get_package_info, is_installed_fast, list_installed_fast,
+    list_orphans_fast, search_local,
 };
 #[cfg(feature = "arch")]
 pub use alpm_ops::DownloadInfo;

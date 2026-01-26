@@ -94,6 +94,21 @@ fn run_omg_with_env(args: &[&str], env_vars: &[(&str, &str)]) -> (bool, String, 
     (output.status.success(), stdout, stderr)
 }
 
+/// Helper to run omg commands with daemon enabled
+fn run_omg_with_daemon(args: &[&str]) -> (bool, String, String) {
+    let output = Command::new(env!("CARGO_BIN_EXE_omg"))
+        .args(args)
+        .env("OMG_TEST_MODE", "1")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("Failed to execute omg");
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    (output.status.success(), stdout, stderr)
+}
+
 /// Helper to measure execution time
 fn measure_time<F: FnOnce() -> T, T>(f: F) -> (T, Duration) {
     let start = Instant::now();
@@ -1327,9 +1342,26 @@ mod daemon {
 
     #[test]
     fn test_status_with_daemon() {
-        // Status should work with or without daemon
-        let (success, _, _) = run_omg(&["status"]);
-        assert!(success, "Status should succeed");
+        // Status should work with daemon enabled (daemon may or may not be running)
+        // This tests that the status command doesn't crash when daemon support is enabled
+        let (success, stdout, stderr) = run_omg_with_daemon(&["status"]);
+        let combined = format!("{stdout}{stderr}");
+
+        // Status should succeed regardless of whether daemon is actually running
+        // It should gracefully fall back to direct mode if daemon is unavailable
+        assert!(
+            success,
+            "Status should succeed with daemon support enabled. Output: {combined}"
+        );
+
+        // Should produce meaningful output
+        assert!(
+            stdout.contains("Package")
+                || stdout.contains("Runtime")
+                || stdout.contains("OMG")
+                || combined.contains("daemon"),
+            "Status should show system info or daemon status. Output: {combined}"
+        );
     }
 }
 

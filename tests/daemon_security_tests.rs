@@ -13,6 +13,13 @@ use tempfile::TempDir;
 #[tokio::test]
 #[serial]
 async fn test_global_rate_limiting() {
+    // Clear all caches before changing environment
+    #[cfg(feature = "arch")]
+    {
+        omg_lib::package_managers::clear_alpm_cache();
+        omg_lib::package_managers::invalidate_caches();
+    }
+
     // Setup temporary environment
     let temp_dir = TempDir::new().unwrap();
     unsafe {
@@ -54,6 +61,13 @@ async fn test_global_rate_limiting() {
 #[tokio::test]
 #[serial]
 async fn test_input_validation_audit() {
+    // Clear all caches before changing environment
+    #[cfg(feature = "arch")]
+    {
+        omg_lib::package_managers::clear_alpm_cache();
+        omg_lib::package_managers::invalidate_caches();
+    }
+
     // Setup temporary environment
     let temp_dir = TempDir::new().unwrap();
     unsafe {
@@ -114,6 +128,13 @@ async fn test_input_validation_audit() {
 #[tokio::test]
 #[serial]
 async fn test_batch_size_limit_audit() {
+    // Clear all caches before changing environment
+    #[cfg(feature = "arch")]
+    {
+        omg_lib::package_managers::clear_alpm_cache();
+        omg_lib::package_managers::invalidate_caches();
+    }
+
     // Setup temporary environment
     let temp_dir = TempDir::new().unwrap();
     unsafe {
