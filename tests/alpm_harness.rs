@@ -6,6 +6,7 @@
 //! This module is used across multiple test files. The `dead_code` warnings
 //! are suppressed because the harness is only used in integration tests.
 
+#![cfg(feature = "arch")]
 #![allow(dead_code)]
 #![allow(clippy::doc_markdown)]
 #![allow(clippy::uninlined_format_args)]
