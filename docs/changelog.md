@@ -11,7 +11,79 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ---
 
 ## [Unreleased]
+### ♻️  Refactoring
+
+- Extract has_word_boundary_match to shared helper
+
+Remove duplicate function definitions by extracting to a documented
+
+module-level helper function. The function was defined identically
+
+in both search() and search_detailed().
+
+Addresses code smell flagged by code quality review agent.
+
 ### ⚡ Performance
+
+- Optimize workflows with sccache, better caching, and auto-changelog
+
+Optimizations applied to all CI workflows:
+
+  - Add sccache for 50%+ faster compilation (mozilla-actions/sccache-action)
+
+  - Add concurrency groups to cancel stale runs on new pushes
+
+  - Split caching into registry + target directories with source-aware keys
+
+  - Set CARGO_INCREMENTAL=0 for faster CI clean builds
+
+  - Add --locked flag for reproducible builds
+
+  - Use taiki-e/install-action for faster tool installation
+
+New changelog workflow:
+
+  - Auto-generate changelog on push to main using git-cliff
+
+  - Escape MDX tags, add Docusaurus frontmatter
+
+  - Update both docs/changelog.md and docs-site/docs/changelog.md
+
+  - Show changelog preview in GitHub job summary
+
+Expected improvements:
+
+  - Warm builds: 3-6 min (was 8-12 min)
+
+  - Stale PR runs: auto-cancelled
+
+  - Changelog: always up-to-date
+
+- Optimize sorting allocations and improve UX
+
+  - Fix O(n²) string allocations in AUR search sorting by precomputing
+
+lowercase keys before sort (decorate-sort-undecorate pattern)
+
+  - Add structured error codes (OMG-E001, OMG-E101, etc.) for better
+
+searchability and debugging
+
+  - Wrap mirrors in Arc to avoid Vec`<String>` clone for each download job
+
+  - Enable typo suggestions for mistyped commands via clap
+
+Based on recommendations from 5 review agents:
+
+  - Rust-Engineer: sorting allocation fix
+
+  - Performance Audit: precompute sort keys
+
+  - Code Quality: Arc for shared data
+
+  - CLI Developer: error codes, typo suggestions
+
+  - Architect: consistency improvements
 
 - Implement world-class changelog generation system
 
@@ -48,6 +120,55 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - Enhanced micro-interactions: hover transforms, glow effects, pulse animations
 - 22x performance story told through visceral design language
 ### ✨ New Features
+
+- **Admin**: Add customer detail drawer with notes and tags management
+
+Added comprehensive customer detail view with CRM-style features:
+
+Components Added:
+
+  - CustomerDetailDrawer: Slide-out panel for customer details
+
+  - NotesPanel: Full CRUD for customer notes with types, pinning, editing
+
+  - TagsManager: Tag creation, assignment, and removal with color picker
+
+- Switch to AGPL-3.0 + dual licensing for adoption sweet spot ⚠️ **BREAKING CHANGE**
+- **Auth**: Add admin column and update dashboard API to query admin status
+
+  - Add migration 009 to add admin INTEGER column to customers table
+
+  - Update schema-production.sql to include admin column and index
+
+  - Update dashboard API to query admin column instead of env var
+
+  - Grant admin access to customer c84a0b61-837c-42be-875a-48c81c41ae95
+
+- **Db**: Add admin column to customers table
+
+  - Add admin INTEGER column with default 0
+
+  - Create index on admin column for efficient queries
+
+  - Include migration instructions for wrangler d1 execute
+
+- **Docs**: Add interactive playground and improve benchmarking fairness
+
+**Interactive Documentation:**
+
+  - Add CLIPlayground component with simulated terminal experience
+
+  - Add PerformanceBenchmark component for live metrics visualization
+
+  - Add CommandComparison component for migration guides
+
+  - Create new interactive.md page with playground, benchmarks, and examples
+
+  - Add comprehensive CSS styling with cyberpunk theme and animations
+
+**Search Plugin Migration:**
+
+  - Replace @easyops-cn/docusaurus-search
 
 - **Admin**: Add docs analytics dashboard to admin panel
 
@@ -181,6 +302,122 @@ categorization. Analytics errors won't appear in production console.
 
 ### 🐛 Bug Fixes
 
+- **Clippy**: Remove unreachable return statement in info_fallback
+
+When arch feature is enabled, the return statement inside the let-else
+
+guard at line 193 handles the not-found case. The final Ok(()) at line
+
+221 is only reached when package is found, so no early return needed.
+
+- **Tests**: Fix info command 'not found' message and gate service tests
+
+  - info_aur fallback now shows 'Package not found' instead of 'AUR not available'
+
+  - info_fallback adds proper fallback for non-arch/debian builds
+
+  - service_install_tests now gated with arch/debian feature flags
+
+Fixes CI failure in test_invalid_package_name_error
+
+- **Tests**: Gate cli_package_repro tests with platform feature
+
+These tests call CLI package functions that require a working package
+
+manager (pacman or apt), so they need arch or debian feature.
+
+- **Clippy**: Remove unnecessary hashes from raw string literals
+
+The raw string literals in pacman_conf.rs tests don't contain any
+
+characters that require the hash delimiters.
+
+- **Tests**: Gate cli_integration tests with arch feature
+
+These integration tests test pacman-specific functionality like searching
+
+for the 'pacman' package, which only exists on Arch Linux systems.
+
+- **Deps**: Update lodash to 4.17.23 via Docusaurus update
+
+Security fix for prototype pollution vulnerability in lodash.
+
+- **Deps**: Update solid-js to 1.9.11 to patch seroval vulnerability
+
+Security fix for CVE in seroval transitive dependency.
+
+- Force badge cache refresh with cacheSeconds parameter
+
+Changed badge cache from 5 minutes to 60 seconds to show live data.
+
+Added cacheSeconds=60 parameter to shields.io badge URL.
+
+- **Tests**: Allow implicit_clone in update integration tests
+
+The Version type is String on non-arch builds, so .to_string() triggers
+
+implicit_clone warning. Since this is test code and the overhead is
+
+negligible, allow the lint at the file level.
+
+- **Tests**: Gate all alpm-dependent tests with arch feature flag
+
+These test files use the alpm crate or alpm_harness module, which are
+
+only available on Arch Linux. Add #![cfg(feature = "arch")] to prevent
+
+compilation errors when running without the arch feature.
+
+Files updated:
+
+  - tests/failure_tests.rs
+
+  - tests/absolute_coverage.rs
+
+  - tests/version_tests.rs
+
+- **Tests**: Resolve clippy pedantic warnings in mutation tests
+
+  - Backtick command in doc comment to fix doc_markdown warning
+
+  - Rename _result to result since it's actually used (used_underscore_binding)
+
+- **Tests**: Gate alpm_harness test with arch feature flag
+
+The alpm_harness test file uses the alpm crate directly, which is only
+
+available with the arch feature. Add #![cfg(feature = "arch")] to
+
+prevent compilation errors when running without features.
+
+- **Ci**: Properly gate debian_db usage with feature flags
+
+The code used #[cfg(not(feature = "arch"))] which would activate when
+
+no features are enabled (e.g., in the Lint & Format CI job), but
+
+debian_db module only exists with debian/debian-pure features.
+
+Changed to #[cfg(any(feature = "debian", feature = "debian-pure"))]
+
+and added fallback for builds without platform features.
+
+- **Tests**: Update search test to include no_aur parameter
+
+The packages::search function now requires 4 arguments including the
+
+no_aur flag. Update the compilation test to match the new signature.
+
+- **Admin**: Update admin handlers to check database admin column
+
+  - Update validateAdmin() in admin.ts to query admin column from database
+
+  - Update handleGetFirehose() in firehose.ts to check admin column
+
+  - Remove dependency on ADMIN_USER_ID environment variable
+
+  - Fixes 403 Forbidden errors on admin endpoints
+
 - **Api**: Update cron trigger configuration and add setup guide
 
   - Remove cron trigger from wrangler.toml (not supported in config file)
@@ -239,6 +476,66 @@ Run before pushing to keep changelog up to date with latest commits.
 
 ### 📚 Documentation
 
+- **License**: Complete BSD-3-Clause and GPL/LGPL attribution
+
+Add comprehensive third-party license documentation per compliance audit:
+
+BSD-3-Clause Dependencies (with copyright notices):
+
+  - curve25519-dalek (© 2016-2021 Isis Agora Lovecruft, Henry de Valence)
+
+  - ed25519-dalek (© 2017-2021 isis agora lovecruft)
+
+  - x25519-dalek (© 2017-2021 isis agora lovecruft, Henry de Valence)
+
+  - subtle (© 2016-2018 Isis Agora Lovecruft, Henry de Valence)
+
+  - instant (© 2019 sebcrozet)
+
+GPL-3.0 Dependencies (optional features):
+
+  - alpm & alpm-sys (Arch Linux integration)
+
+LGPL-2.0-or-later Dependencies (optional features):
+
+  - sequoia-openpgp (OpenPGP implementation)
+
+  - buffered-reader
+
+ISC Licensed Dependencies:
+
+  - aws-lc-rs, inotify, rustls-webpki, untrusted
+
+License Compatibility Clarifications:
+
+  - Confirmed Apache-2.0 + AGPL-3.0 compatibility
+
+  - Confirmed commercial monetization is fully allowed
+
+  - Added license compatibility matrix
+
+  - Documented patent grant implications
+
+- **License**: Modernize license with mise MIT attribution
+
+  - Update LICENSE with comprehensive copyright notice (2024-2026)
+
+  - Add NOTICE file for third-party component attribution
+
+  - Create THIRD-PARTY-LICENSES.md with full mise MIT license text
+
+  - Update README.md with detailed license section
+
+  - Add license attribution in src/runtimes/mise.rs source comments
+
+  - Reference mise (MIT License, © 2025 Jeff Dickey)
+
+  - Clarify AGPL-3.0 network use requirements
+
+  - Add repository links and contact information
+
+Honors mise's MIT license while maintaining OMG's AGPL-3.0 copyleft.
+
 - Update changelog
 
 Auto-generated from git history with git-cliff.
@@ -247,11 +544,45 @@ Auto-generated from git history with git-cliff.
 
 Auto-generated from git history with git-cliff.
 
-## [0.1.139] - 2026-01-26
+- Update changelog
+
+Auto-generated from git history with git-cliff.
+
 ### 🔧 Maintenance
 
-- Relicense from dual commercial/AGPL to pure AGPL-3.0 and bump version to 0.1.138
-## [0.1.0] - 2026-01-25
+- **Deps**: Update Cargo dependencies
+
+Updated 4 packages to latest Rust 1.92 compatible versions:
+
+  - moka: 0.12.12 → 0.12.13
+
+  - zerocopy: 0.8.33 → 0.8.34
+
+  - zerocopy-derive: 0.8.33 → 0.8.34
+
+  - zmij: 1.0.16 → 1.0.17
+
+- Standardize commercial licensing with monthly/annual pricing
+
+  - Update LICENSE: Add monthly ($99/$199) and annual ($999/$1,999) pricing options
+
+  - Update COMMERCIAL-LICENSE: Sync pricing tiers and add monthly option FAQ
+
+  - Update README.md: Reflect new pricing structure
+
+  - Remove commercial_license.md: Delete old contradictory AGPL reference
+
+  - Remove recommendation files: Clean up LICENSE-DUAL-LICENSING, LICENSE-COMPARISON.md, LICENSING-DECISION.md
+
+All commercial license documents now consistently show:
+
+  - Team: $99/month or $999/year (25 seats)
+
+  - Business: $199/month or $1,999/year (75 seats)
+
+  - Enterprise: Custom pricing (unlimited seats)
+
+## [0.1.139] - 2026-01-26
 ### ✨ New Features
 
 - **Cli**: Polish UX with better help text, styling, and error suggestions
@@ -264,6 +595,9 @@ Auto-generated from git history with git-cliff.
 - Sanitize white-paper.md for MDX compatibility
 - Use `std::process::Command` for interactive `sudo` to ensure TTY inheritance
 - Add explicit type hint for aur_client in non-arch builds
+### 🔧 Maintenance
+
+- Relicense from dual commercial/AGPL to pure AGPL-3.0 and bump version to 0.1.138
 ## [0.1.136] - 2026-01-25
 ### ✨ New Features
 
