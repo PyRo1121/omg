@@ -1,7 +1,6 @@
-use crate::cli::{CliContext, CommandRunner};
+use crate::cli::{CliContext, LocalCommandRunner};
 use crate::core::{RuntimeBackend, task_runner};
 use anyhow::Result;
-use async_trait::async_trait;
 
 pub struct RunCommand {
     pub task: String,
@@ -13,8 +12,7 @@ pub struct RunCommand {
     pub all: bool,
 }
 
-#[async_trait]
-impl CommandRunner for RunCommand {
+impl LocalCommandRunner for RunCommand {
     async fn execute(&self, _ctx: &CliContext) -> Result<()> {
         let backend = self
             .runtime_backend

@@ -3,10 +3,9 @@
 use crate::cli::components::Components;
 use crate::cli::tea::Cmd;
 use crate::cli::{
-    CliContext, CommandRunner, EnterpriseCommands, EnterprisePolicyCommands, ServerCommands,
+    CliContext, EnterpriseCommands, EnterprisePolicyCommands, LocalCommandRunner, ServerCommands,
 };
 use anyhow::Result;
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -14,8 +13,7 @@ use std::path::Path;
 
 use crate::core::license;
 
-#[async_trait]
-impl CommandRunner for EnterpriseCommands {
+impl LocalCommandRunner for EnterpriseCommands {
     async fn execute(&self, ctx: &CliContext) -> Result<()> {
         match self {
             EnterpriseCommands::Reports {

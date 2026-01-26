@@ -2,7 +2,9 @@
 
 mod alpm_harness;
 use anyhow::Result;
-use omg_lib::cli::{CliContext, CommandRunner, Commands, EnvCommands, FleetCommands, ToolCommands};
+use omg_lib::cli::{
+    CliContext, Commands, EnvCommands, FleetCommands, LocalCommandRunner, ToolCommands,
+};
 use serial_test::serial;
 use std::fs;
 use tempfile::tempdir;
