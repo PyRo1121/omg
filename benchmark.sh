@@ -54,6 +54,7 @@ echo -e "${GREEN}🚀 OMG World-Class Performance Benchmark${NC}"
 echo "========================================================"
 echo ""
 echo -e "${YELLOW}FAIRNESS NOTES:${NC}"
+echo "  • OMG uses --no-aur flag (no AUR network calls, matching pacman scope)"
 echo "  • yay uses --repo flag (no AUR network calls)"
 echo "  • All tools get equal warmup iterations"
 echo "  • OMG Daemon = in-memory indexed search (architectural advantage)"
@@ -121,10 +122,10 @@ run_bench() {
     echo "$avg"
 }
 
-# 1. Search (firefox)
+# 1. Search (firefox) - Use --no-aur for fair comparison with pacman (official repos only)
 echo -e "\n📦 Benchmark: SEARCH (firefox)"
 echo "-------------------------------"
-RESULTS["search,OMG (Daemon)"]=$(run_bench "OMG (Daemon)" "$OMG search firefox" $ITERATIONS $WARMUP)
+RESULTS["search,OMG (Daemon)"]=$(run_bench "OMG (Daemon)" "$OMG search firefox --no-aur" $ITERATIONS $WARMUP)
 
 if command -v pacman &> /dev/null; then
     RESULTS["search,pacman"]=$(run_bench "pacman" "pacman -Ss firefox" $ITERATIONS $WARMUP)

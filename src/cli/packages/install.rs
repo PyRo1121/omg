@@ -75,10 +75,10 @@ fn install_dry_run(packages: &[String]) -> Result<()> {
                 );
                 if !info.depends.is_empty() {
                     println!(
-                    "      {} Dependencies: {}",
-                    style::dim("└"),
-                    style::dim(&info.depends.join(", "))
-                );
+                        "      {} Dependencies: {}",
+                        style::dim("└"),
+                        style::dim(&info.depends.join(", "))
+                    );
                 }
             } else {
                 println!(
@@ -90,11 +90,7 @@ fn install_dry_run(packages: &[String]) -> Result<()> {
         }
         #[cfg(not(feature = "arch"))]
         {
-            println!(
-                "    {} {}",
-                style::dim("·"),
-                style::package(pkg_name)
-            );
+            println!("    {} {}", style::dim("·"), style::package(pkg_name));
         }
     }
 

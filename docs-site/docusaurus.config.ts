@@ -26,15 +26,51 @@ const config: Config = {
     locales: ['en'],
   },
 
-  themes: [
+  themes: [],
+
+  plugins: [
+    require.resolve('docusaurus-lunr-search'),
     [
-      '@easyops-cn/docusaurus-search-local',
+      '@docusaurus/plugin-pwa',
       {
-        hashed: true,
-        language: ['en'],
-        highlightSearchTermsOnTargetPage: true,
-        explicitSearchResultPath: true,
-        docsRouteBasePath: '/',
+        debug: false,
+        offlineModeActivationStrategies: [
+          'appInstalled',
+          'standalone',
+          'queryString',
+        ],
+        pwaHead: [
+          {
+            tagName: 'link',
+            rel: 'icon',
+            href: '/docs/img/logo.svg',
+          },
+          {
+            tagName: 'link',
+            rel: 'manifest',
+            href: '/docs/manifest.json',
+          },
+          {
+            tagName: 'meta',
+            name: 'theme-color',
+            content: '#6366f1',
+          },
+          {
+            tagName: 'meta',
+            name: 'apple-mobile-web-app-capable',
+            content: 'yes',
+          },
+          {
+            tagName: 'meta',
+            name: 'apple-mobile-web-app-status-bar-style',
+            content: 'black-translucent',
+          },
+          {
+            tagName: 'link',
+            rel: 'apple-touch-icon',
+            href: '/docs/img/logo.svg',
+          },
+        ],
       },
     ],
   ],
@@ -59,6 +95,18 @@ const config: Config = {
         blog: false, // Disable blog
         theme: {
           customCss: './src/css/custom.css',
+        },
+        sitemap: {
+          lastmod: 'date',
+          changefreq: 'weekly',
+          priority: 0.5,
+          ignorePatterns: ['/tags/**'],
+          filename: 'sitemap.xml',
+          createSitemapItems: async (params) => {
+            const {defaultCreateSitemapItems, ...rest} = params;
+            const items = await defaultCreateSitemapItems(rest);
+            return items.filter((item) => !item.url.includes('/page/'));
+          },
         },
       } satisfies Preset.Options,
     ],

@@ -20,6 +20,7 @@ struct DisplayPackage {
 }
 
 impl DisplayPackage {
+    #[allow(clippy::implicit_clone)] // Version type varies by feature flag
     fn from_package(p: Package) -> Self {
         Self {
             name: p.name,
@@ -30,15 +31,29 @@ impl DisplayPackage {
     }
 }
 
-pub async fn search(query: &str, detailed: bool, interactive: bool) -> Result<()> {
-    search_with_json(query, detailed, interactive, false).await
+#[allow(clippy::fn_params_excessive_bools)] // API requires distinct boolean flags
+pub async fn search(query: &str, detailed: bool, interactive: bool, no_aur: bool) -> Result<()> {
+    search_internal(query, detailed, interactive, false, no_aur).await
 }
 
+#[allow(clippy::fn_params_excessive_bools)] // API requires distinct boolean flags
 pub async fn search_with_json(
+    query: &str,
+    detailed: bool,
+    interactive: bool,
+    json: bool,
+    no_aur: bool,
+) -> Result<()> {
+    search_internal(query, detailed, interactive, json, no_aur).await
+}
+
+#[allow(clippy::fn_params_excessive_bools)] // Internal function matching public API
+async fn search_internal(
     query: &str,
     _detailed: bool,
     _interactive: bool,
     json: bool,
+    no_aur: bool,
 ) -> Result<()> {
     if query.len() > 100 {
         anyhow::bail!("Search query too long (max 100 characters)");
@@ -72,22 +87,26 @@ pub async fn search_with_json(
         results
     };
 
-    #[cfg(feature = "arch")]
-    let aur_search = async {
-        let aur = AurClient::new();
-        if let Ok(pkgs) = aur.search(query).await {
-            pkgs.into_iter()
-                .map(DisplayPackage::from_package)
-                .collect::<Vec<_>>()
-        } else {
-            Vec::new()
+    // Skip AUR search if --no-aur flag is set (for benchmarks/official-only searches)
+    let aur_packages = if no_aur {
+        Vec::new()
+    } else {
+        #[cfg(feature = "arch")]
+        {
+            let aur = AurClient::new();
+            if let Ok(pkgs) = aur.search(query).await {
+                pkgs.into_iter()
+                    .map(DisplayPackage::from_package)
+                    .collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            }
         }
+        #[cfg(not(feature = "arch"))]
+        Vec::new()
     };
 
-    #[cfg(not(feature = "arch"))]
-    let aur_search = async { Vec::new() };
-
-    let (official_packages, aur_packages) = tokio::join!(official_search, aur_search);
+    let official_packages = official_search.await;
 
     let mut display_packages = official_packages;
     display_packages.extend(aur_packages);
@@ -162,11 +181,11 @@ pub async fn search_with_json(
 /// The boolean return value allows callers to implement a fallback strategy:
 /// ```rust,ignore
 /// // Try sync path first, fall back to async if needed
-/// if search_sync_cli(query, detailed, interactive)? {
+/// if search_sync_cli(query, detailed, interactive, no_aur)? {
 ///     // Search completed successfully
 /// } else {
 ///     // Already in async context, use async path
-///     search(query, detailed, interactive).await?;
+///     search(query, detailed, interactive, no_aur).await?;
 /// }
 /// ```
 ///
@@ -189,6 +208,7 @@ pub async fn search_with_json(
 /// * `query` - The search query string (max 100 characters, no control chars)
 /// * `detailed` - Whether to perform detailed search (includes AUR details on Arch)
 /// * `interactive` - Interactive mode flag (currently unused but reserved for future use)
+/// * `no_aur` - Skip AUR search and only search official repositories
 ///
 /// # Errors
 ///
@@ -206,9 +226,10 @@ pub async fn search_with_json(
 ///     let query = "firefox";
 ///     let detailed = false;
 ///     let interactive = false;
+///     let no_aur = false; // Include AUR results
 ///
 ///     // Try synchronous execution
-///     if search_sync_cli(query, detailed, interactive)? {
+///     if search_sync_cli(query, detailed, interactive, no_aur)? {
 ///         println!("Search completed synchronously");
 ///     } else {
 ///         println!("Fallback to async path needed");
@@ -216,7 +237,12 @@ pub async fn search_with_json(
 ///     Ok(())
 /// }
 /// ```
-pub fn search_sync_cli(query: &str, detailed: bool, interactive: bool) -> Result<bool> {
+pub fn search_sync_cli(
+    query: &str,
+    detailed: bool,
+    interactive: bool,
+    no_aur: bool,
+) -> Result<bool> {
     // Perform basic validation before attempting any async operations
     // These checks are lightweight and can fail fast without runtime overhead
     if query.len() > 100 || query.chars().any(char::is_control) {
@@ -246,7 +272,7 @@ pub fn search_sync_cli(query: &str, detailed: bool, interactive: bool) -> Result
         .build()?;
 
     // Execute the async search function and block until completion
-    rt.block_on(search(query, detailed, interactive))?;
+    rt.block_on(search(query, detailed, interactive, no_aur))?;
 
     // Return true to indicate successful completion via the sync path
     Ok(true)

@@ -1,0 +1,50 @@
+{
+  "name": "OMG Documentation",
+  "short_name": "OMG Docs",
+  "description": "The Fastest Unified Package Manager for Arch Linux + All Language Runtimes",
+  "start_url": "/docs/",
+  "scope": "/docs/",
+  "display": "standalone",
+  "background_color": "#0f0f23",
+  "theme_color": "#6366f1",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/docs/img/logo.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": [
+    "productivity",
+    "developer tools",
+    "documentation"
+  ],
+  "screenshots": [],
+  "shortcuts": [
+    {
+      "name": "Getting Started",
+      "short_name": "Start",
+      "description": "Quick start guide",
+      "url": "/docs/",
+      "icons": []
+    },
+    {
+      "name": "CLI Reference",
+      "short_name": "CLI",
+      "description": "Command line reference",
+      "url": "/docs/cli",
+      "icons": []
+    },
+    {
+      "name": "Interactive Examples",
+      "short_name": "Try It",
+      "description": "Try OMG commands in your browser",
+      "url": "/docs/interactive",
+      "icons": []
+    }
+  ],
+  "lang": "en",
+  "dir": "ltr"
+}

@@ -20,6 +20,7 @@ impl PureDebianPackageManager {
         Self
     }
 
+    #[allow(clippy::unused_self)] // Method for API consistency with other package managers
     fn run_apt(&self, args: &[&str]) -> Result<()> {
         let mut cmd = if is_root() {
             Command::new("apt-get")
@@ -34,7 +35,7 @@ impl PureDebianPackageManager {
         if status.success() {
             Ok(())
         } else {
-            anyhow::bail!("apt-get failed with status {}", status)
+            anyhow::bail!("apt-get failed with status {status}")
         }
     }
 }

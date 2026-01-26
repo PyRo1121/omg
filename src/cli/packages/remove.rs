@@ -62,7 +62,9 @@ fn remove_dry_run(packages: &[String], recursive: bool) -> Result<()> {
         #[cfg(not(feature = "arch"))]
         {
             // Use debian_db::get_installed_info_fast for Debian/Ubuntu - checks dpkg/status directly
-            if let Ok(Some(info)) = crate::package_managers::debian_db::get_installed_info_fast(pkg_name) {
+            if let Ok(Some(info)) =
+                crate::package_managers::debian_db::get_installed_info_fast(pkg_name)
+            {
                 println!(
                     "    {} {} {}",
                     style::error("✗"),
@@ -92,10 +94,7 @@ fn remove_dry_run(packages: &[String], recursive: bool) -> Result<()> {
         style::info("→"),
         total_size as f64 / 1024.0 / 1024.0
     );
-    println!(
-        "\n  {} No changes made (dry run)",
-        style::dim("ℹ")
-    );
+    println!("\n  {} No changes made (dry run)", style::dim("ℹ"));
 
     Ok(())
 }

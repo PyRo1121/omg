@@ -1,0 +1,299 @@
+.container {
+  background: rgba(255, 255, 255, 0.02);
+  border: 2px solid rgba(99, 102, 241, 0.15);
+  border-radius: 16px;
+  padding: 2.5rem 2rem;
+  margin: 2rem 0;
+  position: relative;
+  overflow: hidden;
+}
+
+.container::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 4px;
+  background: linear-gradient(90deg, #6366f1 0%, #22d3ee 50%, #a855f7 100%);
+  opacity: 0.6;
+}
+
+.header {
+  text-align: center;
+  margin-bottom: 3rem;
+}
+
+.title {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 2rem;
+  font-weight: 900;
+  font-style: italic;
+  color: #fff;
+  margin: 0 0 0.75rem;
+  background: linear-gradient(135deg, #6366f1 0%, #22d3ee 50%, #a855f7 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  transform: skewX(-3deg);
+  display: inline-block;
+}
+
+.subtitle {
+  font-family: 'Manrope', sans-serif;
+  font-size: 0.9375rem;
+  color: #94a3b8;
+  margin: 0;
+}
+
+.benchmarks {
+  display: grid;
+  gap: 2rem;
+}
+
+.benchmarkRow {
+  display: grid;
+  grid-template-columns: 180px 1fr auto;
+  gap: 1.5rem;
+  align-items: center;
+  padding: 1.5rem;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(99, 102, 241, 0.1);
+  border-radius: 12px;
+  transition: all 0.3s ease;
+}
+
+.benchmarkRow:hover {
+  background: rgba(99, 102, 241, 0.05);
+  border-color: rgba(34, 211, 238, 0.3);
+  transform: translateX(4px);
+  box-shadow: 0 8px 32px rgba(99, 102, 241, 0.15);
+}
+
+.operation {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 1rem;
+  font-weight: 700;
+  color: #fff;
+}
+
+.comparison {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.barRow {
+  display: grid;
+  grid-template-columns: 80px 1fr 80px;
+  gap: 1rem;
+  align-items: center;
+}
+
+.label {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #64748b;
+  text-align: right;
+}
+
+.barContainer {
+  height: 32px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 8px;
+  overflow: hidden;
+  position: relative;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.bar {
+  height: 100%;
+  border-radius: 8px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 0.75rem;
+}
+
+.barOmg {
+  background: linear-gradient(90deg, #6366f1 0%, #22d3ee 50%, #a855f7 100%);
+  box-shadow:
+    0 0 20px rgba(34, 211, 238, 0.6),
+    0 0 10px rgba(168, 85, 247, 0.4),
+    inset 0 2px 4px rgba(255, 255, 255, 0.2);
+  position: relative;
+  overflow: hidden;
+}
+
+.speedStreakContainer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.speedStreak {
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.5) 50%, transparent 100%);
+  animation: speedStreakAnim 2s infinite;
+}
+
+@keyframes speedStreakAnim {
+  0% { left: -100%; }
+  100% { left: 200%; }
+}
+
+.barCompetitor {
+  background: linear-gradient(90deg, #334155, #475569);
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.time {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: #94a3b8;
+  text-align: center;
+  min-width: 80px;
+}
+
+.speedupBadge {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 0.875rem 1.25rem;
+  background: linear-gradient(135deg, #6366f1 0%, #22d3ee 100%);
+  border-radius: 12px;
+  min-width: 100px;
+  box-shadow:
+    0 0 30px rgba(34, 211, 238, 0.5),
+    0 4px 12px rgba(0, 0, 0, 0.4);
+  transform: skewX(-5deg);
+  position: relative;
+  overflow: hidden;
+}
+
+.speedupBadge::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.3) 50%, transparent 100%);
+  animation: badgeShine 3s infinite;
+}
+
+@keyframes badgeShine {
+  0% { left: -100%; }
+  100% { left: 200%; }
+}
+
+.speedupValue {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 1.75rem;
+  font-weight: 900;
+  font-style: italic;
+  color: #000;
+  line-height: 1;
+  display: block;
+}
+
+.speedupLabel {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 0.625rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  color: #000;
+  opacity: 0.7;
+  display: block;
+  margin-top: 0.25rem;
+}
+
+.footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2rem;
+  justify-content: center;
+  margin-top: 3rem;
+  padding-top: 2rem;
+  border-top: 1px solid rgba(99, 102, 241, 0.1);
+}
+
+.footerNote {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-family: 'Manrope', sans-serif;
+  font-size: 0.8125rem;
+  color: #64748b;
+}
+
+.checkeredFlag,
+.stopwatch {
+  font-size: 1rem;
+}
+
+@media (max-width: 1024px) {
+  .benchmarkRow {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+
+  .operation {
+    text-align: center;
+    font-size: 0.9375rem;
+  }
+
+  .speedupBadge {
+    margin: 0 auto;
+  }
+}
+
+@media (max-width: 768px) {
+  .container {
+    padding: 1.5rem 1rem;
+  }
+
+  .title {
+    font-size: 1.5rem;
+  }
+
+  .barRow {
+    grid-template-columns: 60px 1fr 70px;
+    gap: 0.75rem;
+  }
+
+  .label {
+    font-size: 0.75rem;
+  }
+
+  .time {
+    font-size: 0.75rem;
+    min-width: 70px;
+  }
+
+  .footer {
+    flex-direction: column;
+    gap: 0.75rem;
+    align-items: center;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .speedStreak,
+  .speedupBadge::before {
+    animation: none;
+  }
+
+  .benchmarkRow:hover {
+    transform: none;
+  }
+}

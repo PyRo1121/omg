@@ -140,8 +140,8 @@ impl DebianPackage {
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug, Default, Clone)]
 pub struct DebianPackageIndex {
     pub packages: Vec<DebianPackage>,
-    /// Note: Uses std HashMap for rkyv serialization compatibility
-    /// Converted to AHashMap at runtime for faster lookups
+    /// Note: Uses std `HashMap` for rkyv serialization compatibility
+    /// Converted to `AHashMap` at runtime for faster lookups
     pub name_to_idx: HashMap<String, usize>,
     pub updated_at: i64,
 }
@@ -171,18 +171,15 @@ pub fn ensure_index_loaded() -> Result<()> {
     if let Ok(entries) = fs::read_dir(lists_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
-                if filename.contains("_Packages")
-                    && !path
-                        .extension()
-                        .is_some_and(|ext| ext.eq_ignore_ascii_case("diff"))
-                {
-                    if let Ok(meta) = entry.metadata() {
-                        if let Ok(mtime) = meta.modified() {
-                            current_files.insert(path, mtime);
-                        }
-                    }
-                }
+            if let Some(filename) = path.file_name().and_then(|n| n.to_str())
+                && filename.contains("_Packages")
+                && !path
+                    .extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("diff"))
+                && let Ok(meta) = entry.metadata()
+                && let Ok(mtime) = meta.modified()
+            {
+                current_files.insert(path, mtime);
             }
         }
     }
@@ -218,7 +215,10 @@ pub fn ensure_index_loaded() -> Result<()> {
             (changed, cache.index.clone())
         } else {
             // Too many changes or no cached index - full rebuild
-            (current_files.keys().cloned().collect::<Vec<PathBuf>>(), None)
+            (
+                current_files.keys().cloned().collect::<Vec<PathBuf>>(),
+                None,
+            )
         }
     };
 
@@ -226,24 +226,22 @@ pub fn ensure_index_loaded() -> Result<()> {
     let cache_path = paths::cache_dir().join("debian_index_v5.lz4");
     let mmap_path = paths::cache_dir().join("debian_index_v5.mmap");
 
-    if index.is_none() && cache_path.exists() {
-        if let Ok(compressed) = fs::read(&cache_path) {
-            // Decompress LZ4
-            if let Ok(bytes) = lz4_flex::decompress_size_prepended(&compressed) {
-                if let Ok(idx) = rkyv::from_bytes::<DebianPackageIndex, rkyv::rancor::Error>(&bytes) {
-                    index = Some(idx);
-                }
-            }
-        }
+    if index.is_none()
+        && cache_path.exists()
+        && let Ok(compressed) = fs::read(&cache_path)
+        && let Ok(bytes) = lz4_flex::decompress_size_prepended(&compressed)
+        && let Ok(idx) = rkyv::from_bytes::<DebianPackageIndex, rkyv::rancor::Error>(&bytes)
+    {
+        index = Some(idx);
     }
 
     // Try to load the mmap index for zero-copy access
     if mmap_path.exists() {
         let mut mmap_guard = DEBIAN_MMAP_INDEX.write();
-        if mmap_guard.is_none() {
-            if let Ok(mmap_index) = DebianMmapIndex::open(&mmap_path) {
-                *mmap_guard = Some(mmap_index);
-            }
+        if mmap_guard.is_none()
+            && let Ok(mmap_index) = DebianMmapIndex::open(&mmap_path)
+        {
+            *mmap_guard = Some(mmap_index);
         }
     }
 
@@ -297,7 +295,9 @@ pub fn ensure_index_loaded() -> Result<()> {
 
     // Rebuild search buffer with pre-calculated capacity
     // IMPORTANT: Store lowercased content for case-insensitive SIMD search
-    let estimated_size: usize = index.packages.iter()
+    let estimated_size: usize = index
+        .packages
+        .iter()
         .map(|p| p.name.len() + p.description.len() + 2)
         .sum();
     let mut search_buffer = Vec::with_capacity(estimated_size);
@@ -319,7 +319,10 @@ pub fn ensure_index_loaded() -> Result<()> {
         .map(|p| p.name)
         .collect();
 
-    let newest_mtime = current_files.values().max().copied()
+    let newest_mtime = current_files
+        .values()
+        .max()
+        .copied()
         .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
 
     let mut cache = DEBIAN_INDEX_CACHE.write();
@@ -424,8 +427,7 @@ fn parse_paragraph_str(paragraph: &str) -> Result<DebianPackage> {
     let mut sha256 = String::new();
     let mut homepage = String::new();
 
-    let mut lines = paragraph.lines();
-    while let Some(line) = lines.next() {
+    for line in paragraph.lines() {
         // Handle continuation lines (multi-line descriptions)
         if line.starts_with(' ') || line.starts_with('\t') {
             if !description.is_empty() {
@@ -550,12 +552,12 @@ pub fn search_fast(query: &str) -> Result<Vec<Package>> {
 
     // Also check lowercase version for case-insensitive exact match
     let query_lower = query.to_lowercase();
-    if query_lower != query {
-        if let Some(exact_pkg) = index.get(&query_lower) {
-            let mut p = exact_pkg.to_package();
-            p.installed = guard.installed_set.contains(&p.name);
-            return Ok(vec![p]);
-        }
+    if query_lower != query
+        && let Some(exact_pkg) = index.get(&query_lower)
+    {
+        let mut p = exact_pkg.to_package();
+        p.installed = guard.installed_set.contains(&p.name);
+        return Ok(vec![p]);
     }
 
     // Slow path: fuzzy search using SIMD memchr
@@ -628,7 +630,7 @@ pub struct LocalPackage {
     pub is_explicit: bool,
 }
 
-/// Parse a dpkg status paragraph into LocalPackage fields
+/// Parse a dpkg status paragraph into `LocalPackage` fields
 #[inline]
 fn parse_status_paragraph(paragraph: &str) -> Option<(String, String, String, String)> {
     let mut name = String::new();
@@ -678,10 +680,16 @@ pub fn list_installed_fast() -> Result<Vec<LocalPackage>> {
     let extended_states_path = Path::new("/var/lib/apt/extended_states");
 
     // Get mtimes
-    let status_mtime = fs::metadata(status_path).ok().and_then(|m| m.modified().ok());
+    let status_mtime = fs::metadata(status_path)
+        .ok()
+        .and_then(|m| m.modified().ok());
     let extended_states_mtime = extended_states_path
         .exists()
-        .then(|| fs::metadata(extended_states_path).ok().and_then(|m| m.modified().ok()))
+        .then(|| {
+            fs::metadata(extended_states_path)
+                .ok()
+                .and_then(|m| m.modified().ok())
+        })
         .flatten();
 
     // Check cache first
@@ -745,25 +753,25 @@ pub fn list_installed_fast() -> Result<Vec<LocalPackage>> {
     // Handle last paragraph
     if start < status_content.len() {
         let paragraph = &status_content[start..];
-        if STATUS_INSTALLED_FINDER.find(paragraph.as_bytes()).is_some() {
-            if let Some((name, version, description, arch)) = parse_status_paragraph(paragraph) {
-                let is_explicit = !auto_installed.contains(&name);
-                installed_set.insert(name.clone());
-                packages.push(LocalPackage {
-                    name,
-                    version,
-                    description,
-                    architecture: arch,
-                    is_explicit,
-                });
-            }
+        if STATUS_INSTALLED_FINDER.find(paragraph.as_bytes()).is_some()
+            && let Some((name, version, description, arch)) = parse_status_paragraph(paragraph)
+        {
+            let is_explicit = !auto_installed.contains(&name);
+            installed_set.insert(name.clone());
+            packages.push(LocalPackage {
+                name,
+                version,
+                description,
+                architecture: arch,
+                is_explicit,
+            });
         }
     }
 
     // Update cache
     {
         let mut cache = DPKG_STATUS_CACHE.write();
-        cache.packages = packages.clone();
+        cache.packages.clone_from(&packages);
         cache.installed_set = installed_set;
         cache.status_mtime = status_mtime;
         cache.extended_states_mtime = extended_states_mtime;

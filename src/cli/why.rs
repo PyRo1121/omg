@@ -4,6 +4,7 @@ use anyhow::Result;
 #[cfg(feature = "arch")]
 use std::collections::{HashMap, HashSet, VecDeque};
 
+#[cfg(any(feature = "arch", feature = "debian"))]
 use crate::cli::tea::Cmd;
 
 /// Explain why a package is installed
