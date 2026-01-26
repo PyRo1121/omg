@@ -22,6 +22,8 @@ export interface Env {
   ADMIN_RATE_LIMITER?: RateLimit;
   AUTH_RATE_LIMITER?: RateLimit;
   API_RATE_LIMITER?: RateLimit;
+  // Turnstile (Cloudflare CAPTCHA)
+  TURNSTILE_SECRET_KEY?: string;
 }
 
 // User from database
@@ -361,6 +363,43 @@ export async function logAudit(
       .run();
   } catch (e) {
     console.error('Audit log error:', e);
+  }
+}
+
+// Verify Cloudflare Turnstile token
+export async function verifyTurnstile(
+  token: string,
+  secretKey: string,
+  ip?: string | null
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const formData = new URLSearchParams();
+    formData.append('secret', secretKey);
+    formData.append('response', token);
+    if (ip) formData.append('remoteip', ip);
+
+    const response = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: formData,
+    });
+
+    const result = await response.json() as {
+      success: boolean;
+      'error-codes'?: string[];
+    };
+
+    if (!result.success) {
+      return {
+        success: false,
+        error: result['error-codes']?.join(', ') || 'Verification failed',
+      };
+    }
+
+    return { success: true };
+  } catch (e) {
+    console.error('Turnstile verification error:', e);
+    return { success: false, error: 'Verification service unavailable' };
   }
 }
 

@@ -7,8 +7,20 @@ binding = "BUCKET"
 bucket_name = "omg-releases"
 preview_bucket_name = "omg-releases-preview"
 
+# Analytics tracking for downloads
+[[d1_databases]]
+binding = "ANALYTICS_DB"
+database_name = "omg-analytics"
+database_id = "e11296b5-1c01-437a-9d22-2e3786c20932"
+
 [env.production]
 route = { pattern = "releases.pyro1121.com", custom_domain = true }
+
 [[env.production.r2_buckets]]
 binding = "BUCKET"
 bucket_name = "omg-releases"
+
+[[env.production.d1_databases]]
+binding = "ANALYTICS_DB"
+database_name = "omg-analytics"
+database_id = "e11296b5-1c01-437a-9d22-2e3786c20932"

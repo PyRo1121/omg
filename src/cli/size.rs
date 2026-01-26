@@ -199,7 +199,7 @@ fn show_top_packages(limit: usize) -> Result<Cmd<()>> {
     Ok(Cmd::batch(vec![
         Components::header("Disk Usage Analysis", "by installed size"),
         Components::spacer(),
-        Components::card(format!("Top {} Packages", limit), content),
+        Components::card(format!("Top {limit} Packages"), content),
         Components::spacer(),
         Components::kv_list(
             Some("Summary"),
@@ -223,7 +223,7 @@ fn show_package_tree(package: &str) -> Result<Cmd<()>> {
 
     if !output.status.success() {
         return Ok(Components::error_with_suggestion(
-            format!("Package '{}' not installed", package),
+            format!("Package '{package}' not installed"),
             "Try 'omg search' to find available packages",
         ));
     }

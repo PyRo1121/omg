@@ -22,5 +22,9 @@
     "prettier": "^3.4.0",
     "typescript": "^5.7.3",
     "wrangler": "^4.0.0"
+  },
+  "dependencies": {
+    "@sentry/cloudflare": "^10.36.0",
+    "@sentry/solid": "^10.36.0"
   }
 }

@@ -1,8 +1,17 @@
 ---
-title: Migrating from yay
+title: Migrate from yay to OMG - Arch Linux AUR Helper Alternative
 sidebar_label: From yay
 sidebar_position: 1
-description: Command mapping and migration guide from yay to OMG
+description: Switch from yay to OMG for 22x faster AUR searches. Complete command mapping, migration steps, and enhanced features including runtime management and security scanning.
+keywords:
+  - yay alternative
+  - yay replacement
+  - aur helper
+  - arch linux package manager
+  - faster yay
+  - migrate from yay
+  - pacman wrapper
+  - arch user repository
 ---
 
 # Migrating from yay

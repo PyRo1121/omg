@@ -5,7 +5,7 @@
 //!
 //! ## Third-Party Attribution
 //!
-//! This module integrates with mise (https://github.com/jdx/mise)
+//! This module integrates with mise (<https://github.com/jdx/mise>)
 //! Copyright (c) 2025 Jeff Dickey, licensed under the MIT License.
 //! See THIRD-PARTY-LICENSES.md for the full mise license text.
 //!

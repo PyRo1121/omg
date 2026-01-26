@@ -187,6 +187,96 @@
         ]
       }
     </script>
+
+    <!-- Structured Data: Organization (for Knowledge Panel) -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "Organization",
+        "name": "OMG Package Manager",
+        "alternateName": ["OMG", "OhMyOpenCode"],
+        "url": "https://pyro1121.com/",
+        "logo": {
+          "@type": "ImageObject",
+          "url": "https://pyro1121.com/favicon.png",
+          "width": 512,
+          "height": 512
+        },
+        "description": "The fastest unified package manager for Linux. One CLI for system packages and language runtimes.",
+        "foundingDate": "2024",
+        "slogan": "Stop switching between 7 package managers",
+        "knowsAbout": [
+          "Package Management",
+          "Runtime Version Management", 
+          "Linux System Administration",
+          "Developer Tools",
+          "Arch Linux",
+          "Node.js",
+          "Python",
+          "Rust",
+          "Go",
+          "Ruby",
+          "Java"
+        ],
+        "sameAs": [
+          "https://github.com/PyRo1121/omg"
+        ],
+        "contactPoint": {
+          "@type": "ContactPoint",
+          "contactType": "technical support",
+          "url": "https://github.com/PyRo1121/omg/issues"
+        }
+      }
+    </script>
+
+    <!-- Structured Data: HowTo for Installation -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "HowTo",
+        "name": "How to Install OMG Package Manager on Linux",
+        "description": "Install the fastest unified package manager for Linux in under 60 seconds. Works on Arch Linux, Debian, and Ubuntu.",
+        "totalTime": "PT1M",
+        "estimatedCost": {
+          "@type": "MonetaryAmount",
+          "currency": "USD",
+          "value": "0"
+        },
+        "tool": [
+          {
+            "@type": "HowToTool",
+            "name": "Terminal/Shell (bash, zsh, or fish)"
+          },
+          {
+            "@type": "HowToTool", 
+            "name": "curl"
+          }
+        ],
+        "step": [
+          {
+            "@type": "HowToStep",
+            "position": 1,
+            "name": "Run the install script",
+            "text": "Open your terminal and run: curl -fsSL https://pyro1121.com/install.sh | bash",
+            "url": "https://pyro1121.com/#install"
+          },
+          {
+            "@type": "HowToStep",
+            "position": 2,
+            "name": "Add shell hook",
+            "text": "Add the shell hook to your config file. For zsh, add to ~/.zshrc: eval \"$(omg hook zsh)\"",
+            "url": "https://pyro1121.com/docs/quickstart"
+          },
+          {
+            "@type": "HowToStep",
+            "position": 3,
+            "name": "Verify installation",
+            "text": "Restart your shell and run: omg --version",
+            "url": "https://pyro1121.com/docs/quickstart"
+          }
+        ]
+      }
+    </script>
     <link rel="icon" type="image/png" href="/favicon.png" sizes="any" />
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>

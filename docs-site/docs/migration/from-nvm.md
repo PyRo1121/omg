@@ -1,8 +1,17 @@
 ---
-title: Migrating from nvm
+title: Migrate from nvm to OMG - Node.js Version Manager Alternative
 sidebar_label: From nvm
 sidebar_position: 2
-description: Command mapping and migration guide from nvm to OMG
+description: Switch from nvm to OMG for 100x faster Node.js version switching. Complete command mapping, migration steps, and .nvmrc compatibility guide. Zero shell startup lag.
+keywords:
+  - nvm alternative
+  - nvm replacement
+  - node version manager
+  - faster nvm
+  - migrate from nvm
+  - nvmrc compatibility
+  - nodejs version switching
+  - shell startup performance
 ---
 
 # Migrating from nvm

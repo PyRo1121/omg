@@ -1,4 +1,4 @@
-import { Component, createSignal, onMount, Show, For } from 'solid-js';
+import { Component, createSignal, onMount, Show, For, lazy, Suspense } from 'solid-js';
 import Header from '../components/Header';
 import Hero from '../components/Hero';
 import FeatureGrid from '../components/landing/FeatureGrid';
@@ -8,10 +8,17 @@ import Pricing from '../components/Pricing';
 import Installation from '../components/Installation';
 import Footer from '../components/Footer';
 
+const BackgroundMesh = lazy(() => import('../components/3d/BackgroundMesh'));
+
 const CONFETTI_COLORS = ['#6366f1', '#8b5cf6', '#ec4899', '#10b981', '#f59e0b', '#3b82f6'];
 
 const HomePage: Component = () => {
   const [showSuccess, setShowSuccess] = createSignal(false);
+  const [show3D, setShow3D] = createSignal(false);
+
+  onMount(() => {
+    requestIdleCallback(() => setShow3D(true), { timeout: 2000 });
+  });
   const [licenseKey, setLicenseKey] = createSignal<string | null>(null);
   const [tier, setTier] = createSignal<string | null>(null);
   const [loading, setLoading] = createSignal(false);
@@ -87,6 +94,11 @@ const HomePage: Component = () => {
 
   return (
     <div class="min-h-screen">
+      <Show when={show3D()}>
+        <Suspense fallback={null}>
+          <BackgroundMesh />
+        </Suspense>
+      </Show>
       <Header />
       <main>
         <Hero />

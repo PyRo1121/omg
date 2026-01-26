@@ -9,8 +9,9 @@ Disallow: /api/
 Disallow: /_*
 Disallow: /private/
 
-# Sitemaps (multiple formats for maximum compatibility)
+# Sitemaps (main site + documentation)
 Sitemap: https://pyro1121.com/sitemap.xml
+Sitemap: https://pyro1121.com/docs/sitemap.xml
 
 # ===========================================
 # Major Search Engines - Full Access

@@ -1,13 +1,24 @@
 import { Component, createResource, Show } from 'solid-js';
-import { createHighlighter, Highlighter } from 'shiki';
+import { createHighlighterCore, HighlighterCore } from 'shiki/core';
+import { createJavaScriptRegexEngine } from 'shiki/engine/javascript';
 
-let highlighterPromise: Promise<Highlighter> | null = null;
+let highlighterPromise: Promise<HighlighterCore> | null = null;
 
 const getSharedHighlighter = () => {
   if (!highlighterPromise) {
-    highlighterPromise = createHighlighter({
-      themes: ['github-dark'],
-      langs: ['javascript', 'typescript', 'tsx', 'bash', 'json', 'yaml', 'markdown', 'rust'],
+    highlighterPromise = createHighlighterCore({
+      themes: [import('@shikijs/themes/github-dark')],
+      langs: [
+        import('@shikijs/langs/javascript'),
+        import('@shikijs/langs/typescript'),
+        import('@shikijs/langs/tsx'),
+        import('@shikijs/langs/bash'),
+        import('@shikijs/langs/json'),
+        import('@shikijs/langs/yaml'),
+        import('@shikijs/langs/markdown'),
+        import('@shikijs/langs/rust'),
+      ],
+      engine: createJavaScriptRegexEngine(),
     });
   }
   return highlighterPromise;
@@ -19,7 +30,7 @@ interface CodeBlockProps {
   inline?: boolean;
 }
 
-const CodeBlock: Component<CodeBlockProps> = (props) => {
+const CodeBlock: Component<CodeBlockProps> = props => {
   // Extract language from className (e.g., "language-js")
   const lang = () => {
     const match = /language-(\w+)/.exec(props.className || '');
@@ -38,11 +49,11 @@ const CodeBlock: Component<CodeBlockProps> = (props) => {
   const highlightedHtml = () => {
     const h = highlighter();
     if (!h) return '';
-    
+
     try {
       return h.codeToHtml(code(), {
         lang: lang() || 'text',
-        theme: 'github-dark'
+        theme: 'github-dark',
       });
     } catch (e) {
       console.error('Shiki highlighting failed:', e);

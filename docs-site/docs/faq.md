@@ -1,7 +1,16 @@
 ---
-title: FAQ
+title: FAQ - Frequently Asked Questions
 sidebar_position: 51
-description: Frequently asked questions
+description: Common questions about OMG package manager. Learn about supported platforms, performance benchmarks, runtime management, migration from nvm/pyenv/pacman, and security features.
+keywords:
+  - omg faq
+  - package manager questions
+  - nvm vs omg
+  - pyenv vs omg
+  - pacman vs omg
+  - linux package manager comparison
+  - runtime manager comparison
+  - arch linux package manager
 ---
 
 # Frequently Asked Questions
