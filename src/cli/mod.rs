@@ -3,7 +3,6 @@
 //! Handles command-line argument parsing and command definitions.
 
 use anyhow::Result;
-use async_trait::async_trait;
 
 mod args;
 pub mod blame;
@@ -57,15 +56,21 @@ pub struct CliContext {
     pub no_color: bool,
 }
 
-/// A trait for modular CLI command execution
-#[async_trait]
-pub trait CommandRunner {
+/// A trait for modular CLI command execution with Send bounds
+///
+/// Uses `trait_variant` to generate Send-bounded async trait for multi-threaded execution.
+/// This is the 2026 best practice for async traits with tokio multi-threaded runtime.
+///
+/// The macro generates:
+/// - `CommandRunner`: Send-bounded variant for multi-threaded executors (default)
+/// - `LocalCommandRunner`: Non-Send variant for single-threaded executors
+#[trait_variant::make(CommandRunner: Send)]
+pub trait LocalCommandRunner {
     /// Execute the command
     async fn execute(&self, ctx: &CliContext) -> Result<()>;
 }
 
-#[async_trait]
-impl CommandRunner for Commands {
+impl LocalCommandRunner for Commands {
     async fn execute(&self, ctx: &CliContext) -> Result<()> {
         match self {
             Commands::Env { command } => command.execute(ctx).await,

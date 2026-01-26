@@ -5571,7 +5571,7 @@ dependencies = [
 
 [[package]]
 name = "omg"
-version = "0.1.141"
+version = "0.1.144"
 dependencies = [
  "ahash",
  "alpm",
@@ -5583,7 +5583,6 @@ dependencies = [
  "anyhow",
  "ar",
  "assert_cmd",
- "async-trait",
  "bitcode",
  "cargo-audit",
  "chrono",
@@ -5648,6 +5647,7 @@ dependencies = [
  "toml 0.9.11+spec-1.1.0",
  "tracing",
  "tracing-subscriber",
+ "trait-variant",
  "uuid",
  "which",
  "whoami",
@@ -8654,6 +8654,17 @@ dependencies = [
  "tracing-core",
  "tracing-log",
  "tracing-serde",
+]
+
+[[package]]
+name = "trait-variant"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "70977707304198400eb4835a78f6a9f928bf41bba420deb8fdb175cd965d77a7"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.114",
 ]
 
 [[package]]

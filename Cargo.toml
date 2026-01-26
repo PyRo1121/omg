@@ -1,6 +1,6 @@
 [package]
 name = "omg"
-version = "0.1.141"
+version = "0.1.144"
 edition = "2024"
 rust-version = "1.92"
 description = "The Fastest Unified Package Manager for Arch Linux + All Language Runtimes"
@@ -39,7 +39,7 @@ clap_complete = "4.5"
 # Error handling
 anyhow = "1.0.100"
 thiserror = "2.0.17"
-async-trait = "0.1"
+trait-variant = "0.1"
 
 # Async runtime
 tokio = { version = "1.49", features = [

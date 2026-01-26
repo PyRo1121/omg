@@ -16,7 +16,8 @@ use omg_lib::cli::runtimes;
 use omg_lib::cli::security;
 
 use omg_lib::cli::{
-    CiCommands, Cli, Commands, ContainerCommands, MigrateCommands, SnapshotCommands, commands,
+    CiCommands, Cli, Commands, ContainerCommands, LocalCommandRunner, MigrateCommands,
+    SnapshotCommands, commands,
 };
 use omg_lib::cli::{blame, ci, diff, migrate, outdated, pin, size, snapshot, why};
 use omg_lib::core::{elevate_if_needed, is_root, set_yes_flag};
@@ -333,7 +334,6 @@ async fn async_main(args: Vec<String>) -> Result<()> {
         | Commands::Fleet { .. }
         | Commands::Team { .. }
         | Commands::Enterprise { .. } => {
-            use omg_lib::cli::CommandRunner;
             cli.command.execute(&ctx).await?;
         }
         Commands::Search {
@@ -431,7 +431,6 @@ async fn async_main(args: Vec<String>) -> Result<()> {
             doctor::run().await?;
         }
         Commands::Audit { command } => {
-            use omg_lib::cli::CommandRunner;
             if let Some(cmd) = command {
                 cmd.execute(&ctx).await?;
             } else {
