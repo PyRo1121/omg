@@ -195,7 +195,7 @@ mod tests {
 
     #[test]
     fn test_parse_basic_config() {
-        let content = r#"
+        let content = r"
 [options]
 RootDir = /
 DBPath = /var/lib/pacman
@@ -209,7 +209,7 @@ Include = /etc/pacman.d/mirrorlist
 
 [multilib]
 Include = /etc/pacman.d/mirrorlist
-"#;
+";
 
         let config = PacmanConfig::parse_str(content).unwrap();
         assert_eq!(config.root_dir, Some("/".to_string()));
@@ -222,7 +222,7 @@ Include = /etc/pacman.d/mirrorlist
 
     #[test]
     fn test_parse_custom_repos() {
-        let content = r#"
+        let content = r"
 [options]
 Architecture = x86_64
 
@@ -235,7 +235,7 @@ Include = /etc/pacman.d/mirrorlist
 [chaotic-aur]
 Server = https://cdn-mirror.chaotic.cx/$repo/$arch
 Server = https://us-tx-mirror.chaotic.cx/$repo/$arch
-"#;
+";
 
         let config = PacmanConfig::parse_str(content).unwrap();
         assert_eq!(config.repos.len(), 3);
@@ -245,7 +245,7 @@ Server = https://us-tx-mirror.chaotic.cx/$repo/$arch
 
     #[test]
     fn test_get_repo_names() {
-        let content = r#"
+        let content = r"
 [core]
 Include = /etc/pacman.d/mirrorlist
 
@@ -254,7 +254,7 @@ Include = /etc/pacman.d/mirrorlist
 
 [custom-repo]
 Server = https://example.com/$repo/$arch
-"#;
+";
 
         let config = PacmanConfig::parse_str(content).unwrap();
         let names = config.get_repo_names();
