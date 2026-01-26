@@ -210,11 +210,14 @@ jobs:
             test-${{ matrix.distro }}-target-${{ hashFiles('**/Cargo.lock') }}-
             test-${{ matrix.distro }}-target-
 
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
       - name: Run unit tests
         run: |
           if [ "${{ matrix.distro }}" != "arch" ]; then export PATH="$HOME/.cargo/bin:$PATH"; fi
           FEATURES="${{ matrix.distro == 'arch' && 'arch' || 'debian' }}"
-          cargo test --lib --no-default-features --features "$FEATURES" --locked
+          cargo nextest run --lib --no-default-features --features "$FEATURES" --locked
 
       - name: Run doc tests
         run: |
@@ -276,10 +279,13 @@ jobs:
             integration-target-${{ hashFiles('**/Cargo.lock') }}-
             integration-target-
 
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
       - name: Run integration tests
         run: |
-          cargo test --test integration_suite --features arch --locked
-          cargo test --test exhaustive_cli_matrix --features arch --locked
+          cargo nextest run --test integration_suite --features arch --locked
+          cargo nextest run --test exhaustive_cli_matrix --features arch --locked
 
       - name: Show sccache stats
         run: sccache --show-stats

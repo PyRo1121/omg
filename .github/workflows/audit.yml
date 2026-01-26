@@ -33,5 +33,44 @@ jobs:
       - name: Install cargo-audit
         uses: taiki-e/install-action@cargo-audit
 
-      - name: Run Audit
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@cargo-deny
+
+      - name: Run cargo-audit (Vulnerability Scan)
         run: cargo audit
+
+      - name: Run cargo-deny (Supply Chain Security)
+        run: |
+          echo "## 🔒 Supply Chain Security Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Check advisories
+          echo "### Vulnerabilities" >> $GITHUB_STEP_SUMMARY
+          cargo deny check advisories 2>&1 | tee -a $GITHUB_STEP_SUMMARY || true
+
+          # Check licenses
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### License Compliance" >> $GITHUB_STEP_SUMMARY
+          cargo deny check licenses 2>&1 | tee -a $GITHUB_STEP_SUMMARY
+
+          # Check bans (duplicate dependencies)
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Dependency Bans & Duplicates" >> $GITHUB_STEP_SUMMARY
+          cargo deny check bans 2>&1 | tee -a $GITHUB_STEP_SUMMARY
+
+          # Check sources
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Source Verification" >> $GITHUB_STEP_SUMMARY
+          cargo deny check sources 2>&1 | tee -a $GITHUB_STEP_SUMMARY
+
+      - name: Generate dependency tree
+        if: always()
+        run: cargo tree --depth 3 > dependency-tree.txt
+
+      - name: Upload dependency tree
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-tree
+          path: dependency-tree.txt
+          retention-days: 30

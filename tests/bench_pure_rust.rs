@@ -9,6 +9,7 @@ use omg_lib::package_managers::pacman_db;
 
 #[cfg(feature = "arch")]
 #[test]
+#[ignore = "System-dependent benchmark that reads actual pacman db - may fail if db is corrupted"]
 fn bench_pure_rust_update_check() {
     use std::time::Instant;
 

@@ -2,15 +2,13 @@
 
 use crate::cli::components::Components;
 use crate::cli::tea::Cmd;
-use crate::cli::{CliContext, CommandRunner, FleetCommands};
+use crate::cli::{CliContext, FleetCommands, LocalCommandRunner};
 use anyhow::Result;
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::core::license;
 
-#[async_trait]
-impl CommandRunner for FleetCommands {
+impl LocalCommandRunner for FleetCommands {
     async fn execute(&self, ctx: &CliContext) -> Result<()> {
         match self {
             FleetCommands::Status => status(ctx).await,

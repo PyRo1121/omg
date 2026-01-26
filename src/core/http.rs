@@ -27,7 +27,7 @@ fn build_client(timeout: Duration, connect_timeout: Duration) -> Client {
         .pool_idle_timeout(Duration::from_secs(90))
         .tcp_nodelay(true)
         .build()
-        .unwrap_or_else(|_| Client::new())
+        .expect("Failed to build HTTP client with default config")
 }
 
 /// Shared default HTTP client.

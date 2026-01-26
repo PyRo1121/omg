@@ -1,17 +1,15 @@
 //! Container CLI commands
 
 use anyhow::Result;
-use async_trait::async_trait;
 
 use crate::cli::components::Components;
 use crate::cli::tea::Cmd;
-use crate::cli::{CliContext, CommandRunner, ContainerCommands};
+use crate::cli::{CliContext, ContainerCommands, LocalCommandRunner};
 use crate::core::container::{
     ContainerConfig, ContainerManager, ContainerRuntime, detect_runtime, dev_container_config,
 };
 
-#[async_trait]
-impl CommandRunner for ContainerCommands {
+impl LocalCommandRunner for ContainerCommands {
     async fn execute(&self, _ctx: &CliContext) -> Result<()> {
         match self {
             ContainerCommands::Status => status(),

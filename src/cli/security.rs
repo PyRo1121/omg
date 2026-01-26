@@ -1,13 +1,11 @@
-use crate::cli::{AuditCommands, CliContext, CommandRunner, ui};
+use crate::cli::{AuditCommands, CliContext, LocalCommandRunner, ui};
 use crate::core::client::DaemonClient;
 use crate::core::license;
 use crate::core::security::{AuditLogger, AuditSeverity, SbomGenerator, SecurityPolicy};
 use anyhow::Result;
-use async_trait::async_trait;
 use owo_colors::OwoColorize;
 
-#[async_trait]
-impl CommandRunner for AuditCommands {
+impl LocalCommandRunner for AuditCommands {
     async fn execute(&self, ctx: &CliContext) -> Result<()> {
         ui::print_spacer();
         match self {

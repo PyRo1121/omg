@@ -56,8 +56,10 @@ pub enum OmgError {
 
 impl OmgError {
     /// Get the error code for this error variant
+    ///
+    /// # Rust 2026: const fn for compile-time error code extraction
     #[must_use]
-    pub fn code(&self) -> Option<&'static str> {
+    pub const fn code(&self) -> Option<&'static str> {
         match self {
             Self::PackageNotFound(_) => Some("OMG-E001"),
             Self::VersionNotFound { .. } => Some("OMG-E101"),

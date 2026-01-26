@@ -1,28 +1,22 @@
-# cargo-deny configuration for OMG Package Manager
-# Run with: cargo deny check
+# deny.toml - Supply chain security policy for OMG
+# https://embarkstudios.github.io/cargo-deny/
 
 [advisories]
-db-path = "~/.cargo/advisory-db"
-db-urls = ["https://github.com/rustsec/advisory-db"]
+# Deny crates with security vulnerabilities
 vulnerability = "deny"
+# Warn about unmaintained crates
 unmaintained = "warn"
-yanked = "warn"
+# Deny yanked crates
+yanked = "deny"
+# Warn about security notices
 notice = "warn"
-ignore = [
-    "RUSTSEC-2024-0336", # rustls 0.20.9 (from debian-packaging)
-    "RUSTSEC-2025-0009", # ring 0.16.20 (from debian-packaging)
-    "RUSTSEC-2023-0071", # rsa 0.9.10 (from debian-packaging)
-    "RUSTSEC-2025-0140", # gix-date (from cargo-audit dependency)
-    "RUSTSEC-2024-0436", # paste (from ratatui)
-    "RUSTSEC-2025-0010", # ring (from rustls)
-    "RUSTSEC-2022-0071", # rusoto_credential
-    "RUSTSEC-2025-0134", # rustls-pemfile
-    "RUSTSEC-2021-0145", # atty
-    "RUSTSEC-2026-0002", # lru (from ratatui)
-]
+# Ignore advisories for specific crates (use sparingly)
+ignore = []
 
 [licenses]
+# Deny unlicensed crates
 unlicensed = "deny"
+# Allow specific licenses only (common open-source licenses)
 allow = [
     "MIT",
     "Apache-2.0",
@@ -30,35 +24,52 @@ allow = [
     "BSD-2-Clause",
     "BSD-3-Clause",
     "ISC",
-    "Zlib",
-    "MPL-2.0",
     "Unicode-DFS-2016",
+    "Zlib",
+    "0BSD",
     "CC0-1.0",
-    "BSL-1.0",
-    "AGPL-3.0-or-later",
+    "MPL-2.0",
 ]
-# copyleft = "warn"
+# Deny copyleft licenses (GPL, AGPL, etc.) to avoid contamination
+copyleft = "deny"
+# Confidence threshold for license detection
 confidence-threshold = 0.8
 
+# Specific clarifications for crates with complex licensing
 [[licenses.clarify]]
 name = "ring"
 expression = "MIT AND ISC AND OpenSSL"
-license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
+license-files = [
+    { path = "LICENSE", hash = 0xbd0eed23 }
+]
 
 [bans]
-# multiple-versions = "warn"
-# highlight = "workspace"
-
-# Deny specific problematic crates
-deny = []
-
-# Skip checking certain crates for duplicates
-skip = []
+# Warn when multiple versions of the same crate are used (reduces binary size)
+multiple-versions = "warn"
+# Deny wildcards in dependencies (breaks reproducibility)
+wildcards = "deny"
+# Allow multiple versions of these crates (common ecosystem pain points)
+skip = [
+    { name = "windows-sys", version = "*" },
+    { name = "windows_x86_64_msvc", version = "*" },
+    { name = "windows_x86_64_gnu", version = "*" },
+    { name = "windows_i686_msvc", version = "*" },
+]
+# Deny specific crates (known bad actors or security issues)
+deny = [
+    # Example: { name = "openssl-sys", reason = "Use rustls instead for better security" },
+]
+# Skip tree analysis for these crates
+skip-tree = []
 
 [sources]
-unknown-registry = "warn"
-unknown-git = "allow"
-allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-allow-git = [
-    "https://gitlab.archlinux.org/archlinux/alpm/alpm.git",
-]
+# Deny crates from unknown registries
+unknown-registry = "deny"
+# Deny crates from unknown git repos
+unknown-git = "deny"
+# Allow git sources (empty = deny all git dependencies for supply chain security)
+allow-git = []
+# Allow these specific git repos if needed
+# allow-git = [
+#     "https://github.com/yourusername/forked-crate",
+# ]
