@@ -656,6 +656,9 @@ pub async fn download_packages_parallel(
         anyhow::bail!("No mirrors available");
     }
 
+    // Wrap mirrors in Arc to avoid cloning Vec<String> for each job
+    // Arc clone is O(1) vs Vec clone which is O(n)
+    let mirrors = std::sync::Arc::new(mirrors);
     let client = download_client().clone();
 
     let total_count = jobs.len();
@@ -672,7 +675,7 @@ pub async fn download_packages_parallel(
     let results: Vec<Result<PathBuf>> = stream::iter(jobs.into_iter().enumerate())
         .map(|(_i, job)| {
             let client = client.clone();
-            let mirrors = mirrors.clone();
+            let mirrors = std::sync::Arc::clone(&mirrors);
             let cache_dir = cache_dir.clone();
             let main_pb = main_pb.clone();
 

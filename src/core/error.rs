@@ -1,4 +1,12 @@
 //! Error types for OMG with helpful suggestions
+//!
+//! Error codes follow the pattern `OMG-Ennn`:
+//! - E001-E099: Package-related errors
+//! - E100-E199: Runtime/version errors
+//! - E200-E299: System/IO errors
+//! - E300-E399: Network errors
+//! - E400-E499: Configuration errors
+//! - E500-E599: Daemon errors
 
 use thiserror::Error;
 
@@ -7,34 +15,34 @@ pub type Result<T> = std::result::Result<T, OmgError>;
 
 #[derive(Error, Debug)]
 pub enum OmgError {
-    #[error("Package not found: {0}")]
+    #[error("[OMG-E001] Package not found: {0}")]
     PackageNotFound(String),
 
-    #[error("Version not found: {runtime} {version}")]
+    #[error("[OMG-E101] Version not found: {runtime} {version}")]
     VersionNotFound { runtime: String, version: String },
 
-    #[error("Runtime not supported: {0}")]
+    #[error("[OMG-E102] Runtime not supported: {0}")]
     UnsupportedRuntime(String),
 
-    #[error("Database error: {0}")]
+    #[error("[OMG-E201] Database error: {0}")]
     DatabaseError(#[from] redb::Error),
 
-    #[error("IO error: {0}")]
+    #[error("[OMG-E202] IO error: {0}")]
     IoError(#[from] std::io::Error),
 
-    #[error("Network error: {0}")]
+    #[error("[OMG-E301] Network error: {0}")]
     NetworkError(#[from] reqwest::Error),
 
-    #[error("Configuration error: {0}")]
+    #[error("[OMG-E401] Configuration error: {0}")]
     ConfigError(String),
 
-    #[error("Daemon not running")]
+    #[error("[OMG-E501] Daemon not running")]
     DaemonNotRunning,
 
-    #[error("Permission denied: {0}")]
+    #[error("[OMG-E203] Permission denied: {0}")]
     PermissionDenied(String),
 
-    #[error("Rate limit exceeded")]
+    #[error("[OMG-E302] Rate limit exceeded")]
     RateLimitExceeded {
         /// Seconds to wait before retrying (from Retry-After header)
         retry_after: Option<u64>,
@@ -44,6 +52,26 @@ pub enum OmgError {
 
     #[error("{0}")]
     Other(String),
+}
+
+impl OmgError {
+    /// Get the error code for this error variant
+    #[must_use]
+    pub fn code(&self) -> Option<&'static str> {
+        match self {
+            Self::PackageNotFound(_) => Some("OMG-E001"),
+            Self::VersionNotFound { .. } => Some("OMG-E101"),
+            Self::UnsupportedRuntime(_) => Some("OMG-E102"),
+            Self::DatabaseError(_) => Some("OMG-E201"),
+            Self::IoError(_) => Some("OMG-E202"),
+            Self::PermissionDenied(_) => Some("OMG-E203"),
+            Self::NetworkError(_) => Some("OMG-E301"),
+            Self::RateLimitExceeded { .. } => Some("OMG-E302"),
+            Self::ConfigError(_) => Some("OMG-E401"),
+            Self::DaemonNotRunning => Some("OMG-E501"),
+            Self::Other(_) => None,
+        }
+    }
 }
 
 impl From<anyhow::Error> for OmgError {
