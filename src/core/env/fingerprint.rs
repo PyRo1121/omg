@@ -24,7 +24,6 @@ use crate::runtimes::{
 
 /// Represents the captured state of the environment
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
-#[allow(clippy::unsafe_derive_deserialize)]
 pub struct EnvironmentState {
     /// Runtime versions (`runtime_name` -> version)
     pub runtimes: HashMap<String, String>,

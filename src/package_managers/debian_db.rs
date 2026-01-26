@@ -78,8 +78,16 @@ impl DebianMmapIndex {
     pub fn open(path: &Path) -> Result<Self> {
         let file = File::open(path)
             .with_context(|| format!("Failed to open mmap index at {}", path.display()))?;
-        // SAFETY: File is opened read-only and we maintain exclusive ownership
+
+        // SAFETY: Memory mapping requires unsafe but is sound here:
+        // - File is opened read-only, preventing modification
+        // - Mmap maintains exclusive ownership of the file handle
+        // - rkyv validation (in archive()) ensures data integrity
+        // - No concurrent mutations possible (read-only file descriptor)
+        // Alternative considered: Read entire file into memory would be slower
+        // and use more RAM for large Debian package databases (>500MB)
         let mmap = unsafe { Mmap::map(&file)? };
+
         Ok(Self { mmap })
     }
 
