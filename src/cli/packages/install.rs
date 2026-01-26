@@ -57,30 +57,42 @@ fn install_dry_run(packages: &[String]) -> Result<()> {
         style::info("→")
     );
 
+    #[allow(unused_mut)]
     let mut total_size: u64 = 0;
 
     for pkg_name in packages {
-        if let Ok(Some(info)) = crate::package_managers::get_sync_pkg_info(pkg_name) {
-            let size_mb = info.download_size.unwrap_or(0) as f64 / 1024.0 / 1024.0;
-            total_size += info.download_size.unwrap_or(0);
-            println!(
-                "    {} {} {} ({:.2} MB)",
-                style::success("✓"),
-                style::package(&info.name),
-                style::version(&info.version.to_string()),
-                size_mb
-            );
-            if !info.depends.is_empty() {
+        #[cfg(feature = "arch")]
+        {
+            if let Ok(Some(info)) = crate::package_managers::get_sync_pkg_info(pkg_name) {
+                let size_mb = info.download_size.unwrap_or(0) as f64 / 1024.0 / 1024.0;
+                total_size += info.download_size.unwrap_or(0);
                 println!(
+                    "    {} {} {} ({:.2} MB)",
+                    style::success("✓"),
+                    style::package(&info.name),
+                    style::version(&info.version.to_string()),
+                    size_mb
+                );
+                if !info.depends.is_empty() {
+                    println!(
                     "      {} Dependencies: {}",
                     style::dim("└"),
                     style::dim(&info.depends.join(", "))
                 );
+                }
+            } else {
+                println!(
+                    "    {} {} (not found in repositories, may be AUR)",
+                    style::warning("?"),
+                    style::package(pkg_name)
+                );
             }
-        } else {
+        }
+        #[cfg(not(feature = "arch"))]
+        {
             println!(
-                "    {} {} (not found in repositories, may be AUR)",
-                style::warning("?"),
+                "    {} {}",
+                style::dim("·"),
                 style::package(pkg_name)
             );
         }

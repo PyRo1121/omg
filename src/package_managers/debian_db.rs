@@ -2,18 +2,25 @@
 //!
 //! Parses /var/lib/apt/lists/*_Packages and /var/lib/dpkg/status files directly
 //! and provides a high-performance index with zero-copy deserialization via rkyv.
+//!
+//! Performance features:
+//! - Zero-copy memory-mapped access via rkyv + mmap
+//! - SIMD-accelerated search via memchr/memmem
+//! - LZ4 compressed cache for space efficiency
+//! - Parallel parsing via rayon
 
 #![cfg(any(feature = "debian", feature = "debian-pure"))]
 
 use std::collections::HashMap;
-use std::fs;
+use std::fs::{self, File};
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, LazyLock};
+use std::sync::LazyLock;
 
-use ahash::{AHashMap, AHashSet};
+use ahash::AHashSet;
 use anyhow::{Context, Result};
 use memchr::memmem;
+use memmap2::Mmap;
 use parking_lot::RwLock;
 use rayon::prelude::*;
 
@@ -28,28 +35,10 @@ static DEBIAN_INDEX_CACHE: LazyLock<RwLock<DebianIndexCache>> =
 static DPKG_STATUS_CACHE: LazyLock<RwLock<DpkgStatusCache>> =
     LazyLock::new(|| RwLock::new(DpkgStatusCache::default()));
 
-/// String interner for common fields (architecture, section, priority)
-/// Reduces memory usage by deduplicating strings like "amd64", "optional", etc.
-static STRING_INTERNER: LazyLock<RwLock<AHashMap<String, Arc<str>>>> =
-    LazyLock::new(|| RwLock::new(AHashMap::new()));
-
-/// Intern a string - returns Arc<str> from cache or creates new one
-fn intern_string(s: &str) -> Arc<str> {
-    let cache = STRING_INTERNER.read();
-    if let Some(interned) = cache.get(s) {
-        return Arc::clone(interned);
-    }
-    drop(cache);
-
-    let mut cache = STRING_INTERNER.write();
-    // Double-check in case another thread inserted while we waited for write lock
-    if let Some(interned) = cache.get(s) {
-        return Arc::clone(interned);
-    }
-    let arc: Arc<str> = Arc::from(s);
-    cache.insert(s.to_string(), Arc::clone(&arc));
-    arc
-}
+/// SIMD-accelerated finder for "Status: install ok installed"
+/// Pre-compiled for faster dpkg/status parsing
+static STATUS_INSTALLED_FINDER: LazyLock<memmem::Finder<'static>> =
+    LazyLock::new(|| memmem::Finder::new(b"Status: install ok installed"));
 
 #[derive(Default)]
 struct DebianIndexCache {
@@ -72,6 +61,48 @@ struct DpkgStatusCache {
     installed_set: AHashSet<String>,
     status_mtime: Option<std::time::SystemTime>,
     extended_states_mtime: Option<std::time::SystemTime>,
+}
+
+/// Global mmap-based index for zero-copy access (optional, used when available)
+static DEBIAN_MMAP_INDEX: LazyLock<RwLock<Option<DebianMmapIndex>>> =
+    LazyLock::new(|| RwLock::new(None));
+
+/// Zero-copy memory-mapped Debian package index
+/// Provides sub-millisecond access to package metadata without deserialization
+pub struct DebianMmapIndex {
+    mmap: Mmap,
+}
+
+impl DebianMmapIndex {
+    /// Open an existing index using memory mapping
+    pub fn open(path: &Path) -> Result<Self> {
+        let file = File::open(path)
+            .with_context(|| format!("Failed to open mmap index at {}", path.display()))?;
+        // SAFETY: File is read-only and we control the format
+        let mmap = unsafe { Mmap::map(&file)? };
+        Ok(Self { mmap })
+    }
+
+    /// Access the archived data with zero-copy
+    #[inline]
+    fn archive(&self) -> &rkyv::Archived<DebianPackageIndex> {
+        // SAFETY: Index was created by our serializer, format is stable
+        unsafe { rkyv::access_unchecked::<rkyv::Archived<DebianPackageIndex>>(&self.mmap) }
+    }
+
+    /// Get a package by name (zero-copy, O(1) via hash lookup in archived data)
+    pub fn get(&self, name: &str) -> Option<&rkyv::Archived<DebianPackage>> {
+        let archive = self.archive();
+        let idx = archive.name_to_idx.get(name)?;
+        // Convert archived u32 to native usize
+        let idx = u32::from(*idx) as usize;
+        archive.packages.get(idx)
+    }
+
+    /// Get all packages (zero-copy reference)
+    pub fn packages(&self) -> &rkyv::vec::ArchivedVec<rkyv::Archived<DebianPackage>> {
+        &self.archive().packages
+    }
 }
 
 /// A Debian package entry optimized for zero-copy access
@@ -106,7 +137,7 @@ impl DebianPackage {
     }
 }
 
-#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug, Default)]
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug, Default, Clone)]
 pub struct DebianPackageIndex {
     pub packages: Vec<DebianPackage>,
     /// Note: Uses std HashMap for rkyv serialization compatibility
@@ -172,9 +203,9 @@ pub fn ensure_index_loaded() -> Result<()> {
     }
 
     // Determine which files changed
-    let (changed_files, mut index) = {
+    let (changed_files, mut index): (Vec<PathBuf>, Option<DebianPackageIndex>) = {
         let cache = DEBIAN_INDEX_CACHE.read();
-        let mut changed = Vec::new();
+        let mut changed: Vec<PathBuf> = Vec::new();
 
         for (path, mtime) in &current_files {
             if cache.file_mtimes.get(path) != Some(mtime) {
@@ -187,12 +218,14 @@ pub fn ensure_index_loaded() -> Result<()> {
             (changed, cache.index.clone())
         } else {
             // Too many changes or no cached index - full rebuild
-            (current_files.keys().cloned().collect(), None)
+            (current_files.keys().cloned().collect::<Vec<PathBuf>>(), None)
         }
     };
 
     // Load or create index (with LZ4 compression support)
     let cache_path = paths::cache_dir().join("debian_index_v5.lz4");
+    let mmap_path = paths::cache_dir().join("debian_index_v5.mmap");
+
     if index.is_none() && cache_path.exists() {
         if let Ok(compressed) = fs::read(&cache_path) {
             // Decompress LZ4
@@ -204,11 +237,25 @@ pub fn ensure_index_loaded() -> Result<()> {
         }
     }
 
+    // Try to load the mmap index for zero-copy access
+    if mmap_path.exists() {
+        let mut mmap_guard = DEBIAN_MMAP_INDEX.write();
+        if mmap_guard.is_none() {
+            if let Ok(mmap_index) = DebianMmapIndex::open(&mmap_path) {
+                *mmap_guard = Some(mmap_index);
+            }
+        }
+    }
+
     let mut index = index.unwrap_or_else(DebianPackageIndex::new);
 
-    // Parse changed files
+    // Parse all files when any have changed (incremental update was broken)
+    // The mtime check above still avoids unnecessary rebuilds when nothing changed
     if !changed_files.is_empty() {
-        let new_packages: Vec<DebianPackage> = changed_files
+        // Get all current Packages files
+        let all_files: Vec<PathBuf> = current_files.keys().cloned().collect();
+
+        let new_packages: Vec<DebianPackage> = all_files
             .par_iter()
             .map(|path| parse_packages_file_sync(path))
             .collect::<Result<Vec<Vec<DebianPackage>>>>()?
@@ -216,24 +263,16 @@ pub fn ensure_index_loaded() -> Result<()> {
             .flatten()
             .collect();
 
-        // Remove old packages from changed files
-        let changed_files_set: AHashSet<_> = changed_files.iter().collect();
-        index.packages.retain(|pkg| {
-            // Keep if package source file hasn't changed
-            !changed_files_set.iter().any(|p| {
-                let file_name = p.file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("");
-                pkg.filename.contains(file_name)
-            })
-        });
+        // Clear and rebuild - simpler and correct
+        index.packages.clear();
+        index.name_to_idx.clear();
 
-        // Add new packages
+        // Add all packages
         for pkg in new_packages {
             index.add_package(pkg);
         }
 
-        // Update timestamp and save (with LZ4 compression)
+        // Update timestamp and save
         index.updated_at = jiff::Timestamp::now().as_second();
         if let Some(p) = cache_path.parent() {
             let _ = fs::create_dir_all(p);
@@ -241,12 +280,23 @@ pub fn ensure_index_loaded() -> Result<()> {
         let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&index)
             .map_err(|e| anyhow::anyhow!("Serialization error: {e}"))?;
 
-        // Compress with LZ4 for faster I/O (typically 60-70% smaller)
+        // Save compressed version for space efficiency
         let compressed = lz4_flex::compress_prepend_size(&bytes);
         fs::write(&cache_path, compressed)?;
+
+        // Also save uncompressed version for zero-copy mmap access
+        let mmap_path = paths::cache_dir().join("debian_index_v5.mmap");
+        fs::write(&mmap_path, &bytes)?;
+
+        // Load the mmap index for zero-copy access
+        if let Ok(mmap_index) = DebianMmapIndex::open(&mmap_path) {
+            let mut mmap_guard = DEBIAN_MMAP_INDEX.write();
+            *mmap_guard = Some(mmap_index);
+        }
     }
 
     // Rebuild search buffer with pre-calculated capacity
+    // IMPORTANT: Store lowercased content for case-insensitive SIMD search
     let estimated_size: usize = index.packages.iter()
         .map(|p| p.name.len() + p.description.len() + 2)
         .sum();
@@ -255,9 +305,10 @@ pub fn ensure_index_loaded() -> Result<()> {
 
     for pkg in &index.packages {
         package_offsets.push(search_buffer.len());
-        search_buffer.extend_from_slice(pkg.name.as_bytes());
+        // Store lowercased for O(1) case-insensitive search
+        search_buffer.extend(pkg.name.bytes().map(|b| b.to_ascii_lowercase()));
         search_buffer.push(b' ');
-        search_buffer.extend_from_slice(pkg.description.as_bytes());
+        search_buffer.extend(pkg.description.bytes().map(|b| b.to_ascii_lowercase()));
         search_buffer.push(0);
     }
     package_offsets.push(search_buffer.len());
@@ -304,8 +355,9 @@ fn parse_packages_file_sync(path: &Path) -> Result<Vec<DebianPackage>> {
         decoder.read_to_string(&mut buf)?;
         buf
     } else {
+        // Use the already-opened buffered reader
         let mut buf = String::new();
-        fs::File::open(path)?.read_to_string(&mut buf)?;
+        reader.into_inner().read_to_string(&mut buf)?;
         buf
     };
 
@@ -356,6 +408,7 @@ fn parse_packages_file_sync(path: &Path) -> Result<Vec<DebianPackage>> {
     Ok(packages)
 }
 
+#[inline]
 fn parse_paragraph_str(paragraph: &str) -> Result<DebianPackage> {
     let mut name = String::new();
     let mut version = String::new();
@@ -382,8 +435,8 @@ fn parse_paragraph_str(paragraph: &str) -> Result<DebianPackage> {
             continue;
         }
 
-        // Fast path: check for colon before splitting
-        let Some(colon_pos) = line.as_bytes().iter().position(|&b| b == b':') else {
+        // Fast path: SIMD-accelerated colon search
+        let Some(colon_pos) = memchr::memchr(b':', line.as_bytes()) else {
             continue;
         };
 
@@ -487,9 +540,29 @@ pub fn search_fast(query: &str) -> Result<Vec<Package>> {
             .collect());
     }
 
+    // Fast path: check for exact package name match first
+    // This optimizes common operations like "apt install package-name"
+    if let Some(exact_pkg) = index.get(query) {
+        let mut p = exact_pkg.to_package();
+        p.installed = guard.installed_set.contains(&p.name);
+        return Ok(vec![p]);
+    }
+
+    // Also check lowercase version for case-insensitive exact match
     let query_lower = query.to_lowercase();
+    if query_lower != query {
+        if let Some(exact_pkg) = index.get(&query_lower) {
+            let mut p = exact_pkg.to_package();
+            p.installed = guard.installed_set.contains(&p.name);
+            return Ok(vec![p]);
+        }
+    }
+
+    // Slow path: fuzzy search using SIMD memchr
     let finder = memmem::Finder::new(query_lower.as_bytes());
-    let mut results = Vec::new();
+    let mut exact_matches = Vec::new();
+    let mut prefix_matches = Vec::new();
+    let mut substring_matches = Vec::new();
     let mut seen_indices = AHashSet::new();
 
     for match_idx in finder.find_iter(&guard.search_buffer) {
@@ -502,13 +575,26 @@ pub fn search_fast(query: &str) -> Result<Vec<Package>> {
         {
             let mut p = pkg.to_package();
             p.installed = guard.installed_set.contains(&p.name);
-            results.push(p);
+
+            // Categorize by match type for better relevance
+            let name_lower = p.name.to_lowercase();
+            if name_lower == query_lower {
+                exact_matches.push(p);
+            } else if name_lower.starts_with(&query_lower) {
+                prefix_matches.push(p);
+            } else {
+                substring_matches.push(p);
+            }
         }
-        if results.len() >= 100 {
+        if exact_matches.len() + prefix_matches.len() + substring_matches.len() >= 100 {
             break;
         }
     }
-    Ok(results)
+
+    // Return results in relevance order: exact > prefix > substring
+    exact_matches.extend(prefix_matches);
+    exact_matches.extend(substring_matches);
+    Ok(exact_matches)
 }
 
 pub fn get_info_fast(name: &str) -> Result<Option<Package>> {
@@ -540,6 +626,37 @@ pub struct LocalPackage {
     pub description: String,
     pub architecture: String,
     pub is_explicit: bool,
+}
+
+/// Parse a dpkg status paragraph into LocalPackage fields
+#[inline]
+fn parse_status_paragraph(paragraph: &str) -> Option<(String, String, String, String)> {
+    let mut name = String::new();
+    let mut version = String::new();
+    let mut description = String::new();
+    let mut arch = String::new();
+
+    for line in paragraph.lines() {
+        let Some(colon_pos) = memchr::memchr(b':', line.as_bytes()) else {
+            continue;
+        };
+        let key = &line[..colon_pos];
+        let value = line[colon_pos + 1..].trim_start();
+
+        match key.as_bytes() {
+            b"Package" => name = value.to_string(),
+            b"Version" => version = value.to_string(),
+            b"Description" => description = value.to_string(),
+            b"Architecture" => arch = value.to_string(),
+            _ => {}
+        }
+    }
+
+    if name.is_empty() {
+        None
+    } else {
+        Some((name, version, description, arch))
+    }
 }
 
 pub fn list_installed_fast() -> Result<Vec<LocalPackage>> {
@@ -607,33 +724,12 @@ pub fn list_installed_fast() -> Result<Vec<LocalPackage>> {
         let paragraph = &status_content[start..end];
         start = end + 2;
 
-        // Quick check if package is installed using memchr
-        if !paragraph.contains("Status: install ok installed") {
+        // Quick check if package is installed using SIMD-accelerated finder
+        if STATUS_INSTALLED_FINDER.find(paragraph.as_bytes()).is_none() {
             continue;
         }
 
-        let mut name = String::new();
-        let mut version = String::new();
-        let mut description = String::new();
-        let mut arch = String::new();
-
-        for line in paragraph.lines() {
-            let Some(colon_pos) = line.bytes().position(|b| b == b':') else {
-                continue;
-            };
-            let key = &line[..colon_pos];
-            let value = line[colon_pos + 1..].trim_start();
-
-            match key.as_bytes() {
-                b"Package" => name = value.to_string(),
-                b"Version" => version = value.to_string(),
-                b"Description" => description = value.to_string(),
-                b"Architecture" => arch = value.to_string(),
-                _ => {}
-            }
-        }
-
-        if !name.is_empty() {
+        if let Some((name, version, description, arch)) = parse_status_paragraph(paragraph) {
             let is_explicit = !auto_installed.contains(&name);
             installed_set.insert(name.clone());
             packages.push(LocalPackage {
@@ -649,29 +745,8 @@ pub fn list_installed_fast() -> Result<Vec<LocalPackage>> {
     // Handle last paragraph
     if start < status_content.len() {
         let paragraph = &status_content[start..];
-        if paragraph.contains("Status: install ok installed") {
-            let mut name = String::new();
-            let mut version = String::new();
-            let mut description = String::new();
-            let mut arch = String::new();
-
-            for line in paragraph.lines() {
-                let Some(colon_pos) = line.bytes().position(|b| b == b':') else {
-                    continue;
-                };
-                let key = &line[..colon_pos];
-                let value = line[colon_pos + 1..].trim_start();
-
-                match key.as_bytes() {
-                    b"Package" => name = value.to_string(),
-                    b"Version" => version = value.to_string(),
-                    b"Description" => description = value.to_string(),
-                    b"Architecture" => arch = value.to_string(),
-                    _ => {}
-                }
-            }
-
-            if !name.is_empty() {
+        if STATUS_INSTALLED_FINDER.find(paragraph.as_bytes()).is_some() {
+            if let Some((name, version, description, arch)) = parse_status_paragraph(paragraph) {
                 let is_explicit = !auto_installed.contains(&name);
                 installed_set.insert(name.clone());
                 packages.push(LocalPackage {
@@ -697,6 +772,27 @@ pub fn list_installed_fast() -> Result<Vec<LocalPackage>> {
     Ok(packages)
 }
 
+/// Get info about an installed package from dpkg/status
+#[inline]
+pub fn get_installed_info_fast(name: &str) -> Result<Option<LocalPackage>> {
+    if crate::core::paths::test_mode() {
+        return Ok(Some(LocalPackage {
+            name: name.to_string(),
+            version: "1.0.0".to_string(),
+            description: "Mock package".to_string(),
+            architecture: "amd64".to_string(),
+            is_explicit: true,
+        }));
+    }
+
+    // Ensure cache is populated
+    list_installed_fast()?;
+
+    let cache = DPKG_STATUS_CACHE.read();
+    Ok(cache.packages.iter().find(|p| p.name == name).cloned())
+}
+
+#[inline]
 pub fn is_installed_fast(name: &str) -> bool {
     if crate::core::paths::test_mode() {
         return name == "apt" || name == "git";

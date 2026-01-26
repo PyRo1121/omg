@@ -35,25 +35,47 @@ fn remove_dry_run(packages: &[String], recursive: bool) -> Result<()> {
         style::info("→")
     );
 
+    #[allow(unused_mut)]
     let mut total_size: u64 = 0;
 
     for pkg_name in packages {
-        if let Ok(Some(info)) = crate::package_managers::get_package_info(pkg_name) {
-            let size_mb = info.size as f64 / 1024.0 / 1024.0;
-            total_size += info.size;
-            println!(
-                "    {} {} {} ({:.2} MB)",
-                style::error("✗"),
-                style::package(&info.name),
-                style::version(&info.version.to_string()),
-                size_mb
-            );
-        } else {
-            println!(
-                "    {} {} (not installed)",
-                style::warning("?"),
-                style::package(pkg_name)
-            );
+        #[cfg(feature = "arch")]
+        {
+            if let Ok(Some(info)) = crate::package_managers::get_package_info(pkg_name) {
+                let size_mb = info.size as f64 / 1024.0 / 1024.0;
+                total_size += info.size;
+                println!(
+                    "    {} {} {} ({:.2} MB)",
+                    style::error("✗"),
+                    style::package(&info.name),
+                    style::version(&info.version.to_string()),
+                    size_mb
+                );
+            } else {
+                println!(
+                    "    {} {} (not installed)",
+                    style::warning("?"),
+                    style::package(pkg_name)
+                );
+            }
+        }
+        #[cfg(not(feature = "arch"))]
+        {
+            // Use debian_db::get_installed_info_fast for Debian/Ubuntu - checks dpkg/status directly
+            if let Ok(Some(info)) = crate::package_managers::debian_db::get_installed_info_fast(pkg_name) {
+                println!(
+                    "    {} {} {}",
+                    style::error("✗"),
+                    style::package(&info.name),
+                    style::version(&info.version),
+                );
+            } else {
+                println!(
+                    "    {} {} (not installed)",
+                    style::warning("?"),
+                    style::package(pkg_name)
+                );
+            }
         }
     }
 
