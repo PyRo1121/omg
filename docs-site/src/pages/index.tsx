@@ -280,6 +280,50 @@ export default function Home(): React.JSX.Element {
         <SpeedMetric value="1.2" suffix="ms" label="Daemon latency" />
       </section>
 
+      {/* PROGRESSIVE DISCLOSURE: Quick Start First */}
+      <section className={styles.quickStart}>
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true }}
+        >
+          <h2>Get Started in 60 Seconds</h2>
+          <p className={styles.sectionSubtitle}>Three commands. That's all it takes.</p>
+
+          <div className={styles.quickStartGrid}>
+            <div className={styles.quickStartStep}>
+              <div className={styles.stepNumber}>1</div>
+              <h3>Install OMG</h3>
+              <div className={styles.codeBlock}>
+                <code>curl -fsSL https://pyro1121.com/install.sh | bash</code>
+              </div>
+            </div>
+
+            <div className={styles.quickStartStep}>
+              <div className={styles.stepNumber}>2</div>
+              <h3>Add Shell Hook</h3>
+              <div className={styles.codeBlock}>
+                <code>eval "$(omg hook zsh)"</code>
+              </div>
+            </div>
+
+            <div className={styles.quickStartStep}>
+              <div className={styles.stepNumber}>3</div>
+              <h3>Install Your First Package</h3>
+              <div className={styles.codeBlock}>
+                <code>omg install ripgrep</code>
+              </div>
+            </div>
+          </div>
+
+          <div style={{ textAlign: 'center', marginTop: '3rem' }}>
+            <Link to="/quickstart" className={styles.secondaryButton}>
+              Full Installation Guide <ChevronRight size={20} style={{ marginLeft: 8 }} />
+            </Link>
+          </div>
+        </motion.div>
+      </section>
+
       <section className={styles.comparison}>
         <motion.h2
           initial={{ opacity: 0, y: 20 }}
