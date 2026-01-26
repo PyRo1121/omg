@@ -1,9 +1,3 @@
----
-title: Changelog
-sidebar_position: 99
-description: Complete version history and release notes
----
-
 # Changelog
 
 All notable changes to OMG are documented here.
@@ -55,6 +49,106 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - 22x performance story told through visceral design language
 ### ✨ New Features
 
+- **Api**: World-class docs analytics system
+
+Comprehensive web analytics for omg-docs.pages.dev with production-grade
+
+features, security, and performance optimizations.
+
+## Backend Features
+
+**Data Collection:**
+
+  - Pageview tracking with full context (URL, referrer, viewport)
+
+  - UTM campaign attribution (source, medium, campaign, term, content)
+
+  - User journey tracking (sessions, entry/exit pages)
+
+  - Interaction events (clicks, copies, scroll depth)
+
+  - Performance metrics (load times: p50, p95, p99)
+
+  - Geographic distribution (country-level via CF headers)
+
+**Storage & Performance:**
+
+  - Raw events: 7-day retention for debugging
+
+  - Daily aggregates: permanent storage, optimized queries
+
+  - Batch inserts: atomic transactions, zero data loss
+
+  - Async aggregation: no impact on response time
+
+  - Efficient indexes: sub-50ms query times
+
+**Security & Privacy:**
+
+  - No PII collection (GDPR compliant)
+
+  - IP anonymization (country-level only)
+
+  - CORS: restricted to docs domains
+
+  - Rate limiting: 100 req/min per IP
+
+  - Input validation: batch size limits
+
+## Implementation
+
+**Database Migration (008):**
+
+  - docs_analytics_events (raw events, 7-day retention)
+
+  - docs_analytics_pageviews_daily (aggregates)
+
+  - docs_analytics_utm_daily (campaign tracking)
+
+  - docs_analytics_referrers_daily (traffic sources)
+
+  - docs_analytics_interactions_daily (user behavior)
+
+  - docs_analytics_sessions (real-time tracking)
+
+  - docs_analytics_geo_daily (geographic distribution)
+
+  - docs_analytics_performance_daily (load times)
+
+**API Endpoints:**
+
+  - POST /api/docs/analytics (event ingestion, public)
+
+  - GET /api/docs/analytics/dashboard (admin view, 7-90 day range)
+
+- **Docs**: Update analytics endpoint to docs-specific route
+
+  - Change endpoint from /api/analytics to /api/docs/analytics
+
+  - Separates docs analytics from CLI product analytics
+
+  - Points to dedicated docs analytics backend handler
+
+The backend now has separate tables and handlers for docs-site
+
+web analytics vs OMG CLI product telemetry.
+
+- **Docs**: Update changelog and improve analytics error handling
+
+  - Copy generated 1203-line changelog from git-cliff
+
+  - Add Docusaurus frontmatter to changelog
+
+  - Escape HTML-like tags in MDX (Vec`<PackageInfo>`, `<A>` component)
+
+  - Silence analytics errors in production (only log in dev mode)
+
+  - Fix analytics endpoint graceful degradation
+
+The changelog now shows the complete project history with proper
+
+categorization. Analytics errors won't appear in production console.
+
 - **Docs**: Match main site theme + analytics + progressive disclosure
 
   - Replace VELOCITY theme (yellow/orange) with main site colors (indigo/cyan/purple)
@@ -70,6 +164,50 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
   - Add accessibility improvements (aria-labels, reduced motion support)
 
   - Configure Cloudflare Pages deployment with wrangler
+
+### 🐛 Bug Fixes
+
+- **Scripts**: Fix deployment script path and add changelog automation
+
+**Deployment Script:**
+
+  - Add automatic directory detection to work from any location
+
+  - Change to script directory before running wrangler commands
+
+  - Display working directory for debugging
+
+**Changelog Automation:**
+
+  - Add update-changelog.sh script for automatic changelog generation
+
+  - Escapes HTML-like tags for MDX compatibility
+
+  - Adds Docusaurus frontmatter automatically
+
+  - Interactive mode: prompts to commit changes
+
+  - CI/CD mode: stages changes for manual commit
+
+  - Usage: ./scripts/update-changelog.sh
+
+Run before pushing to keep changelog up to date with latest commits.
+
+- **Docs**: Resolve undefined scenario reference in TerminalDemo
+
+  - Change scenario.length to TERMINAL_SCENARIO.length
+
+  - Fixes ReferenceError preventing page from rendering
+
+  - Scenario constant was moved outside component but one reference wasn't updated
+
+- **Changelog**: Handle missing previous version in footer template
+
+  - Add conditional check for previous.version in footer
+
+  - Prevents template errors when generating first changelog
+
+  - Generate full 1203-line changelog from git history
 
 ## [0.1.139] - 2026-01-26
 ### 🔧 Maintenance
@@ -450,7 +588,7 @@ Add comprehensive task detection across 10+ ecosystems (Node, Rust, Python, Go, 
 - **Enterprise**: Implement remaining stubs for mirror, fleet, and golden path
 - **Debian**: Enrich daemon search with full package info
 
-  - Update IPC protocol to return `Vec<PackageInfo>` for Debian searches
+  - Update IPC protocol to return Vec`<PackageInfo>` for Debian searches
 
   - Update daemon handlers and cache to support enriched package data
 
