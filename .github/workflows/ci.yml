@@ -6,8 +6,16 @@ on:
   pull_request:
     branches: [main]
 
+# Cancel in-progress runs on new commits to same branch/PR
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_RETRY: 10
+  RUSTUP_MAX_RETRIES: 10
   # Feature flags for each platform
   ARCH_FEATURES: arch,pgp,license
   DEBIAN_FEATURES: debian
@@ -27,22 +35,20 @@ jobs:
         with:
           components: rustfmt, clippy
 
-      - name: Cache cargo registry
-        uses: actions/cache@v4
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
         with:
-          path: ~/.cargo/registry
-          key: lint-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: lint-cargo-registry-
+          prefix-key: "lint"
+          cache-on-failure: true
 
       - name: Check formatting
         run: cargo fmt --all -- --check
 
       - name: Run clippy (no native dependencies - works everywhere)
-        run: |
-          cargo clippy --all-targets --no-default-features --features pgp,license -- -D warnings -W clippy::pedantic
+        run: cargo clippy --all-targets --no-default-features --features pgp,license -- -D warnings -W clippy::pedantic
 
       - name: Run tests (no native dependencies)
-        run: cargo test --all-targets --no-default-features --features pgp,license
+        run: cargo test --all-targets --no-default-features --features pgp,license --locked
 
   ################################################################################
   # Arch Linux build
@@ -66,37 +72,62 @@ jobs:
             openssl \
             libarchive \
             clang \
-            cmake
+            cmake \
+            sccache
 
       - uses: actions/checkout@v4
 
       - name: Fix git permissions
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.7
+        continue-on-error: true
+
+      - name: Configure sccache
+        run: |
+          if command -v sccache &> /dev/null && sccache --start-server 2>/dev/null; then
+            echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
+            echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
+            echo "::notice::sccache enabled"
+          else
+            echo "::warning::sccache unavailable, building without cache"
+          fi
+
       - name: Get rust version
         id: rust-version
         run: echo "version=$(rustc --version | cut -d' ' -f2)" >> $GITHUB_OUTPUT
 
-      - name: Cache cargo build
+      - name: Cache cargo registry
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: arch-${{ steps.rust-version.outputs.version }}-${{ hashFiles('**/Cargo.lock') }}
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: arch-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: arch-registry-
+
+      - name: Cache target directory
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: arch-target-${{ steps.rust-version.outputs.version }}-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('src/**/*.rs') }}
           restore-keys: |
-            arch-${{ steps.rust-version.outputs.version }}-
-            arch-
+            arch-target-${{ steps.rust-version.outputs.version }}-${{ hashFiles('**/Cargo.lock') }}-
+            arch-target-${{ steps.rust-version.outputs.version }}-
 
       - name: Build release binary
-        run: cargo build --release --features ${{ env.ARCH_FEATURES }}
+        run: cargo build --release --features ${{ env.ARCH_FEATURES }} --locked
 
       - name: Run clippy
         run: cargo clippy --all-targets --features ${{ env.ARCH_FEATURES }} -- -D warnings -W clippy::pedantic
 
       - name: Run unit tests
-        run: cargo test --lib --features ${{ env.ARCH_FEATURES }}
+        run: cargo test --lib --features ${{ env.ARCH_FEATURES }} --locked
+
+      - name: Show sccache stats
+        run: sccache --show-stats
 
       - name: Verify binary exists and works
         run: |
@@ -147,28 +178,51 @@ jobs:
       - name: Fix git permissions
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.7
+        continue-on-error: true
+
+      - name: Install and configure sccache
+        run: |
+          export PATH="$CARGO_HOME/bin:$PATH"
+          cargo install sccache --locked || true
+          if command -v sccache &> /dev/null && sccache --start-server 2>/dev/null; then
+            echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
+            echo "RUSTC_WRAPPER=$CARGO_HOME/bin/sccache" >> $GITHUB_ENV
+            echo "::notice::sccache enabled"
+          else
+            echo "::warning::sccache unavailable, building without cache"
+          fi
+
       - name: Get rust version
         id: rust-version
         run: |
           export PATH="$CARGO_HOME/bin:$PATH"
           echo "version=$(rustc --version | cut -d' ' -f2)" >> $GITHUB_OUTPUT
 
-      - name: Cache cargo build
+      - name: Cache cargo registry
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: debian-${{ steps.rust-version.outputs.version }}-${{ hashFiles('**/Cargo.lock') }}
+            /usr/local/cargo/registry/index/
+            /usr/local/cargo/registry/cache/
+            /usr/local/cargo/git/db/
+          key: debian-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: debian-registry-
+
+      - name: Cache target directory
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: debian-target-${{ steps.rust-version.outputs.version }}-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('src/**/*.rs') }}
           restore-keys: |
-            debian-${{ steps.rust-version.outputs.version }}-
-            debian-
+            debian-target-${{ steps.rust-version.outputs.version }}-${{ hashFiles('**/Cargo.lock') }}-
+            debian-target-${{ steps.rust-version.outputs.version }}-
 
       - name: Build release binary
         run: |
           export PATH="$CARGO_HOME/bin:$PATH"
-          cargo build --release --no-default-features --features ${{ env.DEBIAN_FEATURES }}
+          cargo build --release --no-default-features --features ${{ env.DEBIAN_FEATURES }} --locked
 
       - name: Run clippy
         run: |
@@ -178,7 +232,12 @@ jobs:
       - name: Run unit tests
         run: |
           export PATH="$CARGO_HOME/bin:$PATH"
-          cargo test --lib --no-default-features --features ${{ env.DEBIAN_FEATURES }}
+          cargo test --lib --no-default-features --features ${{ env.DEBIAN_FEATURES }} --locked
+
+      - name: Show sccache stats
+        run: |
+          export PATH="$CARGO_HOME/bin:$PATH"
+          sccache --show-stats
 
       - name: Verify binary exists and works
         run: |
@@ -226,28 +285,51 @@ jobs:
       - name: Fix git permissions
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.7
+        continue-on-error: true
+
+      - name: Install and configure sccache
+        run: |
+          export PATH="$HOME/.cargo/bin:$PATH"
+          cargo install sccache --locked || true
+          if command -v sccache &> /dev/null && sccache --start-server 2>/dev/null; then
+            echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
+            echo "RUSTC_WRAPPER=$HOME/.cargo/bin/sccache" >> $GITHUB_ENV
+            echo "::notice::sccache enabled"
+          else
+            echo "::warning::sccache unavailable, building without cache"
+          fi
+
       - name: Get rust version
         id: rust-version
         run: |
           export PATH="$HOME/.cargo/bin:$PATH"
           echo "version=$(rustc --version | cut -d' ' -f2)" >> $GITHUB_OUTPUT
 
-      - name: Cache cargo build
+      - name: Cache cargo registry
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ubuntu-${{ steps.rust-version.outputs.version }}-${{ hashFiles('**/Cargo.lock') }}
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: ubuntu-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ubuntu-registry-
+
+      - name: Cache target directory
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ubuntu-target-${{ steps.rust-version.outputs.version }}-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('src/**/*.rs') }}
           restore-keys: |
-            ubuntu-${{ steps.rust-version.outputs.version }}-
-            ubuntu-
+            ubuntu-target-${{ steps.rust-version.outputs.version }}-${{ hashFiles('**/Cargo.lock') }}-
+            ubuntu-target-${{ steps.rust-version.outputs.version }}-
 
       - name: Build release binary
         run: |
           export PATH="$HOME/.cargo/bin:$PATH"
-          cargo build --release --no-default-features --features ${{ env.DEBIAN_FEATURES }}
+          cargo build --release --no-default-features --features ${{ env.DEBIAN_FEATURES }} --locked
 
       - name: Run clippy
         run: |
@@ -257,7 +339,12 @@ jobs:
       - name: Run unit tests
         run: |
           export PATH="$HOME/.cargo/bin:$PATH"
-          cargo test --lib --no-default-features --features ${{ env.DEBIAN_FEATURES }}
+          cargo test --lib --no-default-features --features ${{ env.DEBIAN_FEATURES }} --locked
+
+      - name: Show sccache stats
+        run: |
+          export PATH="$HOME/.cargo/bin:$PATH"
+          sccache --show-stats
 
       - name: Verify binary exists and works
         run: |
