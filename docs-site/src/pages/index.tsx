@@ -172,7 +172,7 @@ function FeatureCard({ icon: Icon, title, description, delay }: { icon: any; tit
       transition={{ delay }}
     >
       <div className={styles.featureIcon}>
-        <Icon size={32} strokeWidth={1.5} color="#38bdf8" />
+        <Icon size={32} strokeWidth={2} color="#FFED4E" />
       </div>
       <h3>{title}</h3>
       <p>{description}</p>
