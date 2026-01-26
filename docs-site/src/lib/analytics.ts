@@ -6,7 +6,7 @@
  * ═══════════════════════════════════════════════════════════════════════════
  */
 
-const ANALYTICS_ENDPOINT = 'https://api.pyro1121.com/api/analytics';
+const ANALYTICS_ENDPOINT = 'https://api.pyro1121.com/api/docs/analytics';
 const BATCH_SIZE = 10;
 const FLUSH_INTERVAL = 5000; // 5 seconds
 
