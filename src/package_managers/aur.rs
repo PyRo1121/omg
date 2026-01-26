@@ -224,53 +224,59 @@ impl AurClient {
             .collect();
 
         // Sort by relevance: exact name match > prefix match > word boundary > substring > alphabetical
+        // Pre-compute lowercased names to avoid O(n log n) allocations during sort
         let query_lower = query.to_ascii_lowercase();
-        packages.sort_by(|a, b| {
-            let a_name_lower = a.name.to_ascii_lowercase();
-            let b_name_lower = b.name.to_ascii_lowercase();
 
-            // Exact match check
-            let a_exact = a_name_lower == query_lower;
-            let b_exact = b_name_lower == query_lower;
-            if a_exact != b_exact {
-                return b_exact.cmp(&a_exact); // Exact matches first
-            }
-
-            // Prefix match check
-            let a_prefix = a_name_lower.starts_with(&query_lower);
-            let b_prefix = b_name_lower.starts_with(&query_lower);
-            if a_prefix != b_prefix {
-                return b_prefix.cmp(&a_prefix); // Prefix matches first
-            }
-
-            // Word boundary match check
-            fn has_word_boundary_match(haystack: &str, needle: &str) -> bool {
-                for (pos, _) in haystack.match_indices(needle) {
-                    if pos == 0
-                        || haystack.as_bytes()[pos - 1].is_ascii_whitespace()
-                        || haystack.as_bytes()[pos - 1] == b'-'
-                        || haystack.as_bytes()[pos - 1] == b'_'
-                        || haystack.as_bytes()[pos - 1] == b'.'
-                    {
-                        return true;
-                    }
+        // Helper for word boundary matching
+        fn has_word_boundary_match(haystack: &str, needle: &str) -> bool {
+            for (pos, _) in haystack.match_indices(needle) {
+                if pos == 0
+                    || haystack.as_bytes()[pos - 1].is_ascii_whitespace()
+                    || haystack.as_bytes()[pos - 1] == b'-'
+                    || haystack.as_bytes()[pos - 1] == b'_'
+                    || haystack.as_bytes()[pos - 1] == b'.'
+                {
+                    return true;
                 }
-                false
             }
+            false
+        }
 
-            let a_word = has_word_boundary_match(&a_name_lower, &query_lower);
-            let b_word = has_word_boundary_match(&b_name_lower, &query_lower);
-            if a_word != b_word {
-                return b_word.cmp(&a_word); // Word boundary matches first
+        // Precompute sort keys: (exact, prefix, word_boundary, name_len, name_lower, original_idx)
+        let mut keyed: Vec<_> = packages
+            .into_iter()
+            .map(|pkg| {
+                let name_lower = pkg.name.to_ascii_lowercase();
+                let exact = name_lower == query_lower;
+                let prefix = name_lower.starts_with(&query_lower);
+                let word = has_word_boundary_match(&name_lower, &query_lower);
+                (exact, prefix, word, pkg.name.len(), name_lower, pkg)
+            })
+            .collect();
+
+        // Sort using precomputed keys - no allocations during comparison
+        keyed.sort_by(|a, b| {
+            // Exact matches first
+            if a.0 != b.0 {
+                return b.0.cmp(&a.0);
             }
-
-            // Substring match is implied (since we're from search results)
-            // Final tiebreaker: shorter name (more specific) then alphabetical
-            match a.name.len().cmp(&b.name.len()) {
-                std::cmp::Ordering::Equal => a.name.cmp(&b.name),
+            // Prefix matches second
+            if a.1 != b.1 {
+                return b.1.cmp(&a.1);
+            }
+            // Word boundary matches third
+            if a.2 != b.2 {
+                return b.2.cmp(&a.2);
+            }
+            // Shorter names (more specific) fourth
+            match a.3.cmp(&b.3) {
+                std::cmp::Ordering::Equal => a.4.cmp(&b.4), // Alphabetical by lowercase
                 other => other,
             }
         });
+
+        // Extract sorted packages
+        packages = keyed.into_iter().map(|(_, _, _, _, _, pkg)| pkg).collect();
 
         Ok(packages)
     }

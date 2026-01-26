@@ -12,6 +12,8 @@ use clap::{Parser, Subcommand};
 #[command(version)]
 #[command(about = "The Fastest Unified Package Manager for Arch Linux + All Language Runtimes", long_about = None)]
 #[command(propagate_version = true)]
+#[command(subcommand_required = true)]
+#[command(arg_required_else_help = true)]
 pub struct Cli {
     /// Increase verbosity (-v, -vv, -vvv)
     #[arg(short, long, global = true, action = clap::ArgAction::Count)]
