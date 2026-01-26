@@ -210,7 +210,6 @@ async fn info_fallback(package: &str) -> Result<()> {
         ui::print_spacer();
         ui::print_warning("Source: Arch User Repository (AUR)");
         ui::print_spacer();
-        return Ok(());
     }
 
     // Fallback for systems without arch or debian feature enabled
@@ -218,6 +217,7 @@ async fn info_fallback(package: &str) -> Result<()> {
     {
         ui::print_error(format!("Package '{package}' not found"));
     }
+
     Ok(())
 }
 
