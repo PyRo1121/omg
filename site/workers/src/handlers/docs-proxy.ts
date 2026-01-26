@@ -1,50 +1,27 @@
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * OMG ROUTER WORKER - Production-Grade Reverse Proxy
- * Routes /docs/* to omg-docs.pages.dev with intelligent caching and asset rewriting
+ * DOCS PROXY HANDLER - World-Class Reverse Proxy
+ * Proxies pyro1121.com/docs/* → omg-docs.pages.dev
+ * Handles asset rewriting, caching, compression, and performance optimization
  * ═══════════════════════════════════════════════════════════════════════════
  */
 
-export interface Env {
-  MAIN_SITE: string;
-  DOCS_SITE: string;
-}
+import { Env } from '../api';
 
+const DOCS_ORIGIN = 'https://omg-docs.pages.dev';
 const CACHE_VERSION = 'v1';
 
-export default {
-  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    const url = new URL(request.url);
-    const path = url.pathname;
-
-    // Route /docs requests to the docs site with production-ready proxy
-    if (path === '/docs' || path.startsWith('/docs/')) {
-      return handleDocsProxy(request, env, ctx);
-    }
-
-    // All other requests go to main site
-    const mainUrl = new URL(path + url.search, env.MAIN_SITE);
-    return fetch(mainUrl.toString(), {
-      method: request.method,
-      headers: prepareOriginHeaders(request.headers, env.MAIN_SITE),
-      body: request.method !== 'GET' && request.method !== 'HEAD' ? request.body : undefined,
-      redirect: 'follow',
-    });
-  },
-};
-
 /**
- * Production-ready docs proxy handler
- * Handles caching, content rewriting, and performance optimization
+ * Main docs proxy handler
+ * Proxies all /docs/* requests to omg-docs.pages.dev with intelligent caching
  */
-async function handleDocsProxy(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+export async function handleDocsProxy(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   try {
     const url = new URL(request.url);
-    const hostname = url.hostname;
 
     // Strip /docs prefix and preserve the rest of the path
     const docsPath = url.pathname.replace(/^\/docs/, '') || '/';
-    const targetUrl = `${env.DOCS_SITE}${docsPath}${url.search}`;
+    const targetUrl = `${DOCS_ORIGIN}${docsPath}${url.search}`;
 
     // Check cache first (for GET requests only)
     if (request.method === 'GET') {
@@ -56,7 +33,7 @@ async function handleDocsProxy(request: Request, env: Env, ctx: ExecutionContext
         // Clone and add cache hit header
         const response = new Response(cachedResponse.body, cachedResponse);
         response.headers.set('X-Cache', 'HIT');
-        response.headers.set('X-Proxy', 'Cloudflare-Worker-Router');
+        response.headers.set('X-Proxy', 'Cloudflare-Worker');
         return response;
       }
     }
@@ -64,7 +41,7 @@ async function handleDocsProxy(request: Request, env: Env, ctx: ExecutionContext
     // Fetch from origin
     const originRequest = new Request(targetUrl, {
       method: request.method,
-      headers: prepareOriginHeaders(request.headers, env.DOCS_SITE),
+      headers: prepareOriginHeaders(request.headers, url.hostname),
       body: request.method !== 'GET' && request.method !== 'HEAD' ? request.body : undefined,
       redirect: 'manual', // Handle redirects ourselves
     });
@@ -75,15 +52,16 @@ async function handleDocsProxy(request: Request, env: Env, ctx: ExecutionContext
     if (response.status >= 301 && response.status <= 308) {
       const location = response.headers.get('Location');
       if (location) {
-        const redirectUrl = rewriteUrl(location, hostname, env.DOCS_SITE);
+        const redirectUrl = rewriteUrl(location, url.hostname);
         return Response.redirect(redirectUrl, response.status);
       }
     }
 
-    // Handle errors - serve stale content if available
+    // Handle errors
     if (!response.ok && response.status !== 304) {
       console.error(`Docs proxy error: ${response.status} for ${targetUrl}`);
 
+      // Return cached version on origin error if available
       if (request.method === 'GET') {
         const cache = caches.default;
         const cacheKey = new Request(targetUrl, request);
@@ -91,7 +69,7 @@ async function handleDocsProxy(request: Request, env: Env, ctx: ExecutionContext
         if (staleResponse) {
           const fallback = new Response(staleResponse.body, staleResponse);
           fallback.headers.set('X-Cache', 'STALE-ON-ERROR');
-          fallback.headers.set('X-Proxy', 'Cloudflare-Worker-Router');
+          fallback.headers.set('X-Proxy', 'Cloudflare-Worker');
           return fallback;
         }
       }
@@ -107,7 +85,7 @@ async function handleDocsProxy(request: Request, env: Env, ctx: ExecutionContext
     let body = response.body;
     if ((isHTML || isCSS || isJS) && response.body) {
       const text = await response.text();
-      const rewritten = rewriteContent(text, isHTML, isCSS, isJS, hostname, env.DOCS_SITE);
+      const rewritten = rewriteContent(text, isHTML, isCSS, isJS, url.hostname);
       body = new ReadableStream({
         start(controller) {
           controller.enqueue(new TextEncoder().encode(rewritten));
@@ -122,8 +100,8 @@ async function handleDocsProxy(request: Request, env: Env, ctx: ExecutionContext
     // Add custom headers
     const finalResponse = new Response(response.body, response);
     finalResponse.headers.set('X-Cache', 'MISS');
-    finalResponse.headers.set('X-Proxy', 'Cloudflare-Worker-Router');
-    finalResponse.headers.set('X-Docs-Origin', env.DOCS_SITE);
+    finalResponse.headers.set('X-Proxy', 'Cloudflare-Worker');
+    finalResponse.headers.set('X-Docs-Origin', DOCS_ORIGIN);
 
     // Add security headers
     finalResponse.headers.set('X-Content-Type-Options', 'nosniff');
@@ -159,7 +137,7 @@ async function handleDocsProxy(request: Request, env: Env, ctx: ExecutionContext
  * Prepare headers for origin request
  * Strips hop-by-hop headers and adds proper Host header
  */
-function prepareOriginHeaders(headers: Headers, origin: string): Headers {
+function prepareOriginHeaders(headers: Headers, originalHost: string): Headers {
   const newHeaders = new Headers();
 
   // Copy all headers except hop-by-hop headers
@@ -182,12 +160,16 @@ function prepareOriginHeaders(headers: Headers, origin: string): Headers {
   }
 
   // Set proper Host header for origin
-  const originHost = new URL(origin).hostname;
+  const originHost = new URL(DOCS_ORIGIN).hostname;
   newHeaders.set('Host', originHost);
+
+  // Set X-Forwarded headers
+  newHeaders.set('X-Forwarded-Host', originalHost);
+  newHeaders.set('X-Forwarded-Proto', 'https');
 
   // Add user agent if missing
   if (!newHeaders.has('User-Agent')) {
-    newHeaders.set('User-Agent', 'Cloudflare-Worker-Router/2.0');
+    newHeaders.set('User-Agent', 'Cloudflare-Worker-Docs-Proxy/1.0');
   }
 
   return newHeaders;
@@ -197,36 +179,35 @@ function prepareOriginHeaders(headers: Headers, origin: string): Headers {
  * Rewrite content to fix asset paths
  * Converts omg-docs.pages.dev URLs to /docs/ URLs
  */
-function rewriteContent(content: string, isHTML: boolean, isCSS: boolean, isJS: boolean, hostname: string, docsOrigin: string): string {
+function rewriteContent(content: string, isHTML: boolean, isCSS: boolean, isJS: boolean, hostname: string): string {
   let rewritten = content;
-  const docsHostname = new URL(docsOrigin).hostname;
 
   if (isHTML) {
     // Rewrite absolute URLs in HTML
     rewritten = rewritten
       // Fix href and src attributes
-      .replace(new RegExp(`href="https?:\\/\\/[^\\"]*${docsHostname.replace('.', '\\.')}([^\\"]*)"`, 'g'), `href="https://${hostname}/docs$1"`)
-      .replace(new RegExp(`src="https?:\\/\\/[^\\"]*${docsHostname.replace('.', '\\.')}([^\\"]*)"`, 'g'), `src="https://${hostname}/docs$1"`)
+      .replace(/href="https?:\/\/[^"]*omg-docs\.pages\.dev([^"]*)"/g, `href="https://${hostname}/docs$1"`)
+      .replace(/src="https?:\/\/[^"]*omg-docs\.pages\.dev([^"]*)"/g, `src="https://${hostname}/docs$1"`)
       // Fix base href if present
-      .replace(new RegExp(`<base\\s+href="[^\\"]*${docsHostname.replace('.', '\\.')}([^\\"]*)"`, 'g'), `<base href="https://${hostname}/docs$1"`)
+      .replace(/<base\s+href="[^"]*omg-docs\.pages\.dev([^"]*)"/g, `<base href="https://${hostname}/docs$1"`)
       // Fix meta tags
-      .replace(new RegExp(`content="https?:\\/\\/[^\\"]*${docsHostname.replace('.', '\\.')}([^\\"]*)"`, 'g'), `content="https://${hostname}/docs$1"`)
+      .replace(/content="https?:\/\/[^"]*omg-docs\.pages\.dev([^"]*)"/g, `content="https://${hostname}/docs$1"`)
       // Fix JSON-LD and structured data
-      .replace(new RegExp(`https?:\\/\\/[^\\"]*${docsHostname.replace('.', '\\.')}`, 'g'), `https://${hostname}/docs`);
+      .replace(/https?:\/\/[^"]*omg-docs\.pages\.dev/g, `https://${hostname}/docs`);
   }
 
   if (isCSS) {
     // Rewrite URLs in CSS url() functions
     rewritten = rewritten
-      .replace(new RegExp(`url\\(["']?https?:\\/\\/[^)\\"']*${docsHostname.replace('.', '\\.')}([^)\\"']*)["']?\\)`, 'g'), `url("https://${hostname}/docs$1")`)
+      .replace(/url\(["']?https?:\/\/[^)"']*omg-docs\.pages\.dev([^)"']*)["']?\)/g, `url("https://${hostname}/docs$1")`)
       .replace(/url\(["']?\/([^)"']*)["']?\)/g, `url("/docs/$1")`);
   }
 
   if (isJS) {
     // Rewrite URLs in JavaScript strings (careful to not break code)
     rewritten = rewritten
-      .replace(new RegExp(`"https?:\\/\\/[^\\"]*${docsHostname.replace('.', '\\.')}([^\\"]*)"`, 'g'), `"https://${hostname}/docs$1"`)
-      .replace(new RegExp(`'https?:\\/\\/[^']*${docsHostname.replace('.', '\\.')}([^']*)'`, 'g'), `'https://${hostname}/docs$1'`);
+      .replace(/"https?:\/\/[^"]*omg-docs\.pages\.dev([^"]*)"/g, `"https://${hostname}/docs$1"`)
+      .replace(/'https?:\/\/[^']*omg-docs\.pages\.dev([^']*)'/g, `'https://${hostname}/docs$1'`);
   }
 
   return rewritten;
@@ -235,25 +216,15 @@ function rewriteContent(content: string, isHTML: boolean, isCSS: boolean, isJS: 
 /**
  * Rewrite redirect URLs
  */
-function rewriteUrl(url: string, hostname: string, docsOrigin: string): string {
+function rewriteUrl(url: string, hostname: string): string {
   try {
-    // Handle relative URLs (like /quickstart/)
-    if (url.startsWith('/')) {
-      return `https://${hostname}/docs${url}`;
-    }
-
-    // Handle absolute URLs
     const parsed = new URL(url);
-    const docsHostname = new URL(docsOrigin).hostname;
-    if (parsed.hostname.includes(docsHostname)) {
+    if (parsed.hostname.includes('omg-docs.pages.dev')) {
       return `https://${hostname}/docs${parsed.pathname}${parsed.search}${parsed.hash}`;
     }
     return url;
   } catch {
-    // If URL parsing fails, assume it's relative
-    if (url.startsWith('/')) {
-      return `https://${hostname}/docs${url}`;
-    }
+    // If URL parsing fails, return as-is
     return url;
   }
 }

@@ -56,6 +56,7 @@ import {
   handleDocsAnalyticsDashboard,
   cleanupDocsAnalytics,
 } from './handlers/docs-analytics';
+import { handleDocsProxy } from './handlers/docs-proxy';
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -132,6 +133,15 @@ export default {
       // Docs analytics dashboard (admin view)
       if (path === '/api/docs/analytics/dashboard' && request.method === 'GET') {
         return handleDocsAnalyticsDashboard(request, env);
+      }
+
+      // ============================================
+      // Docs proxy (reverse proxy to omg-docs.pages.dev)
+      // ============================================
+
+      // Handle all /docs/* requests (proxy to Cloudflare Pages)
+      if (path.startsWith('/docs')) {
+        return handleDocsProxy(request, env, ctx);
       }
 
       // ============================================

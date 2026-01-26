@@ -12,8 +12,8 @@
   position: absolute;
   inset: 0;
   background-image:
-    linear-gradient(15deg, rgba(255, 237, 78, 0.08) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 237, 78, 0.04) 1px, transparent 1px);
+    linear-gradient(15deg, rgba(99, 102, 241, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(34, 211, 238, 0.04) 1px, transparent 1px);
   background-size: 80px 40px;
   mask-image: radial-gradient(ellipse at 50% 50%, black 10%, transparent 70%);
   animation: gridRace 15s linear infinite;
@@ -54,7 +54,7 @@
   display: inline-flex;
   align-items: center;
   padding: 0.5rem 1.25rem;
-  background: rgba(255, 237, 78, 0.12);
+  background: rgba(99, 102, 241, 0.12);
   border: 2px solid #6366f1;
   border-radius: 4px;
   color: #6366f1;
@@ -65,7 +65,7 @@
   letter-spacing: 0.1em;
   width: fit-content;
   margin-bottom: 1.5rem;
-  box-shadow: 0 0 20px rgba(255, 237, 78, 0.3);
+  box-shadow: 0 0 20px rgba(99, 102, 241, 0.3);
   transform: skewX(-5deg);
   position: relative;
   overflow: hidden;
@@ -78,7 +78,7 @@
   left: -100%;
   width: 100%;
   height: 100%;
-  background: linear-gradient(90deg, transparent 0%, rgba(255, 237, 78, 0.3) 50%, transparent 100%);
+  background: linear-gradient(90deg, transparent 0%, rgba(34, 211, 238, 0.3) 50%, transparent 100%);
   animation: badgeShine 3s infinite;
 }
 
@@ -105,7 +105,7 @@
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
-  text-shadow: 0 0 40px rgba(255, 237, 78, 0.3);
+  text-shadow: 0 0 40px rgba(99, 102, 241, 0.3);
   letter-spacing: -0.04em;
   transform: skewX(-3deg);
   position: relative;
@@ -119,7 +119,7 @@
   width: 50%;
   height: 6px;
   background: linear-gradient(90deg, #6366f1 0%, #22d3ee 50%, transparent 100%);
-  box-shadow: 0 0 15px rgba(255, 237, 78, 0.5);
+  box-shadow: 0 0 15px rgba(34, 211, 238, 0.5);
   transform: skewX(15deg);
 }
 
@@ -158,10 +158,10 @@
   text-transform: uppercase;
   letter-spacing: 0.05em;
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  box-shadow: 
-    0 0 30px rgba(255, 237, 78, 0.4), 
+  box-shadow:
+    0 0 30px rgba(34, 211, 238, 0.4),
     0 6px 0 #4f46e5,
-    0 0 60px rgba(255, 30, 0, 0.2);
+    0 0 60px rgba(168, 85, 247, 0.2);
   transform: skewX(-3deg);
   position: relative;
   overflow: hidden;
@@ -184,16 +184,16 @@
 
 .primaryButton:hover {
   transform: translateY(-4px) skewX(-3deg);
-  box-shadow: 
-    0 0 50px rgba(255, 237, 78, 0.6), 
+  box-shadow:
+    0 0 50px rgba(34, 211, 238, 0.6),
     0 4px 0 #4f46e5,
-    0 0 80px rgba(255, 30, 0, 0.3);
+    0 0 80px rgba(168, 85, 247, 0.3);
 }
 
 .primaryButton:active {
   transform: translateY(2px) skewX(-3deg);
-  box-shadow: 
-    0 0 20px rgba(255, 237, 78, 0.3), 
+  box-shadow:
+    0 0 20px rgba(34, 211, 238, 0.3),
     0 0 0 #4f46e5;
 }
 
@@ -201,8 +201,8 @@
   display: inline-flex;
   align-items: center;
   padding: 1rem 2rem;
-  background: rgba(255, 237, 78, 0.05);
-  border: 2px solid rgba(255, 237, 78, 0.3);
+  background: rgba(99, 102, 241, 0.05);
+  border: 2px solid rgba(99, 102, 241, 0.3);
   color: #6366f1 !important;
   font-family: 'Space Grotesk', sans-serif;
   font-weight: 700;
@@ -214,9 +214,9 @@
 }
 
 .secondaryButton:hover {
-  background: rgba(255, 237, 78, 0.12);
+  background: rgba(99, 102, 241, 0.12);
   border-color: #6366f1;
-  box-shadow: 0 0 20px rgba(255, 237, 78, 0.3);
+  box-shadow: 0 0 20px rgba(99, 102, 241, 0.3);
   transform: translateX(4px);
 }
 
@@ -256,14 +256,14 @@
   max-width: 580px;
   background: rgba(10, 10, 15, 0.85);
   backdrop-filter: blur(12px);
-  border: 2px solid rgba(255, 237, 78, 0.2);
+  border: 2px solid rgba(99, 102, 241, 0.2);
   border-radius: 12px;
   overflow: hidden;
   box-shadow:
-    0 0 0 1px rgba(255, 237, 78, 0.1),
+    0 0 0 1px rgba(99, 102, 241, 0.1),
     0 25px 60px rgba(0, 0, 0, 0.6),
-    0 0 100px rgba(255, 237, 78, 0.2),
-    0 0 40px rgba(255, 30, 0, 0.1);
+    0 0 100px rgba(34, 211, 238, 0.2),
+    0 0 40px rgba(168, 85, 247, 0.1);
   position: relative;
 }
 
@@ -297,7 +297,7 @@
   color: #6366f1;
   margin-right: 0.75rem;
   font-weight: 700;
-  text-shadow: 0 0 10px rgba(255, 237, 78, 0.5);
+  text-shadow: 0 0 10px rgba(99, 102, 241, 0.5);
 }
 
 .terminalOutput {
@@ -313,12 +313,15 @@
   width: 10px;
   height: 20px;
   background: #6366f1;
-  box-shadow: 0 0 15px rgba(255, 237, 78, 0.8);
+  box-shadow: 0 0 15px rgba(99, 102, 241, 0.8);
   animation: blink 1s step-end infinite;
   vertical-align: middle;
   margin-left: 2px;
 }
 
+@keyframes blink {
+  50% { opacity: 0; }
+}
 
 /* Metrics Section */
 .metrics {
@@ -347,8 +350,8 @@
 }
 
 .metric:hover {
-  background: rgba(255, 237, 78, 0.08);
-  box-shadow: inset 0 0 30px rgba(255, 237, 78, 0.1);
+  background: rgba(99, 102, 241, 0.08);
+  box-shadow: inset 0 0 30px rgba(34, 211, 238, 0.1);
 }
 
 .metricValue {
@@ -358,7 +361,7 @@
   font-style: italic;
   color: #6366f1;
   line-height: 1;
-  text-shadow: 0 0 30px rgba(255, 237, 78, 0.5);
+  text-shadow: 0 0 30px rgba(99, 102, 241, 0.5);
   transform: skewX(-5deg);
 }
 
@@ -440,7 +443,7 @@
 
 .comparisonBarOmg {
   background: linear-gradient(90deg, #6366f1 0%, #22d3ee 50%, #a855f7 100%);
-  box-shadow: 0 0 30px rgba(255, 237, 78, 0.6), 0 0 15px rgba(255, 30, 0, 0.4);
+  box-shadow: 0 0 30px rgba(34, 211, 238, 0.6), 0 0 15px rgba(168, 85, 247, 0.4);
   position: relative;
   overflow: hidden;
 }
@@ -518,10 +521,10 @@
 }
 
 .featureCard:hover {
-  background: rgba(255, 237, 78, 0.05);
-  border-color: rgba(255, 237, 78, 0.3);
+  background: rgba(99, 102, 241, 0.05);
+  border-color: rgba(34, 211, 238, 0.3);
   transform: translateY(-6px) skewX(-2deg);
-  box-shadow: 0 10px 40px rgba(255, 237, 78, 0.15);
+  box-shadow: 0 10px 40px rgba(99, 102, 241, 0.15);
 }
 
 .featureIcon {
@@ -588,7 +591,7 @@
 
 .quickStartStep {
   background: rgba(255, 255, 255, 0.02);
-  border: 2px solid rgba(255, 237, 78, 0.15);
+  border: 2px solid rgba(99, 102, 241, 0.15);
   border-radius: 16px;
   padding: 2.5rem 2rem;
   text-align: left;
@@ -612,7 +615,7 @@
 .quickStartStep:hover {
   border-color: #6366f1;
   transform: translateY(-6px);
-  box-shadow: 0 10px 40px rgba(255, 237, 78, 0.2);
+  box-shadow: 0 10px 40px rgba(34, 211, 238, 0.2);
 }
 
 .quickStartStep:hover::before {
@@ -633,7 +636,7 @@
   align-items: center;
   justify-content: center;
   margin-bottom: 1.5rem;
-  box-shadow: 0 0 20px rgba(255, 237, 78, 0.4);
+  box-shadow: 0 0 20px rgba(34, 211, 238, 0.4);
 }
 
 .quickStartStep h3 {
@@ -646,7 +649,7 @@
 
 .codeBlock {
   background: rgba(0, 0, 0, 0.4);
-  border: 1px solid rgba(255, 237, 78, 0.2);
+  border: 1px solid rgba(99, 102, 241, 0.2);
   border-radius: 8px;
   padding: 1rem;
   padding-right: 3rem;
@@ -662,7 +665,7 @@
 
 .codeBlock:hover {
   border-color: #6366f1;
-  box-shadow: 0 0 15px rgba(255, 237, 78, 0.2);
+  box-shadow: 0 0 15px rgba(34, 211, 238, 0.2);
 }
 
 .codeBlock:focus-visible {
@@ -683,7 +686,7 @@
   transform: translateY(-50%);
   background: none;
   border: none;
-  color: rgba(255, 237, 78, 0.6);
+  color: rgba(34, 211, 238, 0.6);
   cursor: pointer;
   transition: all 0.2s ease;
   padding: 0.25rem;
