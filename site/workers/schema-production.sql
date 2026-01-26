@@ -12,12 +12,14 @@ CREATE TABLE IF NOT EXISTS customers (
   email TEXT NOT NULL,
   company TEXT,
   tier TEXT DEFAULT 'free',
+  admin INTEGER DEFAULT 0,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_customers_email ON customers(email);
 CREATE INDEX IF NOT EXISTS idx_customers_stripe ON customers(stripe_customer_id);
+CREATE INDEX IF NOT EXISTS idx_customers_admin ON customers(admin);
 
 CREATE TABLE IF NOT EXISTS licenses (
   id TEXT PRIMARY KEY,

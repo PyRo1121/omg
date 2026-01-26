@@ -26,8 +26,13 @@ export async function handleGetDashboard(request: Request, env: Env): Promise<Re
 
   const { user } = auth;
 
-  // Check if user is admin (server-side only - ADMIN_USER_ID is a Cloudflare secret)
-  const isAdmin = env.ADMIN_USER_ID ? user.id === env.ADMIN_USER_ID : false;
+  // Check if user is admin (query the admin column from customers table)
+  const adminCheck = await env.DB.prepare(
+    `SELECT admin FROM customers WHERE id = ?`
+  )
+    .bind(user.id)
+    .first();
+  const isAdmin = adminCheck?.admin === 1;
 
   // Get license
   const license = await env.DB.prepare(
