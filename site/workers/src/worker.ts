@@ -311,6 +311,46 @@ export default {
         return handleInitDb(env);
       }
 
+      // ============================================
+      // Badge Endpoint (public, for shields.io)
+      // ============================================
+      if (path === '/api/badge/installs' && request.method === 'GET') {
+        try {
+          const result = await env.DB.prepare(
+            `SELECT COUNT(DISTINCT install_id) as total FROM install_stats`
+          ).first();
+          const total = (result?.total as number) || 0;
+          return new Response(JSON.stringify({
+            schemaVersion: 1,
+            label: 'installs',
+            message: total.toLocaleString(),
+            color: 'blue',
+          }), {
+            status: 200,
+            headers: {
+              'Content-Type': 'application/json',
+              'Cache-Control': 'public, max-age=300',
+              ...corsHeaders,
+            },
+          });
+        } catch (err) {
+          // If table doesn't exist or query fails, return 0
+          return new Response(JSON.stringify({
+            schemaVersion: 1,
+            label: 'installs',
+            message: '0',
+            color: 'blue',
+          }), {
+            status: 200,
+            headers: {
+              'Content-Type': 'application/json',
+              'Cache-Control': 'public, max-age=300',
+              ...corsHeaders,
+            },
+          });
+        }
+      }
+
       return errorResponse('Not found', 404);
     } catch (error) {
       console.error('Worker error:', error);
