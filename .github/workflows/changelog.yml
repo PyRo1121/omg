@@ -1,0 +1,93 @@
+name: Changelog
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/changelog.md'
+      - 'docs-site/docs/changelog.md'
+  release:
+    types: [published]
+  workflow_dispatch:
+
+concurrency:
+  group: changelog
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  update-changelog:
+    name: Update Changelog
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Install git-cliff
+        uses: taiki-e/install-action@git-cliff
+
+      - name: Generate Changelog
+        run: |
+          git-cliff --output docs/changelog.md
+          
+          # Escape HTML-like tags for MDX compatibility
+          sed -i 's/<\([A-Z][a-zA-Z]*\)>/`<\1>`/g' docs/changelog.md
+          
+          # Add Docusaurus frontmatter if not present
+          if ! grep -q "^---$" docs/changelog.md; then
+            {
+              echo "---"
+              echo "title: Changelog"
+              echo "sidebar_position: 99"
+              echo "description: Complete version history and release notes"
+              echo "---"
+              echo ""
+              cat docs/changelog.md
+            } > docs/changelog.md.tmp
+            mv docs/changelog.md.tmp docs/changelog.md
+          fi
+          
+          # Copy to docs-site
+          cp docs/changelog.md docs-site/docs/changelog.md
+
+      - name: Check for changes
+        id: changes
+        run: |
+          if git diff --quiet docs/changelog.md docs-site/docs/changelog.md; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
+            echo "::notice::Changelog updated with new commits"
+          fi
+
+      - name: Commit and Push
+        if: steps.changes.outputs.changed == 'true'
+        run: |
+          git add docs/changelog.md docs-site/docs/changelog.md
+          git commit -m "docs: update changelog [skip ci]
+
+          Auto-generated from git history with git-cliff."
+          git push
+
+      - name: Summary
+        run: |
+          echo "## Changelog Update" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ steps.changes.outputs.changed }}" == "true" ]; then
+            echo "✅ Changelog updated and committed" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Recent entries:" >> $GITHUB_STEP_SUMMARY
+            head -50 docs/changelog.md | tail -40 >> $GITHUB_STEP_SUMMARY
+          else
+            echo "ℹ️ No changes to changelog" >> $GITHUB_STEP_SUMMARY
+          fi

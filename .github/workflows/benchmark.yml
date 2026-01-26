@@ -8,12 +8,19 @@ on:
       - 'Cargo.toml'
       - 'benchmark.sh'
   schedule:
-    # Run weekly on Sunday at midnight
     - cron: '0 0 * * 0'
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
 
 jobs:
   benchmark:
@@ -26,18 +33,51 @@ jobs:
       - name: Install Dependencies
         run: |
           pacman -Syu --noconfirm
-          pacman -S --noconfirm base-devel git rust cargo pkgconf openssl libarchive clang bc python python-pip
-          # Note: yay is an AUR package and cannot be installed via pacman
-          # OMG benchmarks compare against pacman directly, not yay
-          # python3 is provided by the 'python' package on Arch
+          pacman -S --noconfirm base-devel git rust cargo pkgconf openssl libarchive clang bc python python-pip sccache
 
       - uses: actions/checkout@v4
 
       - name: Git safe directory
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.7
+        continue-on-error: true
+
+      - name: Configure sccache
+        run: |
+          if command -v sccache &> /dev/null && sccache --start-server 2>/dev/null; then
+            echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
+            echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
+            echo "::notice::sccache enabled"
+          else
+            echo "::warning::sccache unavailable, building without cache"
+          fi
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: bench-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: bench-registry-
+
+      - name: Cache target directory
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: bench-target-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('src/**/*.rs') }}
+          restore-keys: |
+            bench-target-${{ hashFiles('**/Cargo.lock') }}-
+            bench-target-
+
       - name: Build Release
-        run: cargo build --release --features arch
+        run: cargo build --release --features arch --locked
+
+      - name: Show sccache stats
+        run: sccache --show-stats
 
       - name: Run Benchmarks
         id: bench
@@ -45,12 +85,9 @@ jobs:
           chmod +x benchmark.sh
           ./benchmark.sh 2>&1 | tee benchmark_output.txt
           
-          # Extract key metrics for badge
-          # | search | 0.82ms | 12.5ms | 13.1ms | 15.2x |
           SEARCH_TIME=$(grep "| search |" benchmark_report.md | awk -F'|' '{print $3}' | tr -d ' ms')
           echo "search_time=${SEARCH_TIME}" >> $GITHUB_OUTPUT
           
-          # Calculate speedup
           PACMAN_TIME=$(grep "| search |" benchmark_report.md | awk -F'|' '{print $4}' | tr -d ' ms')
           if [ -n "$SEARCH_TIME" ] && [ -n "$PACMAN_TIME" ] && [ "$SEARCH_TIME" != "0" ]; then
             SPEEDUP=$(echo "scale=1; $PACMAN_TIME / $SEARCH_TIME" | bc)
@@ -67,7 +104,6 @@ jobs:
           SPEEDUP="${{ steps.bench.outputs.speedup }}"
           SEARCH_TIME="${{ steps.bench.outputs.search_time }}"
           
-          # Create badge JSON for shields.io endpoint
           cat > benchmark-badge.json << EOF
           {
             "schemaVersion": 1,
@@ -91,16 +127,13 @@ jobs:
       - name: Update Benchmark Results
         if: github.ref == 'refs/heads/main'
         run: |
-          # Create benchmarks directory if it doesn't exist
           mkdir -p benchmarks
           
-          # Save timestamped report
           TIMESTAMP=$(date +%Y%m%d_%H%M%S)
           cp benchmark_report.md "benchmarks/report_${TIMESTAMP}.md"
           cp benchmark_report.md benchmarks/latest.md
           cp benchmark-badge.json benchmarks/badge.json
           
-          # Create summary JSON for API
           cat > benchmarks/summary.json << EOF
           {
             "timestamp": "$(date -Iseconds)",

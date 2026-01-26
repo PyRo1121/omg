@@ -23,12 +23,11 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_RETRY: 10
   RUST_BACKTRACE: 1
 
 jobs:
-  # ═══════════════════════════════════════════════════════════════════════════
-  # Lint checks for each platform
-  # ═══════════════════════════════════════════════════════════════════════════
   lint-arch:
     name: Lint (Arch)
     runs-on: ubuntu-latest
@@ -36,14 +35,47 @@ jobs:
       image: archlinux:latest
     steps:
       - uses: actions/checkout@v4
+
       - name: Install dependencies
         run: |
           pacman -Syu --noconfirm
-          pacman -S --noconfirm base-devel git rust cargo clang cmake
+          pacman -S --noconfirm base-devel git rust cargo clang cmake sccache
+
+      - name: Fix git permissions
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.7
+        continue-on-error: true
+
+      - name: Configure sccache
+        run: |
+          if command -v sccache &> /dev/null && sccache --start-server 2>/dev/null; then
+            echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
+            echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
+            echo "::notice::sccache enabled"
+          else
+            echo "::warning::sccache unavailable, building without cache"
+          fi
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: lint-arch-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: lint-arch-registry-
+
       - name: Check formatting
         run: cargo fmt -- --check
+
       - name: Clippy (Arch)
         run: cargo clippy --all-targets --features arch -- -D warnings -W clippy::pedantic
+
+      - name: Show sccache stats
+        run: sccache --show-stats
 
   lint-debian:
     name: Lint (Debian)
@@ -55,20 +87,53 @@ jobs:
       RUSTUP_HOME: /usr/local/rustup
     steps:
       - uses: actions/checkout@v4
+
       - name: Install dependencies
         run: |
           apt-get update
           apt-get install -y build-essential curl git pkg-config libssl-dev libapt-pkg-dev clang cmake
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
           rm -rf /var/lib/apt/lists/*
+
+      - name: Fix git permissions
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.7
+        continue-on-error: true
+
+      - name: Install and configure sccache
+        run: |
+          export PATH="$CARGO_HOME/bin:$PATH"
+          cargo install sccache --locked || true
+          if command -v sccache &> /dev/null && sccache --start-server 2>/dev/null; then
+            echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
+            echo "RUSTC_WRAPPER=$CARGO_HOME/bin/sccache" >> $GITHUB_ENV
+            echo "::notice::sccache enabled"
+          else
+            echo "::warning::sccache unavailable, building without cache"
+          fi
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            /usr/local/cargo/registry/index/
+            /usr/local/cargo/registry/cache/
+            /usr/local/cargo/git/db/
+          key: lint-debian-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: lint-debian-registry-
+
       - name: Clippy (Debian)
         run: |
           export PATH="$CARGO_HOME/bin:$PATH"
           cargo clippy --all-targets --no-default-features --features debian -- -D warnings -W clippy::pedantic
 
-  # ═══════════════════════════════════════════════════════════════════════════
-  # Test matrix for all distros
-  # ═══════════════════════════════════════════════════════════════════════════
+      - name: Show sccache stats
+        run: |
+          export PATH="$CARGO_HOME/bin:$PATH"
+          sccache --show-stats
+
   test-matrix:
     name: Tests (${{ matrix.distro }})
     runs-on: ubuntu-latest
@@ -85,7 +150,7 @@ jobs:
         if: matrix.distro == 'arch'
         run: |
           pacman -Syu --noconfirm
-          pacman -S --noconfirm base-devel git rust cargo clang cmake
+          pacman -S --noconfirm base-devel git rust cargo clang cmake sccache
 
       - name: Install dependencies (Debian/Ubuntu)
         if: matrix.distro != 'arch'
@@ -95,21 +160,73 @@ jobs:
           rm -rf /var/lib/apt/lists/*
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 
+      - name: Fix git permissions
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.7
+        continue-on-error: true
+
+      - name: Configure sccache (Arch)
+        if: matrix.distro == 'arch'
+        run: |
+          if command -v sccache &> /dev/null && sccache --start-server 2>/dev/null; then
+            echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
+            echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
+            echo "::notice::sccache enabled"
+          else
+            echo "::warning::sccache unavailable, building without cache"
+          fi
+
+      - name: Configure sccache (Debian/Ubuntu)
+        if: matrix.distro != 'arch'
+        run: |
+          export PATH="$HOME/.cargo/bin:$PATH"
+          cargo install sccache --locked || true
+          if command -v sccache &> /dev/null && sccache --start-server 2>/dev/null; then
+            echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
+            echo "RUSTC_WRAPPER=$HOME/.cargo/bin/sccache" >> $GITHUB_ENV
+            echo "::notice::sccache enabled"
+          else
+            echo "::warning::sccache unavailable, building without cache"
+          fi
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: test-${{ matrix.distro }}-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: test-${{ matrix.distro }}-registry-
+
+      - name: Cache target directory
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: test-${{ matrix.distro }}-target-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('src/**/*.rs') }}
+          restore-keys: |
+            test-${{ matrix.distro }}-target-${{ hashFiles('**/Cargo.lock') }}-
+            test-${{ matrix.distro }}-target-
+
       - name: Run unit tests
         run: |
           if [ "${{ matrix.distro }}" != "arch" ]; then export PATH="$HOME/.cargo/bin:$PATH"; fi
           FEATURES="${{ matrix.distro == 'arch' && 'arch' || 'debian' }}"
-          cargo test --lib --no-default-features --features "$FEATURES"
+          cargo test --lib --no-default-features --features "$FEATURES" --locked
 
       - name: Run doc tests
         run: |
           if [ "${{ matrix.distro }}" != "arch" ]; then export PATH="$HOME/.cargo/bin:$PATH"; fi
           FEATURES="${{ matrix.distro == 'arch' && 'arch' || 'debian' }}"
-          cargo test --doc --no-default-features --features "$FEATURES"
+          cargo test --doc --no-default-features --features "$FEATURES" --locked
 
-  # ═══════════════════════════════════════════════════════════════════════════
-  # Integration tests (Arch only - most complete)
-  # ═══════════════════════════════════════════════════════════════════════════
+      - name: Show sccache stats
+        run: |
+          if [ "${{ matrix.distro }}" != "arch" ]; then export PATH="$HOME/.cargo/bin:$PATH"; fi
+          sccache --show-stats
+
   integration-tests:
     name: Integration Tests
     runs-on: ubuntu-latest
@@ -117,18 +234,56 @@ jobs:
       image: archlinux:latest
     steps:
       - uses: actions/checkout@v4
+
       - name: Install dependencies
         run: |
           pacman -Syu --noconfirm
-          pacman -S --noconfirm base-devel git rust cargo clang cmake
+          pacman -S --noconfirm base-devel git rust cargo clang cmake sccache
+
+      - name: Fix git permissions
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.7
+        continue-on-error: true
+
+      - name: Configure sccache
+        run: |
+          if command -v sccache &> /dev/null && sccache --start-server 2>/dev/null; then
+            echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
+            echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
+            echo "::notice::sccache enabled"
+          else
+            echo "::warning::sccache unavailable, building without cache"
+          fi
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: integration-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: integration-registry-
+
+      - name: Cache target directory
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: integration-target-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('src/**/*.rs') }}
+          restore-keys: |
+            integration-target-${{ hashFiles('**/Cargo.lock') }}-
+            integration-target-
+
       - name: Run integration tests
         run: |
-          cargo test --test integration_suite --features arch
-          cargo test --test exhaustive_cli_matrix --features arch
+          cargo test --test integration_suite --features arch --locked
+          cargo test --test exhaustive_cli_matrix --features arch --locked
 
-  # ═══════════════════════════════════════════════════════════════════════════
-  # Final status check
-  # ═══════════════════════════════════════════════════════════════════════════
+      - name: Show sccache stats
+        run: sccache --show-stats
+
   test-status:
     name: "Test Status"
     needs: [lint-arch, lint-debian, test-matrix, integration-tests]

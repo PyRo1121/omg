@@ -6,8 +6,12 @@ on:
   pull_request:
     branches: [main]
   schedule:
-    - cron: '0 0 * * *' # Run daily at midnight
+    - cron: '0 0 * * *'
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -19,9 +23,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "audit"
+          cache-on-failure: true
+
       - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
+        uses: taiki-e/install-action@cargo-audit
 
       - name: Run Audit
         run: cargo audit
