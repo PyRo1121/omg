@@ -2,7 +2,7 @@ use omg_lib::cli::packages;
 
 #[tokio::test]
 async fn test_search_compilation() {
-    let _ = packages::search("query", false, false).await;
+    let _ = packages::search("query", false, false, false).await;
 }
 
 #[tokio::test]
