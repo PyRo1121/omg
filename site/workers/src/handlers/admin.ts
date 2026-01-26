@@ -46,9 +46,7 @@ async function validateAdmin(
   if (!auth) return { error: errorResponse('Invalid or expired session', 401) };
 
   // Check admin status from database
-  const adminCheck = await env.DB.prepare(
-    `SELECT admin FROM customers WHERE id = ?`
-  )
+  const adminCheck = await env.DB.prepare(`SELECT admin FROM customers WHERE id = ?`)
     .bind(auth.user.id)
     .first();
 
@@ -65,16 +63,46 @@ async function validateAdmin(
   return { context: { user: auth.user, requestId, timestamp } };
 }
 
-async function logAdminAudit(db: D1Database, entry: { action: string; userId: string; request?: Request; resourceType?: string; resourceId?: string; metadata?: Record<string, unknown>; success?: boolean }): Promise<void> {
+async function logAdminAudit(
+  db: D1Database,
+  entry: {
+    action: string;
+    userId: string;
+    request?: Request;
+    resourceType?: string;
+    resourceId?: string;
+    metadata?: Record<string, unknown>;
+    success?: boolean;
+  }
+): Promise<void> {
   try {
     const id = generateId();
     const ip = entry.request?.headers.get('CF-Connecting-IP') || null;
     const userAgent = entry.request?.headers.get('User-Agent') || null;
     const country = entry.request?.headers.get('CF-IPCountry') || null;
-    await db.prepare(`INSERT INTO audit_log (id, customer_id, action, resource_type, resource_id, ip_address, user_agent, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`)
-      .bind(id, entry.userId, entry.action, entry.resourceType || null, entry.resourceId || null, ip, userAgent, JSON.stringify({ ...entry.metadata, success: entry.success ?? true, country, timestamp: new Date().toISOString() }))
+    await db
+      .prepare(
+        `INSERT INTO audit_log (id, customer_id, action, resource_type, resource_id, ip_address, user_agent, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`
+      )
+      .bind(
+        id,
+        entry.userId,
+        entry.action,
+        entry.resourceType || null,
+        entry.resourceId || null,
+        ip,
+        userAgent,
+        JSON.stringify({
+          ...entry.metadata,
+          success: entry.success ?? true,
+          country,
+          timestamp: new Date().toISOString(),
+        })
+      )
       .run();
-  } catch (e) { console.error('Admin audit log error:', e); }
+  } catch (e) {
+    console.error('Admin audit log error:', e);
+  }
 }
 
 export async function handleAdminDashboard(request: Request, env: Env): Promise<Response> {
@@ -82,25 +110,96 @@ export async function handleAdminDashboard(request: Request, env: Env): Promise<
   if (result.error) return result.error;
   const { context } = result;
 
-  const counts = await env.DB.prepare(`SELECT (SELECT COUNT(*) FROM customers) as total_users, (SELECT COUNT(*) FROM licenses WHERE status = 'active') as active_licenses, (SELECT COUNT(*) FROM machines WHERE is_active = 1) as active_machines, (SELECT COUNT(*) FROM install_stats) as total_installs`).first();
-  const tierBreakdown = await env.DB.prepare(`SELECT tier, COUNT(*) as count FROM licenses GROUP BY tier`).all();
-  const usageTotals = await env.DB.prepare(`SELECT SUM(commands_run) as total_commands, SUM(packages_installed) as total_packages_installed, SUM(packages_searched) as total_searches, SUM(time_saved_ms) as total_time_saved_ms FROM usage_daily WHERE date >= date('now', '-30 days')`).first();
-  const dailyActiveUsers = await env.DB.prepare(`SELECT date, COUNT(DISTINCT license_id) as active_users, SUM(commands_run) as commands FROM usage_daily WHERE date >= date('now', '-14 days') GROUP BY date ORDER BY date ASC`).all();
-  const recentSignups = await env.DB.prepare(`SELECT DATE(created_at) as date, COUNT(*) as count FROM customers WHERE created_at >= datetime('now', '-7 days') GROUP BY DATE(created_at) ORDER BY date DESC`).all();
-  const installsByPlatform = await env.DB.prepare(`SELECT platform, COUNT(*) as count FROM install_stats GROUP BY platform ORDER BY count DESC`).all();
-  const installsByVersion = await env.DB.prepare(`SELECT version, COUNT(*) as count FROM install_stats GROUP BY version ORDER BY count DESC LIMIT 10`).all();
-  const subscriptionStats = await env.DB.prepare(`SELECT status, COUNT(*) as count FROM subscriptions GROUP BY status`).all();
-  const mrrData = await env.DB.prepare(`SELECT l.tier, COUNT(*) as count FROM licenses l JOIN subscriptions s ON l.customer_id = s.customer_id WHERE s.status = 'active' AND l.tier != 'free' GROUP BY l.tier`).all();
+  const batchResults = await env.DB.batch([
+    env.DB.prepare(
+      `SELECT (SELECT COUNT(*) FROM customers) as total_users, (SELECT COUNT(*) FROM licenses WHERE status = 'active') as active_licenses, (SELECT COUNT(*) FROM machines WHERE is_active = 1) as active_machines, (SELECT COUNT(*) FROM install_stats) as total_installs`
+    ),
+    env.DB.prepare(`SELECT tier, COUNT(*) as count FROM licenses GROUP BY tier`),
+    env.DB.prepare(
+      `SELECT SUM(commands_run) as total_commands, SUM(packages_installed) as total_packages_installed, SUM(packages_searched) as total_searches, SUM(time_saved_ms) as total_time_saved_ms FROM usage_daily WHERE date >= date('now', '-30 days')`
+    ),
+    env.DB.prepare(
+      `SELECT date, COUNT(DISTINCT license_id) as active_users, SUM(commands_run) as commands FROM usage_daily WHERE date >= date('now', '-14 days') GROUP BY date ORDER BY date ASC`
+    ),
+    env.DB.prepare(
+      `SELECT DATE(created_at) as date, COUNT(*) as count FROM customers WHERE created_at >= datetime('now', '-7 days') GROUP BY DATE(created_at) ORDER BY date DESC`
+    ),
+    env.DB.prepare(
+      `SELECT platform, COUNT(*) as count FROM install_stats GROUP BY platform ORDER BY count DESC`
+    ),
+    env.DB.prepare(
+      `SELECT version, COUNT(*) as count FROM install_stats GROUP BY version ORDER BY count DESC LIMIT 10`
+    ),
+    env.DB.prepare(`SELECT status, COUNT(*) as count FROM subscriptions GROUP BY status`),
+    env.DB.prepare(
+      `SELECT l.tier, COUNT(*) as count FROM licenses l JOIN subscriptions s ON l.customer_id = s.customer_id WHERE s.status = 'active' AND l.tier != 'free' GROUP BY l.tier`
+    ),
+    env.DB.prepare(`SELECT SUM(time_saved_ms) as total_time_saved FROM usage_daily`),
+    env.DB.prepare(
+      `SELECT omg_version, COUNT(*) as count FROM machines WHERE is_active = 1 GROUP BY omg_version`
+    ),
+    env.DB.prepare(
+      `SELECT json_extract(metadata, '$.country') as dimension, COUNT(*) as count FROM audit_log WHERE action = 'machine.registered' AND created_at >= datetime('now', '-30 days') GROUP BY dimension ORDER BY count DESC LIMIT 10`
+    ),
+    env.DB.prepare(
+      `SELECT SUM(CASE WHEN action LIKE '%.success' THEN 1 ELSE 0 END) as success, SUM(CASE WHEN action LIKE '%.failed' THEN 1 ELSE 0 END) as failure FROM audit_log WHERE created_at >= datetime('now', '-24 hours')`
+    ),
+  ]);
+
+  const [
+    countsResult,
+    tierBreakdownResult,
+    usageTotalsResult,
+    dailyActiveUsersResult,
+    recentSignupsResult,
+    installsByPlatformResult,
+    installsByVersionResult,
+    subscriptionStatsResult,
+    mrrDataResult,
+    globalUsageResult,
+    fleetVersionsResult,
+    geoDistResult,
+    commandStatsResult,
+  ] = batchResults;
+
+  type CountsRow = {
+    total_users: number;
+    active_licenses: number;
+    active_machines: number;
+    total_installs: number;
+  };
+  type UsageTotalsRow = {
+    total_commands: number;
+    total_packages_installed: number;
+    total_searches: number;
+    total_time_saved_ms: number;
+  };
+  type GlobalUsageRow = { total_time_saved: number };
+  type CommandStatsRow = { success: number; failure: number };
+  type TierRow = { tier: string; count: number };
+
+  const counts = countsResult.results?.[0] as CountsRow | undefined;
+  const tierBreakdown = tierBreakdownResult.results || [];
+  const usageTotals = usageTotalsResult.results?.[0] as UsageTotalsRow | undefined;
+  const dailyActiveUsers = dailyActiveUsersResult.results || [];
+  const recentSignups = recentSignupsResult.results || [];
+  const installsByPlatform = installsByPlatformResult.results || [];
+  const installsByVersion = installsByVersionResult.results || [];
+  const subscriptionStats = subscriptionStatsResult.results || [];
+  const mrrData = (mrrDataResult.results || []) as TierRow[];
+  const globalUsage = globalUsageResult.results?.[0] as GlobalUsageRow | undefined;
+  const fleetVersions = fleetVersionsResult.results || [];
+  const geoDist = geoDistResult.results || [];
+  const commandStats = commandStatsResult.results?.[0] as CommandStatsRow | undefined;
+
   const tierPrices: Record<string, number> = { pro: 9, team: 200, enterprise: 500 };
   let mrr = 0;
-  for (const row of mrrData.results || []) {
-    mrr += (tierPrices[row.tier as string] || 0) * (row.count as number);
+  for (const row of mrrData) {
+    mrr += (tierPrices[row.tier] || 0) * row.count;
   }
-  const globalUsage = await env.DB.prepare(`SELECT SUM(time_saved_ms) as total_time_saved FROM usage_daily`).first();
-  const globalValueUSD = Math.round(((Number(globalUsage?.total_time_saved) || 0) / (1000 * 60 * 60)) * 100);
-  const fleetVersions = await env.DB.prepare(`SELECT omg_version, COUNT(*) as count FROM machines WHERE is_active = 1 GROUP BY omg_version`).all();
-  const geoDist = await env.DB.prepare(`SELECT json_extract(metadata, '$.country') as dimension, COUNT(*) as count FROM audit_log WHERE action = 'machine.registered' AND created_at >= datetime('now', '-30 days') GROUP BY dimension ORDER BY count DESC LIMIT 10`).all();
-  const commandStats = await env.DB.prepare(`SELECT SUM(CASE WHEN action LIKE '%.success' THEN 1 ELSE 0 END) as success, SUM(CASE WHEN action LIKE '%.failed' THEN 1 ELSE 0 END) as failure FROM audit_log WHERE created_at >= datetime('now', '-24 hours')`).first();
+  const globalValueUSD = Math.round(
+    ((globalUsage?.total_time_saved || 0) / (1000 * 60 * 60)) * 100
+  );
 
   return secureJsonResponse({
     request_id: context.requestId,
@@ -111,22 +210,22 @@ export async function handleAdminDashboard(request: Request, env: Env): Promise<
       total_installs: counts?.total_installs || 0,
       mrr,
       global_value_usd: globalValueUSD,
-      command_health: { success: commandStats?.success || 0, failure: commandStats?.failure || 0 }
+      command_health: { success: commandStats?.success || 0, failure: commandStats?.failure || 0 },
     },
-    fleet: { versions: fleetVersions.results || [] },
-    tiers: tierBreakdown.results || [],
+    fleet: { versions: fleetVersions },
+    tiers: tierBreakdown,
     usage: {
       total_commands: usageTotals?.total_commands || 0,
       total_packages_installed: usageTotals?.total_packages_installed || 0,
       total_searches: usageTotals?.total_searches || 0,
-      total_time_saved_ms: usageTotals?.total_time_saved_ms || 0
+      total_time_saved_ms: usageTotals?.total_time_saved_ms || 0,
     },
-    daily_active_users: dailyActiveUsers.results || [],
-    recent_signups: recentSignups.results || [],
-    installs_by_platform: installsByPlatform.results || [],
-    installs_by_version: installsByVersion.results || [],
-    subscriptions: subscriptionStats.results || [],
-    geo_distribution: geoDist.results || []
+    daily_active_users: dailyActiveUsers,
+    recent_signups: recentSignups,
+    installs_by_platform: installsByPlatform,
+    installs_by_version: installsByVersion,
+    subscriptions: subscriptionStats,
+    geo_distribution: geoDist,
   });
 }
 
@@ -181,8 +280,14 @@ export async function handleAdminCRMUsers(request: Request, env: Env): Promise<R
   query += ` ORDER BY engagement_score DESC, created_at DESC LIMIT ? OFFSET ?`;
   params.push(limit, offset);
 
-  const users = await env.DB.prepare(query).bind(...params).all();
-  return secureJsonResponse({ request_id: context.requestId, users: users.results || [], pagination: { page, limit } });
+  const users = await env.DB.prepare(query)
+    .bind(...params)
+    .all();
+  return secureJsonResponse({
+    request_id: context.requestId,
+    users: users.results || [],
+    pagination: { page, limit },
+  });
 }
 
 export async function handleAdminUserDetail(request: Request, env: Env): Promise<Response> {
@@ -197,38 +302,60 @@ export async function handleAdminUserDetail(request: Request, env: Env): Promise
   const user = await env.DB.prepare(`SELECT * FROM customers WHERE id = ?`).bind(userId).first();
   if (!user) return errorResponse('User not found', 404);
 
-  const license = await env.DB.prepare(`SELECT * FROM licenses WHERE customer_id = ?`).bind(userId).first();
-  
+  const license = await env.DB.prepare(`SELECT * FROM licenses WHERE customer_id = ?`)
+    .bind(userId)
+    .first();
+
   if (!license) {
     return errorResponse('License not found for user', 404);
   }
 
-  const machines = await env.DB.prepare(`SELECT * FROM machines WHERE license_id = ?`).bind(license.id).all();
-  const recentUsage = await env.DB.prepare(`SELECT * FROM usage_daily WHERE license_id = ? ORDER BY date DESC LIMIT 30`).bind(license.id).all();
+  const machines = await env.DB.prepare(`SELECT * FROM machines WHERE license_id = ?`)
+    .bind(license.id)
+    .all();
+  const recentUsage = await env.DB.prepare(
+    `SELECT * FROM usage_daily WHERE license_id = ? ORDER BY date DESC LIMIT 30`
+  )
+    .bind(license.id)
+    .all();
 
-  return secureJsonResponse({ request_id: context.requestId, user, license, machines: machines.results || [], usage: recentUsage.results || [] });
+  return secureJsonResponse({
+    request_id: context.requestId,
+    user,
+    license,
+    machines: machines.results || [],
+    usage: recentUsage.results || [],
+  });
 }
 
 export async function handleAdminUpdateUser(request: Request, env: Env): Promise<Response> {
   const result = await validateAdmin(request, env);
   if (result.error) return result.error;
 
-  let body: { userId: string, tier?: string, status?: string };
+  let body: { userId: string; tier?: string; status?: string };
   try {
-    body = await request.json() as { userId: string, tier?: string, status?: string };
+    body = (await request.json()) as { userId: string; tier?: string; status?: string };
   } catch (e) {
     return errorResponse('Invalid JSON body', 400);
   }
   if (!body.userId) return errorResponse('User ID required');
 
   if (body.tier) {
-    await env.DB.prepare(`UPDATE licenses SET tier = ? WHERE customer_id = ?`).bind(body.tier, body.userId).run();
+    await env.DB.prepare(`UPDATE licenses SET tier = ? WHERE customer_id = ?`)
+      .bind(body.tier, body.userId)
+      .run();
   }
   if (body.status) {
-    await env.DB.prepare(`UPDATE licenses SET status = ? WHERE customer_id = ?`).bind(body.status, body.userId).run();
+    await env.DB.prepare(`UPDATE licenses SET status = ? WHERE customer_id = ?`)
+      .bind(body.status, body.userId)
+      .run();
   }
 
-  await logAdminAudit(env.DB, { action: 'admin.update_user', userId: result.context.user.id, metadata: body });
+  await logAdminAudit(env.DB, {
+    action: 'admin.update_user',
+    userId: result.context.user.id,
+    metadata: body,
+  });
   return secureJsonResponse({ success: true });
 }
 
@@ -236,8 +363,13 @@ export async function handleAdminActivity(request: Request, env: Env): Promise<R
   const result = await validateAdmin(request, env);
   if (result.error) return result.error;
 
-  const activity = await env.DB.prepare(`SELECT * FROM audit_log ORDER BY created_at DESC LIMIT 100`).all();
-  return secureJsonResponse({ request_id: result.context.requestId, activity: activity.results || [] });
+  const activity = await env.DB.prepare(
+    `SELECT * FROM audit_log ORDER BY created_at DESC LIMIT 100`
+  ).all();
+  return secureJsonResponse({
+    request_id: result.context.requestId,
+    activity: activity.results || [],
+  });
 }
 
 export async function handleAdminHealth(request: Request, env: Env): Promise<Response> {
@@ -247,7 +379,13 @@ export async function handleAdminHealth(request: Request, env: Env): Promise<Res
 
 function escapeCSV(value: unknown): string {
   const str = String(value ?? '');
-  if (/[",\n\r]/.test(str) || str.startsWith('=') || str.startsWith('+') || str.startsWith('-') || str.startsWith('@')) {
+  if (
+    /[",\n\r]/.test(str) ||
+    str.startsWith('=') ||
+    str.startsWith('+') ||
+    str.startsWith('-') ||
+    str.startsWith('@')
+  ) {
     return `"${str.replace(/"/g, '""')}"`;
   }
   return str;
@@ -257,22 +395,42 @@ export async function handleAdminExportUsage(request: Request, env: Env): Promis
   const result = await validateAdmin(request, env);
   if (result.error) return result.error;
 
-  const usage = await env.DB.prepare(`SELECT * FROM usage_daily ORDER BY date DESC LIMIT 1000`).all();
+  const usage = await env.DB.prepare(
+    `SELECT * FROM usage_daily ORDER BY date DESC LIMIT 1000`
+  ).all();
   const headers = ['date', 'license_id', 'commands_run', 'time_saved_ms'];
-  const csv = [headers.join(','), ...(usage.results || []).map((u: any) => headers.map(h => escapeCSV(u[h])).join(','))].join('\n');
+  const csv = [
+    headers.join(','),
+    ...(usage.results || []).map((u: any) => headers.map(h => escapeCSV(u[h])).join(',')),
+  ].join('\n');
 
-  return new Response(csv, { headers: { 'Content-Type': 'text/csv', 'Content-Disposition': 'attachment; filename="usage.csv"' } });
+  return new Response(csv, {
+    headers: {
+      'Content-Type': 'text/csv',
+      'Content-Disposition': 'attachment; filename="usage.csv"',
+    },
+  });
 }
 
 export async function handleAdminExportAudit(request: Request, env: Env): Promise<Response> {
   const result = await validateAdmin(request, env);
   if (result.error) return result.error;
 
-  const logs = await env.DB.prepare(`SELECT * FROM audit_log ORDER BY created_at DESC LIMIT 1000`).all();
+  const logs = await env.DB.prepare(
+    `SELECT * FROM audit_log ORDER BY created_at DESC LIMIT 1000`
+  ).all();
   const headers = ['created_at', 'action', 'customer_id', 'ip_address'];
-  const csv = [headers.join(','), ...(logs.results || []).map((l: any) => headers.map(h => escapeCSV(l[h])).join(','))].join('\n');
+  const csv = [
+    headers.join(','),
+    ...(logs.results || []).map((l: any) => headers.map(h => escapeCSV(l[h])).join(',')),
+  ].join('\n');
 
-  return new Response(csv, { headers: { 'Content-Type': 'text/csv', 'Content-Disposition': 'attachment; filename="audit.csv"' } });
+  return new Response(csv, {
+    headers: {
+      'Content-Type': 'text/csv',
+      'Content-Disposition': 'attachment; filename="audit.csv"',
+    },
+  });
 }
 
 export async function handleAdminAnalytics(request: Request, env: Env): Promise<Response> {
@@ -280,31 +438,81 @@ export async function handleAdminAnalytics(request: Request, env: Env): Promise<
   if (result.error) return result.error;
   const { context } = result;
 
-  const topCommands = await env.DB.prepare(`SELECT json_extract(properties, '$.command') as command, COUNT(*) as count FROM analytics_events WHERE event_type = 'command' GROUP BY 1 ORDER BY 2 DESC LIMIT 10`).all();
-  const topErrors = await env.DB.prepare(`SELECT json_extract(properties, '$.error_type') as error_type, COUNT(*) as count FROM analytics_events WHERE event_type = 'error' GROUP BY 1 ORDER BY 2 DESC LIMIT 10`).all();
-  const growth = await env.DB.prepare(`SELECT (SELECT COUNT(*) FROM customers WHERE created_at >= datetime('now', '-7 days')) as new_users_7d, (SELECT COUNT(*) FROM subscriptions WHERE status = 'active' AND created_at >= datetime('now', '-7 days')) as new_paid_7d`).first();
-  const timeSaved = await env.DB.prepare(`SELECT SUM(time_saved_ms) / 3600000.0 as total_hours FROM usage_daily`).first();
-  const funnel = await env.DB.prepare(`SELECT (SELECT COUNT(*) FROM install_stats WHERE created_at >= datetime('now', '-30 days')) as installs, (SELECT COUNT(DISTINCT u.license_id) FROM usage_daily u WHERE u.date >= datetime('now', '-30 days') AND u.commands_run > 0) as activated, (SELECT COUNT(DISTINCT u.license_id) FROM usage_daily u WHERE u.date >= datetime('now', '-30 days') GROUP BY u.license_id HAVING SUM(u.commands_run) > 1000) as power_users`).first();
-  const churnRisk = await env.DB.prepare(`SELECT COUNT(*) as at_risk_users FROM (SELECT l.customer_id, (SELECT SUM(commands_run) FROM usage_daily WHERE license_id = l.id AND date >= date('now', '-3 days')) as cmds_3d, (SELECT SUM(commands_run) FROM usage_daily WHERE license_id = l.id AND date >= date('now', '-10 days') AND date < date('now', '-3 days')) as cmds_prev_7d FROM licenses l WHERE l.status = 'active' HAVING (COALESCE(cmds_prev_7d, 0) > 10 AND (COALESCE(cmds_3d, 0) / 3.0) / (COALESCE(cmds_prev_7d, 0) / 7.0 + 0.001) < 0.2) OR (SELECT MAX(date) FROM usage_daily WHERE license_id = l.id) < date('now', '-7 days'))`).first();
-  const retentionRate = await env.DB.prepare(`SELECT CASE WHEN (SELECT COUNT(*) FROM customers WHERE created_at >= datetime('now', '-90 days')) = 0 THEN 0 ELSE CAST((SELECT COUNT(DISTINCT u.license_id) FROM usage_daily u WHERE u.date >= datetime('now', '-7 days')) * 100.0 / (SELECT COUNT(*) FROM customers WHERE created_at >= datetime('now', '-90 days')) AS INTEGER) END as rate`).first();
-  const performance = await env.DB.prepare(`SELECT AVG(duration_ms) as avg_ms, MIN(duration_ms) as min_ms, MAX(duration_ms) as max_ms, COUNT(*) as count FROM analytics_events WHERE event_type = 'performance' AND created_at >= datetime('now', '-7 days')`).first();
-  const sessions = await env.DB.prepare(`SELECT COUNT(DISTINCT session_id) as total_sessions, COUNT(CASE WHEN event_type = 'session_start' THEN 1 END) as sessions_started, COUNT(CASE WHEN event_type = 'heartbeat' THEN 1 END) as heartbeats_sent, AVG(CASE WHEN event_type = 'session_end' THEN json_extract(properties, '$.duration_seconds') END) as avg_duration_seconds, MAX(CASE WHEN event_type = 'session_end' THEN json_extract(properties, '$.duration_seconds') END) as max_duration_seconds FROM analytics_events WHERE event_type IN ('session_start', 'heartbeat', 'session_end') AND created_at >= datetime('now', '-30 days')`).first();
-  const userJourney = await env.DB.prepare(`WITH latest_stages AS (SELECT customer_id, MAX(CASE json_extract(properties, '$.to_stage') WHEN 'installed' THEN 1 WHEN 'activated' THEN 2 WHEN 'first_command' THEN 3 WHEN 'exploring' THEN 4 WHEN 'engaged' THEN 5 WHEN 'power_user' THEN 6 WHEN 'at_risk' THEN 7 WHEN 'churned' THEN 8 ELSE 0 END) as stage_order FROM analytics_events WHERE event_type = 'feature' AND event_name = 'stage_transition' AND created_at >= datetime('now', '-30 days') GROUP BY customer_id) SELECT SUM(CASE WHEN stage_order = 1 THEN 1 END) as installed, SUM(CASE WHEN stage_order = 2 THEN 1 END) as activated, SUM(CASE WHEN stage_order = 3 THEN 1 END) as first_command, SUM(CASE WHEN stage_order = 4 THEN 1 END) as exploring, SUM(CASE WHEN stage_order = 5 THEN 1 END) as engaged, SUM(CASE WHEN stage_order = 6 THEN 1 END) as power_user FROM latest_stages`).first();
-  const runtimeUsage = await env.DB.prepare(`SELECT json_extract(properties, '$.runtime') as runtime, COUNT(*) as count, COUNT(DISTINCT machine_id) as machines FROM analytics_events WHERE (event_name = 'runtime_switch' OR event_name = 'runtime_use') AND created_at >= datetime('now', '-30 days') GROUP BY 1 ORDER BY 2 DESC`).all();
+  const topCommands = await env.DB.prepare(
+    `SELECT json_extract(properties, '$.command') as command, COUNT(*) as count FROM analytics_events WHERE event_type = 'command' GROUP BY 1 ORDER BY 2 DESC LIMIT 10`
+  ).all();
+  const topErrors = await env.DB.prepare(
+    `SELECT json_extract(properties, '$.error_type') as error_type, COUNT(*) as count FROM analytics_events WHERE event_type = 'error' GROUP BY 1 ORDER BY 2 DESC LIMIT 10`
+  ).all();
+  const growth = await env.DB.prepare(
+    `SELECT (SELECT COUNT(*) FROM customers WHERE created_at >= datetime('now', '-7 days')) as new_users_7d, (SELECT COUNT(*) FROM subscriptions WHERE status = 'active' AND created_at >= datetime('now', '-7 days')) as new_paid_7d`
+  ).first();
+  const timeSaved = await env.DB.prepare(
+    `SELECT SUM(time_saved_ms) / 3600000.0 as total_hours FROM usage_daily`
+  ).first();
+  const funnel = await env.DB.prepare(
+    `SELECT (SELECT COUNT(*) FROM install_stats WHERE created_at >= datetime('now', '-30 days')) as installs, (SELECT COUNT(DISTINCT u.license_id) FROM usage_daily u WHERE u.date >= datetime('now', '-30 days') AND u.commands_run > 0) as activated, (SELECT COUNT(DISTINCT u.license_id) FROM usage_daily u WHERE u.date >= datetime('now', '-30 days') GROUP BY u.license_id HAVING SUM(u.commands_run) > 1000) as power_users`
+  ).first();
+  const churnRisk = await env.DB.prepare(
+    `SELECT COUNT(*) as at_risk_users FROM (SELECT l.customer_id, (SELECT SUM(commands_run) FROM usage_daily WHERE license_id = l.id AND date >= date('now', '-3 days')) as cmds_3d, (SELECT SUM(commands_run) FROM usage_daily WHERE license_id = l.id AND date >= date('now', '-10 days') AND date < date('now', '-3 days')) as cmds_prev_7d FROM licenses l WHERE l.status = 'active' HAVING (COALESCE(cmds_prev_7d, 0) > 10 AND (COALESCE(cmds_3d, 0) / 3.0) / (COALESCE(cmds_prev_7d, 0) / 7.0 + 0.001) < 0.2) OR (SELECT MAX(date) FROM usage_daily WHERE license_id = l.id) < date('now', '-7 days'))`
+  ).first();
+  const retentionRate = await env.DB.prepare(
+    `SELECT CASE WHEN (SELECT COUNT(*) FROM customers WHERE created_at >= datetime('now', '-90 days')) = 0 THEN 0 ELSE CAST((SELECT COUNT(DISTINCT u.license_id) FROM usage_daily u WHERE u.date >= datetime('now', '-7 days')) * 100.0 / (SELECT COUNT(*) FROM customers WHERE created_at >= datetime('now', '-90 days')) AS INTEGER) END as rate`
+  ).first();
+  const performance = await env.DB.prepare(
+    `SELECT AVG(duration_ms) as avg_ms, MIN(duration_ms) as min_ms, MAX(duration_ms) as max_ms, COUNT(*) as count FROM analytics_events WHERE event_type = 'performance' AND created_at >= datetime('now', '-7 days')`
+  ).first();
+  const sessions = await env.DB.prepare(
+    `SELECT COUNT(DISTINCT session_id) as total_sessions, COUNT(CASE WHEN event_type = 'session_start' THEN 1 END) as sessions_started, COUNT(CASE WHEN event_type = 'heartbeat' THEN 1 END) as heartbeats_sent, AVG(CASE WHEN event_type = 'session_end' THEN json_extract(properties, '$.duration_seconds') END) as avg_duration_seconds, MAX(CASE WHEN event_type = 'session_end' THEN json_extract(properties, '$.duration_seconds') END) as max_duration_seconds FROM analytics_events WHERE event_type IN ('session_start', 'heartbeat', 'session_end') AND created_at >= datetime('now', '-30 days')`
+  ).first();
+  const userJourney = await env.DB.prepare(
+    `WITH latest_stages AS (SELECT customer_id, MAX(CASE json_extract(properties, '$.to_stage') WHEN 'installed' THEN 1 WHEN 'activated' THEN 2 WHEN 'first_command' THEN 3 WHEN 'exploring' THEN 4 WHEN 'engaged' THEN 5 WHEN 'power_user' THEN 6 WHEN 'at_risk' THEN 7 WHEN 'churned' THEN 8 ELSE 0 END) as stage_order FROM analytics_events WHERE event_type = 'feature' AND event_name = 'stage_transition' AND created_at >= datetime('now', '-30 days') GROUP BY customer_id) SELECT SUM(CASE WHEN stage_order = 1 THEN 1 END) as installed, SUM(CASE WHEN stage_order = 2 THEN 1 END) as activated, SUM(CASE WHEN stage_order = 3 THEN 1 END) as first_command, SUM(CASE WHEN stage_order = 4 THEN 1 END) as exploring, SUM(CASE WHEN stage_order = 5 THEN 1 END) as engaged, SUM(CASE WHEN stage_order = 6 THEN 1 END) as power_user FROM latest_stages`
+  ).first();
+  const runtimeUsage = await env.DB.prepare(
+    `SELECT json_extract(properties, '$.runtime') as runtime, COUNT(*) as count, COUNT(DISTINCT machine_id) as machines FROM analytics_events WHERE (event_name = 'runtime_switch' OR event_name = 'runtime_use') AND created_at >= datetime('now', '-30 days') GROUP BY 1 ORDER BY 2 DESC`
+  ).all();
 
   return secureJsonResponse({
     request_id: context.requestId,
     commands_by_type: topCommands.results || [],
     errors_by_type: topErrors.results || [],
-    growth: { new_users_7d: growth?.new_users_7d || 0, new_paid_7d: growth?.new_paid_7d || 0, growth_rate: 15 },
+    growth: {
+      new_users_7d: growth?.new_users_7d || 0,
+      new_paid_7d: growth?.new_paid_7d || 0,
+      growth_rate: 15,
+    },
     time_saved: { total_hours: timeSaved?.total_hours || 0 },
-    funnel: { installs: funnel?.installs || 0, activated: funnel?.activated || 0, power_users: funnel?.power_users || 0 },
+    funnel: {
+      installs: funnel?.installs || 0,
+      activated: funnel?.activated || 0,
+      power_users: funnel?.power_users || 0,
+    },
     churn_risk: { at_risk_users: churnRisk?.at_risk_users || 0 },
     retention_rate: retentionRate?.rate || 0,
-    performance: { avg_latency_ms: performance?.avg_ms || 0, min_ms: performance?.min_ms || 0, max_ms: performance?.max_ms || 0, query_count: performance?.count || 0 },
-    sessions: { total_30d: sessions?.total_sessions || 0, sessions_started: sessions?.sessions_started || 0, heartbeats_sent: sessions?.heartbeats_sent || 0, avg_duration_seconds: sessions?.avg_duration_seconds || 0, max_duration_seconds: sessions?.max_duration_seconds || 0 },
-    user_journey: { funnel: { installed: userJourney?.installed || 0, activated: userJourney?.activated || 0, first_command: userJourney?.first_command || 0, exploring: userJourney?.exploring || 0, engaged: userJourney?.engaged || 0, power_user: userJourney?.power_user || 0 } },
-    runtime_usage: runtimeUsage.results || []
+    performance: {
+      avg_latency_ms: performance?.avg_ms || 0,
+      min_ms: performance?.min_ms || 0,
+      max_ms: performance?.max_ms || 0,
+      query_count: performance?.count || 0,
+    },
+    sessions: {
+      total_30d: sessions?.total_sessions || 0,
+      sessions_started: sessions?.sessions_started || 0,
+      heartbeats_sent: sessions?.heartbeats_sent || 0,
+      avg_duration_seconds: sessions?.avg_duration_seconds || 0,
+      max_duration_seconds: sessions?.max_duration_seconds || 0,
+    },
+    user_journey: {
+      funnel: {
+        installed: userJourney?.installed || 0,
+        activated: userJourney?.activated || 0,
+        first_command: userJourney?.first_command || 0,
+        exploring: userJourney?.exploring || 0,
+        engaged: userJourney?.engaged || 0,
+        power_user: userJourney?.power_user || 0,
+      },
+    },
+    runtime_usage: runtimeUsage.results || [],
   });
 }
 
@@ -313,7 +521,8 @@ export async function handleAdminCohorts(request: Request, env: Env): Promise<Re
   if (result.error) return result.error;
   const { context } = result;
 
-  const cohorts = await env.DB.prepare(`
+  const cohorts = await env.DB.prepare(
+    `
     WITH user_cohorts AS (
       SELECT id as customer_id, strftime('%Y-%m', created_at) as cohort_month
       FROM customers
@@ -334,7 +543,8 @@ export async function handleAdminCohorts(request: Request, env: Env): Promise<Re
     WHERE month_index >= 0 AND month_index < 12
     GROUP BY 1, 2
     ORDER BY 1 DESC, 2 ASC
-  `).all();
+  `
+  ).all();
 
   return secureJsonResponse({ request_id: context.requestId, cohorts: cohorts.results || [] });
 }
@@ -343,22 +553,56 @@ export async function handleAdminRevenue(request: Request, env: Env): Promise<Re
   const result = await validateAdmin(request, env);
   if (result.error) return result.error;
   const { context } = result;
-  const monthlyRevenue = await env.DB.prepare(`SELECT strftime('%Y-%m', created_at) as month, SUM(amount_cents) / 100.0 as revenue, COUNT(*) as transactions FROM invoices WHERE status = 'paid' GROUP BY month ORDER BY month DESC LIMIT 12`).all();
-  const revenueByTier = await env.DB.prepare(`SELECT l.tier, SUM(i.amount_cents) / 100.0 as total_revenue, COUNT(DISTINCT l.customer_id) as customers FROM invoices i JOIN licenses l ON i.customer_id = l.customer_id WHERE i.status = 'paid' GROUP BY l.tier`).all();
-  const mrrData = await env.DB.prepare(`SELECT l.tier, COUNT(*) as count FROM licenses l JOIN subscriptions s ON l.customer_id = s.customer_id WHERE s.status = 'active' AND l.tier != 'free' GROUP BY l.tier`).all();
+  const monthlyRevenue = await env.DB.prepare(
+    `SELECT strftime('%Y-%m', created_at) as month, SUM(amount_cents) / 100.0 as revenue, COUNT(*) as transactions FROM invoices WHERE status = 'paid' GROUP BY month ORDER BY month DESC LIMIT 12`
+  ).all();
+  const revenueByTier = await env.DB.prepare(
+    `SELECT l.tier, SUM(i.amount_cents) / 100.0 as total_revenue, COUNT(DISTINCT l.customer_id) as customers FROM invoices i JOIN licenses l ON i.customer_id = l.customer_id WHERE i.status = 'paid' GROUP BY l.tier`
+  ).all();
+  const mrrData = await env.DB.prepare(
+    `SELECT l.tier, COUNT(*) as count FROM licenses l JOIN subscriptions s ON l.customer_id = s.customer_id WHERE s.status = 'active' AND l.tier != 'free' GROUP BY l.tier`
+  ).all();
   const tierPrices: Record<string, number> = { pro: 9, team: 200, enterprise: 500 };
   let mrr = 0;
-  for (const row of mrrData.results || []) { mrr += (tierPrices[row.tier as string] || 0) * (row.count as number); }
-  return secureJsonResponse({ request_id: context.requestId, mrr, arr: mrr * 12, monthly_revenue: monthlyRevenue.results || [], revenue_by_tier: revenueByTier.results || [] });
+  for (const row of mrrData.results || []) {
+    mrr += (tierPrices[row.tier as string] || 0) * (row.count as number);
+  }
+  return secureJsonResponse({
+    request_id: context.requestId,
+    mrr,
+    arr: mrr * 12,
+    monthly_revenue: monthlyRevenue.results || [],
+    revenue_by_tier: revenueByTier.results || [],
+  });
 }
 
 export async function handleAdminExportUsers(request: Request, env: Env): Promise<Response> {
   const result = await validateAdmin(request, env);
   if (result.error) return result.error;
-  const users = await env.DB.prepare(`SELECT c.id, c.email, c.company, c.created_at, l.tier, l.status, (SELECT COUNT(*) FROM machines m WHERE m.license_id = l.id AND m.is_active = 1) as active_machines, (SELECT SUM(commands_run) FROM usage_daily u WHERE u.license_id = l.id) as total_commands FROM customers c LEFT JOIN licenses l ON c.id = l.customer_id ORDER BY c.created_at DESC`).all();
-  const headers = ['id', 'email', 'company', 'created_at', 'tier', 'status', 'active_machines', 'total_commands'];
-  const csv = [headers.join(','), ...(users.results || []).map(u => headers.map(h => escapeCSV(u[h])).join(','))].join('\n');
-  return new Response(csv, { headers: { 'Content-Type': 'text/csv', 'Content-Disposition': `attachment; filename="omg-users.csv"`, ...SECURITY_HEADERS } });
+  const users = await env.DB.prepare(
+    `SELECT c.id, c.email, c.company, c.created_at, l.tier, l.status, (SELECT COUNT(*) FROM machines m WHERE m.license_id = l.id AND m.is_active = 1) as active_machines, (SELECT SUM(commands_run) FROM usage_daily u WHERE u.license_id = l.id) as total_commands FROM customers c LEFT JOIN licenses l ON c.id = l.customer_id ORDER BY c.created_at DESC`
+  ).all();
+  const headers = [
+    'id',
+    'email',
+    'company',
+    'created_at',
+    'tier',
+    'status',
+    'active_machines',
+    'total_commands',
+  ];
+  const csv = [
+    headers.join(','),
+    ...(users.results || []).map(u => headers.map(h => escapeCSV(u[h])).join(',')),
+  ].join('\n');
+  return new Response(csv, {
+    headers: {
+      'Content-Type': 'text/csv',
+      'Content-Disposition': `attachment; filename="omg-users.csv"`,
+      ...SECURITY_HEADERS,
+    },
+  });
 }
 
 export async function handleAdminAuditLog(request: Request, env: Env): Promise<Response> {
@@ -368,7 +612,11 @@ export async function handleAdminAuditLog(request: Request, env: Env): Promise<R
   const url = new URL(request.url);
   const page = parseInt(url.searchParams.get('page') || '1');
   const limit = Math.min(parseInt(url.searchParams.get('limit') || '50'), 100);
-  const logs = await env.DB.prepare(`SELECT a.id, a.customer_id, c.email as user_email, a.action, a.ip_address, a.metadata, a.created_at FROM audit_log a LEFT JOIN customers c ON a.customer_id = c.id ORDER BY a.created_at DESC LIMIT ? OFFSET ?`).bind(limit, (page - 1) * limit).all();
+  const logs = await env.DB.prepare(
+    `SELECT a.id, a.customer_id, c.email as user_email, a.action, a.ip_address, a.metadata, a.created_at FROM audit_log a LEFT JOIN customers c ON a.customer_id = c.id ORDER BY a.created_at DESC LIMIT ? OFFSET ?`
+  )
+    .bind(limit, (page - 1) * limit)
+    .all();
   return secureJsonResponse({ request_id: context.requestId, logs: logs.results || [] });
 }
 
@@ -377,30 +625,41 @@ export async function handleAdminAdvancedMetrics(request: Request, env: Env): Pr
   if (result.error) return result.error;
   const { context } = result;
 
-  const dau = await env.DB.prepare(`
+  const dau = await env.DB.prepare(
+    `
     SELECT COUNT(DISTINCT license_id) as count 
     FROM usage_daily 
     WHERE date = date('now') AND commands_run > 0
-  `).first();
+  `
+  ).first();
 
-  const wau = await env.DB.prepare(`
+  const wau = await env.DB.prepare(
+    `
     SELECT COUNT(DISTINCT license_id) as count 
     FROM usage_daily 
     WHERE date >= date('now', '-7 days') AND commands_run > 0
-  `).first();
+  `
+  ).first();
 
-  const mau = await env.DB.prepare(`
+  const mau = await env.DB.prepare(
+    `
     SELECT COUNT(DISTINCT license_id) as count 
     FROM usage_daily 
     WHERE date >= date('now', '-30 days') AND commands_run > 0
-  `).first();
+  `
+  ).first();
 
   const stickiness = {
-    daily_to_monthly: mau?.count ? ((dau?.count || 0) / mau.count * 100).toFixed(1) : 0,
-    weekly_to_monthly: mau?.count ? ((wau?.count || 0) / mau.count * 100).toFixed(1) : 0
+    daily_to_monthly: mau?.count
+      ? ((((dau?.count as number) || 0) / (mau.count as number)) * 100).toFixed(1)
+      : 0,
+    weekly_to_monthly: mau?.count
+      ? ((((wau?.count as number) || 0) / (mau.count as number)) * 100).toFixed(1)
+      : 0,
   };
 
-  const retentionCohorts = await env.DB.prepare(`
+  const retentionCohorts = await env.DB.prepare(
+    `
     WITH cohorts AS (
       SELECT 
         c.id as customer_id,
@@ -421,9 +680,11 @@ export async function handleAdminAdvancedMetrics(request: Request, env: Env): Pr
     GROUP BY cohort_date, week_number
     ORDER BY cohort_date DESC, week_number ASC
     LIMIT 100
-  `).all();
+  `
+  ).all();
 
-  const ltv = await env.DB.prepare(`
+  const ltv = await env.DB.prepare(
+    `
     WITH user_revenue AS (
       SELECT 
         c.id,
@@ -446,9 +707,11 @@ export async function handleAdminAdvancedMetrics(request: Request, env: Env): Pr
       COUNT(*) as customer_count
     FROM user_revenue
     GROUP BY tier
-  `).all();
+  `
+  ).all();
 
-  const featureAdoption = await env.DB.prepare(`
+  const featureAdoption = await env.DB.prepare(
+    `
     SELECT 
       SUM(packages_installed) as total_installs,
       SUM(packages_searched) as total_searches,
@@ -462,9 +725,11 @@ export async function handleAdminAdvancedMetrics(request: Request, env: Env): Pr
       COUNT(DISTINCT license_id) as total_active_users
     FROM usage_daily
     WHERE date >= date('now', '-30 days')
-  `).first();
+  `
+  ).first();
 
-  const commandHeatmap = await env.DB.prepare(`
+  const commandHeatmap = await env.DB.prepare(
+    `
     SELECT 
       strftime('%H', created_at) as hour,
       strftime('%w', created_at) as day_of_week,
@@ -474,9 +739,11 @@ export async function handleAdminAdvancedMetrics(request: Request, env: Env): Pr
       AND created_at >= datetime('now', '-7 days')
     GROUP BY hour, day_of_week
     ORDER BY day_of_week, hour
-  `).all();
+  `
+  ).all();
 
-  const runtimeAdoption = await env.DB.prepare(`
+  const runtimeAdoption = await env.DB.prepare(
+    `
     SELECT 
       json_extract(properties, '$.runtime') as runtime,
       COUNT(DISTINCT machine_id) as unique_users,
@@ -487,9 +754,11 @@ export async function handleAdminAdvancedMetrics(request: Request, env: Env): Pr
       AND created_at >= datetime('now', '-30 days')
     GROUP BY runtime
     ORDER BY unique_users DESC
-  `).all();
+  `
+  ).all();
 
-  const churnRiskSegments = await env.DB.prepare(`
+  const churnRiskSegments = await env.DB.prepare(
+    `
     WITH user_activity AS (
       SELECT 
         l.id as license_id,
@@ -528,9 +797,11 @@ export async function handleAdminAdvancedMetrics(request: Request, env: Env): Pr
         WHEN 'low_engagement' THEN 4
         ELSE 5
       END
-  `).all();
+  `
+  ).all();
 
-  const expansionOpportunities = await env.DB.prepare(`
+  const expansionOpportunities = await env.DB.prepare(
+    `
     WITH usage_intensity AS (
       SELECT 
         l.customer_id,
@@ -576,9 +847,11 @@ export async function handleAdminAdvancedMetrics(request: Request, env: Env): Pr
       CASE priority WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END,
       total_commands_30d DESC
     LIMIT 50
-  `).all();
+  `
+  ).all();
 
-  const timeToValue = await env.DB.prepare(`
+  const timeToValue = await env.DB.prepare(
+    `
     WITH first_command AS (
       SELECT 
         l.customer_id,
@@ -600,9 +873,11 @@ export async function handleAdminAdvancedMetrics(request: Request, env: Env): Pr
       COUNT(CASE WHEN days_to_first_use <= 7 THEN 1 END) * 100.0 / COUNT(*) as pct_activated_week1,
       COUNT(CASE WHEN power_user_date IS NOT NULL THEN 1 END) * 100.0 / COUNT(*) as pct_became_power_users
     FROM first_command
-  `).first();
+  `
+  ).first();
 
-  const revenueMetrics = await env.DB.prepare(`
+  const revenueMetrics = await env.DB.prepare(
+    `
     WITH monthly_revenue AS (
       SELECT 
         strftime('%Y-%m', created_at) as month,
@@ -638,9 +913,11 @@ export async function handleAdminAdvancedMetrics(request: Request, env: Env): Pr
       SUM(new_mrr) as expansion_mrr_12m,
       COUNT(DISTINCT month) as months_tracked
     FROM monthly_revenue
-  `).first();
+  `
+  ).first();
 
-  const productStickiness = await env.DB.prepare(`
+  const productStickiness = await env.DB.prepare(
+    `
     WITH user_streaks AS (
       SELECT 
         license_id,
@@ -655,7 +932,8 @@ export async function handleAdminAdvancedMetrics(request: Request, env: Env): Pr
       COUNT(DISTINCT CASE WHEN days_since_last <= 7 THEN license_id END) * 100.0 / COUNT(DISTINCT license_id) as weekly_active_pct,
       AVG(CASE WHEN days_since_last IS NOT NULL THEN days_since_last END) as avg_days_between_sessions
     FROM user_streaks
-  `).first();
+  `
+  ).first();
 
   return secureJsonResponse({
     request_id: context.requestId,
@@ -663,11 +941,11 @@ export async function handleAdminAdvancedMetrics(request: Request, env: Env): Pr
       dau: dau?.count || 0,
       wau: wau?.count || 0,
       mau: mau?.count || 0,
-      stickiness
+      stickiness,
     },
     retention: {
       cohorts: retentionCohorts.results || [],
-      product_stickiness: productStickiness
+      product_stickiness: productStickiness,
     },
     ltv_by_tier: ltv.results || [],
     feature_adoption: featureAdoption,
@@ -676,7 +954,361 @@ export async function handleAdminAdvancedMetrics(request: Request, env: Env): Pr
     churn_risk_segments: churnRiskSegments.results || [],
     expansion_opportunities: expansionOpportunities.results || [],
     time_to_value: timeToValue,
-    revenue_metrics: revenueMetrics
+    revenue_metrics: revenueMetrics,
+  });
+}
+
+// ============================================
+// Customer Notes CRUD
+// ============================================
+
+export async function handleAdminGetNotes(request: Request, env: Env): Promise<Response> {
+  const result = await validateAdmin(request, env);
+  if (result.error) return result.error;
+  const { context } = result;
+
+  const url = new URL(request.url);
+  const customerId = url.searchParams.get('customerId');
+  if (!customerId) return errorResponse('Customer ID required', 400);
+
+  const notes = await env.DB.prepare(
+    `SELECT n.*, c.email as author_email 
+     FROM customer_notes n 
+     LEFT JOIN customers c ON n.author_id = c.id 
+     WHERE n.customer_id = ? 
+     ORDER BY n.is_pinned DESC, n.created_at DESC`
+  )
+    .bind(customerId)
+    .all();
+
+  return secureJsonResponse({
+    request_id: context.requestId,
+    notes: notes.results || [],
+  });
+}
+
+export async function handleAdminCreateNote(request: Request, env: Env): Promise<Response> {
+  const result = await validateAdmin(request, env);
+  if (result.error) return result.error;
+  const { context } = result;
+
+  let body: { customerId: string; content: string; noteType?: string };
+  try {
+    body = (await request.json()) as { customerId: string; content: string; noteType?: string };
+  } catch {
+    return errorResponse('Invalid JSON body', 400);
+  }
+
+  if (!body.customerId || !body.content) {
+    return errorResponse('Customer ID and content required', 400);
+  }
+
+  const noteId = generateId();
+  const noteType = body.noteType || 'general';
+
+  await env.DB.prepare(
+    `INSERT INTO customer_notes (id, customer_id, content, note_type, author_id, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
+  )
+    .bind(noteId, body.customerId, body.content, noteType, context.user.id)
+    .run();
+
+  await logAdminAudit(env.DB, {
+    action: 'admin.note_created',
+    userId: context.user.id,
+    request,
+    resourceType: 'customer_note',
+    resourceId: noteId,
+    metadata: { customer_id: body.customerId, note_type: noteType },
+  });
+
+  return secureJsonResponse({
+    request_id: context.requestId,
+    success: true,
+    note_id: noteId,
+  });
+}
+
+export async function handleAdminUpdateNote(request: Request, env: Env): Promise<Response> {
+  const result = await validateAdmin(request, env);
+  if (result.error) return result.error;
+  const { context } = result;
+
+  let body: { noteId: string; content?: string; isPinned?: boolean };
+  try {
+    body = (await request.json()) as { noteId: string; content?: string; isPinned?: boolean };
+  } catch {
+    return errorResponse('Invalid JSON body', 400);
+  }
+
+  if (!body.noteId) {
+    return errorResponse('Note ID required', 400);
+  }
+
+  // Build dynamic update query
+  const updates: string[] = ['updated_at = CURRENT_TIMESTAMP'];
+  const params: (string | number)[] = [];
+
+  if (body.content !== undefined) {
+    updates.push('content = ?');
+    params.push(body.content);
+  }
+  if (body.isPinned !== undefined) {
+    updates.push('is_pinned = ?');
+    params.push(body.isPinned ? 1 : 0);
+  }
+
+  params.push(body.noteId);
+
+  await env.DB.prepare(`UPDATE customer_notes SET ${updates.join(', ')} WHERE id = ?`)
+    .bind(...params)
+    .run();
+
+  await logAdminAudit(env.DB, {
+    action: 'admin.note_updated',
+    userId: context.user.id,
+    request,
+    resourceType: 'customer_note',
+    resourceId: body.noteId,
+    metadata: { updated_fields: Object.keys(body).filter(k => k !== 'noteId') },
+  });
+
+  return secureJsonResponse({
+    request_id: context.requestId,
+    success: true,
+  });
+}
+
+export async function handleAdminDeleteNote(request: Request, env: Env): Promise<Response> {
+  const result = await validateAdmin(request, env);
+  if (result.error) return result.error;
+  const { context } = result;
+
+  const url = new URL(request.url);
+  const noteId = url.searchParams.get('noteId');
+  if (!noteId) return errorResponse('Note ID required', 400);
+
+  await env.DB.prepare(`DELETE FROM customer_notes WHERE id = ?`).bind(noteId).run();
+
+  await logAdminAudit(env.DB, {
+    action: 'admin.note_deleted',
+    userId: context.user.id,
+    request,
+    resourceType: 'customer_note',
+    resourceId: noteId,
+  });
+
+  return secureJsonResponse({
+    request_id: context.requestId,
+    success: true,
+  });
+}
+
+// ============================================
+// Customer Tags CRUD
+// ============================================
+
+export async function handleAdminGetTags(request: Request, env: Env): Promise<Response> {
+  const result = await validateAdmin(request, env);
+  if (result.error) return result.error;
+  const { context } = result;
+
+  // Get all available tags with usage counts
+  const tags = await env.DB.prepare(
+    `SELECT t.*, COUNT(cta.customer_id) as usage_count
+     FROM customer_tags t
+     LEFT JOIN customer_tag_assignments cta ON t.id = cta.tag_id
+     GROUP BY t.id
+     ORDER BY t.name ASC`
+  ).all();
+
+  return secureJsonResponse({
+    request_id: context.requestId,
+    tags: tags.results || [],
+  });
+}
+
+export async function handleAdminGetCustomerTags(request: Request, env: Env): Promise<Response> {
+  const result = await validateAdmin(request, env);
+  if (result.error) return result.error;
+  const { context } = result;
+
+  const url = new URL(request.url);
+  const customerId = url.searchParams.get('customerId');
+  if (!customerId) return errorResponse('Customer ID required', 400);
+
+  const tags = await env.DB.prepare(
+    `SELECT t.* FROM customer_tags t
+     JOIN customer_tag_assignments cta ON t.id = cta.tag_id
+     WHERE cta.customer_id = ?
+     ORDER BY t.name ASC`
+  )
+    .bind(customerId)
+    .all();
+
+  return secureJsonResponse({
+    request_id: context.requestId,
+    tags: tags.results || [],
+  });
+}
+
+export async function handleAdminCreateTag(request: Request, env: Env): Promise<Response> {
+  const result = await validateAdmin(request, env);
+  if (result.error) return result.error;
+  const { context } = result;
+
+  let body: { name: string; color?: string; description?: string };
+  try {
+    body = (await request.json()) as { name: string; color?: string; description?: string };
+  } catch {
+    return errorResponse('Invalid JSON body', 400);
+  }
+
+  if (!body.name) {
+    return errorResponse('Tag name required', 400);
+  }
+
+  const tagId = generateId();
+  const color = body.color || '#6366f1'; // Default indigo
+
+  await env.DB.prepare(
+    `INSERT INTO customer_tags (id, name, color, description, created_at)
+     VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)`
+  )
+    .bind(tagId, body.name, color, body.description || null)
+    .run();
+
+  await logAdminAudit(env.DB, {
+    action: 'admin.tag_created',
+    userId: context.user.id,
+    request,
+    resourceType: 'customer_tag',
+    resourceId: tagId,
+    metadata: { name: body.name, color },
+  });
+
+  return secureJsonResponse({
+    request_id: context.requestId,
+    success: true,
+    tag_id: tagId,
+  });
+}
+
+export async function handleAdminAssignTag(request: Request, env: Env): Promise<Response> {
+  const result = await validateAdmin(request, env);
+  if (result.error) return result.error;
+  const { context } = result;
+
+  let body: { customerId: string; tagId: string };
+  try {
+    body = (await request.json()) as { customerId: string; tagId: string };
+  } catch {
+    return errorResponse('Invalid JSON body', 400);
+  }
+
+  if (!body.customerId || !body.tagId) {
+    return errorResponse('Customer ID and Tag ID required', 400);
+  }
+
+  try {
+    await env.DB.prepare(
+      `INSERT INTO customer_tag_assignments (customer_id, tag_id, assigned_by, assigned_at)
+       VALUES (?, ?, ?, CURRENT_TIMESTAMP)`
+    )
+      .bind(body.customerId, body.tagId, context.user.id)
+      .run();
+  } catch (e: any) {
+    if (e.message?.includes('UNIQUE constraint') || e.message?.includes('PRIMARY KEY')) {
+      return secureJsonResponse({
+        request_id: context.requestId,
+        success: true,
+        message: 'Tag already assigned',
+      });
+    }
+    throw e;
+  }
+
+  await logAdminAudit(env.DB, {
+    action: 'admin.tag_assigned',
+    userId: context.user.id,
+    request,
+    resourceType: 'customer_tag_assignment',
+    metadata: { customer_id: body.customerId, tag_id: body.tagId },
+  });
+
+  return secureJsonResponse({
+    request_id: context.requestId,
+    success: true,
+  });
+}
+
+export async function handleAdminRemoveTag(request: Request, env: Env): Promise<Response> {
+  const result = await validateAdmin(request, env);
+  if (result.error) return result.error;
+  const { context } = result;
+
+  const url = new URL(request.url);
+  const customerId = url.searchParams.get('customerId');
+  const tagId = url.searchParams.get('tagId');
+
+  if (!customerId || !tagId) {
+    return errorResponse('Customer ID and Tag ID required', 400);
+  }
+
+  await env.DB.prepare(`DELETE FROM customer_tag_assignments WHERE customer_id = ? AND tag_id = ?`)
+    .bind(customerId, tagId)
+    .run();
+
+  await logAdminAudit(env.DB, {
+    action: 'admin.tag_removed',
+    userId: context.user.id,
+    request,
+    resourceType: 'customer_tag_assignment',
+    metadata: { customer_id: customerId, tag_id: tagId },
+  });
+
+  return secureJsonResponse({
+    request_id: context.requestId,
+    success: true,
+  });
+}
+
+// ============================================
+// Customer Health Score
+// ============================================
+
+export async function handleAdminGetCustomerHealth(request: Request, env: Env): Promise<Response> {
+  const result = await validateAdmin(request, env);
+  if (result.error) return result.error;
+  const { context } = result;
+
+  const url = new URL(request.url);
+  const customerId = url.searchParams.get('customerId');
+  if (!customerId) return errorResponse('Customer ID required', 400);
+
+  const health = await env.DB.prepare(`SELECT * FROM customer_health WHERE customer_id = ?`)
+    .bind(customerId)
+    .first();
+
+  if (!health) {
+    return secureJsonResponse({
+      request_id: context.requestId,
+      health: {
+        customer_id: customerId,
+        overall_score: 50,
+        engagement_score: 50,
+        activation_score: 50,
+        growth_score: 50,
+        risk_score: 0,
+        lifecycle_stage: 'new',
+        updated_at: null,
+      },
+    });
+  }
+
+  return secureJsonResponse({
+    request_id: context.requestId,
+    health,
   });
 }
 

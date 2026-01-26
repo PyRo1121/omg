@@ -713,9 +713,9 @@ export async function getAdminHealth(): Promise<AdminHealth> {
 // Advanced Analytics
 export interface AdminCohorts {
   request_id: string;
-  cohorts: Array<{ 
-    cohort_week: string; 
-    weeks_since_signup: number; 
+  cohorts: Array<{
+    cohort_week: string;
+    weeks_since_signup: number;
     active_users: number;
   }>;
 }
@@ -759,6 +759,123 @@ export async function getAdminAuditLog(
   const params = new URLSearchParams({ page: page.toString(), limit: limit.toString() });
   if (action) params.set('action', action);
   return apiRequest(`/api/admin/audit-log?${params}`);
+}
+
+// Customer Notes API
+export interface CustomerNote {
+  id: string;
+  customer_id: string;
+  content: string;
+  note_type: 'general' | 'call' | 'email' | 'meeting' | 'support' | 'sales' | 'success';
+  is_pinned: number;
+  author_id: string;
+  author_email?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function getAdminNotes(customerId: string): Promise<{ notes: CustomerNote[] }> {
+  return apiRequest(`/api/admin/notes?customerId=${customerId}`);
+}
+
+export async function createAdminNote(
+  customerId: string,
+  content: string,
+  noteType = 'general'
+): Promise<{ success: boolean; note_id: string }> {
+  return apiRequest('/api/admin/notes', {
+    method: 'POST',
+    body: JSON.stringify({ customerId, content, noteType }),
+  });
+}
+
+export async function updateAdminNote(
+  noteId: string,
+  updates: { content?: string; isPinned?: boolean }
+): Promise<{ success: boolean }> {
+  return apiRequest('/api/admin/notes', {
+    method: 'PUT',
+    body: JSON.stringify({ noteId, ...updates }),
+  });
+}
+
+export async function deleteAdminNote(noteId: string): Promise<{ success: boolean }> {
+  return apiRequest(`/api/admin/notes?noteId=${noteId}`, { method: 'DELETE' });
+}
+
+// Customer Tags API
+export interface CustomerTag {
+  id: string;
+  name: string;
+  color: string;
+  description: string | null;
+  usage_count?: number;
+  created_at: string;
+}
+
+export async function getAdminTags(): Promise<{ tags: CustomerTag[] }> {
+  return apiRequest('/api/admin/tags');
+}
+
+export async function createAdminTag(
+  name: string,
+  color?: string,
+  description?: string
+): Promise<{ success: boolean; tag_id: string }> {
+  return apiRequest('/api/admin/tags', {
+    method: 'POST',
+    body: JSON.stringify({ name, color, description }),
+  });
+}
+
+export async function getAdminCustomerTags(customerId: string): Promise<{ tags: CustomerTag[] }> {
+  return apiRequest(`/api/admin/customer-tags?customerId=${customerId}`);
+}
+
+export async function assignAdminTag(
+  customerId: string,
+  tagId: string
+): Promise<{ success: boolean }> {
+  return apiRequest('/api/admin/customer-tags', {
+    method: 'POST',
+    body: JSON.stringify({ customerId, tagId }),
+  });
+}
+
+export async function removeAdminTag(
+  customerId: string,
+  tagId: string
+): Promise<{ success: boolean }> {
+  return apiRequest(`/api/admin/customer-tags?customerId=${customerId}&tagId=${tagId}`, {
+    method: 'DELETE',
+  });
+}
+
+// Customer Health API
+export interface CustomerHealth {
+  customer_id: string;
+  overall_score: number;
+  engagement_score: number;
+  activation_score: number;
+  growth_score: number;
+  risk_score: number;
+  lifecycle_stage:
+    | 'new'
+    | 'onboarding'
+    | 'activated'
+    | 'engaged'
+    | 'power_user'
+    | 'at_risk'
+    | 'churning'
+    | 'churned'
+    | 'reactivated';
+  updated_at: string | null;
+}
+
+export async function getAdminCustomerHealth(
+  customerId: string
+): Promise<{ health: CustomerHealth }> {
+  return apiRequest(`/api/admin/customer-health?customerId=${customerId}`);
 }
 
 // Data Export (returns download URLs)
@@ -856,13 +973,15 @@ export interface SmartInsight {
   generated_by: string;
 }
 
-export async function getSmartInsights(target: 'user' | 'team' | 'admin' = 'user'): Promise<SmartInsight | null> {
+export async function getSmartInsights(
+  target: 'user' | 'team' | 'admin' = 'user'
+): Promise<SmartInsight | null> {
   const token = getSessionToken();
   if (!token) return null;
 
   try {
     const res = await fetch(`${API_BASE}/api/insights?target=${target}`, {
-      headers: { 'Authorization': `Bearer ${token}` }
+      headers: { Authorization: `Bearer ${token}` },
     });
     if (!res.ok) return null;
     return await res.json();

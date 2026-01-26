@@ -158,3 +158,107 @@ export function useAdminCohorts() {
     queryFn: () => api.getAdminCohorts(),
   }));
 }
+
+export function useAdminNotes(customerId: string) {
+  return createQuery(() => ({
+    queryKey: ['admin-notes', customerId],
+    queryFn: () => api.getAdminNotes(customerId),
+    enabled: !!customerId,
+  }));
+}
+
+export function useCreateNote() {
+  const queryClient = useQueryClient();
+  return createMutation(() => ({
+    mutationFn: (params: { customerId: string; content: string; noteType?: string }) =>
+      api.createAdminNote(params.customerId, params.content, params.noteType),
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['admin-notes', variables.customerId] });
+    },
+  }));
+}
+
+export function useUpdateNote() {
+  const queryClient = useQueryClient();
+  return createMutation(() => ({
+    mutationFn: (params: {
+      noteId: string;
+      customerId: string;
+      content?: string;
+      isPinned?: boolean;
+    }) =>
+      api.updateAdminNote(params.noteId, { content: params.content, isPinned: params.isPinned }),
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['admin-notes', variables.customerId] });
+    },
+  }));
+}
+
+export function useDeleteNote() {
+  const queryClient = useQueryClient();
+  return createMutation(() => ({
+    mutationFn: (params: { noteId: string; customerId: string }) =>
+      api.deleteAdminNote(params.noteId),
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['admin-notes', variables.customerId] });
+    },
+  }));
+}
+
+export function useAdminTags() {
+  return createQuery(() => ({
+    queryKey: ['admin-tags'],
+    queryFn: () => api.getAdminTags(),
+  }));
+}
+
+export function useAdminCustomerTags(customerId: string) {
+  return createQuery(() => ({
+    queryKey: ['admin-customer-tags', customerId],
+    queryFn: () => api.getAdminCustomerTags(customerId),
+    enabled: !!customerId,
+  }));
+}
+
+export function useCreateTag() {
+  const queryClient = useQueryClient();
+  return createMutation(() => ({
+    mutationFn: (params: { name: string; color?: string; description?: string }) =>
+      api.createAdminTag(params.name, params.color, params.description),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-tags'] });
+    },
+  }));
+}
+
+export function useAssignTag() {
+  const queryClient = useQueryClient();
+  return createMutation(() => ({
+    mutationFn: (params: { customerId: string; tagId: string }) =>
+      api.assignAdminTag(params.customerId, params.tagId),
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['admin-customer-tags', variables.customerId] });
+      queryClient.invalidateQueries({ queryKey: ['admin-tags'] });
+    },
+  }));
+}
+
+export function useRemoveTag() {
+  const queryClient = useQueryClient();
+  return createMutation(() => ({
+    mutationFn: (params: { customerId: string; tagId: string }) =>
+      api.removeAdminTag(params.customerId, params.tagId),
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['admin-customer-tags', variables.customerId] });
+      queryClient.invalidateQueries({ queryKey: ['admin-tags'] });
+    },
+  }));
+}
+
+export function useAdminCustomerHealth(customerId: string) {
+  return createQuery(() => ({
+    queryKey: ['admin-customer-health', customerId],
+    queryFn: () => api.getAdminCustomerHealth(customerId),
+    enabled: !!customerId,
+  }));
+}
