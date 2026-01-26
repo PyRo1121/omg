@@ -4,8 +4,5 @@ omg.lock
 AGENTS.md
 benchmark_report.md
 node_modules
-.wrangler
 dist
-workers
-/workers/*
-/workers/**
+.wrangler

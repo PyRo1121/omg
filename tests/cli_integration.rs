@@ -1,4 +1,8 @@
 //! Integration tests for OMG CLI commands
+//!
+//! These tests require the arch feature as they test pacman-specific functionality.
+
+#![cfg(feature = "arch")]
 
 use std::process::Command;
 
