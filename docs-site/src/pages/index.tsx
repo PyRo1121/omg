@@ -188,7 +188,7 @@ function TerminalDemo() {
             <span className={styles.cursor}></span>
           </div>
         )}
-        {!isTyping && currentStep !== scenario.length - 1 && displayedLines.length > 0 && (
+        {!isTyping && currentStep !== TERMINAL_SCENARIO.length - 1 && displayedLines.length > 0 && (
            <div className={styles.terminalCommand}>
             <span className={styles.prompt}>❯</span>
             <span className={styles.cursor}></span>
