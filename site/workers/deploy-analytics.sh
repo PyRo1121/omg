@@ -4,8 +4,13 @@
 
 set -e  # Exit on error
 
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
 echo "🚀 Deploying Docs Analytics System"
 echo "=================================="
+echo "Working directory: $SCRIPT_DIR"
 
 # Colors for output
 GREEN='\033[0;32m'
