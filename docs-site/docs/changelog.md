@@ -10,7 +10,7 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 
 ---
 
-## [Unreleased]
+## [0.1.151] - 2026-01-26
 ### ♻️  Refactoring
 
 - Extract has_word_boundary_match to shared helper
@@ -519,6 +519,10 @@ Run before pushing to keep changelog up to date with latest commits.
   - Generate full 1203-line changelog from git history
 
 ### 📚 Documentation
+
+- Update changelog [skip ci]
+
+Auto-generated from git history with git-cliff.
 
 - Update changelog [skip ci]
 
