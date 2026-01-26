@@ -329,7 +329,7 @@ export default {
             status: 200,
             headers: {
               'Content-Type': 'application/json',
-              'Cache-Control': 'public, max-age=300',
+              'Cache-Control': 'public, max-age=60, must-revalidate',
               ...corsHeaders,
             },
           });
@@ -344,7 +344,7 @@ export default {
             status: 200,
             headers: {
               'Content-Type': 'application/json',
-              'Cache-Control': 'public, max-age=300',
+              'Cache-Control': 'public, max-age=60, must-revalidate',
               ...corsHeaders,
             },
           });

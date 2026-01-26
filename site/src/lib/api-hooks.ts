@@ -41,7 +41,8 @@ export function useAdminEvents() {
 export function useFleetStatus() {
   return createQuery(() => ({
     queryKey: ['fleet-status'],
-    queryFn: () => apiRequest<{ members: api.Machine[] }>('/api/fleet/status').then(res => res.members),
+    queryFn: () =>
+      apiRequest<{ members: api.Machine[] }>('/api/fleet/status').then(res => res.members),
   }));
 }
 
@@ -76,7 +77,7 @@ export function useRevokeMachine() {
 export function useCreatePolicy() {
   const queryClient = useQueryClient();
   return createMutation(() => ({
-    mutationFn: (policy: { scope: string; rule: string; value: string; enforced?: boolean }) => 
+    mutationFn: (policy: { scope: string; rule: string; value: string; enforced?: boolean }) =>
       api.createTeamPolicy(policy),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['team-policies'] });
@@ -97,7 +98,7 @@ export function useDeletePolicy() {
 export function useUpdateThreshold() {
   const queryClient = useQueryClient();
   return createMutation(() => ({
-    mutationFn: ({ type, value }: { type: string; value: number }) => 
+    mutationFn: ({ type, value }: { type: string; value: number }) =>
       api.updateAlertThreshold(type, value),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['team-data'] });
@@ -108,10 +109,52 @@ export function useUpdateThreshold() {
 export function useUpdateNotifications() {
   const queryClient = useQueryClient();
   return createMutation(() => ({
-    mutationFn: (settings: api.NotificationSetting[]) => 
-      api.updateNotificationSettings(settings),
+    mutationFn: (settings: api.NotificationSetting[]) => api.updateNotificationSettings(settings),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['notification-settings'] });
     },
+  }));
+}
+
+export function useAdminRevenue() {
+  return createQuery(() => ({
+    queryKey: ['admin-revenue'],
+    queryFn: () => api.getAdminRevenue(),
+  }));
+}
+
+export function useAdminAnalytics() {
+  return createQuery(() => ({
+    queryKey: ['admin-analytics'],
+    queryFn: () => api.getAdminAnalytics(),
+  }));
+}
+
+export function useAdminAuditLog(page = 1, limit = 50, action = '') {
+  return createQuery(() => ({
+    queryKey: ['admin-audit-log', page, limit, action],
+    queryFn: () => api.getAdminAuditLog(page, limit, action),
+  }));
+}
+
+export function useAdminCRMUsers(page = 1, limit = 50, search = '') {
+  return createQuery(() => ({
+    queryKey: ['admin-crm-users', page, limit, search],
+    queryFn: () => api.getAdminUsers(page, limit, search),
+  }));
+}
+
+export function useAdminUserDetail(userId: string) {
+  return createQuery(() => ({
+    queryKey: ['admin-user-detail', userId],
+    queryFn: () => api.getAdminUserDetail(userId),
+    enabled: !!userId,
+  }));
+}
+
+export function useAdminCohorts() {
+  return createQuery(() => ({
+    queryKey: ['admin-cohorts'],
+    queryFn: () => api.getAdminCohorts(),
   }));
 }
