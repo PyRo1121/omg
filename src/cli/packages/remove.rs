@@ -59,7 +59,7 @@ fn remove_dry_run(packages: &[String], recursive: bool) -> Result<()> {
                 );
             }
         }
-        #[cfg(not(feature = "arch"))]
+        #[cfg(any(feature = "debian", feature = "debian-pure"))]
         {
             // Use debian_db::get_installed_info_fast for Debian/Ubuntu - checks dpkg/status directly
             if let Ok(Some(info)) =
@@ -78,6 +78,14 @@ fn remove_dry_run(packages: &[String], recursive: bool) -> Result<()> {
                     style::package(pkg_name)
                 );
             }
+        }
+        #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
+        {
+            println!(
+                "    {} {} (feature-specific info unavailable)",
+                style::dim("○"),
+                style::package(pkg_name)
+            );
         }
     }
 
