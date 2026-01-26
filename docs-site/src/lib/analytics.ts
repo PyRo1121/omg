@@ -230,7 +230,10 @@ class DocsAnalytics {
       });
     } catch (error) {
       // Silently fail - don't break user experience
-      console.debug('Analytics flush failed:', error);
+      // Only log in development mode
+      if (process.env.NODE_ENV === 'development') {
+        console.debug('Analytics flush failed:', error);
+      }
     }
   }
 
