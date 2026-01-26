@@ -51,9 +51,16 @@ import {
   handleBillingPortal,
   handleStripeWebhook,
 } from './handlers/billing';
+import {
+  handleDocsAnalytics,
+  handleDocsAnalyticsDashboard,
+  cleanupDocsAnalytics,
+} from './handlers/docs-analytics';
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    // Add execution context to env for waitUntil support
+    (env as any).ctx = ctx;
     // Handle CORS preflight
     if (request.method === 'OPTIONS') {
       return new Response(null, { headers: corsHeaders });
@@ -115,6 +122,16 @@ export default {
       // Analytics events (batch from CLI)
       if (path === '/api/analytics' && request.method === 'POST') {
         return handleAnalytics(request, env);
+      }
+
+      // Docs analytics (batch from docs site)
+      if (path === '/api/docs/analytics' && request.method === 'POST') {
+        return handleDocsAnalytics(request, env);
+      }
+
+      // Docs analytics dashboard (admin view)
+      if (path === '/api/docs/analytics/dashboard' && request.method === 'GET') {
+        return handleDocsAnalyticsDashboard(request, env);
       }
 
       // ============================================
@@ -299,5 +316,11 @@ export default {
       console.error('Worker error:', error);
       return errorResponse('Internal server error', 500);
     }
+  },
+
+  // Scheduled cron handler for cleanup tasks
+  async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
+    console.log('Running scheduled cleanup tasks');
+    ctx.waitUntil(cleanupDocsAnalytics(env.DB));
   },
 };
