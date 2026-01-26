@@ -124,11 +124,10 @@ impl PackageManager for PureDebianPackageManager {
     fn list_updates(&self) -> BoxFuture<'static, Result<Vec<UpdateInfo>>> {
         async move {
             // Parse Debian package index and installed packages
-            let index = debian_db::DebianIndex::new();
-            index.ensure_index_loaded().await?;
+            debian_db::ensure_index_loaded()?;
 
             let installed = debian_db::list_installed_fast()?;
-            let index_pkgs = index.get_detailed_packages()?;
+            let index_pkgs = debian_db::get_detailed_packages()?;
 
             let mut updates = Vec::new();
             let mut installed_map = std::collections::HashMap::new();
