@@ -5,12 +5,13 @@
 
 #![cfg(any(feature = "debian", feature = "debian-pure"))]
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fs;
 use std::io::{BufReader, Read};
 use std::path::Path;
 use std::sync::LazyLock;
 
+use ahash::{AHashMap, AHashSet};
 use anyhow::{Context, Result};
 use memchr::memmem;
 use parking_lot::RwLock;
@@ -23,6 +24,10 @@ use crate::core::{Package, PackageSource};
 static DEBIAN_INDEX_CACHE: LazyLock<RwLock<DebianIndexCache>> =
     LazyLock::new(|| RwLock::new(DebianIndexCache::default()));
 
+/// Global cache for dpkg/status to avoid reparsing on every call
+static DPKG_STATUS_CACHE: LazyLock<RwLock<DpkgStatusCache>> =
+    LazyLock::new(|| RwLock::new(DpkgStatusCache::default()));
+
 #[derive(Default)]
 struct DebianIndexCache {
     index: Option<DebianPackageIndex>,
@@ -32,7 +37,16 @@ struct DebianIndexCache {
     /// Offsets into the search buffer
     package_offsets: Vec<usize>,
     /// Cached set of installed package names
-    installed_set: HashSet<String>,
+    installed_set: AHashSet<String>,
+}
+
+/// Cache for /var/lib/dpkg/status to avoid expensive reparsing
+#[derive(Default)]
+struct DpkgStatusCache {
+    packages: Vec<LocalPackage>,
+    installed_set: AHashSet<String>,
+    status_mtime: Option<std::time::SystemTime>,
+    extended_states_mtime: Option<std::time::SystemTime>,
 }
 
 /// A Debian package entry optimized for zero-copy access
@@ -70,6 +84,8 @@ impl DebianPackage {
 #[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug, Default)]
 pub struct DebianPackageIndex {
     pub packages: Vec<DebianPackage>,
+    /// Note: Uses std HashMap for rkyv serialization compatibility
+    /// Converted to AHashMap at runtime for faster lookups
     pub name_to_idx: HashMap<String, usize>,
     pub updated_at: i64,
 }
@@ -363,7 +379,7 @@ pub fn search_fast(query: &str) -> Result<Vec<Package>> {
     let query_lower = query.to_lowercase();
     let finder = memmem::Finder::new(query_lower.as_bytes());
     let mut results = Vec::new();
-    let mut seen_indices = HashSet::new();
+    let mut seen_indices = AHashSet::new();
 
     for match_idx in finder.find_iter(&guard.search_buffer) {
         let pkg_idx = match guard.package_offsets.binary_search(&match_idx) {
@@ -425,14 +441,38 @@ pub fn list_installed_fast() -> Result<Vec<LocalPackage>> {
             is_explicit: true,
         }]);
     }
+
     let status_path = Path::new("/var/lib/dpkg/status");
     if !status_path.exists() {
         return Ok(Vec::new());
     }
+
+    let extended_states_path = Path::new("/var/lib/apt/extended_states");
+
+    // Get mtimes
+    let status_mtime = fs::metadata(status_path).ok().and_then(|m| m.modified().ok());
+    let extended_states_mtime = extended_states_path
+        .exists()
+        .then(|| fs::metadata(extended_states_path).ok().and_then(|m| m.modified().ok()))
+        .flatten();
+
+    // Check cache first
+    {
+        let cache = DPKG_STATUS_CACHE.read();
+        if cache.status_mtime == status_mtime
+            && cache.extended_states_mtime == extended_states_mtime
+            && !cache.packages.is_empty()
+        {
+            // Cache hit!
+            return Ok(cache.packages.clone());
+        }
+    }
+
+    // Cache miss - parse from disk
     let status_content = fs::read_to_string(status_path)?;
 
-    let mut auto_installed = HashSet::new();
-    if let Ok(ext_content) = fs::read_to_string("/var/lib/apt/extended_states") {
+    let mut auto_installed = AHashSet::new();
+    if let Ok(ext_content) = fs::read_to_string(extended_states_path) {
         let mut current_pkg = String::new();
         for line in ext_content.lines() {
             if let Some(name) = line.strip_prefix("Package: ") {
@@ -444,6 +484,7 @@ pub fn list_installed_fast() -> Result<Vec<LocalPackage>> {
     }
 
     let mut packages = Vec::new();
+    let mut installed_set = AHashSet::new();
     for paragraph in status_content.split("\n\n") {
         if !paragraph.contains("Status: install ok installed") {
             continue;
@@ -466,6 +507,7 @@ pub fn list_installed_fast() -> Result<Vec<LocalPackage>> {
         }
         if !name.is_empty() {
             let is_explicit = !auto_installed.contains(&name);
+            installed_set.insert(name.clone());
             packages.push(LocalPackage {
                 name,
                 version,
@@ -475,6 +517,16 @@ pub fn list_installed_fast() -> Result<Vec<LocalPackage>> {
             });
         }
     }
+
+    // Update cache
+    {
+        let mut cache = DPKG_STATUS_CACHE.write();
+        cache.packages = packages.clone();
+        cache.installed_set = installed_set;
+        cache.status_mtime = status_mtime;
+        cache.extended_states_mtime = extended_states_mtime;
+    }
+
     Ok(packages)
 }
 
