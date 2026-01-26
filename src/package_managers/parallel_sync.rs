@@ -417,7 +417,9 @@ fn get_custom_repos() -> Result<Vec<(String, String)>> {
             // Look for Server = line
             if let Some(url) = line.strip_prefix("Server") {
                 let url = url.trim().trim_start_matches('=').trim();
-                repos.push((repo.clone(), url.to_string()));
+                // Substitute $repo and $arch placeholders (consistent with build_db_url)
+                let url = url.replace("$repo", repo).replace("$arch", "x86_64");
+                repos.push((repo.clone(), url));
                 current_repo = None;
             }
         }
