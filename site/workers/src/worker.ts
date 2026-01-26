@@ -42,15 +42,21 @@ import {
   handleAdminExportAudit,
   handleAdminAuditLog,
   handleAdminAnalytics,
+  handleAdminGetNotes,
+  handleAdminCreateNote,
+  handleAdminUpdateNote,
+  handleAdminDeleteNote,
+  handleAdminGetTags,
+  handleAdminGetCustomerTags,
+  handleAdminCreateTag,
+  handleAdminAssignTag,
+  handleAdminRemoveTag,
+  handleAdminGetCustomerHealth,
   handleInitDb,
 } from './handlers/admin';
 import { handleGetSmartInsights } from './handlers/insights';
 import { handleGetFirehose } from './handlers/firehose';
-import {
-  handleCreateCheckout,
-  handleBillingPortal,
-  handleStripeWebhook,
-} from './handlers/billing';
+import { handleCreateCheckout, handleBillingPortal, handleStripeWebhook } from './handlers/billing';
 import {
   handleDocsAnalytics,
   handleDocsAnalyticsDashboard,
@@ -233,7 +239,10 @@ export default {
       }
 
       // Admin: Activity feed
-      if ((path === '/api/admin/activity' || path === '/api/admin/events') && request.method === 'GET') {
+      if (
+        (path === '/api/admin/activity' || path === '/api/admin/events') &&
+        request.method === 'GET'
+      ) {
         return handleAdminActivity(request, env);
       }
 
@@ -275,6 +284,42 @@ export default {
       // Admin: View audit log
       if (path === '/api/admin/audit-log' && request.method === 'GET') {
         return handleAdminAuditLog(request, env);
+      }
+
+      // Admin: Customer Notes
+      if (path === '/api/admin/notes' && request.method === 'GET') {
+        return handleAdminGetNotes(request, env);
+      }
+      if (path === '/api/admin/notes' && request.method === 'POST') {
+        return handleAdminCreateNote(request, env);
+      }
+      if (path === '/api/admin/notes' && request.method === 'PUT') {
+        return handleAdminUpdateNote(request, env);
+      }
+      if (path === '/api/admin/notes' && request.method === 'DELETE') {
+        return handleAdminDeleteNote(request, env);
+      }
+
+      // Admin: Customer Tags
+      if (path === '/api/admin/tags' && request.method === 'GET') {
+        return handleAdminGetTags(request, env);
+      }
+      if (path === '/api/admin/tags' && request.method === 'POST') {
+        return handleAdminCreateTag(request, env);
+      }
+      if (path === '/api/admin/customer-tags' && request.method === 'GET') {
+        return handleAdminGetCustomerTags(request, env);
+      }
+      if (path === '/api/admin/customer-tags' && request.method === 'POST') {
+        return handleAdminAssignTag(request, env);
+      }
+      if (path === '/api/admin/customer-tags' && request.method === 'DELETE') {
+        return handleAdminRemoveTag(request, env);
+      }
+
+      // Admin: Customer Health
+      if (path === '/api/admin/customer-health' && request.method === 'GET') {
+        return handleAdminGetCustomerHealth(request, env);
       }
 
       // Admin: Real-time event firehose
@@ -320,34 +365,40 @@ export default {
             `SELECT COUNT(DISTINCT install_id) as total FROM install_stats`
           ).first();
           const total = (result?.total as number) || 0;
-          return new Response(JSON.stringify({
-            schemaVersion: 1,
-            label: 'installs',
-            message: total.toLocaleString(),
-            color: 'blue',
-          }), {
-            status: 200,
-            headers: {
-              'Content-Type': 'application/json',
-              'Cache-Control': 'public, max-age=60, must-revalidate',
-              ...corsHeaders,
-            },
-          });
+          return new Response(
+            JSON.stringify({
+              schemaVersion: 1,
+              label: 'installs',
+              message: total.toLocaleString(),
+              color: 'blue',
+            }),
+            {
+              status: 200,
+              headers: {
+                'Content-Type': 'application/json',
+                'Cache-Control': 'public, max-age=60, must-revalidate',
+                ...corsHeaders,
+              },
+            }
+          );
         } catch (err) {
           // If table doesn't exist or query fails, return 0
-          return new Response(JSON.stringify({
-            schemaVersion: 1,
-            label: 'installs',
-            message: '0',
-            color: 'blue',
-          }), {
-            status: 200,
-            headers: {
-              'Content-Type': 'application/json',
-              'Cache-Control': 'public, max-age=60, must-revalidate',
-              ...corsHeaders,
-            },
-          });
+          return new Response(
+            JSON.stringify({
+              schemaVersion: 1,
+              label: 'installs',
+              message: '0',
+              color: 'blue',
+            }),
+            {
+              status: 200,
+              headers: {
+                'Content-Type': 'application/json',
+                'Cache-Control': 'public, max-age=60, must-revalidate',
+                ...corsHeaders,
+              },
+            }
+          );
         }
       }
 

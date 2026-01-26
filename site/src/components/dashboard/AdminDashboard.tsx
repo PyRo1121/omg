@@ -302,7 +302,10 @@ export const AdminDashboard: Component = () => {
                                 {user.created_at ? api.formatRelativeTime(user.created_at) : 'N/A'}
                               </td>
                               <td class="px-6 py-4">
-                                <button class="rounded-lg p-2 text-slate-500 transition-colors hover:bg-white/5 hover:text-white">
+                                <button
+                                  onClick={() => setSelectedUserId(user.id)}
+                                  class="rounded-lg p-2 text-slate-500 transition-colors hover:bg-white/5 hover:text-white"
+                                >
                                   <Eye size={16} />
                                 </button>
                               </td>
@@ -366,14 +369,10 @@ export const AdminDashboard: Component = () => {
           <Match when={activeTab() === 'audit'}>
             <AuditLogTab />
           </Match>
-
-          <Match when={activeTab() === 'audit'}>
-            <div class="rounded-3xl border border-white/5 bg-[#0d0d0e] p-10 text-center shadow-2xl">
-              <p class="text-slate-400">Audit log coming soon...</p>
-            </div>
-          </Match>
         </Switch>
       </Show>
+
+      <CustomerDetailDrawer userId={selectedUserId()} onClose={() => setSelectedUserId(null)} />
     </div>
   );
 };
