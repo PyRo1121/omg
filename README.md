@@ -267,8 +267,8 @@ make coverage
 - ✅ Source code is public for transparency
 
 ### Paid for Commercial Use
-- 💰 **Team License:** $4,999/year (up to 10 developers)
-- 💰 **Business License:** $19,999/year (up to 50 developers)
+- 💰 **Team License:** $99/month or $999/year (up to 25 developers)
+- 💰 **Business License:** $199/month or $1,999/year (up to 75 developers)
 - 💰 **Enterprise License:** Custom pricing (unlimited developers)
 
 ### Why Source-Available?
