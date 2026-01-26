@@ -167,6 +167,20 @@ categorization. Analytics errors won't appear in production console.
 
 ### 🐛 Bug Fixes
 
+- **Api**: Update cron trigger configuration and add setup guide
+
+  - Remove cron trigger from wrangler.toml (not supported in config file)
+
+  - Add CRON_SETUP.md with instructions for Cloudflare Dashboard setup
+
+  - Document manual cleanup option as fallback
+
+  - Fix wrangler compatibility issue
+
+Cron triggers must be configured via Cloudflare Dashboard or API,
+
+not in wrangler.toml for this version of Workers.
+
 - **Scripts**: Fix deployment script path and add changelog automation
 
 **Deployment Script:**
@@ -208,6 +222,12 @@ Run before pushing to keep changelog up to date with latest commits.
   - Prevents template errors when generating first changelog
 
   - Generate full 1203-line changelog from git history
+
+### 📚 Documentation
+
+- Update changelog
+
+Auto-generated from git history with git-cliff.
 
 ## [0.1.139] - 2026-01-26
 ### 🔧 Maintenance
