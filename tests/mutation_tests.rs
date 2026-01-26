@@ -6,7 +6,7 @@
 //! that your tests catch them. If a mutation isn't caught, it means your tests
 //! have gaps.
 //!
-//! Run: cargo test --test mutation_tests
+//! Run: `cargo test --test mutation_tests`
 //!
 //! For actual mutation testing, use cargo-mutants:
 //!   cargo install cargo-mutants
@@ -361,13 +361,13 @@ mod mutation_test_examples {
     #[test]
     fn example_error_path_assertion() {
         // This catches mutations in error handling
-        let _result: Result<(), &str> = Err("test error");
+        let result: Result<(), &str> = Err("test error");
 
         // Good: Verify exact error
-        assert!(matches!(_result, Err("test error")));
+        assert!(matches!(result, Err("test error")));
 
         // Good: Verify error type
-        assert!(matches!(_result, Err("test error")));
+        assert!(matches!(result, Err("test error")));
 
         // Good: Check error message
     }
