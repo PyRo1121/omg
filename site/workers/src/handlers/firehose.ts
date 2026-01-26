@@ -8,9 +8,13 @@ export async function handleGetFirehose(request: Request, env: Env): Promise<Res
   const auth = await validateSession(env.DB, token);
   if (!auth) return errorResponse('Invalid session', 401);
 
-  // Strictly Admin Only
-  const isAdmin = env.ADMIN_USER_ID ? auth.user.id === env.ADMIN_USER_ID : false;
-  if (!isAdmin) return errorResponse('Forbidden', 403);
+  // Strictly Admin Only - Check admin column from database
+  const adminCheck = await env.DB.prepare(
+    `SELECT admin FROM customers WHERE id = ?`
+  )
+    .bind(auth.user.id)
+    .first();
+  if (adminCheck?.admin !== 1) return errorResponse('Forbidden', 403);
 
   const url = new URL(request.url);
   const limit = Math.min(Number(url.searchParams.get('limit')) || 50, 100);

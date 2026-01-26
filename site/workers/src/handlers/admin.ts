@@ -44,7 +44,15 @@ async function validateAdmin(
   if (!token) return { error: errorResponse('Unauthorized', 401) };
   const auth = await validateSession(env.DB, token);
   if (!auth) return { error: errorResponse('Invalid or expired session', 401) };
-  if (!env.ADMIN_USER_ID || auth.user.id !== env.ADMIN_USER_ID) {
+
+  // Check admin status from database
+  const adminCheck = await env.DB.prepare(
+    `SELECT admin FROM customers WHERE id = ?`
+  )
+    .bind(auth.user.id)
+    .first();
+
+  if (adminCheck?.admin !== 1) {
     await logAdminAudit(env.DB, {
       action: 'admin.unauthorized_access',
       userId: auth.user.id,
