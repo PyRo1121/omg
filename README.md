@@ -188,6 +188,7 @@ Communication happens over a high-speed Unix Domain Socket using a custom binary
 | [Security](docs/security.md) | SBOM, vulnerability scanning, audit logs |
 | [Shell Integration](docs/shell-integration.md) | Hooks and completions |
 | [Team Sync](docs/team.md) | Environment locks and drift detection |
+| [Changelog](docs/changelog.md) | Release history and version notes |
 | [Troubleshooting](docs/troubleshooting.md) | Common issues |
 
 ### Shell Setup
