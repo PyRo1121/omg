@@ -1,6 +1,23 @@
 //! AUR (Arch User Repository) client with build support
 
 use std::collections::HashSet;
+
+/// Check if a needle matches at a word boundary in the haystack.
+/// Word boundaries are: start of string, whitespace, `-`, `_`, `.`
+#[inline]
+fn has_word_boundary_match(haystack: &str, needle: &str) -> bool {
+    for (pos, _) in haystack.match_indices(needle) {
+        if pos == 0
+            || haystack.as_bytes()[pos - 1].is_ascii_whitespace()
+            || haystack.as_bytes()[pos - 1] == b'-'
+            || haystack.as_bytes()[pos - 1] == b'_'
+            || haystack.as_bytes()[pos - 1] == b'.'
+        {
+            return true;
+        }
+    }
+    false
+}
 use std::fs::File;
 use std::io::{BufReader, Cursor, Read};
 use std::path::{Path, PathBuf};
@@ -226,21 +243,6 @@ impl AurClient {
         // Sort by relevance: exact name match > prefix match > word boundary > substring > alphabetical
         // Pre-compute lowercased names to avoid O(n log n) allocations during sort
         let query_lower = query.to_ascii_lowercase();
-
-        // Helper for word boundary matching
-        fn has_word_boundary_match(haystack: &str, needle: &str) -> bool {
-            for (pos, _) in haystack.match_indices(needle) {
-                if pos == 0
-                    || haystack.as_bytes()[pos - 1].is_ascii_whitespace()
-                    || haystack.as_bytes()[pos - 1] == b'-'
-                    || haystack.as_bytes()[pos - 1] == b'_'
-                    || haystack.as_bytes()[pos - 1] == b'.'
-                {
-                    return true;
-                }
-            }
-            false
-        }
 
         // Precompute sort keys: (exact, prefix, word_boundary, name_len, name_lower, original_idx)
         let mut keyed: Vec<_> = packages
@@ -1907,21 +1909,7 @@ pub async fn search_detailed(query: &str) -> Result<Vec<AurPackageDetail>> {
             return b_prefix.cmp(&a_prefix);
         }
 
-        // Word boundary match check
-        fn has_word_boundary_match(haystack: &str, needle: &str) -> bool {
-            for (pos, _) in haystack.match_indices(needle) {
-                if pos == 0
-                    || haystack.as_bytes()[pos - 1].is_ascii_whitespace()
-                    || haystack.as_bytes()[pos - 1] == b'-'
-                    || haystack.as_bytes()[pos - 1] == b'_'
-                    || haystack.as_bytes()[pos - 1] == b'.'
-                {
-                    return true;
-                }
-            }
-            false
-        }
-
+        // Word boundary match check (uses module-level helper)
         let a_word = has_word_boundary_match(&a_name_lower, &query_lower);
         let b_word = has_word_boundary_match(&b_name_lower, &query_lower);
         if a_word != b_word {
