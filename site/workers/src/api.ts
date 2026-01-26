@@ -224,13 +224,35 @@ export const TIER_FEATURES = {
   },
 };
 
-// CORS headers
+// CORS headers - Allow main site and docs site
 export const corsHeaders = {
-  'Access-Control-Allow-Origin': 'https://pyro1121.com',
+  'Access-Control-Allow-Origin': '*', // Allow all origins for public analytics
   'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
   'Access-Control-Allow-Credentials': 'true',
 };
+
+// Helper to get origin-specific CORS headers (for authenticated endpoints)
+export function getCorsHeaders(origin: string | null): Record<string, string> {
+  const allowedOrigins = [
+    'https://pyro1121.com',
+    'https://omg-docs.pages.dev',
+    'https://*.omg-docs.pages.dev',
+  ];
+
+  const isAllowed = origin && allowedOrigins.some(allowed =>
+    allowed.includes('*')
+      ? origin.endsWith(allowed.replace('https://*.', '.'))
+      : origin === allowed
+  );
+
+  return {
+    'Access-Control-Allow-Origin': isAllowed ? origin! : 'https://pyro1121.com',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Credentials': 'true',
+  };
+}
 
 // JSON response helper
 export function jsonResponse(data: unknown, status = 200): Response {

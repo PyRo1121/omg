@@ -38,3 +38,7 @@ simple = { limit = 1000, period = 60 }
 
 [vars]
 ACCOUNT_ID = "f1e95b3e1b502cf366dfc81a863695fa"
+
+# Cron triggers for scheduled tasks
+[[triggers.crons]]
+cron = "0 2 * * *"  # Daily at 2 AM UTC - cleanup old analytics events
