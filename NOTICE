@@ -1,0 +1,32 @@
+OMG - Unified Package Manager
+Copyright (C) 2024-2026 OMG Team
+
+This software is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0).
+See LICENSE file for the full license text.
+
+================================================================================
+
+THIRD-PARTY SOFTWARE NOTICES AND INFORMATION
+
+This software incorporates components from the projects listed below. The original
+copyright notices and licenses under which we received such components are set forth
+below for informational purposes. We reserve all rights not expressly granted herein.
+
+================================================================================
+
+1. mise (https://github.com/jdx/mise)
+
+   Copyright (c) 2025 Jeff Dickey
+
+   Licensed under the MIT License
+
+   OMG bundles and integrates with mise to provide runtime version management for
+   100+ programming languages and tools. The mise integration code in OMG is original
+   work licensed under AGPL-3.0, but mise itself remains MIT-licensed.
+
+   See THIRD-PARTY-LICENSES.md for the full mise MIT license text.
+
+================================================================================
+
+For a complete list of third-party dependencies and their licenses, see:
+THIRD-PARTY-LICENSES.md
