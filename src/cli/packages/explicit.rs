@@ -1,6 +1,7 @@
 //! Explicit package listing functionality
 
 use anyhow::Result;
+use serde::Serialize;
 
 use crate::cli::ui;
 use crate::core::client::DaemonClient;
@@ -8,9 +9,17 @@ use crate::daemon::protocol::{Request, ResponseResult};
 
 use super::common::use_debian_backend;
 
-/// List explicitly installed packages (Synchronous)
+#[derive(Serialize)]
+struct ExplicitJson {
+    packages: Vec<String>,
+    count: usize,
+}
+
 pub fn explicit_sync(count: bool) -> Result<()> {
-    // 1. Try Daemon First (Hot Path - ALL DISTROS)
+    explicit_sync_with_json(count, false)
+}
+
+pub fn explicit_sync_with_json(count: bool, json: bool) -> Result<()> {
     if let Ok(mut client) = DaemonClient::connect_sync() {
         let request = if count {
             Request::ExplicitCount { id: 0 }
@@ -21,11 +30,15 @@ pub fn explicit_sync(count: bool) -> Result<()> {
         if let Ok(res) = client.call_sync(&request) {
             match res {
                 ResponseResult::ExplicitCount(c) => {
-                    println!("{c}");
+                    if json {
+                        println!(r#"{{"count": {c}}}"#);
+                    } else {
+                        println!("{c}");
+                    }
                     return Ok(());
                 }
                 ResponseResult::Explicit(res) => {
-                    display_explicit_list(res.packages)?;
+                    display_explicit_list(res.packages, json)?;
                     return Ok(());
                 }
                 _ => {}
@@ -33,32 +46,41 @@ pub fn explicit_sync(count: bool) -> Result<()> {
         }
     }
 
-    // 2. Fallback to optimized direct parser (Cold Path)
     if use_debian_backend() {
         #[cfg(feature = "debian")]
         {
             let packages = crate::package_managers::list_explicit_fast().unwrap_or_default();
             if count {
-                println!("{}", packages.len());
+                if json {
+                    println!(r#"{{"count": {}}}"#, packages.len());
+                } else {
+                    println!("{}", packages.len());
+                }
             } else {
-                display_explicit_list(packages)?;
+                display_explicit_list(packages, json)?;
             }
             return Ok(());
         }
     }
 
-    // 3. Arch Fallback
     if count {
-        // FAST PATH: Read from daemon's status file (zero IPC, sub-ms)
         if let Some(c) = crate::core::fast_status::FastStatus::read_explicit_count() {
-            println!("{c}");
+            if json {
+                println!(r#"{{"count": {c}}}"#);
+            } else {
+                println!("{c}");
+            }
             return Ok(());
         }
 
         #[cfg(feature = "arch")]
         {
             let count = crate::package_managers::pacman_db::get_explicit_count()?;
-            println!("{count}");
+            if json {
+                println!(r#"{{"count": {count}}}"#);
+            } else {
+                println!("{count}");
+            }
             return Ok(());
         }
 
@@ -71,7 +93,7 @@ pub fn explicit_sync(count: bool) -> Result<()> {
     #[cfg(feature = "arch")]
     {
         let packages = crate::package_managers::list_explicit_fast().unwrap_or_default();
-        display_explicit_list(packages)?;
+        display_explicit_list(packages, json)?;
     }
 
     #[cfg(not(any(feature = "arch", feature = "debian")))]
@@ -82,8 +104,20 @@ pub fn explicit_sync(count: bool) -> Result<()> {
     Ok(())
 }
 
-fn display_explicit_list(mut packages: Vec<String>) -> Result<()> {
+fn display_explicit_list(mut packages: Vec<String>, json: bool) -> Result<()> {
     packages.sort();
+    
+    if json {
+        let output = ExplicitJson {
+            count: packages.len(),
+            packages,
+        };
+        if let Ok(json_str) = serde_json::to_string_pretty(&output) {
+            println!("{json_str}");
+        }
+        return Ok(());
+    }
+    
     use std::io::Write;
     let mut stdout = std::io::BufWriter::new(std::io::stdout());
 

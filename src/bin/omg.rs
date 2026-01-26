@@ -99,6 +99,7 @@ fn try_fast_completions(args: &[String]) -> Result<bool> {
                 verbose: 0,
                 quiet: false,
                 all: use_all,
+                json: false,
                 command: Commands::Status { fast: false },
             });
             omg_lib::cli::help::print_help(&cli, use_all)?;
@@ -319,7 +320,7 @@ async fn async_main(args: Vec<String>) -> Result<()> {
 
     let ctx = omg_lib::cli::CliContext {
         verbose: cli.verbose,
-        json: false,
+        json: cli.json,
         quiet: cli.quiet,
         no_color: !console::colors_enabled(),
     };
@@ -339,20 +340,25 @@ async fn async_main(args: Vec<String>) -> Result<()> {
             detailed,
             interactive,
         } => {
-            packages::search(query, *detailed, *interactive).await?;
+            packages::search_with_json(query, *detailed, *interactive, cli.json).await?;
         }
-        Commands::Install { packages, yes } => {
-            packages::install(packages, *yes).await?;
+        Commands::Install {
+            packages,
+            yes,
+            dry_run,
+        } => {
+            packages::install(packages, *yes, *dry_run).await?;
         }
         Commands::Remove {
             packages: pkgs,
             recursive,
             yes,
+            dry_run,
         } => {
-            packages::remove(pkgs, *recursive, *yes).await?;
+            packages::remove(pkgs, *recursive, *yes, *dry_run).await?;
         }
-        Commands::Update { check, yes } => {
-            packages::update(*check, *yes).await?;
+        Commands::Update { check, yes, dry_run } => {
+            packages::update(*check, *yes, *dry_run).await?;
         }
         Commands::Info { package } => {
             if !packages::info_sync(package)? {
@@ -368,7 +374,7 @@ async fn async_main(args: Vec<String>) -> Result<()> {
             packages::clean(*orphans, *cache, *aur, *all).await?;
         }
         Commands::Explicit { count } => {
-            packages::explicit_sync(*count)?;
+            packages::explicit_sync_with_json(*count, cli.json)?;
         }
         Commands::Sync => {
             packages::sync().await?;
@@ -413,7 +419,7 @@ async fn async_main(args: Vec<String>) -> Result<()> {
             commands::complete(shell, current, last, full.as_deref()).await?;
         }
         Commands::Status { fast } => {
-            packages::status(*fast).await?;
+            packages::status_with_json(*fast, cli.json).await?;
         }
         Commands::Doctor => {
             doctor::run().await?;

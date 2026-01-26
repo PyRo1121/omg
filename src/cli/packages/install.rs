@@ -1,7 +1,4 @@
 //! Install functionality for packages
-//!
-//! Handles package installation with graded security checks.
-//! Provides interactive suggestions for missing packages.
 
 use anyhow::Result;
 use dialoguer::Select;
@@ -12,28 +9,24 @@ use crate::package_managers::get_package_manager;
 
 use futures::future::BoxFuture;
 
-/// Extract package name from a "Package not found" error message.
-///
-/// Error format: "Package not found: {name}"
-/// Falls back to substring matching for other error formats.
 fn extract_missing_package(msg: &str, packages: &[String]) -> Option<String> {
-    // Try to parse the standard error format first
     if let Some(prefix) = msg.strip_prefix("Package not found: ") {
         let pkg_name = prefix.trim();
-        // Verify this is one of the packages we tried to install
         if packages.iter().any(|p| p == pkg_name) {
             return Some(pkg_name.to_string());
         }
     }
 
-    // Fallback to substring check for other error formats
     packages.iter().find(|p| msg.contains(p.as_str())).cloned()
 }
 
-/// Install packages
-pub async fn install(packages: &[String], yes: bool) -> Result<()> {
+pub async fn install(packages: &[String], yes: bool, dry_run: bool) -> Result<()> {
     if packages.is_empty() {
         anyhow::bail!("No packages specified");
+    }
+
+    if dry_run {
+        return install_dry_run(packages);
     }
 
     let pm = get_package_manager();
@@ -51,6 +44,59 @@ pub async fn install(packages: &[String], yes: bool) -> Result<()> {
     }
 
     crate::core::usage::track_install(packages);
+    Ok(())
+}
+
+#[allow(clippy::unnecessary_wraps)]
+fn install_dry_run(packages: &[String]) -> Result<()> {
+    ui::print_header("OMG", "Dry Run - Install Preview");
+    ui::print_spacer();
+
+    println!(
+        "  {} The following packages would be installed:\n",
+        style::info("→")
+    );
+
+    let mut total_size: u64 = 0;
+
+    for pkg_name in packages {
+        if let Ok(Some(info)) = crate::package_managers::get_sync_pkg_info(pkg_name) {
+            let size_mb = info.download_size.unwrap_or(0) as f64 / 1024.0 / 1024.0;
+            total_size += info.download_size.unwrap_or(0);
+            println!(
+                "    {} {} {} ({:.2} MB)",
+                style::success("✓"),
+                style::package(&info.name),
+                style::version(&info.version.to_string()),
+                size_mb
+            );
+            if !info.depends.is_empty() {
+                println!(
+                    "      {} Dependencies: {}",
+                    style::dim("└"),
+                    style::dim(&info.depends.join(", "))
+                );
+            }
+        } else {
+            println!(
+                "    {} {} (not found in repositories, may be AUR)",
+                style::warning("?"),
+                style::package(pkg_name)
+            );
+        }
+    }
+
+    ui::print_spacer();
+    println!(
+        "  {} Total download size: {:.2} MB",
+        style::info("→"),
+        total_size as f64 / 1024.0 / 1024.0
+    );
+    println!(
+        "\n  {} No changes made (dry run)",
+        style::dim("ℹ")
+    );
+
     Ok(())
 }
 
@@ -88,7 +134,7 @@ fn handle_missing_package(
                     new_pkg
                 );
 
-                return install(&[new_pkg], yes).await;
+                return install(&[new_pkg], yes, false).await;
             }
         } else {
             println!("  Suggested alternatives:");

@@ -297,13 +297,13 @@ pub async fn restore(id: &str, dry_run: bool, yes: bool) -> Result<()> {
         if !to_install.is_empty() {
             let pkgs: Vec<String> = to_install.iter().map(|s| (**s).clone()).collect();
             println!("    Installing {} packages...", pkgs.len());
-            crate::cli::packages::install(&pkgs, true).await?;
+            crate::cli::packages::install(&pkgs, true, false).await?;
         }
 
         if !to_remove.is_empty() {
             let pkgs: Vec<String> = to_remove.iter().map(|s| (**s).clone()).collect();
             println!("    Removing {} packages...", pkgs.len());
-            crate::cli::packages::remove(&pkgs, false, true).await?;
+            crate::cli::packages::remove(&pkgs, false, true, false).await?;
         }
     }
 

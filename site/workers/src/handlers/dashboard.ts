@@ -270,7 +270,12 @@ export async function handleUpdateProfile(request: Request, env: Env): Promise<R
     return errorResponse('Invalid or expired session', 401);
   }
 
-  const body = (await request.json()) as { name?: string };
+  let body: { name?: string };
+  try {
+    body = (await request.json()) as { name?: string };
+  } catch (e) {
+    return errorResponse('Invalid JSON body', 400);
+  }
   const { user } = auth;
 
   if (body.name !== undefined) {
@@ -356,7 +361,12 @@ export async function handleRevokeMachine(request: Request, env: Env): Promise<R
     return errorResponse('Invalid or expired session', 401);
   }
 
-  const body = (await request.json()) as { machine_id?: string };
+  let body: { machine_id?: string };
+  try {
+    body = (await request.json()) as { machine_id?: string };
+  } catch (e) {
+    return errorResponse('Invalid JSON body', 400);
+  }
   const { user } = auth;
 
   if (!body.machine_id) {
@@ -438,7 +448,12 @@ export async function handleRevokeSession(request: Request, env: Env): Promise<R
     return errorResponse('Invalid or expired session', 401);
   }
 
-  const body = (await request.json()) as { session_id?: string };
+  let body: { session_id?: string };
+  try {
+    body = (await request.json()) as { session_id?: string };
+  } catch (e) {
+    return errorResponse('Invalid JSON body', 400);
+  }
 
   if (!body.session_id) {
     return errorResponse('Session ID required');
@@ -638,7 +653,12 @@ export async function handleRevokeTeamMember(request: Request, env: Env): Promis
     return errorResponse('Invalid or expired session', 401);
   }
 
-  const body = (await request.json()) as { machine_id?: string };
+  let body: { machine_id?: string };
+  try {
+    body = (await request.json()) as { machine_id?: string };
+  } catch (e) {
+    return errorResponse('Invalid JSON body', 400);
+  }
   if (!body.machine_id) {
     return errorResponse('Machine ID required');
   }

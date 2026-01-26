@@ -122,6 +122,12 @@ pub fn pacman_mirrorlist_path() -> PathBuf {
     env_path("OMG_PACMAN_MIRRORLIST").unwrap_or_else(|| PathBuf::from("/etc/pacman.d/mirrorlist"))
 }
 
+/// Pacman configuration file path (default: /etc/pacman.conf).
+#[must_use]
+pub fn pacman_conf_path() -> PathBuf {
+    env_path("OMG_PACMAN_CONF").unwrap_or_else(|| PathBuf::from("/etc/pacman.conf"))
+}
+
 /// Daemon socket path (default: $`XDG_RUNTIME_DIR/omg.sock`, /run/user/<uid>/omg.sock, or /tmp/omg.sock).
 #[must_use]
 pub fn socket_path() -> PathBuf {

@@ -423,6 +423,17 @@ pub fn images() -> Result<()> {
 pub fn pull(image: &str) -> Result<()> {
     use crate::cli::packages::execute_cmd;
 
+    if image
+        .chars()
+        .any(|c| c.is_control() || c == ';' || c == '|' || c == '&')
+    {
+        execute_cmd(Components::error_with_suggestion(
+            "Invalid image name",
+            "Image names must not contain control characters or shell operators",
+        ));
+        anyhow::bail!("Invalid image name");
+    }
+
     let manager = ContainerManager::new()?;
 
     execute_cmd(Components::loading(format!("Pulling image: {image}")));
@@ -439,6 +450,17 @@ pub fn pull(image: &str) -> Result<()> {
 /// Stop a running container
 pub fn stop(container: &str) -> Result<()> {
     use crate::cli::packages::execute_cmd;
+
+    if container
+        .chars()
+        .any(|c| c.is_control() || c == ';' || c == '|' || c == '&')
+    {
+        execute_cmd(Components::error_with_suggestion(
+            "Invalid container name",
+            "Container names must not contain control characters or shell operators",
+        ));
+        anyhow::bail!("Invalid container name");
+    }
 
     let manager = ContainerManager::new()?;
 
@@ -457,6 +479,19 @@ pub fn stop(container: &str) -> Result<()> {
 
 /// Execute a command in a running container
 pub fn exec(container: &str, command: &[String]) -> Result<()> {
+    use crate::cli::packages::execute_cmd;
+
+    if container
+        .chars()
+        .any(|c| c.is_control() || c == ';' || c == '|' || c == '&')
+    {
+        execute_cmd(Components::error_with_suggestion(
+            "Invalid container name",
+            "Container names must not contain control characters or shell operators",
+        ));
+        anyhow::bail!("Invalid container name");
+    }
+
     let manager = ContainerManager::new()?;
 
     let cmd_refs: Vec<&str> = command.iter().map(String::as_str).collect();

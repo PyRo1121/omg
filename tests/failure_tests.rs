@@ -2,6 +2,8 @@
 //!
 //! Tests critical failure modes using the isolated ALPM harness.
 
+#![allow(clippy::uninlined_format_args)]
+
 mod alpm_harness;
 use alpm_harness::{AlpmHarness, HarnessPkg};
 use anyhow::Result;

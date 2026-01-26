@@ -59,86 +59,30 @@ impl TestRunner {
         }
     }
 
-    /// Run a mock sudo command
+    /// Run a mock sudo command using bash -c to avoid temp file race conditions
     fn run_mock_sudo(&self, args: &[&str], scenario: SudoScenario) -> TestResult {
-        let script = match scenario {
-            SudoScenario::Success => format!(
-                "#!/bin/bash
-# Mock sudo that succeeds
-echo 'Mock sudo: {}'
-exit 0",
-                args.join(" ")
-            ),
-            SudoScenario::PasswordRequired => "#!/bin/bash
-# Mock sudo that requires password (exit code 1, no TTY)
-echo 'sudo: a password is required' >&2
-exit 1"
-                .to_string(),
-            SudoScenario::PermissionDenied => "#!/bin/bash
-# Mock sudo with permission denied
-echo 'sudo: permission denied' >&2
-exit 1"
-                .to_string(),
+        let script_body = match scenario {
+            SudoScenario::Success => format!("echo 'Mock sudo: {}'; exit 0", args.join(" ")),
+            SudoScenario::PasswordRequired => {
+                "echo 'sudo: a password is required' >&2; exit 1".to_string()
+            }
+            SudoScenario::PermissionDenied => {
+                "echo 'sudo: permission denied' >&2; exit 1".to_string()
+            }
             SudoScenario::CommandNotFound => {
                 let cmd = args.get(1).unwrap_or(&"command");
-                format!(
-                    "#!/bin/bash
-# Mock sudo where command not found
-echo \"sudo: {cmd}: command not found\" >&2
-exit 1"
-                )
+                format!("echo 'sudo: {cmd}: command not found' >&2; exit 1")
             }
-            SudoScenario::NoTty => "#!/bin/bash
-# Mock sudo detecting no TTY
-echo 'sudo: no tty present' >&2
-exit 1"
-                .to_string(),
+            SudoScenario::NoTty => "echo 'sudo: no tty present' >&2; exit 1".to_string(),
         };
 
-        // Write the mock sudo script - use a more reliable temp file approach
-        let temp_dir = std::env::temp_dir();
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let temp_file = temp_dir.join(format!("mock_sudo_{}_{}.sh", std::process::id(), timestamp));
-
-        // Write and sync in one operation
-        {
-            let mut file = std::fs::File::create(&temp_file).unwrap();
-            use std::io::Write;
-            write!(file, "{}", script).unwrap();
-            file.sync_all().unwrap();
-        }
-
-        // Make it executable
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut perms = std::fs::metadata(&temp_file).unwrap().permissions();
-            perms.set_mode(0o755);
-            std::fs::set_permissions(&temp_file, perms).unwrap();
-        }
-
-        // Verify file exists before running
-        assert!(
-            temp_file.exists(),
-            "Mock script file should exist: {:?}",
-            temp_file
-        );
-
-        // Run it
-        let output = Command::new(&temp_file)
-            .args(args)
+        let output = Command::new("bash")
+            .arg("-c")
+            .arg(&script_body)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .output()
-            .unwrap_or_else(|e| {
-                panic!("Failed to execute mock sudo script {:?}: {}", temp_file, e);
-            });
-
-        // Cleanup (ignore errors - file might already be gone)
-        let _ = std::fs::remove_file(&temp_file);
+            .expect("Failed to execute bash");
 
         TestResult {
             success: output.status.success(),

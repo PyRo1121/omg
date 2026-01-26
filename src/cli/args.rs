@@ -21,8 +21,12 @@ pub struct Cli {
     #[arg(short, long, global = true)]
     pub quiet: bool,
 
-    /// Show all commands including advanced ones (default: show essential only)
-    #[arg(short, long, global = true)]
+    /// Output in JSON format (for scripting)
+    #[arg(long, global = true)]
+    pub json: bool,
+
+    /// Show all commands including advanced ones
+    #[arg(long = "all-commands", global = true)]
     pub all: bool,
 
     #[command(subcommand)]
@@ -56,6 +60,9 @@ pub enum Commands {
         /// Skip confirmation
         #[arg(short = 'y', long)]
         yes: bool,
+        /// Show what would be installed without making changes
+        #[arg(long)]
+        dry_run: bool,
     },
 
     /// Remove packages (with optional dependency cleanup)
@@ -70,6 +77,9 @@ pub enum Commands {
         /// Skip confirmation
         #[arg(short = 'y', long)]
         yes: bool,
+        /// Show what would be removed without making changes
+        #[arg(long)]
+        dry_run: bool,
     },
 
     /// Update all packages (system + runtimes)
@@ -81,6 +91,9 @@ pub enum Commands {
         /// Skip confirmation
         #[arg(short = 'y', long)]
         yes: bool,
+        /// Show what would be updated without making changes
+        #[arg(long)]
+        dry_run: bool,
     },
 
     /// Show package information
@@ -172,10 +185,10 @@ pub enum Commands {
         #[arg(short, long)]
         cache: bool,
         /// Clear AUR build directories
-        #[arg(short, long)]
+        #[arg(long)]
         aur: bool,
         /// Remove all (orphans + cache + aur)
-        #[arg(short = 'A', long)]
+        #[arg(short = 'a', long)]
         all: bool,
     },
 
@@ -202,13 +215,13 @@ pub enum Commands {
         version: Option<String>,
     },
 
-    /// List installed versions (or available if --all)
+    /// List installed versions (or available if --available/-A)
     #[command(visible_alias = "ls")]
     List {
         /// Runtime to list versions for (omit for all)
         runtime: Option<String>,
         /// Show available versions, not just installed
-        #[arg(short = 'A', long)]
+        #[arg(short = 'a', long)]
         available: bool,
     },
 

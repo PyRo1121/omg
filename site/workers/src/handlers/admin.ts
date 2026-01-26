@@ -190,8 +190,13 @@ export async function handleAdminUserDetail(request: Request, env: Env): Promise
   if (!user) return errorResponse('User not found', 404);
 
   const license = await env.DB.prepare(`SELECT * FROM licenses WHERE customer_id = ?`).bind(userId).first();
-  const machines = await env.DB.prepare(`SELECT * FROM machines WHERE license_id = ?`).bind(license?.id).all();
-  const recentUsage = await env.DB.prepare(`SELECT * FROM usage_daily WHERE license_id = ? ORDER BY date DESC LIMIT 30`).bind(license?.id).all();
+  
+  if (!license) {
+    return errorResponse('License not found for user', 404);
+  }
+
+  const machines = await env.DB.prepare(`SELECT * FROM machines WHERE license_id = ?`).bind(license.id).all();
+  const recentUsage = await env.DB.prepare(`SELECT * FROM usage_daily WHERE license_id = ? ORDER BY date DESC LIMIT 30`).bind(license.id).all();
 
   return secureJsonResponse({ request_id: context.requestId, user, license, machines: machines.results || [], usage: recentUsage.results || [] });
 }
@@ -200,7 +205,12 @@ export async function handleAdminUpdateUser(request: Request, env: Env): Promise
   const result = await validateAdmin(request, env);
   if (result.error) return result.error;
 
-  const body = await request.json() as { userId: string, tier?: string, status?: string };
+  let body: { userId: string, tier?: string, status?: string };
+  try {
+    body = await request.json() as { userId: string, tier?: string, status?: string };
+  } catch (e) {
+    return errorResponse('Invalid JSON body', 400);
+  }
   if (!body.userId) return errorResponse('User ID required');
 
   if (body.tier) {
@@ -227,13 +237,21 @@ export async function handleAdminHealth(request: Request, env: Env): Promise<Res
   return secureJsonResponse({ status: 'ok', db: 'connected', version: '1.0.0' });
 }
 
+function escapeCSV(value: unknown): string {
+  const str = String(value ?? '');
+  if (/[",\n\r]/.test(str) || str.startsWith('=') || str.startsWith('+') || str.startsWith('-') || str.startsWith('@')) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+
 export async function handleAdminExportUsage(request: Request, env: Env): Promise<Response> {
   const result = await validateAdmin(request, env);
   if (result.error) return result.error;
 
   const usage = await env.DB.prepare(`SELECT * FROM usage_daily ORDER BY date DESC LIMIT 1000`).all();
   const headers = ['date', 'license_id', 'commands_run', 'time_saved_ms'];
-  const csv = [headers.join(','), ...(usage.results || []).map((u: any) => headers.map(h => u[h]).join(','))].join('\n');
+  const csv = [headers.join(','), ...(usage.results || []).map((u: any) => headers.map(h => escapeCSV(u[h])).join(','))].join('\n');
 
   return new Response(csv, { headers: { 'Content-Type': 'text/csv', 'Content-Disposition': 'attachment; filename="usage.csv"' } });
 }
@@ -244,7 +262,7 @@ export async function handleAdminExportAudit(request: Request, env: Env): Promis
 
   const logs = await env.DB.prepare(`SELECT * FROM audit_log ORDER BY created_at DESC LIMIT 1000`).all();
   const headers = ['created_at', 'action', 'customer_id', 'ip_address'];
-  const csv = [headers.join(','), ...(logs.results || []).map((l: any) => headers.map(h => l[h]).join(','))].join('\n');
+  const csv = [headers.join(','), ...(logs.results || []).map((l: any) => headers.map(h => escapeCSV(l[h])).join(','))].join('\n');
 
   return new Response(csv, { headers: { 'Content-Type': 'text/csv', 'Content-Disposition': 'attachment; filename="audit.csv"' } });
 }
@@ -261,7 +279,7 @@ export async function handleAdminAnalytics(request: Request, env: Env): Promise<
   const funnel = await env.DB.prepare(`SELECT (SELECT COUNT(*) FROM install_stats WHERE created_at >= datetime('now', '-30 days')) as installs, (SELECT COUNT(DISTINCT u.license_id) FROM usage_daily u WHERE u.date >= datetime('now', '-30 days') AND u.commands_run > 0) as activated, (SELECT COUNT(DISTINCT u.license_id) FROM usage_daily u WHERE u.date >= datetime('now', '-30 days') GROUP BY u.license_id HAVING SUM(u.commands_run) > 1000) as power_users`).first();
   const churnRisk = await env.DB.prepare(`SELECT COUNT(*) as at_risk_users FROM (SELECT l.customer_id, (SELECT SUM(commands_run) FROM usage_daily WHERE license_id = l.id AND date >= date('now', '-3 days')) as cmds_3d, (SELECT SUM(commands_run) FROM usage_daily WHERE license_id = l.id AND date >= date('now', '-10 days') AND date < date('now', '-3 days')) as cmds_prev_7d FROM licenses l WHERE l.status = 'active' HAVING (COALESCE(cmds_prev_7d, 0) > 10 AND (COALESCE(cmds_3d, 0) / 3.0) / (COALESCE(cmds_prev_7d, 0) / 7.0 + 0.001) < 0.2) OR (SELECT MAX(date) FROM usage_daily WHERE license_id = l.id) < date('now', '-7 days'))`).first();
   const retentionRate = await env.DB.prepare(`SELECT CASE WHEN (SELECT COUNT(*) FROM customers WHERE created_at >= datetime('now', '-90 days')) = 0 THEN 0 ELSE CAST((SELECT COUNT(DISTINCT u.license_id) FROM usage_daily u WHERE u.date >= datetime('now', '-7 days')) * 100.0 / (SELECT COUNT(*) FROM customers WHERE created_at >= datetime('now', '-90 days')) AS INTEGER) END as rate`).first();
-  const performance = await env.DB.prepare(`SELECT AVG(duration_ms) as avg_ms, percentile(0.5) within (duration_ms) as p50_ms, percentile(0.95) within (duration_ms) as p95_ms, percentile(0.99) within (duration_ms) as p99_ms, COUNT(*) as count FROM analytics_events WHERE event_type = 'performance' AND created_at >= datetime('now', '-7 days')`).first();
+  const performance = await env.DB.prepare(`SELECT AVG(duration_ms) as avg_ms, MIN(duration_ms) as min_ms, MAX(duration_ms) as max_ms, COUNT(*) as count FROM analytics_events WHERE event_type = 'performance' AND created_at >= datetime('now', '-7 days')`).first();
   const sessions = await env.DB.prepare(`SELECT COUNT(DISTINCT session_id) as total_sessions, COUNT(CASE WHEN event_type = 'session_start' THEN 1 END) as sessions_started, COUNT(CASE WHEN event_type = 'heartbeat' THEN 1 END) as heartbeats_sent, AVG(CASE WHEN event_type = 'session_end' THEN json_extract(properties, '$.duration_seconds') END) as avg_duration_seconds, MAX(CASE WHEN event_type = 'session_end' THEN json_extract(properties, '$.duration_seconds') END) as max_duration_seconds FROM analytics_events WHERE event_type IN ('session_start', 'heartbeat', 'session_end') AND created_at >= datetime('now', '-30 days')`).first();
   const userJourney = await env.DB.prepare(`WITH latest_stages AS (SELECT customer_id, MAX(CASE json_extract(properties, '$.to_stage') WHEN 'installed' THEN 1 WHEN 'activated' THEN 2 WHEN 'first_command' THEN 3 WHEN 'exploring' THEN 4 WHEN 'engaged' THEN 5 WHEN 'power_user' THEN 6 WHEN 'at_risk' THEN 7 WHEN 'churned' THEN 8 ELSE 0 END) as stage_order FROM analytics_events WHERE event_type = 'feature' AND event_name = 'stage_transition' AND created_at >= datetime('now', '-30 days') GROUP BY customer_id) SELECT SUM(CASE WHEN stage_order = 1 THEN 1 END) as installed, SUM(CASE WHEN stage_order = 2 THEN 1 END) as activated, SUM(CASE WHEN stage_order = 3 THEN 1 END) as first_command, SUM(CASE WHEN stage_order = 4 THEN 1 END) as exploring, SUM(CASE WHEN stage_order = 5 THEN 1 END) as engaged, SUM(CASE WHEN stage_order = 6 THEN 1 END) as power_user FROM latest_stages`).first();
   const runtimeUsage = await env.DB.prepare(`SELECT json_extract(properties, '$.runtime') as runtime, COUNT(*) as count, COUNT(DISTINCT machine_id) as machines FROM analytics_events WHERE (event_name = 'runtime_switch' OR event_name = 'runtime_use') AND created_at >= datetime('now', '-30 days') GROUP BY 1 ORDER BY 2 DESC`).all();
@@ -275,7 +293,7 @@ export async function handleAdminAnalytics(request: Request, env: Env): Promise<
     funnel: { installs: funnel?.installs || 0, activated: funnel?.activated || 0, power_users: funnel?.power_users || 0 },
     churn_risk: { at_risk_users: churnRisk?.at_risk_users || 0 },
     retention_rate: retentionRate?.rate || 0,
-    performance: { avg_latency_ms: performance?.avg_ms || 0, p50: performance?.p50_ms || 0, p95: performance?.p95_ms || 0, p99: performance?.p99_ms || 0, query_count: performance?.count || 0 },
+    performance: { avg_latency_ms: performance?.avg_ms || 0, min_ms: performance?.min_ms || 0, max_ms: performance?.max_ms || 0, query_count: performance?.count || 0 },
     sessions: { total_30d: sessions?.total_sessions || 0, sessions_started: sessions?.sessions_started || 0, heartbeats_sent: sessions?.heartbeats_sent || 0, avg_duration_seconds: sessions?.avg_duration_seconds || 0, max_duration_seconds: sessions?.max_duration_seconds || 0 },
     user_journey: { funnel: { installed: userJourney?.installed || 0, activated: userJourney?.activated || 0, first_command: userJourney?.first_command || 0, exploring: userJourney?.exploring || 0, engaged: userJourney?.engaged || 0, power_user: userJourney?.power_user || 0 } },
     runtime_usage: runtimeUsage.results || []
@@ -331,7 +349,7 @@ export async function handleAdminExportUsers(request: Request, env: Env): Promis
   if (result.error) return result.error;
   const users = await env.DB.prepare(`SELECT c.id, c.email, c.company, c.created_at, l.tier, l.status, (SELECT COUNT(*) FROM machines m WHERE m.license_id = l.id AND m.is_active = 1) as active_machines, (SELECT SUM(commands_run) FROM usage_daily u WHERE u.license_id = l.id) as total_commands FROM customers c LEFT JOIN licenses l ON c.id = l.customer_id ORDER BY c.created_at DESC`).all();
   const headers = ['id', 'email', 'company', 'created_at', 'tier', 'status', 'active_machines', 'total_commands'];
-  const csv = [headers.join(','), ...(users.results || []).map(u => headers.map(h => JSON.stringify(u[h] ?? '')).join(','))].join('\n');
+  const csv = [headers.join(','), ...(users.results || []).map(u => headers.map(h => escapeCSV(u[h])).join(','))].join('\n');
   return new Response(csv, { headers: { 'Content-Type': 'text/csv', 'Content-Disposition': `attachment; filename="omg-users.csv"`, ...SECURITY_HEADERS } });
 }
 

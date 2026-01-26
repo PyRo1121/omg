@@ -38,9 +38,17 @@ pub async fn run() -> Result<()> {
     let deps = vec!["git", "curl", "tar", "sudo"];
     for dep in deps {
         if check_command(dep) {
-            println!("  {} Found dependency: {}", style::icon("✓", "✓").green(), dep);
+            println!(
+                "  {} Found dependency: {}",
+                style::icon("✓", "✓").green(),
+                dep
+            );
         } else {
-            println!("  {} Missing dependency: {}", style::icon("✗", "✗").red(), dep);
+            println!(
+                "  {} Missing dependency: {}",
+                style::icon("✗", "✗").red(),
+                dep
+            );
             issues += 1;
         }
     }
@@ -58,9 +66,15 @@ pub async fn run() -> Result<()> {
 
     // 5. PATH Configuration
     if check_path() {
-        println!("  {} PATH configured correctly", style::icon("✓", "✓").green());
+        println!(
+            "  {} PATH configured correctly",
+            style::icon("✓", "✓").green()
+        );
     } else {
-        println!("  {} OMG bin directory not in PATH", style::icon("✗", "✗").red());
+        println!(
+            "  {} OMG bin directory not in PATH",
+            style::icon("✗", "✗").red()
+        );
         issues += 1;
     }
 
@@ -146,7 +160,9 @@ async fn check_daemon() -> bool {
                                 socket_uid,
                                 current_uid
                             );
-                            println!("      Hint: The daemon was likely started by a different user. Try restarting it.");
+                            println!(
+                                "      Hint: The daemon was likely started by a different user. Try restarting it."
+                            );
                             return false;
                         }
                     }

@@ -1,7 +1,4 @@
 //! Update functionality for packages
-//!
-//! Handles checking for updates and performing system upgrades.
-//! Supports both direct libalpm operations and daemon-mediated updates.
 
 use anyhow::Result;
 use dialoguer::Confirm;
@@ -9,40 +6,33 @@ use dialoguer::Confirm;
 use crate::cli::{style, ui};
 use crate::package_managers::{get_package_manager, types::UpdateInfo};
 
-/// Update all packages
-pub async fn update(check_only: bool, yes: bool) -> Result<()> {
+pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
     let pm = get_package_manager();
 
-    // 1. Sync system databases (pacman -Sy equivalent)
-    // This ensures we have the latest package lists from mirrors
     println!("\n{}", style::header("Syncing Databases"));
     pm.sync().await?;
 
-    // 2. Refresh AUR metadata (Arch only)
     #[cfg(feature = "arch")]
     {
         use crate::core::env::distro::use_debian_backend;
         if !use_debian_backend() {
             println!("{}", style::header("Syncing AUR Metadata"));
-            // Force refresh of AUR metadata to ensure search index is up to date
-            // We use a short TTL or force flag if available, but for now just accessing it
-            // via list_updates will trigger refresh if stale.
-            // TODO: Expose a dedicated refresh_metadata() method on AurClient
             let client = crate::package_managers::AurClient::new();
-            // triggering get_updates will refresh metadata if needed
-            // We ignore the result as we just want the side effect of refreshing
             let _ = client.get_update_list().await;
         }
     }
 
     let pb = style::spinner("Checking for updates...");
-    // This will now check against the FRESH databases we just synced
     let updates: Vec<UpdateInfo> = pm.list_updates().await?;
     pb.finish_and_clear();
 
     if updates.is_empty() {
         ui::print_success("System is up to date!");
         return Ok(());
+    }
+
+    if dry_run {
+        return update_dry_run(&updates);
     }
 
     ui::print_header("OMG", &format!("Found {} update(s)", updates.len()));
@@ -92,5 +82,64 @@ pub async fn update(check_only: bool, yes: bool) -> Result<()> {
     pm.update().await?;
 
     ui::print_success("System upgraded successfully!");
+    Ok(())
+}
+
+#[allow(clippy::unnecessary_wraps)]
+fn update_dry_run(updates: &[UpdateInfo]) -> Result<()> {
+    ui::print_header("OMG", "Dry Run - Update Preview");
+    ui::print_spacer();
+
+    println!(
+        "  {} The following packages would be updated:\n",
+        style::info("→")
+    );
+
+    let mut total_download: u64 = 0;
+
+    for update in updates.iter().take(50) {
+        let download_size = if let Ok(Some(info)) =
+            crate::package_managers::get_sync_pkg_info(&update.name)
+        {
+            total_download += info.download_size.unwrap_or(0);
+            format!("{:.2} MB", info.download_size.unwrap_or(0) as f64 / 1024.0 / 1024.0)
+        } else {
+            "unknown".to_string()
+        };
+
+        println!(
+            "    {} {} {} {} {} ({})",
+            style::success("↑"),
+            style::package(&update.name),
+            style::dim(&update.old_version),
+            style::arrow("->"),
+            style::version(&update.new_version),
+            style::dim(&download_size)
+        );
+    }
+
+    if updates.len() > 50 {
+        println!(
+            "    {}",
+            style::dim(&format!("(+{} more updates)", updates.len() - 50))
+        );
+    }
+
+    ui::print_spacer();
+    println!(
+        "  {} Total updates: {}",
+        style::info("→"),
+        updates.len()
+    );
+    println!(
+        "  {} Estimated download: {:.2} MB",
+        style::info("→"),
+        total_download as f64 / 1024.0 / 1024.0
+    );
+    println!(
+        "\n  {} No changes made (dry run)",
+        style::dim("ℹ")
+    );
+
     Ok(())
 }

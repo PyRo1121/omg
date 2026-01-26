@@ -30,7 +30,6 @@ import {
   handleGetAuditLog,
   handleGetTeamMembers,
   handleRevokeTeamMember,
-  handleGetAdminAnalytics,
 } from './handlers/dashboard';
 
 import {
@@ -42,7 +41,7 @@ import {
 // Admin handlers
 import {
   handleAdminDashboard,
-  handleAdminUsers,
+  handleAdminCRMUsers,
   handleAdminUserDetail,
   handleAdminUpdateUser,
   handleAdminActivity,
@@ -50,10 +49,10 @@ import {
   handleAdminCohorts,
   handleAdminRevenue,
   handleAdminAuditLog,
-  handleAdminCRMUsers,
   handleAdminExportUsers,
   handleAdminExportUsage,
   handleAdminExportAudit,
+  handleAdminAnalytics,
 } from './handlers/admin';
 
 import { handleGetSmartInsights } from './handlers/insights';
@@ -280,7 +279,7 @@ export default {
       }
 
       if (path === '/api/admin/users' && method === 'GET') {
-        return handleAdminUsers(request, env);
+        return handleAdminCRMUsers(request, env);
       }
 
       if (path === '/api/admin/user' && method === 'GET') {
@@ -308,7 +307,7 @@ export default {
       }
 
       if (path === '/api/admin/analytics' && method === 'GET') {
-        return handleGetAdminAnalytics(request, env);
+        return handleAdminAnalytics(request, env);
       }
 
       if (path === '/api/admin/audit-log' && method === 'GET') {

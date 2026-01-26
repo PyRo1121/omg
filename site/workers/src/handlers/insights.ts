@@ -1,12 +1,40 @@
 // AI Insights Handler - Using Cloudflare AI Gateway with Meta.com
 import { Env, jsonResponse, errorResponse, validateSession, getAuthToken } from '../api';
 
+// Simple in-memory rate limiter (5 requests per minute per user)
+// TODO: Replace with Cloudflare Rate Limiting API in production for distributed rate limiting
+const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
+const RATE_LIMIT_WINDOW_MS = 60000; // 1 minute
+const RATE_LIMIT_MAX_REQUESTS = 5;
+
+function checkRateLimit(userId: string): boolean {
+  const now = Date.now();
+  const userLimit = rateLimitMap.get(userId);
+  
+  if (!userLimit || now > userLimit.resetAt) {
+    rateLimitMap.set(userId, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
+    return true;
+  }
+  
+  if (userLimit.count >= RATE_LIMIT_MAX_REQUESTS) {
+    return false;
+  }
+  
+  userLimit.count++;
+  return true;
+}
+
 export async function handleGetSmartInsights(request: Request, env: Env): Promise<Response> {
   const token = getAuthToken(request);
   if (!token) return errorResponse('Unauthorized', 401);
 
   const auth = await validateSession(env.DB, token);
   if (!auth) return errorResponse('Invalid session', 401);
+
+  // Rate limiting: 5 requests per minute
+  if (!checkRateLimit(auth.user.id)) {
+    return errorResponse('Rate limit exceeded. Please try again in a minute.', 429);
+  }
 
   const isAdmin = env.ADMIN_USER_ID ? auth.user.id === env.ADMIN_USER_ID : false;
   const url = new URL(request.url);
@@ -49,9 +77,9 @@ export async function handleGetSmartInsights(request: Request, env: Env): Promis
       // Get command breakdown for user/team
       const commandBreakdown = await env.DB.prepare(`
         SELECT 
-          SUM(CASE WHEN command_type = 'search' THEN 1 ELSE 0 END) as searches,
-          SUM(CASE WHEN command_type = 'install' THEN 1 ELSE 0 END) as installs,
-          SUM(CASE WHEN command_type LIKE '%use%' THEN 1 ELSE 0 END) as runtime_switches
+          SUM(packages_searched) as searches,
+          SUM(packages_installed) as installs,
+          SUM(runtimes_switched) as runtime_switches
         FROM usage_daily
         WHERE license_id = (SELECT id FROM licenses WHERE customer_id = ?)
       `).bind(auth.user.id).first();

@@ -14,6 +14,8 @@ pub mod http;
 pub mod license;
 pub mod metrics;
 pub mod packages;
+#[cfg(feature = "arch")]
+pub mod pacman_conf;
 pub mod paths;
 pub mod privilege;
 pub mod safe_ops;

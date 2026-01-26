@@ -15,16 +15,46 @@ use anyhow::{Context, Result};
 use dialoguer::Confirm;
 use flate2::read::GzDecoder;
 use futures::StreamExt;
-// git2 removed - using command-line git (always available on Arch)
 use indicatif::{ProgressBar, ProgressStyle};
 use owo_colors::OwoColorize;
 use reqwest::header::{ETAG, IF_MODIFIED_SINCE, IF_NONE_MATCH, LAST_MODIFIED};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
+use thiserror::Error;
 use tokio::fs as tokio_fs;
 use tokio::process::Command;
 use tracing::{instrument, warn};
 use which::which;
+
+#[derive(Error, Debug)]
+pub enum AurError {
+    #[error("Package '{0}' not found on AUR")]
+    PackageNotFound(String),
+
+    #[error("PKGBUILD not found for '{package}'\n  → The AUR package may not exist or the clone failed\n  → Try: omg aur clean {package} && omg install {package}", package = .0)]
+    PkgbuildNotFound(String),
+
+    #[error("Build failed for '{package}'\n  → Check the build log: {log_path}\n  → Common fixes:\n    - Install missing dependencies: omg install <dep>\n    - Clean and retry: omg aur clean {package}\n    - Check AUR comments for known issues", package = .package, log_path = .log_path)]
+    BuildFailed { package: String, log_path: String },
+
+    #[error("Git clone failed for '{package}'\n  → Check if the package exists: https://aur.archlinux.org/packages/{package}\n  → Verify your internet connection\n  → Try again: omg install {package}", package = .0)]
+    GitCloneFailed(String),
+
+    #[error("Git pull failed for '{package}'\n  → The local clone may have conflicts\n  → Fix: omg aur clean {package} && omg install {package}", package = .0)]
+    GitPullFailed(String),
+
+    #[error("Network error connecting to AUR\n  → Check your internet connection\n  → AUR may be temporarily unavailable\n  → Try again in a few minutes")]
+    NetworkError(#[from] reqwest::Error),
+
+    #[error("Missing build tool: {tool}\n  → Install with: sudo pacman -S {install_pkg}", tool = .tool, install_pkg = .install_pkg)]
+    MissingTool { tool: String, install_pkg: String },
+
+    #[error("Sandbox build failed\n  → bubblewrap is not installed\n  → Install: sudo pacman -S bubblewrap\n  → Or enable unsafe builds: omg config set aur.allow_unsafe_builds true")]
+    SandboxUnavailable,
+
+    #[error("No package archive found after build for '{0}'\n  → The build may have produced a different package name\n  → Check ~/.cache/omg/aur/_pkgdest/ for the built package")]
+    PackageArchiveNotFound(String),
+}
 
 use super::aur_index::{AurIndex, build_index};
 use super::pkgbuild::PkgBuild;
@@ -150,7 +180,17 @@ impl AurClient {
 
         let url = format!("{AUR_RPC_URL}?v=5&type=search&arg={query}");
 
-        let response: AurResponse = self.client.get(&url).send().await?.json().await?;
+        let response: AurResponse = self.client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| {
+                tracing::warn!("AUR search network error: {}", e);
+                anyhow::anyhow!("Failed to connect to AUR. Check your internet connection.")
+            })?
+            .json()
+            .await
+            .context("Failed to parse AUR response")?;
 
         let mut packages: Vec<Package> = response
             .results
@@ -266,7 +306,17 @@ impl AurClient {
 
         let url = format!("{AUR_RPC_URL}?v=5&type=info&arg={package}");
 
-        let response: AurResponse = self.client.get(&url).send().await?.json().await?;
+        let response: AurResponse = self.client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| {
+                tracing::warn!("AUR info network error: {}", e);
+                anyhow::anyhow!("Failed to connect to AUR. Check your internet connection.")
+            })?
+            .json()
+            .await
+            .context("Failed to parse AUR response")?;
 
         Ok(response.results.into_iter().next().map(|p| Package {
             name: p.name,
@@ -377,13 +427,37 @@ impl AurClient {
                         url.push_str("&arg[]=");
                         url.push_str(name);
                     }
-                    client.get(&url).send().await?.json::<AurResponse>().await
+                    
+                    let mut last_error = None;
+                    for retry in 0..3u32 {
+                        if retry > 0 {
+                            tokio::time::sleep(Duration::from_millis(100 * 2u64.pow(retry - 1))).await;
+                        }
+                        
+                        match client.get(&url).send().await {
+                            Ok(resp) => {
+                                if resp.status().is_server_error() {
+                                    last_error = Some(anyhow::anyhow!("AUR server error: {}", resp.status()));
+                                    continue;
+                                }
+                                return resp.json::<AurResponse>().await.map_err(Into::into);
+                            }
+                            Err(e) if e.is_timeout() || e.is_connect() => {
+                                last_error = Some(anyhow::anyhow!("Network error: {e}"));
+                            }
+                            Err(e) => return Err(e.into()),
+                        }
+                    }
+                    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("AUR request failed after retries")))
                 }
             })
             .buffer_unordered(concurrency);
 
         while let Some(res) = stream.next().await {
-            let response = res?;
+            let response = res.map_err(|e| {
+                tracing::warn!("AUR update check failed: {}", e);
+                anyhow::anyhow!("Failed to check AUR updates. Check your internet connection.")
+            })?;
             for p in response.results {
                 // SECURITY: Validate package name from RPC response
                 if let Err(e) = crate::core::security::validate_package_name(&p.name) {
@@ -577,9 +651,7 @@ impl AurClient {
         chunks
     }
 
-    /// Install AUR package by building it
     pub async fn install(&self, package: &str) -> Result<()> {
-        // SECURITY: Validate package name
         crate::core::security::validate_package_name(package)?;
 
         println!(
@@ -588,29 +660,34 @@ impl AurClient {
             package.yellow()
         );
 
-        // Ensure build directory exists
-        std::fs::create_dir_all(&self.build_dir)?;
+        if self.info(package).await?.is_none() {
+            return Err(AurError::PackageNotFound(package.to_string()).into());
+        }
+
+        std::fs::create_dir_all(&self.build_dir)
+            .with_context(|| format!("Failed to create build directory: {}", self.build_dir.display()))?;
 
         let pkg_dir = self.build_dir.join(package);
 
-        // Clone or update the package
         if pkg_dir.exists() {
             println!("{} Updating existing source...", "→".blue());
-            self.git_pull(&pkg_dir).await?;
+            self.git_pull(&pkg_dir).await.map_err(|e| {
+                tracing::warn!("Git pull failed for {}: {}", package, e);
+                AurError::GitPullFailed(package.to_string())
+            })?;
         } else {
             println!("{} Cloning from AUR...", "→".blue());
-            self.git_clone(package).await?;
+            self.git_clone(package).await.map_err(|e| {
+                tracing::warn!("Git clone failed for {}: {}", package, e);
+                AurError::GitCloneFailed(package.to_string())
+            })?;
         }
 
-        // Review PKGBUILD
         let pkgbuild_path = pkg_dir.join("PKGBUILD");
         if !pkgbuild_path.exists() {
-            anyhow::bail!(
-                "✗ Build Error: PKGBUILD not found for package '{package}'.\n  Verify the package exists on AUR or check your internet connection."
-            );
+            return Err(AurError::PkgbuildNotFound(package.to_string()).into());
         }
 
-        // Auto-fetch missing GPG keys before build
         Self::fetch_missing_pgp_keys(&pkgbuild_path).await;
 
         let env = self.makepkg_env(&pkg_dir)?;
@@ -627,24 +704,25 @@ impl AurClient {
             println!("{} Using cached build...", "→".blue());
             cached
         } else {
-            // Build with makepkg (sandboxed if bubblewrap is available)
+            let log_path = self.build_dir.join("_logs").join(format!("{package}.log"));
             let status = self
                 .run_build(&pkg_dir, &env)
                 .await
                 .with_context(|| format!("Failed to run makepkg for '{package}'"))?;
 
             if !status.success() {
-                anyhow::bail!(
-                    "makepkg failed for '{package}'. Check build output above for details."
-                );
+                return Err(AurError::BuildFailed {
+                    package: package.to_string(),
+                    log_path: log_path.display().to_string(),
+                }.into());
             }
 
-            let pkg_file = Self::find_built_package(&pkg_dir, &env.pkgdest).await?;
+            let pkg_file = Self::find_built_package(&pkg_dir, &env.pkgdest).await
+                .map_err(|_| AurError::PackageArchiveNotFound(package.to_string()))?;
             self.write_cache_key(package, &cache_key).await?;
             pkg_file
         };
 
-        // Install the built package
         println!("{} Installing built package...", "→".blue());
         Self::install_built_package(&pkg_file).await?;
 
@@ -653,46 +731,35 @@ impl AurClient {
         Ok(())
     }
 
-    /// Build an AUR package and return the path to the built package (no install)
-    /// This is used for batch updates where we want to install all packages at once
-    /// Uses makepkg for reliable builds that match yay/paru behavior
     #[instrument(skip(self))]
     pub async fn build_only(&self, package: &str) -> Result<PathBuf> {
-        // SECURITY: Validate package name
         crate::core::security::validate_package_name(package)?;
 
-        // Ensure build directory exists
-        std::fs::create_dir_all(&self.build_dir)?;
+        std::fs::create_dir_all(&self.build_dir)
+            .with_context(|| format!("Failed to create build directory: {}", self.build_dir.display()))?;
 
         let pkg_dir = self.build_dir.join(package);
         let pkgbuild_path = pkg_dir.join("PKGBUILD");
 
-        // Clone or update the package - detect incomplete clones
         if pkg_dir.exists() && pkgbuild_path.exists() {
-            // Valid existing clone - just update
-            self.git_pull(&pkg_dir).await.with_context(|| {
-                format!(
-                    "Failed to update AUR package '{package}'. Try removing ~/.cache/omg/aur/{package}"
-                )
+            self.git_pull(&pkg_dir).await.map_err(|e| {
+                tracing::warn!("Git pull failed for {}: {}", package, e);
+                AurError::GitPullFailed(package.to_string())
             })?;
         } else {
-            // Clean up any incomplete clone and start fresh
             if pkg_dir.exists() {
                 std::fs::remove_dir_all(&pkg_dir).ok();
             }
-            self.git_clone(package).await.with_context(|| {
-                format!("Failed to clone AUR package '{package}'. Check if it exists on AUR.")
+            self.git_clone(package).await.map_err(|e| {
+                tracing::warn!("Git clone failed for {}: {}", package, e);
+                AurError::GitCloneFailed(package.to_string())
             })?;
         }
 
-        // Verify PKGBUILD exists after clone
         if !pkgbuild_path.exists() {
-            anyhow::bail!(
-                "PKGBUILD not found for '{package}'. The AUR package may not exist or clone failed."
-            );
+            return Err(AurError::PkgbuildNotFound(package.to_string()).into());
         }
 
-        // Auto-fetch missing GPG keys from PKGBUILD
         Self::fetch_missing_pgp_keys(&pkgbuild_path).await;
 
         let env = self.makepkg_env(&pkg_dir)?;
@@ -707,17 +774,21 @@ impl AurClient {
             return Ok(cached);
         }
 
-        // Build with makepkg
+        let log_path = self.build_dir.join("_logs").join(format!("{package}.log"));
         let status = self
             .run_build(&pkg_dir, &env)
             .await
             .with_context(|| format!("Failed to run makepkg for '{package}'"))?;
 
         if !status.success() {
-            anyhow::bail!("makepkg failed for '{package}'. Check build output above for details.");
+            return Err(AurError::BuildFailed {
+                package: package.to_string(),
+                log_path: log_path.display().to_string(),
+            }.into());
         }
 
-        let pkg_file = Self::find_built_package(&pkg_dir, &env.pkgdest).await?;
+        let pkg_file = Self::find_built_package(&pkg_dir, &env.pkgdest).await
+            .map_err(|_| AurError::PackageArchiveNotFound(package.to_string()))?;
         self.write_cache_key(package, &cache_key).await?;
         Ok(pkg_file)
     }
@@ -863,40 +934,37 @@ impl AurClient {
         self.git_pull(pkg_dir).await
     }
 
-    /// Build an AUR package interactively like yay/paru
-    /// Uses makepkg -si which handles deps automatically with sudo prompts
-    /// Returns the path to the built package (not installed yet)
     #[instrument(skip(self))]
     pub async fn build_package_interactive(&self, package: &str) -> Result<PathBuf> {
-        std::fs::create_dir_all(&self.build_dir)?;
+        std::fs::create_dir_all(&self.build_dir)
+            .with_context(|| format!("Failed to create build directory: {}", self.build_dir.display()))?;
 
         let pkg_dir = self.build_dir.join(package);
         let pkgbuild_path = pkg_dir.join("PKGBUILD");
 
-        // Clone or update
         if pkg_dir.exists() && pkgbuild_path.exists() {
-            self.git_pull(&pkg_dir)
-                .await
-                .with_context(|| format!("Failed to update AUR package '{package}'"))?;
+            self.git_pull(&pkg_dir).await.map_err(|e| {
+                tracing::warn!("Git pull failed for {}: {}", package, e);
+                AurError::GitPullFailed(package.to_string())
+            })?;
         } else {
             if pkg_dir.exists() {
                 std::fs::remove_dir_all(&pkg_dir).ok();
             }
-            self.git_clone(package)
-                .await
-                .with_context(|| format!("Failed to clone AUR package '{package}'"))?;
+            self.git_clone(package).await.map_err(|e| {
+                tracing::warn!("Git clone failed for {}: {}", package, e);
+                AurError::GitCloneFailed(package.to_string())
+            })?;
         }
 
         if !pkgbuild_path.exists() {
-            anyhow::bail!("PKGBUILD not found for '{package}'");
+            return Err(AurError::PkgbuildNotFound(package.to_string()).into());
         }
 
-        // Auto-fetch missing GPG keys
         Self::fetch_missing_pgp_keys(&pkgbuild_path).await;
 
         let env = self.makepkg_env(&pkg_dir)?;
 
-        // Check build cache
         let cache_key = self.cache_key(&pkg_dir, &env.makeflags)?;
         if let Some(cached) = self
             .cached_package(package, &env.pkgdest, &cache_key)
@@ -905,7 +973,6 @@ impl AurClient {
             return Ok(cached);
         }
 
-        // Build with makepkg -s (syncdeps) - handles deps with sudo, interactive
         let mut cmd = Command::new("makepkg");
         cmd.args(["-s", "--noconfirm", "-f", "--needed"])
             .env("MAKEFLAGS", &env.makeflags)
@@ -921,27 +988,28 @@ impl AurClient {
         let status = cmd.status().await.context("Failed to run makepkg")?;
 
         if !status.success() {
-            anyhow::bail!("makepkg failed for '{package}'");
+            let log_path = self.build_dir.join("_logs").join(format!("{package}.log"));
+            return Err(AurError::BuildFailed {
+                package: package.to_string(),
+                log_path: log_path.display().to_string(),
+            }.into());
         }
 
-        let pkg_file = Self::find_built_package(&pkg_dir, &env.pkgdest).await?;
+        let pkg_file = Self::find_built_package(&pkg_dir, &env.pkgdest).await
+            .map_err(|_| AurError::PackageArchiveNotFound(package.to_string()))?;
         self.write_cache_key(package, &cache_key).await?;
         Ok(pkg_file)
     }
 
-    /// Build an AUR package without installing dependencies (deps pre-installed)
-    /// Used for parallel batch builds where deps are resolved upfront
     #[instrument(skip(self))]
     pub async fn build_only_nodeps(&self, package: &str) -> Result<PathBuf> {
         let pkg_dir = self.build_dir.join(package);
         let pkgbuild_path = pkg_dir.join("PKGBUILD");
 
-        // Package should already be cloned/updated by the batch prep phase
         if !pkgbuild_path.exists() {
-            anyhow::bail!("PKGBUILD not found for '{package}'. Run preparation phase first.");
+            return Err(AurError::PkgbuildNotFound(package.to_string()).into());
         }
 
-        // Auto-fetch missing GPG keys from PKGBUILD
         Self::fetch_missing_pgp_keys(&pkgbuild_path).await;
 
         let env = self.makepkg_env(&pkg_dir)?;
@@ -954,19 +1022,21 @@ impl AurClient {
             return Ok(cached);
         }
 
-        // Build with makepkg --nodeps (dependencies already installed)
+        let log_path = self.build_dir.join("_logs").join(format!("{package}.log"));
         let status = self
             .run_build_nodeps(&pkg_dir, &env)
             .await
             .with_context(|| format!("Failed to run makepkg for '{package}'"))?;
 
         if !status.success() {
-            anyhow::bail!(
-                "makepkg failed for '{package}'. Check ~/.cache/omg/aur/_logs/{package}.log"
-            );
+            return Err(AurError::BuildFailed {
+                package: package.to_string(),
+                log_path: log_path.display().to_string(),
+            }.into());
         }
 
-        let pkg_file = Self::find_built_package(&pkg_dir, &env.pkgdest).await?;
+        let pkg_file = Self::find_built_package(&pkg_dir, &env.pkgdest).await
+            .map_err(|_| AurError::PackageArchiveNotFound(package.to_string()))?;
         self.write_cache_key(package, &cache_key).await?;
         Ok(pkg_file)
     }
@@ -1061,14 +1131,19 @@ impl AurClient {
             tracing::warn!("git clone failed, falling back to libgit2");
         }
 
-        // Command-line git is required on Arch Linux
-        anyhow::bail!("git is required but not found in PATH. Install with: sudo pacman -S git")
+        Err(AurError::MissingTool {
+            tool: "git".to_string(),
+            install_pkg: "git".to_string(),
+        }
+        .into())
     }
 
     /// Update existing clone
     async fn git_pull(&self, pkg_dir: &Path) -> Result<()> {
-        let git_path = which("git")
-            .context("git is required but not found in PATH. Install with: sudo pacman -S git")?;
+        let git_path = which("git").map_err(|_| AurError::MissingTool {
+            tool: "git".to_string(),
+            install_pkg: "git".to_string(),
+        })?;
 
         let spinner = create_spinner("Pulling latest changes...");
         let status = Command::new(git_path)
@@ -1271,9 +1346,7 @@ impl AurClient {
         } else {
             if !self.settings.aur.allow_unsafe_builds {
                 spinner.finish_and_clear();
-                anyhow::bail!(
-                    "bubblewrap is not installed. Install it or enable 'aur.allow_unsafe_builds' for native builds."
-                );
+                return Err(AurError::SandboxUnavailable.into());
             }
 
             tracing::debug!("bubblewrap not found, using regular makepkg");
