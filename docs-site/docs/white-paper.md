@@ -86,7 +86,7 @@ Research on "Human-Computer Interaction" (HCI) defines three thresholds of perce
 2.  **1.0 second**: The limit for the user's flow of thought to stay uninterrupted.
 3.  **10 seconds**: The limit for keeping the user's attention.
 
-Legacy package managers operate at the boundary of the 100ms–1.0s range. By targeting **<10ms**, OMG moves into the "True Instant" category. This isn't just a vanity metric; it creates a "Transparent Interface" where the tool disappears, and the developer's intent is realized immediately.
+Legacy package managers operate at the boundary of the 100ms–1.0s range. By targeting **&lt;10ms**, OMG moves into the "True Instant" category. This isn't just a vanity metric; it creates a "Transparent Interface" where the tool disappears, and the developer's intent is realized immediately.
 
 ### 1.5 Engineering for Developer Happiness
 At its core, OMG is an exercise in "Empathy-Driven Engineering." We recognize that a developer's time and mental energy are the most valuable assets in the software lifecycle. Every architectural decision in OMG—from the choice of `bitcode` for serialization to the `tmpfs` snapshot for shell prompts—is designed to protect those assets.

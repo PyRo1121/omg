@@ -133,7 +133,9 @@ pub fn suggest_for_anyhow(err: &anyhow::Error) -> Option<&'static str> {
         return Some("Check that the file path is correct and the file exists");
     }
     if msg.contains("lock") && (msg.contains("exists") || msg.contains("conflict")) {
-        return Some("A lock file exists. Another process might be running, or remove the lock file manually.");
+        return Some(
+            "A lock file exists. Another process might be running, or remove the lock file manually.",
+        );
     }
 
     None

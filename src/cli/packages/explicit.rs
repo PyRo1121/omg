@@ -106,7 +106,7 @@ pub fn explicit_sync_with_json(count: bool, json: bool) -> Result<()> {
 
 fn display_explicit_list(mut packages: Vec<String>, json: bool) -> Result<()> {
     packages.sort();
-    
+
     if json {
         let output = ExplicitJson {
             count: packages.len(),
@@ -117,7 +117,7 @@ fn display_explicit_list(mut packages: Vec<String>, json: bool) -> Result<()> {
         }
         return Ok(());
     }
-    
+
     use std::io::Write;
     let mut stdout = std::io::BufWriter::new(std::io::stdout());
 

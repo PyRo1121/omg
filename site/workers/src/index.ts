@@ -53,6 +53,7 @@ import {
   handleAdminExportUsage,
   handleAdminExportAudit,
   handleAdminAnalytics,
+  handleAdminAdvancedMetrics,
 } from './handlers/admin';
 
 import { handleGetSmartInsights } from './handlers/insights';
@@ -308,6 +309,10 @@ export default {
 
       if (path === '/api/admin/analytics' && method === 'GET') {
         return handleAdminAnalytics(request, env);
+      }
+
+      if (path === '/api/admin/advanced-metrics' && method === 'GET') {
+        return handleAdminAdvancedMetrics(request, env);
       }
 
       if (path === '/api/admin/audit-log' && method === 'GET') {

@@ -3,11 +3,10 @@
 use anyhow::Result;
 
 use crate::cli::{style, ui};
-use crate::cli::tea::run_remove_elm;
 use crate::core::packages::PackageService;
 use crate::package_managers::get_package_manager;
 
-pub async fn remove(packages: &[String], recursive: bool, yes: bool, dry_run: bool) -> Result<()> {
+pub async fn remove(packages: &[String], recursive: bool, _yes: bool, dry_run: bool) -> Result<()> {
     if packages.is_empty() {
         anyhow::bail!("No packages specified");
     }
@@ -22,12 +21,8 @@ pub async fn remove(packages: &[String], recursive: bool, yes: bool, dry_run: bo
         return remove_dry_run(packages, recursive);
     }
 
-    if let Err(e) = run_remove_elm(packages.to_vec(), recursive, yes) {
-        eprintln!("Warning: Elm UI failed, falling back to basic mode: {e}");
-        remove_fallback(packages, recursive).await
-    } else {
-        Ok(())
-    }
+    // Use fallback mode directly (Elm UI has broken confirmation)
+    remove_fallback(packages, recursive).await
 }
 
 #[allow(clippy::unnecessary_wraps)]

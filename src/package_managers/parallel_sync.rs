@@ -214,7 +214,10 @@ async fn download_db(
             let mut file = match file_result {
                 Ok(f) => f,
                 Err(e) => {
-                    last_error = Some(anyhow::anyhow!("Failed to create {}: {e}", temp_path.display()));
+                    last_error = Some(anyhow::anyhow!(
+                        "Failed to create {}: {e}",
+                        temp_path.display()
+                    ));
                     break;
                 }
             };
@@ -293,10 +296,16 @@ pub async fn sync_databases_parallel() -> Result<()> {
     let configured_repos = get_configured_repos();
 
     // Standard repos (use mirrorlist)
-    let standard_repos: std::collections::HashSet<&str> =
-        ["core", "extra", "multilib", "core-testing", "extra-testing", "multilib-testing"]
-            .into_iter()
-            .collect();
+    let standard_repos: std::collections::HashSet<&str> = [
+        "core",
+        "extra",
+        "multilib",
+        "core-testing",
+        "extra-testing",
+        "multilib-testing",
+    ]
+    .into_iter()
+    .collect();
 
     for repo in &configured_repos {
         if standard_repos.contains(repo.as_str()) {
@@ -573,7 +582,10 @@ async fn download_package(
             let mut file = match file_result {
                 Ok(f) => f,
                 Err(e) => {
-                    last_error = Some(anyhow::anyhow!("Failed to create {}: {e}", temp_path.display()));
+                    last_error = Some(anyhow::anyhow!(
+                        "Failed to create {}: {e}",
+                        temp_path.display()
+                    ));
                     break;
                 }
             };

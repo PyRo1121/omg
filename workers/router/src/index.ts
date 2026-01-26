@@ -16,9 +16,8 @@ export default {
 
     // Route /docs requests to the docs site
     if (path === '/docs' || path.startsWith('/docs/')) {
-      // Remove /docs prefix for the docs site (it expects paths at root)
-      const docsPath = path === '/docs' ? '/' : path.replace(/^\/docs/, '');
-      const docsUrl = new URL(docsPath + url.search, env.DOCS_SITE);
+      // Forward the full path including /docs prefix to the Pages deployment
+      const docsUrl = new URL(path + url.search, env.DOCS_SITE);
 
       const response = await fetch(docsUrl.toString(), {
         method: request.method,

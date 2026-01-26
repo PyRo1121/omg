@@ -92,10 +92,7 @@ fn install_dry_run(packages: &[String]) -> Result<()> {
         style::info("→"),
         total_size as f64 / 1024.0 / 1024.0
     );
-    println!(
-        "\n  {} No changes made (dry run)",
-        style::dim("ℹ")
-    );
+    println!("\n  {} No changes made (dry run)", style::dim("ℹ"));
 
     Ok(())
 }
