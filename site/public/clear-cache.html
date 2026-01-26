@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Clearing Cache...</title>
+  <style>
+    body {
+      background: #0a0a0a;
+      color: white;
+      font-family: system-ui;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      margin: 0;
+    }
+    .container {
+      text-align: center;
+    }
+    .spinner {
+      border: 3px solid rgba(255,255,255,0.1);
+      border-top: 3px solid #3b82f6;
+      border-radius: 50%;
+      width: 40px;
+      height: 40px;
+      animation: spin 1s linear infinite;
+      margin: 20px auto;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="spinner"></div>
+    <h2>Clearing Cache...</h2>
+    <p id="status">Please wait...</p>
+  </div>
+  <script>
+    async function clearAllCaches() {
+      const status = document.getElementById('status');
+      
+      try {
+        // Clear all caches
+        if ('caches' in window) {
+          const cacheNames = await caches.keys();
+          await Promise.all(cacheNames.map(name => caches.delete(name)));
+          status.textContent = 'Cache cleared!';
+        }
+        
+        // Unregister service workers
+        if ('serviceWorker' in navigator) {
+          const registrations = await navigator.serviceWorker.getRegistrations();
+          await Promise.all(registrations.map(reg => reg.unregister()));
+          status.textContent = 'Service workers unregistered!';
+        }
+        
+        status.textContent = 'Redirecting to dashboard...';
+        
+        // Hard redirect with cache busting
+        setTimeout(() => {
+          window.location.href = '/dashboard?v=' + Date.now();
+        }, 1000);
+        
+      } catch (e) {
+        status.textContent = 'Error: ' + e.message;
+        setTimeout(() => {
+          window.location.href = '/dashboard';
+        }, 2000);
+      }
+    }
+    
+    clearAllCaches();
+  </script>
+</body>
+</html>

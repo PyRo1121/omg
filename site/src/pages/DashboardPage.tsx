@@ -106,26 +106,30 @@ const DashboardPage: Component = () => {
     }
   });
 
-  // Load Turnstile script and initialize widget
   const initTurnstile = () => {
-    if (turnstileContainer && window.turnstile && !turnstileWidgetId) {
-      turnstileWidgetId = window.turnstile.render(turnstileContainer, {
-        sitekey: TURNSTILE_SITE_KEY,
-        callback: (token: string) => {
-          setTurnstileToken(token);
-          setError('');
-        },
-        'error-callback': () => {
-          setError('Security verification failed. Please refresh and try again.');
-          setTurnstileToken(null);
-        },
-        'expired-callback': () => {
-          setTurnstileToken(null);
-        },
-        theme: 'dark',
-        size: 'normal',
-      });
+    if (!turnstileContainer || !window.turnstile) return;
+    
+    if (turnstileWidgetId) {
+      try { window.turnstile.remove(turnstileWidgetId); } catch {}
+      turnstileWidgetId = null;
     }
+    
+    turnstileWidgetId = window.turnstile.render(turnstileContainer, {
+      sitekey: TURNSTILE_SITE_KEY,
+      callback: (token: string) => {
+        setTurnstileToken(token);
+        setError('');
+      },
+      'error-callback': () => {
+        setError('Security verification failed. Please refresh and try again.');
+        setTurnstileToken(null);
+      },
+      'expired-callback': () => {
+        setTurnstileToken(null);
+      },
+      theme: 'dark',
+      size: 'normal',
+    });
   };
 
   // Check for existing session
@@ -175,10 +179,9 @@ const DashboardPage: Component = () => {
     }
   });
 
-  // Re-initialize Turnstile when returning to login view
   createEffect(() => {
-    if (view() === 'login' && window.turnstile && turnstileContainer && !turnstileWidgetId) {
-      setTimeout(initTurnstile, 100);
+    if (view() === 'login' && window.turnstile && turnstileContainer) {
+      queueMicrotask(initTurnstile);
     }
   });
 

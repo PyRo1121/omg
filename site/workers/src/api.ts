@@ -22,8 +22,8 @@ export interface Env {
   ADMIN_RATE_LIMITER?: RateLimit;
   AUTH_RATE_LIMITER?: RateLimit;
   API_RATE_LIMITER?: RateLimit;
-  // Turnstile (Cloudflare CAPTCHA)
   TURNSTILE_SECRET_KEY?: string;
+  SENTRY_DSN?: string;
 }
 
 // User from database
@@ -228,10 +228,9 @@ export const TIER_FEATURES = {
 
 // CORS headers - Allow main site and docs site
 export const corsHeaders = {
-  'Access-Control-Allow-Origin': '*', // Allow all origins for public analytics
+  'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-  'Access-Control-Allow-Credentials': 'true',
 };
 
 // Helper to get origin-specific CORS headers (for authenticated endpoints)
@@ -256,12 +255,16 @@ export function getCorsHeaders(origin: string | null): Record<string, string> {
   };
 }
 
-// JSON response helper
 export function jsonResponse(data: unknown, status = 200): Response {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { 'Content-Type': 'application/json', ...corsHeaders },
-  });
+  const headers: Record<string, string> = { 
+    'Content-Type': 'application/json', 
+    ...corsHeaders,
+    'CDN-Cache-Control': 'no-store',
+  };
+  if (status >= 400) {
+    headers['Cache-Control'] = 'no-store, no-cache, must-revalidate';
+  }
+  return new Response(JSON.stringify(data), { status, headers });
 }
 
 // Error response helper

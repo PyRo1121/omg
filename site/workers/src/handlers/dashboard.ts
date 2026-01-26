@@ -394,7 +394,7 @@ export async function handleRevokeMachine(request: Request, env: Env): Promise<R
   // Deactivate machine
   const result = await env.DB.prepare(
     `
-    UPDATE machines SET is_active = 0 WHERE license_id = ? AND id = ?
+    UPDATE machines SET is_active = 0 WHERE license_id = ? AND machine_id = ?
   `
   )
     .bind(license.id, body.machine_id)

@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>API Debug</title>
+  <style>
+    body { background: #0a0a0a; color: #fff; font-family: monospace; padding: 20px; }
+    pre { background: #1a1a1a; padding: 15px; border-radius: 8px; overflow-x: auto; }
+    button { background: #3b82f6; color: white; border: none; padding: 10px 20px; 
+             border-radius: 6px; cursor: pointer; margin: 5px; }
+    button:hover { background: #2563eb; }
+    .success { color: #10b981; }
+    .error { color: #ef4444; }
+  </style>
+</head>
+<body>
+  <h1>API Diagnostics</h1>
+  <button onclick="testHealth()">Test /health</button>
+  <button onclick="testDebug()">Test /debug (NEW)</button>
+  <button onclick="testOptions()">Test OPTIONS (preflight)</button>
+  <button onclick="testRevoke()">Test POST /machines/revoke</button>
+  <button onclick="clearLogs()">Clear</button>
+  
+  <div id="output"></div>
+
+  <script>
+    const log = (msg, isError = false) => {
+      const div = document.createElement('div');
+      div.className = isError ? 'error' : 'success';
+      div.innerHTML = '<pre>' + JSON.stringify(msg, null, 2) + '</pre>';
+      document.getElementById('output').appendChild(div);
+    };
+
+    const clearLogs = () => {
+      document.getElementById('output').innerHTML = '';
+    };
+
+    async function testHealth() {
+      log('Testing /health...');
+      try {
+        const res = await fetch('https://api.pyro1121.com/health');
+        log({ status: res.status, data: await res.json() });
+      } catch (e) {
+        log({ error: e.message }, true);
+      }
+    }
+
+    async function testDebug() {
+      log('Testing /debug endpoint...');
+      try {
+        const res = await fetch('https://api.pyro1121.com/debug');
+        log({ status: res.status, data: await res.json() });
+      } catch (e) {
+        log({ error: e.message }, true);
+      }
+    }
+
+    async function testOptions() {
+      log('Testing OPTIONS preflight...');
+      try {
+        const res = await fetch('https://api.pyro1121.com/api/machines/revoke', {
+          method: 'OPTIONS',
+          headers: {
+            'Origin': window.location.origin,
+            'Access-Control-Request-Method': 'POST',
+            'Access-Control-Request-Headers': 'content-type,authorization'
+          }
+        });
+        const headers = {};
+        res.headers.forEach((v, k) => headers[k] = v);
+        log({ status: res.status, headers });
+      } catch (e) {
+        log({ error: e.message }, true);
+      }
+    }
+
+    async function testRevoke() {
+      log('Testing POST /machines/revoke...');
+      const token = localStorage.getItem('omg_session_token');
+      if (!token) {
+        log({ error: 'No session token in localStorage' }, true);
+        return;
+      }
+      
+      try {
+        const res = await fetch('https://api.pyro1121.com/api/machines/revoke', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({ machine_id: 'test' })
+        });
+        
+        const data = await res.json();
+        log({ 
+          status: res.status, 
+          statusText: res.statusText,
+          data 
+        }, res.status !== 401 && res.status !== 200);
+      } catch (e) {
+        log({ error: e.message, stack: e.stack }, true);
+      }
+    }
+  </script>
+</body>
+</html>

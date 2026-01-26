@@ -1,6 +1,4 @@
-// OMG API Worker - Main Entry Point
-// Clean, modular architecture with authenticated endpoints
-
+import * as Sentry from '@sentry/cloudflare';
 import { Env, corsHeaders, jsonResponse, errorResponse, sendEmail } from './api';
 import {
   handleSendCode,
@@ -63,17 +61,38 @@ import {
   cleanupDocsAnalytics,
 } from './handlers/docs-analytics';
 
-export default {
+export default Sentry.withSentry(
+  (env: Env) => ({
+    dsn: env.SENTRY_DSN,
+    tracesSampleRate: 0.1,
+    environment: 'production',
+  }),
+  {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    // Add execution context to env for waitUntil support
     (env as any).ctx = ctx;
-    // Handle CORS preflight
     if (request.method === 'OPTIONS') {
-      return new Response(null, { headers: corsHeaders });
+      return new Response(null, { 
+        headers: {
+          ...corsHeaders,
+          'Access-Control-Max-Age': '86400',
+        }
+      });
     }
 
     const url = new URL(request.url);
-    const path = url.pathname;
+    const rawPath = url.pathname;
+    const path = rawPath.endsWith('/') && rawPath !== '/' ? rawPath.slice(0, -1) : rawPath;
+    
+    if (path === '/debug') {
+      return jsonResponse({
+        method: request.method,
+        url: request.url,
+        rawPathname: rawPath,
+        normalizedPath: path,
+        pathMatch: path === '/api/machines/revoke',
+        headers: Object.fromEntries(request.headers.entries()),
+      });
+    }
 
     try {
       // ============================================
@@ -105,8 +124,8 @@ export default {
         return handleLogout(request, env);
       }
 
-      // License: Validate (for CLI activation)
-      if (path === '/api/validate-license' && request.method === 'GET') {
+      // License: Validate (for CLI activation) - supports both GET and POST
+      if (path === '/api/validate-license' && (request.method === 'GET' || request.method === 'POST')) {
         return handleValidateLicense(request, env);
       }
 
@@ -404,14 +423,14 @@ export default {
 
       return errorResponse('Not found', 404);
     } catch (error) {
+      Sentry.captureException(error);
       console.error('Worker error:', error);
       return errorResponse('Internal server error', 500);
     }
   },
 
-  // Scheduled cron handler for cleanup tasks
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
     console.log('Running scheduled cleanup tasks');
     ctx.waitUntil(cleanupDocsAnalytics(env.DB));
   },
-};
+});
