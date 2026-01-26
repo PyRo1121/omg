@@ -489,41 +489,42 @@ pub fn init_theme() {
 mod tests {
     use super::*;
     use serial_test::serial;
+    use temp_env;
 
     #[test]
     #[serial]
     fn test_no_color_disables_colors() {
-        unsafe { env::set_var("NO_COLOR", "1") };
-        assert!(!colors_enabled());
-        unsafe { env::remove_var("NO_COLOR") };
+        temp_env::with_var("NO_COLOR", Some("1"), || {
+            assert!(!colors_enabled());
+        });
     }
 
     #[test]
     #[serial]
     fn test_omg_colors_always_enables() {
-        unsafe { env::set_var("OMG_COLORS", "always") };
-        assert!(colors_enabled());
-        unsafe { env::remove_var("OMG_COLORS") };
+        temp_env::with_var("OMG_COLORS", Some("always"), || {
+            assert!(colors_enabled());
+        });
     }
 
     #[test]
     #[serial]
     fn test_omg_colors_never_disables() {
-        unsafe { env::set_var("OMG_COLORS", "never") };
-        assert!(!colors_enabled());
-        unsafe { env::remove_var("OMG_COLORS") };
+        temp_env::with_var("OMG_COLORS", Some("never"), || {
+            assert!(!colors_enabled());
+        });
     }
 
     #[test]
     #[serial]
     fn test_unicode_icons() {
-        unsafe { env::set_var("OMG_UNICODE", "1") };
-        assert_eq!(icon("✓", "OK"), "✓");
-        unsafe { env::remove_var("OMG_UNICODE") };
+        temp_env::with_var("OMG_UNICODE", Some("1"), || {
+            assert_eq!(icon("✓", "OK"), "✓");
+        });
 
-        unsafe { env::set_var("OMG_UNICODE", "0") };
-        assert_eq!(icon("✓", "OK"), "OK");
-        unsafe { env::remove_var("OMG_UNICODE") };
+        temp_env::with_var("OMG_UNICODE", Some("0"), || {
+            assert_eq!(icon("✓", "OK"), "OK");
+        });
     }
 
     #[test]
