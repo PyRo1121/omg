@@ -1,7 +1,20 @@
 ---
-title: Runtime Management
+title: Runtime Management - Node.js, Python, Go, Rust, Ruby, Java, Bun
 sidebar_position: 11
-description: Managing Node.js, Python, Go, Rust, Ruby, Java, and Bun
+description: Manage Node.js, Python, Go, Rust, Ruby, Java, and Bun versions with OMG. Sub-millisecond version switching, automatic .nvmrc/.python-version detection, and 100+ additional runtimes via mise.
+keywords:
+  - node version manager
+  - python version manager
+  - rust version manager
+  - go version manager
+  - ruby version manager
+  - java version manager
+  - bun version manager
+  - nvm alternative
+  - pyenv alternative
+  - rustup alternative
+  - runtime switching
+  - version management
 ---
 
 # Runtime Management

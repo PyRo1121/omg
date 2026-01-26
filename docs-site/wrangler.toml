@@ -2,3 +2,8 @@
 name = "omg-docs"
 compatibility_date = "2024-01-01"
 pages_build_output_dir = "build"
+
+# Note: For Pages Functions bindings, configure in dashboard or use:
+# - D1: omg-analytics (e11296b5-1c01-437a-9d22-2e3786c20932)
+# - R2: omg-docs-assets
+# - KV: omg-cache (305ad768c4b94f72bbf2225721e73a4b)

@@ -6,3 +6,6 @@ benchmark_report.md
 node_modules
 .wrangler
 dist
+workers
+/workers/*
+/workers/**

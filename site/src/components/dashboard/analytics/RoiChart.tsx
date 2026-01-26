@@ -1,5 +1,5 @@
-import { Component, mergeProps } from 'solid-js';
-import { SolidApexCharts } from 'solid-apexcharts';
+import { Component, mergeProps, createSignal, onMount, Show } from 'solid-js';
+import { Dynamic } from 'solid-js/web';
 import GlassCard from '../../ui/GlassCard';
 import { LiveIndicator } from '../../ui/Chart';
 
@@ -12,8 +12,21 @@ interface RoiChartProps {
   peakVelocity?: number;
 }
 
-export const RoiChart: Component<RoiChartProps> = (rawProps) => {
-  const props = mergeProps({ height: 300, title: 'Organization Productivity', subtitle: 'Aggregate efficiency gains over the last period.' }, rawProps);
+export const RoiChart: Component<RoiChartProps> = rawProps => {
+  const props = mergeProps(
+    {
+      height: 300,
+      title: 'Organization Productivity',
+      subtitle: 'Aggregate efficiency gains over the last period.',
+    },
+    rawProps
+  );
+  const [ChartComponent, setChartComponent] = createSignal<Component<any> | null>(null);
+
+  onMount(async () => {
+    const { SolidApexCharts } = await import('solid-apexcharts');
+    setChartComponent(() => SolidApexCharts);
+  });
 
   const options = {
     chart: {
@@ -25,12 +38,12 @@ export const RoiChart: Component<RoiChartProps> = (rawProps) => {
         enabled: true,
         easing: 'easeinout',
         speed: 800,
-      }
+      },
     },
     stroke: {
       curve: 'smooth',
       width: 3,
-      colors: ['#6366f1']
+      colors: ['#6366f1'],
     },
     fill: {
       type: 'gradient',
@@ -43,20 +56,20 @@ export const RoiChart: Component<RoiChartProps> = (rawProps) => {
           {
             offset: 0,
             color: '#6366f1',
-            opacity: 0.4
+            opacity: 0.4,
           },
           {
             offset: 100,
             color: '#6366f1',
-            opacity: 0
-          }
-        ]
-      }
+            opacity: 0,
+          },
+        ],
+      },
     },
     grid: {
       borderColor: 'rgba(255, 255, 255, 0.05)',
       strokeDashArray: 4,
-      padding: { left: 20, right: 20 }
+      padding: { left: 20, right: 20 },
     },
     xaxis: {
       categories: props.labels || (props.data || []).map((_, i) => `D${i}`),
@@ -67,8 +80,8 @@ export const RoiChart: Component<RoiChartProps> = (rawProps) => {
           colors: '#64748b',
           fontSize: '10px',
           fontWeight: 700,
-        }
-      }
+        },
+      },
     },
     yaxis: {
       labels: {
@@ -77,35 +90,39 @@ export const RoiChart: Component<RoiChartProps> = (rawProps) => {
           fontSize: '10px',
           fontWeight: 700,
         },
-        formatter: (val: number) => `+${val}%`
-      }
+        formatter: (val: number) => `+${val}%`,
+      },
     },
     tooltip: {
       theme: 'dark',
       x: { show: false },
       y: {
-        formatter: (val: number) => `+${val}% gain`
-      }
+        formatter: (val: number) => `+${val}% gain`,
+      },
     },
     colors: ['#6366f1'],
-    dataLabels: { enabled: false }
+    dataLabels: { enabled: false },
   };
 
-  const series = [{
-    name: 'Productivity Gain',
-    data: props.data
-  }];
+  const series = [
+    {
+      name: 'Productivity Gain',
+      data: props.data,
+    },
+  ];
 
   return (
     <GlassCard class="p-10">
       <div class="mb-10 flex items-center justify-between">
         <div>
-          <h3 class="text-2xl font-black text-white tracking-tight">{props.title}</h3>
+          <h3 class="text-2xl font-black tracking-tight text-white">{props.title}</h3>
           <p class="text-sm font-medium text-slate-500">{props.subtitle}</p>
         </div>
         <div class="flex items-center gap-6">
           <div class="text-right">
-            <p class="text-[10px] font-bold uppercase tracking-widest text-slate-500">Peak Velocity</p>
+            <p class="text-[10px] font-bold tracking-widest text-slate-500 uppercase">
+              Peak Velocity
+            </p>
             <p class="text-lg font-black text-white">+{props.peakVelocity || 0}%</p>
           </div>
           <div class="h-10 w-[1px] bg-white/10" />
@@ -113,12 +130,22 @@ export const RoiChart: Component<RoiChartProps> = (rawProps) => {
         </div>
       </div>
       <div class="min-h-[300px]">
-        <SolidApexCharts
-          type="area"
-          options={options}
-          series={series}
-          height={props.height}
-        />
+        <Show
+          when={ChartComponent()}
+          fallback={
+            <div class="flex h-[300px] items-center justify-center">
+              <div class="h-6 w-6 animate-spin rounded-full border-2 border-blue-500 border-t-transparent" />
+            </div>
+          }
+        >
+          <Dynamic
+            component={ChartComponent()!}
+            type="area"
+            options={options}
+            series={series}
+            height={props.height}
+          />
+        </Show>
       </div>
     </GlassCard>
   );

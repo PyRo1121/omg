@@ -93,10 +93,10 @@ export interface SendCodeResponse {
   error?: string;
 }
 
-export async function sendCode(email: string): Promise<SendCodeResponse> {
+export async function sendCode(email: string, turnstileToken?: string): Promise<SendCodeResponse> {
   return apiRequest('/api/auth/send-code', {
     method: 'POST',
-    body: JSON.stringify({ email }),
+    body: JSON.stringify({ email, turnstileToken }),
   });
 }
 

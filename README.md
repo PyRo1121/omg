@@ -257,31 +257,62 @@ make coverage
 
 ## 📜 License
 
-OMG is licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0-or-later)**.
+**OMG is source-available commercial software.**
 
-**Copyright © 2024-2026 OMG Team**
+**Copyright © 2024-2026 OMG Team. All rights reserved.**
 
-This program is free software: you can redistribute it and/or modify it under the terms of the GNU Affero General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+### Free for Individuals & Open Source
+- ✅ Free for personal projects
+- ✅ Free for open source projects
+- ✅ Source code is public for transparency
 
-### Why AGPL-3.0?
+### Paid for Commercial Use
+- 💰 **Team License:** $4,999/year (up to 10 developers)
+- 💰 **Business License:** $19,999/year (up to 50 developers)
+- 💰 **Enterprise License:** Custom pricing (unlimited developers)
 
-The AGPL ensures that if anyone runs a modified version of OMG as a network service (e.g., SaaS), they must make the source code available to users. This protects the open-source community and ensures transparency.
+### Why Source-Available?
+
+We believe in **transparency** (public source code) and **sustainability** (commercial funding). This model allows us to:
+- Fund full-time development
+- Provide professional support
+- Ship features faster
+- Keep OMG competitive
+
+The source code is public on GitHub for security auditing and learning, but commercial use requires a paid license.
+
+### Do I Need a Commercial License?
+
+**YES** if you're:
+- Working at a for-profit company (even for personal projects at work)
+- Using OMG on company infrastructure
+- Building commercial products with OMG
+- A contractor/consultant using OMG for clients
+
+**NO** if you're:
+- An individual using OMG for personal projects
+- Working on open source projects
+- A student or educator
+
+See **[COMMERCIAL-LICENSE](COMMERCIAL-LICENSE.md)** for full pricing and details.
 
 ### Third-Party Components
 
-OMG integrates with and bundles third-party open-source software:
-
+OMG incorporates third-party open source software:
 - **[mise](https://github.com/jdx/mise)** - Runtime version management (MIT License, © 2025 Jeff Dickey)
 - Various Rust crates (MIT/Apache-2.0 licenses)
 
-See [NOTICE](NOTICE) and [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md) for complete attribution and license information.
+See [NOTICE](NOTICE) and [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md) for complete attribution.
 
 ### Files
 
-- [`LICENSE`](LICENSE) - Full AGPL-3.0 license text
+- [`LICENSE`](LICENSE) - Full license terms
+- [`COMMERCIAL-LICENSE`](COMMERCIAL-LICENSE.md) - Pricing and purchasing
 - [`NOTICE`](NOTICE) - Copyright and third-party notices
-- [`THIRD-PARTY-LICENSES.md`](THIRD-PARTY-LICENSES.md) - Third-party license texts
+- [`THIRD-PARTY-LICENSES.md`](THIRD-PARTY-LICENSES.md) - Third-party licenses
 
----
+### Contact for Licensing
 
-**Questions about licensing?** Open an issue or email legal inquiries to the maintainers.
+📧 Email: **olen@latham.cloud**
+
+For questions about commercial licensing, pricing, or purchasing.

@@ -1,7 +1,17 @@
 ---
-title: CLI Reference
+title: CLI Reference - All OMG Commands
 sidebar_position: 3
-description: Complete command reference for all OMG commands
+description: Complete CLI reference for OMG package manager. Documentation for search, install, remove, update, use, list, run, audit, and all other commands with examples and options.
+keywords:
+  - omg cli
+  - omg commands
+  - package manager commands
+  - omg search
+  - omg install
+  - omg use
+  - omg run
+  - command line reference
+  - linux cli tools
 ---
 
 # CLI Reference

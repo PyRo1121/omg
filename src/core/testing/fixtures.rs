@@ -288,6 +288,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[allow(clippy::implicit_clone)]
     fn test_package_fixture_builder() {
         let pkg = PackageFixture::new()
             .name("test")
@@ -303,6 +304,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::implicit_clone)]
     fn test_package_fixture_defaults() {
         let pkg = PackageFixture::new().build();
         assert_eq!(pkg.name, "test-package");
@@ -310,6 +312,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::implicit_clone)]
     fn test_package_fixture_presets() {
         let firefox = PackageFixture::firefox().build();
         assert_eq!(firefox.name, "firefox");

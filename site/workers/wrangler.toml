@@ -1,16 +1,41 @@
 name = "omg-saas"
 main = "src/worker.ts"
 compatibility_date = "2026-01-17"
+compatibility_flags = ["nodejs_compat"]  # Required for Sentry SDK
 
 # Custom domain routes
 routes = [
   { pattern = "api.pyro1121.com/*", zone_name = "pyro1121.com" }
 ]
 
+# D1 Databases
 [[d1_databases]]
 binding = "DB"
 database_name = "omg-licensing"
 database_id = "bcaf7781-a747-4637-92d9-94782e4fa1db"
+
+[[d1_databases]]
+binding = "ANALYTICS_DB"
+database_name = "omg-analytics"
+database_id = "e11296b5-1c01-437a-9d22-2e3786c20932"
+
+# KV Namespaces
+[[kv_namespaces]]
+binding = "CACHE"
+id = "305ad768c4b94f72bbf2225721e73a4b"
+
+[[kv_namespaces]]
+binding = "SESSIONS"
+id = "1c7724b4fa6b4f0ca528d510b5009dd2"
+
+[[kv_namespaces]]
+binding = "FLAGS"
+id = "7017da41ba6a4b528dc3ea018cd997bd"
+
+# R2 Buckets
+[[r2_buckets]]
+binding = "ASSETS"
+bucket_name = "omg-assets"
 
 [ai]
 binding = "AI"
@@ -35,6 +60,7 @@ simple = { limit = 1000, period = 60 }
 
 # Secrets are set via: bunx wrangler secret put <NAME>
 # Required: STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, JWT_SECRET, ADMIN_USER_ID, RESEND_API_KEY, META_API_KEY
+# Optional: TURNSTILE_SECRET_KEY, SENTRY_DSN
 
 [vars]
 ACCOUNT_ID = "f1e95b3e1b502cf366dfc81a863695fa"

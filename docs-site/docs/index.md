@@ -1,7 +1,18 @@
 ---
-title: Introduction
+title: OMG Documentation - Fastest Unified Package Manager for Linux
 sidebar_position: 1
-description: The complete guide to the fastest unified package manager
+description: Complete documentation for OMG, the unified package manager that's 22x faster than pacman. Manage Arch Linux, Debian, Ubuntu packages and Node.js, Python, Go, Rust, Ruby, Java, Bun runtimes with one CLI.
+keywords:
+  - omg documentation
+  - package manager docs
+  - linux package manager
+  - unified package manager
+  - arch linux
+  - runtime manager
+  - nvm alternative
+  - pyenv alternative
+  - pacman alternative
+  - developer tools
 ---
 
 # OMG Documentation

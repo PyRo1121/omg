@@ -11,7 +11,6 @@ const config: Config = {
     v4: true,
   },
 
-  // Production URL
   url: 'https://pyro1121.com',
   baseUrl: '/docs/',
 
@@ -25,6 +24,80 @@ const config: Config = {
     defaultLocale: 'en',
     locales: ['en'],
   },
+
+  headTags: [
+    {
+      tagName: 'meta',
+      attributes: {
+        name: 'robots',
+        content: 'index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1',
+      },
+    },
+    {
+      tagName: 'meta',
+      attributes: {
+        name: 'googlebot',
+        content: 'index, follow',
+      },
+    },
+    {
+      tagName: 'meta',
+      attributes: {
+        name: 'author',
+        content: 'OMG Team',
+      },
+    },
+    {
+      tagName: 'meta',
+      attributes: {
+        property: 'og:site_name',
+        content: 'OMG Package Manager Documentation',
+      },
+    },
+    {
+      tagName: 'meta',
+      attributes: {
+        property: 'og:type',
+        content: 'website',
+      },
+    },
+    {
+      tagName: 'meta',
+      attributes: {
+        property: 'og:locale',
+        content: 'en_US',
+      },
+    },
+    {
+      tagName: 'meta',
+      attributes: {
+        name: 'twitter:site',
+        content: '@pyro1121',
+      },
+    },
+    {
+      tagName: 'meta',
+      attributes: {
+        name: 'twitter:card',
+        content: 'summary_large_image',
+      },
+    },
+    {
+      tagName: 'link',
+      attributes: {
+        rel: 'preconnect',
+        href: 'https://fonts.googleapis.com',
+      },
+    },
+    {
+      tagName: 'link',
+      attributes: {
+        rel: 'preconnect',
+        href: 'https://fonts.gstatic.com',
+        crossorigin: 'anonymous',
+      },
+    },
+  ],
 
   themes: [],
 
@@ -99,13 +172,26 @@ const config: Config = {
         sitemap: {
           lastmod: 'date',
           changefreq: 'weekly',
-          priority: 0.5,
+          priority: 0.7,
           ignorePatterns: ['/tags/**'],
           filename: 'sitemap.xml',
           createSitemapItems: async (params) => {
             const {defaultCreateSitemapItems, ...rest} = params;
             const items = await defaultCreateSitemapItems(rest);
-            return items.filter((item) => !item.url.includes('/page/'));
+            return items
+              .filter((item) => !item.url.includes('/page/'))
+              .map((item) => {
+                if (item.url.includes('/quickstart') || item.url.includes('/cli') || item.url.endsWith('/docs/')) {
+                  return { ...item, priority: 0.9 };
+                }
+                if (item.url.includes('/migration/') || item.url.includes('/runtimes') || item.url.includes('/packages')) {
+                  return { ...item, priority: 0.85 };
+                }
+                if (item.url.includes('/faq') || item.url.includes('/troubleshooting')) {
+                  return { ...item, priority: 0.8 };
+                }
+                return item;
+              });
           },
         },
       } satisfies Preset.Options,
@@ -114,6 +200,16 @@ const config: Config = {
 
   themeConfig: {
     image: 'img/omg-social-card.png',
+    metadata: [
+      {
+        name: 'keywords',
+        content: 'package manager, linux, arch linux, debian, ubuntu, nvm, pyenv, rustup, runtime manager, node version manager, python version manager, omg, unified package manager',
+      },
+      {
+        name: 'description',
+        content: 'Complete documentation for OMG, the fastest unified package manager for Linux. Learn to manage system packages and language runtimes with a single CLI.',
+      },
+    ],
     colorMode: {
       defaultMode: 'dark',
       disableSwitch: false,

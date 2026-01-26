@@ -1,8 +1,17 @@
 ---
-title: Migrating from pyenv
+title: Migrate from pyenv to OMG - Python Version Manager Alternative
 sidebar_label: From pyenv
 sidebar_position: 3
-description: Command mapping and migration guide from pyenv to OMG
+description: Switch from pyenv to OMG for 50x faster Python version switching. Complete command mapping, migration steps, and .python-version compatibility. Unified runtime management.
+keywords:
+  - pyenv alternative
+  - pyenv replacement
+  - python version manager
+  - faster pyenv
+  - migrate from pyenv
+  - python version file
+  - python switching
+  - virtualenv alternative
 ---
 
 # Migrating from pyenv

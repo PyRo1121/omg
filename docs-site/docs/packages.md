@@ -1,7 +1,19 @@
 ---
-title: Package Management
+title: Package Management - Search, Install, Update Packages
 sidebar_position: 10
-description: Search, install, update, and remove packages
+description: Search, install, update, and remove packages with OMG. 22x faster than pacman. Full AUR support on Arch Linux, APT integration on Debian/Ubuntu. Security grading for every package.
+keywords:
+  - linux package manager
+  - arch linux packages
+  - aur helper
+  - pacman alternative
+  - yay alternative
+  - apt alternative
+  - package search
+  - package install
+  - system packages
+  - debian packages
+  - ubuntu packages
 ---
 
 # Package Management

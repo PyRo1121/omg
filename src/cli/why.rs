@@ -325,7 +325,7 @@ fn show_dependency_chain_debian(package: &str) -> Result<Cmd<()>> {
 
     if !output.status.success() {
         return Ok(Components::error_with_suggestion(
-            format!("Package '{}' not found", package),
+            format!("Package '{package}' not found"),
             "Try 'omg search' to find available packages",
         ));
     }
@@ -335,10 +335,8 @@ fn show_dependency_chain_debian(package: &str) -> Result<Cmd<()>> {
 
     for line in deps_str.lines() {
         let line = line.trim();
-        if line.starts_with("Depends:") {
-            if let Some(dep) = line.strip_prefix("Depends:") {
-                deps.push(dep.trim().to_string());
-            }
+        if let Some(dep) = line.strip_prefix("Depends:") {
+            deps.push(dep.trim().to_string());
         }
     }
 
@@ -368,7 +366,7 @@ fn show_reverse_deps_debian(package: &str) -> Result<Cmd<()>> {
 
     if !output.status.success() {
         return Ok(Components::error_with_suggestion(
-            format!("Package '{}' not found", package),
+            format!("Package '{package}' not found"),
             "Try 'omg search' to find available packages",
         ));
     }
@@ -387,7 +385,7 @@ fn show_reverse_deps_debian(package: &str) -> Result<Cmd<()>> {
     Ok(Cmd::batch(vec![
         Components::header(
             "Reverse Dependencies",
-            format!("packages that depend on {}", package),
+            format!("packages that depend on {package}"),
         ),
         Components::spacer(),
         Components::kv_list(

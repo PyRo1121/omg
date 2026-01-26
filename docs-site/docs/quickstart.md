@@ -1,7 +1,17 @@
 ---
-title: Quick Start
+title: Quick Start - Install OMG Package Manager
 sidebar_position: 2
-description: Get started with OMG in 5 minutes
+description: Install OMG, the fastest unified package manager for Linux. Set up shell integration for Arch Linux, Debian, Ubuntu. Replace nvm, pyenv, and pacman with one CLI in 5 minutes.
+keywords:
+  - install omg
+  - omg installation
+  - linux package manager install
+  - arch linux package manager
+  - nvm alternative
+  - pyenv alternative
+  - pacman alternative
+  - runtime version manager
+  - developer tools setup
 ---
 
 # Quick Start Guide

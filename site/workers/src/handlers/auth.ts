@@ -8,6 +8,7 @@ import {
   generateOTP,
   validateSession,
   logAudit,
+  verifyTurnstile,
 } from '../api';
 
 // Send OTP email via Resend
@@ -60,11 +61,30 @@ async function sendOTPEmail(
 
 // Send OTP code to email
 export async function handleSendCode(request: Request, env: Env): Promise<Response> {
-  const body = (await request.json()) as { email?: string };
+  const body = (await request.json()) as { email?: string; turnstileToken?: string };
   const email = body.email?.toLowerCase().trim();
+  const turnstileToken = body.turnstileToken;
 
   if (!email || !email.includes('@')) {
     return errorResponse('Valid email required');
+  }
+
+  // Verify Turnstile token (bot protection)
+  if (env.TURNSTILE_SECRET_KEY) {
+    if (!turnstileToken) {
+      return errorResponse('Security verification required', 400);
+    }
+
+    const ip = request.headers.get('CF-Connecting-IP');
+    const turnstileResult = await verifyTurnstile(turnstileToken, env.TURNSTILE_SECRET_KEY, ip);
+
+    if (!turnstileResult.success) {
+      await logAudit(env.DB, null, 'auth.turnstile_failed', 'auth_code', null, request, {
+        email,
+        error: turnstileResult.error,
+      });
+      return errorResponse('Security verification failed. Please try again.', 403);
+    }
   }
 
   // Rate limit: max 3 codes per email per 10 minutes

@@ -1,0 +1,282 @@
+# OMG Commercial License
+
+**Copyright (C) 2024-2026 OMG Team. All rights reserved.**
+
+---
+
+## Overview
+
+OMG is **source-available commercial software**, not open source.
+
+- ✅ **Free** for individuals and open source projects
+- 💰 **Paid** for companies and commercial use
+- 📖 **Source code** is public for transparency and security
+
+---
+
+## Do I Need a Commercial License?
+
+### ✅ YES - You need a commercial license if:
+
+- You work at a for-profit company (even if using OMG for personal projects at work)
+- You're using OMG on company infrastructure (laptops, servers, CI/CD)
+- You're using OMG to build commercial products
+- You're offering OMG as a service to others
+- Your team/company has any paid employees using OMG
+- You're a contractor/consultant using OMG for client work
+
+**Simple rule:** If you're making money or working at a company that makes money, you need a license.
+
+### ❌ NO - You DON'T need a commercial license if:
+
+- You're an individual using OMG for personal projects
+- You're working on open source projects (non-commercial)
+- You're a student or teacher using OMG for education
+- You're evaluating OMG for potential purchase (30-day trial)
+
+---
+
+## Commercial License Tiers
+
+### 🚀 TEAM LICENSE
+**$4,999 USD per year**
+
+Perfect for startups and small teams.
+
+**Includes:**
+- ✅ Up to 10 developer seats
+- ✅ Internal use within one organization
+- ✅ Covers all employees and contractors
+- ✅ Email support (48-hour response)
+- ✅ 1 year of updates and bug fixes
+- ✅ Perpetual license for current version
+
+**Ideal for:** Startups, small engineering teams
+
+---
+
+### 💼 BUSINESS LICENSE
+**$19,999 USD per year**
+
+For growing companies with larger teams.
+
+**Includes:**
+- ✅ Up to 50 developer seats
+- ✅ Internal use within one organization
+- ✅ Covers all employees and contractors
+- ✅ Priority support with 24-hour SLA
+- ✅ 1 year of updates and bug fixes
+- ✅ Quarterly business reviews
+- ✅ Perpetual license for current version
+
+**Ideal for:** Mid-size companies, established teams
+
+---
+
+### 🏢 ENTERPRISE LICENSE
+**Custom Pricing - Contact Us**
+
+For large organizations with complex needs.
+
+**Includes:**
+- ✅ Unlimited developer seats
+- ✅ Multi-organization use (subsidiaries, affiliates)
+- ✅ Covers all employees and contractors globally
+- ✅ Dedicated support with custom SLA
+- ✅ Private Slack/Teams channel
+- ✅ On-site training available
+- ✅ Custom feature development (negotiable)
+- ✅ Legal indemnification
+- ✅ Perpetual license for current version
+
+**Ideal for:** Fortune 500, large enterprises, regulated industries
+
+---
+
+### ☁️ SAAS LICENSE
+**Custom Pricing - Contact Us**
+
+Required if you're offering OMG as a service.
+
+**Required for:**
+- Offering OMG as a hosted/managed service to customers
+- Embedding OMG in commercial products for distribution
+- White-labeling OMG for resale
+- Providing OMG-based consulting services
+
+**Includes:**
+- ✅ All Enterprise License benefits
+- ✅ Redistribution rights
+- ✅ White-label permission (optional)
+- ✅ Reseller agreements available
+- ✅ Revenue sharing or flat-fee models
+
+**Ideal for:** Cloud providers, DevOps platforms, consulting firms
+
+---
+
+## Pricing FAQ
+
+### Can I pay monthly?
+No. All licenses are annual subscriptions. Monthly payment plans may be available for Enterprise licenses (contact us).
+
+### What happens after the license expires?
+You can continue using the version you licensed perpetually, but you won't receive updates, bug fixes, or support. To stay current, renew annually.
+
+### Can I transfer licenses between employees?
+Yes. Licenses are "floating seats" - you can reassign them as employees join/leave.
+
+### Do contractors count toward the seat limit?
+Yes. Any person (employee or contractor) using OMG counts as one seat.
+
+### Can I use OMG in multiple companies I own?
+Each legal entity requires a separate license. Contact us for multi-entity discounts.
+
+### Is there a non-profit discount?
+Yes. Registered 501(c)(3) non-profits receive 50% off Team and Business licenses. Contact us with documentation.
+
+### Can I get a trial?
+Yes. 30-day free trials are available for commercial evaluation. Contact us.
+
+### What payment methods do you accept?
+- Credit card (Stripe)
+- ACH/Wire transfer (for annual invoices)
+- Purchase orders (Enterprise only)
+
+---
+
+## How to Purchase
+
+### Step 1: Contact Us
+Email: **olen@latham.cloud**
+Subject: "OMG Commercial License - [TIER]"
+
+Include:
+- Company name and website
+- Number of developers
+- Desired license tier (Team/Business/Enterprise/SaaS)
+- Billing contact information
+
+### Step 2: Receive Quote
+We'll send you a formal quote within 1 business day.
+
+### Step 3: Sign Agreement
+Review and sign the commercial license agreement (electronic signature).
+
+### Step 4: Payment
+Pay via credit card (instant) or invoice (NET 30 for Enterprise).
+
+### Step 5: Receive License Key
+You'll receive a license key to activate OMG for commercial use.
+
+---
+
+## Compliance & Enforcement
+
+### How do you verify license compliance?
+- Self-reported (honor system for most customers)
+- License key validation in the software
+- Periodic audits for Enterprise customers (contractual right)
+
+### What happens if I use OMG without a license?
+Using OMG for commercial purposes without a license is:
+- ❌ Copyright infringement
+- ❌ Breach of license terms
+- ❌ Subject to legal action
+
+We reserve the right to:
+- Pursue legal remedies (injunctions, damages)
+- Charge backdated license fees + penalties
+- Publicize violations
+
+**Don't risk it.** Licenses are affordable and buying one is the right thing to do.
+
+### Can I audit the source code before purchasing?
+Absolutely! The source code is public on GitHub. Review it thoroughly before buying.
+
+---
+
+## Open Source & Community
+
+### Why isn't OMG open source?
+We believe in:
+- ✅ Transparency (public source code)
+- ✅ Security (auditable by anyone)
+- ✅ Sustainability (commercial funding for development)
+
+But we also believe developers deserve to be paid for their work. Source-available licensing lets us:
+- Fund ongoing development
+- Provide support and documentation
+- Keep OMG competitive and maintained
+
+### Can I contribute to OMG?
+Yes! We accept:
+- Bug reports (GitHub issues)
+- Feature requests (GitHub discussions)
+- Security reports (security@omg.dev - coming soon)
+- Documentation improvements
+
+Code contributions require a Contributor License Agreement (CLA) since we hold commercial licensing rights.
+
+### Will OMG ever become open source?
+Possibly. We're considering a "delayed open source" model where versions convert to MIT/Apache-2.0 after 3-5 years. This is common in the BSL (Business Source License) model.
+
+---
+
+## Support
+
+All commercial licenses include support:
+
+| License Tier | Support Level | Response Time |
+|-------------|--------------|---------------|
+| **Team** | Email | 48 hours |
+| **Business** | Email + Priority | 24 hours (business days) |
+| **Enterprise** | Dedicated Slack/Teams | 4 hours (24/7 for Critical) |
+| **SaaS** | Custom | Per agreement |
+
+Support includes:
+- Bug fixes and patches
+- Installation help
+- Configuration assistance
+- Performance troubleshooting
+
+Support does NOT include:
+- Custom feature development (Enterprise only, extra cost)
+- On-site visits (Enterprise only, extra cost)
+- Training (available separately)
+
+---
+
+## Contact
+
+**For licensing inquiries:**
+📧 Email: olen@latham.cloud
+🔗 Website: https://pyro1121.com
+📁 GitHub: https://github.com/PyRo1121/omg
+
+**For sales questions:**
+- License tier recommendations
+- Volume discounts
+- Multi-year agreements
+- Custom terms
+
+**For technical questions:**
+- Pre-sales technical questions are free
+- Post-purchase support included with license
+
+---
+
+## Legal
+
+**License Terms:** See LICENSE file for complete legal terms.
+
+**Privacy Policy:** We collect minimal data (email, company name, payment info). We never sell customer data.
+
+**Refund Policy:** 30-day money-back guarantee if you're unsatisfied. Annual licenses are non-refundable after 30 days but can be transferred.
+
+**Terms of Service:** Commercial licenses are subject to our standard Terms of Service (provided upon purchase).
+
+---
+
+*Last Updated: January 25, 2026*
+*License Version: 1.0*

@@ -1,6 +1,7 @@
 // OMG API Worker - Main Router
 // Clean consolidated routing file
 
+import * as Sentry from '@sentry/cloudflare';
 import { corsHeaders } from './api';
 
 // License handlers (CLI activation & usage reporting)
@@ -89,10 +90,20 @@ export interface Env {
   META_API_KEY?: string;
   ACCOUNT_ID?: string;
   ADMIN_RATE_LIMITER?: any;
+  // Turnstile (Cloudflare CAPTCHA)
+  TURNSTILE_SECRET_KEY?: string;
+  // Sentry error tracking
+  SENTRY_DSN?: string;
 }
 
-export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+export default Sentry.withSentry(
+  (env: Env) => ({
+    dsn: env.SENTRY_DSN,
+    tracesSampleRate: 0.1, // Sample 10% of requests for performance monitoring
+    environment: 'production',
+  }),
+  {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname;
     const method = request.method;
@@ -368,8 +379,10 @@ export default {
       });
 
     } catch (error) {
+      // Capture error in Sentry
+      Sentry.captureException(error);
       console.error('Worker error:', error);
-      return new Response(JSON.stringify({ 
+      return new Response(JSON.stringify({
         error: 'Internal server error',
         message: error instanceof Error ? error.message : 'Unknown error'
       }), {
@@ -378,4 +391,4 @@ export default {
       });
     }
   },
-};
+} satisfies ExportedHandler<Env>);

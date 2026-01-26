@@ -1,4 +1,14 @@
-import { Component, createSignal, createEffect, Show, For, onMount, Switch, Match } from 'solid-js';
+import {
+  Component,
+  createSignal,
+  createEffect,
+  Show,
+  For,
+  onMount,
+  onCleanup,
+  Switch,
+  Match,
+} from 'solid-js';
 import { A } from '@solidjs/router';
 import { animate, stagger } from 'motion';
 import * as api from '../lib/api';
@@ -22,11 +32,35 @@ import {
   ChevronRight,
   Shield,
   ShieldAlert,
-  Activity
+  Activity,
 } from 'lucide-solid';
 
 type View = 'login' | 'verify' | 'dashboard';
 type Tab = 'overview' | 'machines' | 'team' | 'security' | 'billing' | 'admin';
+
+// Turnstile site key (public - safe to expose)
+const TURNSTILE_SITE_KEY = '0x4AAAAAACREzmYYXC6MxMqi';
+
+// Declare Turnstile global types
+declare global {
+  interface Window {
+    turnstile?: {
+      render: (
+        container: string | HTMLElement,
+        options: {
+          sitekey: string;
+          callback: (token: string) => void;
+          'error-callback'?: () => void;
+          'expired-callback'?: () => void;
+          theme?: 'light' | 'dark' | 'auto';
+          size?: 'normal' | 'compact';
+        }
+      ) => string;
+      reset: (widgetId: string) => void;
+      remove: (widgetId: string) => void;
+    };
+  }
+}
 
 const DashboardPage: Component = () => {
   // Auth state
@@ -35,6 +69,9 @@ const DashboardPage: Component = () => {
   const [otpCode, setOtpCode] = createSignal('');
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal('');
+  const [turnstileToken, setTurnstileToken] = createSignal<string | null>(null);
+  let turnstileWidgetId: string | null = null;
+  let turnstileContainer: HTMLDivElement | undefined;
 
   // Dashboard state
   const [dashboard, setDashboard] = createSignal<api.DashboardData | null>(null);
@@ -55,19 +92,41 @@ const DashboardPage: Component = () => {
     if (view() === 'dashboard' && dashboard()) {
       // Stagger nav items
       animate(
-        "nav button",
+        'nav button',
         { opacity: [0, 1], x: [-20, 0] },
         { delay: stagger(0.05), duration: 0.5, easing: [0.16, 1, 0.3, 1] }
       );
 
       // Animate main content area
       animate(
-        "main > div",
+        'main > div',
         { opacity: [0, 1], y: [10, 0] },
         { duration: 0.6, easing: [0.16, 1, 0.3, 1] }
       );
     }
   });
+
+  // Load Turnstile script and initialize widget
+  const initTurnstile = () => {
+    if (turnstileContainer && window.turnstile && !turnstileWidgetId) {
+      turnstileWidgetId = window.turnstile.render(turnstileContainer, {
+        sitekey: TURNSTILE_SITE_KEY,
+        callback: (token: string) => {
+          setTurnstileToken(token);
+          setError('');
+        },
+        'error-callback': () => {
+          setError('Security verification failed. Please refresh and try again.');
+          setTurnstileToken(null);
+        },
+        'expired-callback': () => {
+          setTurnstileToken(null);
+        },
+        theme: 'dark',
+        size: 'normal',
+      });
+    }
+  };
 
   // Check for existing session
   onMount(async () => {
@@ -95,13 +154,39 @@ const DashboardPage: Component = () => {
         setLoading(false);
       }
     }
+
+    // Load Turnstile script
+    if (!document.querySelector('script[src*="turnstile"]')) {
+      const script = document.createElement('script');
+      script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?onload=onTurnstileLoad';
+      script.async = true;
+      (window as any).onTurnstileLoad = initTurnstile;
+      document.head.appendChild(script);
+    } else if (window.turnstile) {
+      initTurnstile();
+    }
+  });
+
+  // Cleanup Turnstile widget
+  onCleanup(() => {
+    if (turnstileWidgetId && window.turnstile) {
+      window.turnstile.remove(turnstileWidgetId);
+      turnstileWidgetId = null;
+    }
+  });
+
+  // Re-initialize Turnstile when returning to login view
+  createEffect(() => {
+    if (view() === 'login' && window.turnstile && turnstileContainer && !turnstileWidgetId) {
+      setTimeout(initTurnstile, 100);
+    }
   });
 
   const loadDashboardData = async () => {
     try {
       const data = await api.getDashboard();
       setDashboard(data);
-      
+
       if (data?.license?.tier && ['team', 'enterprise'].includes(data.license.tier)) {
         await loadTeamData();
       }
@@ -125,18 +210,40 @@ const DashboardPage: Component = () => {
   // Auth handlers
   const handleSendCode = async (e: Event) => {
     e.preventDefault();
+
+    // Require Turnstile verification
+    if (!turnstileToken()) {
+      setError('Please complete the security verification');
+      return;
+    }
+
     setLoading(true);
     setError('');
     try {
-      const res = await api.sendCode(email());
+      const res = await api.sendCode(email(), turnstileToken()!);
       if (res.success || res.status === 'ok') {
         setView('verify');
+        // Reset Turnstile for next login attempt
+        setTurnstileToken(null);
+        if (turnstileWidgetId && window.turnstile) {
+          window.turnstile.reset(turnstileWidgetId);
+        }
       } else {
         setError(res.error || 'Failed to send code');
+        // Reset Turnstile on error
+        if (turnstileWidgetId && window.turnstile) {
+          window.turnstile.reset(turnstileWidgetId);
+        }
+        setTurnstileToken(null);
       }
     } catch (e: any) {
       console.error('Send code error:', e);
       setError(e.message || 'Network error');
+      // Reset Turnstile on error
+      if (turnstileWidgetId && window.turnstile) {
+        window.turnstile.reset(turnstileWidgetId);
+      }
+      setTurnstileToken(null);
     } finally {
       setLoading(false);
     }
@@ -181,53 +288,68 @@ const DashboardPage: Component = () => {
   };
 
   // Glassmorphism Styles
-  const pageBg = "min-h-screen bg-[#0a0a0a] text-slate-200 font-sans selection:bg-blue-500/30 selection:text-blue-200 overflow-x-hidden relative";
+  const pageBg =
+    'min-h-screen bg-[#0a0a0a] text-slate-200 font-sans selection:bg-blue-500/30 selection:text-blue-200 overflow-x-hidden relative';
   const bgEffects = (
     <>
-      <div class="fixed top-[-20%] left-[-10%] w-[50%] h-[50%] bg-blue-600/10 rounded-full blur-[120px] pointer-events-none" />
-      <div class="fixed bottom-[-20%] right-[-10%] w-[50%] h-[50%] bg-purple-600/10 rounded-full blur-[120px] pointer-events-none" />
-      <div class="fixed top-[20%] right-[10%] w-[30%] h-[30%] bg-cyan-600/5 rounded-full blur-[100px] pointer-events-none" />
+      <div class="pointer-events-none fixed top-[-20%] left-[-10%] h-[50%] w-[50%] rounded-full bg-blue-600/10 blur-[120px]" />
+      <div class="pointer-events-none fixed right-[-10%] bottom-[-20%] h-[50%] w-[50%] rounded-full bg-purple-600/10 blur-[120px]" />
+      <div class="pointer-events-none fixed top-[20%] right-[10%] h-[30%] w-[30%] rounded-full bg-cyan-600/5 blur-[100px]" />
     </>
   );
 
-  const glassPanel = "bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl";
-  const glassInput = "w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-white/30 focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/50 transition-all";
-  const glassButton = "w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-medium py-3 rounded-xl shadow-lg shadow-blue-500/20 transition-all active:scale-[0.98]";
+  const glassPanel = 'bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl';
+  const glassInput =
+    'w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-white/30 focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/50 transition-all';
+  const glassButton =
+    'w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-medium py-3 rounded-xl shadow-lg shadow-blue-500/20 transition-all active:scale-[0.98]';
 
   const NavItem = (props: { id: Tab; icon: any; label: string }) => {
     const isActive = () => activeTab() === props.id;
     return (
       <button
         onClick={() => setActiveTab(props.id)}
-        class={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-300 group relative ${
+        class={`group relative flex w-full items-center gap-3 rounded-xl px-4 py-3 transition-all duration-300 ${
           isActive()
-            ? 'text-white bg-blue-600/10 border border-blue-500/20'
-            : 'text-slate-400 hover:text-white hover:bg-white/5'
+            ? 'border border-blue-500/20 bg-blue-600/10 text-white'
+            : 'text-slate-400 hover:bg-white/5 hover:text-white'
         }`}
       >
         <Show when={isActive()}>
-          <div class="absolute inset-0 bg-blue-500/5 blur-lg rounded-xl" />
-          <div class="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-8 bg-blue-500 rounded-r-full" />
+          <div class="absolute inset-0 rounded-xl bg-blue-500/5 blur-lg" />
+          <div class="absolute top-1/2 left-0 h-8 w-1 -translate-y-1/2 rounded-r-full bg-blue-500" />
         </Show>
-        <props.icon class={`w-5 h-5 transition-colors ${isActive() ? 'text-blue-400' : 'text-slate-500 group-hover:text-slate-300'}`} />
-        <span class="font-medium relative">{props.label}</span>
+        <props.icon
+          class={`h-5 w-5 transition-colors ${isActive() ? 'text-blue-400' : 'text-slate-500 group-hover:text-slate-300'}`}
+        />
+        <span class="relative font-medium">{props.label}</span>
       </button>
     );
   };
 
-  const InsightCard = (props: { title: string; value: string; icon: any; color: string; sub?: string }) => (
-    <div class={`${glassPanel} p-6 relative overflow-hidden group hover:border-white/20 transition-colors`}>
-      <div class={`absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity`}>
-        <props.icon class={`w-24 h-24 text-${props.color}-500`} />
+  const InsightCard = (props: {
+    title: string;
+    value: string;
+    icon: any;
+    color: string;
+    sub?: string;
+  }) => (
+    <div
+      class={`${glassPanel} group relative overflow-hidden p-6 transition-colors hover:border-white/20`}
+    >
+      <div
+        class={`absolute top-0 right-0 p-4 opacity-10 transition-opacity group-hover:opacity-20`}
+      >
+        <props.icon class={`h-24 w-24 text-${props.color}-500`} />
       </div>
       <div class="relative z-10">
-        <div class={`inline-flex p-2 rounded-lg bg-${props.color}-500/10 mb-4`}>
-          <props.icon class={`w-6 h-6 text-${props.color}-400`} />
+        <div class={`inline-flex rounded-lg p-2 bg-${props.color}-500/10 mb-4`}>
+          <props.icon class={`h-6 w-6 text-${props.color}-400`} />
         </div>
-        <h3 class="text-slate-400 text-sm font-medium mb-1">{props.title}</h3>
-        <div class="text-3xl font-bold text-white mb-2">{props.value}</div>
+        <h3 class="mb-1 text-sm font-medium text-slate-400">{props.title}</h3>
+        <div class="mb-2 text-3xl font-bold text-white">{props.value}</div>
         <Show when={props.sub}>
-          <div class="text-xs text-slate-500 font-mono">{props.sub}</div>
+          <div class="font-mono text-xs text-slate-500">{props.sub}</div>
         </Show>
       </div>
     </div>
@@ -238,43 +360,56 @@ const DashboardPage: Component = () => {
       <Match when={view() === 'login'}>
         <div class={pageBg}>
           {bgEffects}
-          <div class="relative z-10 min-h-screen flex flex-col items-center justify-center p-4">
-            <div class={`${glassPanel} w-full max-w-md p-8 md:p-12 animate-fade-in`}>
-              <div class="text-center mb-8">
-                <div class="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-tr from-blue-500 to-purple-500 mb-6 shadow-lg shadow-blue-500/20">
-                  <Terminal class="w-8 h-8 text-white" />
+          <div class="relative z-10 flex min-h-screen flex-col items-center justify-center p-4">
+            <div class={`${glassPanel} animate-fade-in w-full max-w-md p-8 md:p-12`}>
+              <div class="mb-8 text-center">
+                <div class="mb-6 inline-flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-tr from-blue-500 to-purple-500 shadow-lg shadow-blue-500/20">
+                  <Terminal class="h-8 w-8 text-white" />
                 </div>
-                <h1 class="text-3xl font-bold text-white mb-2 tracking-tight">Welcome back</h1>
+                <h1 class="mb-2 text-3xl font-bold tracking-tight text-white">Welcome back</h1>
                 <p class="text-slate-400">Enter your email to access your dashboard</p>
               </div>
 
               <form onSubmit={handleSendCode} class="space-y-6">
                 <div>
-                  <label class="block text-sm font-medium text-slate-300 mb-2 ml-1">Email Address</label>
+                  <label class="mb-2 ml-1 block text-sm font-medium text-slate-300">
+                    Email Address
+                  </label>
                   <input
                     type="email"
                     value={email()}
-                    onInput={(e) => setEmail(e.currentTarget.value)}
+                    onInput={e => setEmail(e.currentTarget.value)}
                     placeholder="dev@example.com"
                     required
                     class={glassInput}
                   />
                 </div>
 
+                {/* Cloudflare Turnstile Widget */}
+                <div class="flex justify-center">
+                  <div ref={turnstileContainer} class="cf-turnstile" />
+                </div>
+
                 <Show when={error()}>
-                  <div class="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm flex items-center gap-2">
-                    <ShieldAlert class="w-4 h-4" />
+                  <div class="flex items-center gap-2 rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-sm text-red-400">
+                    <ShieldAlert class="h-4 w-4" />
                     {error()}
                   </div>
                 </Show>
 
-                <button type="submit" disabled={loading()} class={glassButton}>
+                <button
+                  type="submit"
+                  disabled={loading() || !turnstileToken()}
+                  class={`${glassButton} ${!turnstileToken() ? 'cursor-not-allowed opacity-50' : ''}`}
+                >
                   {loading() ? (
                     <span class="flex items-center justify-center gap-2">
-                      <span class="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                      <span class="h-4 w-4 animate-spin rounded-full border-2 border-white/20 border-t-white" />
                       Sending Code...
                     </span>
-                  ) : 'Continue with Email'}
+                  ) : (
+                    'Continue with Email'
+                  )}
                 </button>
               </form>
             </div>
@@ -285,33 +420,38 @@ const DashboardPage: Component = () => {
       <Match when={view() === 'verify'}>
         <div class={pageBg}>
           {bgEffects}
-          <div class="relative z-10 min-h-screen flex flex-col items-center justify-center p-4">
-            <div class={`${glassPanel} w-full max-w-md p-8 md:p-12 animate-fade-in`}>
-              <div class="text-center mb-8">
-                <div class="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-white/10 mb-6">
-                  <Shield class="w-8 h-8 text-blue-400" />
+          <div class="relative z-10 flex min-h-screen flex-col items-center justify-center p-4">
+            <div class={`${glassPanel} animate-fade-in w-full max-w-md p-8 md:p-12`}>
+              <div class="mb-8 text-center">
+                <div class="mb-6 inline-flex h-16 w-16 items-center justify-center rounded-2xl bg-white/10">
+                  <Shield class="h-8 w-8 text-blue-400" />
                 </div>
-                <h1 class="text-3xl font-bold text-white mb-2 tracking-tight">Check your email</h1>
-                <p class="text-slate-400">We sent a verification code to <span class="text-white font-medium">{email()}</span></p>
+                <h1 class="mb-2 text-3xl font-bold tracking-tight text-white">Check your email</h1>
+                <p class="text-slate-400">
+                  We sent a verification code to{' '}
+                  <span class="font-medium text-white">{email()}</span>
+                </p>
               </div>
 
               <form onSubmit={handleVerifyCode} class="space-y-6">
                 <div>
-                  <label class="block text-sm font-medium text-slate-300 mb-2 ml-1">Verification Code</label>
+                  <label class="mb-2 ml-1 block text-sm font-medium text-slate-300">
+                    Verification Code
+                  </label>
                   <input
                     type="text"
                     value={otpCode()}
-                    onInput={(e) => setOtpCode(e.currentTarget.value)}
+                    onInput={e => setOtpCode(e.currentTarget.value)}
                     placeholder="123456"
                     required
-                    class={`${glassInput} text-center text-2xl tracking-[0.5em] font-mono`}
+                    class={`${glassInput} text-center font-mono text-2xl tracking-[0.5em]`}
                     maxLength={6}
                   />
                 </div>
 
                 <Show when={error()}>
-                  <div class="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm flex items-center gap-2">
-                    <ShieldAlert class="w-4 h-4" />
+                  <div class="flex items-center gap-2 rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-sm text-red-400">
+                    <ShieldAlert class="h-4 w-4" />
                     {error()}
                   </div>
                 </Show>
@@ -319,17 +459,19 @@ const DashboardPage: Component = () => {
                 <button type="submit" disabled={loading()} class={glassButton}>
                   {loading() ? (
                     <span class="flex items-center justify-center gap-2">
-                      <span class="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                      <span class="h-4 w-4 animate-spin rounded-full border-2 border-white/20 border-t-white" />
                       Verifying...
                     </span>
-                  ) : 'Verify & Login'}
+                  ) : (
+                    'Verify & Login'
+                  )}
                 </button>
 
                 <div class="text-center">
                   <button
                     type="button"
                     onClick={() => setView('login')}
-                    class="text-sm text-slate-400 hover:text-white transition-colors"
+                    class="text-sm text-slate-400 transition-colors hover:text-white"
                   >
                     Use a different email
                   </button>
@@ -346,98 +488,140 @@ const DashboardPage: Component = () => {
 
           <div class="relative z-10 flex min-h-screen">
             {/* Sidebar */}
-            <aside class="w-72 hidden lg:flex flex-col border-r border-white/5 bg-black/20 backdrop-blur-xl fixed h-screen z-50">
-              <div class="p-6 border-b border-white/5">
+            <aside class="fixed z-50 hidden h-screen w-72 flex-col border-r border-white/5 bg-black/20 backdrop-blur-xl lg:flex">
+              <div class="border-b border-white/5 p-6">
                 <div class="flex items-center gap-3">
-                  <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center shadow-lg shadow-blue-500/20">
-                    <Terminal class="w-6 h-6 text-white" />
+                  <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 shadow-lg shadow-blue-500/20">
+                    <Terminal class="h-6 w-6 text-white" />
                   </div>
                   <div>
-                    <h1 class="text-xl font-bold text-white leading-none">OMG</h1>
-                    <span class="text-xs text-slate-500 font-medium tracking-wider">DASHBOARD</span>
+                    <h1 class="text-xl leading-none font-bold text-white">OMG</h1>
+                    <span class="text-xs font-medium tracking-wider text-slate-500">DASHBOARD</span>
                   </div>
                 </div>
               </div>
 
-              <nav class="flex-1 p-4 space-y-1 overflow-y-auto">
-                <div class="text-xs font-bold text-slate-600 uppercase tracking-wider mb-2 px-4 pt-2">Platform</div>
+              <nav class="flex-1 space-y-1 overflow-y-auto p-4">
+                <div class="mb-2 px-4 pt-2 text-xs font-bold tracking-wider text-slate-600 uppercase">
+                  Platform
+                </div>
                 <NavItem id="overview" icon={BarChart3} label="Overview" />
                 <NavItem id="machines" icon={Monitor} label="Machines" />
 
-                <div class="text-xs font-bold text-slate-600 uppercase tracking-wider mb-2 px-4 pt-6">Organization</div>
+                <div class="mb-2 px-4 pt-6 text-xs font-bold tracking-wider text-slate-600 uppercase">
+                  Organization
+                </div>
                 <NavItem id="team" icon={Users} label="Team" />
                 <NavItem id="security" icon={Lock} label="Security" />
                 <NavItem id="billing" icon={CreditCard} label="Billing" />
 
-                <Show when={dashboard()?.user.email === 'admin@omg.lol' || dashboard()?.is_admin || activeTab() === 'admin'}> {/* Basic admin check */}
-                  <div class="text-xs font-bold text-slate-600 uppercase tracking-wider mb-2 px-4 pt-6">System</div>
+                <Show
+                  when={
+                    dashboard()?.user.email === 'admin@omg.lol' ||
+                    dashboard()?.is_admin ||
+                    activeTab() === 'admin'
+                  }
+                >
+                  {' '}
+                  {/* Basic admin check */}
+                  <div class="mb-2 px-4 pt-6 text-xs font-bold tracking-wider text-slate-600 uppercase">
+                    System
+                  </div>
                   <NavItem id="admin" icon={Crown} label="Admin Console" />
                 </Show>
               </nav>
 
-              <div class="p-4 border-t border-white/5">
+              <div class="border-t border-white/5 p-4">
                 <button
                   onClick={handleLogout}
-                  class="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-slate-400 hover:text-white hover:bg-white/5 transition-all"
+                  class="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-slate-400 transition-all hover:bg-white/5 hover:text-white"
                 >
-                  <LogOut class="w-5 h-5" />
+                  <LogOut class="h-5 w-5" />
                   <span class="font-medium">Sign Out</span>
                 </button>
               </div>
             </aside>
 
             {/* Main Content */}
-            <main class="flex-1 lg:ml-72 p-4 md:p-8 overflow-x-hidden">
-              <Show when={dashboard()} fallback={
-                <div class="flex items-center justify-center h-[50vh]">
-                  <div class="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-                </div>
-              }>
+            <main class="flex-1 overflow-x-hidden p-4 md:p-8 lg:ml-72">
+              <Show
+                when={dashboard()}
+                fallback={
+                  <div class="flex h-[50vh] items-center justify-center">
+                    <div class="h-8 w-8 animate-spin rounded-full border-2 border-blue-500 border-t-transparent" />
+                  </div>
+                }
+              >
                 {/* Top Bar (Mobile Toggle + User Profile) */}
-                <div class="flex justify-between items-center mb-8">
+                <div class="mb-8 flex items-center justify-between">
                   <div class="lg:hidden">
                     {/* Mobile menu trigger placeholder */}
-                    <Terminal class="w-8 h-8 text-blue-500" />
+                    <Terminal class="h-8 w-8 text-blue-500" />
                   </div>
 
-              <div class="flex items-center gap-4 ml-auto">
-                <div class="hidden md:flex flex-col items-end">
-                  <span class="text-sm font-medium text-white">{dashboard()?.user.email}</span>
-                  <span class="text-xs text-slate-500 uppercase tracking-wider">{dashboard()?.license.tier} Plan</span>
-                </div>
-                <div class="w-10 h-10 rounded-full bg-gradient-to-br from-slate-700 to-slate-800 border border-white/10 flex items-center justify-center">
-                  <span class="text-lg font-bold text-white">{(dashboard()?.user?.email?.[0] || 'U').toUpperCase()}</span>
-                </div>
-              </div>
+                  <div class="ml-auto flex items-center gap-4">
+                    <div class="hidden flex-col items-end md:flex">
+                      <span class="text-sm font-medium text-white">{dashboard()?.user.email}</span>
+                      <span class="text-xs tracking-wider text-slate-500 uppercase">
+                        {dashboard()?.license.tier} Plan
+                      </span>
+                    </div>
+                    <div class="flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-gradient-to-br from-slate-700 to-slate-800">
+                      <span class="text-lg font-bold text-white">
+                        {(dashboard()?.user?.email?.[0] || 'U').toUpperCase()}
+                      </span>
+                    </div>
+                  </div>
                 </div>
 
                 <Show when={actionMessage()}>
-                  <div class="mb-6 p-4 rounded-xl bg-green-500/10 border border-green-500/20 text-green-400 flex items-center gap-3 animate-fade-in">
-                    <CheckCircle class="w-5 h-5" />
+                  <div class="animate-fade-in mb-6 flex items-center gap-3 rounded-xl border border-green-500/20 bg-green-500/10 p-4 text-green-400">
+                    <CheckCircle class="h-5 w-5" />
                     {actionMessage()}
                   </div>
                 </Show>
 
                 <Show when={activeTab() === 'overview'}>
-                  <div class="space-y-8 animate-fade-in">
+                  <div class="animate-fade-in space-y-8">
                     {/* License Card */}
                     <div class="relative overflow-hidden rounded-3xl bg-gradient-to-r from-blue-600 to-purple-600 p-1 shadow-2xl shadow-blue-500/20">
-                      <div class="absolute inset-0 bg-[url('/noise.png')] opacity-20 mix-blend-overlay" />
-                      <div class="relative rounded-[20px] bg-black/40 backdrop-blur-xl p-6 md:p-8">
-                        <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+                      <div
+                        class="absolute inset-0 opacity-20 mix-blend-overlay"
+                        style="background-image: url('data:image/svg+xml,%3Csvg viewBox=%220 0 200 200%22 xmlns=%22http://www.w3.org/2000/svg%22%3E%3Cfilter id=%22n%22%3E%3CfeTurbulence type=%22fractalNoise%22 baseFrequency=%220.65%22 numOctaves=%223%22 stitchTiles=%22stitch%22/%3E%3C/filter%3E%3Crect width=%22100%25%22 height=%22100%25%22 filter=%22url(%23n)%22/%3E%3C/svg%3E');"
+                      />
+                      <div class="relative rounded-[20px] bg-black/40 p-6 backdrop-blur-xl md:p-8">
+                        <div class="flex flex-col items-start justify-between gap-6 md:flex-row md:items-center">
                           <div>
-                            <h2 class="text-2xl font-bold text-white mb-2">Welcome back, Developer</h2>
-                            <p class="text-blue-100/80">You're running on the <span class="font-bold text-white">{dashboard()?.license?.tier || 'Free'}</span> tier.</p>
+                            <h2 class="mb-2 text-2xl font-bold text-white">
+                              Welcome back, Developer
+                            </h2>
+                            <p class="text-blue-100/80">
+                              You're running on the{' '}
+                              <span class="font-bold text-white">
+                                {dashboard()?.license?.tier || 'Free'}
+                              </span>{' '}
+                              tier.
+                            </p>
                           </div>
-                          <div class="flex items-center gap-3 bg-white/10 rounded-xl p-1 pr-4 border border-white/10 hover:bg-white/15 transition-colors cursor-pointer group" onClick={copyLicense}>
-                            <div class="bg-black/50 p-2 rounded-lg text-xs font-mono text-slate-300">
+                          <div
+                            class="group flex cursor-pointer items-center gap-3 rounded-xl border border-white/10 bg-white/10 p-1 pr-4 transition-colors hover:bg-white/15"
+                            onClick={copyLicense}
+                          >
+                            <div class="rounded-lg bg-black/50 p-2 font-mono text-xs text-slate-300">
                               LICENSE_KEY
                             </div>
-                            <span class="font-mono text-white tracking-wide">
+                            <span class="font-mono tracking-wide text-white">
                               {dashboard()?.license?.license_key?.slice(0, 12) || '••••••••••••'}...
                             </span>
-                            <Show when={copied()} fallback={<span class="text-xs text-blue-200 opacity-0 group-hover:opacity-100 transition-opacity">Copy</span>}>
-                              <CheckCircle class="w-4 h-4 text-green-400" />
+                            <Show
+                              when={copied()}
+                              fallback={
+                                <span class="text-xs text-blue-200 opacity-0 transition-opacity group-hover:opacity-100">
+                                  Copy
+                                </span>
+                              }
+                            >
+                              <CheckCircle class="h-4 w-4 text-green-400" />
                             </Show>
                           </div>
                         </div>
@@ -445,7 +629,7 @@ const DashboardPage: Component = () => {
                     </div>
 
                     {/* Personal Insights Grid */}
-                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                    <div class="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
                       <InsightCard
                         title="Time Saved"
                         value={`${((dashboard()?.usage?.total_time_saved_ms || 0) / 3600000).toFixed(1)}h`}
@@ -472,16 +656,20 @@ const DashboardPage: Component = () => {
                         value={dashboard()?.usage?.total_vulnerabilities_found === 0 ? 'A+' : 'B'}
                         icon={Shield}
                         color="indigo"
-                        sub={dashboard()?.usage?.total_vulnerabilities_found === 0 ? "No critical vulnerabilities" : `${dashboard()?.usage?.total_vulnerabilities_found} issues found`}
+                        sub={
+                          dashboard()?.usage?.total_vulnerabilities_found === 0
+                            ? 'No critical vulnerabilities'
+                            : `${dashboard()?.usage?.total_vulnerabilities_found} issues found`
+                        }
                       />
                     </div>
 
                     {/* AI Insights Section */}
-                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    <div class="grid grid-cols-1 gap-6 lg:grid-cols-3">
                       <div class={`${glassPanel} p-6 md:p-8 lg:col-span-2`}>
-                        <div class="flex items-center gap-3 mb-6">
-                          <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-pink-500 to-rose-500 flex items-center justify-center">
-                            <Flame class="w-5 h-5 text-white" />
+                        <div class="mb-6 flex items-center gap-3">
+                          <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-pink-500 to-rose-500">
+                            <Flame class="h-5 w-5 text-white" />
                           </div>
                           <h2 class="text-xl font-bold text-white">Smart Insights</h2>
                         </div>
@@ -489,28 +677,34 @@ const DashboardPage: Component = () => {
                       </div>
 
                       <div class={`${glassPanel} p-6 md:p-8`}>
-                        <div class="flex items-center gap-3 mb-6">
-                          <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-amber-500 to-orange-500 flex items-center justify-center">
-                            <Crown class="w-5 h-5 text-white" />
+                        <div class="mb-6 flex items-center gap-3">
+                          <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-amber-500 to-orange-500">
+                            <Crown class="h-5 w-5 text-white" />
                           </div>
                           <h2 class="text-xl font-bold text-white">Leaderboard</h2>
                         </div>
                         <div class="space-y-4">
                           <For each={dashboard()?.leaderboard || []}>
                             {(entry, i) => (
-                              <div class="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/5">
+                              <div class="flex items-center justify-between rounded-xl border border-white/5 bg-white/5 p-3">
                                 <div class="flex items-center gap-3">
-                                  <span class={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${i() === 0 ? 'bg-amber-500 text-black' : 'bg-slate-800 text-slate-400'}`}>
+                                  <span
+                                    class={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold ${i() === 0 ? 'bg-amber-500 text-black' : 'bg-slate-800 text-slate-400'}`}
+                                  >
                                     {i() + 1}
                                   </span>
                                   <span class="text-sm font-medium text-white">{entry.user}</span>
                                 </div>
-                                <span class="text-xs font-mono text-emerald-400">{api.formatTimeSaved(entry.time_saved)}</span>
+                                <span class="font-mono text-xs text-emerald-400">
+                                  {api.formatTimeSaved(entry.time_saved)}
+                                </span>
                               </div>
                             )}
                           </For>
                           <Show when={!dashboard()?.leaderboard?.length}>
-                            <div class="text-center py-4 text-slate-500 italic text-sm">No data available</div>
+                            <div class="py-4 text-center text-sm text-slate-500 italic">
+                              No data available
+                            </div>
                           </Show>
                         </div>
                       </div>
@@ -518,27 +712,37 @@ const DashboardPage: Component = () => {
 
                     {/* Recent Activity */}
                     <div class={`${glassPanel} p-6 md:p-8`}>
-                      <div class="flex items-center justify-between mb-6">
+                      <div class="mb-6 flex items-center justify-between">
                         <h2 class="text-xl font-bold text-white">Recent Activity</h2>
-                        <button class="text-sm text-blue-400 hover:text-blue-300 font-medium">View All</button>
+                        <button class="text-sm font-medium text-blue-400 hover:text-blue-300">
+                          View All
+                        </button>
                       </div>
                       <div class="space-y-4">
-                        <Show when={auditLog().length > 0} fallback={
-                          <div class="text-center py-12 text-slate-500 italic">No recent activity recorded</div>
-                        }>
+                        <Show
+                          when={auditLog().length > 0}
+                          fallback={
+                            <div class="py-12 text-center text-slate-500 italic">
+                              No recent activity recorded
+                            </div>
+                          }
+                        >
                           <For each={auditLog().slice(0, 5)}>
-                            {(log) => (
-                              <div class="flex items-center gap-4 p-4 rounded-xl bg-white/5 border border-white/5 hover:border-white/10 transition-colors">
-                                <div class="w-10 h-10 rounded-full bg-slate-800 flex items-center justify-center">
-                                  <Terminal class="w-5 h-5 text-slate-400" />
+                            {log => (
+                              <div class="flex items-center gap-4 rounded-xl border border-white/5 bg-white/5 p-4 transition-colors hover:border-white/10">
+                                <div class="flex h-10 w-10 items-center justify-center rounded-full bg-slate-800">
+                                  <Terminal class="h-5 w-5 text-slate-400" />
                                 </div>
                                 <div class="flex-1">
                                   <div class="text-sm font-medium text-white">{log.action}</div>
-                                  <div class="text-xs text-slate-500 font-mono mt-1">
-                                    {log.created_at ? new Date(log.created_at).toLocaleString() : 'N/A'} • {log.ip_address}
+                                  <div class="mt-1 font-mono text-xs text-slate-500">
+                                    {log.created_at
+                                      ? new Date(log.created_at).toLocaleString()
+                                      : 'N/A'}{' '}
+                                    • {log.ip_address}
                                   </div>
                                 </div>
-                                <ChevronRight class="w-5 h-5 text-slate-600" />
+                                <ChevronRight class="h-5 w-5 text-slate-600" />
                               </div>
                             )}
                           </For>
@@ -560,7 +764,7 @@ const DashboardPage: Component = () => {
                   <TeamAnalytics
                     teamData={teamData()}
                     licenseKey={dashboard()?.license?.license_key || ''}
-                    onRevoke={(id) => api.revokeMachine(id).then(loadTeamData)}
+                    onRevoke={id => api.revokeMachine(id).then(loadTeamData)}
                     onRefresh={loadTeamData}
                   />
                 </Show>
@@ -569,17 +773,21 @@ const DashboardPage: Component = () => {
                   <TeamAnalytics
                     teamData={teamData()}
                     licenseKey={dashboard()?.license?.license_key || ''}
-                    onRevoke={(id) => api.revokeMachine(id).then(loadTeamData)}
+                    onRevoke={id => api.revokeMachine(id).then(loadTeamData)}
                     onRefresh={loadTeamData}
                     initialView="security"
                   />
                 </Show>
 
                 <Show when={activeTab() === 'billing'}>
-                  <div class="space-y-8 animate-fade-in">
+                  <div class="animate-fade-in space-y-8">
                     <div class={`${glassPanel} p-10 shadow-2xl`}>
-                      <h3 class="mb-6 text-2xl font-black text-white tracking-tight uppercase tracking-widest">Billing & Subscription</h3>
-                      <p class="text-slate-400 mb-8">Manage your subscription, payment methods, and view invoices.</p>
+                      <h3 class="mb-6 text-2xl font-black tracking-tight tracking-widest text-white uppercase">
+                        Billing & Subscription
+                      </h3>
+                      <p class="mb-8 text-slate-400">
+                        Manage your subscription, payment methods, and view invoices.
+                      </p>
                       <div class="flex gap-4">
                         <button
                           onClick={() => window.open('https://pyro1121.com/pricing', '_blank')}
@@ -590,7 +798,9 @@ const DashboardPage: Component = () => {
                         <button
                           onClick={async () => {
                             try {
-                              const res = await api.openBillingPortal(dashboard()?.user?.email || '');
+                              const res = await api.openBillingPortal(
+                                dashboard()?.user?.email || ''
+                              );
                               if (res.url) window.open(res.url, '_blank');
                             } catch (e) {
                               console.error('Failed to open billing portal:', e);
@@ -603,19 +813,31 @@ const DashboardPage: Component = () => {
                       </div>
                     </div>
 
-                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <div class="grid grid-cols-1 gap-6 md:grid-cols-3">
                       <div class={`${glassPanel} p-8`}>
-                        <div class="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Current Tier</div>
-                        <div class="text-2xl font-black text-indigo-400 uppercase">{dashboard()?.license?.tier || 'Free'}</div>
+                        <div class="mb-2 text-[10px] font-bold tracking-widest text-slate-500 uppercase">
+                          Current Tier
+                        </div>
+                        <div class="text-2xl font-black text-indigo-400 uppercase">
+                          {dashboard()?.license?.tier || 'Free'}
+                        </div>
                       </div>
                       <div class={`${glassPanel} p-8`}>
-                        <div class="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Status</div>
-                        <div class="text-2xl font-black text-emerald-400 uppercase">{dashboard()?.license?.status || 'Active'}</div>
+                        <div class="mb-2 text-[10px] font-bold tracking-widest text-slate-500 uppercase">
+                          Status
+                        </div>
+                        <div class="text-2xl font-black text-emerald-400 uppercase">
+                          {dashboard()?.license?.status || 'Active'}
+                        </div>
                       </div>
                       <div class={`${glassPanel} p-8`}>
-                        <div class="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2">Next Renewal</div>
+                        <div class="mb-2 text-[10px] font-bold tracking-widest text-slate-500 uppercase">
+                          Next Renewal
+                        </div>
                         <div class="text-2xl font-black text-white">
-                          {dashboard()?.license?.expires_at ? new Date(dashboard()!.license.expires_at).toLocaleDateString() : 'N/A'}
+                          {dashboard()?.license?.expires_at
+                            ? new Date(dashboard()!.license.expires_at).toLocaleDateString()
+                            : 'N/A'}
                         </div>
                       </div>
                     </div>
@@ -625,7 +847,6 @@ const DashboardPage: Component = () => {
                 <Show when={activeTab() === 'admin'}>
                   <AdminDashboard />
                 </Show>
-
               </Show>
             </main>
           </div>
