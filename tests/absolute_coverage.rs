@@ -1,3 +1,5 @@
+#![cfg(feature = "arch")]
+
 mod alpm_harness;
 use anyhow::Result;
 use omg_lib::cli::{CliContext, CommandRunner, Commands, EnvCommands, FleetCommands, ToolCommands};
