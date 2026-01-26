@@ -23,10 +23,10 @@ mod aur;
 mod aur_index;
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
 pub mod debian_db;
-#[cfg(any(feature = "debian", feature = "debian-pure"))]
-pub mod file_watcher;
 #[cfg(feature = "debian-pure")]
 pub mod debian_pure;
+#[cfg(any(feature = "debian", feature = "debian-pure"))]
+pub mod file_watcher;
 pub mod mock;
 #[cfg(feature = "arch")]
 pub mod pacman_db;

@@ -166,6 +166,7 @@ pub async fn info(package: &str) -> Result<()> {
     }
 }
 
+#[allow(clippy::unused_async)] // Contains .await in arch feature block only
 async fn info_fallback(package: &str) -> Result<()> {
     // Try sync path first
     if info_sync(package)? {

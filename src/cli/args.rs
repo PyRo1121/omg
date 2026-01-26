@@ -51,6 +51,9 @@ pub enum Commands {
         /// Interactive mode: select packages to install from results
         #[arg(short, long)]
         interactive: bool,
+        /// Search official repositories only (skip AUR)
+        #[arg(long)]
+        no_aur: bool,
     },
 
     /// Install packages with security grading and auto-AUR detection

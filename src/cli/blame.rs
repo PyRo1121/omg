@@ -1,6 +1,7 @@
 //! `omg blame` - Show when and why a package was installed
 
 use anyhow::Result;
+#[cfg(any(feature = "arch", feature = "debian"))]
 use owo_colors::OwoColorize;
 
 use crate::cli::tea::Cmd;

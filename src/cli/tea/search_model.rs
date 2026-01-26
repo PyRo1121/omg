@@ -327,6 +327,7 @@ fn truncate(text: &str, max_len: usize) -> String {
 // CONVERSIONS
 // ═══════════════════════════════════════════════════════════════════════════════
 
+#[allow(clippy::implicit_clone)] // Version type varies by feature flag
 impl From<SyncPackage> for SearchResult {
     fn from(pkg: SyncPackage) -> Self {
         Self {
@@ -346,6 +347,7 @@ impl From<SyncPackage> for SearchResult {
     }
 }
 
+#[allow(clippy::implicit_clone)] // Version type varies by feature flag
 impl From<Package> for SearchResult {
     fn from(pkg: Package) -> Self {
         let source = match pkg.source {

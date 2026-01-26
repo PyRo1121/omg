@@ -60,7 +60,7 @@ fn try_fast_search(args: &[String]) -> bool {
         if query.starts_with('-') {
             return false;
         }
-        if packages::search_sync_cli(query, false, false).unwrap_or(false) {
+        if packages::search_sync_cli(query, false, false, false).unwrap_or(false) {
             return true;
         }
     }
@@ -266,6 +266,7 @@ fn main() -> Result<()> {
     result
 }
 
+#[allow(clippy::too_many_lines)] // Main dispatch function - refactoring would reduce readability
 async fn async_main(args: Vec<String>) -> Result<()> {
     omg_lib::cli::style::init_theme();
     let cmd_start = omg_lib::core::analytics::start_timer();
@@ -339,8 +340,9 @@ async fn async_main(args: Vec<String>) -> Result<()> {
             query,
             detailed,
             interactive,
+            no_aur,
         } => {
-            packages::search_with_json(query, *detailed, *interactive, cli.json).await?;
+            packages::search_with_json(query, *detailed, *interactive, cli.json, *no_aur).await?;
         }
         Commands::Install {
             packages,
