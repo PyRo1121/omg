@@ -10,6 +10,47 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 
 ---
 
+## [Unreleased]
+### 🐛 Bug Fixes
+
+- Substitute `$repo` and `$arch` placeholders in parsed server URLs
+### 📚 Documentation
+
+- Add Phase 1 Safety implementation plan
+
+Detailed task-by-task plan for eliminating unsafe code and panics:
+
+  - 13 tasks with exact code changes
+
+  - Step-by-step instructions
+
+  - Test verification at each step
+
+  - Performance benchmarking
+
+  - Quality gates and completion checklist
+
+Ready for execution in isolated worktree.
+
+- Add Rust 2026 comprehensive modernization design
+
+  - 3-4 week phased modernization plan
+
+  - Phase 1: Safety (eliminate unsafe, panics)
+
+  - Phase 2: Async & Performance (proper patterns, reduce cloning)
+
+  - Phase 3: Architecture (DDD, consistency, remove AI slop)
+
+  - Quality gates and success metrics defined
+
+- Update changelog [skip ci]
+
+Auto-generated from git history with git-cliff.
+
+### 🔧 Maintenance
+
+- Ignore .worktrees directory for git worktree isolation
 ## [0.1.151] - 2026-01-26
 ### ♻️  Refactoring
 
