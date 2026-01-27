@@ -8,7 +8,7 @@ export const queryClient = new QueryClient({
       retry: 2,
       retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
       networkMode: 'offlineFirst',
-      useErrorBoundary: (error: any) => error.response?.status >= 500,
+      throwOnError: (error: any) => error.response?.status >= 500,
       refetchOnWindowFocus: false,
       refetchOnReconnect: true,
     },
@@ -17,7 +17,7 @@ export const queryClient = new QueryClient({
         if (error.response?.status && error.response.status < 500) return false;
         return failureCount < 2;
       },
-      useErrorBoundary: (error: any) => error.response?.status >= 500,
+      throwOnError: (error: any) => error.response?.status >= 500,
     },
   },
 });

@@ -625,328 +625,161 @@ export async function handleAdminAdvancedMetrics(request: Request, env: Env): Pr
   if (result.error) return result.error;
   const { context } = result;
 
-  const dau = await env.DB.prepare(
-    `
-    SELECT COUNT(DISTINCT license_id) as count 
-    FROM usage_daily 
-    WHERE date = date('now') AND commands_run > 0
-  `
-  ).first();
-
-  const wau = await env.DB.prepare(
-    `
-    SELECT COUNT(DISTINCT license_id) as count 
-    FROM usage_daily 
-    WHERE date >= date('now', '-7 days') AND commands_run > 0
-  `
-  ).first();
-
-  const mau = await env.DB.prepare(
-    `
-    SELECT COUNT(DISTINCT license_id) as count 
-    FROM usage_daily 
-    WHERE date >= date('now', '-30 days') AND commands_run > 0
-  `
-  ).first();
-
-  const stickiness = {
-    daily_to_monthly: mau?.count
-      ? ((((dau?.count as number) || 0) / (mau.count as number)) * 100).toFixed(1)
-      : 0,
-    weekly_to_monthly: mau?.count
-      ? ((((wau?.count as number) || 0) / (mau.count as number)) * 100).toFixed(1)
-      : 0,
+  const safeQuery = async <T>(query: () => Promise<T>, fallback: T): Promise<T> => {
+    try {
+      return await query();
+    } catch (e) {
+      console.error('Query failed:', e);
+      return fallback;
+    }
   };
 
-  const retentionCohorts = await env.DB.prepare(
-    `
-    WITH cohorts AS (
-      SELECT 
-        c.id as customer_id,
-        DATE(c.created_at) as cohort_date,
-        DATE(c.created_at, '+' || 
-          CAST((julianday(u.date) - julianday(DATE(c.created_at))) / 7 AS INTEGER) || ' weeks') as week_number
-      FROM customers c
-      LEFT JOIN licenses l ON c.id = l.customer_id
-      LEFT JOIN usage_daily u ON l.id = u.license_id
-      WHERE c.created_at >= datetime('now', '-90 days')
-        AND u.commands_run > 0
-    )
-    SELECT 
-      cohort_date,
-      week_number,
-      COUNT(DISTINCT customer_id) as retained_users
-    FROM cohorts
-    GROUP BY cohort_date, week_number
-    ORDER BY cohort_date DESC, week_number ASC
-    LIMIT 100
-  `
-  ).all();
+  const dau = await safeQuery(
+    () => env.DB.prepare(`SELECT COUNT(DISTINCT license_id) as count FROM usage_daily WHERE date = date('now') AND commands_run > 0`).first(),
+    { count: 0 }
+  );
 
-  const ltv = await env.DB.prepare(
-    `
-    WITH user_revenue AS (
-      SELECT 
-        c.id,
-        c.created_at,
-        l.tier,
-        CASE l.tier
-          WHEN 'pro' THEN 9
-          WHEN 'team' THEN 200
-          WHEN 'enterprise' THEN 500
-          ELSE 0
-        END as monthly_value,
-        julianday('now') - julianday(c.created_at) as days_active
+  const wau = await safeQuery(
+    () => env.DB.prepare(`SELECT COUNT(DISTINCT license_id) as count FROM usage_daily WHERE date >= date('now', '-7 days') AND commands_run > 0`).first(),
+    { count: 0 }
+  );
+
+  const mau = await safeQuery(
+    () => env.DB.prepare(`SELECT COUNT(DISTINCT license_id) as count FROM usage_daily WHERE date >= date('now', '-30 days') AND commands_run > 0`).first(),
+    { count: 0 }
+  );
+
+  const mauCount = (mau?.count as number) || 1;
+  const stickiness = {
+    daily_to_monthly: (((dau?.count as number) || 0) / mauCount * 100).toFixed(1) + '%',
+    weekly_to_monthly: (((wau?.count as number) || 0) / mauCount * 100).toFixed(1) + '%',
+  };
+
+  const retentionCohorts = await safeQuery(
+    () => env.DB.prepare(`
+      SELECT DATE(c.created_at) as cohort_date, 
+             CAST((julianday(u.date) - julianday(DATE(c.created_at))) / 7 AS INTEGER) as week_number,
+             COUNT(DISTINCT c.id) as retained_users
+      FROM customers c
+      JOIN licenses l ON c.id = l.customer_id
+      JOIN usage_daily u ON l.id = u.license_id
+      WHERE c.created_at >= datetime('now', '-90 days') AND u.commands_run > 0
+      GROUP BY cohort_date, week_number
+      ORDER BY cohort_date DESC, week_number ASC
+      LIMIT 100
+    `).all(),
+    { results: [] }
+  );
+
+  const ltv = await safeQuery(
+    () => env.DB.prepare(`
+      SELECT l.tier, COUNT(*) as customer_count,
+             AVG(CASE l.tier WHEN 'pro' THEN 9 WHEN 'team' THEN 200 WHEN 'enterprise' THEN 500 ELSE 0 END 
+                 * (julianday('now') - julianday(c.created_at)) / 30.0) as avg_ltv
       FROM customers c
       JOIN licenses l ON c.id = l.customer_id
       WHERE l.tier != 'free'
-    )
-    SELECT 
-      AVG(monthly_value * (days_active / 30.0)) as avg_ltv,
-      tier,
-      COUNT(*) as customer_count
-    FROM user_revenue
-    GROUP BY tier
-  `
-  ).all();
+      GROUP BY l.tier
+    `).all(),
+    { results: [] }
+  );
 
-  const featureAdoption = await env.DB.prepare(
-    `
-    SELECT 
-      SUM(packages_installed) as total_installs,
-      SUM(packages_searched) as total_searches,
-      SUM(runtimes_switched) as total_runtime_switches,
-      SUM(sbom_generated) as total_sbom,
-      SUM(vulnerabilities_found) as total_vulns,
-      COUNT(DISTINCT CASE WHEN packages_installed > 0 THEN license_id END) as install_adopters,
-      COUNT(DISTINCT CASE WHEN packages_searched > 0 THEN license_id END) as search_adopters,
-      COUNT(DISTINCT CASE WHEN runtimes_switched > 0 THEN license_id END) as runtime_adopters,
-      COUNT(DISTINCT CASE WHEN sbom_generated > 0 THEN license_id END) as sbom_adopters,
-      COUNT(DISTINCT license_id) as total_active_users
-    FROM usage_daily
-    WHERE date >= date('now', '-30 days')
-  `
-  ).first();
+  const featureAdoption = await safeQuery(
+    () => env.DB.prepare(`
+      SELECT SUM(packages_installed) as total_installs, SUM(packages_searched) as total_searches,
+             SUM(runtimes_switched) as total_runtime_switches,
+             COUNT(DISTINCT CASE WHEN packages_installed > 0 THEN license_id END) as install_adopters,
+             COUNT(DISTINCT CASE WHEN packages_searched > 0 THEN license_id END) as search_adopters,
+             COUNT(DISTINCT CASE WHEN runtimes_switched > 0 THEN license_id END) as runtime_adopters,
+             COUNT(DISTINCT license_id) as total_active_users
+      FROM usage_daily WHERE date >= date('now', '-30 days')
+    `).first(),
+    null
+  );
 
-  const commandHeatmap = await env.DB.prepare(
-    `
-    SELECT 
-      strftime('%H', created_at) as hour,
-      strftime('%w', created_at) as day_of_week,
-      COUNT(*) as event_count
-    FROM analytics_events
-    WHERE event_type = 'command' 
-      AND created_at >= datetime('now', '-7 days')
-    GROUP BY hour, day_of_week
-    ORDER BY day_of_week, hour
-  `
-  ).all();
+  const commandHeatmap = await safeQuery(
+    () => env.DB.prepare(`
+      SELECT strftime('%H', created_at) as hour, strftime('%w', created_at) as day_of_week, COUNT(*) as event_count
+      FROM analytics_events WHERE event_type = 'command' AND created_at >= datetime('now', '-7 days')
+      GROUP BY hour, day_of_week ORDER BY day_of_week, hour
+    `).all(),
+    { results: [] }
+  );
 
-  const runtimeAdoption = await env.DB.prepare(
-    `
-    SELECT 
-      json_extract(properties, '$.runtime') as runtime,
-      COUNT(DISTINCT machine_id) as unique_users,
-      COUNT(*) as total_uses,
-      AVG(CAST(json_extract(properties, '$.duration_ms') AS REAL)) as avg_duration_ms
-    FROM analytics_events
-    WHERE event_name IN ('runtime_switch', 'runtime_use')
-      AND created_at >= datetime('now', '-30 days')
-    GROUP BY runtime
-    ORDER BY unique_users DESC
-  `
-  ).all();
+  const runtimeAdoption = await safeQuery(
+    () => env.DB.prepare(`
+      SELECT json_extract(properties, '$.runtime') as runtime, COUNT(DISTINCT machine_id) as unique_users, COUNT(*) as total_uses
+      FROM analytics_events WHERE event_name IN ('runtime_switch', 'runtime_use') AND created_at >= datetime('now', '-30 days')
+      GROUP BY runtime ORDER BY unique_users DESC
+    `).all(),
+    { results: [] }
+  );
 
-  const churnRiskSegments = await env.DB.prepare(
-    `
-    WITH user_activity AS (
-      SELECT 
-        l.id as license_id,
-        l.customer_id,
-        c.email,
-        l.tier,
-        MAX(u.date) as last_active,
-        julianday('now') - julianday(MAX(u.date)) as days_inactive,
-        SUM(CASE WHEN u.date >= date('now', '-7 days') THEN u.commands_run ELSE 0 END) as cmds_7d,
-        SUM(CASE WHEN u.date >= date('now', '-30 days') AND u.date < date('now', '-7 days') THEN u.commands_run ELSE 0 END) as cmds_prev_23d,
-        COUNT(DISTINCT u.date) as active_days_30d
+  const churnRiskSegments = await safeQuery(
+    () => env.DB.prepare(`
+      SELECT l.tier, COUNT(*) as user_count, 
+             CASE WHEN MAX(u.date) < date('now', '-14 days') THEN 'critical' 
+                  WHEN MAX(u.date) < date('now', '-7 days') THEN 'high' 
+                  ELSE 'healthy' END as risk_segment
       FROM licenses l
-      JOIN customers c ON l.customer_id = c.id
       LEFT JOIN usage_daily u ON l.id = u.license_id
-      WHERE l.status = 'active' AND l.tier != 'free'
+      WHERE l.status = 'active'
       GROUP BY l.id
-    )
-    SELECT 
-      CASE
-        WHEN days_inactive > 14 THEN 'critical_churn_risk'
-        WHEN days_inactive > 7 THEN 'high_churn_risk'
-        WHEN cmds_7d = 0 AND cmds_prev_23d > 50 THEN 'medium_churn_risk'
-        WHEN active_days_30d < 5 THEN 'low_engagement'
-        ELSE 'healthy'
-      END as risk_segment,
-      COUNT(*) as user_count,
-      AVG(cmds_7d + cmds_prev_23d) as avg_monthly_commands,
-      tier
-    FROM user_activity
-    GROUP BY risk_segment, tier
-    ORDER BY 
-      CASE risk_segment
-        WHEN 'critical_churn_risk' THEN 1
-        WHEN 'high_churn_risk' THEN 2
-        WHEN 'medium_churn_risk' THEN 3
-        WHEN 'low_engagement' THEN 4
-        ELSE 5
-      END
-  `
-  ).all();
+    `).all(),
+    { results: [] }
+  );
 
-  const expansionOpportunities = await env.DB.prepare(
-    `
-    WITH usage_intensity AS (
-      SELECT 
-        l.customer_id,
-        c.email,
-        c.company,
-        l.tier,
-        l.max_seats,
-        COUNT(DISTINCT m.id) as active_machines,
-        SUM(u.commands_run) as total_commands_30d,
-        SUM(u.time_saved_ms) / 3600000.0 as hours_saved_30d
+  const expansionOpportunities = await safeQuery(
+    () => env.DB.prepare(`
+      SELECT c.email, l.tier, COUNT(DISTINCT m.id) as active_machines, SUM(u.commands_run) as total_commands_30d,
+             CASE WHEN l.tier = 'free' AND SUM(u.commands_run) > 500 THEN 'upsell_to_pro'
+                  WHEN l.tier = 'pro' AND COUNT(DISTINCT m.id) >= 3 THEN 'upsell_to_team' ELSE NULL END as opportunity_type,
+             'medium' as priority
       FROM licenses l
       JOIN customers c ON l.customer_id = c.id
       LEFT JOIN machines m ON l.id = m.license_id AND m.is_active = 1
       LEFT JOIN usage_daily u ON l.id = u.license_id AND u.date >= date('now', '-30 days')
       WHERE l.status = 'active'
       GROUP BY l.customer_id
-    )
-    SELECT 
-      customer_id,
-      email,
-      company,
-      tier,
-      active_machines,
-      max_seats,
-      total_commands_30d,
-      ROUND(hours_saved_30d, 1) as hours_saved_30d,
-      CASE
-        WHEN tier = 'free' AND total_commands_30d > 500 THEN 'upsell_to_pro'
-        WHEN tier = 'pro' AND active_machines >= 3 THEN 'upsell_to_team'
-        WHEN tier = 'team' AND hours_saved_30d > 100 THEN 'upsell_to_enterprise'
-        WHEN active_machines >= max_seats * 0.8 THEN 'seat_expansion'
-        ELSE NULL
-      END as opportunity_type,
-      CASE
-        WHEN tier = 'free' AND total_commands_30d > 1000 THEN 'high'
-        WHEN tier = 'free' AND total_commands_30d > 500 THEN 'medium'
-        WHEN active_machines >= max_seats THEN 'high'
-        ELSE 'low'
-      END as priority
-    FROM usage_intensity
-    WHERE opportunity_type IS NOT NULL
-    ORDER BY 
-      CASE priority WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END,
-      total_commands_30d DESC
-    LIMIT 50
-  `
-  ).all();
+      HAVING opportunity_type IS NOT NULL
+      LIMIT 50
+    `).all(),
+    { results: [] }
+  );
 
-  const timeToValue = await env.DB.prepare(
-    `
-    WITH first_command AS (
-      SELECT 
-        l.customer_id,
-        c.email,
-        c.created_at as signup_date,
-        MIN(u.date) as first_usage_date,
-        julianday(MIN(u.date)) - julianday(c.created_at) as days_to_first_use,
-        (SELECT MIN(date) FROM usage_daily WHERE license_id = l.id AND commands_run >= 10) as power_user_date
+  const timeToValue = await safeQuery(
+    () => env.DB.prepare(`
+      SELECT AVG(julianday(MIN(u.date)) - julianday(c.created_at)) as avg_days_to_activation,
+             COUNT(CASE WHEN julianday(MIN(u.date)) - julianday(c.created_at) <= 7 THEN 1 END) * 100.0 / COUNT(*) as pct_activated_week1
       FROM customers c
       JOIN licenses l ON c.id = l.customer_id
       LEFT JOIN usage_daily u ON l.id = u.license_id AND u.commands_run > 0
       WHERE c.created_at >= datetime('now', '-90 days')
-      GROUP BY l.customer_id
-    )
-    SELECT 
-      AVG(days_to_first_use) as avg_days_to_activation,
-      AVG(julianday(power_user_date) - julianday(signup_date)) as avg_days_to_power_user,
-      COUNT(CASE WHEN days_to_first_use <= 1 THEN 1 END) * 100.0 / COUNT(*) as pct_activated_day1,
-      COUNT(CASE WHEN days_to_first_use <= 7 THEN 1 END) * 100.0 / COUNT(*) as pct_activated_week1,
-      COUNT(CASE WHEN power_user_date IS NOT NULL THEN 1 END) * 100.0 / COUNT(*) as pct_became_power_users
-    FROM first_command
-  `
-  ).first();
+      GROUP BY c.id
+    `).first(),
+    null
+  );
 
-  const revenueMetrics = await env.DB.prepare(
-    `
-    WITH monthly_revenue AS (
-      SELECT 
-        strftime('%Y-%m', created_at) as month,
-        l.tier,
-        COUNT(*) as new_customers,
-        CASE l.tier
-          WHEN 'pro' THEN 9
-          WHEN 'team' THEN 200
-          WHEN 'enterprise' THEN 500
-          ELSE 0
-        END * COUNT(*) as new_mrr
-      FROM customers c
-      JOIN licenses l ON c.id = l.customer_id
-      WHERE c.created_at >= datetime('now', '-12 months')
-        AND l.tier != 'free'
-      GROUP BY month, l.tier
-    ),
-    current_mrr AS (
-      SELECT 
-        SUM(CASE l.tier
-          WHEN 'pro' THEN 9
-          WHEN 'team' THEN 200
-          WHEN 'enterprise' THEN 500
-          ELSE 0
-        END) as total_mrr
-      FROM licenses l
-      JOIN subscriptions s ON l.customer_id = s.customer_id
+  const revenueMetrics = await safeQuery(
+    () => env.DB.prepare(`
+      SELECT SUM(CASE l.tier WHEN 'pro' THEN 9 WHEN 'team' THEN 200 WHEN 'enterprise' THEN 500 ELSE 0 END) as current_mrr
+      FROM licenses l JOIN subscriptions s ON l.customer_id = s.customer_id
       WHERE s.status = 'active' AND l.tier != 'free'
-    )
-    SELECT 
-      (SELECT total_mrr FROM current_mrr) as current_mrr,
-      (SELECT total_mrr FROM current_mrr) * 12 as projected_arr,
-      SUM(new_mrr) as expansion_mrr_12m,
-      COUNT(DISTINCT month) as months_tracked
-    FROM monthly_revenue
-  `
-  ).first();
+    `).first(),
+    { current_mrr: 0 }
+  );
 
-  const productStickiness = await env.DB.prepare(
-    `
-    WITH user_streaks AS (
-      SELECT 
-        license_id,
-        date,
-        LAG(date, 1, date) OVER (PARTITION BY license_id ORDER BY date) as prev_date,
-        julianday(date) - julianday(LAG(date, 1, date) OVER (PARTITION BY license_id ORDER BY date)) as days_since_last
-      FROM usage_daily
-      WHERE commands_run > 0 AND date >= date('now', '-60 days')
-    )
-    SELECT 
-      COUNT(DISTINCT CASE WHEN days_since_last <= 1 THEN license_id END) * 100.0 / COUNT(DISTINCT license_id) as daily_active_pct,
-      COUNT(DISTINCT CASE WHEN days_since_last <= 7 THEN license_id END) * 100.0 / COUNT(DISTINCT license_id) as weekly_active_pct,
-      AVG(CASE WHEN days_since_last IS NOT NULL THEN days_since_last END) as avg_days_between_sessions
-    FROM user_streaks
-  `
-  ).first();
+  const currentMrr = (revenueMetrics?.current_mrr as number) || 0;
 
   return secureJsonResponse({
     request_id: context.requestId,
     engagement: {
-      dau: dau?.count || 0,
-      wau: wau?.count || 0,
-      mau: mau?.count || 0,
+      dau: (dau?.count as number) || 0,
+      wau: (wau?.count as number) || 0,
+      mau: (mau?.count as number) || 0,
       stickiness,
     },
-    retention: {
-      cohorts: retentionCohorts.results || [],
-      product_stickiness: productStickiness,
-    },
+    retention: { cohorts: retentionCohorts.results || [] },
     ltv_by_tier: ltv.results || [],
     feature_adoption: featureAdoption,
     command_heatmap: commandHeatmap.results || [],
@@ -954,7 +787,7 @@ export async function handleAdminAdvancedMetrics(request: Request, env: Env): Pr
     churn_risk_segments: churnRiskSegments.results || [],
     expansion_opportunities: expansionOpportunities.results || [],
     time_to_value: timeToValue,
-    revenue_metrics: revenueMetrics,
+    revenue_metrics: { current_mrr: currentMrr, projected_arr: currentMrr * 12, expansion_mrr_12m: 0 },
   });
 }
 
