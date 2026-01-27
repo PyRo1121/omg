@@ -39,11 +39,12 @@ pub struct NodeManager {
 
 impl NodeManager {
     pub fn new() -> Self {
-        let data_dir = super::DATA_DIR.clone();
+        let data_dir = &*super::DATA_DIR;
+        let node_versions = data_dir.join("versions").join("node");
 
         Self {
-            versions_dir: data_dir.join("versions").join("node"),
-            current_link: data_dir.join("versions").join("node").join("current"),
+            versions_dir: node_versions.clone(),
+            current_link: node_versions.join("current"),
             client: download_client().clone(),
         }
     }
@@ -56,16 +57,14 @@ impl NodeManager {
     pub async fn list_available(&self) -> Result<Vec<NodeVersion>> {
         let url = format!("{NODE_DIST_URL}/index.json");
 
-        let versions: Vec<NodeVersion> = self
-            .client
+        self.client
             .get(&url)
             .send()
             .await
             .context("Failed to fetch Node.js version list. Check your internet connection.")?
             .json()
             .await
-            .context("Failed to parse Node.js version list from nodejs.org")?;
-        Ok(versions)
+            .context("Failed to parse Node.js version list from nodejs.org")
     }
 
     pub fn list_installed(&self) -> Result<Vec<String>> {
@@ -81,25 +80,24 @@ impl NodeManager {
     pub async fn resolve_alias(&self, alias: &str) -> Result<String> {
         let alias = normalize_version(alias);
 
-        if alias == "latest" {
-            let versions = self.list_available().await?;
-            if let Some(v) = versions.first() {
-                return Ok(v.version.trim_start_matches('v').to_string());
+        match alias.as_str() {
+            "latest" => {
+                let versions = self.list_available().await?;
+                versions
+                    .first()
+                    .map(|v| v.version.trim_start_matches('v').to_string())
+                    .ok_or_else(|| anyhow::anyhow!("No Node.js versions found upstream"))
             }
-            anyhow::bail!("No Node.js versions found upstream");
-        }
-
-        if alias == "lts" {
-            let versions = self.list_available().await?;
-            for v in versions {
-                if v.lts.is_string() {
-                    return Ok(v.version.trim_start_matches('v').to_string());
-                }
+            "lts" => {
+                let versions = self.list_available().await?;
+                versions
+                    .iter()
+                    .find(|v| v.lts.is_string())
+                    .map(|v| v.version.trim_start_matches('v').to_string())
+                    .ok_or_else(|| anyhow::anyhow!("No LTS version found"))
             }
-            anyhow::bail!("No LTS version found");
+            _ => Ok(alias),
         }
-
-        Ok(alias)
     }
 
     /// Install Node.js - PURE RUST, NO SUBPROCESS
@@ -150,18 +148,19 @@ impl NodeManager {
     /// Fetch SHA256 checksum from nodejs.org
     async fn fetch_checksum(&self, version: &str, filename: &str) -> Result<String> {
         let url = format!("{NODE_DIST_URL}/v{version}/SHASUMS256.txt");
-        let response = self.client.get(&url).send().await?;
-        let text = response.text().await?;
+        let text = self
+            .client
+            .get(&url)
+            .send()
+            .await?
+            .text()
+            .await?;
 
-        for line in text.lines() {
-            if line.ends_with(filename)
-                && let Some(hash) = line.split_whitespace().next()
-            {
-                return Ok(hash.to_string());
-            }
-        }
-
-        anyhow::bail!("Checksum not found for {filename}")
+        text.lines()
+            .find(|line| line.ends_with(filename))
+            .and_then(|line| line.split_whitespace().next())
+            .map(String::from)
+            .ok_or_else(|| anyhow::anyhow!("Checksum not found for {filename}"))
     }
 
     /// Switch to a specific version
@@ -182,17 +181,14 @@ impl NodeManager {
             return Ok(());
         }
 
-        // Check if this is the current version
         if let Some(current) = self.current_version()
             && current == version
         {
-            // Remove the symlink
-            let _ = std::fs::remove_file(&self.current_link);
+            let _ = fs::remove_file(&self.current_link);
         }
 
-        std::fs::remove_dir_all(&version_dir)?;
+        fs::remove_dir_all(&version_dir)?;
         println!("{} Node.js {} uninstalled", "✓".green(), version);
-
         Ok(())
     }
 }
