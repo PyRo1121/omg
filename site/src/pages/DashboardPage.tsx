@@ -87,21 +87,18 @@ const DashboardPage: Component = () => {
   const [adminUsers, setAdminUsers] = createSignal<api.AdminUser[]>([]);
   const [adminActivity, setAdminActivity] = createSignal<api.AdminActivity[]>([]);
 
-  // Entrance animations
   createEffect(() => {
     if (view() === 'dashboard' && dashboard()) {
-      // Stagger nav items
       animate(
         'nav button',
-        { opacity: [0, 1], x: [-20, 0] },
-        { delay: stagger(0.05), duration: 0.5, easing: [0.16, 1, 0.3, 1] }
+        { opacity: [0, 1], x: [-20, 0] } as any,
+        { delay: stagger(0.05), duration: 0.5, ease: [0.16, 1, 0.3, 1] }
       );
 
-      // Animate main content area
       animate(
         'main > div',
-        { opacity: [0, 1], y: [10, 0] },
-        { duration: 0.6, easing: [0.16, 1, 0.3, 1] }
+        { opacity: [0, 1], y: [10, 0] } as any,
+        { duration: 0.6, ease: [0.16, 1, 0.3, 1] }
       );
     }
   });
@@ -839,7 +836,7 @@ const DashboardPage: Component = () => {
                         </div>
                         <div class="text-2xl font-black text-white">
                           {dashboard()?.license?.expires_at
-                            ? new Date(dashboard()!.license.expires_at).toLocaleDateString()
+                            ? new Date(dashboard()!.license.expires_at!).toLocaleDateString()
                             : 'N/A'}
                         </div>
                       </div>

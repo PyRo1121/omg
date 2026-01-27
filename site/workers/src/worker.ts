@@ -50,6 +50,7 @@ import {
   handleAdminAssignTag,
   handleAdminRemoveTag,
   handleAdminGetCustomerHealth,
+  handleAdminAdvancedMetrics,
   handleInitDb,
 } from './handlers/admin';
 import { handleGetSmartInsights } from './handlers/insights';
@@ -339,6 +340,11 @@ export default Sentry.withSentry(
       // Admin: Customer Health
       if (path === '/api/admin/customer-health' && request.method === 'GET') {
         return handleAdminGetCustomerHealth(request, env);
+      }
+
+      // Admin: Advanced Metrics (engagement, retention, LTV, churn risk)
+      if (path === '/api/admin/advanced-metrics' && request.method === 'GET') {
+        return handleAdminAdvancedMetrics(request, env);
       }
 
       // Admin: Real-time event firehose

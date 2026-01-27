@@ -161,11 +161,11 @@ async fn handle_debian_search(
 ) -> Response {
     let limit = limit.unwrap_or(DEFAULT_SEARCH_LIMIT).min(MAX_SEARCH_LIMIT);
 
-    // Check cache first
+    // Check cache first (Arc clone is cheap - just pointer copy)
     if let Some(cached) = state.cache.get_debian(&query) {
         return Response::Success {
             id,
-            result: ResponseResult::DebianSearch(cached.into_iter().take(limit).collect()),
+            result: ResponseResult::DebianSearch(cached.iter().take(limit).cloned().collect()),
         };
     }
 
@@ -196,10 +196,11 @@ async fn handle_debian_search(
 
     match results {
         Ok(Ok(pkgs)) => {
-            state.cache.insert_debian(query, pkgs.clone());
+            let results: Vec<PackageInfo> = pkgs.into_iter().take(limit).collect();
+            state.cache.insert_debian(query, results.clone());
             Response::Success {
                 id,
-                result: ResponseResult::DebianSearch(pkgs.into_iter().take(limit).collect()),
+                result: ResponseResult::DebianSearch(results),
             }
         }
         Ok(Err(e)) => Response::Error {
@@ -356,11 +357,11 @@ async fn handle_search(
 
     let limit = limit.unwrap_or(DEFAULT_SEARCH_LIMIT).min(MAX_SEARCH_LIMIT); // Cap limit to prevent resource exhaustion
 
-    // Check cache first
+    // Check cache first (Arc clone is cheap - just pointer copy)
     if let Some(cached) = state.cache.get(&query) {
         // Avoid intermediate allocation by calculating total from cached length
         let total = cached.len().min(limit);
-        let packages: Vec<_> = cached.into_iter().take(limit).collect();
+        let packages: Vec<_> = cached.iter().take(limit).cloned().collect();
         return Response::Success {
             id,
             result: ResponseResult::Search(SearchResult { packages, total }),
@@ -386,7 +387,7 @@ async fn handle_search(
         }
     };
 
-    // Cache results and return (clone only for cache, return original)
+    // Cache results and return (Arc eliminates expensive clone)
     let total = official.len();
     state.cache.insert(query, official.clone());
 
@@ -420,11 +421,11 @@ async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) ->
         };
     }
 
-    // 1. Check cache first
+    // 1. Check cache first (Arc clone is cheap - just pointer copy)
     if let Some(cached) = state.cache.get_info(&package) {
         return Response::Success {
             id,
-            result: ResponseResult::Info(cached),
+            result: ResponseResult::Info(Arc::try_unwrap(cached).unwrap_or_else(|arc| (*arc).clone())),
         };
     }
 
@@ -438,10 +439,11 @@ async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) ->
 
     // 2. Try official index (Instant hash lookup)
     if let Some(pkg) = state.index.get(&package) {
-        state.cache.insert_info(pkg.clone());
+        let info = pkg.clone();
+        state.cache.insert_info(info.clone());
         return Response::Success {
             id,
-            result: ResponseResult::Info(pkg),
+            result: ResponseResult::Info(info),
         };
     }
 
@@ -460,10 +462,11 @@ async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) ->
             licenses: Vec::new(),
             source: "official".to_string(),
         };
-        state.cache.insert_info(detailed.clone());
+        let info_copy = detailed.clone();
+        state.cache.insert_info(detailed);
         return Response::Success {
             id,
-            result: ResponseResult::Info(detailed),
+            result: ResponseResult::Info(info_copy),
         };
     }
 
@@ -486,10 +489,11 @@ async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) ->
             source: "aur".to_string(),
         };
 
-        state.cache.insert_info(detailed.clone());
+        let info_copy = detailed.clone();
+        state.cache.insert_info(detailed);
         return Response::Success {
             id,
-            result: ResponseResult::Info(detailed),
+            result: ResponseResult::Info(info_copy),
         };
     }
 
@@ -504,11 +508,11 @@ async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) ->
 
 /// Handle status request
 async fn handle_status(state: Arc<DaemonState>, id: RequestId) -> Response {
-    // 1. Check MEMORY cache first (instant - sub-microsecond)
+    // 1. Check MEMORY cache first (instant - sub-microsecond, Arc clone is cheap)
     if let Some(cached) = state.cache.get_status() {
         return Response::Success {
             id,
-            result: ResponseResult::Status(cached),
+            result: ResponseResult::Status(Arc::try_unwrap(cached).unwrap_or_else(|arc| (*arc).clone())),
         };
     }
 
@@ -519,11 +523,12 @@ async fn handle_status(state: Arc<DaemonState>, id: RequestId) -> Response {
         tokio::task::spawn_blocking(move || state_clone.persistent.get_status()).await;
 
     if let Ok(Ok(Some(cached))) = cached_result {
-        // Promote to memory cache for next hit
-        state.cache.update_status(cached.clone());
+        // Promote to memory cache for next hit (Arc avoids clone)
+        let status_copy = cached.clone();
+        state.cache.update_status(cached);
         return Response::Success {
             id,
-            result: ResponseResult::Status(cached),
+            result: ResponseResult::Status(status_copy),
         };
     }
 
@@ -567,12 +572,13 @@ async fn handle_status(state: Arc<DaemonState>, id: RequestId) -> Response {
                 runtime_versions: state.runtime_versions.read().clone(),
             };
 
+            let res_copy = res.clone();
             let _ = state.persistent.set_status(&res);
-            state.cache.update_status(res.clone());
+            state.cache.update_status(res);
 
             Response::Success {
                 id,
-                result: ResponseResult::Status(res),
+                result: ResponseResult::Status(res_copy),
             }
         }
         Ok(Err(e)) => Response::Error {
@@ -679,10 +685,13 @@ async fn handle_security_audit(state: Arc<DaemonState>, id: RequestId) -> Respon
 
 /// Handle list explicit request
 async fn handle_list_explicit(state: Arc<DaemonState>, id: RequestId) -> Response {
+    // Arc clone is cheap - just pointer copy
     if let Some(cached) = state.cache.get_explicit() {
         return Response::Success {
             id,
-            result: ResponseResult::Explicit(ExplicitResult { packages: cached }),
+            result: ResponseResult::Explicit(ExplicitResult {
+                packages: Arc::try_unwrap(cached).unwrap_or_else(|arc| (*arc).clone()),
+            }),
         };
     }
 
@@ -715,10 +724,11 @@ async fn handle_list_explicit(state: Arc<DaemonState>, id: RequestId) -> Respons
 
     match packages_result {
         Ok(Ok(packages)) => {
-            state.cache.update_explicit(packages.clone());
+            let packages_copy = packages.clone();
+            state.cache.update_explicit(packages);
             Response::Success {
                 id,
-                result: ResponseResult::Explicit(ExplicitResult { packages }),
+                result: ResponseResult::Explicit(ExplicitResult { packages: packages_copy }),
             }
         }
         Ok(Err(e)) => Response::Error {

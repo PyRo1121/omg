@@ -4,7 +4,7 @@
 //! It requires `libapt-pkg-dev` to be installed on the system.
 
 use anyhow::{Context, Result};
-use futures::future::{BoxFuture, FutureExt};
+use async_trait::async_trait;
 
 use crate::core::is_root;
 use crate::core::{Package, PackageSource};

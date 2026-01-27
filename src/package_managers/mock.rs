@@ -6,7 +6,7 @@
 #![allow(clippy::unwrap_used)]
 
 use anyhow::Result;
-use futures::future::{BoxFuture, FutureExt};
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -174,196 +174,171 @@ impl MockPackageManager {
     }
 }
 
+#[async_trait]
 impl PackageManager for MockPackageManager {
     fn name(&self) -> &'static str {
         self.distro_name
     }
 
-    fn search(&self, query: &str) -> BoxFuture<'static, Result<Vec<Package>>> {
+    async fn search(&self, query: &str) -> Result<Vec<Package>> {
         let query = query.to_lowercase();
         let db = self.db.clone();
         let state = Self::load_state(self.distro_name);
-        async move {
-            let pkgs = db.packages.lock().unwrap();
-            Ok(pkgs
-                .values()
-                .filter(|p| {
-                    p.name.contains(&query) || p.description.to_lowercase().contains(&query)
-                })
-                .map(|p| Package {
-                    name: p.name.clone(),
-                    version: parse_version_or_zero(&p.version),
-                    description: p.description.clone(),
-                    source: PackageSource::Official,
-                    installed: state.installed.contains_key(&p.name),
-                })
-                .collect())
-        }
-        .boxed()
-    }
-
-    fn install(&self, packages: &[String]) -> BoxFuture<'static, Result<()>> {
-        let packages = packages.to_vec();
-        let distro_name = self.distro_name;
-        let db = self.db.clone();
-        async move {
-            let mut state = Self::load_state(distro_name);
-            let pkgs = db.packages.lock().unwrap();
-            for pkg in packages {
-                // Use available version if present, otherwise db version, otherwise "0"
-                let version = state
-                    .available
-                    .get(&pkg)
-                    .or_else(|| pkgs.get(&pkg).map(|p| &p.version))
-                    .cloned()
-                    .unwrap_or_else(|| "0".to_string());
-                state.installed.insert(pkg, version);
-            }
-            Self::save_state(&state);
-            Ok(())
-        }
-        .boxed()
-    }
-
-    fn remove(&self, packages: &[String]) -> BoxFuture<'static, Result<()>> {
-        let packages = packages.to_vec();
-        let distro_name = self.distro_name;
-        async move {
-            let mut state = Self::load_state(distro_name);
-            for pkg in packages {
-                state.installed.remove(&pkg);
-            }
-            Self::save_state(&state);
-            Ok(())
-        }
-        .boxed()
-    }
-
-    fn update(&self) -> BoxFuture<'static, Result<()>> {
-        async move { Ok(()) }.boxed()
-    }
-
-    fn sync(&self) -> BoxFuture<'static, Result<()>> {
-        async move { Ok(()) }.boxed()
-    }
-
-    fn info(&self, package: &str) -> BoxFuture<'static, Result<Option<Package>>> {
-        let package = package.to_string();
-        let db = self.db.clone();
-        let state = Self::load_state(self.distro_name);
-        async move {
-            let pkgs = db.packages.lock().unwrap();
-            Ok(pkgs.get(&package).map(|p| Package {
+        let pkgs = db.packages.lock().unwrap();
+        Ok(pkgs
+            .values()
+            .filter(|p| {
+                p.name.contains(&query) || p.description.to_lowercase().contains(&query)
+            })
+            .map(|p| Package {
                 name: p.name.clone(),
                 version: parse_version_or_zero(&p.version),
                 description: p.description.clone(),
                 source: PackageSource::Official,
                 installed: state.installed.contains_key(&p.name),
-            }))
-        }
-        .boxed()
+            })
+            .collect())
     }
 
-    fn list_installed(&self) -> BoxFuture<'static, Result<Vec<Package>>> {
+    async fn install(&self, packages: &[String]) -> Result<()> {
+        let distro_name = self.distro_name;
+        let db = self.db.clone();
+        let mut state = Self::load_state(distro_name);
+        let pkgs = db.packages.lock().unwrap();
+        for pkg in packages {
+            // Use available version if present, otherwise db version, otherwise "0"
+            let version = state
+                .available
+                .get(pkg)
+                .or_else(|| pkgs.get(pkg).map(|p| &p.version))
+                .cloned()
+                .unwrap_or_else(|| "0".to_string());
+            state.installed.insert(pkg.clone(), version);
+        }
+        Self::save_state(&state);
+        Ok(())
+    }
+
+    async fn remove(&self, packages: &[String]) -> Result<()> {
+        let distro_name = self.distro_name;
+        let mut state = Self::load_state(distro_name);
+        for pkg in packages {
+            state.installed.remove(pkg);
+        }
+        Self::save_state(&state);
+        Ok(())
+    }
+
+    async fn update(&self) -> Result<()> {
+        Ok(())
+    }
+
+    async fn sync(&self) -> Result<()> {
+        Ok(())
+    }
+
+    async fn info(&self, package: &str) -> Result<Option<Package>> {
         let db = self.db.clone();
         let state = Self::load_state(self.distro_name);
-        async move {
-            let pkgs = db.packages.lock().unwrap();
-            Ok(state
-                .installed
-                .iter()
-                .map(|(name, version)| {
-                    if let Some(p) = pkgs.get(name) {
-                        Package {
-                            name: p.name.clone(),
-                            version: parse_version_or_zero(version),
-                            description: p.description.clone(),
-                            source: PackageSource::Official,
-                            installed: true,
-                        }
-                    } else {
-                        // Package installed but not in db (e.g. manually added to mock state)
-                        Package {
-                            name: name.clone(),
-                            version: parse_version_or_zero(version),
-                            description: "Mock package".to_string(),
-                            source: PackageSource::Official,
-                            installed: true,
-                        }
+        let pkgs = db.packages.lock().unwrap();
+        Ok(pkgs.get(package).map(|p| Package {
+            name: p.name.clone(),
+            version: parse_version_or_zero(&p.version),
+            description: p.description.clone(),
+            source: PackageSource::Official,
+            installed: state.installed.contains_key(&p.name),
+        }))
+    }
+
+    async fn list_installed(&self) -> Result<Vec<Package>> {
+        let db = self.db.clone();
+        let state = Self::load_state(self.distro_name);
+        let pkgs = db.packages.lock().unwrap();
+        Ok(state
+            .installed
+            .iter()
+            .map(|(name, version)| {
+                if let Some(p) = pkgs.get(name) {
+                    Package {
+                        name: p.name.clone(),
+                        version: parse_version_or_zero(version),
+                        description: p.description.clone(),
+                        source: PackageSource::Official,
+                        installed: true,
                     }
-                })
-                .collect())
-        }
-        .boxed()
-    }
-
-    fn get_status(&self, _fast: bool) -> BoxFuture<'static, Result<(usize, usize, usize, usize)>> {
-        let db = self.db.clone();
-        let state = Self::load_state(self.distro_name);
-        async move {
-            let total = db.packages.lock().unwrap().len();
-            let explicit = state.installed.len();
-            Ok((total, explicit, 0, 0))
-        }
-        .boxed()
-    }
-
-    fn list_explicit(&self) -> BoxFuture<'static, Result<Vec<String>>> {
-        let state = Self::load_state(self.distro_name);
-        async move { Ok(state.installed.keys().cloned().collect()) }.boxed()
-    }
-
-    fn list_updates(&self) -> BoxFuture<'static, Result<Vec<UpdateInfo>>> {
-        let db = self.db.clone();
-        let state = Self::load_state(self.distro_name);
-
-        async move {
-            let pkgs = db.packages.lock().unwrap();
-            let mut updates = Vec::new();
-
-            for (pkg_name, installed_ver) in &state.installed {
-                if let Some(available_ver) = state.available.get(pkg_name) {
-                    // Use repo from db if available, else "unknown"
-                    let repo = pkgs
-                        .get(pkg_name)
-                        .map_or_else(|| "unknown".to_string(), |p| p.repo.clone());
-
-                    #[cfg(feature = "arch")]
-                    let is_update_needed = {
-                        use crate::package_managers::types::Version as AlpmVersion;
-                        use std::str::FromStr;
-
-                        let installed = AlpmVersion::from_str(installed_ver)
-                            .unwrap_or_else(|_| AlpmVersion::from_str("0").unwrap());
-                        let available = AlpmVersion::from_str(available_ver)
-                            .unwrap_or_else(|_| AlpmVersion::from_str("0").unwrap());
-
-                        available > installed
-                    };
-
-                    #[cfg(not(feature = "arch"))]
-                    let is_update_needed = Self::is_newer(installed_ver, available_ver);
-
-                    if is_update_needed {
-                        updates.push(UpdateInfo {
-                            name: pkg_name.clone(),
-                            old_version: installed_ver.clone(),
-                            new_version: available_ver.clone(),
-                            repo,
-                        });
+                } else {
+                    // Package installed but not in db (e.g. manually added to mock state)
+                    Package {
+                        name: name.clone(),
+                        version: parse_version_or_zero(version),
+                        description: "Mock package".to_string(),
+                        source: PackageSource::Official,
+                        installed: true,
                     }
                 }
-            }
-
-            Ok(updates)
-        }
-        .boxed()
+            })
+            .collect())
     }
 
-    fn is_installed(&self, package: &str) -> BoxFuture<'static, bool> {
-        let package = package.to_string();
+    async fn get_status(&self, _fast: bool) -> Result<(usize, usize, usize, usize)> {
+        let db = self.db.clone();
         let state = Self::load_state(self.distro_name);
-        async move { state.installed.contains_key(&package) }.boxed()
+        let total = db.packages.lock().unwrap().len();
+        let explicit = state.installed.len();
+        Ok((total, explicit, 0, 0))
+    }
+
+    async fn list_explicit(&self) -> Result<Vec<String>> {
+        let state = Self::load_state(self.distro_name);
+        Ok(state.installed.keys().cloned().collect())
+    }
+
+    async fn list_updates(&self) -> Result<Vec<UpdateInfo>> {
+        let db = self.db.clone();
+        let state = Self::load_state(self.distro_name);
+        let pkgs = db.packages.lock().unwrap();
+        let mut updates = Vec::new();
+
+        for (pkg_name, installed_ver) in &state.installed {
+            if let Some(available_ver) = state.available.get(pkg_name) {
+                // Use repo from db if available, else "unknown"
+                let repo = pkgs
+                    .get(pkg_name)
+                    .map_or_else(|| "unknown".to_string(), |p| p.repo.clone());
+
+                #[cfg(feature = "arch")]
+                let is_update_needed = {
+                    use crate::package_managers::types::Version as AlpmVersion;
+                    use std::str::FromStr;
+
+                    let installed = AlpmVersion::from_str(installed_ver)
+                        .unwrap_or_else(|_| AlpmVersion::from_str("0").unwrap());
+                    let available = AlpmVersion::from_str(available_ver)
+                        .unwrap_or_else(|_| AlpmVersion::from_str("0").unwrap());
+
+                    available > installed
+                };
+
+                #[cfg(not(feature = "arch"))]
+                let is_update_needed = Self::is_newer(installed_ver, available_ver);
+
+                if is_update_needed {
+                    updates.push(UpdateInfo {
+                        name: pkg_name.clone(),
+                        old_version: installed_ver.clone(),
+                        new_version: available_ver.clone(),
+                        repo,
+                    });
+                }
+            }
+        }
+
+        Ok(updates)
+    }
+
+    async fn is_installed(&self, package: &str) -> bool {
+        let state = Self::load_state(self.distro_name);
+        state.installed.contains_key(package)
     }
 }
 

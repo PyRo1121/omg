@@ -1,0 +1,830 @@
+/**
+ * OMG Design System: Mission Control
+ * ===================================
+ * 
+ * A world-class design system for the OMG Admin Dashboard & CRM.
+ * Aesthetic: Deep space darkness with bioluminescent data visualization.
+ * 
+ * Typography: 
+ *   - Display/Headers: Space Grotesk (geometric, technical)
+ *   - Body/UI: Plus Jakarta Sans (modern, readable)
+ *   - Code/Data: JetBrains Mono (precision, tabular)
+ * 
+ * Core Palette Philosophy:
+ *   - Background: Deep void blacks with subtle blue undertones
+ *   - Data: Bioluminescent colors that "glow" against darkness
+ *   - Health: Traffic light progression (emerald -> amber -> rose)
+ *   - Accents: Electric cyan and plasma purple for energy
+ */
+
+/* ==========================================================================
+   DESIGN TOKENS: CSS Custom Properties
+   ========================================================================== */
+
+:root {
+  /* =========================================================================
+     COLOR TOKENS: PRIMITIVES
+     ========================================================================= */
+  
+  /* Void Blacks - The canvas */
+  --color-void-950: #030304;
+  --color-void-900: #07070a;
+  --color-void-850: #0a0a0e;
+  --color-void-800: #0d0d12;
+  --color-void-750: #101016;
+  --color-void-700: #14141b;
+  --color-void-650: #181820;
+  --color-void-600: #1c1c26;
+  --color-void-500: #24242f;
+  --color-void-400: #2e2e3a;
+  --color-void-300: #3d3d4a;
+  --color-void-200: #52525e;
+  --color-void-100: #71717a;
+  
+  /* Nebula Grays - Text hierarchy */
+  --color-nebula-950: #0f0f14;
+  --color-nebula-900: #18181f;
+  --color-nebula-800: #27272f;
+  --color-nebula-700: #3f3f47;
+  --color-nebula-600: #52525a;
+  --color-nebula-500: #71717a;
+  --color-nebula-400: #a1a1aa;
+  --color-nebula-300: #d4d4dc;
+  --color-nebula-200: #e4e4ec;
+  --color-nebula-100: #f4f4f8;
+  --color-nebula-50: #fafafc;
+  
+  /* Plasma Blue - Primary brand */
+  --color-plasma-950: #0c1929;
+  --color-plasma-900: #122a4a;
+  --color-plasma-800: #1a3a66;
+  --color-plasma-700: #234e8a;
+  --color-plasma-600: #2e64ad;
+  --color-plasma-500: #3b7dd1;
+  --color-plasma-400: #5a9ae8;
+  --color-plasma-300: #85b8f4;
+  --color-plasma-200: #b3d4fa;
+  --color-plasma-100: #dceafd;
+  --color-plasma-50: #f0f6fe;
+  
+  /* Electric Cyan - Accent/energy */
+  --color-electric-950: #042f2e;
+  --color-electric-900: #064e4b;
+  --color-electric-800: #0d7377;
+  --color-electric-700: #0e9494;
+  --color-electric-600: #14b8b8;
+  --color-electric-500: #22d3d3;
+  --color-electric-400: #2ee8e8;
+  --color-electric-300: #5ff5f5;
+  --color-electric-200: #99f6f6;
+  --color-electric-100: #ccfbfb;
+  --color-electric-50: #ecfefe;
+  
+  /* Photon Purple - Secondary accent */
+  --color-photon-950: #1e1028;
+  --color-photon-900: #2e1a42;
+  --color-photon-800: #452766;
+  --color-photon-700: #5e3488;
+  --color-photon-600: #7c3aad;
+  --color-photon-500: #9d4edd;
+  --color-photon-400: #b06de8;
+  --color-photon-300: #c89af0;
+  --color-photon-200: #e0c3f7;
+  --color-photon-100: #f0e1fb;
+  --color-photon-50: #f9f1fd;
+  
+  /* Aurora Green - Success/healthy */
+  --color-aurora-950: #022c22;
+  --color-aurora-900: #064e3b;
+  --color-aurora-800: #065f46;
+  --color-aurora-700: #047857;
+  --color-aurora-600: #059669;
+  --color-aurora-500: #10b981;
+  --color-aurora-400: #34d399;
+  --color-aurora-300: #6ee7b7;
+  --color-aurora-200: #a7f3d0;
+  --color-aurora-100: #d1fae5;
+  --color-aurora-50: #ecfdf5;
+  
+  /* Solar Amber - Warning/attention */
+  --color-solar-950: #2a1f00;
+  --color-solar-900: #453a00;
+  --color-solar-800: #6b5900;
+  --color-solar-700: #8a7500;
+  --color-solar-600: #b89500;
+  --color-solar-500: #f59e0b;
+  --color-solar-400: #fbbf24;
+  --color-solar-300: #fcd34d;
+  --color-solar-200: #fde68a;
+  --color-solar-100: #fef3c7;
+  --color-solar-50: #fffbeb;
+  
+  /* Flare Red - Danger/critical */
+  --color-flare-950: #2c0a0e;
+  --color-flare-900: #4c1016;
+  --color-flare-800: #7f1d1d;
+  --color-flare-700: #991b1b;
+  --color-flare-600: #dc2626;
+  --color-flare-500: #ef4444;
+  --color-flare-400: #f87171;
+  --color-flare-300: #fca5a5;
+  --color-flare-200: #fecaca;
+  --color-flare-100: #fee2e2;
+  --color-flare-50: #fef2f2;
+
+  /* Indigo Core - Primary UI elements */
+  --color-indigo-950: #1e1b4b;
+  --color-indigo-900: #312e81;
+  --color-indigo-800: #3730a3;
+  --color-indigo-700: #4338ca;
+  --color-indigo-600: #4f46e5;
+  --color-indigo-500: #6366f1;
+  --color-indigo-400: #818cf8;
+  --color-indigo-300: #a5b4fc;
+  --color-indigo-200: #c7d2fe;
+  --color-indigo-100: #e0e7ff;
+  --color-indigo-50: #eef2ff;
+
+  /* =========================================================================
+     COLOR TOKENS: SEMANTIC
+     ========================================================================= */
+  
+  /* Backgrounds */
+  --bg-void: var(--color-void-950);
+  --bg-surface: var(--color-void-900);
+  --bg-elevated: var(--color-void-850);
+  --bg-card: var(--color-void-800);
+  --bg-card-hover: var(--color-void-750);
+  --bg-overlay: rgba(3, 3, 4, 0.85);
+  --bg-interactive: rgba(255, 255, 255, 0.03);
+  --bg-interactive-hover: rgba(255, 255, 255, 0.06);
+  --bg-interactive-active: rgba(255, 255, 255, 0.08);
+  
+  /* Text */
+  --text-primary: var(--color-nebula-100);
+  --text-secondary: var(--color-nebula-400);
+  --text-tertiary: var(--color-nebula-500);
+  --text-muted: var(--color-nebula-600);
+  --text-disabled: var(--color-nebula-700);
+  --text-inverse: var(--color-void-950);
+  
+  /* Borders */
+  --border-subtle: rgba(255, 255, 255, 0.05);
+  --border-default: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.12);
+  --border-interactive: rgba(255, 255, 255, 0.15);
+  --border-focus: var(--color-indigo-500);
+  
+  /* Status Colors */
+  --status-success: var(--color-aurora-500);
+  --status-success-bg: rgba(16, 185, 129, 0.1);
+  --status-success-border: rgba(16, 185, 129, 0.2);
+  
+  --status-warning: var(--color-solar-500);
+  --status-warning-bg: rgba(245, 158, 11, 0.1);
+  --status-warning-border: rgba(245, 158, 11, 0.2);
+  
+  --status-error: var(--color-flare-500);
+  --status-error-bg: rgba(239, 68, 68, 0.1);
+  --status-error-border: rgba(239, 68, 68, 0.2);
+  
+  --status-info: var(--color-plasma-500);
+  --status-info-bg: rgba(59, 125, 209, 0.1);
+  --status-info-border: rgba(59, 125, 209, 0.2);
+
+  /* =========================================================================
+     HEALTH SCORE TOKENS
+     ========================================================================= */
+  
+  /* Health Score Ranges (0-100) */
+  --health-critical: var(--color-flare-500);      /* 0-20 */
+  --health-critical-bg: rgba(239, 68, 68, 0.1);
+  --health-critical-glow: rgba(239, 68, 68, 0.4);
+  
+  --health-poor: var(--color-flare-400);          /* 21-40 */
+  --health-poor-bg: rgba(248, 113, 113, 0.1);
+  --health-poor-glow: rgba(248, 113, 113, 0.35);
+  
+  --health-fair: var(--color-solar-500);          /* 41-60 */
+  --health-fair-bg: rgba(245, 158, 11, 0.1);
+  --health-fair-glow: rgba(245, 158, 11, 0.3);
+  
+  --health-good: var(--color-electric-500);       /* 61-80 */
+  --health-good-bg: rgba(34, 211, 211, 0.1);
+  --health-good-glow: rgba(34, 211, 211, 0.3);
+  
+  --health-excellent: var(--color-aurora-500);    /* 81-100 */
+  --health-excellent-bg: rgba(16, 185, 129, 0.1);
+  --health-excellent-glow: rgba(16, 185, 129, 0.4);
+
+  /* =========================================================================
+     LIFECYCLE STAGE TOKENS
+     ========================================================================= */
+  
+  --stage-new: var(--color-plasma-400);
+  --stage-new-bg: rgba(90, 154, 232, 0.1);
+  --stage-new-icon: "sparkles";
+  
+  --stage-onboarding: var(--color-photon-400);
+  --stage-onboarding-bg: rgba(176, 109, 232, 0.1);
+  --stage-onboarding-icon: "rocket";
+  
+  --stage-activated: var(--color-electric-500);
+  --stage-activated-bg: rgba(34, 211, 211, 0.1);
+  --stage-activated-icon: "zap";
+  
+  --stage-engaged: var(--color-indigo-400);
+  --stage-engaged-bg: rgba(129, 140, 248, 0.1);
+  --stage-engaged-icon: "activity";
+  
+  --stage-power-user: var(--color-solar-400);
+  --stage-power-user-bg: rgba(251, 191, 36, 0.1);
+  --stage-power-user-icon: "crown";
+  
+  --stage-at-risk: var(--color-flare-400);
+  --stage-at-risk-bg: rgba(248, 113, 113, 0.1);
+  --stage-at-risk-icon: "alert-triangle";
+  
+  --stage-churning: var(--color-flare-600);
+  --stage-churning-bg: rgba(220, 38, 38, 0.1);
+  --stage-churning-icon: "trending-down";
+  
+  --stage-churned: var(--color-nebula-600);
+  --stage-churned-bg: rgba(82, 82, 90, 0.1);
+  --stage-churned-icon: "x-circle";
+  
+  --stage-reactivated: var(--color-aurora-400);
+  --stage-reactivated-bg: rgba(52, 211, 153, 0.1);
+  --stage-reactivated-icon: "refresh-cw";
+
+  /* =========================================================================
+     TIER TOKENS
+     ========================================================================= */
+  
+  --tier-free: var(--color-nebula-500);
+  --tier-free-bg: rgba(113, 113, 122, 0.1);
+  --tier-free-border: rgba(113, 113, 122, 0.2);
+  
+  --tier-pro: var(--color-indigo-400);
+  --tier-pro-bg: linear-gradient(135deg, rgba(99, 102, 241, 0.15), rgba(129, 140, 248, 0.1));
+  --tier-pro-border: rgba(99, 102, 241, 0.3);
+  
+  --tier-team: var(--color-electric-400);
+  --tier-team-bg: linear-gradient(135deg, rgba(34, 211, 211, 0.15), rgba(46, 232, 232, 0.1));
+  --tier-team-border: rgba(34, 211, 211, 0.3);
+  
+  --tier-enterprise: var(--color-solar-400);
+  --tier-enterprise-bg: linear-gradient(135deg, rgba(245, 158, 11, 0.15), rgba(251, 191, 36, 0.1));
+  --tier-enterprise-border: rgba(245, 158, 11, 0.3);
+
+  /* =========================================================================
+     CHURN RISK TOKENS
+     ========================================================================= */
+  
+  --risk-critical: var(--color-flare-500);
+  --risk-critical-bg: rgba(239, 68, 68, 0.1);
+  --risk-critical-border: rgba(239, 68, 68, 0.25);
+  --risk-critical-glow: 0 0 30px rgba(239, 68, 68, 0.3);
+  
+  --risk-high: #f97316;  /* Orange-500 */
+  --risk-high-bg: rgba(249, 115, 22, 0.1);
+  --risk-high-border: rgba(249, 115, 22, 0.25);
+  --risk-high-glow: 0 0 25px rgba(249, 115, 22, 0.25);
+  
+  --risk-medium: var(--color-solar-500);
+  --risk-medium-bg: rgba(245, 158, 11, 0.1);
+  --risk-medium-border: rgba(245, 158, 11, 0.25);
+  --risk-medium-glow: 0 0 20px rgba(245, 158, 11, 0.2);
+  
+  --risk-low: #84cc16;  /* Lime-500 */
+  --risk-low-bg: rgba(132, 204, 22, 0.1);
+  --risk-low-border: rgba(132, 204, 22, 0.25);
+  --risk-low-glow: 0 0 15px rgba(132, 204, 22, 0.15);
+  
+  --risk-healthy: var(--color-aurora-500);
+  --risk-healthy-bg: rgba(16, 185, 129, 0.1);
+  --risk-healthy-border: rgba(16, 185, 129, 0.25);
+  --risk-healthy-glow: 0 0 20px rgba(16, 185, 129, 0.2);
+
+  /* =========================================================================
+     REAL-TIME / TELEMETRY TOKENS
+     ========================================================================= */
+  
+  --live-pulse: var(--color-aurora-500);
+  --live-pulse-ring: rgba(16, 185, 129, 0.4);
+  
+  --stream-success: var(--color-aurora-400);
+  --stream-failure: var(--color-flare-400);
+  --stream-warning: var(--color-solar-400);
+  --stream-info: var(--color-plasma-400);
+  
+  --presence-online: var(--color-aurora-500);
+  --presence-idle: var(--color-solar-500);
+  --presence-offline: var(--color-nebula-600);
+
+  /* =========================================================================
+     TYPOGRAPHY TOKENS
+     ========================================================================= */
+  
+  /* Font Families */
+  --font-display: 'Space Grotesk', system-ui, sans-serif;
+  --font-body: 'Plus Jakarta Sans', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+  
+  /* Font Sizes - Modular scale (1.2 ratio) */
+  --text-2xs: 0.625rem;    /* 10px */
+  --text-xs: 0.75rem;      /* 12px */
+  --text-sm: 0.875rem;     /* 14px */
+  --text-base: 1rem;       /* 16px */
+  --text-lg: 1.125rem;     /* 18px */
+  --text-xl: 1.25rem;      /* 20px */
+  --text-2xl: 1.5rem;      /* 24px */
+  --text-3xl: 1.875rem;    /* 30px */
+  --text-4xl: 2.25rem;     /* 36px */
+  --text-5xl: 3rem;        /* 48px */
+  --text-6xl: 3.75rem;     /* 60px */
+  --text-7xl: 4.5rem;      /* 72px */
+  --text-8xl: 6rem;        /* 96px */
+  
+  /* Font Weights */
+  --font-normal: 400;
+  --font-medium: 500;
+  --font-semibold: 600;
+  --font-bold: 700;
+  --font-extrabold: 800;
+  --font-black: 900;
+  
+  /* Line Heights */
+  --leading-none: 1;
+  --leading-tight: 1.15;
+  --leading-snug: 1.25;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.625;
+  --leading-loose: 2;
+  
+  /* Letter Spacing */
+  --tracking-tighter: -0.05em;
+  --tracking-tight: -0.025em;
+  --tracking-normal: 0;
+  --tracking-wide: 0.025em;
+  --tracking-wider: 0.05em;
+  --tracking-widest: 0.1em;
+  --tracking-ultra: 0.2em;
+
+  /* =========================================================================
+     SPACING TOKENS (4px base unit)
+     ========================================================================= */
+  
+  --space-0: 0;
+  --space-px: 1px;
+  --space-0-5: 0.125rem;   /* 2px */
+  --space-1: 0.25rem;      /* 4px */
+  --space-1-5: 0.375rem;   /* 6px */
+  --space-2: 0.5rem;       /* 8px */
+  --space-2-5: 0.625rem;   /* 10px */
+  --space-3: 0.75rem;      /* 12px */
+  --space-3-5: 0.875rem;   /* 14px */
+  --space-4: 1rem;         /* 16px */
+  --space-5: 1.25rem;      /* 20px */
+  --space-6: 1.5rem;       /* 24px */
+  --space-7: 1.75rem;      /* 28px */
+  --space-8: 2rem;         /* 32px */
+  --space-9: 2.25rem;      /* 36px */
+  --space-10: 2.5rem;      /* 40px */
+  --space-11: 2.75rem;     /* 44px */
+  --space-12: 3rem;        /* 48px */
+  --space-14: 3.5rem;      /* 56px */
+  --space-16: 4rem;        /* 64px */
+  --space-20: 5rem;        /* 80px */
+  --space-24: 6rem;        /* 96px */
+  --space-28: 7rem;        /* 112px */
+  --space-32: 8rem;        /* 128px */
+  --space-36: 9rem;        /* 144px */
+  --space-40: 10rem;       /* 160px */
+  --space-44: 11rem;       /* 176px */
+  --space-48: 12rem;       /* 192px */
+  --space-52: 13rem;       /* 208px */
+  --space-56: 14rem;       /* 224px */
+  --space-60: 15rem;       /* 240px */
+  --space-64: 16rem;       /* 256px */
+  --space-72: 18rem;       /* 288px */
+  --space-80: 20rem;       /* 320px */
+  --space-96: 24rem;       /* 384px */
+
+  /* =========================================================================
+     BORDER RADIUS TOKENS
+     ========================================================================= */
+  
+  --radius-none: 0;
+  --radius-xs: 0.125rem;   /* 2px - tiny elements */
+  --radius-sm: 0.25rem;    /* 4px - small buttons */
+  --radius-md: 0.375rem;   /* 6px - inputs */
+  --radius-lg: 0.5rem;     /* 8px - cards */
+  --radius-xl: 0.75rem;    /* 12px - modals */
+  --radius-2xl: 1rem;      /* 16px - large cards */
+  --radius-3xl: 1.5rem;    /* 24px - hero elements */
+  --radius-4xl: 2rem;      /* 32px - feature cards */
+  --radius-full: 9999px;   /* pills, avatars */
+
+  /* =========================================================================
+     SHADOW TOKENS (Elevation System)
+     ========================================================================= */
+  
+  /* Soft shadows for subtle elevation */
+  --shadow-xs: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
+  --shadow-sm: 0 1px 3px 0 rgba(0, 0, 0, 0.4), 0 1px 2px -1px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -2px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -4px rgba(0, 0, 0, 0.5);
+  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5);
+  --shadow-2xl: 0 25px 50px -12px rgba(0, 0, 0, 0.6);
+  --shadow-3xl: 0 35px 60px -15px rgba(0, 0, 0, 0.7);
+  
+  /* Glow shadows for interactive/accent elements */
+  --glow-sm: 0 0 10px var(--color-indigo-500);
+  --glow-md: 0 0 20px var(--color-indigo-500), 0 0 40px rgba(99, 102, 241, 0.3);
+  --glow-lg: 0 0 30px var(--color-indigo-500), 0 0 60px rgba(99, 102, 241, 0.4);
+  --glow-electric: 0 0 20px var(--color-electric-500), 0 0 40px rgba(34, 211, 211, 0.3);
+  --glow-aurora: 0 0 20px var(--color-aurora-500), 0 0 40px rgba(16, 185, 129, 0.3);
+  --glow-flare: 0 0 20px var(--color-flare-500), 0 0 40px rgba(239, 68, 68, 0.3);
+  
+  /* Card-specific shadows with colored rim lights */
+  --shadow-card: 
+    0 0 0 1px var(--border-subtle),
+    0 4px 6px -1px rgba(0, 0, 0, 0.4),
+    0 2px 4px -2px rgba(0, 0, 0, 0.4);
+  --shadow-card-hover:
+    0 0 0 1px var(--border-default),
+    0 10px 15px -3px rgba(0, 0, 0, 0.5),
+    0 4px 6px -4px rgba(0, 0, 0, 0.5),
+    0 0 30px -10px rgba(99, 102, 241, 0.2);
+  --shadow-card-active:
+    0 0 0 1px var(--color-indigo-500),
+    0 0 30px rgba(99, 102, 241, 0.3);
+
+  /* =========================================================================
+     ANIMATION / TRANSITION TOKENS
+     ========================================================================= */
+  
+  /* Durations */
+  --duration-instant: 0ms;
+  --duration-fast: 100ms;
+  --duration-normal: 200ms;
+  --duration-slow: 300ms;
+  --duration-slower: 500ms;
+  --duration-slowest: 700ms;
+  --duration-glacial: 1000ms;
+  
+  /* Timing Functions (Easing) */
+  --ease-linear: linear;
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  
+  /* Custom easing for premium feel */
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-bounce: cubic-bezier(0.68, -0.55, 0.265, 1.55);
+  --ease-smooth: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-swift: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-enter: cubic-bezier(0, 0, 0.2, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  
+  /* Animation presets */
+  --transition-colors: color var(--duration-fast) var(--ease-in-out),
+                       background-color var(--duration-fast) var(--ease-in-out),
+                       border-color var(--duration-fast) var(--ease-in-out);
+  --transition-opacity: opacity var(--duration-normal) var(--ease-in-out);
+  --transition-transform: transform var(--duration-normal) var(--ease-smooth);
+  --transition-all: all var(--duration-normal) var(--ease-smooth);
+  --transition-shadow: box-shadow var(--duration-normal) var(--ease-in-out);
+
+  /* =========================================================================
+     BREAKPOINT TOKENS (for CSS container queries)
+     ========================================================================= */
+  
+  --breakpoint-xs: 475px;
+  --breakpoint-sm: 640px;
+  --breakpoint-md: 768px;
+  --breakpoint-lg: 1024px;
+  --breakpoint-xl: 1280px;
+  --breakpoint-2xl: 1536px;
+  --breakpoint-3xl: 1920px;
+
+  /* =========================================================================
+     Z-INDEX TOKENS
+     ========================================================================= */
+  
+  --z-base: 0;
+  --z-docked: 10;
+  --z-dropdown: 100;
+  --z-sticky: 200;
+  --z-banner: 300;
+  --z-overlay: 400;
+  --z-modal: 500;
+  --z-popover: 600;
+  --z-tooltip: 700;
+  --z-toast: 800;
+  --z-max: 9999;
+
+  /* =========================================================================
+     COMPONENT-SPECIFIC TOKENS
+     ========================================================================= */
+  
+  /* Data Cards */
+  --card-bg: rgba(13, 13, 18, 0.8);
+  --card-bg-glass: rgba(255, 255, 255, 0.03);
+  --card-border: var(--border-subtle);
+  --card-radius: var(--radius-3xl);
+  --card-padding: var(--space-8);
+  --card-padding-sm: var(--space-6);
+  
+  /* Buttons */
+  --btn-height-sm: 2rem;       /* 32px */
+  --btn-height-md: 2.5rem;     /* 40px */
+  --btn-height-lg: 3rem;       /* 48px */
+  --btn-height-xl: 3.5rem;     /* 56px */
+  --btn-radius: var(--radius-xl);
+  
+  /* Inputs */
+  --input-height-sm: 2rem;     /* 32px */
+  --input-height-md: 2.5rem;   /* 40px */
+  --input-height-lg: 3rem;     /* 48px */
+  --input-radius: var(--radius-2xl);
+  --input-bg: var(--bg-interactive);
+  --input-border: var(--border-default);
+  --input-border-focus: var(--color-indigo-500);
+  
+  /* Badges */
+  --badge-radius: var(--radius-full);
+  --badge-height-sm: 1.25rem;  /* 20px */
+  --badge-height-md: 1.5rem;   /* 24px */
+  --badge-height-lg: 1.75rem;  /* 28px */
+  
+  /* Tables */
+  --table-row-height: 3.5rem;  /* 56px */
+  --table-header-bg: rgba(255, 255, 255, 0.02);
+  --table-row-hover-bg: rgba(255, 255, 255, 0.02);
+  --table-border: var(--border-subtle);
+  
+  /* Charts */
+  --chart-grid-color: rgba(255, 255, 255, 0.05);
+  --chart-axis-color: var(--color-nebula-700);
+  --chart-label-color: var(--color-nebula-500);
+  
+  /* Progress/Gauges */
+  --gauge-track-color: var(--color-void-700);
+  --gauge-track-width: 8px;
+  --gauge-indicator-width: 12px;
+}
+
+/* =========================================================================
+   COMPONENT TOKEN ALIASES (for specific contexts)
+   ========================================================================= */
+
+/* CRM-specific tokens */
+:root {
+  /* Note Types */
+  --note-general: var(--color-nebula-400);
+  --note-general-bg: rgba(161, 161, 170, 0.1);
+  --note-call: var(--color-plasma-400);
+  --note-call-bg: rgba(90, 154, 232, 0.1);
+  --note-email: var(--color-indigo-400);
+  --note-email-bg: rgba(129, 140, 248, 0.1);
+  --note-meeting: var(--color-photon-400);
+  --note-meeting-bg: rgba(176, 109, 232, 0.1);
+  --note-support: var(--color-solar-400);
+  --note-support-bg: rgba(251, 191, 36, 0.1);
+  --note-sales: var(--color-aurora-400);
+  --note-sales-bg: rgba(52, 211, 153, 0.1);
+  --note-success: var(--color-electric-400);
+  --note-success-bg: rgba(46, 232, 232, 0.1);
+  
+  /* Task Types */
+  --task-followup: var(--color-plasma-400);
+  --task-followup-bg: rgba(90, 154, 232, 0.1);
+  --task-onboarding: var(--color-photon-400);
+  --task-onboarding-bg: rgba(176, 109, 232, 0.1);
+  --task-renewal: var(--color-solar-400);
+  --task-renewal-bg: rgba(251, 191, 36, 0.1);
+  --task-upsell: var(--color-aurora-400);
+  --task-upsell-bg: rgba(52, 211, 153, 0.1);
+  --task-support: var(--color-flare-400);
+  --task-support-bg: rgba(248, 113, 113, 0.1);
+  
+  /* Communication Types */
+  --comm-email: var(--color-indigo-400);
+  --comm-chat: var(--color-electric-400);
+  --comm-phone: var(--color-aurora-400);
+  --comm-meeting: var(--color-photon-400);
+  --comm-ticket: var(--color-solar-400);
+}
+
+/* Analytics Heatmap Intensity Scale */
+:root {
+  --heatmap-0: rgba(99, 102, 241, 0.05);
+  --heatmap-1: rgba(99, 102, 241, 0.15);
+  --heatmap-2: rgba(99, 102, 241, 0.30);
+  --heatmap-3: rgba(99, 102, 241, 0.50);
+  --heatmap-4: rgba(99, 102, 241, 0.70);
+  --heatmap-5: var(--color-indigo-500);
+  --heatmap-6: var(--color-indigo-400);
+  --heatmap-7: var(--color-electric-400);
+  --heatmap-8: var(--color-electric-300);
+}
+
+/* Geo/Globe colors for presence map */
+:root {
+  --geo-na: var(--color-indigo-400);
+  --geo-eu: var(--color-electric-400);
+  --geo-asia: var(--color-photon-400);
+  --geo-sa: var(--color-aurora-400);
+  --geo-africa: var(--color-solar-400);
+  --geo-oceania: var(--color-plasma-400);
+}
+
+/* =========================================================================
+   DASHBOARD-SPECIFIC TOKENS
+   ========================================================================= */
+
+/* Semantic Status Colors */
+:root {
+  --status-success-fg: var(--color-aurora-400);
+  --status-success-muted: var(--color-aurora-500);
+  --status-warning-fg: var(--color-solar-400);
+  --status-warning-muted: var(--color-solar-500);
+  --status-danger-fg: var(--color-flare-400);
+  --status-danger-muted: var(--color-flare-500);
+  --status-info-fg: var(--color-plasma-400);
+  --status-info-muted: var(--color-plasma-500);
+}
+
+/* Semantic Metric Colors - Executive Dashboard */
+:root {
+  /* Revenue metrics (green family - growth/money) */
+  --metric-revenue: var(--color-aurora-500);
+  --metric-revenue-light: var(--color-aurora-400);
+  --metric-revenue-dark: var(--color-aurora-600);
+  --metric-revenue-bg: rgba(16, 185, 129, 0.1);
+  --metric-revenue-border: rgba(16, 185, 129, 0.2);
+  --metric-revenue-glow: 0 0 20px rgba(16, 185, 129, 0.3);
+  
+  /* Churn/attrition metrics (red family - loss/danger) */
+  --metric-churn: var(--color-flare-500);
+  --metric-churn-light: var(--color-flare-400);
+  --metric-churn-dark: var(--color-flare-600);
+  --metric-churn-bg: rgba(239, 68, 68, 0.1);
+  --metric-churn-border: rgba(239, 68, 68, 0.2);
+  --metric-churn-glow: 0 0 20px rgba(239, 68, 68, 0.3);
+  
+  /* Engagement metrics (blue family - activity/interaction) */
+  --metric-engagement: var(--color-plasma-500);
+  --metric-engagement-light: var(--color-plasma-400);
+  --metric-engagement-dark: var(--color-plasma-600);
+  --metric-engagement-bg: rgba(59, 125, 209, 0.1);
+  --metric-engagement-border: rgba(59, 125, 209, 0.2);
+  --metric-engagement-glow: 0 0 20px rgba(59, 125, 209, 0.3);
+  
+  /* Expansion metrics (purple family - growth/opportunity) */
+  --metric-expansion: var(--color-photon-500);
+  --metric-expansion-light: var(--color-photon-400);
+  --metric-expansion-dark: var(--color-photon-600);
+  --metric-expansion-bg: rgba(157, 78, 221, 0.1);
+  --metric-expansion-border: rgba(157, 78, 221, 0.2);
+  --metric-expansion-glow: 0 0 20px rgba(157, 78, 221, 0.3);
+  
+  /* Users/Activity metrics (cyan family - energy/dynamic) */
+  --metric-users: var(--color-electric-500);
+  --metric-users-light: var(--color-electric-400);
+  --metric-users-dark: var(--color-electric-600);
+  --metric-users-bg: rgba(34, 211, 211, 0.1);
+  --metric-users-border: rgba(34, 211, 211, 0.2);
+  --metric-users-glow: 0 0 20px rgba(34, 211, 211, 0.3);
+}
+
+/* Health Grade Colors (Letter grades A+ through F) */
+:root {
+  /* A+ Grade - Exceptional (95-100) */
+  --grade-a-plus: #059669;
+  --grade-a-plus-light: #10b981;
+  --grade-a-plus-bg: rgba(5, 150, 105, 0.1);
+  --grade-a-plus-border: rgba(5, 150, 105, 0.25);
+  --grade-a-plus-glow: 0 0 20px rgba(5, 150, 105, 0.4);
+  
+  /* A Grade - Excellent (85-94) */
+  --grade-a: var(--color-aurora-500);
+  --grade-a-light: var(--color-aurora-400);
+  --grade-a-bg: rgba(16, 185, 129, 0.1);
+  --grade-a-border: rgba(16, 185, 129, 0.25);
+  --grade-a-glow: 0 0 20px rgba(16, 185, 129, 0.35);
+  
+  /* B Grade - Good (70-84) */
+  --grade-b: var(--color-electric-500);
+  --grade-b-light: var(--color-electric-400);
+  --grade-b-bg: rgba(34, 211, 211, 0.1);
+  --grade-b-border: rgba(34, 211, 211, 0.25);
+  --grade-b-glow: 0 0 20px rgba(34, 211, 211, 0.3);
+  
+  /* C Grade - Fair (50-69) */
+  --grade-c: var(--color-solar-500);
+  --grade-c-light: var(--color-solar-400);
+  --grade-c-bg: rgba(245, 158, 11, 0.1);
+  --grade-c-border: rgba(245, 158, 11, 0.25);
+  --grade-c-glow: 0 0 20px rgba(245, 158, 11, 0.3);
+  
+  /* D Grade - Poor (30-49) */
+  --grade-d: #f97316;
+  --grade-d-light: #fb923c;
+  --grade-d-bg: rgba(249, 115, 22, 0.1);
+  --grade-d-border: rgba(249, 115, 22, 0.25);
+  --grade-d-glow: 0 0 20px rgba(249, 115, 22, 0.3);
+  
+  /* F Grade - Critical (0-29) */
+  --grade-f: var(--color-flare-500);
+  --grade-f-light: var(--color-flare-400);
+  --grade-f-bg: rgba(239, 68, 68, 0.1);
+  --grade-f-border: rgba(239, 68, 68, 0.25);
+  --grade-f-glow: 0 0 20px rgba(239, 68, 68, 0.4);
+}
+
+/* Lifecycle Stage Colors - Customer Journey */
+:root {
+  /* Positive Journey Stages */
+  --lifecycle-new: var(--color-plasma-400);
+  --lifecycle-new-bg: rgba(90, 154, 232, 0.1);
+  --lifecycle-new-border: rgba(90, 154, 232, 0.2);
+  
+  --lifecycle-onboarding: var(--color-photon-400);
+  --lifecycle-onboarding-bg: rgba(176, 109, 232, 0.1);
+  --lifecycle-onboarding-border: rgba(176, 109, 232, 0.2);
+  
+  --lifecycle-activated: var(--color-electric-500);
+  --lifecycle-activated-bg: rgba(34, 211, 211, 0.1);
+  --lifecycle-activated-border: rgba(34, 211, 211, 0.2);
+  
+  --lifecycle-engaged: var(--color-indigo-400);
+  --lifecycle-engaged-bg: rgba(129, 140, 248, 0.1);
+  --lifecycle-engaged-border: rgba(129, 140, 248, 0.2);
+  
+  --lifecycle-power-user: var(--color-solar-400);
+  --lifecycle-power-user-bg: rgba(251, 191, 36, 0.1);
+  --lifecycle-power-user-border: rgba(251, 191, 36, 0.2);
+  
+  /* Negative/Risk Journey Stages */
+  --lifecycle-at-risk: var(--color-flare-400);
+  --lifecycle-at-risk-bg: rgba(248, 113, 113, 0.1);
+  --lifecycle-at-risk-border: rgba(248, 113, 113, 0.25);
+  
+  --lifecycle-churning: var(--color-flare-600);
+  --lifecycle-churning-bg: rgba(220, 38, 38, 0.1);
+  --lifecycle-churning-border: rgba(220, 38, 38, 0.25);
+  
+  --lifecycle-churned: var(--color-nebula-600);
+  --lifecycle-churned-bg: rgba(82, 82, 90, 0.1);
+  --lifecycle-churned-border: rgba(82, 82, 90, 0.2);
+  
+  /* Recovery Stage */
+  --lifecycle-reactivated: var(--color-aurora-400);
+  --lifecycle-reactivated-bg: rgba(52, 211, 153, 0.1);
+  --lifecycle-reactivated-border: rgba(52, 211, 153, 0.2);
+}
+
+/* KPI Card Component Tokens */
+:root {
+  --kpi-card-bg: var(--color-void-850);
+  --kpi-card-bg-hover: var(--color-void-800);
+  --kpi-card-border: rgba(255, 255, 255, 0.05);
+  --kpi-card-border-hover: rgba(255, 255, 255, 0.1);
+  --kpi-card-radius: var(--radius-3xl);
+  --kpi-card-padding: var(--space-6);
+  --kpi-card-shadow: var(--shadow-card);
+  --kpi-card-shadow-hover: var(--shadow-card-hover);
+}
+
+/* Metric Ring Component Tokens */
+:root {
+  --ring-track-color: var(--color-void-700);
+  --ring-track-opacity: 1;
+  --ring-stroke-width-sm: 4px;
+  --ring-stroke-width-md: 6px;
+  --ring-stroke-width-lg: 8px;
+  --ring-size-sm: 48px;
+  --ring-size-md: 80px;
+  --ring-size-lg: 120px;
+}
+
+/* Live Indicator Component Tokens */
+:root {
+  --live-indicator-color: var(--color-aurora-500);
+  --live-indicator-glow: 0 0 8px rgba(16, 185, 129, 0.5);
+  --live-indicator-pulse-color: rgba(16, 185, 129, 0.4);
+  --live-indicator-bg: rgba(16, 185, 129, 0.1);
+}
+
+/* Trend Indicator Colors */
+:root {
+  --trend-positive: var(--color-aurora-400);
+  --trend-positive-bg: rgba(16, 185, 129, 0.1);
+  --trend-negative: var(--color-flare-400);
+  --trend-negative-bg: rgba(239, 68, 68, 0.1);
+  --trend-neutral: var(--color-nebula-500);
+  --trend-neutral-bg: rgba(113, 113, 122, 0.1);
+}

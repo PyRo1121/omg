@@ -5583,6 +5583,7 @@ dependencies = [
  "anyhow",
  "ar",
  "assert_cmd",
+ "async-trait",
  "bitcode",
  "cargo-audit",
  "chrono",
