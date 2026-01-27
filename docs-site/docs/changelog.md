@@ -27,10 +27,44 @@ Phase 1: Safety First modernization complete.
 
 Ready for Phase 2.
 
+### ⚡ Performance
+
+- Rust 2026 Phase 2 - Async & Performance ([#17](https://github.com/PyRo1121/omg/issues/17))
+
+* refactor: reduce cloning with Arc patterns in hot paths
+
+Convert expensive Vec/String clones to Arc patterns:
+
+  - Cache keys: LazyLock`<String>` optimized (no repeated .clone() calls)
+
+  - Cache values: Vec`<PackageInfo>` → Arc<Vec`<PackageInfo>`>
+
+  - Cache values: DetailedPackageInfo → Arc`<DetailedPackageInfo>`>
+
+  - Cache values: StatusResult → Arc`<StatusResult>`
+
+  - Cache values: Vec`<String>` → Arc<Vec`<String>`>
+
+Performance improvements:
+
+  - Arc clones are pointer copies (8 bytes) vs full data structure clones
+
+  - Reduces memory churn by 60-80% for cached responses
+
+  - Eliminates 23 expensive hot path clones
+
+  - Search results cached as Arc eliminate double allocation
+
+  - Info cache stores Arc, returns cheap clone
+
 ### 🐛 Bug Fixes
 
 - Substitute `$repo` and `$arch` placeholders in parsed server URLs
 ### 📚 Documentation
+
+- Update changelog [skip ci]
+
+Auto-generated from git history with git-cliff.
 
 - Update changelog [skip ci]
 

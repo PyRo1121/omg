@@ -1,6 +1,6 @@
 import { Component, For, Show, createSignal } from 'solid-js';
 import { createMutation, createQuery, useQueryClient } from '@tanstack/solid-query';
-import { Plus, X, Check, Edit } from '../../ui/Icons';
+import { Plus, X } from '../../ui/Icons';
 import { apiRequest } from '../../../lib/api';
 
 interface Tag {

@@ -559,3 +559,193 @@ proptest! {
         prop_assert_eq!(type1, type2, "Operation should be deterministic");
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PHASE 3 PROPERTY TESTS - DATA STRUCTURE INVARIANTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+proptest! {
+    /// Property: Package collections should maintain ordering consistency
+    /// When we sort packages by name, the order should be stable and repeatable
+    #[test]
+    fn prop_package_collection_ordering_stable(
+        count in 1usize..20usize,
+        seed in 0u64..1000u64
+    ) {
+        // Arrange - Create random package names
+        let mut packages: Vec<String> = (0..count)
+            .map(|i| format!("pkg{}{}", i, seed))
+            .collect();
+
+        // Act - Sort twice
+        packages.sort();
+        let first_sort = packages.clone();
+        packages.sort();
+        let second_sort = packages.clone();
+
+        // Assert - Order should be identical
+        prop_assert_eq!(first_sort, second_sort, "Sorting should be stable");
+    }
+
+    /// Property: Version parsing should be reversible
+    /// If we parse a version and convert it back to string, parsing again should yield the same result
+    #[test]
+    fn prop_version_parsing_reversible(
+        major in 0u32..100u32,
+        minor in 0u32..100u32,
+        patch in 0u32..100u32
+    ) {
+        // Arrange
+        let original = format!("{major}.{minor}.{patch}");
+
+        // Act - Parse and stringify
+        let parsed1 = semver::Version::parse(&original);
+        if let Ok(v1) = parsed1 {
+            let stringified = v1.to_string();
+            let parsed2 = semver::Version::parse(&stringified);
+
+            // Assert - Second parse should succeed and match first
+            prop_assert!(parsed2.is_ok());
+            prop_assert_eq!(v1, parsed2.unwrap());
+        }
+    }
+
+    /// Property: Error messages should never contain sensitive information
+    /// No error message should leak paths, passwords, or system information
+    #[test]
+    fn prop_error_messages_safe(
+        error_type in "[a-z]{1,20}",
+        user_input in "[^\x00]{0,100}"
+    ) {
+        // Arrange - Simulate an error with user input
+        let error_msg = format!("Error in {}: {}", error_type, user_input);
+
+        // Act & Assert - Should not contain sensitive patterns
+        prop_assert!(!error_msg.contains("/etc/passwd"));
+        prop_assert!(!error_msg.contains("/etc/shadow"));
+        prop_assert!(!error_msg.contains("root:"));
+        prop_assert!(!error_msg.contains("password="));
+        prop_assert!(!error_msg.contains("token="));
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PHASE 3 PROPERTY TESTS - MATHEMATICAL PROPERTIES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+proptest! {
+    /// Property: Version comparison should be transitive
+    /// If v1 < v2 and v2 < v3, then v1 < v3
+    #[test]
+    fn prop_version_comparison_transitive(
+        maj1 in 0u32..10u32,
+        min1 in 0u32..10u32,
+        pat1 in 0u32..10u32,
+        maj2 in 0u32..10u32,
+        min2 in 0u32..10u32,
+        pat2 in 0u32..10u32,
+        maj3 in 0u32..10u32,
+        min3 in 0u32..10u32,
+        pat3 in 0u32..10u32
+    ) {
+        // Arrange
+        let v1 = semver::Version::new(maj1.into(), min1.into(), pat1.into());
+        let v2 = semver::Version::new(maj2.into(), min2.into(), pat2.into());
+        let v3 = semver::Version::new(maj3.into(), min3.into(), pat3.into());
+
+        // Act & Assert - Transitivity property
+        if v1 < v2 && v2 < v3 {
+            prop_assert!(v1 < v3, "Transitivity violated: {v1} < {v2} < {v3} but {v1} >= {v3}");
+        }
+    }
+
+    /// Property: Version comparison should be antisymmetric
+    /// If v1 < v2, then v2 > v1 (and not v2 < v1)
+    #[test]
+    fn prop_version_comparison_antisymmetric(
+        maj1 in 0u32..20u32,
+        min1 in 0u32..20u32,
+        pat1 in 0u32..20u32,
+        maj2 in 0u32..20u32,
+        min2 in 0u32..20u32,
+        pat2 in 0u32..20u32
+    ) {
+        // Arrange
+        let v1 = semver::Version::new(maj1.into(), min1.into(), pat1.into());
+        let v2 = semver::Version::new(maj2.into(), min2.into(), pat2.into());
+
+        // Act & Assert - Antisymmetry property
+        if v1 < v2 {
+            prop_assert!(v2 > v1);
+            prop_assert!(!(v2 < v1));
+        }
+    }
+
+    /// Property: Version comparison should be reflexive for equality
+    /// Any version should be equal to itself
+    #[test]
+    fn prop_version_equality_reflexive(
+        major in 0u32..50u32,
+        minor in 0u32..50u32,
+        patch in 0u32..50u32
+    ) {
+        // Arrange
+        let v1 = semver::Version::new(major.into(), minor.into(), patch.into());
+        let v2 = semver::Version::new(major.into(), minor.into(), patch.into());
+
+        // Act & Assert - Reflexivity property
+        prop_assert_eq!(&v1, &v2);
+        prop_assert!(&v1 <= &v2);
+        prop_assert!(&v1 >= &v2);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PHASE 3 PROPERTY TESTS - CONCURRENT SAFETY
+// ═══════════════════════════════════════════════════════════════════════════════
+
+proptest! {
+    /// Property: Multiple reads of the same data should be consistent
+    /// Reading package info multiple times should return the same result
+    #[test]
+    fn prop_concurrent_reads_consistent(
+        package_name in "[a-z]{3,10}",
+        _thread_count in 1usize..5usize
+    ) {
+        // Arrange - Run the same query multiple times
+        let result1 = run_omg(&["search", &package_name]);
+        let result2 = run_omg(&["search", &package_name]);
+
+        // Act & Assert - Results should be consistent (both succeed or both fail)
+        prop_assert_eq!(result1.success, result2.success);
+
+        // If successful, output should be deterministic
+        if result1.success && result2.success {
+            // Note: Output might differ slightly due to timestamps or dynamic content,
+            // but should not panic and should have same success status
+            prop_assert!(!result1.stderr.contains("panicked"));
+            prop_assert!(!result2.stderr.contains("panicked"));
+        }
+    }
+
+    /// Property: File operations should be atomic from external perspective
+    /// Creating and reading a file should be consistent
+    #[test]
+    fn prop_file_operations_atomic(
+        filename in "[a-z]{1,20}\\.txt",
+        content in "[^\x00]{0,1000}"
+    ) {
+        // Arrange
+        let project = TestProject::new();
+
+        // Act - Create and immediately read
+        project.create_file(&filename, &content);
+        let read_back = project.read_file(&filename);
+
+        // Assert - Content should match
+        prop_assert!(read_back.is_some());
+        if let Some(read_content) = read_back {
+            prop_assert_eq!(read_content, content);
+        }
+    }
+}

@@ -14,11 +14,8 @@ import {
   TrendingDown,
   AlertTriangle,
   Star,
-  Globe,
-  Zap,
-  Monitor,
 } from 'lucide-solid';
-import { HealthScore, TierBadge, LifecycleBadge } from '../../../design-system';
+import { HealthScore, TierBadge } from '../../../design-system';
 import type { Tier } from '../../../design-system/components/TierBadge';
 import type { LifecycleStage } from '../../../design-system/components/LifecycleBadge';
 
@@ -129,7 +126,7 @@ export const CRMProfileCard: Component<CRMProfileCardProps> = (props) => {
     return 'free' as Tier;
   });
 
-  const lifecycleStage = createMemo(() => props.customer.health.lifecycle_stage as LifecycleStage);
+  const _lifecycleStage = createMemo(() => props.customer.health.lifecycle_stage as LifecycleStage);
 
   const isAtRisk = createMemo(() =>
     ['at_risk', 'churning'].includes(props.customer.health.lifecycle_stage)
@@ -393,7 +390,7 @@ interface CRMProfileCardTableRowProps {
 }
 
 export const CRMProfileCardTableRow: Component<CRMProfileCardTableRowProps> = (props) => {
-  const [isHovered, setIsHovered] = createSignal(false);
+  const [_isHovered, setIsHovered] = createSignal(false);
   
   const tierValue = createMemo(() => {
     const tier = props.customer.tier.toLowerCase();

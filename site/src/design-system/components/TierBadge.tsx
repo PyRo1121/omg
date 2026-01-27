@@ -182,7 +182,7 @@ const tierOrder: Tier[] = ['free', 'pro', 'team', 'enterprise'];
 
 export const TierComparison: Component<TierComparisonProps> = (props) => {
   const currentIndex = createMemo(() => tierOrder.indexOf(props.currentTier));
-  const recommendedIndex = createMemo(() => 
+  const _recommendedIndex = createMemo(() => 
     props.recommendedTier ? tierOrder.indexOf(props.recommendedTier) : -1
   );
 

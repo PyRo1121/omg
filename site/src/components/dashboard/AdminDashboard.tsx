@@ -1,11 +1,7 @@
 import { Component, createSignal, createMemo, For, Show, Switch, Match } from 'solid-js';
 import {
   Activity,
-  Terminal,
   Users,
-  Zap,
-  Globe,
-  TrendingUp,
   Search,
   Download,
   BarChart3,
@@ -13,8 +9,13 @@ import {
   History,
   ChevronDown,
   Lightbulb,
-  Eye,
-  Crown,
+  Calendar,
+  Filter,
+  GitCompare,
+  Save,
+  Layers,
+  Brain,
+  FileText,
 } from 'lucide-solid';
 import * as api from '../../lib/api';
 import {
@@ -30,14 +31,25 @@ import { RevenueTab } from './admin/RevenueTab';
 import { AuditLogTab } from './admin/AuditLogTab';
 import { CustomerDetailDrawer } from './admin/CustomerDetailDrawer';
 import { InsightsTab } from './admin/insights/InsightsTab';
+import { SegmentAnalytics } from './admin/SegmentAnalytics';
+import { PredictiveInsights } from './admin/PredictiveInsights';
+import { CustomReportBuilder } from './admin/CustomReportBuilder';
 
-// Premium Components
+type DateRange = '7d' | '30d' | '90d' | 'custom';
+type SavedView = {
+  id: string;
+  name: string;
+  tab: AdminTab;
+  dateRange: DateRange;
+  segment: string;
+  compareEnabled: boolean;
+};
+
 import {
   ExecutiveKPIDashboard,
   RealTimeCommandCenter,
   CRMProfileCard,
   CRMProfileCardTableRow,
-  CustomerHealthHub,
 } from './premium';
 import type {
   ExecutiveKPI,
@@ -49,9 +61,18 @@ import type {
   CustomerHealth,
 } from './premium/types';
 
-type AdminTab = 'overview' | 'crm' | 'analytics' | 'insights' | 'revenue' | 'audit';
+type AdminTab = 'overview' | 'crm' | 'analytics' | 'insights' | 'revenue' | 'audit' | 'segments' | 'predictions' | 'reports';
 
-// Transform API data to premium component types
+const SEGMENTS = [
+  { id: 'all', name: 'All Customers' },
+  { id: 'enterprise', name: 'Enterprise' },
+  { id: 'team', name: 'Team' },
+  { id: 'pro', name: 'Pro' },
+  { id: 'power_users', name: 'Power Users' },
+  { id: 'at_risk', name: 'At Risk' },
+  { id: 'new_users', name: 'New Users (30d)' },
+];
+
 function transformToExecutiveKPI(
   dashboard: api.AdminOverview | undefined,
   metrics: api.AdminAdvancedMetrics | undefined
@@ -134,7 +155,24 @@ function transformToAdvancedMetrics(metrics: api.AdminAdvancedMetrics | undefine
   };
 }
 
-function transformFirehoseEvents(events: any[]): FirehoseEvent[] {
+interface RawFirehoseEvent {
+  id?: string;
+  event_name?: string;
+  action?: string;
+  machine_id?: string;
+  hostname?: string;
+  platform?: string;
+  timestamp?: string;
+  created_at?: string;
+  duration_ms?: number;
+  success?: boolean;
+  metadata?: {
+    hostname?: string;
+    platform?: string;
+  };
+}
+
+function transformFirehoseEvents(events: RawFirehoseEvent[]): FirehoseEvent[] {
   return events.map((e, i) => ({
     id: e.id || `evt-${i}`,
     event_type: mapEventType(e.event_name || e.action || ''),
@@ -217,7 +255,12 @@ export const AdminDashboard: Component = () => {
   const [isExporting, setIsExporting] = createSignal(false);
   const [crmViewMode, setCrmViewMode] = createSignal<'cards' | 'table'>('table');
 
-  // Data Queries
+  const [dateRange, setDateRange] = createSignal<DateRange>('30d');
+  const [selectedSegment, setSelectedSegment] = createSignal('all');
+  const [compareEnabled, setCompareEnabled] = createSignal(false);
+  const [savedViews, setSavedViews] = createSignal<SavedView[]>([]);
+  const [showSaveViewModal, setShowSaveViewModal] = createSignal(false);
+  const [newViewName, setNewViewName] = createSignal('');
   const dashboardQuery = useAdminDashboard();
   const firehoseQuery = useAdminFirehose(100);
   const crmUsersQuery = useAdminCRMUsers(crmPage(), 25, crmSearch());
@@ -285,23 +328,62 @@ export const AdminDashboard: Component = () => {
     }
   };
 
-  const TabButton = (props: { id: AdminTab; icon: any; label: string }) => (
+  const saveCurrentView = () => {
+    if (!newViewName().trim()) return;
+    const view: SavedView = {
+      id: `view-${Date.now()}`,
+      name: newViewName(),
+      tab: activeTab(),
+      dateRange: dateRange(),
+      segment: selectedSegment(),
+      compareEnabled: compareEnabled(),
+    };
+    setSavedViews((prev) => [...prev, view]);
+    setNewViewName('');
+    setShowSaveViewModal(false);
+  };
+
+  const loadView = (view: SavedView) => {
+    setActiveTab(view.tab);
+    setDateRange(view.dateRange);
+    setSelectedSegment(view.segment);
+    setCompareEnabled(view.compareEnabled);
+  };
+
+  const tabCounts = createMemo(() => ({
+    crm: crmUsersQuery.data?.pagination?.total || 0,
+    insights: advancedMetricsQuery.data?.expansion_opportunities?.length || 0,
+    predictions:
+      (advancedMetricsQuery.data?.churn_risk_segments?.filter(
+        (s) => s.risk_segment === 'high' || s.risk_segment === 'critical'
+      ).length || 0) + (advancedMetricsQuery.data?.expansion_opportunities?.length || 0),
+  }));
+
+  const TabButton = (props: { id: AdminTab; icon: Component<{ size?: number }>; label: string; count?: number }) => (
     <button
       onClick={() => setActiveTab(props.id)}
-      class={`flex items-center gap-3 rounded-xl px-6 py-3 font-bold transition-all ${
+      class={`flex items-center gap-2 rounded-xl px-4 py-2.5 font-bold transition-all ${
         activeTab() === props.id
           ? 'scale-[1.02] bg-white text-black shadow-lg'
           : 'text-slate-400 hover:bg-white/5 hover:text-white'
       }`}
     >
-      <props.icon size={18} />
+      <props.icon size={16} />
       <span>{props.label}</span>
+      <Show when={props.count !== undefined && props.count > 0}>
+        <span
+          class={`rounded-full px-1.5 py-0.5 text-2xs font-black ${
+            activeTab() === props.id ? 'bg-black/10 text-black' : 'bg-white/10 text-white'
+          }`}
+        >
+          {props.count}
+        </span>
+      </Show>
     </button>
   );
 
   return (
-    <div class="space-y-8 pb-20">
-      {/* Header */}
+    <div class="space-y-6 pb-20">
       <div class="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <h1 class="font-display text-4xl font-black tracking-tight text-white">Mission Control</h1>
@@ -310,7 +392,52 @@ export const AdminDashboard: Component = () => {
           </p>
         </div>
 
-        <div class="flex items-center gap-3">
+        <div class="flex flex-wrap items-center gap-3">
+          <div class="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
+            <Calendar size={14} class="text-nebula-500" />
+            <select
+              value={dateRange()}
+              onChange={(e) => setDateRange(e.currentTarget.value as DateRange)}
+              class="bg-transparent text-sm font-bold text-white focus:outline-none"
+            >
+              <option value="7d">Last 7 days</option>
+              <option value="30d">Last 30 days</option>
+              <option value="90d">Last 90 days</option>
+              <option value="custom">Custom</option>
+            </select>
+          </div>
+
+          <div class="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
+            <Filter size={14} class="text-nebula-500" />
+            <select
+              value={selectedSegment()}
+              onChange={(e) => setSelectedSegment(e.currentTarget.value)}
+              class="bg-transparent text-sm font-bold text-white focus:outline-none"
+            >
+              <For each={SEGMENTS}>{(seg) => <option value={seg.id}>{seg.name}</option>}</For>
+            </select>
+          </div>
+
+          <button
+            onClick={() => setCompareEnabled(!compareEnabled())}
+            class={`flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-bold transition-all ${
+              compareEnabled()
+                ? 'border-indigo-500/50 bg-indigo-500/10 text-indigo-400'
+                : 'border-white/10 bg-white/[0.03] text-white hover:bg-white/[0.06]'
+            }`}
+          >
+            <GitCompare size={14} />
+            Compare
+          </button>
+
+          <button
+            onClick={() => setShowSaveViewModal(true)}
+            class="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-sm font-bold text-white transition-all hover:bg-white/[0.06]"
+          >
+            <Save size={14} />
+            Save View
+          </button>
+
           <div class="relative">
             <button
               onClick={(e) => {
@@ -318,11 +445,11 @@ export const AdminDashboard: Component = () => {
                 setExportMenuOpen(!exportMenuOpen());
               }}
               disabled={isExporting()}
-              class="flex items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.03] px-5 py-3 text-sm font-bold text-white transition-all hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-50"
+              class="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-sm font-bold text-white transition-all hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-50"
             >
-              <Download size={16} />
-              {isExporting() ? 'Exporting...' : 'Export Data'}
-              <ChevronDown size={14} class={`transition-transform ${exportMenuOpen() ? 'rotate-180' : ''}`} />
+              <Download size={14} />
+              Export
+              <ChevronDown size={12} class={`transition-transform ${exportMenuOpen() ? 'rotate-180' : ''}`} />
             </button>
 
             <Show when={exportMenuOpen()}>
@@ -343,7 +470,7 @@ export const AdminDashboard: Component = () => {
                 >
                   <BarChart3 size={16} class="text-cyan-400" />
                   <div>
-                    <div class="font-medium">Usage (30d)</div>
+                    <div class="font-medium">Usage ({dateRange()})</div>
                     <div class="text-xs text-slate-500">Export usage data as CSV</div>
                   </div>
                 </button>
@@ -353,7 +480,7 @@ export const AdminDashboard: Component = () => {
                 >
                   <History size={16} class="text-purple-400" />
                   <div>
-                    <div class="font-medium">Audit Log (30d)</div>
+                    <div class="font-medium">Audit Log ({dateRange()})</div>
                     <div class="text-xs text-slate-500">Export audit log as CSV</div>
                   </div>
                 </button>
@@ -363,12 +490,45 @@ export const AdminDashboard: Component = () => {
         </div>
       </div>
 
-      {/* Navigation */}
-      <div class="no-scrollbar flex items-center gap-2 overflow-x-auto rounded-2xl border border-white/5 bg-white/[0.02] p-1.5">
+      <Show when={compareEnabled()}>
+        <div class="flex items-center gap-3 rounded-xl border border-indigo-500/30 bg-indigo-500/10 px-4 py-3">
+          <GitCompare size={18} class="text-indigo-400" />
+          <span class="text-sm font-medium text-indigo-300">
+            Comparing current period with previous {dateRange() === '7d' ? '7 days' : dateRange() === '30d' ? '30 days' : '90 days'}
+          </span>
+          <button
+            onClick={() => setCompareEnabled(false)}
+            class="ml-auto rounded-lg bg-indigo-500/20 px-3 py-1 text-xs font-bold text-indigo-300 hover:bg-indigo-500/30"
+          >
+            Exit Comparison
+          </button>
+        </div>
+      </Show>
+
+      <Show when={savedViews().length > 0}>
+        <div class="flex items-center gap-2 overflow-x-auto">
+          <span class="text-xs font-bold text-nebula-500">Saved Views:</span>
+          <For each={savedViews()}>
+            {(view) => (
+              <button
+                onClick={() => loadView(view)}
+                class="flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs font-bold text-white transition-all hover:bg-white/[0.06]"
+              >
+                {view.name}
+              </button>
+            )}
+          </For>
+        </div>
+      </Show>
+
+      <div class="no-scrollbar flex items-center gap-1.5 overflow-x-auto rounded-2xl border border-white/5 bg-white/[0.02] p-1.5">
         <TabButton id="overview" icon={Activity} label="Overview" />
-        <TabButton id="crm" icon={Users} label="CRM" />
+        <TabButton id="crm" icon={Users} label="CRM" count={tabCounts().crm} />
         <TabButton id="analytics" icon={BarChart3} label="Analytics" />
-        <TabButton id="insights" icon={Lightbulb} label="Insights" />
+        <TabButton id="insights" icon={Lightbulb} label="Insights" count={tabCounts().insights} />
+        <TabButton id="segments" icon={Layers} label="Segments" />
+        <TabButton id="predictions" icon={Brain} label="Predictions" count={tabCounts().predictions} />
+        <TabButton id="reports" icon={FileText} label="Reports" />
         <TabButton id="revenue" icon={CreditCard} label="Revenue" />
         <TabButton id="audit" icon={History} label="Audit Log" />
       </div>
@@ -475,9 +635,8 @@ export const AdminDashboard: Component = () => {
                       {(customer) => (
                         <CRMProfileCard
                           customer={customer}
-                          onViewDetail={(id) => setSelectedUserId(id)}
-                          onQuickAction={(action, id) => {
-                            console.log('Quick action:', action, id);
+                          onViewDetail={(customerId) => setSelectedUserId(customerId)}
+                          onQuickAction={(action, _customerId) => {
                             if (action === 'email') {
                               window.open(`mailto:${customer.email}`);
                             }
@@ -502,7 +661,7 @@ export const AdminDashboard: Component = () => {
                             <th class="px-6 py-4">Machines</th>
                             <th class="px-6 py-4">Commands</th>
                             <th class="px-6 py-4">Joined</th>
-                            <th class="px-6 py-4"></th>
+                            <th class="px-6 py-4">{/* Actions */}</th>
                           </tr>
                         </thead>
                         <tbody class="divide-y divide-white/5">
@@ -510,8 +669,8 @@ export const AdminDashboard: Component = () => {
                             {(customer) => (
                               <CRMProfileCardTableRow
                                 customer={customer}
-                                onViewDetail={(id) => setSelectedUserId(id)}
-                                onQuickAction={(action, id) => {
+                                onViewDetail={(customerId) => setSelectedUserId(customerId)}
+                                onQuickAction={(action, _customerId) => {
                                   if (action === 'email') {
                                     window.open(`mailto:${customer.email}`);
                                   }
@@ -562,7 +721,6 @@ export const AdminDashboard: Component = () => {
             </div>
           </Match>
 
-          {/* Analytics Tab */}
           <Match when={activeTab() === 'analytics'}>
             <div class="space-y-8">
               <DocsAnalytics />
@@ -570,24 +728,80 @@ export const AdminDashboard: Component = () => {
             </div>
           </Match>
 
-          {/* Insights Tab */}
           <Match when={activeTab() === 'insights'}>
             <InsightsTab />
           </Match>
 
-          {/* Revenue Tab */}
+          <Match when={activeTab() === 'segments'}>
+            <SegmentAnalytics />
+          </Match>
+
+          <Match when={activeTab() === 'predictions'}>
+            <PredictiveInsights />
+          </Match>
+
+          <Match when={activeTab() === 'reports'}>
+            <CustomReportBuilder />
+          </Match>
+
           <Match when={activeTab() === 'revenue'}>
             <RevenueTab />
           </Match>
 
-          {/* Audit Tab */}
           <Match when={activeTab() === 'audit'}>
             <AuditLogTab />
           </Match>
         </Switch>
       </Show>
 
-      {/* Customer Detail Drawer */}
+      <Show when={showSaveViewModal()}>
+        <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+          <div class="w-full max-w-md rounded-2xl border border-white/10 bg-void-900 p-6 shadow-2xl">
+            <h3 class="mb-4 text-lg font-black text-white">Save Current View</h3>
+            <input
+              type="text"
+              value={newViewName()}
+              onInput={(e) => setNewViewName(e.currentTarget.value)}
+              placeholder="View name..."
+              class="mb-4 w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-white placeholder-nebula-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+            />
+            <div class="mb-4 space-y-2 rounded-xl border border-white/5 bg-void-850 p-3 text-xs text-nebula-400">
+              <div class="flex justify-between">
+                <span>Tab:</span>
+                <span class="font-bold text-white">{activeTab()}</span>
+              </div>
+              <div class="flex justify-between">
+                <span>Date Range:</span>
+                <span class="font-bold text-white">{dateRange()}</span>
+              </div>
+              <div class="flex justify-between">
+                <span>Segment:</span>
+                <span class="font-bold text-white">{SEGMENTS.find((s) => s.id === selectedSegment())?.name}</span>
+              </div>
+              <div class="flex justify-between">
+                <span>Compare Mode:</span>
+                <span class="font-bold text-white">{compareEnabled() ? 'On' : 'Off'}</span>
+              </div>
+            </div>
+            <div class="flex justify-end gap-3">
+              <button
+                onClick={() => setShowSaveViewModal(false)}
+                class="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-bold text-white transition-all hover:bg-white/10"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={saveCurrentView}
+                disabled={!newViewName().trim()}
+                class="rounded-xl bg-indigo-500 px-4 py-2 text-sm font-bold text-white transition-all hover:bg-indigo-600 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Save View
+              </button>
+            </div>
+          </div>
+        </div>
+      </Show>
+
       <CustomerDetailDrawer userId={selectedUserId()} onClose={() => setSelectedUserId(null)} />
     </div>
   );

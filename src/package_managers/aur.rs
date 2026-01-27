@@ -30,15 +30,12 @@ use alpm_srcinfo::SourceInfoV1;
 use alpm_types::{Architecture, SystemArchitecture, Version};
 use anyhow::{Context, Result};
 use dialoguer::Confirm;
-use flate2::read::GzDecoder;
 use futures::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
 use owo_colors::OwoColorize;
-use reqwest::header::{ETAG, IF_MODIFIED_SINCE, IF_NONE_MATCH, LAST_MODIFIED};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
-use tokio::fs as tokio_fs;
 use tokio::process::Command;
 use tracing::{instrument, warn};
 use which::which;
@@ -79,7 +76,8 @@ pub enum AurError {
     PackageArchiveNotFound(String),
 }
 
-use super::aur_index::{AurIndex, build_index};
+use super::aur_index::AurIndex;
+use super::aur_metadata::{AurJsonPackage, get_metadata_path, read_metadata_archive, sync_aur_metadata};
 use super::pkgbuild::PkgBuild;
 use crate::config::{AurBuildMethod, Settings};
 use crate::core::http::shared_client;
@@ -89,7 +87,6 @@ use crate::package_managers::{get_potential_aur_packages, pacman_db};
 const AUR_RPC_URL: &str = "https://aur.archlinux.org/rpc";
 const AUR_GIT_URL: &str = "https://aur.archlinux.org";
 const AUR_RPC_MAX_URI: usize = 4400;
-const AUR_META_URL: &str = "https://aur.archlinux.org/packages-meta-ext-v1.json.gz";
 
 /// AUR API client with build support
 #[derive(Clone)]
@@ -109,31 +106,7 @@ struct MakepkgEnv {
 
 #[derive(Debug, Deserialize)]
 struct AurResponse {
-    results: Vec<AurPackage>,
-}
-
-#[derive(Debug, Deserialize, serde::Serialize)]
-struct AurMetaCache {
-    etag: Option<String>,
-    last_modified: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct AurPackage {
-    #[serde(rename = "Name")]
-    name: String,
-    #[serde(rename = "Version")]
-    version: String,
-    #[serde(rename = "Description")]
-    description: Option<String>,
-    #[serde(rename = "Maintainer")]
-    _maintainer: Option<String>,
-    #[serde(rename = "NumVotes")]
-    _num_votes: Option<i32>,
-    #[serde(rename = "Popularity")]
-    _popularity: Option<f64>,
-    #[serde(rename = "OutOfDate")]
-    _out_of_date: Option<i64>,
+    results: Vec<AurJsonPackage>,
 }
 
 impl AurClient {
@@ -507,145 +480,20 @@ impl AurClient {
             return Ok(None);
         }
 
-        let cache_path = self.metadata_cache_path();
-        let meta_path = self.metadata_meta_path();
-        let ttl = self.settings.aur.metadata_cache_ttl_secs;
+        // Sync metadata (this will be fast if already fresh)
+        sync_aur_metadata(&self.client, &self.settings, false).await?;
 
-        let cache_path_clone = cache_path.clone();
-        let should_use_cache = tokio::task::spawn_blocking(move || {
-            let matches_ttl = std::fs::metadata(&cache_path_clone)
-                .and_then(|m| m.modified())
-                .map(|m| m.elapsed().unwrap_or_default() < Duration::from_secs(ttl))
-                .unwrap_or(false);
-
-            cache_path_clone.exists() && matches_ttl
-        })
-        .await?;
-
-        if should_use_cache {
-            let cache_path_clone = cache_path.clone();
-            return tokio::task::spawn_blocking(move || {
-                Self::read_metadata_archive(&cache_path_clone)
-            })
-            .await?
-            .map(Some);
-        }
-
-        let meta_cache = if meta_path.exists() {
-            if let Ok(bytes) = tokio_fs::read(&meta_path).await {
-                if let Ok(parsed) = serde_json::from_slice::<AurMetaCache>(&bytes) {
-                    parsed
-                } else {
-                    AurMetaCache {
-                        etag: None,
-                        last_modified: None,
-                    }
-                }
-            } else {
-                AurMetaCache {
-                    etag: None,
-                    last_modified: None,
-                }
-            }
+        let path = get_metadata_path();
+        if path.exists() {
+            let results = tokio::task::spawn_blocking(move || read_metadata_archive(&path)).await??;
+            Ok(Some(AurResponse { results }))
         } else {
-            AurMetaCache {
-                etag: None,
-                last_modified: None,
-            }
-        };
-
-        if let Some(parent) = cache_path.parent() {
-            tokio_fs::create_dir_all(parent).await?;
+            Ok(None)
         }
-
-        let mut req = self.client.get(AUR_META_URL);
-        if let Some(etag) = &meta_cache.etag {
-            req = req.header(IF_NONE_MATCH, etag);
-        }
-        if let Some(last_modified) = &meta_cache.last_modified {
-            req = req.header(IF_MODIFIED_SINCE, last_modified);
-        }
-
-        let response = req.send().await?;
-        if response.status() == reqwest::StatusCode::NOT_MODIFIED && cache_path.exists() {
-            let cache_path_clone = cache_path.clone();
-            return tokio::task::spawn_blocking(move || {
-                Self::read_metadata_archive(&cache_path_clone)
-            })
-            .await?
-            .map(Some);
-        }
-
-        let response = response.error_for_status()?;
-        let etag = response
-            .headers()
-            .get(ETAG)
-            .and_then(|v| v.to_str().ok())
-            .map(str::to_string);
-        let last_modified = response
-            .headers()
-            .get(LAST_MODIFIED)
-            .and_then(|v| v.to_str().ok())
-            .map(str::to_string);
-        let bytes = response.bytes().await?;
-        let tmp_path = cache_path.with_extension("tmp");
-        tokio_fs::write(&tmp_path, &bytes).await?;
-        tokio_fs::rename(&tmp_path, &cache_path).await?;
-        let meta_cache = AurMetaCache {
-            etag,
-            last_modified,
-        };
-        if let Ok(meta_bytes) = serde_json::to_vec(&meta_cache) {
-            let _ = tokio_fs::write(&meta_path, meta_bytes).await;
-        }
-
-        let cache_path_clone = cache_path.clone();
-        tokio::task::spawn_blocking(move || Self::read_metadata_archive(&cache_path_clone))
-            .await?
-            .map(|res| {
-                // Spawn background task to rebuild binary index
-                let index_path = self.metadata_index_path();
-                let cache_path = self.metadata_cache_path();
-                tokio::spawn(async move {
-                    let result =
-                        tokio::task::spawn_blocking(move || build_index(&cache_path, &index_path))
-                            .await;
-
-                    match result {
-                        Ok(Err(e)) => warn!("Failed to build AUR index: {}", e),
-                        Err(e) => warn!("Failed to spawn index build: {}", e),
-                        Ok(Ok(())) => tracing::debug!("AUR index rebuilt successfully"),
-                    }
-                });
-                Some(res)
-            })
-    }
-
-    fn read_metadata_archive(path: &Path) -> Result<AurResponse> {
-        let file = File::open(path)?;
-        let reader = BufReader::new(file);
-        let decoder = GzDecoder::new(reader);
-        // The metadata archive is a raw JSON array, not wrapped in {"results": [...]}
-        let results: Vec<AurPackage> = serde_json::from_reader(decoder)?;
-        Ok(AurResponse { results })
-    }
-
-    fn metadata_cache_path(&self) -> PathBuf {
-        self.build_dir
-            .join("_meta")
-            .join("packages-meta-ext-v1.json.gz")
-    }
-
-    fn metadata_meta_path(&self) -> PathBuf {
-        self.build_dir
-            .join("_meta")
-            .join("packages-meta-ext-v1.json.gz.meta")
     }
 
     fn metadata_index_path(&self) -> PathBuf {
-        self.build_dir
-            .join("_meta")
-            .join("packages-meta-ext-v1.rkyv")
+        super::aur_metadata::get_index_path()
     }
 
     fn chunk_aur_names(names: &[String]) -> Vec<Vec<String>> {

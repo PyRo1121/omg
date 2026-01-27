@@ -1,4 +1,4 @@
-import { Component, ParentComponent, Show, For, JSX, createSignal, splitProps } from 'solid-js';
+import { Component, ParentComponent, Show, For, createSignal, JSX } from 'solid-js';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
