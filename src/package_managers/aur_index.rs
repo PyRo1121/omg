@@ -46,43 +46,52 @@ impl AurIndex {
     pub fn open(path: &Path) -> Result<Self> {
         let file = File::open(path)
             .with_context(|| format!("Failed to open index at {}", path.display()))?;
+
+        // SAFETY: Memory mapping requires unsafe but is sound here:
+        // - File is opened read-only, preventing modification
+        // - Mmap maintains exclusive ownership of the file handle
+        // - rkyv validation (in archive()) ensures data integrity
+        // - No concurrent mutations possible (read-only file descriptor)
+        // Alternative considered: Read entire file into memory would be slower
+        // and use more RAM for large AUR archives (>100MB)
         let mmap = unsafe { Mmap::map(&file)? };
 
-        // For now using unchecked access until rkyv 0.8 validation setup is simplified.
         Ok(Self { mmap })
     }
 
-    /// Access the archived data
-    fn archive(&self) -> &ArchivedAurArchive {
-        // SAFE: Index is internal cache.
-        unsafe { rkyv::access_unchecked::<ArchivedAurArchive>(&self.mmap) }
+    /// Access the archived data with validation
+    fn archive(&self) -> Result<&ArchivedAurArchive> {
+        rkyv::access::<rkyv::Archived<AurArchive>, rkyv::rancor::Error>(&self.mmap)
+            .map_err(|e| anyhow::anyhow!("Corrupted AUR index: {e}"))
     }
 
     /// Check if a package exists in the index
     #[allow(dead_code)]
-    pub fn contains(&self, name: &str) -> bool {
-        self.get(name).is_some()
+    pub fn contains(&self, name: &str) -> Result<bool> {
+        Ok(self.get(name)?.is_some())
     }
 
     /// Get metadata for a specific package (zero-copy)
     ///
     /// Returns a reference to the archived entry in the memory-mapped file.
-    pub fn get(&self, name: &str) -> Option<&ArchivedAurEntry> {
-        let archive = self.archive();
-        let idx = archive
+    pub fn get(&self, name: &str) -> Result<Option<&ArchivedAurEntry>> {
+        let archive = self.archive()?;
+        let Ok(idx) = archive
             .entries
             .binary_search_by_key(&name, |e: &ArchivedAurEntry| e.name.as_str())
-            .ok()?;
-        Some(&archive.entries[idx])
+        else {
+            return Ok(None);
+        };
+        Ok(Some(&archive.entries[idx]))
     }
 
     /// Search for packages matching a query (substring match in name or description)
     #[allow(clippy::map_unwrap_or)]
-    pub fn search(&self, query: &str, limit: usize) -> Vec<&ArchivedAurEntry> {
-        let archive = self.archive();
+    pub fn search(&self, query: &str, limit: usize) -> Result<Vec<&ArchivedAurEntry>> {
+        let archive = self.archive()?;
         let query = query.to_lowercase();
 
-        archive
+        Ok(archive
             .entries
             .iter()
             .filter(|e: &&ArchivedAurEntry| {
@@ -95,16 +104,16 @@ impl AurIndex {
                         .unwrap_or(false)
             })
             .take(limit)
-            .collect()
+            .collect())
     }
 
     /// Batch update check
     pub fn get_updates(
         &self,
         local_pkgs: &[(String, alpm_types::Version)],
-    ) -> Vec<(String, alpm_types::Version, alpm_types::Version)> {
+    ) -> Result<Vec<(String, alpm_types::Version, alpm_types::Version)>> {
         let mut updates = Vec::new();
-        let archive = self.archive();
+        let archive = self.archive()?;
 
         for (name, local_version) in local_pkgs {
             if let Ok(idx) = archive
@@ -119,7 +128,7 @@ impl AurIndex {
             }
         }
 
-        updates
+        Ok(updates)
     }
 }
 
@@ -216,21 +225,21 @@ mod tests {
 
         // Verify index
         let index = AurIndex::open(&index_path)?;
-        assert!(index.contains("pkg-a"));
-        assert!(index.contains("pkg-b"));
-        assert!(index.contains("Another-Pkg"));
+        assert!(index.contains("pkg-a")?);
+        assert!(index.contains("pkg-b")?);
+        assert!(index.contains("Another-Pkg")?);
 
-        let pkg_a = index.get("pkg-a").unwrap();
+        let pkg_a = index.get("pkg-a")?.unwrap();
         assert_eq!(pkg_a.name.as_str(), "pkg-a");
         assert_eq!(pkg_a.version.as_str(), "1.0");
         assert_eq!(pkg_a.description.as_ref().unwrap().as_str(), "desc a");
         assert_eq!(pkg_a.num_votes, 10);
 
         // Test search
-        let results = index.search("pkg", 10);
+        let results = index.search("pkg", 10)?;
         assert_eq!(results.len(), 3); // pkg-a, pkg-b, Another-Pkg (contains 'pkg')
 
-        let results = index.search("another", 10);
+        let results = index.search("another", 10)?;
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name.as_str(), "Another-Pkg");
 

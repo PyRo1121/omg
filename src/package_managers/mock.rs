@@ -375,17 +375,14 @@ mod tests {
     #[test]
     fn test_mock_persistence() {
         let dir = tempdir().unwrap();
-        // SAFETY: Unit test is single-threaded
-        unsafe {
-            std::env::set_var("OMG_DATA_DIR", dir.path());
-        }
+        temp_env::with_var("OMG_DATA_DIR", Some(dir.path()), || {
+            let pm1 = MockPackageManager::new("arch");
+            futures::executor::block_on(pm1.install(&["test-pkg".to_string()])).unwrap();
 
-        let pm1 = MockPackageManager::new("arch");
-        futures::executor::block_on(pm1.install(&["test-pkg".to_string()])).unwrap();
-
-        // New instance should see the change
-        let pm2 = MockPackageManager::new("arch");
-        let installed = futures::executor::block_on(pm2.list_explicit()).unwrap();
-        assert!(installed.contains(&"test-pkg".to_string()));
+            // New instance should see the change
+            let pm2 = MockPackageManager::new("arch");
+            let installed = futures::executor::block_on(pm2.list_explicit()).unwrap();
+            assert!(installed.contains(&"test-pkg".to_string()));
+        });
     }
 }

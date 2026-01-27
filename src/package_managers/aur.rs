@@ -173,7 +173,7 @@ impl AurClient {
                 let query_clone = query.to_string();
                 let result = tokio::task::spawn_blocking(move || -> Result<Vec<Package>> {
                     let index = AurIndex::open(&index_path_clone)?;
-                    let entries = index.search(&query_clone, 50);
+                    let entries = index.search(&query_clone, 50)?;
                     Ok(entries
                         .into_iter()
                         .map(|e| Package {
@@ -295,7 +295,7 @@ impl AurClient {
             let package_clone = package.to_string();
             let result = tokio::task::spawn_blocking(move || -> Result<Option<Package>> {
                 let index = AurIndex::open(&index_path_clone)?;
-                if let Some(entry) = index.get(&package_clone) {
+                if let Some(entry) = index.get(&package_clone)? {
                     return Ok(Some(Package {
                         name: entry.name.as_str().to_string(),
                         version: crate::package_managers::parse_version_or_zero(
@@ -375,7 +375,7 @@ impl AurClient {
                         }
                     };
 
-                    Ok(Some(index.get_updates(&local_pkgs)))
+                    Ok(Some(index.get_updates(&local_pkgs)?))
                 },
             )
             .await?;

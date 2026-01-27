@@ -78,30 +78,40 @@ impl DebianMmapIndex {
     pub fn open(path: &Path) -> Result<Self> {
         let file = File::open(path)
             .with_context(|| format!("Failed to open mmap index at {}", path.display()))?;
-        // SAFETY: File is read-only and we control the format
+
+        // SAFETY: Memory mapping requires unsafe but is sound here:
+        // - File is opened read-only, preventing modification
+        // - Mmap maintains exclusive ownership of the file handle
+        // - rkyv validation (in archive()) ensures data integrity
+        // - No concurrent mutations possible (read-only file descriptor)
+        // Alternative considered: Read entire file into memory would be slower
+        // and use more RAM for large Debian package databases (>500MB)
         let mmap = unsafe { Mmap::map(&file)? };
+
         Ok(Self { mmap })
     }
 
     /// Access the archived data with zero-copy
     #[inline]
-    fn archive(&self) -> &rkyv::Archived<DebianPackageIndex> {
-        // SAFETY: Index was created by our serializer, format is stable
-        unsafe { rkyv::access_unchecked::<rkyv::Archived<DebianPackageIndex>>(&self.mmap) }
+    fn archive(&self) -> Result<&rkyv::Archived<DebianPackageIndex>> {
+        rkyv::access::<rkyv::Archived<DebianPackageIndex>, rkyv::rancor::Error>(&self.mmap)
+            .map_err(|e| anyhow::anyhow!("Corrupted Debian package index: {}", e))
     }
 
     /// Get a package by name (zero-copy, O(1) via hash lookup in archived data)
-    pub fn get(&self, name: &str) -> Option<&rkyv::Archived<DebianPackage>> {
-        let archive = self.archive();
-        let idx = archive.name_to_idx.get(name)?;
+    pub fn get(&self, name: &str) -> Result<Option<&rkyv::Archived<DebianPackage>>> {
+        let archive = self.archive()?;
+        let Some(idx) = archive.name_to_idx.get(name) else {
+            return Ok(None);
+        };
         // Convert archived u32 to native usize
         let idx = u32::from(*idx) as usize;
-        archive.packages.get(idx)
+        Ok(archive.packages.get(idx))
     }
 
     /// Get all packages (zero-copy reference)
-    pub fn packages(&self) -> &rkyv::vec::ArchivedVec<rkyv::Archived<DebianPackage>> {
-        &self.archive().packages
+    pub fn packages(&self) -> Result<&rkyv::vec::ArchivedVec<rkyv::Archived<DebianPackage>>> {
+        Ok(&self.archive()?.packages)
     }
 }
 
