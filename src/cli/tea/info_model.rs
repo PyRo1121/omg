@@ -127,13 +127,19 @@ impl Model for InfoModel {
                     // Logic mirrors src/cli/packages/info.rs
                     if tokio::runtime::Handle::try_current().is_ok() {
                         std::thread::spawn(move || {
-                            let rt = tokio::runtime::Runtime::new().unwrap();
+                            let Ok(rt) = tokio::runtime::Runtime::new() else {
+                                return InfoMsg::Error(
+                                    "Failed to create async runtime".to_string(),
+                                );
+                            };
                             rt.block_on(async { fetch_info(&pkg_name).await })
                         })
                         .join()
-                        .unwrap()
+                        .unwrap_or_else(|_| InfoMsg::Error("Thread panicked".to_string()))
                     } else {
-                        let rt = tokio::runtime::Runtime::new().unwrap();
+                        let Ok(rt) = tokio::runtime::Runtime::new() else {
+                            return InfoMsg::Error("Failed to create async runtime".to_string());
+                        };
                         rt.block_on(async { fetch_info(&pkg_name).await })
                     }
                 }))

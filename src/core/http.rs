@@ -18,6 +18,19 @@ static SHARED_CLIENT: LazyLock<Client> =
 static DOWNLOAD_CLIENT: LazyLock<Client> =
     LazyLock::new(|| build_client(DOWNLOAD_TIMEOUT, DOWNLOAD_CONNECT_TIMEOUT));
 
+/// Build HTTP client with standard configuration.
+///
+/// This function uses `.expect()` because:
+/// 1. All configuration values are static and known-valid
+/// 2. Building can only fail with TLS backend issues (extremely rare)
+/// 3. If this fails, the application cannot function at all (no network = no package manager)
+/// 4. Panicking early on startup is better than propagating errors through the entire app
+///
+/// # Panics
+/// Panics if the HTTP client cannot be built, which should only happen with:
+/// - Missing TLS certificates (system misconfiguration)
+/// - Incompatible TLS backend (build issue)
+#[allow(clippy::expect_used)]
 fn build_client(timeout: Duration, connect_timeout: Duration) -> Client {
     Client::builder()
         .user_agent("omg-package-manager")
@@ -27,7 +40,7 @@ fn build_client(timeout: Duration, connect_timeout: Duration) -> Client {
         .pool_idle_timeout(Duration::from_secs(90))
         .tcp_nodelay(true)
         .build()
-        .expect("Failed to build HTTP client with default config")
+        .expect("Failed to build HTTP client - check TLS configuration")
 }
 
 /// Shared default HTTP client.

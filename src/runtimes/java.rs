@@ -7,11 +7,13 @@
 //! - LTS version detection
 //! - `JAVA_HOME` auto-configuration
 
+use std::collections::HashSet;
+use std::fs;
+use std::path::PathBuf;
+
 use anyhow::{Context, Result};
 use owo_colors::OwoColorize;
 use serde::Deserialize;
-use std::fs;
-use std::path::PathBuf;
 
 use super::common::{
     download_with_progress, extract_tar_gz, get_current_version, list_installed_versions,
@@ -47,14 +49,12 @@ pub struct JavaManager {
 
 impl JavaManager {
     pub fn new() -> Self {
-        let data_dir = super::DATA_DIR.clone();
-
-        let client = download_client().clone();
+        let java_dir = super::DATA_DIR.join("versions/java");
 
         Self {
-            versions_dir: data_dir.join("versions").join("java"),
-            current_link: data_dir.join("versions").join("java").join("current"),
-            client,
+            versions_dir: java_dir.clone(),
+            current_link: java_dir.join("current"),
+            client: download_client().clone(),
         }
     }
 
@@ -65,9 +65,6 @@ impl JavaManager {
 
     /// List available Java versions from Adoptium
     pub async fn list_available(&self) -> Result<Vec<JavaVersion>> {
-        // Get available feature versions (major versions)
-        let available_url = format!("{ADOPTIUM_API}/info/available_releases");
-
         #[derive(Deserialize)]
         struct AvailableReleases {
             available_lts_releases: Vec<u32>,
@@ -76,7 +73,7 @@ impl JavaManager {
 
         let releases: AvailableReleases = self
             .client
-            .get(&available_url)
+            .get(format!("{ADOPTIUM_API}/info/available_releases"))
             .send()
             .await
             .context("Failed to fetch Java versions from Adoptium")?
@@ -84,8 +81,7 @@ impl JavaManager {
             .await
             .context("Failed to parse Java version data")?;
 
-        let lts_set: std::collections::HashSet<u32> =
-            releases.available_lts_releases.into_iter().collect();
+        let lts_set: HashSet<u32> = releases.available_lts_releases.into_iter().collect();
 
         let mut versions: Vec<JavaVersion> = releases
             .available_releases
@@ -96,13 +92,7 @@ impl JavaManager {
             })
             .collect();
 
-        // Sort descending
-        versions.sort_by(|a, b| {
-            b.version
-                .parse::<u32>()
-                .unwrap_or(0)
-                .cmp(&a.version.parse::<u32>().unwrap_or(0))
-        });
+        versions.sort_by_key(|v| std::cmp::Reverse(v.version.parse::<u32>().unwrap_or(0)));
 
         Ok(versions)
     }
@@ -125,7 +115,7 @@ impl JavaManager {
             return self.use_version(version);
         }
 
-        tracing::info!(
+        println!(
             "{} Installing Java {} (Adoptium)...\n",
             "OMG".cyan().bold(),
             version.yellow()
@@ -137,16 +127,14 @@ impl JavaManager {
             arch => anyhow::bail!("Unsupported architecture: {arch}"),
         };
 
-        // Query Adoptium API
-        let api_url = format!(
-            "{ADOPTIUM_API}/assets/latest/{version}/hotspot?architecture={arch}&image_type=jdk&os=linux&vendor=eclipse"
-        );
-
-        tracing::info!("{} Querying Adoptium API...", "→".blue());
+        println!("{} Querying Adoptium API...", "→".blue());
 
         let binaries: Vec<AdoptiumBinary> = self
             .client
-            .get(&api_url)
+            .get(format!(
+                "{ADOPTIUM_API}/assets/latest/{version}/hotspot?\
+                 architecture={arch}&image_type=jdk&os=linux&vendor=eclipse"
+            ))
             .send()
             .await
             .context("Failed to fetch JDK data from Adoptium")?
@@ -160,19 +148,17 @@ impl JavaManager {
 
         fs::create_dir_all(&self.versions_dir)?;
 
-        tracing::info!("{} Downloading {}...", "→".blue(), binary.package.name);
+        println!("{} Downloading {}...", "→".blue(), binary.package.name);
         let download_path = self.versions_dir.join(&binary.package.name);
         download_with_progress(&self.client, &binary.package.link, &download_path, None).await?;
 
-        tracing::info!("{} Extracting (pure Rust)...", "→".blue());
+        println!("{} Extracting (pure Rust)...", "→".blue());
         extract_tar_gz(&download_path, &version_dir, 1).await?;
 
         let _ = fs::remove_file(&download_path);
 
         print_installed("Java", version);
-        self.use_version(version)?;
-
-        Ok(())
+        self.use_version(version)
     }
 
     /// Switch to a specific version
@@ -180,16 +166,16 @@ impl JavaManager {
         let version_dir = self.versions_dir.join(version);
         set_current_version(&self.versions_dir, version)?;
 
-        tracing::info!("{} Now using Java {}", "✓".green(), version);
-        tracing::info!(
+        println!("{} Now using Java {version}", "✓".green());
+        println!(
             "  {} {}",
             "JAVA_HOME:".dimmed(),
-            version_dir.display().to_string().dimmed()
+            version_dir.display().dimmed()
         );
-        tracing::info!(
+        println!(
             "  {} {}",
             "PATH:".dimmed(),
-            self.bin_dir().display().to_string().dimmed()
+            self.bin_dir().display().dimmed()
         );
 
         Ok(())
@@ -200,18 +186,16 @@ impl JavaManager {
         let version_dir = self.versions_dir.join(version);
 
         if !version_dir.exists() {
-            tracing::info!("{} Java {} is not installed", "→".dimmed(), version);
+            println!("{} Java {version} is not installed", "→".dimmed());
             return Ok(());
         }
 
-        if let Some(current) = self.current_version()
-            && current == version
-        {
+        if self.current_version().as_deref() == Some(version) {
             let _ = fs::remove_file(&self.current_link);
         }
 
         fs::remove_dir_all(&version_dir)?;
-        tracing::info!("{} Java {} uninstalled", "✓".green(), version);
+        println!("{} Java {version} uninstalled", "✓".green());
         Ok(())
     }
 }

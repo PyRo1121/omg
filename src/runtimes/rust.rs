@@ -42,7 +42,7 @@ fn manifest_component_version(manifest: &toml::Value, component: &str) -> Result
         .and_then(|pkg| pkg.get("version"))
         .and_then(toml::Value::as_str)
         .ok_or_else(|| anyhow::anyhow!("Missing version for component '{component}'"))?;
-    Ok(value.split(' ').next().unwrap_or(value).to_string())
+    Ok(value.split_whitespace().next().unwrap_or(value).to_string())
 }
 
 fn is_date_parts(year: &str, month: &str, day: &str) -> bool {
@@ -104,11 +104,12 @@ pub struct RustManager {
 
 impl RustManager {
     pub fn new() -> Self {
-        let data_dir = super::DATA_DIR.clone();
+        let data_dir = &*super::DATA_DIR;
+        let rust_versions = data_dir.join("versions").join("rust");
 
         Self {
-            versions_dir: data_dir.join("versions").join("rust"),
-            current_link: data_dir.join("versions").join("rust").join("current"),
+            versions_dir: rust_versions.clone(),
+            current_link: rust_versions.join("current"),
             client: download_client().clone(),
         }
     }
@@ -208,7 +209,7 @@ impl RustManager {
 
         if needs_install {
             self.install_with_profile(&toolchain, profile, &request.components, &request.targets)
-                .await?;
+                .await
         } else {
             if !needs_components.is_empty() {
                 self.install_components(&toolchain, &needs_components)
@@ -217,9 +218,8 @@ impl RustManager {
             if !needs_targets.is_empty() {
                 self.install_targets(&toolchain, &needs_targets).await?;
             }
+            Ok(())
         }
-
-        Ok(())
     }
 
     pub fn toolchain_dir(&self, toolchain: &RustToolchainSpec) -> PathBuf {
@@ -233,26 +233,24 @@ impl RustManager {
         version: &str,
         target: &str,
     ) -> Result<()> {
-        let filename = archive_path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("");
+        let is_xz = archive_path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| ext == "xz");
 
-        if filename.ends_with(".tar.xz") {
+        if is_xz {
             let file = File::open(archive_path)?;
             let mut decompressed = Vec::new();
             lzma_rs::xz_decompress(&mut std::io::BufReader::new(file), &mut decompressed)
-                .with_context(|| "Failed to decompress XZ archive")?;
+                .context("Failed to decompress XZ archive")?;
             let mut archive = Archive::new(decompressed.as_slice());
-            Self::extract_component_entries(&mut archive, dest_dir, component, version, target)?;
+            Self::extract_component_entries(&mut archive, dest_dir, component, version, target)
         } else {
             let file = File::open(archive_path)?;
             let decoder = GzDecoder::new(file);
             let mut archive = Archive::new(decoder);
-            Self::extract_component_entries(&mut archive, dest_dir, component, version, target)?;
+            Self::extract_component_entries(&mut archive, dest_dir, component, version, target)
         }
-
-        Ok(())
     }
 
     fn extract_component_entries<R: std::io::Read>(
@@ -340,11 +338,12 @@ impl RustManager {
 
 impl RustManager {
     pub fn parse_toolchain_file(path: &Path) -> Result<RustToolchainRequest> {
-        if path
+        let is_toml = path
             .file_name()
             .and_then(|name| name.to_str())
-            .is_some_and(|name| name == "rust-toolchain.toml")
-        {
+            .is_some_and(|name| name == "rust-toolchain.toml");
+
+        if is_toml {
             let content = fs::read_to_string(path)?;
             let parsed: RustToolchainFile = toml::from_str(&content)?;
             return Ok(RustToolchainRequest {
@@ -358,7 +357,7 @@ impl RustManager {
         let channel = fs::read_to_string(path)?.trim().to_string();
         Ok(RustToolchainRequest {
             channel,
-            ..RustToolchainRequest::default()
+            ..Default::default()
         })
     }
 
@@ -374,12 +373,12 @@ impl RustManager {
         fs::create_dir_all(&version_dir)?;
 
         let mut required_components = profile_components(profile)?;
-        required_components.extend(components.iter().cloned());
-        required_components.sort();
+        required_components.extend_from_slice(components);
+        required_components.sort_unstable();
         required_components.dedup();
 
-        for component in required_components.clone() {
-            self.install_component(toolchain, &component, &toolchain.host)
+        for component in &required_components {
+            self.install_component(toolchain, component, &toolchain.host)
                 .await?;
         }
 
@@ -388,12 +387,8 @@ impl RustManager {
         }
 
         let mut metadata = Self::read_metadata(&version_dir)?;
-        for component in required_components {
-            metadata.components.insert(component);
-        }
-        for target in targets {
-            metadata.targets.insert(target.clone());
-        }
+        metadata.components.extend(required_components);
+        metadata.targets.extend(targets.iter().cloned());
         Self::write_metadata(&version_dir, &metadata)?;
 
         print_installed("Rust", &toolchain.name());
@@ -415,8 +410,7 @@ impl RustManager {
             metadata.components.insert(component.clone());
         }
 
-        Self::write_metadata(&version_dir, &metadata)?;
-        Ok(())
+        Self::write_metadata(&version_dir, &metadata)
     }
 
     async fn install_targets(
@@ -433,8 +427,7 @@ impl RustManager {
             metadata.targets.insert(target.clone());
         }
 
-        Self::write_metadata(&version_dir, &metadata)?;
-        Ok(())
+        Self::write_metadata(&version_dir, &metadata)
     }
 
     async fn install_component(
@@ -450,8 +443,8 @@ impl RustManager {
         let component_version = manifest_component_version(&manifest, component)?;
         let url = manifest_component_url(&manifest, component, target)?;
         let filename = url
-            .split('/')
-            .next_back()
+            .rsplit('/')
+            .next()
             .ok_or_else(|| anyhow::anyhow!("Invalid download URL for {component}"))?;
         let download_path = self.versions_dir.join(filename);
 
@@ -464,7 +457,7 @@ impl RustManager {
             &component_version,
             target,
         )?;
-        let _ = fs::remove_file(&download_path);
+        fs::remove_file(&download_path).ok();
         Ok(())
     }
 
@@ -474,14 +467,13 @@ impl RustManager {
             return Ok(RustToolchainMetadata::default());
         }
         let content = fs::read_to_string(path)?;
-        Ok(toml::from_str(&content)?)
+        toml::from_str(&content).map_err(Into::into)
     }
 
     fn write_metadata(toolchain_dir: &Path, metadata: &RustToolchainMetadata) -> Result<()> {
         let path = toolchain_dir.join(RUST_METADATA_FILE);
         let content = toml::to_string_pretty(metadata)?;
-        fs::write(path, content)?;
-        Ok(())
+        fs::write(path, content).map_err(Into::into)
     }
 
     fn missing_components(
@@ -512,10 +504,10 @@ impl RustManager {
 
     async fn fetch_manifest(&self, channel: &str, date: Option<&str>) -> Result<toml::Value> {
         let filename = format!("{RUST_MANIFEST_PREFIX}-{channel}.toml");
-        let url = date.map_or_else(
-            || format!("{RUST_DIST_URL}/{filename}"),
-            |date| format!("{RUST_DIST_URL}/{date}/{filename}"),
-        );
+        let url = match date {
+            Some(d) => format!("{RUST_DIST_URL}/{d}/{filename}"),
+            None => format!("{RUST_DIST_URL}/{filename}"),
+        };
 
         let manifest = self
             .client
@@ -527,7 +519,7 @@ impl RustManager {
             .await
             .context("Failed to read Rust version manifest")?;
 
-        Ok(toml::from_str(&manifest)?)
+        toml::from_str(&manifest).map_err(Into::into)
     }
 }
 
@@ -543,25 +535,26 @@ impl RustToolchainSpec {
         let mut segments: Vec<&str> = input.split('-').collect();
         let mut channel = segments.first().copied().unwrap_or(input).to_string();
 
+        // Handle dated beta releases (e.g., "1.82.0-beta.5")
         if channel.chars().next().is_some_and(|c| c.is_ascii_digit())
             && segments.get(1).is_some_and(|seg| seg.starts_with("beta"))
         {
-            channel.push('-');
-            if let Some(s1) = segments.get(1) {
-                channel.push_str(s1);
+            if let Some(beta_part) = segments.get(1) {
+                channel = format!("{channel}-{beta_part}");
             }
             segments.drain(0..2);
         } else {
             segments.remove(0);
         }
 
-        let mut date = None;
-        if let (Some(s0), Some(s1), Some(s2)) = (segments.first(), segments.get(1), segments.get(2))
-            && is_date_parts(s0, s1, s2)
-        {
-            date = Some(format!("{s0}-{s1}-{s2}"));
-            segments.drain(0..3);
-        }
+        // Parse date if present (YYYY-MM-DD)
+        let date = match (segments.first(), segments.get(1), segments.get(2)) {
+            (Some(&y), Some(&m), Some(&d)) if is_date_parts(y, m, d) => {
+                segments.drain(0..3);
+                Some(format!("{y}-{m}-{d}"))
+            }
+            _ => None,
+        };
 
         let host = if segments.is_empty() {
             default_host_triple()?
@@ -577,46 +570,35 @@ impl RustToolchainSpec {
     }
 
     pub fn name(&self) -> String {
-        let mut name = self.channel.clone();
-        if let Some(date) = &self.date {
-            name.push('-');
-            name.push_str(date);
+        match &self.date {
+            Some(date) => format!("{}-{}-{}", self.channel, date, self.host),
+            None => format!("{}-{}", self.channel, self.host),
         }
-        name.push('-');
-        name.push_str(&self.host);
-        name
     }
 }
 
 fn default_host_triple() -> Result<String> {
-    let arch = std::env::consts::ARCH;
-    let os = std::env::consts::OS;
-    match (arch, os) {
+    match (std::env::consts::ARCH, std::env::consts::OS) {
         ("x86_64", "linux") => Ok("x86_64-unknown-linux-gnu".to_string()),
         ("aarch64", "linux") => Ok("aarch64-unknown-linux-gnu".to_string()),
-        _ => anyhow::bail!("Unsupported host platform: {arch}-{os}"),
+        (arch, os) => anyhow::bail!("Unsupported host platform: {arch}-{os}"),
     }
 }
 
 fn profile_components(profile: &str) -> Result<Vec<String>> {
-    match profile {
-        "minimal" => Ok(vec!["rustc", "cargo", "rust-std"]
-            .into_iter()
-            .map(str::to_string)
-            .collect()),
-        "default" | "complete" => Ok(vec![
+    let components = match profile {
+        "minimal" => vec!["rustc", "cargo", "rust-std"],
+        "default" | "complete" => vec![
             "rustc",
             "cargo",
             "rust-std",
             "rustfmt",
             "clippy",
             "rust-docs",
-        ]
-        .into_iter()
-        .map(str::to_string)
-        .collect()),
+        ],
         other => anyhow::bail!("Unknown Rust profile: {other}"),
-    }
+    };
+    Ok(components.into_iter().map(String::from).collect())
 }
 
 fn manifest_version(manifest: &toml::Value) -> Option<String> {
@@ -625,7 +607,7 @@ fn manifest_version(manifest: &toml::Value) -> Option<String> {
         .and_then(|pkg| pkg.get("rustc"))
         .and_then(|rustc| rustc.get("version"))
         .and_then(|value| value.as_str())
-        .map(|value| value.split(' ').next().unwrap_or(value).to_string())
+        .map(|value| value.split_whitespace().next().unwrap_or(value).to_string())
 }
 
 fn manifest_component_url(manifest: &toml::Value, component: &str, target: &str) -> Result<String> {

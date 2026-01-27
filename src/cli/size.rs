@@ -46,10 +46,10 @@ fn show_top_packages(limit: usize) -> Result<Cmd<()>> {
     }
 
     let mut commands = vec![
-        Components::header("Disk Usage Analysis", "by installed size"),
-        Components::spacer(),
-        Components::card(format!("Top {limit} Packages"), content),
-        Components::spacer(),
+        Cmd::header("Disk Usage Analysis", "by installed size"),
+        Cmd::spacer(),
+        Cmd::card(format!("Top {limit} Packages"), content),
+        Cmd::spacer(),
         Components::kv_list(
             Some("Summary"),
             vec![
@@ -61,8 +61,8 @@ fn show_top_packages(limit: usize) -> Result<Cmd<()>> {
 
     // Show cache size
     if let Ok(cache_size) = get_cache_size() {
-        commands.push(Components::spacer());
-        commands.push(Components::info(format!(
+        commands.push(Cmd::spacer());
+        commands.push(Cmd::info(format!(
             "Cache: {} (run 'omg clean --cache' to clear)",
             format_size(cache_size)
         )));
@@ -111,10 +111,7 @@ fn show_package_tree(package: &str) -> Result<Cmd<()>> {
 
     dep_sizes.sort_by(|a, b| b.1.cmp(&a.1));
 
-    let mut commands = vec![
-        Components::header("Package Size Tree", package),
-        Components::spacer(),
-    ];
+    let mut commands = vec![Cmd::header("Package Size Tree", package), Cmd::spacer()];
 
     // Package info
     commands.push(Components::kv_list(
@@ -133,23 +130,24 @@ fn show_package_tree(package: &str) -> Result<Cmd<()>> {
             .map(|(name, size)| format!("├─ {} {}", name, format_size(*size)))
             .collect();
 
-        commands.push(Components::spacer());
-        commands.push(Components::card(
+        commands.push(Cmd::spacer());
+        commands.push(Cmd::card(
             format!("Dependencies ({} total)", dep_sizes.len()),
             dep_content,
         ));
 
         if dep_sizes.len() > 10 {
-            commands.push(Components::muted(format!(
-                "... and {} more dependencies",
-                dep_sizes.len() - 10
-            )));
+            use crate::cli::tea::{StyledTextConfig, TextStyle};
+            commands.push(Cmd::styled_text(StyledTextConfig {
+                text: format!("... and {} more dependencies", dep_sizes.len() - 10),
+                style: TextStyle::Muted,
+            }));
         }
     }
 
     // Total footprint
     let total = pkg_size + total_dep_size;
-    commands.push(Components::spacer());
+    commands.push(Cmd::spacer());
     commands.push(Components::kv_list(
         Some("Total Footprint"),
         vec![
@@ -197,10 +195,10 @@ fn show_top_packages(limit: usize) -> Result<Cmd<()>> {
     }
 
     Ok(Cmd::batch(vec![
-        Components::header("Disk Usage Analysis", "by installed size"),
-        Components::spacer(),
-        Components::card(format!("Top {limit} Packages"), content),
-        Components::spacer(),
+        Cmd::header("Disk Usage Analysis", "by installed size"),
+        Cmd::spacer(),
+        Cmd::card(format!("Top {limit} Packages"), content),
+        Cmd::spacer(),
         Components::kv_list(
             Some("Summary"),
             vec![
@@ -272,8 +270,8 @@ fn show_package_tree(package: &str) -> Result<Cmd<()>> {
     let total_deps: i64 = dep_sizes.iter().map(|(_, s)| s).sum();
 
     let mut commands = vec![
-        Components::header("Package Size Tree", package),
-        Components::spacer(),
+        Cmd::header("Package Size Tree", package),
+        Cmd::spacer(),
         Components::kv_list(
             Some("Package Size"),
             vec![
@@ -290,15 +288,15 @@ fn show_package_tree(package: &str) -> Result<Cmd<()>> {
             .map(|(name, dep_size)| format!("├─ {} {}", name, format_size(*dep_size)))
             .collect();
 
-        commands.push(Components::spacer());
-        commands.push(Components::card(
+        commands.push(Cmd::spacer());
+        commands.push(Cmd::card(
             format!("Dependencies ({} total)", dep_sizes.len()),
             dep_content,
         ));
     }
 
     let total = size + total_deps;
-    commands.push(Components::spacer());
+    commands.push(Cmd::spacer());
     commands.push(Components::kv_list(
         Some("Total Footprint"),
         vec![

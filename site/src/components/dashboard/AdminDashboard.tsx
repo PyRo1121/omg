@@ -1,4 +1,4 @@
-import { Component, createSignal, createMemo, For, Show, Switch, Match, ErrorBoundary } from 'solid-js';
+import { Component, createSignal, createMemo, For, Show, Switch, Match } from 'solid-js';
 import {
   Activity,
   Users,
@@ -16,9 +16,6 @@ import {
   Layers,
   Brain,
   FileText,
-  AlertTriangle,
-  X,
-  Loader2,
 } from 'lucide-solid';
 import * as api from '../../lib/api';
 import {
@@ -28,7 +25,6 @@ import {
   useAdminAdvancedMetrics,
 } from '../../lib/api-hooks';
 import { CardSkeleton } from '../ui/Skeleton';
-import { ErrorFallback } from '../ui/ErrorFallback';
 import { DocsAnalytics } from './admin/DocsAnalytics';
 import { CohortAnalysis } from './admin/CohortAnalysis';
 import { RevenueTab } from './admin/RevenueTab';
@@ -257,8 +253,6 @@ export const AdminDashboard: Component = () => {
   const [selectedUserId, setSelectedUserId] = createSignal<string | null>(null);
   const [exportMenuOpen, setExportMenuOpen] = createSignal(false);
   const [isExporting, setIsExporting] = createSignal(false);
-  const [exportingType, setExportingType] = createSignal<string | null>(null);
-  const [exportError, setExportError] = createSignal<string | null>(null);
   const [crmViewMode, setCrmViewMode] = createSignal<'cards' | 'table'>('table');
 
   const [dateRange, setDateRange] = createSignal<DateRange>('30d');
@@ -305,47 +299,32 @@ export const AdminDashboard: Component = () => {
 
   const crmPagination = () => crmUsersQuery.data?.pagination;
 
-  // Helper to get days from dateRange
-  const getDateRangeDays = (): number => {
-    const range = dateRange();
-    if (range === '7d') return 7;
-    if (range === '30d') return 30;
-    if (range === '90d') return 90;
-    return 30; // default for custom
-  };
-
   // Export handlers
   const handleExport = async (type: 'users' | 'usage' | 'audit') => {
     setIsExporting(true);
-    setExportingType(type);
     setExportMenuOpen(false);
-    setExportError(null);
     try {
       let data: string;
       let filename: string;
-      const days = getDateRangeDays();
       switch (type) {
         case 'users':
           data = await api.exportAdminUsers();
           filename = `omg-users-${new Date().toISOString().split('T')[0]}.csv`;
           break;
         case 'usage':
-          data = await api.exportAdminUsage(days);
-          filename = `omg-usage-${dateRange()}-${new Date().toISOString().split('T')[0]}.csv`;
+          data = await api.exportAdminUsage(30);
+          filename = `omg-usage-${new Date().toISOString().split('T')[0]}.csv`;
           break;
         case 'audit':
-          data = await api.exportAdminAudit(days);
-          filename = `omg-audit-${dateRange()}-${new Date().toISOString().split('T')[0]}.csv`;
+          data = await api.exportAdminAudit(30);
+          filename = `omg-audit-${new Date().toISOString().split('T')[0]}.csv`;
           break;
       }
       api.downloadCSV(data, filename);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-      setExportError(`Failed to export ${type}: ${errorMessage}`);
       console.error('Export failed:', error);
     } finally {
       setIsExporting(false);
-      setExportingType(null);
     }
   };
 
@@ -380,44 +359,9 @@ export const AdminDashboard: Component = () => {
       ).length || 0) + (advancedMetricsQuery.data?.expansion_opportunities?.length || 0),
   }));
 
-  const TAB_ORDER: AdminTab[] = ['overview', 'crm', 'analytics', 'insights', 'segments', 'predictions', 'reports', 'revenue', 'audit'];
-
-  const handleTabKeyNavigation = (e: KeyboardEvent, currentId: AdminTab) => {
-    const currentIndex = TAB_ORDER.indexOf(currentId);
-    
-    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
-      e.preventDefault();
-      const nextIndex = (currentIndex + 1) % TAB_ORDER.length;
-      setActiveTab(TAB_ORDER[nextIndex]);
-      document.getElementById(`tab-${TAB_ORDER[nextIndex]}`)?.focus();
-    }
-    if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
-      e.preventDefault();
-      const prevIndex = (currentIndex - 1 + TAB_ORDER.length) % TAB_ORDER.length;
-      setActiveTab(TAB_ORDER[prevIndex]);
-      document.getElementById(`tab-${TAB_ORDER[prevIndex]}`)?.focus();
-    }
-    if (e.key === 'Home') {
-      e.preventDefault();
-      setActiveTab(TAB_ORDER[0]);
-      document.getElementById(`tab-${TAB_ORDER[0]}`)?.focus();
-    }
-    if (e.key === 'End') {
-      e.preventDefault();
-      setActiveTab(TAB_ORDER[TAB_ORDER.length - 1]);
-      document.getElementById(`tab-${TAB_ORDER[TAB_ORDER.length - 1]}`)?.focus();
-    }
-  };
-
   const TabButton = (props: { id: AdminTab; icon: Component<{ size?: number }>; label: string; count?: number }) => (
     <button
-      id={`tab-${props.id}`}
-      role="tab"
-      aria-selected={activeTab() === props.id}
-      aria-controls={`panel-${props.id}`}
-      tabindex={activeTab() === props.id ? 0 : -1}
       onClick={() => setActiveTab(props.id)}
-      onKeyDown={(e) => handleTabKeyNavigation(e, props.id)}
       class={`flex items-center gap-2 rounded-xl px-4 py-2.5 font-bold transition-all ${
         activeTab() === props.id
           ? 'scale-[1.02] bg-white text-black shadow-lg'
@@ -501,24 +445,16 @@ export const AdminDashboard: Component = () => {
                 setExportMenuOpen(!exportMenuOpen());
               }}
               disabled={isExporting()}
-              aria-haspopup="true"
-              aria-expanded={exportMenuOpen()}
-              aria-controls="export-menu"
               class="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-sm font-bold text-white transition-all hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-50"
             >
-              <Show when={isExporting()} fallback={<Download size={14} />}>
-                <Loader2 size={14} class="animate-spin" />
-              </Show>
-              <Show when={exportingType()} fallback="Export">
-                Exporting {exportingType()}...
-              </Show>
+              <Download size={14} />
+              Export
               <ChevronDown size={12} class={`transition-transform ${exportMenuOpen() ? 'rotate-180' : ''}`} />
             </button>
 
             <Show when={exportMenuOpen()}>
-              <div id="export-menu" role="menu" aria-label="Export options" class="absolute right-0 top-full z-50 mt-2 w-56 origin-top-right rounded-xl border border-white/10 bg-[#0d0d0e] p-1 shadow-2xl">
+              <div class="absolute right-0 top-full z-50 mt-2 w-56 origin-top-right rounded-xl border border-white/10 bg-[#0d0d0e] p-1 shadow-2xl">
                 <button
-                  role="menuitem"
                   onClick={() => handleExport('users')}
                   class="flex w-full items-center gap-3 rounded-lg px-4 py-2.5 text-left text-sm text-white transition-colors hover:bg-white/5"
                 >
@@ -529,7 +465,6 @@ export const AdminDashboard: Component = () => {
                   </div>
                 </button>
                 <button
-                  role="menuitem"
                   onClick={() => handleExport('usage')}
                   class="flex w-full items-center gap-3 rounded-lg px-4 py-2.5 text-left text-sm text-white transition-colors hover:bg-white/5"
                 >
@@ -540,7 +475,6 @@ export const AdminDashboard: Component = () => {
                   </div>
                 </button>
                 <button
-                  role="menuitem"
                   onClick={() => handleExport('audit')}
                   class="flex w-full items-center gap-3 rounded-lg px-4 py-2.5 text-left text-sm text-white transition-colors hover:bg-white/5"
                 >
@@ -587,7 +521,7 @@ export const AdminDashboard: Component = () => {
         </div>
       </Show>
 
-      <div role="tablist" aria-label="Dashboard navigation" class="no-scrollbar flex items-center gap-1.5 overflow-x-auto rounded-2xl border border-white/5 bg-white/[0.02] p-1.5">
+      <div class="no-scrollbar flex items-center gap-1.5 overflow-x-auto rounded-2xl border border-white/5 bg-white/[0.02] p-1.5">
         <TabButton id="overview" icon={Activity} label="Overview" />
         <TabButton id="crm" icon={Users} label="CRM" count={tabCounts().crm} />
         <TabButton id="analytics" icon={BarChart3} label="Analytics" />
@@ -610,30 +544,30 @@ export const AdminDashboard: Component = () => {
 
       <Show when={dashboardQuery.isSuccess}>
         <Switch>
+          {/* Overview Tab - Executive Dashboard */}
           <Match when={activeTab() === 'overview'}>
-            <div role="tabpanel" id="panel-overview" aria-labelledby="tab-overview" tabindex={0} class="space-y-8">
-              <ErrorBoundary fallback={(err, reset) => <ErrorFallback error={err} reset={reset} />}>
-                <ExecutiveKPIDashboard
-                  kpi={executiveKPI()}
-                  metrics={advancedMetrics()}
-                  isLoading={advancedMetricsQuery.isLoading}
-                />
-              </ErrorBoundary>
+            <div class="space-y-8">
+              {/* Executive KPI Dashboard */}
+              <ExecutiveKPIDashboard
+                kpi={executiveKPI()}
+                metrics={advancedMetrics()}
+                isLoading={advancedMetricsQuery.isLoading}
+              />
 
-              <ErrorBoundary fallback={(err, reset) => <ErrorFallback error={err} reset={reset} />}>
-                <RealTimeCommandCenter
-                  events={firehoseEvents()}
-                  geoDistribution={geoDistribution()}
-                  commandHealth={commandHealth()}
-                  isLive={true}
-                  onRefresh={() => firehoseQuery.refetch()}
-                />
-              </ErrorBoundary>
+              {/* Real-Time Command Center */}
+              <RealTimeCommandCenter
+                events={firehoseEvents()}
+                geoDistribution={geoDistribution()}
+                commandHealth={commandHealth()}
+                isLive={true}
+                onRefresh={() => firehoseQuery.refetch()}
+              />
             </div>
           </Match>
 
+          {/* CRM Tab - Customer Management */}
           <Match when={activeTab() === 'crm'}>
-            <div role="tabpanel" id="panel-crm" aria-labelledby="tab-crm" tabindex={0} class="space-y-6">
+            <div class="space-y-6">
               {/* CRM Header */}
               <div class="flex flex-col justify-between gap-6 md:flex-row md:items-center">
                 <div>
@@ -788,62 +722,34 @@ export const AdminDashboard: Component = () => {
           </Match>
 
           <Match when={activeTab() === 'analytics'}>
-            <div role="tabpanel" id="panel-analytics" aria-labelledby="tab-analytics" tabindex={0} class="space-y-8">
-              <ErrorBoundary fallback={(err, reset) => <ErrorFallback error={err} reset={reset} />}>
-                <DocsAnalytics />
-              </ErrorBoundary>
-              <ErrorBoundary fallback={(err, reset) => <ErrorFallback error={err} reset={reset} />}>
-                <CohortAnalysis />
-              </ErrorBoundary>
+            <div class="space-y-8">
+              <DocsAnalytics />
+              <CohortAnalysis />
             </div>
           </Match>
 
           <Match when={activeTab() === 'insights'}>
-            <div role="tabpanel" id="panel-insights" aria-labelledby="tab-insights" tabindex={0}>
-              <ErrorBoundary fallback={(err, reset) => <ErrorFallback error={err} reset={reset} />}>
-                <InsightsTab />
-              </ErrorBoundary>
-            </div>
+            <InsightsTab />
           </Match>
 
           <Match when={activeTab() === 'segments'}>
-            <div role="tabpanel" id="panel-segments" aria-labelledby="tab-segments" tabindex={0}>
-              <ErrorBoundary fallback={(err, reset) => <ErrorFallback error={err} reset={reset} />}>
-                <SegmentAnalytics />
-              </ErrorBoundary>
-            </div>
+            <SegmentAnalytics />
           </Match>
 
           <Match when={activeTab() === 'predictions'}>
-            <div role="tabpanel" id="panel-predictions" aria-labelledby="tab-predictions" tabindex={0}>
-              <ErrorBoundary fallback={(err, reset) => <ErrorFallback error={err} reset={reset} />}>
-                <PredictiveInsights />
-              </ErrorBoundary>
-            </div>
+            <PredictiveInsights />
           </Match>
 
           <Match when={activeTab() === 'reports'}>
-            <div role="tabpanel" id="panel-reports" aria-labelledby="tab-reports" tabindex={0}>
-              <ErrorBoundary fallback={(err, reset) => <ErrorFallback error={err} reset={reset} />}>
-                <CustomReportBuilder />
-              </ErrorBoundary>
-            </div>
+            <CustomReportBuilder />
           </Match>
 
           <Match when={activeTab() === 'revenue'}>
-            <div role="tabpanel" id="panel-revenue" aria-labelledby="tab-revenue" tabindex={0}>
-              <ErrorBoundary fallback={(err, reset) => <ErrorFallback error={err} reset={reset} />}>
-                <RevenueTab />
-              </ErrorBoundary>
-            </div>
+            <RevenueTab />
           </Match>
 
           <Match when={activeTab() === 'audit'}>
-            <div role="tabpanel" id="panel-audit" aria-labelledby="tab-audit" tabindex={0}>
-              <ErrorBoundary fallback={(err, reset) => <ErrorFallback error={err} reset={reset} />}>
-                <AuditLogTab />
-              </ErrorBoundary>
-            </div>
+            <AuditLogTab />
           </Match>
         </Switch>
       </Show>
@@ -893,23 +799,6 @@ export const AdminDashboard: Component = () => {
               </button>
             </div>
           </div>
-        </div>
-      </Show>
-
-      <Show when={exportError()}>
-        <div class="fixed bottom-4 right-4 z-50 flex items-start gap-3 rounded-xl border border-flare-500/20 bg-flare-500/10 p-4 shadow-2xl backdrop-blur-sm">
-          <AlertTriangle size={20} class="shrink-0 text-flare-400" />
-          <div class="flex-1">
-            <p class="text-sm font-bold text-flare-400">Export Failed</p>
-            <p class="mt-1 text-xs text-nebula-400">{exportError()}</p>
-          </div>
-          <button
-            onClick={() => setExportError(null)}
-            class="shrink-0 rounded-lg p-1 text-flare-400 transition-colors hover:bg-flare-500/20"
-            aria-label="Dismiss error"
-          >
-            <X size={16} />
-          </button>
         </div>
       </Show>
 

@@ -366,13 +366,11 @@ impl omg_lib::package_managers::PackageManager for MockPackageManager {
         "mock"
     }
 
-    async fn search(
-        &self,
-        query: &str,
-    ) -> anyhow::Result<Vec<omg_lib::core::Package>> {
+    async fn search(&self, query: &str) -> anyhow::Result<Vec<omg_lib::core::Package>> {
         use omg_lib::core::{Package, PackageSource};
         use omg_lib::package_managers::parse_version_or_zero;
-        Ok(self.db
+        Ok(self
+            .db
             .search(query)
             .into_iter()
             .map(|p| Package {
@@ -407,10 +405,7 @@ impl omg_lib::package_managers::PackageManager for MockPackageManager {
         Ok(())
     }
 
-    async fn info(
-        &self,
-        package: &str,
-    ) -> anyhow::Result<Option<omg_lib::core::Package>> {
+    async fn info(&self, package: &str) -> anyhow::Result<Option<omg_lib::core::Package>> {
         use omg_lib::core::{Package, PackageSource};
         use omg_lib::package_managers::parse_version_or_zero;
         Ok(self.db.get(package).map(|p| Package {
@@ -441,10 +436,7 @@ impl omg_lib::package_managers::PackageManager for MockPackageManager {
         Ok(results)
     }
 
-    async fn get_status(
-        &self,
-        _fast: bool,
-    ) -> anyhow::Result<(usize, usize, usize, usize)> {
+    async fn get_status(&self, _fast: bool) -> anyhow::Result<(usize, usize, usize, usize)> {
         let total = self.db.packages.lock().unwrap().len();
         let explicit = self.db.installed.lock().unwrap().len();
         Ok((total, explicit, 0, 0))

@@ -66,7 +66,9 @@ pub async fn sync_aur_metadata(
 
     let build_dir = paths::cache_dir().join("aur");
     let cache_path = build_dir.join("_meta").join("packages-meta-ext-v1.json.gz");
-    let meta_path = build_dir.join("_meta").join("packages-meta-ext-v1.json.gz.meta");
+    let meta_path = build_dir
+        .join("_meta")
+        .join("packages-meta-ext-v1.json.gz.meta");
     let index_path = build_dir.join("_meta").join("packages-meta-ext-v1.rkyv");
 
     // Check TTL if not forced
@@ -87,8 +89,10 @@ pub async fn sync_aur_metadata(
                 info!("AUR cache is fresh but index is missing. Rebuilding index...");
                 let cache_path_clone = cache_path.clone();
                 let index_path_clone = index_path.clone();
-                tokio::task::spawn_blocking(move || build_index(&cache_path_clone, &index_path_clone))
-                    .await??;
+                tokio::task::spawn_blocking(move || {
+                    build_index(&cache_path_clone, &index_path_clone)
+                })
+                .await??;
             }
             return Ok(());
         }
@@ -102,10 +106,16 @@ pub async fn sync_aur_metadata(
                 last_modified: None,
             })
         } else {
-            AurMetaCache { etag: None, last_modified: None }
+            AurMetaCache {
+                etag: None,
+                last_modified: None,
+            }
         }
     } else {
-        AurMetaCache { etag: None, last_modified: None }
+        AurMetaCache {
+            etag: None,
+            last_modified: None,
+        }
     };
 
     if let Some(parent) = cache_path.parent() {
@@ -126,29 +136,37 @@ pub async fn sync_aur_metadata(
     if response.status() == reqwest::StatusCode::NOT_MODIFIED {
         // Cache is still valid on server side
         // Touch the file to update mtime so we don't check again immediately
-        if cache_path.exists() {
-            if let Ok(file) = File::options().write(true).open(&cache_path) {
-                let _ = file.set_modified(SystemTime::now());
-            }
+        if cache_path.exists()
+            && let Ok(file) = File::options().write(true).open(&cache_path)
+        {
+            let _ = file.set_modified(SystemTime::now());
         }
-        
+
         // Ensure index exists
         if !index_path.exists() && cache_path.exists() {
-             info!("Rebuilding missing AUR index...");
-             let cache_path_clone = cache_path.clone();
-             let index_path_clone = index_path.clone();
-             tokio::task::spawn_blocking(move || build_index(&cache_path_clone, &index_path_clone))
-                 .await??;
+            info!("Rebuilding missing AUR index...");
+            let cache_path_clone = cache_path.clone();
+            let index_path_clone = index_path.clone();
+            tokio::task::spawn_blocking(move || build_index(&cache_path_clone, &index_path_clone))
+                .await??;
         }
-        
+
         return Ok(());
     }
 
     let response = response.error_for_status()?;
-    
+
     // Capture headers before consuming body
-    let etag = response.headers().get(ETAG).and_then(|v| v.to_str().ok()).map(String::from);
-    let last_modified = response.headers().get(LAST_MODIFIED).and_then(|v| v.to_str().ok()).map(String::from);
+    let etag = response
+        .headers()
+        .get(ETAG)
+        .and_then(|v| v.to_str().ok())
+        .map(String::from);
+    let last_modified = response
+        .headers()
+        .get(LAST_MODIFIED)
+        .and_then(|v| v.to_str().ok())
+        .map(String::from);
 
     // Download to temp file
     let tmp_path = cache_path.with_extension("tmp");
@@ -157,7 +175,10 @@ pub async fn sync_aur_metadata(
     tokio_fs::rename(&tmp_path, &cache_path).await?;
 
     // Save meta cache
-    let new_meta = AurMetaCache { etag, last_modified };
+    let new_meta = AurMetaCache {
+        etag,
+        last_modified,
+    };
     if let Ok(meta_bytes) = serde_json::to_vec(&new_meta) {
         let _ = tokio_fs::write(&meta_path, meta_bytes).await;
     }
@@ -166,7 +187,7 @@ pub async fn sync_aur_metadata(
     info!("Building AUR binary index...");
     let cache_path_clone = cache_path.clone();
     let index_path_clone = index_path.clone();
-    
+
     tokio::task::spawn_blocking(move || build_index(&cache_path_clone, &index_path_clone))
         .await??;
 
@@ -175,7 +196,7 @@ pub async fn sync_aur_metadata(
 }
 
 /// Read and parse the metadata archive (if you need the raw JSON)
-/// Note: prefer using AurIndex for lookups
+/// Note: prefer using `AurIndex` for lookups
 pub fn read_metadata_archive(path: &Path) -> Result<Vec<AurJsonPackage>> {
     let file = File::open(path)?;
     let reader = BufReader::new(file);
@@ -185,9 +206,15 @@ pub fn read_metadata_archive(path: &Path) -> Result<Vec<AurJsonPackage>> {
 }
 
 pub fn get_metadata_path() -> PathBuf {
-    paths::cache_dir().join("aur").join("_meta").join("packages-meta-ext-v1.json.gz")
+    paths::cache_dir()
+        .join("aur")
+        .join("_meta")
+        .join("packages-meta-ext-v1.json.gz")
 }
 
 pub fn get_index_path() -> PathBuf {
-    paths::cache_dir().join("aur").join("_meta").join("packages-meta-ext-v1.rkyv")
+    paths::cache_dir()
+        .join("aur")
+        .join("_meta")
+        .join("packages-meta-ext-v1.rkyv")
 }

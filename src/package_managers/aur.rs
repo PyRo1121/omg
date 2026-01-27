@@ -77,7 +77,9 @@ pub enum AurError {
 }
 
 use super::aur_index::AurIndex;
-use super::aur_metadata::{AurJsonPackage, get_metadata_path, read_metadata_archive, sync_aur_metadata};
+use super::aur_metadata::{
+    AurJsonPackage, get_metadata_path, read_metadata_archive, sync_aur_metadata,
+};
 use super::pkgbuild::PkgBuild;
 use crate::config::{AurBuildMethod, Settings};
 use crate::core::http::shared_client;
@@ -140,7 +142,7 @@ impl AurClient {
 
         // Try fast binary index first if enabled and available
         if self.settings.aur.use_metadata_archive {
-            let index_path = self.metadata_index_path();
+            let index_path = Self::metadata_index_path();
             if index_path.exists() {
                 let index_path_clone = index_path.clone();
                 let query_clone = query.to_string();
@@ -262,7 +264,7 @@ impl AurClient {
         crate::core::security::validate_package_name(package)?;
 
         // Try fast binary index first
-        let index_path = self.metadata_index_path();
+        let index_path = Self::metadata_index_path();
         if index_path.exists() {
             let index_path_clone = index_path.clone();
             let package_clone = package.to_string();
@@ -335,7 +337,7 @@ impl AurClient {
         }
 
         // 2. Try fast binary index first
-        let index_path = self.metadata_index_path();
+        let index_path = Self::metadata_index_path();
         if index_path.exists() {
             let index_path_clone = index_path.clone();
             let result = tokio::task::spawn_blocking(
@@ -485,14 +487,15 @@ impl AurClient {
 
         let path = get_metadata_path();
         if path.exists() {
-            let results = tokio::task::spawn_blocking(move || read_metadata_archive(&path)).await??;
+            let results =
+                tokio::task::spawn_blocking(move || read_metadata_archive(&path)).await??;
             Ok(Some(AurResponse { results }))
         } else {
             Ok(None)
         }
     }
 
-    fn metadata_index_path(&self) -> PathBuf {
+    fn metadata_index_path() -> PathBuf {
         super::aur_metadata::get_index_path()
     }
 
@@ -523,7 +526,7 @@ impl AurClient {
     pub async fn install(&self, package: &str) -> Result<()> {
         crate::core::security::validate_package_name(package)?;
 
-        tracing::info!(
+        println!(
             "{} Installing AUR package: {}\n",
             "OMG".cyan().bold(),
             package.yellow()
@@ -533,23 +536,25 @@ impl AurClient {
             return Err(AurError::PackageNotFound(package.to_string()).into());
         }
 
-        tokio::fs::create_dir_all(&self.build_dir).await.with_context(|| {
-            format!(
-                "Failed to create build directory: {}",
-                self.build_dir.display()
-            )
-        })?;
+        tokio::fs::create_dir_all(&self.build_dir)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create build directory: {}",
+                    self.build_dir.display()
+                )
+            })?;
 
         let pkg_dir = self.build_dir.join(package);
 
         if pkg_dir.exists() {
-            tracing::info!("{} Updating existing source...", "→".blue());
+            println!("{} Updating existing source...", "→".blue());
             self.git_pull(&pkg_dir).await.map_err(|e| {
                 tracing::warn!("Git pull failed for {}: {}", package, e);
                 AurError::GitPullFailed(package.to_string())
             })?;
         } else {
-            tracing::info!("{} Cloning from AUR...", "→".blue());
+            println!("{} Cloning from AUR...", "→".blue());
             self.git_clone(package).await.map_err(|e| {
                 tracing::warn!("Git clone failed for {}: {}", package, e);
                 AurError::GitCloneFailed(package.to_string())
@@ -574,7 +579,7 @@ impl AurClient {
             .cached_package(package, &env.pkgdest, &cache_key)
             .await?
         {
-            tracing::info!("{} Using cached build...", "→".blue());
+            println!("{} Using cached build...", "→".blue());
             cached
         } else {
             let log_path = self.build_dir.join("_logs").join(format!("{package}.log"));
@@ -598,10 +603,10 @@ impl AurClient {
             pkg_file
         };
 
-        tracing::info!("{} Installing built package...", "→".blue());
+        println!("{} Installing built package...", "→".blue());
         Self::install_built_package(&pkg_file).await?;
 
-        tracing::info!("\n{} {} installed successfully!", "✓".green(), package);
+        println!("\n{} {} installed successfully!", "✓".green(), package);
 
         Ok(())
     }
@@ -610,12 +615,14 @@ impl AurClient {
     pub async fn build_only(&self, package: &str) -> Result<PathBuf> {
         crate::core::security::validate_package_name(package)?;
 
-        tokio::fs::create_dir_all(&self.build_dir).await.with_context(|| {
-            format!(
-                "Failed to create build directory: {}",
-                self.build_dir.display()
-            )
-        })?;
+        tokio::fs::create_dir_all(&self.build_dir)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create build directory: {}",
+                    self.build_dir.display()
+                )
+            })?;
 
         let pkg_dir = self.build_dir.join(package);
         let pkgbuild_path = pkg_dir.join("PKGBUILD");
@@ -817,12 +824,14 @@ impl AurClient {
 
     #[instrument(skip(self))]
     pub async fn build_package_interactive(&self, package: &str) -> Result<PathBuf> {
-        tokio::fs::create_dir_all(&self.build_dir).await.with_context(|| {
-            format!(
-                "Failed to create build directory: {}",
-                self.build_dir.display()
-            )
-        })?;
+        tokio::fs::create_dir_all(&self.build_dir)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create build directory: {}",
+                    self.build_dir.display()
+                )
+            })?;
 
         let pkg_dir = self.build_dir.join(package);
         let pkgbuild_path = pkg_dir.join("PKGBUILD");
@@ -983,10 +992,9 @@ impl AurClient {
         spinner.finish_and_clear();
         if !status.success() {
             tracing::error!(
-                "  {} Build failed: {} (see {})",
-                "✗".red(),
-                package_name,
-                log_path.display()
+                package = package_name,
+                log_path = %log_path.display(),
+                "Build failed"
             );
         }
         Ok(status)
@@ -1105,7 +1113,7 @@ impl AurClient {
 
         if bwrap_available {
             tracing::info!("Using bubblewrap sandbox for secure AUR build");
-            tracing::info!("{} Building in sandbox (bubblewrap)...", "🔒".green());
+            println!("{} Building in sandbox (bubblewrap)...", "🔒".green());
 
             // Install dependencies BEFORE entering sandbox (requires sudo)
             let dep_status = Command::new("makepkg")
@@ -1229,7 +1237,7 @@ impl AurClient {
 
             spinner.finish_and_clear();
             if !status.success() {
-                tracing::error!("  {} Build failed. Log: {}", "✗".red(), log_path.display());
+                println!("  {} Build failed. Log: {}", "✗".red(), log_path.display());
             }
             Ok(status)
         } else {
@@ -1239,7 +1247,7 @@ impl AurClient {
             }
 
             tracing::debug!("bubblewrap not found, using regular makepkg");
-            tracing::warn!(
+            println!(
                 "{} Building without sandbox (install 'bubblewrap' for isolation)...",
                 "→".dimmed()
             );
@@ -1274,7 +1282,7 @@ impl AurClient {
             .await?;
 
         if !status.success() {
-            tracing::error!("  {} Build failed. Log: {}", "✗".red(), log_path.display());
+            println!("  {} Build failed. Log: {}", "✗".red(), log_path.display());
         }
         Ok(status)
     }
@@ -1376,7 +1384,7 @@ impl AurClient {
         let status = cmd.status().await.context("Failed to run chroot build")?;
         spinner.finish_and_clear();
         if !status.success() {
-            tracing::error!("  {} Build failed. Log: {}", "✗".red(), log_path.display());
+            println!("  {} Build failed. Log: {}", "✗".red(), log_path.display());
         }
         Ok(status)
     }
@@ -1404,7 +1412,7 @@ impl AurClient {
     }
 
     fn review_pkgbuild(pkgbuild_path: &Path) -> Result<()> {
-        tracing::info!(
+        println!(
             "{} Review PKGBUILD before building: {}",
             "→".blue(),
             pkgbuild_path.display()
@@ -1648,7 +1656,7 @@ impl AurClient {
 
     /// Install the built package via sudo omg install <path>
     async fn install_built_package(pkg_path: &Path) -> Result<()> {
-        tracing::info!(
+        println!(
             "{} Installing built package (elevating with sudo)...",
             "→".blue()
         );
@@ -1664,7 +1672,7 @@ impl AurClient {
         let pkg_dir = self.build_dir.join(package);
         if pkg_dir.exists() {
             std::fs::remove_dir_all(&pkg_dir)?;
-            tracing::info!("{} Cleaned build directory for {}", "✓".green(), package);
+            println!("{} Cleaned build directory for {}", "✓".green(), package);
         }
         Ok(())
     }
@@ -1674,7 +1682,7 @@ impl AurClient {
         if self.build_dir.exists() {
             std::fs::remove_dir_all(&self.build_dir)?;
             std::fs::create_dir_all(&self.build_dir)?;
-            tracing::info!("{} Cleaned all AUR build directories", "✓".green());
+            println!("{} Cleaned all AUR build directories", "✓".green());
         }
         Ok(())
     }
@@ -1832,7 +1840,7 @@ mod tests {
 
         let bwrap_path = which::which("bwrap");
         if bwrap_path.is_err() {
-            tracing::debug!("Skipping sandbox test: bubblewrap not installed");
+            println!("Skipping sandbox test: bubblewrap not installed");
             return;
         }
 

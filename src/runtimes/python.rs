@@ -51,14 +51,13 @@ pub struct PythonManager {
 
 impl PythonManager {
     pub fn new() -> Self {
-        let data_dir = super::DATA_DIR.clone();
-
-        let client = download_client().clone();
+        let data_dir = &*super::DATA_DIR;
+        let python_versions = data_dir.join("versions").join("python");
 
         Self {
-            versions_dir: data_dir.join("versions").join("python"),
-            current_link: data_dir.join("versions").join("python").join("current"),
-            client,
+            versions_dir: python_versions.clone(),
+            current_link: python_versions.join("current"),
+            client: download_client().clone(),
         }
     }
 
@@ -119,7 +118,7 @@ impl PythonManager {
             })
             .collect();
 
-        result.sort_by(|a, b| version_cmp(&b.version, &a.version));
+        result.sort_unstable_by(|a, b| version_cmp(&b.version, &a.version));
         Ok(result)
     }
 
@@ -129,30 +128,17 @@ impl PythonManager {
             .chars()
             .take_while(|c| c.is_ascii_digit() || *c == '.')
             .collect::<String>();
-        if Self::is_semver_like(&version) {
-            Some(version)
-        } else {
-            None
-        }
+        Self::is_semver_like(&version).then_some(version)
     }
 
     fn is_semver_like(value: &str) -> bool {
         let mut parts = value.split('.');
-        let Some(major) = parts.next() else {
-            return false;
-        };
-        let Some(minor) = parts.next() else {
-            return false;
-        };
-        let Some(patch) = parts.next() else {
-            return false;
-        };
-        if parts.next().is_some() {
-            return false;
+        match (parts.next(), parts.next(), parts.next(), parts.next()) {
+            (Some(major), Some(minor), Some(patch), None) => [major, minor, patch]
+                .iter()
+                .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit())),
+            _ => false,
         }
-        [major, minor, patch]
-            .iter()
-            .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
     }
 
     pub fn list_installed(&self) -> Result<Vec<String>> {
@@ -181,7 +167,7 @@ impl PythonManager {
             return self.use_version(&version);
         }
 
-        tracing::info!(
+        println!(
             "{} Installing Python {}...\n",
             "OMG".cyan().bold(),
             version.yellow()
@@ -193,7 +179,7 @@ impl PythonManager {
             arch => anyhow::bail!("Unsupported architecture: {arch}"),
         };
 
-        tracing::info!("{} Finding Python {} release...", "→".blue(), version);
+        println!("{} Finding Python {} release...", "→".blue(), version);
 
         let releases: Vec<GithubRelease> = self
             .client
@@ -206,41 +192,34 @@ impl PythonManager {
             .await
             .context("Failed to parse Python release data")?;
 
-        let mut download_url = None;
-        let mut asset_name = String::new();
-
-        for release in &releases {
-            for asset in &release.assets {
-                if asset.name.contains(&format!("cpython-{version}"))
+        let python_prefix = format!("cpython-{version}");
+        let asset = releases
+            .iter()
+            .flat_map(|release| &release.assets)
+            .find(|asset| {
+                asset.name.contains(&python_prefix)
                     && asset.name.contains(arch)
                     && asset.name.contains("linux-gnu")
                     && asset.name.contains("install_only")
                     && asset.name.ends_with(".tar.gz")
-                {
-                    download_url = Some(asset.browser_download_url.clone());
-                    asset_name.clone_from(&asset.name);
-                    break;
-                }
-            }
-            if download_url.is_some() {
-                break;
-            }
-        }
+            })
+            .ok_or_else(|| {
+                anyhow::anyhow!("Python {version} not found. Try: omg list python --available")
+            })?;
 
-        let url = download_url.ok_or_else(|| {
-            anyhow::anyhow!("Python {version} not found. Try: omg list python --available")
-        })?;
+        let url = &asset.browser_download_url;
+        let asset_name = &asset.name;
 
         fs::create_dir_all(&self.versions_dir)?;
 
-        tracing::info!("{} Downloading {}...", "→".blue(), asset_name);
-        let download_path = self.versions_dir.join(&asset_name);
-        download_with_progress(&self.client, &url, &download_path, None).await?;
+        println!("{} Downloading {}...", "→".blue(), asset_name);
+        let download_path = self.versions_dir.join(asset_name);
+        download_with_progress(&self.client, url, &download_path, None).await?;
 
-        tracing::info!("{} Extracting (pure Rust)...", "→".blue());
+        println!("{} Extracting (pure Rust)...", "→".blue());
         extract_tar_gz(&download_path, &version_dir, 1).await?;
 
-        let _ = fs::remove_file(&download_path);
+        fs::remove_file(&download_path).ok();
 
         print_installed("Python", &version);
         self.use_version(&version)?;
@@ -262,7 +241,7 @@ impl PythonManager {
         let version_dir = self.versions_dir.join(&version);
 
         if !version_dir.exists() {
-            tracing::info!("{} Python {} is not installed", "→".dimmed(), version);
+            println!("{} Python {} is not installed", "→".dimmed(), version);
             return Ok(());
         }
 
@@ -273,7 +252,7 @@ impl PythonManager {
         }
 
         fs::remove_dir_all(&version_dir)?;
-        tracing::info!("{} Python {} uninstalled", "✓".green(), version);
+        println!("{} Python {} uninstalled", "✓".green(), version);
         Ok(())
     }
 }

@@ -70,13 +70,12 @@ async fn main() -> Result<()> {
     let state = match omg_lib::daemon::handlers::DaemonState::new() {
         Ok(s) => std::sync::Arc::new(s),
         Err(e) => {
-            tracing::error!("Failed to initialize daemon state: {e:#}");
-            eprintln!("\n✗ Daemon startup failed: {e:#}");
-            eprintln!("\nTroubleshooting:");
-            eprintln!("  1. Ensure package databases are synced: sudo omg sync");
-            eprintln!("  2. Check if another daemon is running: pgrep omgd");
-            eprintln!("  3. Remove stale lock files: rm -f ~/.local/share/omg/daemon/*.lock");
-            eprintln!("  4. Check disk space and permissions");
+            tracing::error!("Failed to initialize daemon state: {:#}", e);
+            tracing::error!("Troubleshooting:");
+            tracing::error!("  1. Ensure package databases are synced: sudo omg sync");
+            tracing::error!("  2. Check if another daemon is running: pgrep omgd");
+            tracing::error!("  3. Remove stale lock files: rm -f ~/.local/share/omg/daemon/*.lock");
+            tracing::error!("  4. Check disk space and permissions");
             return Err(e);
         }
     };

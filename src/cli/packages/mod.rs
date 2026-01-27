@@ -72,7 +72,7 @@ pub fn execute_cmd(cmd: crate::cli::tea::Cmd<()>) {
                 println!("  ⚠ {msg}");
             }
             Cmd::Error(msg) => {
-                eprintln!("  ✗ {msg}");
+                tracing::error!("{}", msg);
             }
             Cmd::Header(title, body) => {
                 println!("\n[{title}] {body}");

@@ -93,21 +93,18 @@ pub async fn status(_ctx: &CliContext) -> Result<()> {
     }
 
     execute_cmd(Cmd::batch([
-        Components::header(
+        Cmd::header(
             "Fleet Status",
             format!("{total_machines} machine(s) in fleet"),
         ),
-        Components::spacer(),
+        Cmd::spacer(),
         Components::status_summary(status_items),
         if machine_list.is_empty() {
             Cmd::none()
         } else {
-            Cmd::batch([
-                Components::spacer(),
-                Components::card("Active Machines", machine_list),
-            ])
+            Cmd::batch([Cmd::spacer(), Cmd::card("Active Machines", machine_list)])
         },
-        Components::spacer(),
+        Cmd::spacer(),
         Cmd::println("Manage your fleet at: https://pyro1121.com/dashboard"),
     ]));
 
@@ -143,9 +140,7 @@ pub async fn push(team: Option<&str>, message: Option<&str>, _ctx: &CliContext) 
     if let Some(m) = message {
         // SECURITY: Validate message
         if m.len() > 1000 {
-            execute_cmd(Components::error(
-                "Push message too long (max 1000 characters)",
-            ));
+            execute_cmd(Cmd::error("Push message too long (max 1000 characters)"));
             anyhow::bail!("Push message too long");
         }
     }
@@ -167,7 +162,7 @@ pub async fn push(team: Option<&str>, message: Option<&str>, _ctx: &CliContext) 
         std::fs::read_to_string(lock_path).unwrap_or_default()
     } else {
         // Fallback to capturing current state if no lockfile
-        execute_cmd(Components::warning(
+        execute_cmd(Cmd::warning(
             "No omg.lock found, capturing current state...",
         ));
         String::new()
@@ -191,21 +186,18 @@ pub async fn push(team: Option<&str>, message: Option<&str>, _ctx: &CliContext) 
             if !res.status().is_success() {
                 // If API is not yet ready, we warn but don't fail hard for this demo
                 if res.status() == reqwest::StatusCode::NOT_FOUND {
-                    execute_cmd(Components::warning(
+                    execute_cmd(Cmd::warning(
                         "Fleet API endpoint not yet active (404). Config saved locally.",
                     ));
                 } else {
-                    execute_cmd(Components::error(format!(
-                        "Fleet push failed: {}",
-                        res.status()
-                    )));
+                    execute_cmd(Cmd::error(format!("Fleet push failed: {}", res.status())));
                     anyhow::bail!("Fleet push failed: {}", res.status());
                 }
             }
         }
         Err(e) => {
             // Network error
-            execute_cmd(Components::error(format!(
+            execute_cmd(Cmd::error(format!(
                 "Failed to connect to fleet server: {e}"
             )));
             anyhow::bail!("Failed to connect to fleet server: {e}");
@@ -213,7 +205,7 @@ pub async fn push(team: Option<&str>, message: Option<&str>, _ctx: &CliContext) 
     }
 
     execute_cmd(Cmd::batch([
-        Components::success("Push complete!"),
+        Cmd::success("Push complete!"),
         Components::kv_list(
             Some("Push Summary"),
             vec![
@@ -249,20 +241,20 @@ pub async fn remediate(dry_run: bool, confirm: bool, _ctx: &CliContext) -> Resul
 
     if dry_run {
         execute_cmd(Cmd::batch([
-            Components::header("Fleet Remediation", "Dry run - no changes will be made"),
-            Components::spacer(),
-            Components::card("Remediation Plan", plan_details),
-            Components::info("Run without --dry-run and with --confirm to apply"),
+            Cmd::header("Fleet Remediation", "Dry run - no changes will be made"),
+            Cmd::spacer(),
+            Cmd::card("Remediation Plan", plan_details),
+            Cmd::info("Run without --dry-run and with --confirm to apply"),
         ]));
         return Ok(());
     }
 
     if !confirm {
         execute_cmd(Cmd::batch([
-            Components::header("Fleet Remediation", "Confirmation required"),
-            Components::spacer(),
-            Components::card("Remediation Plan", plan_details),
-            Components::warning("Add --confirm to proceed"),
+            Cmd::header("Fleet Remediation", "Confirmation required"),
+            Cmd::spacer(),
+            Cmd::card("Remediation Plan", plan_details),
+            Cmd::warning("Add --confirm to proceed"),
         ]));
         return Ok(());
     }
@@ -276,7 +268,7 @@ pub async fn remediate(dry_run: bool, confirm: bool, _ctx: &CliContext) -> Resul
     tokio::time::sleep(std::time::Duration::from_millis(800)).await;
 
     execute_cmd(Cmd::batch([
-        Components::success("Remediation complete!"),
+        Cmd::success("Remediation complete!"),
         Components::status_summary(vec![
             (
                 "Machines remediated",

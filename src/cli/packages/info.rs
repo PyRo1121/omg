@@ -155,7 +155,7 @@ fn display_detailed_info(info: &crate::daemon::protocol::DetailedPackageInfo) {
 pub async fn info(package: &str) -> Result<()> {
     // Try modern Elm UI first
     if let Err(e) = run_info_elm(package.to_string()) {
-        eprintln!("Warning: Elm UI failed, falling back to basic mode: {e}");
+        tracing::warn!("Elm UI failed, falling back to basic mode: {}", e);
         info_fallback(package).await
     } else {
         Ok(())

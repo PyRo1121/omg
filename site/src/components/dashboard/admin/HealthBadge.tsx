@@ -1,4 +1,4 @@
-import { Component, createMemo, Switch, Match } from 'solid-js';
+import { Component, createMemo } from 'solid-js';
 import {
   Sparkles,
   Zap,
@@ -29,6 +29,7 @@ type HealthConfig = {
 };
 
 type StageConfig = {
+  icon: typeof Activity;
   label: string;
   color: string;
   bg: string;
@@ -48,16 +49,16 @@ const SIZE_CONFIG = {
 } as const;
 
 const STAGE_CONFIG: Record<string, StageConfig> = {
-  new: { label: 'New', color: 'text-[var(--lifecycle-new)]', bg: 'bg-[var(--lifecycle-new-bg)]' },
-  onboarding: { label: 'Onboarding', color: 'text-[var(--lifecycle-onboarding)]', bg: 'bg-[var(--lifecycle-onboarding-bg)]' },
-  activated: { label: 'Activated', color: 'text-[var(--lifecycle-activated)]', bg: 'bg-[var(--lifecycle-activated-bg)]' },
-  engaged: { label: 'Engaged', color: 'text-[var(--lifecycle-engaged)]', bg: 'bg-[var(--lifecycle-engaged-bg)]' },
-  power_user: { label: 'Power User', color: 'text-[var(--lifecycle-power-user)]', bg: 'bg-[var(--lifecycle-power-user-bg)]' },
-  at_risk: { label: 'At Risk', color: 'text-[var(--lifecycle-at-risk)]', bg: 'bg-[var(--lifecycle-at-risk-bg)]' },
-  churning: { label: 'Churning', color: 'text-[var(--lifecycle-churning)]', bg: 'bg-[var(--lifecycle-churning-bg)]' },
-  churned: { label: 'Churned', color: 'text-[var(--lifecycle-churned)]', bg: 'bg-[var(--lifecycle-churned-bg)]' },
-  reactivated: { label: 'Reactivated', color: 'text-[var(--lifecycle-reactivated)]', bg: 'bg-[var(--lifecycle-reactivated-bg)]' },
-  default: { label: 'Active', color: 'text-[var(--lifecycle-engaged)]', bg: 'bg-[var(--lifecycle-engaged-bg)]' },
+  new: { icon: Sparkles, label: 'New', color: 'text-[var(--lifecycle-new)]', bg: 'bg-[var(--lifecycle-new-bg)]' },
+  onboarding: { icon: Rocket, label: 'Onboarding', color: 'text-[var(--lifecycle-onboarding)]', bg: 'bg-[var(--lifecycle-onboarding-bg)]' },
+  activated: { icon: Zap, label: 'Activated', color: 'text-[var(--lifecycle-activated)]', bg: 'bg-[var(--lifecycle-activated-bg)]' },
+  engaged: { icon: Activity, label: 'Engaged', color: 'text-[var(--lifecycle-engaged)]', bg: 'bg-[var(--lifecycle-engaged-bg)]' },
+  power_user: { icon: Crown, label: 'Power User', color: 'text-[var(--lifecycle-power-user)]', bg: 'bg-[var(--lifecycle-power-user-bg)]' },
+  at_risk: { icon: AlertTriangle, label: 'At Risk', color: 'text-[var(--lifecycle-at-risk)]', bg: 'bg-[var(--lifecycle-at-risk-bg)]' },
+  churning: { icon: TrendingDown, label: 'Churning', color: 'text-[var(--lifecycle-churning)]', bg: 'bg-[var(--lifecycle-churning-bg)]' },
+  churned: { icon: XCircle, label: 'Churned', color: 'text-[var(--lifecycle-churned)]', bg: 'bg-[var(--lifecycle-churned-bg)]' },
+  reactivated: { icon: RefreshCw, label: 'Reactivated', color: 'text-[var(--lifecycle-reactivated)]', bg: 'bg-[var(--lifecycle-reactivated-bg)]' },
+  default: { icon: Activity, label: 'Active', color: 'text-[var(--lifecycle-engaged)]', bg: 'bg-[var(--lifecycle-engaged-bg)]' },
 };
 
 function getHealthConfig(score: number, showGlow: boolean): HealthConfig {
@@ -127,40 +128,6 @@ function getRingDimensions(size: 'sm' | 'md' | 'lg') {
   return dimensions[size];
 }
 
-const StageIcon: Component<{ stage: string; size: number; class: string }> = (props) => {
-  return (
-    <Switch fallback={<Activity size={props.size} class={props.class} />}>
-      <Match when={props.stage === 'new'}>
-        <Sparkles size={props.size} class={props.class} />
-      </Match>
-      <Match when={props.stage === 'onboarding'}>
-        <Rocket size={props.size} class={props.class} />
-      </Match>
-      <Match when={props.stage === 'activated'}>
-        <Zap size={props.size} class={props.class} />
-      </Match>
-      <Match when={props.stage === 'engaged'}>
-        <Activity size={props.size} class={props.class} />
-      </Match>
-      <Match when={props.stage === 'power_user'}>
-        <Crown size={props.size} class={props.class} />
-      </Match>
-      <Match when={props.stage === 'at_risk'}>
-        <AlertTriangle size={props.size} class={props.class} />
-      </Match>
-      <Match when={props.stage === 'churning'}>
-        <TrendingDown size={props.size} class={props.class} />
-      </Match>
-      <Match when={props.stage === 'churned'}>
-        <XCircle size={props.size} class={props.class} />
-      </Match>
-      <Match when={props.stage === 'reactivated'}>
-        <RefreshCw size={props.size} class={props.class} />
-      </Match>
-    </Switch>
-  );
-};
-
 export const HealthBadge: Component<HealthBadgeProps> = (props) => {
   const size = () => props.size || 'md';
   const showGlow = () => props.showGlow !== false;
@@ -168,6 +135,7 @@ export const HealthBadge: Component<HealthBadgeProps> = (props) => {
 
   const healthConfig = createMemo(() => getHealthConfig(props.score, showGlow()));
   const stageConfig = createMemo(() => STAGE_CONFIG[props.stage] || STAGE_CONFIG.default);
+  const StageIcon = createMemo(() => stageConfig().icon);
   const sizes = createMemo(() => SIZE_CONFIG[size()]);
 
   if (variant() === 'ring') {
@@ -195,7 +163,7 @@ export const HealthBadge: Component<HealthBadgeProps> = (props) => {
               stroke-width={ringDims().strokeWidth}
               fill="none"
               stroke-linecap="round"
-              stroke-dasharray={`${CIRCUMFERENCE * ringDims().factor}`}
+              stroke-dasharray={CIRCUMFERENCE * ringDims().factor}
               stroke-dashoffset={offset() * ringDims().factor}
               class={`transition-all duration-700 ${showGlow() ? 'drop-shadow-[0_0_4px_currentColor]' : ''}`}
             />
@@ -205,7 +173,7 @@ export const HealthBadge: Component<HealthBadgeProps> = (props) => {
           </span>
         </div>
         <div class={`flex items-center justify-center rounded-lg p-1 ${stageConfig().bg}`} title={stageConfig().label}>
-          <StageIcon stage={props.stage} size={sizes().icon} class={stageConfig().color} />
+          <StageIcon size={sizes().icon} class={stageConfig().color} />
         </div>
       </div>
     );
@@ -218,7 +186,7 @@ export const HealthBadge: Component<HealthBadgeProps> = (props) => {
           {props.score}
         </span>
         <div class={`flex items-center gap-1 rounded-full px-1.5 py-0.5 ${stageConfig().bg}`}>
-          <StageIcon stage={props.stage} size={sizes().icon - 2} class={stageConfig().color} />
+          <StageIcon size={sizes().icon - 2} class={stageConfig().color} />
           <span class={`text-2xs font-bold ${stageConfig().color}`}>
             {stageConfig().label}
           </span>
@@ -239,7 +207,7 @@ export const HealthBadge: Component<HealthBadgeProps> = (props) => {
         class={`flex items-center justify-center rounded-lg p-1 ${stageConfig().bg} transition-all duration-200 hover:scale-110`} 
         title={stageConfig().label}
       >
-        <StageIcon stage={props.stage} size={sizes().icon} class={stageConfig().color} />
+        <StageIcon size={sizes().icon} class={stageConfig().color} />
       </div>
     </div>
   );
