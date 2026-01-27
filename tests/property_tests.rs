@@ -511,6 +511,44 @@ mod fuzz {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// PACKAGE NAME PROPERTIES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(30))]
+
+    /// Valid package names should be handled consistently
+    #[test]
+    fn prop_package_name_handling(
+        name in "[a-z][a-z0-9-]{2,50}"
+    ) {
+        let result = run_omg(&["info", &name]);
+        prop_assert!(!result.stderr.contains("panicked at"));
+    }
+
+    /// Package names with numbers should work
+    #[test]
+    fn prop_package_with_numbers(
+        prefix in "[a-z]{2,10}",
+        number in 0u32..100
+    ) {
+        let name = format!("{prefix}{number}");
+        let result = run_omg(&["search", &name]);
+        prop_assert!(!result.stderr.contains("panicked at"));
+    }
+
+    /// Package names with hyphens should work
+    #[test]
+    fn prop_package_with_hyphens(
+        parts in prop::collection::vec("[a-z]{2,10}", 2..5)
+    ) {
+        let name = parts.join("-");
+        let result = run_omg(&["info", &name]);
+        prop_assert!(!result.stderr.contains("panicked at"));
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // REGRESSION TESTS
 // ═══════════════════════════════════════════════════════════════════════════════
 

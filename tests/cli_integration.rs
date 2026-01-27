@@ -4,114 +4,93 @@
 
 #![cfg(feature = "arch")]
 
-use std::process::Command;
+mod common;
 
-fn omg_cmd() -> Command {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_omg"));
-    cmd.env("NO_COLOR", "1");
-    cmd
-}
+use common::*;
 
 #[test]
 fn test_help_command() {
     // ===== ARRANGE =====
-    let mut cmd = omg_cmd();
-    cmd.arg("--help");
+    init_test_env();
 
     // ===== ACT =====
-    let output = cmd.output().expect("Failed to run omg");
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let result = run_omg(&["--help"]);
 
     // ===== ASSERT =====
-    assert!(output.status.success());
-    assert!(stdout.contains("omg"));
-    assert!(stdout.contains("search"));
-    assert!(stdout.contains("install"));
+    result.assert_success();
+    result.assert_stdout_contains("omg");
+    result.assert_stdout_contains("search");
+    result.assert_stdout_contains("install");
 }
 
 #[test]
 fn test_version_command() {
     // ===== ARRANGE =====
-    let mut cmd = omg_cmd();
-    cmd.arg("--version");
+    init_test_env();
 
     // ===== ACT =====
-    let output = cmd.output().expect("Failed to run omg");
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let result = run_omg(&["--version"]);
 
     // ===== ASSERT =====
-    assert!(output.status.success());
-    assert!(stdout.contains("omg"));
+    result.assert_success();
+    result.assert_stdout_contains("omg");
 }
 
 #[test]
 fn test_search_help() {
     // ===== ARRANGE =====
-    let mut cmd = omg_cmd();
-    cmd.args(["search", "--help"]);
+    init_test_env();
 
     // ===== ACT =====
-    let output = cmd.output().expect("Failed to run omg");
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let result = run_omg(&["search", "--help"]);
 
     // ===== ASSERT =====
-    assert!(output.status.success());
-    assert!(stdout.contains("search") || stdout.contains("Search"));
+    result.assert_success();
+    assert!(result.stdout_contains("search") || result.stdout_contains("Search"));
 }
 
 #[test]
 fn test_search_pacman() {
     // ===== ARRANGE =====
     let query = "pacman";
-    let mut cmd = omg_cmd();
-    cmd.args(["search", query]);
 
     // ===== ACT =====
-    let output = cmd.output().expect("Failed to run omg");
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let result = run_omg(&["search", query]);
 
     // ===== ASSERT =====
-    assert!(output.status.success());
-    assert!(
-        stdout.contains(query),
-        "Search for '{query}' should return results containing '{query}'"
-    );
+    result.assert_success();
+    result.assert_stdout_contains(query);
 }
 
 #[test]
 fn test_info_pacman() {
     // ===== ARRANGE =====
     let package_name = "pacman";
-    let mut cmd = omg_cmd();
-    cmd.args(["info", package_name]);
 
     // ===== ACT =====
-    let output = cmd.output().expect("Failed to run omg");
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let result = run_omg(&["info", package_name]);
 
     // ===== ASSERT =====
-    assert!(output.status.success());
-    assert!(stdout.contains(package_name));
+    result.assert_success();
+    result.assert_stdout_contains(package_name);
 }
 
 #[test]
 fn test_info_nonexistent_package() {
+    use common::fixtures::packages::NONEXISTENT;
+
     // ===== ARRANGE =====
-    let nonexistent_package = "this-package-definitely-does-not-exist-12345";
-    let mut cmd = omg_cmd();
-    cmd.args(["info", nonexistent_package]);
+    let nonexistent_package = NONEXISTENT[0];
 
     // ===== ACT =====
-    let output = cmd.output().expect("Failed to run omg");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let combined = format!("{stdout}{stderr}");
+    let result = run_omg(&["info", nonexistent_package]);
 
     // ===== ASSERT =====
+    let combined = result.combined_output();
     assert!(
         combined.contains("not found")
             || combined.contains("No package")
-            || !output.status.success(),
+            || !result.success,
         "Should indicate package not found"
     );
 }
@@ -119,32 +98,30 @@ fn test_info_nonexistent_package() {
 #[test]
 fn test_list_explicit() {
     // ===== ARRANGE =====
-    let mut cmd = omg_cmd();
-    cmd.args(["list", "--explicit"]);
+    init_test_env();
 
     // ===== ACT =====
-    let output = cmd.output().expect("Failed to run omg");
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let result = run_omg(&["list", "--explicit"]);
 
     // ===== ASSERT =====
-    assert!(output.status.success());
-    assert!(!stdout.is_empty(), "Should list explicit packages");
+    result.assert_success();
+    assert!(!result.stdout.is_empty(), "Should list explicit packages");
 }
 
 #[test]
 fn test_status_command() {
     // ===== ARRANGE =====
-    let mut cmd = omg_cmd();
-    cmd.arg("status");
+    init_test_env();
 
     // ===== ACT =====
-    let output = cmd.output().expect("Failed to run omg");
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let result = run_omg(&["status"]);
 
     // ===== ASSERT =====
-    assert!(output.status.success());
+    result.assert_success();
     assert!(
-        stdout.contains("package") || stdout.contains("Package") || stdout.contains("installed"),
+        result.stdout_contains("package")
+            || result.stdout_contains("Package")
+            || result.stdout_contains("installed"),
         "Status should show package information"
     );
 }
@@ -152,18 +129,15 @@ fn test_status_command() {
 #[test]
 fn test_install_dry_run() {
     // ===== ARRANGE =====
-    let mut cmd = omg_cmd();
-    cmd.args(["install", "--dry-run", "vim"]);
+    let package = "vim";
 
     // ===== ACT =====
-    let output = cmd.output().expect("Failed to run omg");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let combined = format!("{stdout}{stderr}");
+    let result = run_omg(&["install", "--dry-run", package]);
 
     // ===== ASSERT =====
+    let combined = result.combined_output();
     assert!(
-        combined.contains("vim") || combined.contains("dry") || combined.contains("Dry"),
+        combined.contains(package) || combined.contains("dry") || combined.contains("Dry"),
         "Dry run should mention the package or dry run mode"
     );
 }
@@ -171,18 +145,15 @@ fn test_install_dry_run() {
 #[test]
 fn test_remove_dry_run() {
     // ===== ARRANGE =====
-    let mut cmd = omg_cmd();
-    cmd.args(["remove", "--dry-run", "pacman"]);
+    let package = "pacman";
 
     // ===== ACT =====
-    let output = cmd.output().expect("Failed to run omg");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let combined = format!("{stdout}{stderr}");
+    let result = run_omg(&["remove", "--dry-run", package]);
 
     // ===== ASSERT =====
+    let combined = result.combined_output();
     assert!(
-        combined.contains("pacman") || combined.contains("dry") || combined.contains("Dry"),
+        combined.contains(package) || combined.contains("dry") || combined.contains("Dry"),
         "Dry run should mention the package or dry run mode"
     );
 }
@@ -190,19 +161,17 @@ fn test_remove_dry_run() {
 #[test]
 fn test_doctor_command() {
     // ===== ARRANGE =====
-    let mut cmd = omg_cmd();
-    cmd.arg("doctor");
+    init_test_env();
 
     // ===== ACT =====
-    let output = cmd.output().expect("Failed to run omg");
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let result = run_omg(&["doctor"]);
 
     // ===== ASSERT =====
     assert!(
-        stdout.contains("✓")
-            || stdout.contains("✗")
-            || stdout.contains("check")
-            || stdout.contains("Check"),
+        result.stdout_contains("✓")
+            || result.stdout_contains("✗")
+            || result.stdout_contains("check")
+            || result.stdout_contains("Check"),
         "Doctor should show check results"
     );
 }
@@ -210,32 +179,29 @@ fn test_doctor_command() {
 #[test]
 fn test_invalid_command() {
     // ===== ARRANGE =====
-    let mut cmd = omg_cmd();
-    cmd.arg("this-is-not-a-valid-command");
+    let invalid_cmd = "this-is-not-a-valid-command";
 
     // ===== ACT =====
-    let output = cmd.output().expect("Failed to run omg");
+    let result = run_omg(&[invalid_cmd]);
 
     // ===== ASSERT =====
-    assert!(!output.status.success(), "Invalid command should fail");
+    result.assert_failure();
 }
 
 /// Empty search returns all packages (valid behavior)
 #[test]
 fn test_search_empty_query() {
     // ===== ARRANGE =====
-    let mut cmd = omg_cmd();
-    cmd.args(["search", ""]);
+    init_test_env();
 
     // ===== ACT =====
-    let output = cmd.output().expect("Failed to run omg");
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let result = run_omg(&["search", ""]);
 
     // ===== ASSERT =====
     // Empty search is valid - returns all packages
     // Just verify it doesn't crash and produces output
     assert!(
-        output.status.success() || !stdout.is_empty(),
+        result.success || !result.stdout.is_empty(),
         "Empty search should succeed or produce output"
     );
 }
@@ -243,25 +209,23 @@ fn test_search_empty_query() {
 #[test]
 fn test_verbose_flag() {
     // ===== ARRANGE =====
-    let mut cmd = omg_cmd();
-    cmd.args(["-v", "status"]);
+    init_test_env();
 
     // ===== ACT =====
-    let output = cmd.output().expect("Failed to run omg");
+    let result = run_omg(&["-v", "status"]);
 
     // ===== ASSERT =====
-    assert!(output.status.success());
+    result.assert_success();
 }
 
 #[test]
 fn test_double_verbose_flag() {
     // ===== ARRANGE =====
-    let mut cmd = omg_cmd();
-    cmd.args(["-vv", "status"]);
+    init_test_env();
 
     // ===== ACT =====
-    let output = cmd.output().expect("Failed to run omg");
+    let result = run_omg(&["-vv", "status"]);
 
     // ===== ASSERT =====
-    assert!(output.status.success());
+    result.assert_success();
 }

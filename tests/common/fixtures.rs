@@ -307,6 +307,40 @@ pub mod perf {
     }
 }
 
+/// Error test helpers
+pub mod error_conditions {
+    use crate::common::TestProject;
+    use std::fs::File;
+    use std::io::Write;
+
+    /// Create a project with a corrupted database file
+    pub fn corrupted_database() -> TestProject {
+        let project = TestProject::new();
+        let db_path = project.data_dir.path().join("corrupted.db");
+        let mut f = File::create(&db_path).unwrap();
+        writeln!(f, "corrupted database data {{{{").unwrap();
+        project
+    }
+
+    /// Create a project with an invalid lock file
+    pub fn invalid_lock_file() -> TestProject {
+        let project = TestProject::new();
+        project.create_file("omg.lock", "invalid toml {{{{");
+        project
+    }
+
+    /// Create a project with very deep directory nesting
+    pub fn deep_nested_dirs(depth: usize) -> TestProject {
+        let project = TestProject::new();
+        let deep_path = (0..depth)
+            .map(|i| format!("d{i}"))
+            .collect::<Vec<_>>()
+            .join("/");
+        project.create_dir(&deep_path);
+        project
+    }
+}
+
 /// Test scenarios combining multiple fixtures
 pub mod scenarios {
     /// Full-stack Node.js project
