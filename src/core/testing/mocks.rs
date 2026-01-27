@@ -4,7 +4,7 @@ use crate::core::{Package, PackageSource};
 use crate::package_managers::parse_version_or_zero;
 use crate::package_managers::{PackageManager, types::UpdateInfo};
 use anyhow::Result;
-use futures::future::{BoxFuture, FutureExt};
+use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -125,187 +125,158 @@ impl Default for TestPackageManager {
     }
 }
 
+#[async_trait]
 impl PackageManager for TestPackageManager {
     fn name(&self) -> &'static str {
         "test-mock"
     }
 
-    fn search(&self, query: &str) -> BoxFuture<'static, Result<Vec<Package>>> {
+    async fn search(&self, query: &str) -> Result<Vec<Package>> {
         let query = query.to_lowercase();
         let packages = self.packages.clone();
         let fail = *self.fail_operations.lock().unwrap();
         let delay = self.search_delay_ms;
 
-        async move {
-            if delay > 0 {
-                tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
-            }
-
-            if fail {
-                anyhow::bail!("Search operation failed (test failure mode)");
-            }
-
-            let pkgs = packages.lock().unwrap();
-            Ok(pkgs
-                .values()
-                .filter(|p| {
-                    p.name.to_lowercase().contains(&query)
-                        || p.description.to_lowercase().contains(&query)
-                })
-                .cloned()
-                .collect())
+        if delay > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
         }
-        .boxed()
+
+        if fail {
+            anyhow::bail!("Search operation failed (test failure mode)");
+        }
+
+        let pkgs = packages.lock().unwrap();
+        Ok(pkgs
+            .values()
+            .filter(|p| {
+                p.name.to_lowercase().contains(&query)
+                    || p.description.to_lowercase().contains(&query)
+            })
+            .cloned()
+            .collect())
     }
 
-    fn install(&self, packages: &[String]) -> BoxFuture<'static, Result<()>> {
+    async fn install(&self, packages: &[String]) -> Result<()> {
         let packages: Vec<String> = packages.to_vec();
         let installed = self.installed.clone();
         let fail = *self.fail_operations.lock().unwrap();
 
-        async move {
-            if fail {
-                anyhow::bail!("Install operation failed (test failure mode)");
-            }
-
-            for pkg in packages {
-                installed.lock().unwrap().insert(pkg);
-            }
-            Ok(())
+        if fail {
+            anyhow::bail!("Install operation failed (test failure mode)");
         }
-        .boxed()
+
+        for pkg in packages {
+            installed.lock().unwrap().insert(pkg);
+        }
+        Ok(())
     }
 
-    fn remove(&self, packages: &[String]) -> BoxFuture<'static, Result<()>> {
+    async fn remove(&self, packages: &[String]) -> Result<()> {
         let packages: Vec<String> = packages.to_vec();
         let installed = self.installed.clone();
         let fail = *self.fail_operations.lock().unwrap();
 
-        async move {
-            if fail {
-                anyhow::bail!("Remove operation failed (test failure mode)");
-            }
-
-            for pkg in packages {
-                installed.lock().unwrap().remove(&pkg);
-            }
-            Ok(())
+        if fail {
+            anyhow::bail!("Remove operation failed (test failure mode)");
         }
-        .boxed()
+
+        for pkg in packages {
+            installed.lock().unwrap().remove(&pkg);
+        }
+        Ok(())
     }
 
-    fn update(&self) -> BoxFuture<'static, Result<()>> {
+    async fn update(&self) -> Result<()> {
         let fail = *self.fail_operations.lock().unwrap();
 
-        async move {
-            if fail {
-                anyhow::bail!("Update operation failed (test failure mode)");
-            }
-            Ok(())
+        if fail {
+            anyhow::bail!("Update operation failed (test failure mode)");
         }
-        .boxed()
+        Ok(())
     }
 
-    fn sync(&self) -> BoxFuture<'static, Result<()>> {
+    async fn sync(&self) -> Result<()> {
         let fail = *self.fail_operations.lock().unwrap();
 
-        async move {
-            if fail {
-                anyhow::bail!("Sync operation failed (test failure mode)");
-            }
-            Ok(())
+        if fail {
+            anyhow::bail!("Sync operation failed (test failure mode)");
         }
-        .boxed()
+        Ok(())
     }
 
-    fn info(&self, package: &str) -> BoxFuture<'static, Result<Option<Package>>> {
+    async fn info(&self, package: &str) -> Result<Option<Package>> {
         let package = package.to_string();
         let packages = self.packages.clone();
         let fail = *self.fail_operations.lock().unwrap();
 
-        async move {
-            if fail {
-                anyhow::bail!("Info operation failed (test failure mode)");
-            }
-
-            Ok(packages.lock().unwrap().get(&package).cloned())
+        if fail {
+            anyhow::bail!("Info operation failed (test failure mode)");
         }
-        .boxed()
+
+        Ok(packages.lock().unwrap().get(&package).cloned())
     }
 
-    fn list_installed(&self) -> BoxFuture<'static, Result<Vec<Package>>> {
+    async fn list_installed(&self) -> Result<Vec<Package>> {
         let packages = self.packages.clone();
         let installed = self.installed.clone();
         let fail = *self.fail_operations.lock().unwrap();
 
-        async move {
-            if fail {
-                anyhow::bail!("List installed operation failed (test failure mode)");
-            }
-
-            let installed_set = installed.lock().unwrap();
-            let pkgs = packages.lock().unwrap();
-            Ok(pkgs
-                .values()
-                .filter(|p| installed_set.contains(&p.name))
-                .cloned()
-                .collect())
+        if fail {
+            anyhow::bail!("List installed operation failed (test failure mode)");
         }
-        .boxed()
+
+        let installed_set = installed.lock().unwrap();
+        let pkgs = packages.lock().unwrap();
+        Ok(pkgs
+            .values()
+            .filter(|p| installed_set.contains(&p.name))
+            .cloned()
+            .collect())
     }
 
-    fn get_status(&self, _fast: bool) -> BoxFuture<'static, Result<(usize, usize, usize, usize)>> {
+    async fn get_status(&self, _fast: bool) -> Result<(usize, usize, usize, usize)> {
         let packages = self.packages.clone();
         let installed = self.installed.clone();
         let updates = self.updates.clone();
         let fail = *self.fail_operations.lock().unwrap();
 
-        async move {
-            if fail {
-                anyhow::bail!("Get status operation failed (test failure mode)");
-            }
-
-            let total = packages.lock().unwrap().len();
-            let explicit = installed.lock().unwrap().len();
-            let updates_count = updates.lock().unwrap().len();
-            Ok((total, explicit, 0, updates_count))
+        if fail {
+            anyhow::bail!("Get status operation failed (test failure mode)");
         }
-        .boxed()
+
+        let total = packages.lock().unwrap().len();
+        let explicit = installed.lock().unwrap().len();
+        let updates_count = updates.lock().unwrap().len();
+        Ok((total, explicit, 0, updates_count))
     }
 
-    fn list_explicit(&self) -> BoxFuture<'static, Result<Vec<String>>> {
+    async fn list_explicit(&self) -> Result<Vec<String>> {
         let installed = self.installed.clone();
         let fail = *self.fail_operations.lock().unwrap();
 
-        async move {
-            if fail {
-                anyhow::bail!("List explicit operation failed (test failure mode)");
-            }
-
-            Ok(installed.lock().unwrap().iter().cloned().collect())
+        if fail {
+            anyhow::bail!("List explicit operation failed (test failure mode)");
         }
-        .boxed()
+
+        Ok(installed.lock().unwrap().iter().cloned().collect())
     }
 
-    fn list_updates(&self) -> BoxFuture<'static, Result<Vec<UpdateInfo>>> {
+    async fn list_updates(&self) -> Result<Vec<UpdateInfo>> {
         let updates = self.updates.clone();
         let fail = *self.fail_operations.lock().unwrap();
 
-        async move {
-            if fail {
-                anyhow::bail!("List updates operation failed (test failure mode)");
-            }
-
-            Ok(updates.lock().unwrap().clone())
+        if fail {
+            anyhow::bail!("List updates operation failed (test failure mode)");
         }
-        .boxed()
+
+        Ok(updates.lock().unwrap().clone())
     }
 
-    fn is_installed(&self, package: &str) -> BoxFuture<'static, bool> {
+    async fn is_installed(&self, package: &str) -> bool {
         let package = package.to_string();
         let installed = self.installed.clone();
 
-        async move { installed.lock().unwrap().contains(&package) }.boxed()
+        installed.lock().unwrap().contains(&package)
     }
 }
 
