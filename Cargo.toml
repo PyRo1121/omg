@@ -1,6 +1,6 @@
 [package]
 name = "omg"
-version = "0.1.151"
+version = "0.1.152"
 edition = "2024"
 rust-version = "1.92"
 description = "The Fastest Unified Package Manager for Arch Linux + All Language Runtimes"
@@ -186,6 +186,7 @@ scopeguard = "1.2"
 tar = "0.4"
 flate2 = "1.0"
 chrono = "0.4"
+temp-env = "0.3"
 
 [profile.release]
 lto = "fat"       # Full LTO for maximum cross-crate inlining

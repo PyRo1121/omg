@@ -89,12 +89,8 @@ impl DaemonState {
     }
 }
 
-#[allow(clippy::expect_used)]
-impl Default for DaemonState {
-    fn default() -> Self {
-        Self::new().expect("Failed to initialize DaemonState")
-    }
-}
+// NOTE: DaemonState does not implement Default because initialization can fail.
+// Use DaemonState::new() which returns Result<Self, anyhow::Error> to handle errors properly.
 
 /// Handle an incoming request
 pub async fn handle_request(state: Arc<DaemonState>, request: Request) -> Response {

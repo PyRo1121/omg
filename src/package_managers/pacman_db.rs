@@ -933,8 +933,10 @@ mod tests {
             .join("core.db")
             .exists()
         {
-            let updates = check_updates_fast().expect("Failed to check updates");
-            println!("Found {} updates", updates.len());
+            match check_updates_fast() {
+                Ok(updates) => println!("Found {} updates", updates.len()),
+                Err(e) => panic!("Failed to check updates: {e}"),
+            }
         }
     }
 
@@ -952,7 +954,10 @@ mod tests {
     #[test]
     fn test_get_package_counts() {
         if crate::core::paths::pacman_local_dir().exists() {
-            let (total, explicit, deps) = get_counts_fast().expect("Failed to get counts");
+            let (total, explicit, deps) = match get_counts_fast() {
+                Ok(counts) => counts,
+                Err(e) => panic!("Failed to get counts: {e}"),
+            };
             assert!(total > 0);
             // On some test systems, explicit might be 0 if only deps are present
             // but usually at least some are explicit. We change to total >= explicit + deps
