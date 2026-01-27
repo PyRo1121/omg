@@ -464,6 +464,10 @@ Auto-generated from git history with git-cliff.
 
 Auto-generated from git history with git-cliff.
 
+- Update changelog [skip ci]
+
+Auto-generated from git history with git-cliff.
+
 - Add Phase 3 Task 5 tracing conversion summary
 - Task 2 summary - RuntimeManager trait removal
 - Phase 3 architecture audit
