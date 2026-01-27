@@ -2,6 +2,28 @@
 //!
 //! This module provides pre-built, styled UI components that can be used
 //! across all CLI commands for consistent visual design.
+//!
+//! ## Generic Parameter Rationale
+//!
+//! All component functions use a generic `<M>` parameter and return `Cmd<M>`.
+//! This is **required by the Bubble Tea/Elm Architecture framework** for:
+//!
+//! 1. **Batching**: Components must be batchable with message-producing commands:
+//!    ```rust
+//!    Cmd::batch([
+//!        Components::loading("msg"),           // Cmd<InstallMsg>
+//!        Cmd::Exec(|| InstallMsg::Complete)    // Cmd<InstallMsg>
+//!    ])
+//!    ```
+//!
+//! 2. **Dual Usage**: Same components work in both contexts:
+//!    - Standalone: `Cmd<()>` for simple output
+//!    - Models: `Cmd<ModelMsg>` for state machines
+//!
+//! 3. **Type Safety**: Generic ensures all batched commands share message type
+//!
+//! The generic is a phantom type parameter resolved at compile time (zero cost).
+//! Do not remove these generics - they're essential for framework correctness.
 
 use crate::cli::tea::Cmd;
 
