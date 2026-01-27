@@ -3,7 +3,7 @@
 //! These benchmarks measure the performance of critical operations
 //! to ensure Phase 3 architectural changes haven't introduced regressions.
 
-use criterion::{criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
 use std::time::Duration;
 
@@ -25,7 +25,9 @@ fn bench_search(c: &mut Criterion) {
             &term,
             |b, &term| {
                 b.iter(|| {
-                    let _ = black_box(package_managers::pacman_db::search_sync_fast(black_box(term)));
+                    let _ = black_box(package_managers::pacman_db::search_sync_fast(black_box(
+                        term,
+                    )));
                 });
             },
         );
@@ -35,7 +37,9 @@ fn bench_search(c: &mut Criterion) {
             &term,
             |b, &term| {
                 b.iter(|| {
-                    let _ = black_box(package_managers::pacman_db::search_local_cached(black_box(term)));
+                    let _ = black_box(package_managers::pacman_db::search_local_cached(black_box(
+                        term,
+                    )));
                 });
             },
         );
@@ -78,15 +82,11 @@ fn bench_unified_search(c: &mut Criterion) {
     let search_terms = vec!["rust", "python", "vim"];
 
     for term in search_terms {
-        group.bench_with_input(
-            BenchmarkId::new("search_sync", term),
-            &term,
-            |b, &term| {
-                b.iter(|| {
-                    let _ = black_box(package_managers::search_sync(black_box(term)));
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("search_sync", term), &term, |b, &term| {
+            b.iter(|| {
+                let _ = black_box(package_managers::search_sync(black_box(term)));
+            });
+        });
     }
 
     group.finish();

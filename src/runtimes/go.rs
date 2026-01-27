@@ -98,7 +98,11 @@ impl GoManager {
             return self.use_version(&version);
         }
 
-        println!("{} Installing Go {}...\n", "OMG".cyan().bold(), version.yellow());
+        println!(
+            "{} Installing Go {}...\n",
+            "OMG".cyan().bold(),
+            version.yellow()
+        );
 
         let arch = Self::detect_architecture()?;
         let filename = format!("go{version}.linux-{arch}.tar.gz");
@@ -162,7 +166,10 @@ impl GoManager {
             return Ok(());
         }
 
-        if self.current_version().is_some_and(|current| current == version) {
+        if self
+            .current_version()
+            .is_some_and(|current| current == version)
+        {
             let _ = fs::remove_file(&self.current_link);
         }
 

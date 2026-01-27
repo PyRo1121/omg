@@ -72,7 +72,9 @@ impl BunManager {
             .into_iter()
             .filter_map(|r| {
                 // Tags are like "bun-v1.0.0"
-                let version = r.tag_name.strip_prefix("bun-v")
+                let version = r
+                    .tag_name
+                    .strip_prefix("bun-v")
                     .or_else(|| r.tag_name.strip_prefix('v'))
                     .unwrap_or(&r.tag_name);
 
@@ -98,7 +100,8 @@ impl BunManager {
         let alias = normalize_version(alias);
         if alias == "latest" {
             let versions = self.list_available().await?;
-            versions.first()
+            versions
+                .first()
                 .map(|v| v.version.clone())
                 .context("No Bun versions found upstream")
         } else {
@@ -166,7 +169,10 @@ impl BunManager {
             return Ok(());
         }
 
-        if self.current_version().is_some_and(|current| current == version) {
+        if self
+            .current_version()
+            .is_some_and(|current| current == version)
+        {
             let _ = fs::remove_file(&self.current_link);
         }
 
