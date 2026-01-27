@@ -1,6 +1,6 @@
 [package]
 name = "omg"
-version = "0.1.152"
+version = "0.1.164"
 edition = "2024"
 rust-version = "1.92"
 description = "The Fastest Unified Package Manager for Arch Linux + All Language Runtimes"
@@ -139,6 +139,7 @@ alpm-pkginfo = { git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", p
 
 # Process execution
 which = "8.0"
+wait-timeout = "0.2"
 
 # Semver handling
 semver = "1.0.27"
