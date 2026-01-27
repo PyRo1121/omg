@@ -15,7 +15,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use super::common::{
-    download_with_progress, extract_tar_xz, get_current_version, list_installed_versions,
+    download_with_progress, extract_tar_xz,
     normalize_version, print_already_installed, print_installed, print_using, set_current_version,
 };
 use crate::core::http::download_client;
@@ -65,15 +65,6 @@ impl NodeManager {
             .json()
             .await
             .context("Failed to parse Node.js version list from nodejs.org")
-    }
-
-    pub fn list_installed(&self) -> Result<Vec<String>> {
-        list_installed_versions(&self.versions_dir)
-    }
-
-    #[must_use]
-    pub fn current_version(&self) -> Option<String> {
-        get_current_version(&self.versions_dir)
     }
 
     /// Resolve version alias (latest, lts) to actual version number
@@ -164,28 +155,10 @@ impl NodeManager {
         print_using("Node.js", &version, &self.bin_dir());
         Ok(())
     }
-
-    /// Uninstall a version
-    pub fn uninstall(&self, version: &str) -> Result<()> {
-        let version = normalize_version(version);
-        let version_dir = self.versions_dir.join(&version);
-
-        if !version_dir.exists() {
-            println!("{} Node.js {} is not installed", "→".dimmed(), version);
-            return Ok(());
-        }
-
-        if let Some(current) = self.current_version()
-            && current == version
-        {
-            let _ = fs::remove_file(&self.current_link);
-        }
-
-        fs::remove_dir_all(&version_dir)?;
-        println!("{} Node.js {} uninstalled", "✓".green(), version);
-        Ok(())
-    }
 }
+
+// Generate common runtime manager methods (list_installed, current_version, uninstall)
+crate::impl_runtime_common!(NodeManager, "Node.js");
 
 impl Default for NodeManager {
     fn default() -> Self {

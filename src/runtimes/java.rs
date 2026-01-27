@@ -16,7 +16,7 @@ use owo_colors::OwoColorize;
 use serde::Deserialize;
 
 use super::common::{
-    download_with_progress, extract_tar_gz, get_current_version, list_installed_versions,
+    download_with_progress, extract_tar_gz,
     print_already_installed, print_installed, set_current_version,
 };
 use crate::core::http::download_client;
@@ -97,15 +97,6 @@ impl JavaManager {
         Ok(versions)
     }
 
-    pub fn list_installed(&self) -> Result<Vec<String>> {
-        list_installed_versions(&self.versions_dir)
-    }
-
-    #[must_use]
-    pub fn current_version(&self) -> Option<String> {
-        get_current_version(&self.versions_dir)
-    }
-
     /// Install Java - PURE RUST, NO SUBPROCESS
     pub async fn install(&self, version: &str) -> Result<()> {
         let version_dir = self.versions_dir.join(version);
@@ -180,25 +171,10 @@ impl JavaManager {
 
         Ok(())
     }
-
-    /// Uninstall a version
-    pub fn uninstall(&self, version: &str) -> Result<()> {
-        let version_dir = self.versions_dir.join(version);
-
-        if !version_dir.exists() {
-            println!("{} Java {version} is not installed", "→".dimmed());
-            return Ok(());
-        }
-
-        if self.current_version().as_deref() == Some(version) {
-            let _ = fs::remove_file(&self.current_link);
-        }
-
-        fs::remove_dir_all(&version_dir)?;
-        println!("{} Java {version} uninstalled", "✓".green());
-        Ok(())
-    }
 }
+
+// Generate common runtime manager methods (list_installed, current_version, uninstall)
+crate::impl_runtime_common!(JavaManager, "Java");
 
 impl Default for JavaManager {
     fn default() -> Self {

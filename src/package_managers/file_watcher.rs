@@ -47,6 +47,10 @@ pub fn clear_dpkg_status_dirty() {
 /// File watcher handle - drop to stop watching
 pub struct DebianFileWatcher {
     _watcher: RecommendedWatcher,
+    /// Shutdown channel to signal task termination
+    shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
+    /// Background task handle for clean shutdown
+    task_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl DebianFileWatcher {
@@ -79,46 +83,101 @@ impl DebianFileWatcher {
             watcher.watch(dpkg_status, RecursiveMode::NonRecursive)?;
         }
 
-        // Spawn event handler task
-        tokio::spawn(async move {
+        // Create shutdown channel for clean task termination
+        let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel();
+
+        // Spawn event handler task with shutdown support
+        let task_handle = tokio::spawn(async move {
             let mut debounce_apt = tokio::time::Instant::now();
             let mut debounce_dpkg = tokio::time::Instant::now();
             let debounce_duration = Duration::from_secs(1);
 
-            while let Some(event) = rx.recv().await {
-                // Only care about modify/create/delete events
-                match event.kind {
-                    EventKind::Modify(_) | EventKind::Create(_) | EventKind::Remove(_) => {}
-                    _ => continue,
-                }
+            loop {
+                tokio::select! {
+                    // Shutdown signal received
+                    _ = &mut shutdown_rx => {
+                        tracing::debug!("File watcher shutting down gracefully");
+                        break;
+                    }
+                    // File system event received
+                    Some(event) = rx.recv() => {
+                        // Only care about modify/create/delete events
+                        match event.kind {
+                            EventKind::Modify(_) | EventKind::Create(_) | EventKind::Remove(_) => {}
+                            _ => continue,
+                        }
 
-                for path in &event.paths {
-                    let path_str = path.to_string_lossy();
+                        for path in &event.paths {
+                            let path_str = path.to_string_lossy();
 
-                    // Check if it's an apt lists change
-                    if path_str.contains("/var/lib/apt/lists") {
-                        let now = tokio::time::Instant::now();
-                        if now.duration_since(debounce_apt) > debounce_duration {
-                            debounce_apt = now;
-                            DEBIAN_INDEX_DIRTY.store(true, Ordering::Relaxed);
-                            tracing::debug!("Apt lists changed, marking index dirty");
+                            // Check if it's an apt lists change
+                            if path_str.contains("/var/lib/apt/lists") {
+                                let now = tokio::time::Instant::now();
+                                if now.duration_since(debounce_apt) > debounce_duration {
+                                    debounce_apt = now;
+                                    DEBIAN_INDEX_DIRTY.store(true, Ordering::Relaxed);
+                                    tracing::debug!("Apt lists changed, marking index dirty");
+                                }
+                            }
+
+                            // Check if it's a dpkg status change
+                            if path_str.contains("/var/lib/dpkg/status") {
+                                let now = tokio::time::Instant::now();
+                                if now.duration_since(debounce_dpkg) > debounce_duration {
+                                    debounce_dpkg = now;
+                                    DPKG_STATUS_DIRTY.store(true, Ordering::Relaxed);
+                                    tracing::debug!("Dpkg status changed, marking dirty");
+                                }
+                            }
                         }
                     }
-
-                    // Check if it's a dpkg status change
-                    if path_str.contains("/var/lib/dpkg/status") {
-                        let now = tokio::time::Instant::now();
-                        if now.duration_since(debounce_dpkg) > debounce_duration {
-                            debounce_dpkg = now;
-                            DPKG_STATUS_DIRTY.store(true, Ordering::Relaxed);
-                            tracing::debug!("Dpkg status changed, marking dirty");
-                        }
+                    // Channel closed (all senders dropped)
+                    else => {
+                        tracing::debug!("File watcher channel closed, terminating");
+                        break;
                     }
                 }
             }
         });
 
-        Ok(Self { _watcher: watcher })
+        Ok(Self {
+            _watcher: watcher,
+            shutdown_tx: Some(shutdown_tx),
+            task_handle: Some(task_handle),
+        })
+    }
+}
+
+impl Drop for DebianFileWatcher {
+    fn drop(&mut self) {
+        // Send shutdown signal to background task
+        if let Some(shutdown_tx) = self.shutdown_tx.take() {
+            let _ = shutdown_tx.send(());
+            tracing::debug!("Sent shutdown signal to file watcher task");
+        }
+
+        // Wait for task to complete gracefully (non-blocking)
+        if let Some(handle) = self.task_handle.take() {
+            // Try to get a runtime handle to block on task completion
+            // If we're in a tokio runtime, block until task finishes
+            // If not, the task will be aborted when the handle is dropped
+            if let Ok(runtime_handle) = tokio::runtime::Handle::try_current() {
+                if let Ok(result) = runtime_handle.block_on(async {
+                    tokio::time::timeout(Duration::from_secs(5), handle).await
+                }) {
+                    if let Err(e) = result {
+                        tracing::warn!("File watcher task failed during shutdown: {e}");
+                    } else {
+                        tracing::debug!("File watcher task shut down cleanly");
+                    }
+                } else {
+                    tracing::warn!("File watcher task did not shut down within 5 seconds");
+                }
+            } else {
+                // Outside tokio runtime - task will be aborted when handle drops
+                tracing::debug!("File watcher task will terminate asynchronously");
+            }
+        }
     }
 }
 

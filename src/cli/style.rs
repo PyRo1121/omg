@@ -150,7 +150,7 @@ pub fn colors_enabled() -> bool {
 /// Check if we're in a TTY
 #[must_use]
 pub fn is_tty() -> bool {
-    console::user_attended() && console::user_attended()
+    console::user_attended()
 }
 
 /// Check if unicode icons should be used

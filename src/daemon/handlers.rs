@@ -159,15 +159,23 @@ async fn handle_debian_search(
     query: String,
     limit: Option<usize>,
 ) -> Response {
+    // METRICS: Track search requests
+    GLOBAL_METRICS.inc_search_requests();
+
     let limit = limit.unwrap_or(DEFAULT_SEARCH_LIMIT).min(MAX_SEARCH_LIMIT);
 
     // Check cache first (Arc clone is cheap - just pointer copy)
     if let Some(cached) = state.cache.get_debian(&query) {
+        // METRICS: Cache hit
+        GLOBAL_METRICS.inc_cache_hits();
         return Response::Success {
             id,
             result: ResponseResult::DebianSearch(cached.iter().take(limit).cloned().collect()),
         };
     }
+
+    // METRICS: Cache miss - will perform search
+    GLOBAL_METRICS.inc_cache_misses();
 
     // Run search in blocking task
     #[cfg(any(feature = "debian", feature = "debian-pure"))]
@@ -197,22 +205,17 @@ async fn handle_debian_search(
     match results {
         Ok(Ok(pkgs)) => {
             let results: Vec<PackageInfo> = pkgs.into_iter().take(limit).collect();
-            state.cache.insert_debian(query, results.clone());
+            let results = Arc::new(results);
+            state.cache.insert_debian_arc(query, Arc::clone(&results));
             Response::Success {
                 id,
-                result: ResponseResult::DebianSearch(results),
+                result: ResponseResult::DebianSearch(
+                    Arc::try_unwrap(results).unwrap_or_else(|arc| (*arc).clone())
+                ),
             }
         }
-        Ok(Err(e)) => Response::Error {
-            id,
-            code: error_codes::INTERNAL_ERROR,
-            message: format!("Debian search failed: {e}"),
-        },
-        Err(e) => Response::Error {
-            id,
-            code: error_codes::INTERNAL_ERROR,
-            message: format!("Debian search task panicked: {e}"),
-        },
+        Ok(Err(e)) => internal_error(id, format!("Debian search failed: {e}")),
+        Err(e) => internal_error(id, format!("Debian search task panicked: {e}")),
     }
 }
 
@@ -244,6 +247,11 @@ fn handle_metrics(id: RequestId) -> Response {
         security_audit_requests: snapshot.security_audit_requests,
         bytes_received: snapshot.bytes_received,
         bytes_sent: snapshot.bytes_sent,
+        cache_hits: snapshot.cache_hits,
+        cache_misses: snapshot.cache_misses,
+        search_requests: snapshot.search_requests,
+        info_requests: snapshot.info_requests,
+        status_requests: snapshot.status_requests,
     };
 
     Response::Success {
@@ -336,29 +344,24 @@ async fn handle_search(
     query: String,
     limit: Option<usize>,
 ) -> Response {
+    // METRICS: Track search requests
+    GLOBAL_METRICS.inc_search_requests();
+
     // SECURITY: Validate search query to prevent injection attacks
     // Allow more flexible search queries but limit length
     if query.len() > MAX_QUERY_LENGTH {
-        let msg = format!("Search query too long (max {MAX_QUERY_LENGTH} characters)");
-        audit_log(
-            AuditEventType::PolicyViolation,
-            AuditSeverity::Warning,
-            "daemon_handler",
-            &msg,
-        );
-        GLOBAL_METRICS.inc_validation_failures();
-        GLOBAL_METRICS.inc_requests_failed();
-        return Response::Error {
+        return validation_error(
             id,
-            code: error_codes::INVALID_PARAMS,
-            message: msg,
-        };
+            format!("Search query too long (max {MAX_QUERY_LENGTH} characters)"),
+        );
     }
 
     let limit = limit.unwrap_or(DEFAULT_SEARCH_LIMIT).min(MAX_SEARCH_LIMIT); // Cap limit to prevent resource exhaustion
 
     // Check cache first (Arc clone is cheap - just pointer copy)
     if let Some(cached) = state.cache.get(&query) {
+        // METRICS: Cache hit
+        GLOBAL_METRICS.inc_cache_hits();
         // Avoid intermediate allocation by calculating total from cached length
         let total = cached.len().min(limit);
         let packages: Vec<_> = cached.iter().take(limit).cloned().collect();
@@ -367,6 +370,9 @@ async fn handle_search(
             result: ResponseResult::Search(SearchResult { packages, total }),
         };
     }
+
+    // METRICS: Cache miss - will perform search
+    GLOBAL_METRICS.inc_cache_misses();
 
     // 1. Instant Official Search (Sub-millisecond)
     // Run in blocking task to avoid stalling the async runtime during heavy search
@@ -378,23 +384,18 @@ async fn handle_search(
 
     let official = match official {
         Ok(res) => res,
-        Err(e) => {
-            return Response::Error {
-                id,
-                code: error_codes::INTERNAL_ERROR,
-                message: format!("Search task failed: {e}"),
-            };
-        }
+        Err(e) => return internal_error(id, format!("Search task failed: {e}")),
     };
 
     // Cache results and return (Arc eliminates expensive clone)
+    let official = Arc::new(official);
     let total = official.len();
-    state.cache.insert(query, official.clone());
+    state.cache.insert_arc(query, Arc::clone(&official));
 
     Response::Success {
         id,
         result: ResponseResult::Search(SearchResult {
-            packages: official,
+            packages: Arc::try_unwrap(official).unwrap_or_else(|arc| (*arc).clone()),
             total,
         }),
     }
@@ -403,26 +404,18 @@ async fn handle_search(
 /// Handle info request
 #[inline]
 async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) -> Response {
+    // METRICS: Track info requests
+    GLOBAL_METRICS.inc_info_requests();
+
     // SECURITY: Validate package name to prevent command injection
     if let Err(e) = crate::core::security::validate_package_name(&package) {
-        let msg = format!("Invalid package name: {e}");
-        audit_log(
-            AuditEventType::PolicyViolation,
-            AuditSeverity::Warning,
-            "daemon_handler",
-            &msg,
-        );
-        GLOBAL_METRICS.inc_validation_failures();
-        GLOBAL_METRICS.inc_requests_failed();
-        return Response::Error {
-            id,
-            code: error_codes::INVALID_PARAMS,
-            message: msg,
-        };
+        return validation_error(id, format!("Invalid package name: {e}"));
     }
 
     // 1. Check cache first (Arc clone is cheap - just pointer copy)
     if let Some(cached) = state.cache.get_info(&package) {
+        // METRICS: Cache hit
+        GLOBAL_METRICS.inc_cache_hits();
         return Response::Success {
             id,
             result: ResponseResult::Info(
@@ -432,20 +425,20 @@ async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) ->
     }
 
     if state.cache.is_info_miss(&package) {
-        return Response::Error {
-            id,
-            code: error_codes::PACKAGE_NOT_FOUND,
-            message: format!("Package not found: {package}"),
-        };
+        return not_found_error(id, format!("Package not found: {package}"));
     }
+
+    // METRICS: Cache miss - will fetch package info
+    GLOBAL_METRICS.inc_cache_misses();
 
     // 2. Try official index (Instant hash lookup)
     if let Some(pkg) = state.index.get(&package) {
-        let info = pkg.clone();
-        state.cache.insert_info(info.clone());
+        // Clone once, then use Arc for cheap sharing
+        let info = Arc::new(pkg.clone());
+        state.cache.insert_info_arc(Arc::clone(&info));
         return Response::Success {
             id,
-            result: ResponseResult::Info(info),
+            result: ResponseResult::Info(Arc::try_unwrap(info).unwrap_or_else(|arc| (*arc).clone())),
         };
     }
 
@@ -510,8 +503,13 @@ async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) ->
 
 /// Handle status request
 async fn handle_status(state: Arc<DaemonState>, id: RequestId) -> Response {
+    // METRICS: Track status requests
+    GLOBAL_METRICS.inc_status_requests();
+
     // 1. Check MEMORY cache first (instant - sub-microsecond, Arc clone is cheap)
     if let Some(cached) = state.cache.get_status() {
+        // METRICS: Cache hit (memory)
+        GLOBAL_METRICS.inc_cache_hits();
         return Response::Success {
             id,
             result: ResponseResult::Status(
@@ -527,6 +525,8 @@ async fn handle_status(state: Arc<DaemonState>, id: RequestId) -> Response {
         tokio::task::spawn_blocking(move || state_clone.persistent.get_status()).await;
 
     if let Ok(Ok(Some(cached))) = cached_result {
+        // METRICS: Cache hit (persistent)
+        GLOBAL_METRICS.inc_cache_hits();
         // Promote to memory cache for next hit (Arc avoids clone)
         let status_copy = cached.clone();
         state.cache.update_status(cached);
@@ -535,6 +535,9 @@ async fn handle_status(state: Arc<DaemonState>, id: RequestId) -> Response {
             result: ResponseResult::Status(status_copy),
         };
     }
+
+    // METRICS: Cache miss - need to query system
+    GLOBAL_METRICS.inc_cache_misses();
 
     // 3. Query system backends (Heavy I/O)
     let state_clone = Arc::clone(&state);
@@ -585,16 +588,8 @@ async fn handle_status(state: Arc<DaemonState>, id: RequestId) -> Response {
                 result: ResponseResult::Status(res_copy),
             }
         }
-        Ok(Err(e)) => Response::Error {
-            id,
-            code: error_codes::INTERNAL_ERROR,
-            message: format!("Failed to get system status: {e}"),
-        },
-        Err(e) => Response::Error {
-            id,
-            code: error_codes::INTERNAL_ERROR,
-            message: format!("Status task panicked: {e}"),
-        },
+        Ok(Err(e)) => internal_error(id, format!("Failed to get system status: {e}")),
+        Err(e) => internal_error(id, format!("Status task panicked: {e}")),
     }
 }
 
@@ -737,16 +732,8 @@ async fn handle_list_explicit(state: Arc<DaemonState>, id: RequestId) -> Respons
                 }),
             }
         }
-        Ok(Err(e)) => Response::Error {
-            id,
-            code: error_codes::INTERNAL_ERROR,
-            message: format!("Failed to list explicit packages: {e}"),
-        },
-        Err(e) => Response::Error {
-            id,
-            code: error_codes::INTERNAL_ERROR,
-            message: format!("List explicit task panicked: {e}"),
-        },
+        Ok(Err(e)) => internal_error(id, format!("Failed to list explicit packages: {e}")),
+        Err(e) => internal_error(id, format!("List explicit task panicked: {e}")),
     }
 }
 
@@ -794,15 +781,51 @@ async fn handle_explicit_count(state: Arc<DaemonState>, id: RequestId) -> Respon
                 result: ResponseResult::ExplicitCount(count),
             }
         }
-        Ok(Err(e)) => Response::Error {
-            id,
-            code: error_codes::INTERNAL_ERROR,
-            message: format!("Failed to count explicit packages: {e}"),
-        },
-        Err(e) => Response::Error {
-            id,
-            code: error_codes::INTERNAL_ERROR,
-            message: format!("Explicit count task panicked: {e}"),
-        },
+        Ok(Err(e)) => internal_error(id, format!("Failed to count explicit packages: {e}")),
+        Err(e) => internal_error(id, format!("Explicit count task panicked: {e}")),
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Handler Dispatch Helpers - Reduce Boilerplate
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Create a validation error response with logging and metrics
+#[inline]
+fn validation_error(id: RequestId, message: impl Into<String>) -> Response {
+    let msg = message.into();
+    audit_log(
+        AuditEventType::PolicyViolation,
+        AuditSeverity::Warning,
+        "daemon_handler",
+        &msg,
+    );
+    GLOBAL_METRICS.inc_validation_failures();
+    GLOBAL_METRICS.inc_requests_failed();
+    Response::Error {
+        id,
+        code: error_codes::INVALID_PARAMS,
+        message: msg,
+    }
+}
+
+/// Create an internal error response with metrics
+#[inline]
+fn internal_error(id: RequestId, message: impl Into<String>) -> Response {
+    GLOBAL_METRICS.inc_requests_failed();
+    Response::Error {
+        id,
+        code: error_codes::INTERNAL_ERROR,
+        message: message.into(),
+    }
+}
+
+/// Create a not found error response
+#[inline]
+fn not_found_error(id: RequestId, message: impl Into<String>) -> Response {
+    Response::Error {
+        id,
+        code: error_codes::PACKAGE_NOT_FOUND,
+        message: message.into(),
     }
 }

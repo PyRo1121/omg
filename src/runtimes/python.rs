@@ -14,7 +14,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use super::common::{
-    download_with_progress, extract_tar_gz, get_current_version, list_installed_versions,
+    download_with_progress, extract_tar_gz,
     normalize_version, print_already_installed, print_installed, print_using, set_current_version,
     version_cmp,
 };
@@ -141,15 +141,6 @@ impl PythonManager {
         }
     }
 
-    pub fn list_installed(&self) -> Result<Vec<String>> {
-        list_installed_versions(&self.versions_dir)
-    }
-
-    #[must_use]
-    pub fn current_version(&self) -> Option<String> {
-        get_current_version(&self.versions_dir)
-    }
-
     /// Install Python - PURE RUST, NO SUBPROCESS
     pub async fn install(&self, version: &str) -> Result<()> {
         let version = normalize_version(version);
@@ -234,28 +225,10 @@ impl PythonManager {
         print_using("Python", &version, &self.bin_dir());
         Ok(())
     }
-
-    /// Uninstall a version
-    pub fn uninstall(&self, version: &str) -> Result<()> {
-        let version = normalize_version(version);
-        let version_dir = self.versions_dir.join(&version);
-
-        if !version_dir.exists() {
-            println!("{} Python {} is not installed", "→".dimmed(), version);
-            return Ok(());
-        }
-
-        if let Some(current) = self.current_version()
-            && current == version
-        {
-            let _ = fs::remove_file(&self.current_link);
-        }
-
-        fs::remove_dir_all(&version_dir)?;
-        println!("{} Python {} uninstalled", "✓".green(), version);
-        Ok(())
-    }
 }
+
+// Generate common runtime manager methods (list_installed, current_version, uninstall)
+crate::impl_runtime_common!(PythonManager, "Python");
 
 impl Default for PythonManager {
     fn default() -> Self {

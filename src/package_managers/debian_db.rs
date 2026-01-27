@@ -15,6 +15,7 @@ use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::LazyLock;
 
 use ahash::AHashSet;
@@ -26,6 +27,19 @@ use rayon::prelude::*;
 
 use crate::core::paths;
 use crate::core::{Package, PackageSource};
+
+/// TTL for cache eviction safety net (30 minutes)
+const CACHE_TTL_SECS: u64 = 30 * 60;
+
+/// Check if cache is expired based on TTL (30-minute safety net)
+fn is_cache_expired(last_accessed: Option<std::time::SystemTime>) -> bool {
+    if let Some(last_access) = last_accessed {
+        if let Ok(elapsed) = std::time::SystemTime::now().duration_since(last_access) {
+            return elapsed.as_secs() > CACHE_TTL_SECS;
+        }
+    }
+    false
+}
 
 /// Global cache for Debian package index
 static DEBIAN_INDEX_CACHE: LazyLock<RwLock<DebianIndexCache>> =
@@ -52,6 +66,8 @@ struct DebianIndexCache {
     package_offsets: Vec<usize>,
     /// Cached set of installed package names
     installed_set: AHashSet<String>,
+    /// Last access time for TTL-based eviction (30-minute safety net)
+    last_accessed: Option<std::time::SystemTime>,
 }
 
 /// Cache for /var/lib/dpkg/status to avoid expensive reparsing
@@ -61,6 +77,8 @@ struct DpkgStatusCache {
     installed_set: AHashSet<String>,
     status_mtime: Option<std::time::SystemTime>,
     extended_states_mtime: Option<std::time::SystemTime>,
+    /// Last access time for TTL-based eviction (30-minute safety net)
+    last_accessed: Option<std::time::SystemTime>,
 }
 
 /// Global mmap-based index for zero-copy access (optional, used when available)
@@ -71,6 +89,9 @@ static DEBIAN_MMAP_INDEX: LazyLock<RwLock<Option<DebianMmapIndex>>> =
 /// Provides sub-millisecond access to package metadata without deserialization
 pub struct DebianMmapIndex {
     mmap: Mmap,
+    /// Last access time (Unix timestamp) for TTL-based eviction
+    /// AtomicU64 allows lock-free updates from read-only methods
+    last_accessed: AtomicU64,
 }
 
 impl DebianMmapIndex {
@@ -88,7 +109,16 @@ impl DebianMmapIndex {
         // and use more RAM for large Debian package databases (>500MB)
         let mmap = unsafe { Mmap::map(&file)? };
 
-        Ok(Self { mmap })
+        // Initialize last_accessed to current time
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        Ok(Self {
+            mmap,
+            last_accessed: AtomicU64::new(now),
+        })
     }
 
     /// Access the archived data with zero-copy
@@ -112,6 +142,37 @@ impl DebianMmapIndex {
     /// Get all packages (zero-copy reference)
     pub fn packages(&self) -> Result<&rkyv::vec::ArchivedVec<rkyv::Archived<DebianPackage>>> {
         Ok(&self.archive()?.packages)
+    }
+
+    /// Check if the mmap is expired based on TTL (30 minutes)
+    pub fn is_expired(&self) -> bool {
+        let last = self.last_accessed.load(Ordering::Relaxed);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        now.saturating_sub(last) > CACHE_TTL_SECS
+    }
+
+    /// Update last accessed time (called on each access)
+    pub fn touch(&self) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        self.last_accessed.store(now, Ordering::Relaxed);
+    }
+}
+
+impl Drop for DebianMmapIndex {
+    fn drop(&mut self) {
+        // Mmap::drop() will automatically unmap the memory and close the file descriptor
+        // This explicit Drop impl documents the cleanup behavior for memory leak audits
+        tracing::debug!(
+            "Unmapping Debian package index (size: {} bytes)",
+            self.mmap.len()
+        );
     }
 }
 
@@ -196,12 +257,22 @@ pub fn ensure_index_loaded() -> Result<()> {
 
     // Check if we need to update
     let needs_update = {
-        let cache = DEBIAN_INDEX_CACHE.read();
-        if cache.index.is_none() {
+        let mut cache = DEBIAN_INDEX_CACHE.write();
+
+        // Clear cache if TTL expired (safety net for unbounded growth)
+        if is_cache_expired(cache.last_accessed) {
+            *cache = DebianIndexCache::default();
+            true
+        } else if cache.index.is_none() {
             true // No index yet
         } else {
             // Check if any files changed or were added/removed
-            cache.file_mtimes != current_files
+            let needs_update = cache.file_mtimes != current_files;
+            if !needs_update {
+                // Cache hit - update last accessed
+                cache.last_accessed = Some(std::time::SystemTime::now());
+            }
+            needs_update
         }
     };
 
@@ -248,6 +319,15 @@ pub fn ensure_index_loaded() -> Result<()> {
     // Try to load the mmap index for zero-copy access
     if mmap_path.exists() {
         let mut mmap_guard = DEBIAN_MMAP_INDEX.write();
+
+        // Clear expired mmap (TTL-based cleanup for 500MB+ resource leak)
+        if let Some(ref mmap) = *mmap_guard {
+            if mmap.is_expired() {
+                tracing::debug!("Clearing expired Debian mmap index (TTL exceeded)");
+                *mmap_guard = None;
+            }
+        }
+
         if mmap_guard.is_none()
             && let Ok(mmap_index) = DebianMmapIndex::open(&mmap_path)
         {
@@ -288,17 +368,42 @@ pub fn ensure_index_loaded() -> Result<()> {
         let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&index)
             .map_err(|e| anyhow::anyhow!("Serialization error: {e}"))?;
 
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
         // Save compressed version for space efficiency
         let compressed = lz4_flex::compress_prepend_size(&bytes);
-        fs::write(&cache_path, compressed)?;
+        
+        // Atomic write for compressed cache
+        let parent = cache_path.parent().unwrap_or_else(|| Path::new("."));
+        let mut temp_cache = NamedTempFile::new_in(parent)
+            .context("Failed to create temporary cache file")?;
+        temp_cache.write_all(&compressed)
+            .context("Failed to write compressed cache data")?;
+        temp_cache.persist(&cache_path)
+            .context("Failed to persist compressed cache file")?;
 
         // Also save uncompressed version for zero-copy mmap access
         let mmap_path = paths::cache_dir().join("debian_index_v5.mmap");
-        fs::write(&mmap_path, &bytes)?;
+        
+        // Atomic write for mmap index
+        // CRITICAL: Must use atomic rename to avoid crashing readers holding an mmap
+        let mut temp_mmap = NamedTempFile::new_in(parent)
+            .context("Failed to create temporary mmap file")?;
+        temp_mmap.write_all(&bytes)
+            .context("Failed to write mmap data")?;
+        temp_mmap.persist(&mmap_path)
+            .context("Failed to persist mmap file")?;
 
         // Load the mmap index for zero-copy access
         if let Ok(mmap_index) = DebianMmapIndex::open(&mmap_path) {
             let mut mmap_guard = DEBIAN_MMAP_INDEX.write();
+
+            // Clear existing mmap before loading new one
+            if mmap_guard.is_some() {
+                tracing::debug!("Replacing existing Debian mmap index with updated version");
+            }
+
             *mmap_guard = Some(mmap_index);
         }
     }
@@ -342,6 +447,7 @@ pub fn ensure_index_loaded() -> Result<()> {
     cache.search_buffer = search_buffer;
     cache.package_offsets = package_offsets;
     cache.installed_set = installed_set;
+    cache.last_accessed = Some(std::time::SystemTime::now());
 
     Ok(())
 }
@@ -704,12 +810,17 @@ pub fn list_installed_fast() -> Result<Vec<LocalPackage>> {
 
     // Check cache first
     {
-        let cache = DPKG_STATUS_CACHE.read();
-        if cache.status_mtime == status_mtime
+        let mut cache = DPKG_STATUS_CACHE.write();
+
+        // Clear cache if TTL expired (safety net for unbounded growth)
+        if is_cache_expired(cache.last_accessed) {
+            *cache = DpkgStatusCache::default();
+        } else if cache.status_mtime == status_mtime
             && cache.extended_states_mtime == extended_states_mtime
             && !cache.packages.is_empty()
         {
-            // Cache hit!
+            // Cache hit! Update last accessed
+            cache.last_accessed = Some(std::time::SystemTime::now());
             return Ok(cache.packages.clone());
         }
     }
@@ -785,6 +896,7 @@ pub fn list_installed_fast() -> Result<Vec<LocalPackage>> {
         cache.installed_set = installed_set;
         cache.status_mtime = status_mtime;
         cache.extended_states_mtime = extended_states_mtime;
+        cache.last_accessed = Some(std::time::SystemTime::now());
     }
 
     Ok(packages)
@@ -853,6 +965,26 @@ pub fn get_counts_fast() -> Result<(usize, usize, usize, usize)> {
     let explicit = installed.iter().filter(|p| p.is_explicit).count();
 
     Ok((total, explicit, 0, 0))
+}
+
+/// Cleanup expired memory-mapped indices to prevent resource leaks
+///
+/// Should be called periodically (e.g., every 30 minutes) to free 500MB+ mmaps
+/// that haven't been accessed within the TTL window. This is a safety net for
+/// long-running daemons that may accumulate stale mmap resources.
+pub fn cleanup_expired_mmaps() {
+    let mut mmap_guard = DEBIAN_MMAP_INDEX.write();
+
+    if let Some(ref mmap) = *mmap_guard {
+        if mmap.is_expired() {
+            let size = mmap.mmap.len();
+            tracing::info!(
+                "Cleaning up expired Debian mmap index (size: {} MB)",
+                size / 1024 / 1024
+            );
+            *mmap_guard = None;
+        }
+    }
 }
 
 #[cfg(test)]

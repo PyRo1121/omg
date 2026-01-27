@@ -195,3 +195,101 @@ impl PgpVerifier {
         .context("Signature verification failed")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    #[test]
+    fn test_pgp_verifier_new() {
+        let verifier = PgpVerifier::new();
+        // Should construct successfully even without system keyring
+        assert!(verifier.policy.time().is_none());
+    }
+
+    #[test]
+    fn test_pgp_verifier_default() {
+        let verifier = PgpVerifier::default();
+        // Default should be equivalent to new()
+        assert!(verifier.policy.time().is_none());
+    }
+
+    #[test]
+    fn test_verify_detached_missing_signature() {
+        let verifier = PgpVerifier::new();
+
+        // Create a test file
+        let mut data_file = NamedTempFile::new().unwrap();
+        writeln!(data_file, "test data").unwrap();
+        data_file.flush().unwrap();
+
+        // Non-existent signature file
+        let sig_path = std::path::Path::new("/nonexistent.sig");
+        let keyring_path = std::path::Path::new("/nonexistent.gpg");
+
+        let result = verifier.verify_detached(data_file.path(), sig_path, keyring_path);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_verify_detached_missing_data_file() {
+        let verifier = PgpVerifier::new();
+
+        // Create a temporary signature file (even if invalid)
+        let mut sig_file = NamedTempFile::new().unwrap();
+        writeln!(sig_file, "fake signature").unwrap();
+        sig_file.flush().unwrap();
+
+        let data_path = std::path::Path::new("/nonexistent.data");
+        let keyring_path = std::path::Path::new("/nonexistent.gpg");
+
+        let result = verifier.verify_detached(data_path, sig_file.path(), keyring_path);
+        // Should fail when trying to read data file
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_verify_memory_invalid_signature() {
+        let verifier = PgpVerifier::new();
+        let data = b"test data";
+        let invalid_sig = b"not a real signature";
+
+        let result = verifier.verify_memory(data, invalid_sig);
+        // Should fail with invalid signature format
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_verify_memory_empty_signature() {
+        let verifier = PgpVerifier::new();
+        let data = b"test data";
+        let empty_sig = b"";
+
+        let result = verifier.verify_memory(data, empty_sig);
+        // Should fail with empty signature
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_verify_package_missing_keyring() {
+        let verifier = PgpVerifier::new();
+
+        let mut pkg = NamedTempFile::new().unwrap();
+        writeln!(pkg, "package data").unwrap();
+        pkg.flush().unwrap();
+
+        let mut sig = NamedTempFile::new().unwrap();
+        writeln!(sig, "signature").unwrap();
+        sig.flush().unwrap();
+
+        // This test will check the keyring path validation
+        // On non-Arch systems, the keyring won't exist
+        let result = verifier.verify_package(pkg.path(), sig.path());
+
+        // May succeed on Arch Linux, should fail on other systems
+        // We're just testing that it doesn't panic
+        let _ = result;
+    }
+}

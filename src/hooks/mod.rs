@@ -8,7 +8,6 @@ pub mod completions;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use anyhow::Result;
 use semver::{Version, VersionReq};
@@ -16,6 +15,7 @@ use serde::Deserialize;
 use toml::Value;
 
 use crate::config::Settings;
+use crate::core::runtime_resolver::{mise_available, mise_runtime_bin_path};
 use crate::core::{RuntimeBackend, paths};
 use crate::runtimes::rust::RustToolchainSpec;
 
@@ -549,52 +549,8 @@ fn native_runtime_bin_path(runtime: &str, version: &str) -> Option<PathBuf> {
     }
 }
 
-fn mise_available() -> bool {
-    find_in_path("mise").is_some()
-}
-
-fn mise_runtime_bin_path(runtime: &str, version: &str) -> Option<PathBuf> {
-    let tool_spec = if version.is_empty() {
-        runtime.to_string()
-    } else {
-        format!("{runtime}@{version}")
-    };
-
-    let output = Command::new("mise")
-        .args(["where", "--", &tool_spec])
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let install_dir = PathBuf::from(stdout.trim());
-    if install_dir.as_os_str().is_empty() {
-        return None;
-    }
-
-    let bin_dir = install_dir.join("bin");
-    if bin_dir.exists() {
-        Some(bin_dir)
-    } else if install_dir.exists() {
-        Some(install_dir)
-    } else {
-        None
-    }
-}
-
-fn find_in_path(binary: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    for dir in std::env::split_paths(&path) {
-        let candidate = dir.join(binary);
-        if candidate.exists() {
-            return Some(candidate);
-        }
-    }
-    None
-}
+// Runtime resolution functions (find_in_path, mise_available, mise_runtime_bin_path)
+// moved to core::runtime_resolver module
 
 /// Get active versions for display
 #[must_use]

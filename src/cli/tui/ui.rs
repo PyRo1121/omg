@@ -33,12 +33,8 @@ mod colors {
     pub const ACCENT_ORANGE: Color = Color::Rgb(255, 158, 100);
     pub const ACCENT_RED: Color = Color::Rgb(247, 118, 142);
     pub const ACCENT_MAGENTA: Color = Color::Rgb(187, 154, 247);
-    #[allow(dead_code)]
-    pub const ACCENT_PINK: Color = Color::Rgb(255, 121, 198);
 
     pub const BORDER_NORMAL: Color = Color::Rgb(61, 66, 91);
-    #[allow(dead_code)]
-    pub const BORDER_ACTIVE: Color = Color::Rgb(122, 162, 247);
 }
 
 pub fn draw(f: &mut Frame, app: &App) {

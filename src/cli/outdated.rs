@@ -62,11 +62,10 @@ pub async fn run(security_only: bool, json: bool) -> Result<()> {
         .into_iter()
         .map(|u| {
             let update_type = classify_update(&u.old_version, &u.new_version);
-            // Simple CVE check - in reality would query a vulnerability database
-            let is_security = u.name.contains("openssl")
-                || u.name.contains("glibc")
-                || u.name.contains("linux")
-                || u.name.contains("curl");
+            // TODO: Integrate with CVE database (OSV, GHSA, etc.) for real security detection
+            // Current implementation disabled to prevent false positives/negatives
+            // Example: Would flag 'linux-docs' but miss 'sudo', 'systemd', 'openssh'
+            let is_security = false;  // Placeholder - proper CVE integration needed
 
             OutdatedPackage {
                 name: u.name,
@@ -216,7 +215,6 @@ pub async fn run(security_only: bool, json: bool) -> Result<()> {
     Ok(())
 }
 
-#[allow(dead_code)]
 fn classify_update(old: &str, new: &str) -> UpdateType {
     // Parse semver-like versions
     let old_parts: Vec<_> = old.split('.').collect();

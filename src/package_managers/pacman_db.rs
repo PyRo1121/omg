@@ -28,6 +28,9 @@ use tracing::instrument;
 
 use crate::core::paths;
 
+/// TTL for cache eviction safety net (30 minutes)
+const CACHE_TTL_SECS: u64 = 30 * 60;
+
 /// Global cache for sync databases - parsed once, used forever until invalidated
 static SYNC_DB_CACHE: std::sync::LazyLock<RwLock<DbCache>> =
     std::sync::LazyLock::new(|| RwLock::new(DbCache::default()));
@@ -40,6 +43,9 @@ static LOCAL_DB_CACHE: std::sync::LazyLock<RwLock<LocalDbCache>> =
 struct DbCache {
     packages: HashMap<String, SyncDbPackage>,
     last_modified: Option<SystemTime>,
+    /// Last access time for TTL-based eviction (30-minute safety net)
+    #[serde(skip)]
+    last_accessed: Option<SystemTime>,
 }
 
 fn load_sync_packages(sync_dir: &Path) -> Result<HashMap<String, SyncDbPackage>> {
@@ -72,13 +78,29 @@ fn collect_sync_db_paths(sync_dir: &Path) -> Vec<(PathBuf, String)> {
     if let Ok(entries) = std::fs::read_dir(sync_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
+
+            // Skip non-files and signature files
+            if !path.is_file() {
+                continue;
+            }
+
+            // Only process .db files (not .db.sig or other extensions)
+            if !path
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("db"))
+            {
+                continue;
+            }
+
+            // Extract repo name (file_stem gives us the name without .db)
             let name = path
                 .file_stem()
                 .and_then(|n| n.to_str())
                 .map(str::to_string);
+
+            // Skip standard repos (already added above)
             if let Some(name) = name
                 && !["core", "extra", "multilib"].contains(&name.as_str())
-                && path.is_file()
             {
                 dbs.push((path, name));
             }
@@ -92,6 +114,9 @@ fn collect_sync_db_paths(sync_dir: &Path) -> Vec<(PathBuf, String)> {
 struct LocalDbCache {
     packages: HashMap<String, LocalDbPackage>,
     last_modified: Option<SystemTime>,
+    /// Last access time for TTL-based eviction (30-minute safety net)
+    #[serde(skip)]
+    last_accessed: Option<SystemTime>,
 }
 
 /// A package entry from the sync database
@@ -239,107 +264,155 @@ pub fn parse_sync_db(path: &Path, repo_name: &str) -> Result<HashMap<String, Syn
 
 fn parse_desc_content(content: &str, repo: &str) -> SyncDbPackage {
     // Try V2 first (newer format without MD5SUM - most packages use this now)
-    if let Ok(desc) = alpm_repo_db::desc::RepoDescFileV2::from_str(content) {
-        return SyncDbPackage {
-            name: desc.name.to_string(),
-            version: Version::from_str(&desc.version.to_string())
-                .unwrap_or_else(|_| super::types::zero_version()),
-            desc: desc.description.to_string(),
-            filename: desc.file_name.to_string(),
-            csize: desc.compressed_size,
-            isize: desc.installed_size,
-            url: desc
-                .url
-                .as_ref()
-                .map(std::string::ToString::to_string)
-                .unwrap_or_default(),
-            arch: desc.arch.to_string(),
-            repo: repo.to_string(),
-            licenses: desc.license.iter().map(ToString::to_string).collect(),
-            depends: desc
-                .dependencies
-                .iter()
-                .map(std::string::ToString::to_string)
-                .collect(),
-            makedepends: desc
-                .make_dependencies
-                .iter()
-                .map(std::string::ToString::to_string)
-                .collect(),
-            optdepends: desc
-                .optional_dependencies
-                .iter()
-                .map(std::string::ToString::to_string)
-                .collect(),
-            provides: desc
-                .provides
-                .iter()
-                .map(std::string::ToString::to_string)
-                .collect(),
-            conflicts: desc
-                .conflicts
-                .iter()
-                .map(std::string::ToString::to_string)
-                .collect(),
-            replaces: desc
-                .replaces
-                .iter()
-                .map(std::string::ToString::to_string)
-                .collect(),
-        };
+    // Wrap in catch_unwind because alpm_repo_db can panic on corrupted data
+    // (e.g., PackageRelation::from_str panics on malformed dependency strings)
+    let v2_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        alpm_repo_db::desc::RepoDescFileV2::from_str(content)
+    }));
+
+    match v2_result {
+        Ok(Ok(desc)) => {
+            return SyncDbPackage {
+                name: desc.name.to_string(),
+                version: Version::from_str(&desc.version.to_string())
+                    .unwrap_or_else(|_| super::types::zero_version()),
+                desc: desc.description.to_string(),
+                filename: desc.file_name.to_string(),
+                csize: desc.compressed_size,
+                isize: desc.installed_size,
+                url: desc
+                    .url
+                    .as_ref()
+                    .map(std::string::ToString::to_string)
+                    .unwrap_or_default(),
+                arch: desc.arch.to_string(),
+                repo: repo.to_string(),
+                licenses: desc.license.iter().map(ToString::to_string).collect(),
+                depends: desc
+                    .dependencies
+                    .iter()
+                    .map(std::string::ToString::to_string)
+                    .collect(),
+                makedepends: desc
+                    .make_dependencies
+                    .iter()
+                    .map(std::string::ToString::to_string)
+                    .collect(),
+                optdepends: desc
+                    .optional_dependencies
+                    .iter()
+                    .map(std::string::ToString::to_string)
+                    .collect(),
+                provides: desc
+                    .provides
+                    .iter()
+                    .map(std::string::ToString::to_string)
+                    .collect(),
+                conflicts: desc
+                    .conflicts
+                    .iter()
+                    .map(std::string::ToString::to_string)
+                    .collect(),
+                replaces: desc
+                    .replaces
+                    .iter()
+                    .map(std::string::ToString::to_string)
+                    .collect(),
+            };
+        }
+        Ok(Err(_)) => {
+            // V2 parsing failed normally, try V1 below
+        }
+        Err(panic_info) => {
+            // V2 parsing panicked on corrupted data - log warning and try V1
+            let panic_msg = panic_info
+                .downcast_ref::<String>()
+                .map(String::as_str)
+                .or_else(|| panic_info.downcast_ref::<&str>().copied())
+                .unwrap_or("unknown panic");
+            tracing::warn!(
+                repo = repo,
+                error = panic_msg,
+                "Corrupted package desc in repo (V2 parse panic), trying V1 fallback"
+            );
+        }
     }
 
     // Fallback to V1 (older format with MD5SUM)
-    if let Ok(desc) = alpm_repo_db::desc::RepoDescFileV1::from_str(content) {
-        return SyncDbPackage {
-            name: desc.name.to_string(),
-            version: Version::from_str(&desc.version.to_string())
-                .unwrap_or_else(|_| super::types::zero_version()),
-            desc: desc.description.to_string(),
-            filename: desc.file_name.to_string(),
-            csize: desc.compressed_size,
-            isize: desc.installed_size,
-            url: desc
-                .url
-                .as_ref()
-                .map(std::string::ToString::to_string)
-                .unwrap_or_default(),
-            arch: desc.arch.to_string(),
-            repo: repo.to_string(),
-            licenses: desc.license.iter().map(ToString::to_string).collect(),
-            depends: desc
-                .dependencies
-                .iter()
-                .map(std::string::ToString::to_string)
-                .collect(),
-            makedepends: desc
-                .make_dependencies
-                .iter()
-                .map(std::string::ToString::to_string)
-                .collect(),
-            optdepends: desc
-                .optional_dependencies
-                .iter()
-                .map(std::string::ToString::to_string)
-                .collect(),
-            provides: desc
-                .provides
-                .iter()
-                .map(std::string::ToString::to_string)
-                .collect(),
-            conflicts: desc
-                .conflicts
-                .iter()
-                .map(std::string::ToString::to_string)
-                .collect(),
-            replaces: desc
-                .replaces
-                .iter()
-                .map(std::string::ToString::to_string)
-                .collect(),
-        };
+    // Also wrap in catch_unwind for the same reason
+    let v1_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        alpm_repo_db::desc::RepoDescFileV1::from_str(content)
+    }));
+
+    match v1_result {
+        Ok(Ok(desc)) => {
+            return SyncDbPackage {
+                name: desc.name.to_string(),
+                version: Version::from_str(&desc.version.to_string())
+                    .unwrap_or_else(|_| super::types::zero_version()),
+                desc: desc.description.to_string(),
+                filename: desc.file_name.to_string(),
+                csize: desc.compressed_size,
+                isize: desc.installed_size,
+                url: desc
+                    .url
+                    .as_ref()
+                    .map(std::string::ToString::to_string)
+                    .unwrap_or_default(),
+                arch: desc.arch.to_string(),
+                repo: repo.to_string(),
+                licenses: desc.license.iter().map(ToString::to_string).collect(),
+                depends: desc
+                    .dependencies
+                    .iter()
+                    .map(std::string::ToString::to_string)
+                    .collect(),
+                makedepends: desc
+                    .make_dependencies
+                    .iter()
+                    .map(std::string::ToString::to_string)
+                    .collect(),
+                optdepends: desc
+                    .optional_dependencies
+                    .iter()
+                    .map(std::string::ToString::to_string)
+                    .collect(),
+                provides: desc
+                    .provides
+                    .iter()
+                    .map(std::string::ToString::to_string)
+                    .collect(),
+                conflicts: desc
+                    .conflicts
+                    .iter()
+                    .map(std::string::ToString::to_string)
+                    .collect(),
+                replaces: desc
+                    .replaces
+                    .iter()
+                    .map(std::string::ToString::to_string)
+                    .collect(),
+            };
+        }
+        Ok(Err(_)) => {
+            // V1 parsing also failed normally - return empty package
+        }
+        Err(panic_info) => {
+            // V1 parsing also panicked - log warning and return empty package
+            let panic_msg = panic_info
+                .downcast_ref::<String>()
+                .map(String::as_str)
+                .or_else(|| panic_info.downcast_ref::<&str>().copied())
+                .unwrap_or("unknown panic");
+            tracing::warn!(
+                repo = repo,
+                error = panic_msg,
+                "Corrupted package desc in repo (V1 parse panic), skipping package"
+            );
+        }
     }
 
+    // Both V2 and V1 failed - return empty package (will be filtered out by caller)
     SyncDbPackage {
         repo: repo.to_string(),
         ..SyncDbPackage::default()
@@ -535,14 +608,36 @@ fn load_cache_from_disk<T: for<'de> Deserialize<'de>>(name: &str) -> Result<T> {
     Ok(cache)
 }
 
+/// Check if cache is expired based on TTL (30-minute safety net)
+fn is_cache_expired(last_accessed: Option<SystemTime>) -> bool {
+    if let Some(last_access) = last_accessed {
+        if let Ok(elapsed) = SystemTime::now().duration_since(last_access) {
+            return elapsed.as_secs() > CACHE_TTL_SECS;
+        }
+    }
+    false
+}
+
 /// Ensure sync cache is loaded (fast if already loaded)
 fn ensure_sync_cache_loaded(sync_dir: &Path) -> Result<()> {
     let current_mtime = get_newest_db_mtime(sync_dir);
 
     {
-        let cache = SYNC_DB_CACHE.read();
-        if cache.last_modified == Some(current_mtime) && !cache.packages.is_empty() {
+        let mut cache = SYNC_DB_CACHE.write();
+        if cache.last_modified == Some(current_mtime)
+            && !cache.packages.is_empty()
+            && !is_cache_expired(cache.last_accessed)
+        {
+            // Update last accessed time on cache hit
+            cache.last_accessed = Some(SystemTime::now());
             return Ok(());
+        }
+
+        // Clear cache if TTL expired (safety net for unbounded growth)
+        if is_cache_expired(cache.last_accessed) {
+            cache.packages.clear();
+            cache.last_modified = None;
+            cache.last_accessed = None;
         }
     }
 
@@ -551,17 +646,33 @@ fn ensure_sync_cache_loaded(sync_dir: &Path) -> Result<()> {
         && disk_cache.last_modified == Some(current_mtime)
     {
         let mut cache = SYNC_DB_CACHE.write();
+
+        // Double-check: another thread may have loaded while we were waiting
+        if cache.last_modified == Some(current_mtime) && !cache.packages.is_empty() {
+            cache.last_accessed = Some(SystemTime::now());
+            return Ok(());
+        }
+
         *cache = disk_cache;
+        cache.last_accessed = Some(SystemTime::now());
         return Ok(());
     }
 
     // Cache miss or stale - need to reload/parse
     let packages = load_sync_packages(sync_dir)?;
 
-    // Update memory cache
+    // Update memory cache with double-checked locking
     let mut cache = SYNC_DB_CACHE.write();
+
+    // Re-check: another thread may have loaded while we were parsing
+    if cache.last_modified == Some(current_mtime) && !cache.packages.is_empty() {
+        cache.last_accessed = Some(SystemTime::now());
+        return Ok(());
+    }
+
     cache.packages = packages;
     cache.last_modified = Some(current_mtime);
+    cache.last_accessed = Some(SystemTime::now());
 
     // Save to disk for next time
     let _ = save_cache_to_disk(&*cache, "sync_db");
@@ -574,9 +685,21 @@ fn ensure_local_cache_loaded(local_dir: &Path) -> Result<()> {
     let current_mtime = get_local_db_mtime(local_dir)?;
 
     {
-        let cache = LOCAL_DB_CACHE.read();
-        if cache.last_modified == Some(current_mtime) && !cache.packages.is_empty() {
+        let mut cache = LOCAL_DB_CACHE.write();
+        if cache.last_modified == Some(current_mtime)
+            && !cache.packages.is_empty()
+            && !is_cache_expired(cache.last_accessed)
+        {
+            // Update last accessed time on cache hit
+            cache.last_accessed = Some(SystemTime::now());
             return Ok(());
+        }
+
+        // Clear cache if TTL expired (safety net for unbounded growth)
+        if is_cache_expired(cache.last_accessed) {
+            cache.packages.clear();
+            cache.last_modified = None;
+            cache.last_accessed = None;
         }
     }
 
@@ -585,7 +708,15 @@ fn ensure_local_cache_loaded(local_dir: &Path) -> Result<()> {
         && disk_cache.last_modified == Some(current_mtime)
     {
         let mut cache = LOCAL_DB_CACHE.write();
+
+        // Double-check: another thread may have loaded while we were waiting
+        if cache.last_modified == Some(current_mtime) && !cache.packages.is_empty() {
+            cache.last_accessed = Some(SystemTime::now());
+            return Ok(());
+        }
+
         *cache = disk_cache;
+        cache.last_accessed = Some(SystemTime::now());
         return Ok(());
     }
 
@@ -594,8 +725,16 @@ fn ensure_local_cache_loaded(local_dir: &Path) -> Result<()> {
 
     // Update memory cache
     let mut cache = LOCAL_DB_CACHE.write();
+
+    // Double-check: another thread may have loaded while we were parsing
+    if cache.last_modified == Some(current_mtime) && !cache.packages.is_empty() {
+        cache.last_accessed = Some(SystemTime::now());
+        return Ok(());
+    }
+
     cache.packages = packages;
     cache.last_modified = Some(current_mtime);
+    cache.last_accessed = Some(SystemTime::now());
 
     // Save to disk
     let _ = save_cache_to_disk(&*cache, "local_db");
@@ -924,6 +1063,39 @@ pub fn get_explicit_count() -> Result<usize> {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_collect_sync_db_paths_excludes_sig_files() {
+        // Create a temporary test directory with .db and .db.sig files
+        let temp_dir = std::env::temp_dir().join("omg_test_sync_db");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        // Create test files
+        std::fs::write(temp_dir.join("core.db"), b"dummy").unwrap();
+        std::fs::write(temp_dir.join("core.db.sig"), b"signature").unwrap();
+        std::fs::write(temp_dir.join("extra.db"), b"dummy").unwrap();
+        std::fs::write(temp_dir.join("extra.db.sig"), b"signature").unwrap();
+        std::fs::write(temp_dir.join("custom-repo.db"), b"dummy").unwrap();
+        std::fs::write(temp_dir.join("custom-repo.db.sig"), b"signature").unwrap();
+        std::fs::write(temp_dir.join("not-a-db.txt"), b"text").unwrap();
+
+        let db_paths = collect_sync_db_paths(&temp_dir);
+
+        // Should only collect .db files, NOT .db.sig files
+        let collected_names: Vec<_> = db_paths.iter().map(|(path, _)| path.file_name().unwrap().to_str().unwrap()).collect();
+
+        assert!(collected_names.contains(&"core.db"), "Should include core.db");
+        assert!(collected_names.contains(&"extra.db"), "Should include extra.db");
+        assert!(collected_names.contains(&"custom-repo.db"), "Should include custom-repo.db");
+        assert!(!collected_names.contains(&"core.db.sig"), "Should NOT include .sig files");
+        assert!(!collected_names.contains(&"extra.db.sig"), "Should NOT include .sig files");
+        assert!(!collected_names.contains(&"custom-repo.db.sig"), "Should NOT include .sig files");
+        assert!(!collected_names.contains(&"not-a-db.txt"), "Should NOT include non-.db files");
+
+        // Cleanup
+        std::fs::remove_dir_all(&temp_dir).unwrap();
+    }
 
     #[test]
     #[ignore = "System-dependent test that reads actual pacman db files - may fail if db is corrupted"]

@@ -76,41 +76,84 @@ where
 }
 
 /// Get a cached ALPM handle or create a new one for this thread
+///
+/// SAFETY: Uses catch_unwind to ensure RefCell is properly released even if
+/// the closure panics, preventing the thread-local from becoming poisoned.
 #[allow(clippy::expect_used)]
 pub fn with_handle<F, R>(f: F) -> Result<R>
 where
     F: FnOnce(&Alpm) -> Result<R>,
 {
     ALPM_HANDLE.with(|cell| {
+        // Borrow and initialize if needed
         let mut maybe_handle = cell.borrow_mut();
         if maybe_handle.is_none() {
             *maybe_handle = Some(create_alpm_handle()?);
         }
 
-        with_alpm_handle(
-            maybe_handle
-                .as_ref()
-                .expect("ALPM handle initialized above"),
-            f,
-        )
+        // Get reference to handle
+        let handle_ref = maybe_handle
+            .as_ref()
+            .expect("ALPM handle initialized above");
+
+        // Execute user function with panic safety
+        // SAFETY: We wrap in catch_unwind to ensure RefCell is properly released
+        // even if f panics. This prevents the thread-local from becoming poisoned.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            with_alpm_handle(handle_ref, f)
+        }));
+
+        // Drop the borrow before handling panic
+        drop(maybe_handle);
+
+        match result {
+            Ok(r) => r,
+            Err(panic_payload) => {
+                // Re-throw the panic after RefCell is released
+                std::panic::resume_unwind(panic_payload)
+            }
+        }
     })
 }
 
 /// Get a mutable cached ALPM handle
+///
+/// SAFETY: Uses catch_unwind to ensure RefCell is properly released even if
+/// the closure panics, preventing the thread-local from becoming poisoned.
 #[allow(clippy::expect_used)]
 pub fn with_handle_mut<F, R>(f: F) -> Result<R>
 where
     F: FnOnce(&mut Alpm) -> Result<R>,
 {
     ALPM_HANDLE.with(|cell| {
+        // Borrow and initialize if needed
         let mut maybe_handle = cell.borrow_mut();
         if maybe_handle.is_none() {
             *maybe_handle = Some(create_alpm_handle()?);
         }
 
-        f(maybe_handle
+        // Get mutable reference to handle
+        let handle_ref = maybe_handle
             .as_mut()
-            .expect("ALPM handle initialized above"))
+            .expect("ALPM handle initialized above");
+
+        // Execute user function with panic safety
+        // SAFETY: We wrap in catch_unwind to ensure RefCell is properly released
+        // even if f panics. This prevents the thread-local from becoming poisoned.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            f(handle_ref)
+        }));
+
+        // Drop the borrow before handling panic
+        drop(maybe_handle);
+
+        match result {
+            Ok(r) => r,
+            Err(panic_payload) => {
+                // Re-throw the panic after RefCell is released
+                std::panic::resume_unwind(panic_payload)
+            }
+        }
     })
 }
 

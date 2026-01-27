@@ -193,7 +193,7 @@ temp-env = "0.3"
 [profile.release]
 lto = "fat"       # Full LTO for maximum cross-crate inlining
 codegen-units = 1
-panic = "abort"
+panic = "unwind"  # CRITICAL: Required for catch_unwind to work in release builds
 strip = true
 opt-level = 3
 

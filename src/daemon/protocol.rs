@@ -207,4 +207,9 @@ pub struct MetricsSnapshot {
     pub security_audit_requests: u64,
     pub bytes_received: u64,
     pub bytes_sent: u64,
+    pub cache_hits: u64,
+    pub cache_misses: u64,
+    pub search_requests: u64,
+    pub info_requests: u64,
+    pub status_requests: u64,
 }

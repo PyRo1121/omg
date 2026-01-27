@@ -168,6 +168,7 @@ impl MockPackageManager {
         }
     }
 
+    // Used only when arch feature is disabled
     #[allow(dead_code)]
     fn is_newer(old: &str, new: &str) -> bool {
         matches!(old.cmp(new), std::cmp::Ordering::Less)
