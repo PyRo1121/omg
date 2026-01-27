@@ -117,9 +117,7 @@ pub async fn share(description: String, public: bool) -> Result<()> {
 
     // SECURITY: Validate description
     if description.len() > 1000 {
-        execute_cmd(Cmd::error(
-            "Description too long (max 1000 characters)",
-        ));
+        execute_cmd(Cmd::error("Description too long (max 1000 characters)"));
         anyhow::bail!("Description too long");
     }
 

@@ -236,18 +236,12 @@ pub fn license_scan(export: Option<&str>, _ctx: &CliContext) -> Result<()> {
         if violations.is_empty() {
             Cmd::none()
         } else {
-            Cmd::batch([
-                Cmd::spacer(),
-                Cmd::card("Policy Violations", violations),
-            ])
+            Cmd::batch([Cmd::spacer(), Cmd::card("Policy Violations", violations)])
         },
         if unknown.is_empty() {
             Cmd::none()
         } else {
-            Cmd::batch([
-                Cmd::spacer(),
-                Cmd::card("Unknown Licenses", unknown),
-            ])
+            Cmd::batch([Cmd::spacer(), Cmd::card("Unknown Licenses", unknown)])
         },
         if let Some(format) = export {
             Cmd::batch([Cmd::spacer(), {
@@ -289,9 +283,7 @@ pub mod policy {
             anyhow::bail!("Invalid policy scope");
         }
         if rule.len() > 1024 {
-            execute_cmd(Cmd::error(
-                "Policy rule too long (max 1024 characters)",
-            ));
+            execute_cmd(Cmd::error("Policy rule too long (max 1024 characters)"));
             anyhow::bail!("Policy rule too long");
         }
 

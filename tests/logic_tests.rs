@@ -109,7 +109,9 @@ async fn test_mock_package_manager_install() {
     let package_name = "test-pkg".to_string();
 
     // ===== ACT =====
-    pm.install(&[package_name.clone()]).await.unwrap();
+    pm.install(std::slice::from_ref(&package_name))
+        .await
+        .unwrap();
 
     // ===== ASSERT =====
     let results = pm.search("test").await.unwrap();

@@ -111,10 +111,7 @@ fn show_package_tree(package: &str) -> Result<Cmd<()>> {
 
     dep_sizes.sort_by(|a, b| b.1.cmp(&a.1));
 
-    let mut commands = vec![
-        Cmd::header("Package Size Tree", package),
-        Cmd::spacer(),
-    ];
+    let mut commands = vec![Cmd::header("Package Size Tree", package), Cmd::spacer()];
 
     // Package info
     commands.push(Components::kv_list(

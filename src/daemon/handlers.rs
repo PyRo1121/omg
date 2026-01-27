@@ -425,7 +425,9 @@ async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) ->
     if let Some(cached) = state.cache.get_info(&package) {
         return Response::Success {
             id,
-            result: ResponseResult::Info(Arc::try_unwrap(cached).unwrap_or_else(|arc| (*arc).clone())),
+            result: ResponseResult::Info(
+                Arc::try_unwrap(cached).unwrap_or_else(|arc| (*arc).clone()),
+            ),
         };
     }
 
@@ -512,7 +514,9 @@ async fn handle_status(state: Arc<DaemonState>, id: RequestId) -> Response {
     if let Some(cached) = state.cache.get_status() {
         return Response::Success {
             id,
-            result: ResponseResult::Status(Arc::try_unwrap(cached).unwrap_or_else(|arc| (*arc).clone())),
+            result: ResponseResult::Status(
+                Arc::try_unwrap(cached).unwrap_or_else(|arc| (*arc).clone()),
+            ),
         };
     }
 
@@ -728,7 +732,9 @@ async fn handle_list_explicit(state: Arc<DaemonState>, id: RequestId) -> Respons
             state.cache.update_explicit(packages);
             Response::Success {
                 id,
-                result: ResponseResult::Explicit(ExplicitResult { packages: packages_copy }),
+                result: ResponseResult::Explicit(ExplicitResult {
+                    packages: packages_copy,
+                }),
             }
         }
         Ok(Err(e)) => Response::Error {

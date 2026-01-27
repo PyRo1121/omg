@@ -187,9 +187,7 @@ impl PackageManager for MockPackageManager {
         let pkgs = db.packages.lock().unwrap();
         Ok(pkgs
             .values()
-            .filter(|p| {
-                p.name.contains(&query) || p.description.to_lowercase().contains(&query)
-            })
+            .filter(|p| p.name.contains(&query) || p.description.to_lowercase().contains(&query))
             .map(|p| Package {
                 name: p.name.clone(),
                 version: parse_version_or_zero(&p.version),

@@ -119,7 +119,6 @@ impl Components {
     }
 }
 
-
 impl Components {
     /// Loading message with spinner icon
     ///
@@ -227,11 +226,7 @@ impl Components {
     /// Section header for grouping related output
     #[must_use]
     pub fn section<M>(title: impl Into<String>) -> Cmd<M> {
-        Cmd::batch([
-            Cmd::spacer(),
-            Cmd::header(title.into(), ""),
-            Cmd::spacer(),
-        ])
+        Cmd::batch([Cmd::spacer(), Cmd::header(title.into(), ""), Cmd::spacer()])
     }
 }
 

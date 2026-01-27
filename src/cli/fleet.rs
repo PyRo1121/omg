@@ -102,10 +102,7 @@ pub async fn status(_ctx: &CliContext) -> Result<()> {
         if machine_list.is_empty() {
             Cmd::none()
         } else {
-            Cmd::batch([
-                Cmd::spacer(),
-                Cmd::card("Active Machines", machine_list),
-            ])
+            Cmd::batch([Cmd::spacer(), Cmd::card("Active Machines", machine_list)])
         },
         Cmd::spacer(),
         Cmd::println("Manage your fleet at: https://pyro1121.com/dashboard"),
@@ -143,9 +140,7 @@ pub async fn push(team: Option<&str>, message: Option<&str>, _ctx: &CliContext) 
     if let Some(m) = message {
         // SECURITY: Validate message
         if m.len() > 1000 {
-            execute_cmd(Cmd::error(
-                "Push message too long (max 1000 characters)",
-            ));
+            execute_cmd(Cmd::error("Push message too long (max 1000 characters)"));
             anyhow::bail!("Push message too long");
         }
     }
@@ -195,10 +190,7 @@ pub async fn push(team: Option<&str>, message: Option<&str>, _ctx: &CliContext) 
                         "Fleet API endpoint not yet active (404). Config saved locally.",
                     ));
                 } else {
-                    execute_cmd(Cmd::error(format!(
-                        "Fleet push failed: {}",
-                        res.status()
-                    )));
+                    execute_cmd(Cmd::error(format!("Fleet push failed: {}", res.status())));
                     anyhow::bail!("Fleet push failed: {}", res.status());
                 }
             }
