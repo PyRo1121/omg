@@ -16,4 +16,9 @@ export * from './components/AlertThresholdCard';
 export * from './components/ComparisonChart';
 export * from './components/ForecastWidget';
 
+export * from './components/CohortHeatmap';
+export * from './components/EngagementGauge';
+export * from './components/OpportunityCard';
+export * from './components/TimelineMetric';
+
 export { default as omgPreset } from './tailwind.preset';

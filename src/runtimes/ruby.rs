@@ -122,7 +122,7 @@ impl RubyManager {
             return self.use_version(&version);
         }
 
-        println!(
+        tracing::info!(
             "{} Installing Ruby {}...\n",
             "OMG".cyan().bold(),
             version.yellow()
@@ -135,12 +135,12 @@ impl RubyManager {
 
         fs::create_dir_all(&self.versions_dir)?;
 
-        println!("{} Downloading pre-built Ruby {}...", "→".blue(), version);
+        tracing::info!("{} Downloading pre-built Ruby {}...", "→".blue(), version);
         let download_path = self.versions_dir.join(&filename);
 
         match download_with_progress(&self.client, &url, &download_path, None).await {
             Ok(()) => {
-                println!("{} Extracting (pure Rust)...", "→".blue());
+                tracing::info!("{} Extracting (pure Rust)...", "→".blue());
                 extract_tar_gz(&download_path, &version_dir, 1).await?;
 
                 let _ = fs::remove_file(&download_path);
@@ -149,13 +149,13 @@ impl RubyManager {
                 self.use_version(&version)?;
             }
             Err(e) => {
-                println!(
+                tracing::info!(
                     "{} Pre-built Ruby {} not available: {}",
                     "!".yellow(),
                     version,
                     e
                 );
-                println!("  Try: omg list ruby --available");
+                tracing::info!("  Try: omg list ruby --available");
                 return Err(e);
             }
         }
@@ -177,7 +177,7 @@ impl RubyManager {
         let version_dir = self.versions_dir.join(&version);
 
         if !version_dir.exists() {
-            println!("{} Ruby {} is not installed", "→".dimmed(), version);
+            tracing::info!("{} Ruby {} is not installed", "→".dimmed(), version);
             return Ok(());
         }
 
@@ -188,7 +188,7 @@ impl RubyManager {
         }
 
         fs::remove_dir_all(&version_dir)?;
-        println!("{} Ruby {} uninstalled", "✓".green(), version);
+        tracing::info!("{} Ruby {} uninstalled", "✓".green(), version);
         Ok(())
     }
 }

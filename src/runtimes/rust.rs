@@ -168,7 +168,7 @@ impl RustManager {
             return self.use_version(version);
         }
 
-        println!(
+        tracing::info!(
             "{} Installing Rust {}...\n",
             "OMG".cyan().bold(),
             toolchain.name().yellow()
@@ -318,7 +318,7 @@ impl RustManager {
         let version_dir = self.toolchain_dir(&toolchain);
 
         if !version_dir.exists() {
-            println!(
+            tracing::info!(
                 "{} Rust {} is not installed",
                 "→".dimmed(),
                 toolchain.name()
@@ -333,7 +333,7 @@ impl RustManager {
         }
 
         fs::remove_dir_all(&version_dir)?;
-        println!("{} Rust {} uninstalled", "✓".green(), toolchain.name());
+        tracing::info!("{} Rust {} uninstalled", "✓".green(), toolchain.name());
         Ok(())
     }
 }
@@ -443,7 +443,7 @@ impl RustManager {
         component: &str,
         target: &str,
     ) -> Result<()> {
-        println!("{} Downloading {}...", "→".blue(), component);
+        tracing::info!("{} Downloading {}...", "→".blue(), component);
         let manifest = self
             .fetch_manifest(&toolchain.channel, toolchain.date.as_deref())
             .await?;
@@ -456,7 +456,7 @@ impl RustManager {
         let download_path = self.versions_dir.join(filename);
 
         download_with_progress(&self.client, &url, &download_path, None).await?;
-        println!("{} Extracting {}...", "→".blue(), component);
+        tracing::info!("{} Extracting {}...", "→".blue(), component);
         Self::extract_component(
             &download_path,
             &self.toolchain_dir(toolchain),
