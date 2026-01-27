@@ -43,20 +43,17 @@ pub struct BunManager {
 
 impl BunManager {
     pub fn new() -> Self {
-        let data_dir = super::DATA_DIR.clone();
-
-        let client = download_client().clone();
-
+        let versions_dir = super::DATA_DIR.join("versions").join("bun");
         Self {
-            versions_dir: data_dir.join("versions").join("bun"),
-            current_link: data_dir.join("versions").join("bun").join("current"),
-            client,
+            current_link: versions_dir.join("current"),
+            versions_dir,
+            client: download_client().clone(),
         }
     }
 
     #[must_use]
-    pub fn bin_dir(&self) -> PathBuf {
-        self.current_link.clone()
+    pub fn bin_dir(&self) -> &PathBuf {
+        &self.current_link
     }
 
     /// List available Bun versions from GitHub releases
@@ -71,28 +68,20 @@ impl BunManager {
             .await
             .context("Failed to parse Bun release data")?;
 
-        let versions: Vec<BunVersion> = releases
+        Ok(releases
             .into_iter()
             .filter_map(|r| {
                 // Tags are like "bun-v1.0.0"
-                let version = r
-                    .tag_name
-                    .trim_start_matches("bun-v")
-                    .trim_start_matches('v')
-                    .to_string();
+                let version = r.tag_name.strip_prefix("bun-v")
+                    .or_else(|| r.tag_name.strip_prefix('v'))
+                    .unwrap_or(&r.tag_name);
 
-                if version.is_empty() {
-                    None
-                } else {
-                    Some(BunVersion {
-                        version,
-                        prerelease: r.prerelease,
-                    })
-                }
+                (!version.is_empty()).then(|| BunVersion {
+                    version: version.to_owned(),
+                    prerelease: r.prerelease,
+                })
             })
-            .collect();
-
-        Ok(versions)
+            .collect())
     }
 
     pub fn list_installed(&self) -> Result<Vec<String>> {
@@ -109,12 +98,12 @@ impl BunManager {
         let alias = normalize_version(alias);
         if alias == "latest" {
             let versions = self.list_available().await?;
-            if let Some(v) = versions.first() {
-                return Ok(v.version.clone());
-            }
-            anyhow::bail!("No Bun versions found upstream");
+            versions.first()
+                .map(|v| v.version.clone())
+                .context("No Bun versions found upstream")
+        } else {
+            Ok(alias)
         }
-        Ok(alias)
     }
 
     /// Install Bun - PURE RUST, NO SUBPROCESS
@@ -163,7 +152,7 @@ impl BunManager {
     pub fn use_version(&self, version: &str) -> Result<()> {
         let version = normalize_version(version);
         set_current_version(&self.versions_dir, &version)?;
-        print_using("Bun", &version, &self.bin_dir());
+        print_using("Bun", &version, self.bin_dir());
         Ok(())
     }
 
@@ -173,18 +162,16 @@ impl BunManager {
         let version_dir = self.versions_dir.join(&version);
 
         if !version_dir.exists() {
-            println!("{} Bun {} is not installed", "→".dimmed(), version);
+            println!("{} Bun {version} is not installed", "→".dimmed());
             return Ok(());
         }
 
-        if let Some(current) = self.current_version()
-            && current == version
-        {
+        if self.current_version().is_some_and(|current| current == version) {
             let _ = fs::remove_file(&self.current_link);
         }
 
         fs::remove_dir_all(&version_dir)?;
-        println!("{} Bun {} uninstalled", "✓".green(), version);
+        println!("{} Bun {version} uninstalled", "✓".green());
         Ok(())
     }
 }
