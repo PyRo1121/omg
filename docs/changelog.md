@@ -11,10 +11,30 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ---
 
 ## [Unreleased]
+### ♻️  Refactoring
+
+- Rust 2026 Phase 1 - Safety First ([#16](https://github.com/PyRo1121/omg/issues/16))
+
+Phase 1: Safety First modernization complete.
+
+  - 67% unsafe code elimination (6 → 2 blocks)
+
+  - Zero panics in critical paths
+
+  - 100% test pass rate (398/398)
+
+  - All quality gates passed
+
+Ready for Phase 2.
+
 ### 🐛 Bug Fixes
 
 - Substitute `$repo` and `$arch` placeholders in parsed server URLs
 ### 📚 Documentation
+
+- Update changelog [skip ci]
+
+Auto-generated from git history with git-cliff.
 
 - Add Phase 1 Safety implementation plan
 
