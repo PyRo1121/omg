@@ -422,8 +422,8 @@ pub async fn list_versions(runtime: Option<&str>, available: bool) -> Result<()>
                 if available {
                     println!("{} Available remote versions:", "→".blue());
                     for v in mgr.list_available().await?.iter().take(20) {
-                        let stable = if v.stable { " (stable)" } else { "" };
-                        ui::print_list_item(&v.version, Some(stable));
+                        let stable = if v.stable() { " (stable)" } else { "" };
+                        ui::print_list_item(v.version(), Some(stable));
                     }
                 } else {
                     let current = mgr.current_version();
