@@ -88,9 +88,7 @@ fn test_info_nonexistent_package() {
     // ===== ASSERT =====
     let combined = result.combined_output();
     assert!(
-        combined.contains("not found")
-            || combined.contains("No package")
-            || !result.success,
+        combined.contains("not found") || combined.contains("No package") || !result.success,
         "Should indicate package not found"
     );
 }

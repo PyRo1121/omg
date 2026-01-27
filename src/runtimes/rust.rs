@@ -562,7 +562,11 @@ impl RustToolchainSpec {
             segments.join("-")
         };
 
-        Ok(Self { channel, date, host })
+        Ok(Self {
+            channel,
+            date,
+            host,
+        })
     }
 
     pub fn name(&self) -> String {

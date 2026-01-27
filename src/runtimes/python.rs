@@ -134,11 +134,9 @@ impl PythonManager {
     fn is_semver_like(value: &str) -> bool {
         let mut parts = value.split('.');
         match (parts.next(), parts.next(), parts.next(), parts.next()) {
-            (Some(major), Some(minor), Some(patch), None) => {
-                [major, minor, patch]
-                    .iter()
-                    .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
-            }
+            (Some(major), Some(minor), Some(patch), None) => [major, minor, patch]
+                .iter()
+                .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit())),
             _ => false,
         }
     }

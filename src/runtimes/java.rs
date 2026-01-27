@@ -142,9 +142,9 @@ impl JavaManager {
             .await
             .context("Failed to parse JDK data")?;
 
-        let binary = binaries
-            .first()
-            .ok_or_else(|| anyhow::anyhow!("No JDK {version} found for {arch}. Try: omg list java --available"))?;
+        let binary = binaries.first().ok_or_else(|| {
+            anyhow::anyhow!("No JDK {version} found for {arch}. Try: omg list java --available")
+        })?;
 
         fs::create_dir_all(&self.versions_dir)?;
 

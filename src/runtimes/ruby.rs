@@ -140,10 +140,7 @@ impl RubyManager {
         download_with_progress(&self.client, &url, &download_path, None)
             .await
             .with_context(|| {
-                eprintln!(
-                    "{} Pre-built Ruby {version} not available",
-                    "!".yellow()
-                );
+                eprintln!("{} Pre-built Ruby {version} not available", "!".yellow());
                 eprintln!("  Try: omg list ruby --available");
                 format!("Failed to download Ruby {version}")
             })?;
@@ -177,7 +174,10 @@ impl RubyManager {
             return Ok(());
         }
 
-        if self.current_version().is_some_and(|current| current == version) {
+        if self
+            .current_version()
+            .is_some_and(|current| current == version)
+        {
             let _ = fs::remove_file(&self.current_link);
         }
 

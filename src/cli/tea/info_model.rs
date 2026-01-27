@@ -128,7 +128,9 @@ impl Model for InfoModel {
                     if tokio::runtime::Handle::try_current().is_ok() {
                         std::thread::spawn(move || {
                             let Ok(rt) = tokio::runtime::Runtime::new() else {
-                                return InfoMsg::Error("Failed to create async runtime".to_string());
+                                return InfoMsg::Error(
+                                    "Failed to create async runtime".to_string(),
+                                );
                             };
                             rt.block_on(async { fetch_info(&pkg_name).await })
                         })

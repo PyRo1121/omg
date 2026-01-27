@@ -144,7 +144,9 @@ impl MiseManager {
             .await
             .context("Failed to parse mise release info")?;
 
-        Ok(release.tag_name.strip_prefix('v')
+        Ok(release
+            .tag_name
+            .strip_prefix('v')
             .unwrap_or(&release.tag_name)
             .to_owned())
     }

@@ -148,13 +148,7 @@ impl NodeManager {
     /// Fetch SHA256 checksum from nodejs.org
     async fn fetch_checksum(&self, version: &str, filename: &str) -> Result<String> {
         let url = format!("{NODE_DIST_URL}/v{version}/SHASUMS256.txt");
-        let text = self
-            .client
-            .get(&url)
-            .send()
-            .await?
-            .text()
-            .await?;
+        let text = self.client.get(&url).send().await?.text().await?;
 
         text.lines()
             .find(|line| line.ends_with(filename))

@@ -160,7 +160,9 @@ impl Model for InstallModel {
                             .unwrap_or_else(|_| Err(anyhow::anyhow!("Thread panicked")))
                         } else {
                             let Ok(rt) = tokio::runtime::Runtime::new() else {
-                                return InstallMsg::Error("Failed to create async runtime".to_string());
+                                return InstallMsg::Error(
+                                    "Failed to create async runtime".to_string(),
+                                );
                             };
                             rt.block_on(async {
                                 let pm = get_package_manager();
