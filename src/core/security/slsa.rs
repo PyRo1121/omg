@@ -326,3 +326,147 @@ impl SlsaVerifier {
         SlsaLevel::None
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    #[test]
+    fn test_slsa_level_display() {
+        assert_eq!(SlsaLevel::None.to_string(), "None");
+        assert_eq!(SlsaLevel::Level1.to_string(), "SLSA Level 1");
+        assert_eq!(SlsaLevel::Level2.to_string(), "SLSA Level 2");
+        assert_eq!(SlsaLevel::Level3.to_string(), "SLSA Level 3");
+    }
+
+    #[test]
+    fn test_slsa_level_ordering() {
+        assert!(SlsaLevel::Level3 > SlsaLevel::Level2);
+        assert!(SlsaLevel::Level2 > SlsaLevel::Level1);
+        assert!(SlsaLevel::Level1 > SlsaLevel::None);
+    }
+
+    #[test]
+    fn test_calculate_hash() {
+        let mut temp = NamedTempFile::new().unwrap();
+        use std::io::Write;
+        write!(temp, "test content").unwrap();
+        temp.flush().unwrap();
+
+        let hash = SlsaVerifier::calculate_hash(temp.path()).unwrap();
+
+        // Verify it's a valid SHA-256 hash (64 hex characters)
+        assert_eq!(hash.len(), 64);
+        assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
+
+        // Known hash for "test content" (no newline)
+        assert_eq!(
+            hash,
+            "6ae8a75555209fd6c44157c0aed8016e763ff435a19cf186f76863140143ff72"
+        );
+    }
+
+    #[test]
+    fn test_calculate_hash_empty_file() {
+        let temp = NamedTempFile::new().unwrap();
+        let hash = SlsaVerifier::calculate_hash(temp.path()).unwrap();
+
+        // SHA-256 of empty file
+        assert_eq!(
+            hash,
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+    }
+
+    #[test]
+    fn test_verify_hash_success() {
+        let mut temp = NamedTempFile::new().unwrap();
+        use std::io::Write;
+        write!(temp, "test content").unwrap();
+        temp.flush().unwrap();
+
+        let verifier = SlsaVerifier::default();
+        let expected = "6ae8a75555209fd6c44157c0aed8016e763ff435a19cf186f76863140143ff72";
+
+        assert!(verifier.verify_hash(temp.path(), expected).unwrap());
+    }
+
+    #[test]
+    fn test_verify_hash_mismatch() {
+        let mut temp = NamedTempFile::new().unwrap();
+        use std::io::Write;
+        write!(temp, "test content").unwrap();
+        temp.flush().unwrap();
+
+        let verifier = SlsaVerifier::default();
+        let wrong_hash = "0000000000000000000000000000000000000000000000000000000000000000";
+
+        assert!(!verifier.verify_hash(temp.path(), wrong_hash).unwrap());
+    }
+
+    #[test]
+    fn test_determine_slsa_level_core_packages() {
+        let verifier = SlsaVerifier::default();
+
+        // Core packages should be Level 3
+        assert_eq!(
+            verifier.determine_slsa_level("glibc", true),
+            SlsaLevel::Level3
+        );
+        assert_eq!(
+            verifier.determine_slsa_level("linux", true),
+            SlsaLevel::Level3
+        );
+        assert_eq!(
+            verifier.determine_slsa_level("systemd", true),
+            SlsaLevel::Level3
+        );
+    }
+
+    #[test]
+    fn test_determine_slsa_level_official_packages() {
+        let verifier = SlsaVerifier::default();
+
+        // Regular official packages should be Level 2
+        assert_eq!(
+            verifier.determine_slsa_level("vim", true),
+            SlsaLevel::Level2
+        );
+        assert_eq!(
+            verifier.determine_slsa_level("firefox", true),
+            SlsaLevel::Level2
+        );
+    }
+
+    #[test]
+    fn test_determine_slsa_level_aur_packages() {
+        let verifier = SlsaVerifier::default();
+
+        // AUR packages have no SLSA guarantees
+        assert_eq!(
+            verifier.determine_slsa_level("yay", false),
+            SlsaLevel::None
+        );
+        assert_eq!(
+            verifier.determine_slsa_level("spotify", false),
+            SlsaLevel::None
+        );
+    }
+
+    #[test]
+    fn test_slsa_verifier_new() {
+        let verifier = SlsaVerifier::new();
+        assert!(verifier.is_ok());
+
+        let verifier = verifier.unwrap();
+        assert_eq!(verifier.rekor_url, "https://rekor.sigstore.dev");
+    }
+
+    #[test]
+    fn test_slsa_verifier_default() {
+        let verifier = SlsaVerifier::default();
+        assert_eq!(verifier.rekor_url, "https://rekor.sigstore.dev");
+    }
+}

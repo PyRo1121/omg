@@ -1,14 +1,11 @@
 //! IPC Client for communicating with the daemon
 //!
 //! Uses `LengthDelimitedCodec` and bitcode for maximum IPC performance.
-//! Supports connection pooling for persistent connections across commands.
 
 use anyhow::{Context, Result};
 use futures::sink::SinkExt;
 use futures::stream::StreamExt;
-use parking_lot::Mutex;
 use std::path::PathBuf;
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::net::UnixStream;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
@@ -21,20 +18,8 @@ use crate::daemon::protocol::{
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream as SyncUnixStream;
 
-/// Global connection pool for sync clients (reuses connections across calls)
-static SYNC_POOL: OnceLock<Mutex<Option<SyncUnixStream>>> = OnceLock::new();
-
-/// Get or create a pooled sync connection
-pub fn get_pooled_sync() -> Result<SyncUnixStream> {
-    let pool = SYNC_POOL.get_or_init(|| Mutex::new(None));
-    let mut guard = pool.lock();
-
-    if let Some(stream) = guard.take() {
-        // Connection exists - return it
-        return Ok(stream);
-    }
-
-    // Show connection spinner while establishing connection
+/// Create a new sync connection to the daemon
+fn connect_sync_stream() -> Result<SyncUnixStream> {
     tracing::debug!("Connecting to daemon...");
 
     let socket_path = default_socket_path();
@@ -92,13 +77,11 @@ impl DaemonClient {
     }
 
     /// Connect to the daemon synchronously (sub-millisecond)
-    /// Uses connection pooling for even faster subsequent calls
     pub fn connect_sync() -> Result<Self> {
         if Self::daemon_disabled() {
             anyhow::bail!("Daemon disabled by environment");
         }
-        // Try pooled connection first (faster)
-        let stream = get_pooled_sync()?;
+        let stream = connect_sync_stream()?;
 
         Ok(Self {
             framed: None,
@@ -405,20 +388,20 @@ impl DaemonClient {
     }
 }
 
-/// Pooled sync client that automatically returns connection to pool on drop
+/// Synchronous client for non-async contexts
 pub struct PooledSyncClient {
     stream: Option<SyncUnixStream>,
     request_id: AtomicU64,
 }
 
 impl PooledSyncClient {
-    /// Get a pooled connection (reuses existing or creates new)
+    /// Create a new sync connection to the daemon
     pub fn acquire() -> Result<Self> {
         if DaemonClient::daemon_disabled() {
             anyhow::bail!("Daemon disabled by environment");
         }
         Ok(Self {
-            stream: Some(get_pooled_sync()?),
+            stream: Some(connect_sync_stream()?),
             request_id: AtomicU64::new(1),
         })
     }
@@ -512,7 +495,6 @@ impl PooledSyncClient {
 
 impl Drop for PooledSyncClient {
     fn drop(&mut self) {
-        // UnixStream can't be safely pooled due to lack of Clone
-        // Stream will be closed when dropped
+        // Stream will be closed automatically when dropped
     }
 }

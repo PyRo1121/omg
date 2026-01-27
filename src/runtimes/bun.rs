@@ -14,7 +14,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use super::common::{
-    download_with_progress, extract_zip, get_current_version, list_installed_versions,
+    download_with_progress, extract_zip,
     normalize_version, print_already_installed, print_installed, print_using, set_current_version,
 };
 use crate::core::http::download_client;
@@ -86,15 +86,6 @@ impl BunManager {
             .collect())
     }
 
-    pub fn list_installed(&self) -> Result<Vec<String>> {
-        list_installed_versions(&self.versions_dir)
-    }
-
-    #[must_use]
-    pub fn current_version(&self) -> Option<String> {
-        get_current_version(&self.versions_dir)
-    }
-
     /// Resolve Bun alias (latest) to a concrete version
     pub async fn resolve_alias(&self, alias: &str) -> Result<String> {
         let alias = normalize_version(alias);
@@ -158,29 +149,10 @@ impl BunManager {
         print_using("Bun", &version, self.bin_dir());
         Ok(())
     }
-
-    /// Uninstall a version
-    pub fn uninstall(&self, version: &str) -> Result<()> {
-        let version = normalize_version(version);
-        let version_dir = self.versions_dir.join(&version);
-
-        if !version_dir.exists() {
-            println!("{} Bun {version} is not installed", "→".dimmed());
-            return Ok(());
-        }
-
-        if self
-            .current_version()
-            .is_some_and(|current| current == version)
-        {
-            let _ = fs::remove_file(&self.current_link);
-        }
-
-        fs::remove_dir_all(&version_dir)?;
-        println!("{} Bun {version} uninstalled", "✓".green());
-        Ok(())
-    }
 }
+
+// Generate common runtime manager methods (list_installed, current_version, uninstall)
+crate::impl_runtime_common!(BunManager, "Bun");
 
 impl Default for BunManager {
     fn default() -> Self {

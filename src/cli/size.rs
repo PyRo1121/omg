@@ -319,7 +319,6 @@ fn show_package_tree(_package: &str) -> Result<Cmd<()>> {
     anyhow::bail!("Size analysis requires arch or debian feature")
 }
 
-#[allow(dead_code)]
 fn format_size(bytes: i64) -> String {
     const KB: i64 = 1024;
     const MB: i64 = KB * 1024;
@@ -336,7 +335,6 @@ fn format_size(bytes: i64) -> String {
     }
 }
 
-#[allow(dead_code)]
 fn generate_bar(value: i64, max: i64, width: usize) -> String {
     let ratio = if max > 0 {
         (value as f64 / max as f64).min(1.0)
@@ -362,7 +360,8 @@ fn get_cache_size() -> Result<i64> {
         if let Ok(entry) = entry
             && let Ok(meta) = entry.metadata()
         {
-            total += meta.len().cast_signed();
+            // Use saturating_add to prevent overflow on extremely large caches
+            total = total.saturating_add(meta.len().try_into().unwrap_or(i64::MAX));
         }
     }
 

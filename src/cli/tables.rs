@@ -27,12 +27,6 @@ pub enum TableStyle {
 }
 
 impl TableStyle {
-    /// Get whether to hide borders
-    #[must_use]
-    #[allow(dead_code)]
-    fn hide_borders(self) -> bool {
-        matches!(self, Self::Compact)
-    }
 }
 
 /// Create a new table with OMG styling

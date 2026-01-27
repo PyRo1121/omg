@@ -96,6 +96,8 @@ impl PackageCache {
     }
 
     /// Get cached explicit packages (Arc clone is cheap - just pointer copy)
+    #[inline]
+    #[must_use]
     pub fn get_explicit(&self) -> Option<Arc<Vec<String>>> {
         self.explicit_packages.get(&**KEY_EXPLICIT)
     }
@@ -133,6 +135,11 @@ impl PackageCache {
         self.cache.insert(query, Arc::new(packages));
     }
 
+    /// Store Arc'd results in cache (avoids double-wrapping)
+    pub fn insert_arc(&self, query: String, packages: Arc<Vec<PackageInfo>>) {
+        self.cache.insert(query, packages);
+    }
+
     /// Get cached Debian search results (Arc clone is cheap - just pointer copy)
     #[inline]
     #[must_use]
@@ -143,6 +150,11 @@ impl PackageCache {
     /// Store Debian search results in cache
     pub fn insert_debian(&self, query: String, packages: Vec<PackageInfo>) {
         self.debian_cache.insert(query, Arc::new(packages));
+    }
+
+    /// Store Arc'd Debian search results in cache (avoids double-wrapping)
+    pub fn insert_debian_arc(&self, query: String, packages: Arc<Vec<PackageInfo>>) {
+        self.debian_cache.insert(query, packages);
     }
 
     /// Get cache statistics
@@ -173,6 +185,8 @@ impl PackageCache {
     }
 
     /// Check if package info is known to be missing
+    #[inline]
+    #[must_use]
     pub fn is_info_miss(&self, name: &str) -> bool {
         self.info_miss_cache.get(name).unwrap_or(false)
     }
@@ -182,6 +196,13 @@ impl PackageCache {
         let name = info.name.clone();
         self.info_miss_cache.invalidate(&name);
         self.detailed_cache.insert(name, Arc::new(info));
+    }
+
+    /// Store Arc'd detailed info in cache (avoids double-wrapping)
+    pub fn insert_info_arc(&self, info: Arc<DetailedPackageInfo>) {
+        let name = info.name.clone();
+        self.info_miss_cache.invalidate(&name);
+        self.detailed_cache.insert(name, info);
     }
 
     /// Record a missing package info lookup

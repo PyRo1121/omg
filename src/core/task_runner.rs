@@ -2,13 +2,14 @@ use anyhow::{Context, Result};
 use dialoguer::{Confirm, Select, theme::ColorfulTheme};
 use owo_colors::OwoColorize;
 use serde::Deserialize;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::config::Settings;
-use crate::core::{RuntimeBackend, paths};
+use crate::core::RuntimeBackend;
+use crate::core::runtime_resolver::{add_mise_path_fallbacks, find_in_path};
 use crate::hooks;
 use crate::runtimes::rust::RustManager;
 use crate::runtimes::{BunManager, NodeManager};
@@ -796,6 +797,19 @@ fn execute_process(
     // Note: We can't blindly add -- to all commands, but we should ensure 'cmd' itself is safe.
     crate::core::security::validate_package_name(cmd)?;
 
+    // SECURITY: Validate extra_args to prevent command injection
+    for arg in extra_args {
+        // Check for shell metacharacters that could be dangerous
+        if arg.contains(';') || arg.contains('|') || arg.contains('&')
+            || arg.contains('`') || arg.contains('$') || arg.contains('\n') {
+            anyhow::bail!("Invalid argument '{arg}' - contains shell metacharacters");
+        }
+        // Warn about potentially dangerous options (but allow them)
+        if arg.starts_with("--") && (arg.contains("eval") || arg.contains("exec")) {
+            tracing::warn!("Potentially dangerous argument: {}", arg);
+        }
+    }
+
     command.args(args);
     command.args(extra_args);
 
@@ -989,105 +1003,7 @@ fn ensure_js_package_manager(command: &str) -> Result<()> {
     }
 }
 
-fn find_in_path(binary: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    for dir in std::env::split_paths(&path) {
-        let candidate = dir.join(binary);
-        if candidate.exists() {
-            return Some(candidate);
-        }
-    }
-    None
-}
-
-fn add_mise_path_fallbacks(
-    versions: &HashMap<String, String>,
-    path_additions: &mut Vec<String>,
-    backend: RuntimeBackend,
-) {
-    if !matches!(
-        backend,
-        RuntimeBackend::Mise | RuntimeBackend::NativeThenMise
-    ) {
-        return;
-    }
-
-    if !mise_available() {
-        return;
-    }
-
-    let mut seen: HashSet<String> = path_additions.iter().cloned().collect();
-    for (runtime, version) in versions {
-        if backend == RuntimeBackend::NativeThenMise
-            && native_runtime_bin_path(runtime, version).is_some()
-        {
-            continue;
-        }
-
-        if let Some(bin_dir) = mise_runtime_bin_path(runtime, version) {
-            let bin = bin_dir.display().to_string();
-            if seen.insert(bin.clone()) {
-                path_additions.push(bin);
-            }
-        }
-    }
-}
-
-fn native_runtime_bin_path(runtime: &str, version: &str) -> Option<PathBuf> {
-    let data_dir = paths::data_dir();
-    let bin_path = match runtime {
-        "node" => data_dir.join("versions/node").join(version).join("bin"),
-        "python" => data_dir.join("versions/python").join(version).join("bin"),
-        "go" => data_dir.join("versions/go").join(version).join("bin"),
-        "ruby" => data_dir.join("versions/ruby").join(version).join("bin"),
-        "java" => data_dir.join("versions/java").join(version).join("bin"),
-        "bun" => data_dir.join("versions/bun").join(version),
-        "rust" => home::home_dir().unwrap_or_default().join(".cargo/bin"),
-        _ => return None,
-    };
-
-    if bin_path.exists() {
-        Some(bin_path)
-    } else {
-        None
-    }
-}
-
-fn mise_available() -> bool {
-    find_in_path("mise").is_some()
-}
-
-fn mise_runtime_bin_path(runtime: &str, version: &str) -> Option<PathBuf> {
-    let tool_spec = if version.is_empty() {
-        runtime.to_string()
-    } else {
-        format!("{runtime}@{version}")
-    };
-
-    let output = Command::new("mise")
-        .args(["where", "--", &tool_spec])
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let install_dir = PathBuf::from(stdout.trim());
-    if install_dir.as_os_str().is_empty() {
-        return None;
-    }
-
-    let bin_dir = install_dir.join("bin");
-    if bin_dir.exists() {
-        Some(bin_dir)
-    } else if install_dir.exists() {
-        Some(install_dir)
-    } else {
-        None
-    }
-}
+// Runtime resolution functions moved to core::runtime_resolver module
 
 /// Run a task in watch mode - re-run on file changes
 #[allow(clippy::unused_async)] // Async for API consistency with other task functions

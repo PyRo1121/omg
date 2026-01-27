@@ -167,12 +167,6 @@ pub fn elevate_if_needed(args: &[String]) -> anyhow::Result<()> {
             yes_mode
         );
 
-        // SAFETY: We are setting this environment variable before spawning the sudo process.
-        // This is safe because we are not doing other environment manipulations concurrently.
-        unsafe {
-            std::env::set_var("OMG_ELEVATED", "1");
-        }
-
         // Skip argv[0] as run_self_sudo adds the executable path itself
         let args_refs: Vec<&str> = args
             .iter()
@@ -237,6 +231,7 @@ pub async fn run_self_sudo(args: &[&str]) -> anyhow::Result<()> {
     if yes_flag {
         // Non-interactive mode: use -n flag and fail if password required
         let status = tokio::process::Command::new("sudo")
+            .env("OMG_ELEVATED", "1")
             .arg("-n")
             .arg("--")
             .arg(&exe)
@@ -288,6 +283,7 @@ pub async fn run_self_sudo(args: &[&str]) -> anyhow::Result<()> {
     } else {
         // Interactive mode: try -n first, fall back to interactive sudo
         let status = tokio::process::Command::new("sudo")
+            .env("OMG_ELEVATED", "1")
             .arg("-n")
             .arg("--")
             .arg(&exe)
@@ -301,6 +297,7 @@ pub async fn run_self_sudo(args: &[&str]) -> anyhow::Result<()> {
             Ok(s) if s.code() == Some(1) => {
                 tracing::info!("Trying interactive sudo (30s timeout)...");
                 let mut child = std::process::Command::new("sudo")
+                    .env("OMG_ELEVATED", "1")
                     .arg("--")
                     .arg(&exe)
                     .args(args)
@@ -336,6 +333,7 @@ pub async fn run_self_sudo(args: &[&str]) -> anyhow::Result<()> {
                 {
                     // Fall back to interactive sudo (allows password prompt)
                     let interactive_status = tokio::process::Command::new("sudo")
+                        .env("OMG_ELEVATED", "1")
                         .arg("--")
                         .arg(&exe)
                         .args(args)

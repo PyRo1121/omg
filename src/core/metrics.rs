@@ -16,6 +16,11 @@ pub struct MetricsSnapshot {
     pub security_audit_requests: u64,
     pub bytes_received: u64,
     pub bytes_sent: u64,
+    pub cache_hits: u64,
+    pub cache_misses: u64,
+    pub search_requests: u64,
+    pub info_requests: u64,
+    pub status_requests: u64,
 }
 
 /// Global metrics registry using atomics for high performance
@@ -28,6 +33,11 @@ pub struct Metrics {
     security_audit_requests: AtomicU64,
     bytes_received: AtomicU64,
     bytes_sent: AtomicU64,
+    cache_hits: AtomicU64,
+    cache_misses: AtomicU64,
+    search_requests: AtomicU64,
+    info_requests: AtomicU64,
+    status_requests: AtomicU64,
 }
 
 impl Default for Metrics {
@@ -47,6 +57,11 @@ impl Metrics {
             security_audit_requests: AtomicU64::new(0),
             bytes_received: AtomicU64::new(0),
             bytes_sent: AtomicU64::new(0),
+            cache_hits: AtomicU64::new(0),
+            cache_misses: AtomicU64::new(0),
+            search_requests: AtomicU64::new(0),
+            info_requests: AtomicU64::new(0),
+            status_requests: AtomicU64::new(0),
         }
     }
 
@@ -86,6 +101,26 @@ impl Metrics {
         self.bytes_sent.fetch_add(bytes, Ordering::Relaxed);
     }
 
+    pub fn inc_cache_hits(&self) {
+        self.cache_hits.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn inc_cache_misses(&self) {
+        self.cache_misses.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn inc_search_requests(&self) {
+        self.search_requests.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn inc_info_requests(&self) {
+        self.info_requests.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn inc_status_requests(&self) {
+        self.status_requests.fetch_add(1, Ordering::Relaxed);
+    }
+
     pub fn snapshot(&self) -> MetricsSnapshot {
         MetricsSnapshot {
             requests_total: self.requests_total.load(Ordering::Relaxed),
@@ -96,6 +131,11 @@ impl Metrics {
             security_audit_requests: self.security_audit_requests.load(Ordering::Relaxed),
             bytes_received: self.bytes_received.load(Ordering::Relaxed),
             bytes_sent: self.bytes_sent.load(Ordering::Relaxed),
+            cache_hits: self.cache_hits.load(Ordering::Relaxed),
+            cache_misses: self.cache_misses.load(Ordering::Relaxed),
+            search_requests: self.search_requests.load(Ordering::Relaxed),
+            info_requests: self.info_requests.load(Ordering::Relaxed),
+            status_requests: self.status_requests.load(Ordering::Relaxed),
         }
     }
 }

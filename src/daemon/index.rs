@@ -373,9 +373,14 @@ impl PackageIndex {
         })
     }
 
+    #[inline]
+    #[must_use]
     pub fn len(&self) -> usize {
         self.items.len()
     }
+
+    #[inline]
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.items.is_empty()
     }

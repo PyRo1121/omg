@@ -97,8 +97,10 @@ pub async fn download_with_progress(
 
     // Verify checksum if provided
     if let Some(expected) = expected_sha256 {
-        // Safe to unwrap because we initialized it above
-        let actual = format!("{:x}", hasher.unwrap().finalize());
+        // SAFETY: hasher is guaranteed to be Some when expected_sha256 is Some
+        // (see initialization at line 76-80)
+        let hasher = hasher.expect("hasher initialized when expected_sha256 is Some");
+        let actual = format!("{:x}", hasher.finalize());
 
         if actual != expected.to_lowercase() {
             anyhow::bail!(
@@ -396,6 +398,55 @@ pub fn print_already_installed(runtime: &str, version: &str) {
         runtime.cyan(),
         version.yellow()
     );
+}
+
+/// Macro to generate common runtime manager methods
+///
+/// Eliminates ~300 lines of duplicated code across runtime managers
+#[macro_export]
+macro_rules! impl_runtime_common {
+    ($manager_type:ty, $runtime_name:expr) => {
+        impl $manager_type {
+            /// List all installed versions of this runtime
+            pub fn list_installed(&self) -> Result<Vec<String>> {
+                $crate::runtimes::common::list_installed_versions(&self.versions_dir)
+            }
+
+            /// Get the currently active version
+            #[must_use]
+            pub fn current_version(&self) -> Option<String> {
+                $crate::runtimes::common::get_current_version(&self.versions_dir)
+            }
+
+            /// Uninstall a specific version of this runtime
+            pub fn uninstall(&self, version: &str) -> Result<()> {
+                use anyhow::Context;
+                use owo_colors::OwoColorize;
+                use std::fs;
+
+                let version = $crate::runtimes::common::normalize_version(version);
+                let version_dir = self.versions_dir.join(&version);
+
+                if !version_dir.exists() {
+                    println!("{} {} {} is not installed", "→".dimmed(), $runtime_name, version);
+                    return Ok(());
+                }
+
+                // Clear current link if uninstalling the active version
+                if let Some(current) = self.current_version()
+                    && current == version
+                {
+                    let _ = fs::remove_file(&self.current_link);
+                }
+
+                fs::remove_dir_all(&version_dir)
+                    .with_context(|| format!("Failed to remove {} directory", version_dir.display()))?;
+
+                println!("{} {} {} uninstalled", "✓".green(), $runtime_name, version);
+                Ok(())
+            }
+        }
+    };
 }
 
 #[cfg(test)]
