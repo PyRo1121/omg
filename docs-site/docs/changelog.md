@@ -438,9 +438,27 @@ Performance improvements:
 
 ### 🐛 Bug Fixes
 
+- Make tests resilient to signal termination and optimize release script
+
+  - Rename test_concurrent_elevation_attempts to test_sequential_status_commands
+
+  - Handle processes killed by signals (exit code -1) gracefully
+
+  - Make info tests accept 'not found' messages in test mode
+
+  - Optimize release script to run focused tests (unit + integration only)
+
+  - Skip flaky property tests during release
+
+  - Apply clippy fixes to privilege.rs (redundant closures, formatting)
+
 - Inline format args in license.rs for clippy compliance
 - Substitute `$repo` and `$arch` placeholders in parsed server URLs
 ### 📚 Documentation
+
+- Update changelog [skip ci]
+
+Auto-generated from git history with git-cliff.
 
 - Update changelog [skip ci]
 
