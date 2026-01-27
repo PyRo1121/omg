@@ -807,7 +807,7 @@ fn draw_packages(f: &mut Frame, area: Rect, app: &App) {
     )
     .header(header)
     .block(styled_block(" Packages"))
-    .highlight_style(Style::default().bg(colors::BG_HIGHLIGHT));
+    .row_highlight_style(Style::default().bg(colors::BG_HIGHLIGHT));
 
     f.render_widget(table, *list_area);
 }
@@ -1215,7 +1215,7 @@ fn draw_team(f: &mut Frame, area: Rect, app: &App) {
         )
         .header(header)
         .block(styled_block(" Members"))
-        .highlight_style(Style::default().bg(colors::BG_HIGHLIGHT));
+        .row_highlight_style(Style::default().bg(colors::BG_HIGHLIGHT));
 
         f.render_widget(table, *right);
     } else {
