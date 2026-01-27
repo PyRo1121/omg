@@ -2,6 +2,33 @@
 //!
 //! Pre-defined test data and scenarios for consistent testing.
 
+// Re-export library fixtures
+pub use omg_lib::core::testing::fixtures::*;
+
+use crate::common::mocks::MockPackage;
+
+/// Extension trait to convert `PackageFixture` to `MockPackage` for testing
+pub trait PackageFixtureExt {
+    /// Convert a `PackageFixture` into a `MockPackage` for use in tests
+    fn to_mock_package(&self) -> MockPackage;
+}
+
+impl PackageFixtureExt for PackageFixture {
+    fn to_mock_package(&self) -> MockPackage {
+        // Build the Package first to get defaults applied
+        let pkg = self.clone().build();
+
+        MockPackage {
+            name: pkg.name,
+            version: pkg.version.to_string(),
+            description: pkg.description,
+            repo: "test".to_string(),
+            dependencies: vec![],
+            installed_size: 100,
+        }
+    }
+}
+
 /// Common package names for testing across distros
 pub mod packages {
     /// Packages that exist on all supported distros

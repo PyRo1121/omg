@@ -118,22 +118,31 @@ fn test_info_nonexistent_package() {
 
 #[test]
 fn test_list_explicit() {
-    let output = omg_cmd()
-        .args(["list", "--explicit"])
-        .output()
-        .expect("Failed to run omg");
+    // ===== ARRANGE =====
+    let mut cmd = omg_cmd();
+    cmd.args(["list", "--explicit"]);
 
-    assert!(output.status.success());
+    // ===== ACT =====
+    let output = cmd.output().expect("Failed to run omg");
     let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // ===== ASSERT =====
+    assert!(output.status.success());
     assert!(!stdout.is_empty(), "Should list explicit packages");
 }
 
 #[test]
 fn test_status_command() {
-    let output = omg_cmd().arg("status").output().expect("Failed to run omg");
+    // ===== ARRANGE =====
+    let mut cmd = omg_cmd();
+    cmd.arg("status");
 
-    assert!(output.status.success());
+    // ===== ACT =====
+    let output = cmd.output().expect("Failed to run omg");
     let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // ===== ASSERT =====
+    assert!(output.status.success());
     assert!(
         stdout.contains("package") || stdout.contains("Package") || stdout.contains("installed"),
         "Status should show package information"
@@ -142,15 +151,17 @@ fn test_status_command() {
 
 #[test]
 fn test_install_dry_run() {
-    let output = omg_cmd()
-        .args(["install", "--dry-run", "vim"])
-        .output()
-        .expect("Failed to run omg");
+    // ===== ARRANGE =====
+    let mut cmd = omg_cmd();
+    cmd.args(["install", "--dry-run", "vim"]);
 
+    // ===== ACT =====
+    let output = cmd.output().expect("Failed to run omg");
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     let combined = format!("{stdout}{stderr}");
 
+    // ===== ASSERT =====
     assert!(
         combined.contains("vim") || combined.contains("dry") || combined.contains("Dry"),
         "Dry run should mention the package or dry run mode"
@@ -159,15 +170,17 @@ fn test_install_dry_run() {
 
 #[test]
 fn test_remove_dry_run() {
-    let output = omg_cmd()
-        .args(["remove", "--dry-run", "pacman"])
-        .output()
-        .expect("Failed to run omg");
+    // ===== ARRANGE =====
+    let mut cmd = omg_cmd();
+    cmd.args(["remove", "--dry-run", "pacman"]);
 
+    // ===== ACT =====
+    let output = cmd.output().expect("Failed to run omg");
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     let combined = format!("{stdout}{stderr}");
 
+    // ===== ASSERT =====
     assert!(
         combined.contains("pacman") || combined.contains("dry") || combined.contains("Dry"),
         "Dry run should mention the package or dry run mode"
@@ -176,9 +189,15 @@ fn test_remove_dry_run() {
 
 #[test]
 fn test_doctor_command() {
-    let output = omg_cmd().arg("doctor").output().expect("Failed to run omg");
+    // ===== ARRANGE =====
+    let mut cmd = omg_cmd();
+    cmd.arg("doctor");
 
+    // ===== ACT =====
+    let output = cmd.output().expect("Failed to run omg");
     let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // ===== ASSERT =====
     assert!(
         stdout.contains("✓")
             || stdout.contains("✗")
@@ -190,25 +209,31 @@ fn test_doctor_command() {
 
 #[test]
 fn test_invalid_command() {
-    let output = omg_cmd()
-        .arg("this-is-not-a-valid-command")
-        .output()
-        .expect("Failed to run omg");
+    // ===== ARRANGE =====
+    let mut cmd = omg_cmd();
+    cmd.arg("this-is-not-a-valid-command");
 
+    // ===== ACT =====
+    let output = cmd.output().expect("Failed to run omg");
+
+    // ===== ASSERT =====
     assert!(!output.status.success(), "Invalid command should fail");
 }
 
 /// Empty search returns all packages (valid behavior)
 #[test]
 fn test_search_empty_query() {
-    let output = omg_cmd()
-        .args(["search", ""])
-        .output()
-        .expect("Failed to run omg");
+    // ===== ARRANGE =====
+    let mut cmd = omg_cmd();
+    cmd.args(["search", ""]);
 
+    // ===== ACT =====
+    let output = cmd.output().expect("Failed to run omg");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // ===== ASSERT =====
     // Empty search is valid - returns all packages
     // Just verify it doesn't crash and produces output
-    let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         output.status.success() || !stdout.is_empty(),
         "Empty search should succeed or produce output"
@@ -217,20 +242,26 @@ fn test_search_empty_query() {
 
 #[test]
 fn test_verbose_flag() {
-    let output = omg_cmd()
-        .args(["-v", "status"])
-        .output()
-        .expect("Failed to run omg");
+    // ===== ARRANGE =====
+    let mut cmd = omg_cmd();
+    cmd.args(["-v", "status"]);
 
+    // ===== ACT =====
+    let output = cmd.output().expect("Failed to run omg");
+
+    // ===== ASSERT =====
     assert!(output.status.success());
 }
 
 #[test]
 fn test_double_verbose_flag() {
-    let output = omg_cmd()
-        .args(["-vv", "status"])
-        .output()
-        .expect("Failed to run omg");
+    // ===== ARRANGE =====
+    let mut cmd = omg_cmd();
+    cmd.args(["-vv", "status"]);
 
+    // ===== ACT =====
+    let output = cmd.output().expect("Failed to run omg");
+
+    // ===== ASSERT =====
     assert!(output.status.success());
 }
