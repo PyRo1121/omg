@@ -80,7 +80,7 @@ pub fn unwrap_or_default<T: Default>(option: Option<T>) -> T {
 /// Safe alternative to `unwrap()` that exits with a helpful error message
 pub fn unwrap_or_exit<T>(option: Option<T>, context: &str) -> T {
     option.unwrap_or_else(|| {
-        eprintln!("❌ Fatal error: {context}");
+        tracing::error!("Fatal error: {}", context);
         std::process::exit(1);
     })
 }

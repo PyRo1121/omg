@@ -393,7 +393,7 @@ pub async fn sync_databases_parallel() -> Result<()> {
         Ok(())
     } else {
         for e in &errors {
-            eprintln!("{} {}", "✗".red(), e);
+            tracing::error!("Sync error: {}", e);
         }
         anyhow::bail!("Failed to sync {} database(s)", errors.len())
     }
@@ -724,9 +724,9 @@ pub async fn download_packages_parallel(
     }
 
     if !errors.is_empty() {
-        eprintln!("\n{} {} download(s) failed:", "⚠".yellow(), errors.len());
+        tracing::warn!("{} download(s) failed", errors.len());
         for e in errors.iter().take(5) {
-            eprintln!("  {} {}", "✗".red(), e);
+            tracing::error!("Download error: {}", e);
         }
     }
 

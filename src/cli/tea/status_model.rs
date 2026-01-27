@@ -99,7 +99,9 @@ impl Model for StatusModel {
                     let daemon_result = if tokio::runtime::Handle::try_current().is_ok() {
                         // Already in runtime
                         std::thread::spawn(move || {
-                            let rt = tokio::runtime::Runtime::new().unwrap();
+                            let Ok(rt) = tokio::runtime::Runtime::new() else {
+                                return None;
+                            };
                             rt.block_on(async {
                                 if let Ok(mut client) = DaemonClient::connect().await
                                     && let Ok(ResponseResult::Status(status)) =
@@ -118,10 +120,13 @@ impl Model for StatusModel {
                             })
                         })
                         .join()
-                        .unwrap()
+                        .ok()
+                        .flatten()
                     } else {
                         // Create runtime
-                        let rt = tokio::runtime::Runtime::new().unwrap();
+                        let Ok(rt) = tokio::runtime::Runtime::new() else {
+                            return StatusMsg::Error("Failed to create async runtime".to_string());
+                        };
                         rt.block_on(async {
                             if let Ok(mut client) = DaemonClient::connect().await
                                 && let Ok(ResponseResult::Status(status)) =
@@ -148,16 +153,20 @@ impl Model for StatusModel {
                     let fallback_result: anyhow::Result<(usize, usize, usize, usize)> =
                         if tokio::runtime::Handle::try_current().is_ok() {
                             std::thread::spawn(move || {
-                                let rt = tokio::runtime::Runtime::new().unwrap();
+                                let Ok(rt) = tokio::runtime::Runtime::new() else {
+                                    return Err(anyhow::anyhow!("Failed to create async runtime"));
+                                };
                                 rt.block_on(async {
                                     let pm = get_package_manager();
                                     pm.get_status(fast).await
                                 })
                             })
                             .join()
-                            .unwrap()
+                            .unwrap_or_else(|_| Err(anyhow::anyhow!("Thread panicked")))
                         } else {
-                            let rt = tokio::runtime::Runtime::new().unwrap();
+                            let Ok(rt) = tokio::runtime::Runtime::new() else {
+                                return StatusMsg::Error("Failed to create async runtime".to_string());
+                            };
                             rt.block_on(async {
                                 let pm = get_package_manager();
                                 pm.get_status(fast).await
