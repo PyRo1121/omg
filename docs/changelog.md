@@ -436,6 +436,9 @@ Performance improvements:
 
   - Info cache stores Arc, returns cheap clone
 
+### ✨ New Features
+
+- Introduce `runtime_resolver` module, optimize daemon cache, simplify sync client, and add new integration tests and benchmarks
 ### 🐛 Bug Fixes
 
 - Make tests resilient to signal termination and optimize release script
@@ -455,6 +458,10 @@ Performance improvements:
 - Inline format args in license.rs for clippy compliance
 - Substitute `$repo` and `$arch` placeholders in parsed server URLs
 ### 📚 Documentation
+
+- Update changelog [skip ci]
+
+Auto-generated from git history with git-cliff.
 
 - Update changelog [skip ci]
 
