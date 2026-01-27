@@ -151,13 +151,17 @@ impl Model for InstallModel {
                             std::thread::spawn(move || {
                                 let pm = get_package_manager();
                                 let service = PackageService::new(pm);
-                                let rt = tokio::runtime::Runtime::new().unwrap();
+                                let Ok(rt) = tokio::runtime::Runtime::new() else {
+                                    return Err(anyhow::anyhow!("Failed to create async runtime"));
+                                };
                                 rt.block_on(async { service.install(&packages_task, yes).await })
                             })
                             .join()
-                            .unwrap()
+                            .unwrap_or_else(|_| Err(anyhow::anyhow!("Thread panicked")))
                         } else {
-                            let rt = tokio::runtime::Runtime::new().unwrap();
+                            let Ok(rt) = tokio::runtime::Runtime::new() else {
+                                return InstallMsg::Error("Failed to create async runtime".to_string());
+                            };
                             rt.block_on(async {
                                 let pm = get_package_manager();
                                 let service = PackageService::new(pm);

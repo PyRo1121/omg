@@ -272,21 +272,21 @@ impl<M: Model> Program<M> {
             Cmd::Table(config) => {
                 // Tables would need specialized handling in the renderer
                 // For now, fall back to simple rendering
-                eprintln!("{config:?}");
+                tracing::debug!("Table config: {:?}", config);
             }
             Cmd::StyledText(config) => {
                 // Styled text would need the LipGlossRenderer
                 // For now, just print the text
-                eprintln!("{}", config.text);
+                tracing::debug!("Styled text: {}", config.text);
             }
             Cmd::Panel(config) => {
                 // Panels would need specialized handling in the renderer
                 // For now, fall back to simple rendering
                 if let Some(title) = &config.title {
-                    eprintln!("\n[{title}]");
+                    tracing::debug!("Panel: {}", title);
                 }
                 for line in &config.content {
-                    eprintln!("{}{}", " ".repeat(config.padding), line);
+                    tracing::debug!("{}{}", " ".repeat(config.padding), line);
                 }
             }
             Cmd::Spacer => {

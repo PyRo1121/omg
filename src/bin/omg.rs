@@ -261,7 +261,7 @@ fn main() -> Result<()> {
     if let Err(ref err) = result
         && let Some(suggestion) = omg_lib::core::error::suggest_for_anyhow(err)
     {
-        eprintln!("\n💡 {suggestion}");
+        tracing::info!("Suggestion: {}", suggestion);
     }
 
     result

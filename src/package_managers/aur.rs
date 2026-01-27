@@ -991,11 +991,10 @@ impl AurClient {
 
         spinner.finish_and_clear();
         if !status.success() {
-            eprintln!(
-                "  {} Build failed: {} (see {})",
-                "✗".red(),
-                package_name,
-                log_path.display()
+            tracing::error!(
+                package = package_name,
+                log_path = %log_path.display(),
+                "Build failed"
             );
         }
         Ok(status)
