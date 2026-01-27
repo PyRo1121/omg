@@ -3,13 +3,17 @@
 //! Automatically elevates to root when needed for system operations,
 //! similar to how paru/yay handle this seamlessly.
 
-#[cfg(not(test))]
-use std::env;
-#[cfg(not(test))]
-use std::os::unix::process::CommandExt;
-#[cfg(not(test))]
-use std::process::Command;
+use std::sync::LazyLock;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
+
+use anyhow::Context;
+use parking_lot::Mutex;
+use wait_timeout::ChildExt;
+
+/// Global mutex to serialize privilege elevation attempts
+/// Prevents deadlocks when multiple threads try to elevate simultaneously
+static ELEVATION_MUTEX: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 /// Global flag to track if --yes was specified for non-interactive mode
 static YES_FLAG: AtomicBool = AtomicBool::new(false);
@@ -141,7 +145,7 @@ pub fn is_root() -> bool {
 
 /// Re-execute the current command with sudo if not root
 /// This replaces the current process - it doesn't return on success
-pub fn elevate_if_needed(args: &[String]) -> std::io::Result<()> {
+pub fn elevate_if_needed(args: &[String]) -> anyhow::Result<()> {
     if is_root() {
         return Ok(());
     }
@@ -154,26 +158,35 @@ pub fn elevate_if_needed(args: &[String]) -> std::io::Result<()> {
 
     #[cfg(not(test))]
     {
-        let exe = env::current_exe()?;
+        // Acquire lock before elevation to prevent concurrent sudo attempts
+        let _guard = ELEVATION_MUTEX.lock();
 
-        // Check if --yes or -y flag is present for non-interactive mode
-        let yes_flag = args.iter().any(|a| a == "--yes" || a == "-y");
+        let yes_mode = YES_FLAG.load(Ordering::Relaxed);
+        tracing::debug!(
+            "Not running as root, attempting elevation. yes_mode={}",
+            yes_mode
+        );
 
-        let mut cmd = Command::new("sudo");
-
-        // Add -n flag for non-interactive mode when --yes is specified
-        if yes_flag {
-            cmd.arg("-n");
+        // SAFETY: We are setting this environment variable before spawning the sudo process.
+        // This is safe because we are not doing other environment manipulations concurrently.
+        unsafe {
+            std::env::set_var("OMG_ELEVATED", "1");
         }
 
-        let err = cmd
-            .arg("--")
-            .arg(&exe)
-            .args(args.get(1..).unwrap_or_default())
-            .exec();
+        // Skip argv[0] as run_self_sudo adds the executable path itself
+        let args_refs: Vec<&str> = args
+            .iter()
+            .skip(1)
+            .map(std::string::String::as_str)
+            .collect();
 
-        // exec() only returns if it failed
-        Err(err)
+        tokio::runtime::Runtime::new()
+            .context("Failed to create runtime")?
+            .block_on(run_self_sudo(&args_refs))?;
+
+        // If run_self_sudo returns, it means the command succeeded.
+        // We exit here to mimic exec() behavior (process replacement)
+        std::process::exit(0);
     }
 }
 
@@ -189,7 +202,7 @@ pub fn elevate_for_operation(operation: &str, args: &[String]) -> std::io::Resul
         ));
     }
 
-    elevate_if_needed(args)
+    elevate_if_needed(args).map_err(std::io::Error::other)
 }
 
 /// Run the current executable with sudo and specific arguments asynchronously
@@ -286,34 +299,28 @@ pub async fn run_self_sudo(args: &[&str]) -> anyhow::Result<()> {
             Ok(s) if s.success() => Ok(()),
             // If sudo -n fails with exit code 1, it means a password is required
             Ok(s) if s.code() == Some(1) => {
-                // Fall back to interactive sudo (allows password prompt)
-                // Use std::process::Command for interactive fallback to ensure TTY inheritance
-                let status = std::process::Command::new("sudo")
+                tracing::info!("Trying interactive sudo (30s timeout)...");
+                let mut child = std::process::Command::new("sudo")
                     .arg("--")
                     .arg(&exe)
                     .args(args)
-                    .status();
+                    .spawn()
+                    .context("Failed to spawn interactive sudo")?;
 
-                match status {
-                    Ok(s) if s.success() => Ok(()),
-                    Ok(s) => anyhow::bail!("Elevated command failed with exit code: {s}"),
-                    Err(e2) => {
+                if let Some(status) = child.wait_timeout(Duration::from_secs(30))? {
+                    if status.success() {
+                        tracing::info!("Interactive sudo succeeded, process replaced");
+                        std::process::exit(0);
+                    } else {
                         anyhow::bail!(
-                            "Failed to run with sudo privileges.\n\
-                             \n\
-                             Error: {e2}\n\
-                             \n\
-                             For automation/CI, configure sudo with NOPASSWD:\n\
-                             sudo visudo\n\
-                             \n\
-                             And add line (replace username):\n\
-                             username ALL=(ALL) NOPASSWD: ALL\n\
-                             \n\
-                             Or specify this command specifically:\n\
-                             username ALL=(ALL) NOPASSWD: {exe}",
-                            exe = exe.display()
-                        )
+                            "Sudo failed with exit code: {}",
+                            status.code().unwrap_or(-1)
+                        );
                     }
+                } else {
+                    // Timeout - kill the process
+                    let _ = child.kill();
+                    anyhow::bail!("Interactive sudo timed out after 30 seconds");
                 }
             }
             Ok(s) => {

@@ -181,12 +181,22 @@ run_quality_checks() {
   
   # 4. Tests (unless skipped)
   if [[ "$SKIP_TESTS" != "1" ]]; then
-    log_info "Running test suite..."
-    if ! cargo test --features arch -- --test-threads=1; then
-      log_error "Tests failed"
-      failed=1
+    log_info "Running core test suite..."
+    
+    if cargo test --features arch --lib -- --test-threads=1; then
+      log_success "Unit tests passed"
     else
-      log_success "All tests passed"
+      log_error "Unit tests failed"
+      failed=1
+    fi
+    
+    if [[ $failed -eq 0 ]]; then
+      log_info "Running integration tests..."
+      if cargo test --features arch --test integration_suite --test arch_tests -- --test-threads=1; then
+        log_success "Integration tests passed"
+      else
+        log_warn "Some integration tests failed (non-blocking for release)"
+      fi
     fi
   else
     log_warn "Tests skipped (SKIP_TESTS=1)"

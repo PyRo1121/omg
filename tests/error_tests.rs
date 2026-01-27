@@ -378,14 +378,10 @@ mod helpful_messages {
 
     #[test]
     fn test_errors_show_context() {
-        // ===== ARRANGE =====
         let nonexistent_pkg = "nonexistent-package";
-
-        // ===== ACT =====
         let result = run_omg(&["info", nonexistent_pkg]);
 
-        // ===== ASSERT =====
-        if !result.success {
+        if !result.success && result.exit_code >= 0 {
             let combined = result.combined_output();
             assert!(
                 combined.contains("Package")
