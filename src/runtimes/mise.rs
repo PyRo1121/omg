@@ -86,7 +86,7 @@ impl MiseManager {
 
     /// Install mise binary
     pub async fn install(&self) -> Result<()> {
-        println!(
+        tracing::info!(
             "{} Installing mise (runtime version manager)...\n",
             "OMG".cyan().bold()
         );
@@ -104,12 +104,12 @@ impl MiseManager {
         let filename = format!("mise-v{version}-linux-{arch}.tar.gz");
         let url = format!("{MISE_GITHUB_RELEASES}/download/v{version}/{filename}");
 
-        println!("{} Downloading mise v{}...", "→".blue(), version);
+        tracing::info!("{} Downloading mise v{}...", "→".blue(), version);
         let download_path = self.bin_dir.join(&filename);
         self.download_file(&url, &download_path).await?;
 
         // Extract the tarball
-        println!("{} Extracting...", "→".blue());
+        tracing::info!("{} Extracting...", "→".blue());
         self.extract_tarball(&download_path)?;
 
         // Cleanup
@@ -125,7 +125,7 @@ impl MiseManager {
         perms.set_mode(0o755);
         fs::set_permissions(&self.mise_bin, perms)?;
 
-        println!("{} mise v{} installed!", "✓".green(), version);
+        tracing::info!("{} mise v{} installed!", "✓".green(), version);
         Ok(())
     }
 
@@ -333,7 +333,7 @@ impl MiseManager {
             anyhow::bail!("mise failed to activate {tool_spec}");
         }
 
-        println!("{} Using {} {} (via mise)", "✓".green(), runtime, version);
+        tracing::info!("{} Using {} {} (via mise)", "✓".green(), runtime, version);
         Ok(())
     }
 

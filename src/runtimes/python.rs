@@ -181,7 +181,7 @@ impl PythonManager {
             return self.use_version(&version);
         }
 
-        println!(
+        tracing::info!(
             "{} Installing Python {}...\n",
             "OMG".cyan().bold(),
             version.yellow()
@@ -193,7 +193,7 @@ impl PythonManager {
             arch => anyhow::bail!("Unsupported architecture: {arch}"),
         };
 
-        println!("{} Finding Python {} release...", "→".blue(), version);
+        tracing::info!("{} Finding Python {} release...", "→".blue(), version);
 
         let releases: Vec<GithubRelease> = self
             .client
@@ -233,11 +233,11 @@ impl PythonManager {
 
         fs::create_dir_all(&self.versions_dir)?;
 
-        println!("{} Downloading {}...", "→".blue(), asset_name);
+        tracing::info!("{} Downloading {}...", "→".blue(), asset_name);
         let download_path = self.versions_dir.join(&asset_name);
         download_with_progress(&self.client, &url, &download_path, None).await?;
 
-        println!("{} Extracting (pure Rust)...", "→".blue());
+        tracing::info!("{} Extracting (pure Rust)...", "→".blue());
         extract_tar_gz(&download_path, &version_dir, 1).await?;
 
         let _ = fs::remove_file(&download_path);
@@ -262,7 +262,7 @@ impl PythonManager {
         let version_dir = self.versions_dir.join(&version);
 
         if !version_dir.exists() {
-            println!("{} Python {} is not installed", "→".dimmed(), version);
+            tracing::info!("{} Python {} is not installed", "→".dimmed(), version);
             return Ok(());
         }
 
@@ -273,7 +273,7 @@ impl PythonManager {
         }
 
         fs::remove_dir_all(&version_dir)?;
-        println!("{} Python {} uninstalled", "✓".green(), version);
+        tracing::info!("{} Python {} uninstalled", "✓".green(), version);
         Ok(())
     }
 }

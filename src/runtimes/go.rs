@@ -94,7 +94,7 @@ impl GoManager {
             return self.use_version(&version);
         }
 
-        println!(
+        tracing::info!(
             "{} Installing Go {}...\n",
             "OMG".cyan().bold(),
             version.yellow()
@@ -114,11 +114,11 @@ impl GoManager {
         // Fetch checksum for verification
         let checksum = self.fetch_checksum(&version, &filename).await.ok();
 
-        println!("{} Downloading {}...", "→".blue(), filename);
+        tracing::info!("{} Downloading {}...", "→".blue(), filename);
         let download_path = self.versions_dir.join(&filename);
         download_with_progress(&self.client, &url, &download_path, checksum.as_deref()).await?;
 
-        println!("{} Extracting (pure Rust)...", "→".blue());
+        tracing::info!("{} Extracting (pure Rust)...", "→".blue());
         extract_tar_gz(&download_path, &version_dir, 1).await?;
 
         let _ = fs::remove_file(&download_path);
@@ -143,13 +143,13 @@ impl GoManager {
         let version_dir = self.versions_dir.join(&version);
         set_current_version(&self.versions_dir, &version)?;
 
-        println!("{} Now using Go {}", "✓".green(), version);
-        println!(
+        tracing::info!("{} Now using Go {}", "✓".green(), version);
+        tracing::info!(
             "  {} {}",
             "GOROOT:".dimmed(),
             version_dir.display().to_string().dimmed()
         );
-        println!(
+        tracing::info!(
             "  {} {}",
             "PATH:".dimmed(),
             self.bin_dir().display().to_string().dimmed()
@@ -164,7 +164,7 @@ impl GoManager {
         let version_dir = self.versions_dir.join(&version);
 
         if !version_dir.exists() {
-            println!("{} Go {} is not installed", "→".dimmed(), version);
+            tracing::info!("{} Go {} is not installed", "→".dimmed(), version);
             return Ok(());
         }
 
@@ -175,7 +175,7 @@ impl GoManager {
         }
 
         fs::remove_dir_all(&version_dir)?;
-        println!("{} Go {} uninstalled", "✓".green(), version);
+        tracing::info!("{} Go {} uninstalled", "✓".green(), version);
         Ok(())
     }
 }

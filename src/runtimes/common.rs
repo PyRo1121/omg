@@ -365,7 +365,7 @@ fn extract_domain(url: &str) -> &str {
 
 /// Print installation success message
 pub fn print_installed(runtime: &str, version: &str) {
-    println!(
+    tracing::info!(
         "\n{} {} {} installed successfully!",
         "✓".green().bold(),
         runtime.cyan(),
@@ -375,13 +375,13 @@ pub fn print_installed(runtime: &str, version: &str) {
 
 /// Print version switch message
 pub fn print_using(runtime: &str, version: &str, bin_path: &Path) {
-    println!(
+    tracing::info!(
         "{} Now using {} {}",
         "✓".green(),
         runtime.cyan(),
         version.yellow()
     );
-    println!(
+    tracing::info!(
         "  {} {}",
         "PATH:".dimmed(),
         bin_path.display().to_string().dimmed()
@@ -390,7 +390,7 @@ pub fn print_using(runtime: &str, version: &str, bin_path: &Path) {
 
 /// Print already installed message
 pub fn print_already_installed(runtime: &str, version: &str) {
-    println!(
+    tracing::info!(
         "{} {} {} is already installed",
         "✓".green(),
         runtime.cyan(),

@@ -319,9 +319,237 @@ export const TeamAnalytics: Component<TeamAnalyticsProps> = props => {
                           </div>
                         </div>
                       )}
-                    </For>
+                     </For>
                  </div>
                </div>
+            </Match>
+
+            <Match when={view() === 'security'}>
+              <div class="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                {/* Security Overview */}
+                <div class="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
+                  <StatCard 
+                    title="Compliance Score"
+                    value={`${securityMetrics().compliance_score}%`}
+                    icon={<Shield size={20} />}
+                    description="Fleet-wide security compliance rating."
+                    class="border-emerald-500/20 bg-emerald-500/[0.03]"
+                  />
+                  <StatCard
+                    title="Critical Issues"
+                    value={securityMetrics().critical.toString()}
+                    icon={<Shield size={20} />}
+                    description="Nodes requiring immediate attention."
+                    class={securityMetrics().critical > 0 ? "border-rose-500/20 bg-rose-500/[0.03]" : "border-emerald-500/20 bg-emerald-500/[0.03]"}
+                  />
+                  <StatCard
+                    title="Outdated Versions"
+                    value={(teamData()?.members?.filter(m => m.omg_version && !m.omg_version.startsWith('1.')).length || 0).toString()}
+                    icon={<Clock size={20} />}
+                    description="Nodes running outdated OMG versions."
+                    class="border-amber-500/20 bg-amber-500/[0.03]"
+                  />
+                  <StatCard
+                    title="Active Policies"
+                    value={(policiesQuery.data?.policies?.length || 0).toString()}
+                    icon={<Lock size={20} />}
+                    description="Security policies currently enforced."
+                    class="border-indigo-500/20 bg-indigo-500/[0.03]"
+                  />
+                </div>
+
+                {/* Security Score Card */}
+                <div class="grid grid-cols-1 gap-6 lg:grid-cols-3">
+                  <div class="lg:col-span-2">
+                    <SecurityScore 
+                      score={securityMetrics().compliance_score}
+                      critical={securityMetrics().critical}
+                      high={securityMetrics().high}
+                      medium={securityMetrics().medium}
+                      low={securityMetrics().low}
+                    />
+                  </div>
+                  
+                  {/* Version Distribution */}
+                  <div class="rounded-3xl border border-white/5 bg-[#0d0d0e] p-8 shadow-2xl">
+                    <h3 class="text-lg font-bold text-white uppercase tracking-widest mb-6">Version Distribution</h3>
+                    <div class="space-y-4">
+                      <For each={Object.entries(
+                        (teamData()?.members || []).reduce((acc, m) => {
+                          const ver = m.omg_version || 'Unknown';
+                          acc[ver] = (acc[ver] || 0) + 1;
+                          return acc;
+                        }, {} as Record<string, number>)
+                      ).sort((a, b) => b[1] - a[1])}>
+                        {([version, count]) => (
+                          <div class="flex items-center justify-between">
+                            <span class="text-sm font-mono text-slate-300">{version}</span>
+                            <div class="flex items-center gap-3">
+                              <div class="w-24 h-2 bg-white/5 rounded-full overflow-hidden">
+                                <div 
+                                  class={`h-full rounded-full ${version.startsWith('1.') ? 'bg-emerald-500' : 'bg-amber-500'}`}
+                                  style={{ width: `${(count / (teamData()?.members?.length || 1)) * 100}%` }}
+                                />
+                              </div>
+                              <span class="text-xs font-bold text-slate-500 w-8">{count}</span>
+                            </div>
+                          </div>
+                        )}
+                      </For>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Compliance Table */}
+                <div class="rounded-3xl border border-white/5 bg-[#0d0d0e] p-8 shadow-2xl">
+                  <h3 class="text-xl font-bold text-white uppercase tracking-widest mb-6">Node Compliance Status</h3>
+                  <div class="overflow-x-auto">
+                    <table class="w-full">
+                      <thead>
+                        <tr class="border-b border-white/5">
+                          <th class="text-left text-[10px] font-black text-slate-500 uppercase tracking-widest pb-4">Node</th>
+                          <th class="text-left text-[10px] font-black text-slate-500 uppercase tracking-widest pb-4">Version</th>
+                          <th class="text-left text-[10px] font-black text-slate-500 uppercase tracking-widest pb-4">OS</th>
+                          <th class="text-left text-[10px] font-black text-slate-500 uppercase tracking-widest pb-4">Last Seen</th>
+                          <th class="text-left text-[10px] font-black text-slate-500 uppercase tracking-widest pb-4">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <For each={sortedMembers()}>
+                          {member => {
+                            const isCompliant = member.omg_version?.startsWith('1.');
+                            return (
+                              <tr class="border-b border-white/5 hover:bg-white/[0.02]">
+                                <td class="py-4">
+                                  <div class="flex items-center gap-3">
+                                    <div class="h-8 w-8 rounded-lg bg-gradient-to-br from-slate-700 to-slate-800 flex items-center justify-center text-xs font-bold text-white">
+                                      {(member.user_email?.[0] || 'U').toUpperCase()}
+                                    </div>
+                                    <div>
+                                      <div class="text-sm font-bold text-white truncate max-w-[200px]">{member.user_email || 'Unknown'}</div>
+                                      <div class="text-[10px] text-slate-500">{member.hostname || 'Unknown Host'}</div>
+                                    </div>
+                                  </div>
+                                </td>
+                                <td class="py-4">
+                                  <span class={`text-sm font-mono ${isCompliant ? 'text-emerald-400' : 'text-amber-400'}`}>
+                                    {member.omg_version || 'Unknown'}
+                                  </span>
+                                </td>
+                                <td class="py-4 text-sm text-slate-400">{member.os || 'Unknown'}</td>
+                                <td class="py-4 text-xs text-slate-500 font-mono">{api.formatRelativeTime(member.last_seen_at)}</td>
+                                <td class="py-4">
+                                  <StatusBadge status={isCompliant ? 'compliant' : 'non-compliant'} />
+                                </td>
+                              </tr>
+                            );
+                          }}
+                        </For>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </Match>
+
+            <Match when={view() === 'activity'}>
+              <div class="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                {/* Activity Stats */}
+                <div class="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
+                  <StatCard 
+                    title="Total Operations"
+                    value={(teamData()?.totals?.total_commands ?? 0).toLocaleString()}
+                    icon={<Zap size={20} />}
+                    description="Commands executed across all nodes."
+                    class="border-amber-500/20 bg-amber-500/[0.03]"
+                  />
+                  <StatCard
+                    title="Active Today"
+                    value={(teamData()?.members?.filter(m => {
+                      if (!m.last_seen_at) return false;
+                      const today = new Date();
+                      const lastSeen = new Date(m.last_seen_at);
+                      return lastSeen.toDateString() === today.toDateString();
+                    }).length || 0).toString()}
+                    icon={<Users size={20} />}
+                    description="Nodes active in the last 24 hours."
+                    class="border-emerald-500/20 bg-emerald-500/[0.03]"
+                  />
+                  <StatCard
+                    title="Avg Commands/Node"
+                    value={Math.round((teamData()?.totals?.total_commands || 0) / (teamData()?.members?.length || 1)).toLocaleString()}
+                    icon={<BarChart3 size={20} />}
+                    description="Average execution volume per node."
+                    class="border-indigo-500/20 bg-indigo-500/[0.03]"
+                  />
+                  <StatCard
+                    title="Peak Velocity"
+                    value={`${Math.max(...(teamData()?.daily_usage?.map(d => d.commands_run) || [0]))}`}
+                    icon={<Zap size={20} />}
+                    description="Highest daily command volume."
+                    class="border-purple-500/20 bg-purple-500/[0.03]"
+                  />
+                </div>
+
+                {/* Activity Chart */}
+                <div class="grid grid-cols-1 gap-6 lg:grid-cols-3">
+                  <div class="lg:col-span-2">
+                    <RoiChart data={productivityImpact().daily_trend} peakVelocity={Math.max(...(teamData()?.daily_usage?.map(d => d.commands_run) || [0]))} />
+                  </div>
+                  
+                  {/* Top Performers */}
+                  <div class="rounded-3xl border border-white/5 bg-[#0d0d0e] p-8 shadow-2xl">
+                    <h3 class="text-lg font-bold text-white uppercase tracking-widest mb-6">Top Performers</h3>
+                    <div class="space-y-4">
+                      <For each={[...(teamData()?.members || [])].sort((a, b) => (b.total_commands || 0) - (a.total_commands || 0)).slice(0, 5)}>
+                        {(member, i) => (
+                          <div class="flex items-center justify-between p-3 rounded-xl bg-white/[0.02] border border-white/5">
+                            <div class="flex items-center gap-3">
+                              <div class={`h-6 w-6 rounded-full flex items-center justify-center text-xs font-bold ${
+                                i() === 0 ? 'bg-amber-500 text-black' : 
+                                i() === 1 ? 'bg-slate-400 text-black' : 
+                                i() === 2 ? 'bg-amber-700 text-white' : 
+                                'bg-slate-700 text-slate-400'
+                              }`}>
+                                {i() + 1}
+                              </div>
+                              <span class="text-sm font-medium text-white truncate max-w-[120px]">{member.user_email?.split('@')[0] || 'Unknown'}</span>
+                            </div>
+                            <span class="text-sm font-bold text-indigo-400">{(member.total_commands || 0).toLocaleString()}</span>
+                          </div>
+                        )}
+                      </For>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Recent Activity Log */}
+                <div class="rounded-3xl border border-white/5 bg-[#0d0d0e] p-8 shadow-2xl">
+                  <h3 class="text-xl font-bold text-white uppercase tracking-widest mb-6">Execution Log</h3>
+                  <div class="space-y-3">
+                    <For each={auditLogsQuery.data?.logs?.slice(0, 15) || []}>
+                      {log => (
+                        <div class="flex items-center gap-4 p-4 rounded-xl bg-white/[0.02] border border-white/5 hover:border-white/10 transition-all">
+                          <div class="h-10 w-10 rounded-xl bg-indigo-500/10 flex items-center justify-center">
+                            <Zap size={18} class="text-indigo-400" />
+                          </div>
+                          <div class="flex-1 min-w-0">
+                            <div class="flex items-center gap-2">
+                              <span class="text-sm font-bold text-white">{log.action || 'Action'}</span>
+                              <span class="text-[10px] font-mono text-slate-500 uppercase tracking-widest">{log.resource_type || 'system'}</span>
+                            </div>
+                            <div class="text-xs text-slate-500 mt-1">{log.resource_id || 'N/A'}</div>
+                          </div>
+                          <div class="text-right">
+                            <div class="text-[10px] font-mono text-slate-500">{log.created_at ? new Date(log.created_at).toLocaleTimeString() : 'N/A'}</div>
+                            <div class="text-[10px] text-slate-600">{log.created_at ? new Date(log.created_at).toLocaleDateString() : ''}</div>
+                          </div>
+                        </div>
+                      )}
+                    </For>
+                  </div>
+                </div>
+              </div>
             </Match>
 
             <Match when={view() === 'settings'}>

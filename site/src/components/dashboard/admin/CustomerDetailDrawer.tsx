@@ -1,4 +1,4 @@
-import { Component, Show, For, createSignal } from 'solid-js';
+import { Component, Show, For, createSignal, createEffect, onCleanup } from 'solid-js';
 import {
   X,
   Calendar,
@@ -36,6 +36,51 @@ export const CustomerDetailDrawer: Component<CustomerDetailDrawerProps> = props 
   const [activeSection, setActiveSection] = createSignal<
     'overview' | 'crm' | 'machines' | 'usage' | 'billing'
   >('overview');
+  let drawerRef: HTMLDivElement | undefined;
+  let previousActiveElement: HTMLElement | null = null;
+
+  createEffect(() => {
+    if (props.userId) {
+      previousActiveElement = document.activeElement as HTMLElement | null;
+      
+      setTimeout(() => {
+        const closeButton = drawerRef?.querySelector('button');
+        closeButton?.focus();
+      }, 100);
+
+      const handleKeyDown = (e: KeyboardEvent) => {
+        if (e.key === 'Escape') {
+          props.onClose();
+          return;
+        }
+
+        if (e.key === 'Tab' && drawerRef) {
+          const focusableElements = drawerRef.querySelectorAll<HTMLElement>(
+            'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+          );
+          const firstElement = focusableElements[0];
+          const lastElement = focusableElements[focusableElements.length - 1];
+
+          if (e.shiftKey && document.activeElement === firstElement) {
+            e.preventDefault();
+            lastElement?.focus();
+          } else if (!e.shiftKey && document.activeElement === lastElement) {
+            e.preventDefault();
+            firstElement?.focus();
+          }
+        }
+      };
+
+      document.addEventListener('keydown', handleKeyDown);
+      
+      onCleanup(() => {
+        document.removeEventListener('keydown', handleKeyDown);
+        if (previousActiveElement instanceof HTMLElement) {
+          previousActiveElement.focus();
+        }
+      });
+    }
+  });
 
   const userDetailQuery = useAdminUserDetail(props.userId || '');
   const detail = () => userDetailQuery.data;
@@ -104,17 +149,28 @@ export const CustomerDetailDrawer: Component<CustomerDetailDrawerProps> = props 
   return (
     <Show when={props.userId}>
       <div class="fixed inset-0 z-50 flex justify-end">
-        <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={props.onClose} />
+        <div 
+          class="absolute inset-0 bg-black/60 backdrop-blur-sm" 
+          onClick={props.onClose}
+          aria-hidden="true"
+        />
 
-        <div class="animate-in slide-in-from-right relative w-full max-w-2xl overflow-y-auto border-l border-white/10 bg-[#0a0a0b] shadow-2xl duration-300">
+        <div
+          ref={drawerRef}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="drawer-title"
+          class="animate-in slide-in-from-right relative w-full max-w-2xl overflow-y-auto border-l border-white/10 bg-[#0a0a0b] shadow-2xl duration-300"
+        >
           <div class="sticky top-0 z-10 border-b border-white/5 bg-[#0a0a0b]/95 p-6 backdrop-blur-xl">
             <div class="flex items-start justify-between">
               <div>
-                <h2 class="text-2xl font-black tracking-tight text-white">Customer Detail</h2>
+                <h2 id="drawer-title" class="text-2xl font-black tracking-tight text-white">Customer Detail</h2>
                 <p class="mt-1 text-sm text-slate-500">360° view of customer activity</p>
               </div>
               <button
                 onClick={props.onClose}
+                aria-label="Close customer detail drawer"
                 class="rounded-xl p-2 text-slate-400 transition-colors hover:bg-white/5 hover:text-white"
               >
                 <X size={20} />

@@ -112,7 +112,7 @@ impl NodeManager {
             return self.use_version(&version);
         }
 
-        println!(
+        tracing::info!(
             "{} Installing Node.js {}...\n",
             "OMG".cyan().bold(),
             version.yellow()
@@ -132,11 +132,11 @@ impl NodeManager {
         // Fetch checksum for verification
         let checksum = self.fetch_checksum(&version, &filename).await.ok();
 
-        println!("{} Downloading {}...", "→".blue(), filename);
+        tracing::info!("{} Downloading {}...", "→".blue(), filename);
         let download_path = self.versions_dir.join(&filename);
         download_with_progress(&self.client, &url, &download_path, checksum.as_deref()).await?;
 
-        println!("{} Extracting (pure Rust)...", "→".blue());
+        tracing::info!("{} Extracting (pure Rust)...", "→".blue());
         extract_tar_xz(&download_path, &version_dir, 1).await?;
 
         let _ = fs::remove_file(&download_path);
@@ -178,7 +178,7 @@ impl NodeManager {
         let version_dir = self.versions_dir.join(&version);
 
         if !version_dir.exists() {
-            println!("{} Node.js {} is not installed", "→".dimmed(), version);
+            tracing::info!("{} Node.js {} is not installed", "→".dimmed(), version);
             return Ok(());
         }
 
@@ -191,7 +191,7 @@ impl NodeManager {
         }
 
         std::fs::remove_dir_all(&version_dir)?;
-        println!("{} Node.js {} uninstalled", "✓".green(), version);
+        tracing::info!("{} Node.js {} uninstalled", "✓".green(), version);
 
         Ok(())
     }

@@ -127,7 +127,7 @@ impl BunManager {
             return self.use_version(&version);
         }
 
-        println!(
+        tracing::info!(
             "{} Installing Bun {}...\n",
             "OMG".cyan().bold(),
             version.yellow()
@@ -144,11 +144,11 @@ impl BunManager {
 
         fs::create_dir_all(&self.versions_dir)?;
 
-        println!("{} Downloading Bun v{}...", "→".blue(), version);
+        tracing::info!("{} Downloading Bun v{}...", "→".blue(), version);
         let download_path = self.versions_dir.join(&filename);
         download_with_progress(&self.client, &url, &download_path, None).await?;
 
-        println!("{} Extracting (pure Rust)...", "→".blue());
+        tracing::info!("{} Extracting (pure Rust)...", "→".blue());
         extract_zip(&download_path, &version_dir, 1).await?;
 
         let _ = fs::remove_file(&download_path);
@@ -173,7 +173,7 @@ impl BunManager {
         let version_dir = self.versions_dir.join(&version);
 
         if !version_dir.exists() {
-            println!("{} Bun {} is not installed", "→".dimmed(), version);
+            tracing::info!("{} Bun {} is not installed", "→".dimmed(), version);
             return Ok(());
         }
 
@@ -184,7 +184,7 @@ impl BunManager {
         }
 
         fs::remove_dir_all(&version_dir)?;
-        println!("{} Bun {} uninstalled", "✓".green(), version);
+        tracing::info!("{} Bun {} uninstalled", "✓".green(), version);
         Ok(())
     }
 }

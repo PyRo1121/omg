@@ -125,7 +125,7 @@ impl JavaManager {
             return self.use_version(version);
         }
 
-        println!(
+        tracing::info!(
             "{} Installing Java {} (Adoptium)...\n",
             "OMG".cyan().bold(),
             version.yellow()
@@ -142,7 +142,7 @@ impl JavaManager {
             "{ADOPTIUM_API}/assets/latest/{version}/hotspot?architecture={arch}&image_type=jdk&os=linux&vendor=eclipse"
         );
 
-        println!("{} Querying Adoptium API...", "→".blue());
+        tracing::info!("{} Querying Adoptium API...", "→".blue());
 
         let binaries: Vec<AdoptiumBinary> = self
             .client
@@ -160,11 +160,11 @@ impl JavaManager {
 
         fs::create_dir_all(&self.versions_dir)?;
 
-        println!("{} Downloading {}...", "→".blue(), binary.package.name);
+        tracing::info!("{} Downloading {}...", "→".blue(), binary.package.name);
         let download_path = self.versions_dir.join(&binary.package.name);
         download_with_progress(&self.client, &binary.package.link, &download_path, None).await?;
 
-        println!("{} Extracting (pure Rust)...", "→".blue());
+        tracing::info!("{} Extracting (pure Rust)...", "→".blue());
         extract_tar_gz(&download_path, &version_dir, 1).await?;
 
         let _ = fs::remove_file(&download_path);
@@ -180,13 +180,13 @@ impl JavaManager {
         let version_dir = self.versions_dir.join(version);
         set_current_version(&self.versions_dir, version)?;
 
-        println!("{} Now using Java {}", "✓".green(), version);
-        println!(
+        tracing::info!("{} Now using Java {}", "✓".green(), version);
+        tracing::info!(
             "  {} {}",
             "JAVA_HOME:".dimmed(),
             version_dir.display().to_string().dimmed()
         );
-        println!(
+        tracing::info!(
             "  {} {}",
             "PATH:".dimmed(),
             self.bin_dir().display().to_string().dimmed()
@@ -200,7 +200,7 @@ impl JavaManager {
         let version_dir = self.versions_dir.join(version);
 
         if !version_dir.exists() {
-            println!("{} Java {} is not installed", "→".dimmed(), version);
+            tracing::info!("{} Java {} is not installed", "→".dimmed(), version);
             return Ok(());
         }
 
@@ -211,7 +211,7 @@ impl JavaManager {
         }
 
         fs::remove_dir_all(&version_dir)?;
-        println!("{} Java {} uninstalled", "✓".green(), version);
+        tracing::info!("{} Java {} uninstalled", "✓".green(), version);
         Ok(())
     }
 }
