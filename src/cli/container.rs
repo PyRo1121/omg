@@ -101,27 +101,27 @@ pub fn status() -> Result<()> {
                     .collect();
 
                 Cmd::batch([
-                    Components::header("Container Status", format!("Runtime: {runtime_str}")),
-                    Components::spacer(),
-                    Components::card("Running Containers", container_list),
+                    Cmd::header("Container Status", format!("Runtime: {runtime_str}")),
+                    Cmd::spacer(),
+                    Cmd::card("Running Containers", container_list),
                     Components::complete("Container status retrieved"),
                 ])
             }
             Ok(_) => Cmd::batch([
-                Components::header("Container Status", format!("Runtime: {runtime_str}")),
-                Components::spacer(),
-                Components::info("No running containers"),
+                Cmd::header("Container Status", format!("Runtime: {runtime_str}")),
+                Cmd::spacer(),
+                Cmd::info("No running containers"),
             ]),
             Err(e) => Cmd::batch([
-                Components::header("Container Status", format!("Runtime: {runtime_str}")),
-                Components::spacer(),
-                Components::error(format!("Failed to list containers: {e}")),
+                Cmd::header("Container Status", format!("Runtime: {runtime_str}")),
+                Cmd::spacer(),
+                Cmd::error(format!("Failed to list containers: {e}")),
             ]),
         }
     } else {
         Cmd::batch([
-            Components::header("Container Status", "Runtime: Not found"),
-            Components::spacer(),
+            Cmd::header("Container Status", "Runtime: Not found"),
+            Cmd::spacer(),
             Components::error_with_suggestion(
                 "No container runtime detected",
                 "Install Docker or Podman to use container features",
@@ -246,7 +246,7 @@ pub fn shell(
 
     execute_cmd(Cmd::batch([
         Components::loading(format!("Starting shell in {} container...", config.image)),
-        Components::card("Container Configuration", details),
+        Cmd::card("Container Configuration", details),
     ]));
 
     let exit_code = manager.shell(&config)?;
@@ -316,7 +316,7 @@ pub fn build(
 
     execute_cmd(Cmd::batch([
         Components::loading(format!("Building image: {tag}")),
-        Components::card("Build Configuration", build_details),
+        Cmd::card("Build Configuration", build_details),
     ]));
 
     manager.build_with_options(
@@ -345,8 +345,8 @@ pub fn list() -> Result<()> {
 
     if containers.is_empty() {
         execute_cmd(Cmd::batch([
-            Components::header("Running Containers", "No active containers"),
-            Components::spacer(),
+            Cmd::header("Running Containers", "No active containers"),
+            Cmd::spacer(),
         ]));
         return Ok(());
     }
@@ -365,12 +365,12 @@ pub fn list() -> Result<()> {
         .collect();
 
     execute_cmd(Cmd::batch([
-        Components::header(
+        Cmd::header(
             "Running Containers",
             format!("{} container(s) running", containers.len()),
         ),
-        Components::spacer(),
-        Components::card("Active Containers", container_list),
+        Cmd::spacer(),
+        Cmd::card("Active Containers", container_list),
     ]));
 
     Ok(())
@@ -386,8 +386,8 @@ pub fn images() -> Result<()> {
 
     if images.is_empty() {
         execute_cmd(Cmd::batch([
-            Components::header("Container Images", "No images found"),
-            Components::spacer(),
+            Cmd::header("Container Images", "No images found"),
+            Cmd::spacer(),
         ]));
         return Ok(());
     }
@@ -406,12 +406,12 @@ pub fn images() -> Result<()> {
         .collect();
 
     execute_cmd(Cmd::batch([
-        Components::header(
+        Cmd::header(
             "Container Images",
             format!("{} image(s) available", images.len()),
         ),
-        Components::spacer(),
-        Components::card("Available Images", image_list),
+        Cmd::spacer(),
+        Cmd::card("Available Images", image_list),
     ]));
 
     Ok(())
@@ -553,8 +553,8 @@ pub fn init(base_image: Option<String>) -> Result<()> {
     }
 
     execute_cmd(Cmd::batch([
-        Components::success("Created Dockerfile.omg"),
-        Components::card("Configuration", details),
+        Cmd::success("Created Dockerfile.omg"),
+        Cmd::card("Configuration", details),
         Cmd::println("\n  Build with:"),
         Cmd::println("    omg container build -t myapp ."),
     ]));

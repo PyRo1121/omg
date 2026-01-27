@@ -221,7 +221,7 @@ impl Model for UpdateModel {
                     Cmd::batch([
                         summary_cmd,
                         Cmd::spacer(),
-                        Components::info("Run 'omg update' to install"),
+                        Cmd::info("Run 'omg update' to install"),
                     ])
                 } else if self.yes {
                     Cmd::batch([summary_cmd, Cmd::Exec(Box::new(|| UpdateMsg::Execute))])
@@ -239,12 +239,12 @@ impl Model for UpdateModel {
                     Cmd::Exec(Box::new(|| UpdateMsg::Execute))
                 } else {
                     self.state = UpdateState::Complete;
-                    Components::warning("Upgrade cancelled.")
+                    Cmd::warning("Upgrade cancelled.")
                 }
             }
             UpdateMsg::Execute => {
                 self.state = UpdateState::Downloading;
-                Components::info("Executing system upgrade...")
+                Cmd::info("Executing system upgrade...")
             }
             UpdateMsg::DownloadProgress { percent } => {
                 self.download_percent = percent.clamp(0, 100);
@@ -252,12 +252,12 @@ impl Model for UpdateModel {
                     self.state = UpdateState::Installing;
                 }
                 // Fallback to info message as progress component is missing
-                Components::info(format!("Downloading... {}%", self.download_percent))
+                Cmd::info(format!("Downloading... {}%", self.download_percent))
             }
             UpdateMsg::InstallProgress { package } => {
                 self.current_installing = Some(package.clone());
                 // Fallback to info message
-                Components::info(format!("Installing {package}..."))
+                Cmd::info(format!("Installing {package}..."))
             }
             UpdateMsg::Complete => {
                 self.state = UpdateState::Complete;
@@ -266,7 +266,7 @@ impl Model for UpdateModel {
             UpdateMsg::Error(err) => {
                 self.state = UpdateState::Failed;
                 self.error = Some(err.clone());
-                Components::error(format!("Update failed: {err}"))
+                Cmd::error(format!("Update failed: {err}"))
             }
         }
     }

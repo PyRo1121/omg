@@ -31,7 +31,7 @@ pub async fn capture() -> Result<()> {
     state.save("omg.lock")?;
 
     execute_cmd(Cmd::batch([
-        Components::success("Environment state captured"),
+        Cmd::success("Environment state captured"),
         Components::kv_list(
             Some("Capture Details"),
             vec![
@@ -67,8 +67,8 @@ pub async fn check() -> Result<()> {
 
     if report.has_drift {
         execute_cmd(Cmd::batch([
-            Components::warning("Environment drift detected"),
-            Components::spacer(),
+            Cmd::warning("Environment drift detected"),
+            Cmd::spacer(),
             Cmd::println("  The following differences were found:"),
         ]));
         report.print();
@@ -76,8 +76,8 @@ pub async fn check() -> Result<()> {
     }
 
     execute_cmd(Cmd::batch([
-        Components::success("Environment is in sync"),
-        Components::spacer(),
+        Cmd::success("Environment is in sync"),
+        Cmd::spacer(),
         Components::kv_list(
             Some("Environment Status"),
             vec![("Lockfile", "omg.lock"), ("Status", "No drift detected")],
@@ -117,7 +117,7 @@ pub async fn share(description: String, public: bool) -> Result<()> {
 
     // SECURITY: Validate description
     if description.len() > 1000 {
-        execute_cmd(Components::error(
+        execute_cmd(Cmd::error(
             "Description too long (max 1000 characters)",
         ));
         anyhow::bail!("Description too long");
@@ -158,7 +158,7 @@ pub async fn share(description: String, public: bool) -> Result<()> {
     if !response.status().is_success() {
         let status = response.status();
         let text = response.text().await?;
-        execute_cmd(Components::error(format!(
+        execute_cmd(Cmd::error(format!(
             "Failed to create gist: {status} - {text}"
         )));
         anyhow::bail!("Failed to create gist: {status} - {text}");
@@ -167,7 +167,7 @@ pub async fn share(description: String, public: bool) -> Result<()> {
     let gist_resp: GistResponse = response.json().await?;
 
     execute_cmd(Cmd::batch([
-        Components::success("Environment shared successfully!"),
+        Cmd::success("Environment shared successfully!"),
         Components::kv_list(
             Some("Gist Details"),
             vec![
@@ -193,7 +193,7 @@ pub async fn sync(url_or_id: String) -> Result<()> {
 
     // SECURITY: Basic validation for input
     if url_or_id.len() > 255 || url_or_id.chars().any(char::is_control) {
-        execute_cmd(Components::error("Invalid Gist URL or ID"));
+        execute_cmd(Cmd::error("Invalid Gist URL or ID"));
         anyhow::bail!("Invalid Gist URL or ID");
     }
 
@@ -223,7 +223,7 @@ pub async fn sync(url_or_id: String) -> Result<()> {
 
     if !response.status().is_success() {
         let status = response.status();
-        execute_cmd(Components::error(format!("Failed to fetch Gist: {status}")));
+        execute_cmd(Cmd::error(format!("Failed to fetch Gist: {status}")));
         anyhow::bail!("Failed to fetch Gist: {status}");
     }
 
@@ -239,8 +239,8 @@ pub async fn sync(url_or_id: String) -> Result<()> {
 
         std::fs::write("omg.lock", content)?;
         execute_cmd(Cmd::batch([
-            Components::success("omg.lock updated from Gist"),
-            Components::info("Running environment check..."),
+            Cmd::success("omg.lock updated from Gist"),
+            Cmd::info("Running environment check..."),
         ]));
 
         // Auto-check

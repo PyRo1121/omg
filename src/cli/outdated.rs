@@ -115,42 +115,42 @@ pub async fn run(security_only: bool, json: bool) -> Result<()> {
         .collect();
 
     let mut commands = vec![
-        Components::spacer(),
-        Components::header(
+        Cmd::spacer(),
+        Cmd::header(
             "Available Updates",
             format!("{} packages total", filtered.len()),
         ),
-        Components::spacer(),
+        Cmd::spacer(),
     ];
 
     // Security updates
     if !security.is_empty() {
-        commands.push(Components::card(
+        commands.push(Cmd::card(
             "Security Updates (install immediately)".to_string(),
             security
                 .iter()
                 .map(|p| format!("{} {} → {} (CVE)", p.name, p.current_version, p.new_version))
                 .collect(),
         ));
-        commands.push(Components::spacer());
+        commands.push(Cmd::spacer());
     }
 
     // Major updates
     if !major.is_empty() {
-        commands.push(Components::card(
+        commands.push(Cmd::card(
             "Major Updates (may have breaking changes)".to_string(),
             major
                 .iter()
                 .map(|p| format!("{} {} → ({})", p.name, p.current_version, p.repo))
                 .collect(),
         ));
-        commands.push(Components::spacer());
+        commands.push(Cmd::spacer());
     }
 
     // Minor updates
     if !minor.is_empty() {
         let minor_count = minor.len().min(10);
-        commands.push(Components::card(
+        commands.push(Cmd::card(
             "Minor Updates (new features)".to_string(),
             minor
                 .iter()
@@ -160,18 +160,19 @@ pub async fn run(security_only: bool, json: bool) -> Result<()> {
         ));
 
         if minor.len() > 10 {
-            commands.push(Components::muted(format!(
-                "... and {} more minor updates",
-                minor.len() - 10
-            )));
+            use crate::cli::tea::{StyledTextConfig, TextStyle};
+            commands.push(Cmd::styled_text(StyledTextConfig {
+                text: format!("... and {} more minor updates", minor.len() - 10),
+                style: TextStyle::Muted,
+            }));
         }
-        commands.push(Components::spacer());
+        commands.push(Cmd::spacer());
     }
 
     // Patch updates
     if !patch.is_empty() {
         let patch_count = patch.len().min(5);
-        commands.push(Components::card(
+        commands.push(Cmd::card(
             "Patch Updates (bug fixes)".to_string(),
             patch
                 .iter()
@@ -181,12 +182,13 @@ pub async fn run(security_only: bool, json: bool) -> Result<()> {
         ));
 
         if patch.len() > 5 {
-            commands.push(Components::muted(format!(
-                "... and {} more patch updates",
-                patch.len() - 5
-            )));
+            use crate::cli::tea::{StyledTextConfig, TextStyle};
+            commands.push(Cmd::styled_text(StyledTextConfig {
+                text: format!("... and {} more patch updates", patch.len() - 5),
+                style: TextStyle::Muted,
+            }));
         }
-        commands.push(Components::spacer());
+        commands.push(Cmd::spacer());
     }
 
     // Summary
@@ -199,12 +201,12 @@ pub async fn run(security_only: bool, json: bool) -> Result<()> {
             ("Patch Updates", &patch.len().to_string()),
         ],
     ));
-    commands.push(Components::spacer());
+    commands.push(Cmd::spacer());
 
     // Actions
-    commands.push(Components::info("Run 'omg update' to update all packages"));
+    commands.push(Cmd::info("Run 'omg update' to update all packages"));
     if !security.is_empty() {
-        commands.push(Components::warning(
+        commands.push(Cmd::warning(
             "Run 'omg update --security' to update security fixes only",
         ));
     }
