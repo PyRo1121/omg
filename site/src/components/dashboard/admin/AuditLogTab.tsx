@@ -9,6 +9,8 @@ import {
   ArrowLeft,
   ArrowRight,
   Filter,
+  Search,
+  X,
 } from '../../ui/Icons';
 import { useAdminAuditLog } from '../../../lib/api-hooks';
 import { CardSkeleton } from '../../ui/Skeleton';
@@ -44,13 +46,36 @@ const formatAction = (action: string) => {
 export const AuditLogTab: Component = () => {
   const [page, setPage] = createSignal(1);
   const [actionFilter, setActionFilter] = createSignal('');
+  const [searchQuery, setSearchQuery] = createSignal('');
+  const [showFilters, setShowFilters] = createSignal(false);
   const limit = 25;
 
   const auditQuery = useAdminAuditLog(page(), limit, actionFilter());
 
-  const logs = () => auditQuery.data?.logs || [];
+  const logs = () => {
+    const allLogs = auditQuery.data?.logs || [];
+    const query = searchQuery().toLowerCase().trim();
+
+    if (!query) return allLogs;
+
+    // Filter by user email or IP address
+    return allLogs.filter(log =>
+      log.user_email?.toLowerCase().includes(query) ||
+      log.ip_address?.toLowerCase().includes(query) ||
+      log.resource_id?.toLowerCase().includes(query)
+    );
+  };
+
   const pagination = () => auditQuery.data?.pagination;
   const totalPages = () => pagination()?.pages || 1;
+
+  const hasActiveFilters = () => actionFilter() !== '' || searchQuery() !== '';
+
+  const clearAllFilters = () => {
+    setActionFilter('');
+    setSearchQuery('');
+    setPage(1);
+  };
 
   const getIcon = (action: string) => {
     return ACTION_ICONS[action] || Shield;
@@ -72,32 +97,86 @@ export const AuditLogTab: Component = () => {
   return (
     <div class="animate-in fade-in slide-in-from-bottom-4 space-y-6 duration-500">
       <div class="rounded-3xl border border-white/5 bg-[#0d0d0e] p-8 shadow-2xl">
-        <div class="mb-8 flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
-          <div>
-            <h3 class="text-2xl font-black tracking-tight text-white">Security Audit Log</h3>
-            <p class="mt-1 text-sm font-medium text-slate-500">
-              Complete history of system actions and access events
-            </p>
-          </div>
+        <div class="mb-8 space-y-6">
+          <div class="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
+            <div>
+              <h3 class="text-2xl font-black tracking-tight text-white">Security Audit Log</h3>
+              <p class="mt-1 text-sm font-medium text-slate-500">
+                Complete history of system actions and access events
+              </p>
+            </div>
 
-          <div class="flex items-center gap-3">
-            <div class="relative">
-              <Filter size={16} class="absolute top-1/2 left-3 -translate-y-1/2 text-slate-500" />
-              <select
-                value={actionFilter()}
-                onChange={e => {
-                  setActionFilter(e.target.value);
-                  setPage(1);
-                }}
-                class="cursor-pointer appearance-none rounded-xl border border-white/10 bg-white/5 py-2.5 pr-8 pl-10 text-sm text-white transition-all focus:ring-2 focus:ring-indigo-500/20 focus:outline-none"
+            <div class="flex items-center gap-3">
+              <button
+                onClick={() => setShowFilters(!showFilters())}
+                class={`flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-bold transition-all ${
+                  showFilters()
+                    ? 'border-indigo-500/30 bg-indigo-500/10 text-indigo-400'
+                    : 'border-white/10 bg-white/5 text-slate-400 hover:bg-white/10 hover:text-white'
+                }`}
               >
-                <option value="">All Actions</option>
-                <For each={uniqueActions}>
-                  {action => <option value={action}>{formatAction(action)}</option>}
-                </For>
-              </select>
+                <Filter size={16} />
+                Filters
+                <Show when={hasActiveFilters()}>
+                  <span class="rounded-full bg-indigo-500 px-1.5 py-0.5 text-[10px] font-black text-white">
+                    {(actionFilter() ? 1 : 0) + (searchQuery() ? 1 : 0)}
+                  </span>
+                </Show>
+              </button>
+
+              <Show when={hasActiveFilters()}>
+                <button
+                  onClick={clearAllFilters}
+                  class="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-bold text-slate-400 transition-all hover:bg-white/10 hover:text-white"
+                >
+                  <X size={16} />
+                  Clear
+                </button>
+              </Show>
             </div>
           </div>
+
+          <Show when={showFilters()}>
+            <div class="animate-in fade-in slide-in-from-top-2 grid gap-4 rounded-xl border border-white/10 bg-white/5 p-4 md:grid-cols-2">
+              <div>
+                <label class="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-400">
+                  Action Type
+                </label>
+                <div class="relative">
+                  <Filter size={16} class="absolute top-1/2 left-3 -translate-y-1/2 text-slate-500" />
+                  <select
+                    value={actionFilter()}
+                    onChange={e => {
+                      setActionFilter(e.target.value);
+                      setPage(1);
+                    }}
+                    class="w-full cursor-pointer appearance-none rounded-xl border border-white/10 bg-white/5 py-2.5 pr-8 pl-10 text-sm text-white transition-all focus:border-indigo-500/50 focus:ring-2 focus:ring-indigo-500/20 focus:outline-none"
+                  >
+                    <option value="">All Actions</option>
+                    <For each={uniqueActions}>
+                      {action => <option value={action}>{formatAction(action)}</option>}
+                    </For>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label class="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-400">
+                  Search User / IP / Resource
+                </label>
+                <div class="relative">
+                  <Search size={16} class="absolute top-1/2 left-3 -translate-y-1/2 text-slate-500" />
+                  <input
+                    type="text"
+                    value={searchQuery()}
+                    onInput={e => setSearchQuery(e.currentTarget.value)}
+                    placeholder="user@example.com, 192.168.1.1, ..."
+                    class="w-full rounded-xl border border-white/10 bg-white/5 py-2.5 pr-3 pl-10 text-sm text-white placeholder-slate-500 transition-all focus:border-indigo-500/50 focus:ring-2 focus:ring-indigo-500/20 focus:outline-none"
+                  />
+                </div>
+              </div>
+            </div>
+          </Show>
         </div>
 
         <Show when={auditQuery.isLoading}>

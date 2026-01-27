@@ -685,7 +685,7 @@ impl AurClient {
             return Err(AurError::PackageNotFound(package.to_string()).into());
         }
 
-        std::fs::create_dir_all(&self.build_dir).with_context(|| {
+        tokio::fs::create_dir_all(&self.build_dir).await.with_context(|| {
             format!(
                 "Failed to create build directory: {}",
                 self.build_dir.display()
@@ -762,7 +762,7 @@ impl AurClient {
     pub async fn build_only(&self, package: &str) -> Result<PathBuf> {
         crate::core::security::validate_package_name(package)?;
 
-        std::fs::create_dir_all(&self.build_dir).with_context(|| {
+        tokio::fs::create_dir_all(&self.build_dir).await.with_context(|| {
             format!(
                 "Failed to create build directory: {}",
                 self.build_dir.display()
@@ -969,7 +969,7 @@ impl AurClient {
 
     #[instrument(skip(self))]
     pub async fn build_package_interactive(&self, package: &str) -> Result<PathBuf> {
-        std::fs::create_dir_all(&self.build_dir).with_context(|| {
+        tokio::fs::create_dir_all(&self.build_dir).await.with_context(|| {
             format!(
                 "Failed to create build directory: {}",
                 self.build_dir.display()
@@ -1093,7 +1093,7 @@ impl AurClient {
             .and_then(|name| name.to_str())
             .unwrap_or("package");
         let log_dir = self.build_dir.join("_logs");
-        std::fs::create_dir_all(&log_dir)?;
+        tokio::fs::create_dir_all(&log_dir).await?;
         let log_path = log_dir.join(format!("{package_name}.log"));
         let log_path_clone = log_path.clone();
         let (log_file, log_file_err) = tokio::task::spawn_blocking(move || {
@@ -1234,7 +1234,7 @@ impl AurClient {
             .and_then(|name| name.to_str())
             .unwrap_or("package");
         let log_dir = self.build_dir.join("_logs");
-        std::fs::create_dir_all(&log_dir)?;
+        tokio::fs::create_dir_all(&log_dir).await?;
         let log_path = log_dir.join(format!("{package_name}.log"));
         let log_path_clone = log_path.clone();
         let (log_file, log_file_err) = tokio::task::spawn_blocking(move || {
@@ -1410,7 +1410,7 @@ impl AurClient {
             .and_then(|name| name.to_str())
             .unwrap_or("package");
         let log_dir = self.build_dir.join("_logs");
-        std::fs::create_dir_all(&log_dir)?;
+        tokio::fs::create_dir_all(&log_dir).await?;
         let log_path = log_dir.join(format!("{package_name}.log"));
         let log_path_clone = log_path.clone();
         let (log_file, log_file_err) = tokio::task::spawn_blocking(move || {
@@ -1472,7 +1472,7 @@ impl AurClient {
             .and_then(|name| name.to_str())
             .unwrap_or("package");
         let log_dir = self.build_dir.join("_logs");
-        std::fs::create_dir_all(&log_dir)?;
+        tokio::fs::create_dir_all(&log_dir).await?;
         let log_path = log_dir.join(format!("{package_name}.log"));
         let log_path_clone = log_path.clone();
         let (log_file, log_file_err) = tokio::task::spawn_blocking(move || {

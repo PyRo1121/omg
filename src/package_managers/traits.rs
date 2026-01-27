@@ -1,47 +1,54 @@
 //! Package manager trait definition
 
 use anyhow::Result;
-use futures::future::BoxFuture;
+use async_trait::async_trait;
 
 use crate::core::Package;
 
-/// Trait for package manager backends (Dyn-compatible)
+/// Trait for package manager backends (object-safe for dynamic dispatch)
+///
+/// Uses `async_trait` to enable async methods in object-safe traits.
+/// This allows `Arc<dyn PackageManager>` for runtime polymorphism.
+///
+/// Rust 2026 Note: We keep `async_trait` for object safety (required for dyn).
+/// trait-variant generates native async fn which returns impl Future, making
+/// the trait NOT object-safe. Since this codebase uses Arc<dyn PackageManager>
+/// extensively, we must keep `async_trait` for compatibility.
+#[async_trait]
 pub trait PackageManager: Send + Sync {
     /// Get the name of this package manager
     fn name(&self) -> &'static str;
 
     /// Search for packages
-    fn search(&self, query: &str) -> BoxFuture<'static, Result<Vec<Package>>>;
+    async fn search(&self, query: &str) -> Result<Vec<Package>>;
 
     /// Install packages
-    fn install(&self, packages: &[String]) -> BoxFuture<'static, Result<()>>;
+    async fn install(&self, packages: &[String]) -> Result<()>;
 
     /// Remove packages
-    fn remove(&self, packages: &[String]) -> BoxFuture<'static, Result<()>>;
+    async fn remove(&self, packages: &[String]) -> Result<()>;
 
     /// Update all packages (upgrade system)
-    fn update(&self) -> BoxFuture<'static, Result<()>>;
+    async fn update(&self) -> Result<()>;
 
     /// Synchronize package databases (refresh metadata)
-    fn sync(&self) -> BoxFuture<'static, Result<()>>;
+    async fn sync(&self) -> Result<()>;
 
     /// Get information about a package
-    fn info(&self, package: &str) -> BoxFuture<'static, Result<Option<Package>>>;
+    async fn info(&self, package: &str) -> Result<Option<Package>>;
 
     /// List installed packages
-    fn list_installed(&self) -> BoxFuture<'static, Result<Vec<Package>>>;
+    async fn list_installed(&self) -> Result<Vec<Package>>;
 
     /// Get system status (total, explicit, orphans, updates)
-    fn get_status(&self, fast: bool) -> BoxFuture<'static, Result<(usize, usize, usize, usize)>>;
+    async fn get_status(&self, fast: bool) -> Result<(usize, usize, usize, usize)>;
 
     /// List explicitly installed package names
-    fn list_explicit(&self) -> BoxFuture<'static, Result<Vec<String>>>;
+    async fn list_explicit(&self) -> Result<Vec<String>>;
 
     /// List available updates
-    fn list_updates(
-        &self,
-    ) -> BoxFuture<'static, Result<Vec<crate::package_managers::types::UpdateInfo>>>;
+    async fn list_updates(&self) -> Result<Vec<crate::package_managers::types::UpdateInfo>>;
 
     /// Check if a specific package is installed
-    fn is_installed(&self, package: &str) -> BoxFuture<'static, bool>;
+    async fn is_installed(&self, package: &str) -> bool;
 }

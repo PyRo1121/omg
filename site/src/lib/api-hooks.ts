@@ -262,3 +262,11 @@ export function useAdminCustomerHealth(customerId: string) {
     enabled: !!customerId,
   }));
 }
+
+export function useAdminAdvancedMetrics() {
+  return createQuery(() => ({
+    queryKey: ['admin-advanced-metrics'],
+    queryFn: () => api.getAdminAdvancedMetrics(),
+    staleTime: 5 * 60 * 1000, // 5 minutes - expensive query
+  }));
+}

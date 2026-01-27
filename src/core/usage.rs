@@ -371,7 +371,8 @@ impl UsageStats {
     pub async fn sync(&mut self, license_key: &str) -> Result<()> {
         // Get machine info for richer telemetry
         let machine_id = crate::core::license::get_machine_id();
-        let hostname = std::fs::read_to_string("/etc/hostname")
+        let hostname = tokio::fs::read_to_string("/etc/hostname")
+            .await
             .map(|s| s.trim().to_string())
             .unwrap_or_default();
 

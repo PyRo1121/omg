@@ -33,7 +33,9 @@ export const FleetTable: Component<FleetTableProps> = (props) => {
             type="checkbox"
             class="rounded border-white/10 bg-white/5 text-blue-500 focus:ring-blue-500/20"
             checked={table.getIsAllRowsSelected()}
-            indeterminate={table.getIsSomeRowsSelected()}
+            ref={(el) => {
+              if (el) el.indeterminate = table.getIsSomeRowsSelected();
+            }}
             onChange={table.getToggleAllRowsSelectedHandler()}
           />
         </div>

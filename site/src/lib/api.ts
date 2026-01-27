@@ -253,6 +253,10 @@ export interface DashboardData {
     top_runtime: string;
     percentile: number;
   };
+  leaderboard?: Array<{
+    user: string;
+    time_saved: number;
+  }>;
 }
 
 export async function getDashboard(): Promise<DashboardData> {
@@ -541,6 +545,8 @@ export interface AdminUser {
   machine_count: number;
   total_commands: number;
   last_active: string | null;
+  engagement_score?: number;
+  lifecycle_stage?: string;
 }
 
 export interface AdminUsersResponse {
@@ -878,7 +884,156 @@ export async function getAdminCustomerHealth(
   return apiRequest(`/api/admin/customer-health?customerId=${customerId}`);
 }
 
-// Data Export (returns download URLs)
+// Advanced Metrics API
+export interface AdminAdvancedMetrics {
+  request_id: string;
+  engagement: {
+    dau: number;
+    wau: number;
+    mau: number;
+    stickiness: {
+      daily_to_monthly: string;
+      weekly_to_monthly: string;
+    };
+  };
+  retention: {
+    cohorts: Array<{
+      cohort_date: string;
+      week_number: string;
+      retained_users: number;
+    }>;
+    product_stickiness: {
+      daily_active_pct: number;
+      weekly_active_pct: number;
+      avg_days_between_sessions: number;
+    };
+  };
+  ltv_by_tier: Array<{
+    avg_ltv: number;
+    tier: string;
+    customer_count: number;
+  }>;
+  feature_adoption: {
+    total_installs: number;
+    total_searches: number;
+    total_runtime_switches: number;
+    total_sbom: number;
+    total_vulns: number;
+    install_adopters: number;
+    search_adopters: number;
+    runtime_adopters: number;
+    sbom_adopters: number;
+    total_active_users: number;
+  };
+  command_heatmap: Array<{
+    hour: string;
+    day_of_week: string;
+    event_count: number;
+  }>;
+  runtime_adoption: Array<{
+    runtime: string;
+    unique_users: number;
+    total_uses: number;
+    avg_duration_ms: number;
+  }>;
+  churn_risk_segments: Array<{
+    risk_segment: string;
+    user_count: number;
+    avg_monthly_commands: number;
+    tier: string;
+  }>;
+  expansion_opportunities: Array<{
+    customer_id: string;
+    email: string;
+    company: string | null;
+    tier: string;
+    active_machines: number;
+    max_seats: number;
+    total_commands_30d: number;
+    hours_saved_30d: number;
+    opportunity_type: string;
+    priority: string;
+  }>;
+  time_to_value: {
+    avg_days_to_activation: number;
+    avg_days_to_power_user: number;
+    pct_activated_day1: number;
+    pct_activated_week1: number;
+    pct_became_power_users: number;
+  };
+  revenue_metrics: {
+    current_mrr: number;
+    projected_arr: number;
+    expansion_mrr_12m: number;
+    months_tracked: number;
+  };
+}
+
+export async function getAdminAdvancedMetrics(): Promise<AdminAdvancedMetrics> {
+  return apiRequest('/api/admin/advanced-metrics');
+}
+
+// Data Export - Fetch CSV data directly
+export async function exportAdminUsers(): Promise<string> {
+  const token = getSessionToken();
+  if (!token) throw new Error('No auth token');
+
+  const response = await fetch(`${API_BASE}/api/admin/export-users`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to export users');
+  }
+
+  return await response.text();
+}
+
+export async function exportAdminUsage(days = 30): Promise<string> {
+  const token = getSessionToken();
+  if (!token) throw new Error('No auth token');
+
+  const response = await fetch(`${API_BASE}/api/admin/export-usage?days=${days}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to export usage');
+  }
+
+  return await response.text();
+}
+
+export async function exportAdminAudit(days = 30): Promise<string> {
+  const token = getSessionToken();
+  if (!token) throw new Error('No auth token');
+
+  const response = await fetch(`${API_BASE}/api/admin/export-audit?days=${days}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to audit log');
+  }
+
+  return await response.text();
+}
+
+// Helper function to trigger CSV download in browser
+export function downloadCSV(data: string, filename: string): void {
+  const blob = new Blob([data], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.style.display = 'none';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+// Data Export (returns download URLs) - DEPRECATED, use export functions above
 export function getAdminExportUsersUrl(): string {
   return `${API_BASE}/api/admin/export/users`;
 }

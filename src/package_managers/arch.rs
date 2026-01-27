@@ -1,6 +1,6 @@
 use anyhow::Result as AnyhowResult;
-use futures::FutureExt;
-use futures::future::{BoxFuture, Future};
+use async_trait::async_trait;
+use futures::future::Future;
 use owo_colors::OwoColorize;
 
 use crate::core::{Package, PackageSource, is_root, privilege};
@@ -47,170 +47,138 @@ where
     Ok(())
 }
 
+#[async_trait]
 impl PackageManager for ArchPackageManager {
     fn name(&self) -> &'static str {
         "pacman"
     }
 
-    fn search(&self, query: &str) -> BoxFuture<'static, AnyhowResult<Vec<Package>>> {
+    async fn search(&self, query: &str) -> AnyhowResult<Vec<Package>> {
         let query = query.to_string();
-        async move {
-            // Offload ALPM search to blocking thread
-            tokio::task::spawn_blocking(move || {
-                // Direct ALPM search is handled by search_sync in alpm_direct.rs
-                let results = crate::package_managers::search_sync(&query)?;
-                Ok(results
-                    .into_iter()
-                    .map(|p| Package {
-                        name: p.name,
-                        version: p.version,
-                        description: p.description,
-                        source: PackageSource::Official,
-                        installed: p.installed,
-                    })
-                    .collect())
-            })
-            .await?
-        }
-        .boxed()
-    }
-
-    fn install(&self, packages: &[String]) -> BoxFuture<'static, AnyhowResult<()>> {
-        let packages = packages.to_vec();
-        async move {
-            crate::core::security::validate_package_names(&packages)?;
-            if packages.is_empty() {
-                return Ok(());
-            }
-
-            let pkgs_clone = packages.clone();
-            run_privileged_operation("install", &packages, || async move {
-                tokio::task::spawn_blocking(move || {
-                    crate::package_managers::execute_transaction(pkgs_clone, false, false, None)
-                })
-                .await??;
-                Ok(())
-            })
-            .await
-        }
-        .boxed()
-    }
-
-    fn remove(&self, packages: &[String]) -> BoxFuture<'static, AnyhowResult<()>> {
-        let packages = packages.to_vec();
-        async move {
-            crate::core::security::validate_package_names(&packages)?;
-            if packages.is_empty() {
-                return Ok(());
-            }
-
-            let pkgs_clone = packages.clone();
-            run_privileged_operation("remove", &packages, || async move {
-                tokio::task::spawn_blocking(move || {
-                    crate::package_managers::execute_transaction(pkgs_clone, true, false, None)
-                })
-                .await??;
-                Ok(())
-            })
-            .await
-        }
-        .boxed()
-    }
-
-    fn update(&self) -> BoxFuture<'static, AnyhowResult<()>> {
-        async move {
-            run_privileged_operation("update", &[], || async {
-                println!("{} Starting full system upgrade...", "OMG".cyan().bold());
-                tokio::task::spawn_blocking(move || {
-                    crate::package_managers::execute_transaction(Vec::new(), false, true, None)
-                })
-                .await??;
-                Ok(())
-            })
-            .await
-        }
-        .boxed()
-    }
-
-    fn sync(&self) -> BoxFuture<'static, AnyhowResult<()>> {
-        async move {
-            run_privileged_operation("sync", &[], || async {
-                crate::package_managers::sync_databases_parallel().await?;
-                Ok(())
-            })
-            .await
-        }
-        .boxed()
-    }
-
-    fn info(&self, package: &str) -> BoxFuture<'static, AnyhowResult<Option<Package>>> {
-        let package = package.to_string();
-        async move {
-            // SECURITY: Validate package name
-            crate::core::security::validate_package_name(&package)?;
-
-            // Try direct ALPM info
-            if let Ok(Some(info)) = crate::package_managers::get_package_info(&package) {
-                return Ok(Some(Package {
-                    name: info.name,
-                    version: info.version,
-                    description: info.description,
+        // Offload ALPM search to blocking thread
+        tokio::task::spawn_blocking(move || {
+            // Direct ALPM search is handled by search_sync in alpm_direct.rs
+            let results = crate::package_managers::search_sync(&query)?;
+            Ok(results
+                .into_iter()
+                .map(|p| Package {
+                    name: p.name,
+                    version: p.version,
+                    description: p.description,
                     source: PackageSource::Official,
-                    installed: info.installed,
-                }));
-            }
-            Ok(None)
-        }
-        .boxed()
+                    installed: p.installed,
+                })
+                .collect())
+        })
+        .await?
     }
 
-    fn list_installed(&self) -> BoxFuture<'static, AnyhowResult<Vec<Package>>> {
-        async move {
-            // LIGHTNING FAST: Direct ALPM list
-            // Offload to blocking thread
+    async fn install(&self, packages: &[String]) -> AnyhowResult<()> {
+        crate::core::security::validate_package_names(packages)?;
+        if packages.is_empty() {
+            return Ok(());
+        }
+
+        let pkgs_clone = packages.to_vec();
+        let packages = packages.to_vec();
+        run_privileged_operation("install", &packages, || async move {
             tokio::task::spawn_blocking(move || {
-                let pkgs = crate::package_managers::list_installed_fast()?;
-                Ok(pkgs
-                    .into_iter()
-                    .map(|p| Package {
-                        name: p.name,
-                        version: p.version,
-                        description: p.description,
-                        source: PackageSource::Official,
-                        installed: true,
-                    })
-                    .collect())
+                crate::package_managers::execute_transaction(pkgs_clone, false, false, None)
             })
-            .await?
+            .await??;
+            Ok(())
+        })
+        .await
+    }
+
+    async fn remove(&self, packages: &[String]) -> AnyhowResult<()> {
+        crate::core::security::validate_package_names(packages)?;
+        if packages.is_empty() {
+            return Ok(());
         }
-        .boxed()
+
+        let pkgs_clone = packages.to_vec();
+        let packages = packages.to_vec();
+        run_privileged_operation("remove", &packages, || async move {
+            tokio::task::spawn_blocking(move || {
+                crate::package_managers::execute_transaction(pkgs_clone, true, false, None)
+            })
+            .await??;
+            Ok(())
+        })
+        .await
     }
 
-    fn get_status(
-        &self,
-        _fast: bool,
-    ) -> BoxFuture<'static, AnyhowResult<(usize, usize, usize, usize)>> {
-        async move { get_system_status() }.boxed()
+    async fn update(&self) -> AnyhowResult<()> {
+        run_privileged_operation("update", &[], || async {
+            println!("{} Starting full system upgrade...", "OMG".cyan().bold());
+            tokio::task::spawn_blocking(move || {
+                crate::package_managers::execute_transaction(Vec::new(), false, true, None)
+            })
+            .await??;
+            Ok(())
+        })
+        .await
     }
 
-    fn list_explicit(&self) -> BoxFuture<'static, AnyhowResult<Vec<String>>> {
-        async move {
-            tokio::task::spawn_blocking(crate::package_managers::list_explicit_fast)
-                .await?
+    async fn sync(&self) -> AnyhowResult<()> {
+        run_privileged_operation("sync", &[], || async {
+            crate::package_managers::sync_databases_parallel().await?;
+            Ok(())
+        })
+        .await
+    }
+
+    async fn info(&self, package: &str) -> AnyhowResult<Option<Package>> {
+        // SECURITY: Validate package name
+        crate::core::security::validate_package_name(package)?;
+
+        // Try direct ALPM info
+        if let Ok(Some(info)) = crate::package_managers::get_package_info(package) {
+            return Ok(Some(Package {
+                name: info.name,
+                version: info.version,
+                description: info.description,
+                source: PackageSource::Official,
+                installed: info.installed,
+            }));
         }
-        .boxed()
+        Ok(None)
     }
 
-    fn list_updates(
-        &self,
-    ) -> BoxFuture<'static, AnyhowResult<Vec<crate::package_managers::types::UpdateInfo>>> {
-        async move { tokio::task::spawn_blocking(crate::package_managers::get_update_list).await? }
-            .boxed()
+    async fn list_installed(&self) -> AnyhowResult<Vec<Package>> {
+        // LIGHTNING FAST: Direct ALPM list
+        // Offload to blocking thread
+        tokio::task::spawn_blocking(move || {
+            let pkgs = crate::package_managers::list_installed_fast()?;
+            Ok(pkgs
+                .into_iter()
+                .map(|p| Package {
+                    name: p.name,
+                    version: p.version,
+                    description: p.description,
+                    source: PackageSource::Official,
+                    installed: true,
+                })
+                .collect())
+        })
+        .await?
     }
 
-    fn is_installed(&self, package: &str) -> BoxFuture<'static, bool> {
-        let package = package.to_string();
-        async move { crate::package_managers::is_installed_fast(&package).unwrap_or(false) }.boxed()
+    async fn get_status(&self, _fast: bool) -> AnyhowResult<(usize, usize, usize, usize)> {
+        get_system_status()
+    }
+
+    async fn list_explicit(&self) -> AnyhowResult<Vec<String>> {
+        tokio::task::spawn_blocking(crate::package_managers::list_explicit_fast).await?
+    }
+
+    async fn list_updates(&self) -> AnyhowResult<Vec<crate::package_managers::types::UpdateInfo>> {
+        tokio::task::spawn_blocking(crate::package_managers::get_update_list).await?
+    }
+
+    async fn is_installed(&self, package: &str) -> bool {
+        crate::package_managers::is_installed_fast(package).unwrap_or(false)
     }
 }
 

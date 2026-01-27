@@ -15,13 +15,25 @@ import {
   CheckCircle,
   Star,
 } from '../../ui/Icons';
-import { useAdminUserDetail } from '../../../lib/api-hooks';
+import {
+  useAdminUserDetail,
+  useAdminNotes,
+  useAdminCustomerTags,
+  useAdminTags,
+  useCreateNote,
+  useDeleteNote,
+  useAssignTag,
+  useRemoveTag,
+  useCreateTag,
+} from '../../../lib/api-hooks';
 import {
   formatRelativeTime,
   formatDate,
   formatTimeSaved,
   getTierBadgeColor,
 } from '../../../lib/api';
+import { NotesSection } from './NotesSection';
+import { TagsSection } from './TagsSection';
 
 interface CustomerDetailDrawerProps {
   userId: string | null;
@@ -30,11 +42,50 @@ interface CustomerDetailDrawerProps {
 
 export const CustomerDetailDrawer: Component<CustomerDetailDrawerProps> = props => {
   const [activeSection, setActiveSection] = createSignal<
-    'overview' | 'machines' | 'usage' | 'billing'
+    'overview' | 'crm' | 'machines' | 'usage' | 'billing'
   >('overview');
 
   const userDetailQuery = useAdminUserDetail(props.userId || '');
   const detail = () => userDetailQuery.data;
+
+  // CRM hooks
+  const notesQuery = useAdminNotes(props.userId || '');
+  const customerTagsQuery = useAdminCustomerTags(props.userId || '');
+  const allTagsQuery = useAdminTags();
+
+  const createNoteMutation = useCreateNote();
+  const deleteNoteMutation = useDeleteNote();
+  const assignTagMutation = useAssignTag();
+  const removeTagMutation = useRemoveTag();
+  const createTagMutation = useCreateTag();
+
+  const handleCreateNote = (content: string, noteType: string) => {
+    if (props.userId) {
+      createNoteMutation.mutate({ customerId: props.userId, content, noteType });
+    }
+  };
+
+  const handleDeleteNote = (noteId: string) => {
+    if (props.userId) {
+      deleteNoteMutation.mutate({ noteId, customerId: props.userId });
+    }
+  };
+
+  const handleAssignTag = (tagId: string) => {
+    if (props.userId) {
+      assignTagMutation.mutate({ customerId: props.userId, tagId });
+    }
+  };
+
+  const handleRemoveTag = (tagId: string) => {
+    if (props.userId) {
+      removeTagMutation.mutate({ customerId: props.userId, tagId });
+    }
+  };
+
+  const handleCreateTag = (name: string, color: string) => {
+    createTagMutation.mutate({ name, color });
+  };
 
   const healthScoreColor = (score: number) => {
     if (score >= 80) return 'text-emerald-400 bg-emerald-500/10';
@@ -203,10 +254,33 @@ export const CustomerDetailDrawer: Component<CustomerDetailDrawerProps> = props 
 
               <div class="flex items-center gap-2 rounded-xl border border-white/5 bg-white/[0.02] p-1">
                 <SectionButton id="overview" label="Overview" />
+                <SectionButton id="crm" label="CRM" />
                 <SectionButton id="machines" label="Machines" />
                 <SectionButton id="usage" label="Usage" />
                 <SectionButton id="billing" label="Billing" />
               </div>
+
+              <Show when={activeSection() === 'crm'}>
+                <div class="space-y-6">
+                  <NotesSection
+                    customerId={props.userId || ''}
+                    notes={notesQuery.data?.notes || []}
+                    onAddNote={handleCreateNote}
+                    onDeleteNote={handleDeleteNote}
+                    isLoading={notesQuery.isLoading}
+                  />
+
+                  <TagsSection
+                    customerId={props.userId || ''}
+                    customerTags={customerTagsQuery.data?.tags || []}
+                    allTags={allTagsQuery.data?.tags || []}
+                    onAssignTag={handleAssignTag}
+                    onRemoveTag={handleRemoveTag}
+                    onCreateTag={handleCreateTag}
+                    isLoading={customerTagsQuery.isLoading || allTagsQuery.isLoading}
+                  />
+                </div>
+              </Show>
 
               <Show when={activeSection() === 'machines'}>
                 <div class="space-y-3">

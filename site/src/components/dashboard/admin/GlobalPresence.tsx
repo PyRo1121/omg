@@ -1,4 +1,4 @@
-import { Component, For } from 'solid-js';
+import { Component, For, Show } from 'solid-js';
 import GlassCard from '../../ui/GlassCard';
 import { Globe } from '../../ui/Icons';
 
