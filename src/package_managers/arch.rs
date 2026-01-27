@@ -33,7 +33,7 @@ where
     Fut: Future<Output = AnyhowResult<()>>,
 {
     if !is_root() {
-        println!("{} Elevating privileges for {command}...", "→".blue());
+        tracing::info!("{} Elevating privileges for {command}...", "→".blue());
         let mut args = vec![command, "--"];
         let pkg_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
         args.extend_from_slice(&pkg_refs);
@@ -111,7 +111,7 @@ impl PackageManager for ArchPackageManager {
 
     async fn update(&self) -> AnyhowResult<()> {
         run_privileged_operation("update", &[], || async {
-            println!("{} Starting full system upgrade...", "OMG".cyan().bold());
+            tracing::info!("{} Starting full system upgrade...", "OMG".cyan().bold());
             tokio::task::spawn_blocking(move || {
                 crate::package_managers::execute_transaction(Vec::new(), false, true, None)
             })
@@ -189,17 +189,17 @@ pub async fn list_orphans() -> AnyhowResult<Vec<String>> {
 pub async fn remove_orphans() -> AnyhowResult<()> {
     let orphans = list_orphans().await?;
     if orphans.is_empty() {
-        println!("{} No orphan packages to remove.", "✓".green());
+        tracing::info!("{} No orphan packages to remove.", "✓".green());
         return Ok(());
     }
 
-    println!(
+    tracing::info!(
         "{} Found {} orphan package(s):",
         "OMG".cyan().bold(),
         orphans.len()
     );
     for pkg in &orphans {
-        println!("  {} {}", "→".dimmed(), pkg);
+        tracing::info!("  {} {}", "→".dimmed(), pkg);
     }
 
     crate::package_managers::execute_transaction(orphans, true, false, None)?;

@@ -523,7 +523,7 @@ impl AurClient {
     pub async fn install(&self, package: &str) -> Result<()> {
         crate::core::security::validate_package_name(package)?;
 
-        println!(
+        tracing::info!(
             "{} Installing AUR package: {}\n",
             "OMG".cyan().bold(),
             package.yellow()
@@ -543,13 +543,13 @@ impl AurClient {
         let pkg_dir = self.build_dir.join(package);
 
         if pkg_dir.exists() {
-            println!("{} Updating existing source...", "→".blue());
+            tracing::info!("{} Updating existing source...", "→".blue());
             self.git_pull(&pkg_dir).await.map_err(|e| {
                 tracing::warn!("Git pull failed for {}: {}", package, e);
                 AurError::GitPullFailed(package.to_string())
             })?;
         } else {
-            println!("{} Cloning from AUR...", "→".blue());
+            tracing::info!("{} Cloning from AUR...", "→".blue());
             self.git_clone(package).await.map_err(|e| {
                 tracing::warn!("Git clone failed for {}: {}", package, e);
                 AurError::GitCloneFailed(package.to_string())
@@ -574,7 +574,7 @@ impl AurClient {
             .cached_package(package, &env.pkgdest, &cache_key)
             .await?
         {
-            println!("{} Using cached build...", "→".blue());
+            tracing::info!("{} Using cached build...", "→".blue());
             cached
         } else {
             let log_path = self.build_dir.join("_logs").join(format!("{package}.log"));
@@ -598,10 +598,10 @@ impl AurClient {
             pkg_file
         };
 
-        println!("{} Installing built package...", "→".blue());
+        tracing::info!("{} Installing built package...", "→".blue());
         Self::install_built_package(&pkg_file).await?;
 
-        println!("\n{} {} installed successfully!", "✓".green(), package);
+        tracing::info!("\n{} {} installed successfully!", "✓".green(), package);
 
         Ok(())
     }
@@ -982,7 +982,7 @@ impl AurClient {
 
         spinner.finish_and_clear();
         if !status.success() {
-            eprintln!(
+            tracing::error!(
                 "  {} Build failed: {} (see {})",
                 "✗".red(),
                 package_name,
@@ -1105,7 +1105,7 @@ impl AurClient {
 
         if bwrap_available {
             tracing::info!("Using bubblewrap sandbox for secure AUR build");
-            println!("{} Building in sandbox (bubblewrap)...", "🔒".green());
+            tracing::info!("{} Building in sandbox (bubblewrap)...", "🔒".green());
 
             // Install dependencies BEFORE entering sandbox (requires sudo)
             let dep_status = Command::new("makepkg")
@@ -1229,7 +1229,7 @@ impl AurClient {
 
             spinner.finish_and_clear();
             if !status.success() {
-                println!("  {} Build failed. Log: {}", "✗".red(), log_path.display());
+                tracing::error!("  {} Build failed. Log: {}", "✗".red(), log_path.display());
             }
             Ok(status)
         } else {
@@ -1239,7 +1239,7 @@ impl AurClient {
             }
 
             tracing::debug!("bubblewrap not found, using regular makepkg");
-            println!(
+            tracing::warn!(
                 "{} Building without sandbox (install 'bubblewrap' for isolation)...",
                 "→".dimmed()
             );
@@ -1274,7 +1274,7 @@ impl AurClient {
             .await?;
 
         if !status.success() {
-            println!("  {} Build failed. Log: {}", "✗".red(), log_path.display());
+            tracing::error!("  {} Build failed. Log: {}", "✗".red(), log_path.display());
         }
         Ok(status)
     }
@@ -1376,7 +1376,7 @@ impl AurClient {
         let status = cmd.status().await.context("Failed to run chroot build")?;
         spinner.finish_and_clear();
         if !status.success() {
-            println!("  {} Build failed. Log: {}", "✗".red(), log_path.display());
+            tracing::error!("  {} Build failed. Log: {}", "✗".red(), log_path.display());
         }
         Ok(status)
     }
@@ -1404,7 +1404,7 @@ impl AurClient {
     }
 
     fn review_pkgbuild(pkgbuild_path: &Path) -> Result<()> {
-        println!(
+        tracing::info!(
             "{} Review PKGBUILD before building: {}",
             "→".blue(),
             pkgbuild_path.display()
@@ -1648,7 +1648,7 @@ impl AurClient {
 
     /// Install the built package via sudo omg install <path>
     async fn install_built_package(pkg_path: &Path) -> Result<()> {
-        println!(
+        tracing::info!(
             "{} Installing built package (elevating with sudo)...",
             "→".blue()
         );
@@ -1664,7 +1664,7 @@ impl AurClient {
         let pkg_dir = self.build_dir.join(package);
         if pkg_dir.exists() {
             std::fs::remove_dir_all(&pkg_dir)?;
-            println!("{} Cleaned build directory for {}", "✓".green(), package);
+            tracing::info!("{} Cleaned build directory for {}", "✓".green(), package);
         }
         Ok(())
     }
@@ -1674,7 +1674,7 @@ impl AurClient {
         if self.build_dir.exists() {
             std::fs::remove_dir_all(&self.build_dir)?;
             std::fs::create_dir_all(&self.build_dir)?;
-            println!("{} Cleaned all AUR build directories", "✓".green());
+            tracing::info!("{} Cleaned all AUR build directories", "✓".green());
         }
         Ok(())
     }
@@ -1832,7 +1832,7 @@ mod tests {
 
         let bwrap_path = which::which("bwrap");
         if bwrap_path.is_err() {
-            println!("Skipping sandbox test: bubblewrap not installed");
+            tracing::debug!("Skipping sandbox test: bubblewrap not installed");
             return;
         }
 

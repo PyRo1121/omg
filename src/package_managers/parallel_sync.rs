@@ -278,7 +278,7 @@ async fn download_db(
 pub async fn sync_databases_parallel() -> Result<()> {
     let mirrors = get_mirrors()?;
 
-    println!(
+    tracing::info!(
         "{} Synchronizing package databases...\n",
         "OMG".cyan().bold()
     );
@@ -386,14 +386,14 @@ pub async fn sync_databases_parallel() -> Result<()> {
         tracing::warn!("AUR sync task panicked: {}", e);
     }
 
-    println!();
+    tracing::info!("");
 
     if errors.is_empty() {
-        println!("{} Databases synchronized successfully!\n", "✓".green());
+        tracing::info!("{} Databases synchronized successfully!\n", "✓".green());
         Ok(())
     } else {
         for e in &errors {
-            eprintln!("{} {}", "✗".red(), e);
+            tracing::error!("{} {}", "✗".red(), e);
         }
         anyhow::bail!("Failed to sync {} database(s)", errors.len())
     }
@@ -724,9 +724,9 @@ pub async fn download_packages_parallel(
     }
 
     if !errors.is_empty() {
-        eprintln!("\n{} {} download(s) failed:", "⚠".yellow(), errors.len());
+        tracing::warn!("\n{} {} download(s) failed:", "⚠".yellow(), errors.len());
         for e in errors.iter().take(5) {
-            eprintln!("  {} {}", "✗".red(), e);
+            tracing::warn!("  {} {}", "✗".red(), e);
         }
     }
 

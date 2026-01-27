@@ -55,9 +55,10 @@ Given the large volume (895 calls), we'll convert in logical batches:
 - **Estimated calls:** ~50
 - **Rationale:** Entry points, most visible to users
 
-#### Batch 2: Package Managers - Critical Path
-- **Files:** aur.rs, parallel_sync.rs, mock.rs
-- **Estimated calls:** ~100
+#### Batch 2: Package Managers - Critical Path ✅ (Completed 2026-01-26)
+- **Files:** aur.rs, parallel_sync.rs, mock.rs, arch.rs, alpm_ops.rs, pacman_db.rs
+- **Converted calls:** 21 println!/eprintln! calls
+- **Result:** All tests passing, 0 println!/eprintln! remain in package_managers/
 - **Rationale:** Core functionality, error handling
 
 #### Batch 3: Runtime Modules - High Volume ✅ (Completed 2026-01-26)
