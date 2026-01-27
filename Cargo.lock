@@ -5648,7 +5648,7 @@ dependencies = [
 
 [[package]]
 name = "omg"
-version = "0.1.152"
+version = "0.1.164"
 dependencies = [
  "ahash",
  "alpm",
@@ -5728,6 +5728,7 @@ dependencies = [
  "tracing-subscriber",
  "trait-variant",
  "uuid",
+ "wait-timeout",
  "which",
  "whoami",
  "winnow",
