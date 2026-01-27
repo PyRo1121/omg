@@ -304,9 +304,7 @@ pub async fn members(_ctx: &CliContext) -> Result<()> {
         execute_cmd(Cmd::batch([
             Cmd::header("Team Members", "No members found"),
             Cmd::spacer(),
-            Cmd::info(
-                "Team members will appear here once they activate with your license key",
-            ),
+            Cmd::info("Team members will appear here once they activate with your license key"),
         ]));
         return Ok(());
     }
@@ -841,18 +839,13 @@ pub fn compliance(export: Option<&str>, enforce: bool, _ctx: &CliContext) -> Res
         if enforce {
             Cmd::batch([
                 Cmd::spacer(),
-                Cmd::warning(
-                    "Enforcement mode enabled - Non-compliant operations will be blocked",
-                ),
+                Cmd::warning("Enforcement mode enabled - Non-compliant operations will be blocked"),
             ])
         } else {
             Cmd::none()
         },
         if let Some(path) = export {
-            Cmd::batch([
-                Cmd::spacer(),
-                Cmd::success(format!("Exported to {path}")),
-            ])
+            Cmd::batch([Cmd::spacer(), Cmd::success(format!("Exported to {path}"))])
         } else {
             Cmd::none()
         },

@@ -91,7 +91,8 @@ impl PackageCache {
     pub fn update_status(&self, result: StatusResult) {
         self.explicit_count
             .insert(KEY_EXPLICIT_COUNT.to_string(), result.explicit_packages);
-        self.system_status.insert(KEY_STATUS.to_string(), Arc::new(result));
+        self.system_status
+            .insert(KEY_STATUS.to_string(), Arc::new(result));
     }
 
     /// Get cached explicit packages (Arc clone is cheap - just pointer copy)

@@ -77,7 +77,9 @@ pub enum AurError {
 }
 
 use super::aur_index::AurIndex;
-use super::aur_metadata::{AurJsonPackage, get_metadata_path, read_metadata_archive, sync_aur_metadata};
+use super::aur_metadata::{
+    AurJsonPackage, get_metadata_path, read_metadata_archive, sync_aur_metadata,
+};
 use super::pkgbuild::PkgBuild;
 use crate::config::{AurBuildMethod, Settings};
 use crate::core::http::shared_client;
@@ -140,7 +142,7 @@ impl AurClient {
 
         // Try fast binary index first if enabled and available
         if self.settings.aur.use_metadata_archive {
-            let index_path = self.metadata_index_path();
+            let index_path = Self::metadata_index_path();
             if index_path.exists() {
                 let index_path_clone = index_path.clone();
                 let query_clone = query.to_string();
@@ -262,7 +264,7 @@ impl AurClient {
         crate::core::security::validate_package_name(package)?;
 
         // Try fast binary index first
-        let index_path = self.metadata_index_path();
+        let index_path = Self::metadata_index_path();
         if index_path.exists() {
             let index_path_clone = index_path.clone();
             let package_clone = package.to_string();
@@ -335,7 +337,7 @@ impl AurClient {
         }
 
         // 2. Try fast binary index first
-        let index_path = self.metadata_index_path();
+        let index_path = Self::metadata_index_path();
         if index_path.exists() {
             let index_path_clone = index_path.clone();
             let result = tokio::task::spawn_blocking(
@@ -485,14 +487,15 @@ impl AurClient {
 
         let path = get_metadata_path();
         if path.exists() {
-            let results = tokio::task::spawn_blocking(move || read_metadata_archive(&path)).await??;
+            let results =
+                tokio::task::spawn_blocking(move || read_metadata_archive(&path)).await??;
             Ok(Some(AurResponse { results }))
         } else {
             Ok(None)
         }
     }
 
-    fn metadata_index_path(&self) -> PathBuf {
+    fn metadata_index_path() -> PathBuf {
         super::aur_metadata::get_index_path()
     }
 
@@ -533,12 +536,14 @@ impl AurClient {
             return Err(AurError::PackageNotFound(package.to_string()).into());
         }
 
-        tokio::fs::create_dir_all(&self.build_dir).await.with_context(|| {
-            format!(
-                "Failed to create build directory: {}",
-                self.build_dir.display()
-            )
-        })?;
+        tokio::fs::create_dir_all(&self.build_dir)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create build directory: {}",
+                    self.build_dir.display()
+                )
+            })?;
 
         let pkg_dir = self.build_dir.join(package);
 
@@ -610,12 +615,14 @@ impl AurClient {
     pub async fn build_only(&self, package: &str) -> Result<PathBuf> {
         crate::core::security::validate_package_name(package)?;
 
-        tokio::fs::create_dir_all(&self.build_dir).await.with_context(|| {
-            format!(
-                "Failed to create build directory: {}",
-                self.build_dir.display()
-            )
-        })?;
+        tokio::fs::create_dir_all(&self.build_dir)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create build directory: {}",
+                    self.build_dir.display()
+                )
+            })?;
 
         let pkg_dir = self.build_dir.join(package);
         let pkgbuild_path = pkg_dir.join("PKGBUILD");
@@ -817,12 +824,14 @@ impl AurClient {
 
     #[instrument(skip(self))]
     pub async fn build_package_interactive(&self, package: &str) -> Result<PathBuf> {
-        tokio::fs::create_dir_all(&self.build_dir).await.with_context(|| {
-            format!(
-                "Failed to create build directory: {}",
-                self.build_dir.display()
-            )
-        })?;
+        tokio::fs::create_dir_all(&self.build_dir)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to create build directory: {}",
+                    self.build_dir.display()
+                )
+            })?;
 
         let pkg_dir = self.build_dir.join(package);
         let pkgbuild_path = pkg_dir.join("PKGBUILD");

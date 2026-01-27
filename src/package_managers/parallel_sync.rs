@@ -17,12 +17,12 @@ use serde::{Deserialize, Serialize};
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 
+use crate::config::Settings;
 use crate::core::{
     http::{download_client, shared_client},
     paths,
 };
 use crate::package_managers::aur_metadata::sync_aur_metadata;
-use crate::config::Settings;
 
 const MIRROR_CACHE_TTL_SECS: u64 = 6 * 60 * 60;
 

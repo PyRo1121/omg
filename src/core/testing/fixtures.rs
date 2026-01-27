@@ -318,7 +318,9 @@ impl VersionFixture {
     /// Create a beta version
     #[must_use]
     pub fn beta(major: u32, minor: u32, patch: u32) -> String {
-        Self::new(major, minor, patch).with_prerelease("beta").build()
+        Self::new(major, minor, patch)
+            .with_prerelease("beta")
+            .build()
     }
 
     /// Create an rc version

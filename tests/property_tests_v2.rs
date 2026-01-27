@@ -677,7 +677,7 @@ proptest! {
         // Act & Assert - Antisymmetry property
         if v1 < v2 {
             prop_assert!(v2 > v1);
-            prop_assert!(!(v2 < v1));
+            prop_assert!(v2 >= v1);
         }
     }
 
@@ -695,8 +695,8 @@ proptest! {
 
         // Act & Assert - Reflexivity property
         prop_assert_eq!(&v1, &v2);
-        prop_assert!(&v1 <= &v2);
-        prop_assert!(&v1 >= &v2);
+        prop_assert!(v1 <= v2);
+        prop_assert!(v1 >= v2);
     }
 }
 

@@ -31,10 +31,7 @@ fn build_blame_output(package: &str) -> Result<Cmd<()>> {
         ));
     }
 
-    let mut commands = vec![
-        Cmd::header("Package History", package),
-        Cmd::spacer(),
-    ];
+    let mut commands = vec![Cmd::header("Package History", package), Cmd::spacer()];
 
     // Package info
     if let Some(ver) = &version {

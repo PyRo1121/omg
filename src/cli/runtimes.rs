@@ -216,8 +216,15 @@ fn mise_list_all() -> Result<()> {
         .args(["ls"])
         .output()
         .context("Failed to run `mise ls`")?;
+
     if !output.status.success() {
-        anyhow::bail!("mise failed to list installed runtimes");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if !stderr.is_empty() {
+            tracing::warn!("mise ls failed: {}", stderr);
+        }
+        // Don't fail - just show nothing instead
+        println!("  {} No mise runtimes detected", "-".dimmed());
+        return Ok(());
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
