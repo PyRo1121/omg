@@ -21,6 +21,8 @@ use crate::core::{
     http::{download_client, shared_client},
     paths,
 };
+use crate::package_managers::aur_metadata::sync_aur_metadata;
+use crate::config::Settings;
 
 const MIRROR_CACHE_TTL_SECS: u64 = 6 * 60 * 60;
 
@@ -291,6 +293,17 @@ pub async fn sync_databases_parallel() -> Result<()> {
     let mp = MultiProgress::new();
     let client = download_client().clone();
 
+    // Start AUR metadata sync in background
+    let aur_sync_handle = {
+        let client = client.clone();
+        tokio::spawn(async move {
+            let settings = Settings::load().unwrap_or_default();
+            if let Err(e) = sync_aur_metadata(&client, &settings, false).await {
+                tracing::warn!("Failed to sync AUR metadata: {}", e);
+            }
+        })
+    };
+
     // Collect all repos to sync from pacman.conf
     let mut repos_to_sync: Vec<(String, Vec<String>, PathBuf)> = Vec::new();
     let configured_repos = get_configured_repos();
@@ -368,6 +381,11 @@ pub async fn sync_databases_parallel() -> Result<()> {
         }
     }
 
+    // Wait for AUR sync to complete
+    if let Err(e) = aur_sync_handle.await {
+        tracing::warn!("AUR sync task panicked: {}", e);
+    }
+
     println!();
 
     if errors.is_empty() {
@@ -406,6 +424,7 @@ fn get_custom_repos() -> Result<Vec<(String, String)>> {
                 "multilib",
                 "community",
                 "testing",
+                "omarchy",
             ]
             .contains(&name)
             {

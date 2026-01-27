@@ -17,8 +17,7 @@ import {
   XCircle,
   RefreshCw,
 } from 'lucide-solid';
-import { HealthScore, LifecycleBadge, LifecycleProgress } from '../../../design-system';
-import { ProgressRing } from '../../../design-system/components/Charts';
+import { HealthScore } from '../../../design-system';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -30,7 +29,7 @@ interface CustomerHealthHubProps {
   showDetails?: boolean;
 }
 
-const ALL_LIFECYCLE_STAGES: LifecycleStage[] = [
+const _ALL_LIFECYCLE_STAGES: LifecycleStage[] = [
   'new',
   'onboarding',
   'activated',

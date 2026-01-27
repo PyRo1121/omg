@@ -1,4 +1,4 @@
-import { Component, createMemo, For, Show, createSignal } from 'solid-js';
+import { Component, For, Show, createSignal } from 'solid-js';
 import {
   createSolidTable,
   flexRender,

@@ -1,4 +1,4 @@
-import { Component, For, Show, createMemo, createSignal, ParentComponent } from 'solid-js';
+import { Component, For, Show, createMemo, createSignal } from 'solid-js';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import {
@@ -14,7 +14,6 @@ import {
   Tag,
   X,
   Plus,
-  MoreHorizontal,
   ChevronRight,
 } from 'lucide-solid';
 

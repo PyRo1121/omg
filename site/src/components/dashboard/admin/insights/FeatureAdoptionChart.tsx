@@ -1,5 +1,5 @@
-import { Component } from 'solid-js';
-import { Package, Search, Repeat, FileCode, Shield } from 'lucide-solid';
+import { Component, For } from 'solid-js';
+import { Package, Search, Repeat, FileCode } from 'lucide-solid';
 
 interface FeatureAdoptionData {
   total_installs: number;
@@ -92,40 +92,42 @@ export const FeatureAdoptionChart: Component<FeatureAdoptionChartProps> = (props
       </div>
 
       <div class="space-y-4">
-        {features.map((feature) => {
-          const colors = getColorClasses(feature.color);
-          const adoptionRate = parseFloat(getAdoptionRate(feature.adopters));
-          const Icon = feature.icon;
+        <For each={features}>
+          {(feature) => {
+            const colors = getColorClasses(feature.color);
+            const adoptionRate = parseFloat(getAdoptionRate(feature.adopters));
+            const Icon = feature.icon;
 
-          return (
-            <div class="rounded-xl border border-white/10 bg-white/5 p-4">
-              <div class="mb-3 flex items-center justify-between">
-                <div class="flex items-center gap-3">
-                  <div class={`rounded-lg ${colors.bg} p-2`}>
-                    <Icon size={18} class={colors.text} />
+            return (
+              <div class="rounded-xl border border-white/10 bg-white/5 p-4">
+                <div class="mb-3 flex items-center justify-between">
+                  <div class="flex items-center gap-3">
+                    <div class={`rounded-lg ${colors.bg} p-2`}>
+                      <Icon size={18} class={colors.text} />
+                    </div>
+                    <div>
+                      <p class="text-sm font-bold text-white">{feature.name}</p>
+                      <p class="text-xs text-slate-400">
+                        {feature.total_uses.toLocaleString()} total uses
+                      </p>
+                    </div>
                   </div>
-                  <div>
-                    <p class="text-sm font-bold text-white">{feature.name}</p>
-                    <p class="text-xs text-slate-400">
-                      {feature.total_uses.toLocaleString()} total uses
-                    </p>
+                  <div class="text-right">
+                    <p class={`text-2xl font-black ${colors.text}`}>{adoptionRate}%</p>
+                    <p class="text-xs text-slate-500">{feature.adopters} users</p>
                   </div>
                 </div>
-                <div class="text-right">
-                  <p class={`text-2xl font-black ${colors.text}`}>{adoptionRate}%</p>
-                  <p class="text-xs text-slate-500">{feature.adopters} users</p>
+
+                <div class="h-2 overflow-hidden rounded-full bg-white/5">
+                  <div
+                    class={`h-full rounded-full transition-all duration-500 ${colors.bar}`}
+                    style={{ width: `${Math.min(adoptionRate, 100)}%` }}
+                  />
                 </div>
               </div>
-
-              <div class="h-2 overflow-hidden rounded-full bg-white/5">
-                <div
-                  class={`h-full rounded-full transition-all duration-500 ${colors.bar}`}
-                  style={{ width: `${Math.min(adoptionRate, 100)}%` }}
-                />
-              </div>
-            </div>
-          );
-        })}
+            );
+          }}
+        </For>
       </div>
 
       <div class="mt-6 grid grid-cols-2 gap-4 rounded-xl border border-white/10 bg-white/5 p-4">

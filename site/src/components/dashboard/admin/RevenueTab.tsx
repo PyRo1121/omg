@@ -11,7 +11,7 @@ import {
 import { useAdminRevenue, useAdminCohorts } from '../../../lib/api-hooks';
 import { CardSkeleton } from '../../ui/Skeleton';
 
-const formatCurrency = (cents: number) => {
+const _formatCurrency = (cents: number) => {
   return new Intl.NumberFormat('en-US', {
     style: 'currency',
     currency: 'USD',
@@ -32,7 +32,7 @@ export const RevenueTab: Component = () => {
   const [selectedPeriod, setSelectedPeriod] = createSignal<'7d' | '30d' | '90d' | '1y'>('30d');
 
   const revenue = () => revenueQuery.data;
-  const cohorts = () => cohortsQuery.data?.cohorts || [];
+  const _cohorts = () => cohortsQuery.data?.cohorts || [];
 
   const maxMonthlyRevenue = () => {
     const monthly = revenue()?.monthly_revenue || [];

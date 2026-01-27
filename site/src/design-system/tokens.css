@@ -828,3 +828,364 @@
   --trend-neutral: var(--color-nebula-500);
   --trend-neutral-bg: rgba(113, 113, 122, 0.1);
 }
+
+/* =========================================================================
+   ENTERPRISE COMPONENT TOKENS
+   ========================================================================= */
+
+/* Segment Builder Component Tokens */
+:root {
+  --segment-builder-field: rgba(255, 255, 255, 0.03);
+  --segment-builder-field-hover: rgba(255, 255, 255, 0.05);
+  --segment-builder-operator: rgba(99, 102, 241, 0.1);
+  --segment-builder-operator-text: var(--color-indigo-300);
+  --segment-builder-value: rgba(255, 255, 255, 0.03);
+  --segment-builder-value-focus: rgba(99, 102, 241, 0.15);
+  --segment-builder-border: rgba(255, 255, 255, 0.08);
+  --segment-builder-border-hover: rgba(255, 255, 255, 0.15);
+  --segment-builder-group-bg: rgba(7, 7, 10, 0.5);
+  --segment-builder-logic-and: rgba(99, 102, 241, 0.2);
+  --segment-builder-logic-and-text: var(--color-indigo-300);
+  --segment-builder-logic-or: rgba(157, 78, 221, 0.2);
+  --segment-builder-logic-or-text: var(--color-photon-300);
+}
+
+/* Drilldown Table Component Tokens */
+:root {
+  --drilldown-header: rgba(255, 255, 255, 0.02);
+  --drilldown-row-hover: rgba(255, 255, 255, 0.02);
+  --drilldown-selection: rgba(99, 102, 241, 0.08);
+  --drilldown-selection-border: rgba(99, 102, 241, 0.2);
+  --drilldown-expanded: rgba(7, 7, 10, 0.6);
+  --drilldown-expanded-border: rgba(255, 255, 255, 0.05);
+  --drilldown-sort-active: var(--color-indigo-400);
+  --drilldown-filter-active: var(--color-indigo-400);
+  --drilldown-checkbox: var(--color-indigo-500);
+  --drilldown-checkbox-hover: var(--color-indigo-400);
+}
+
+/* Alert Threshold Component Tokens */
+:root {
+  --alert-threshold-normal-zone: rgba(16, 185, 129, 0.15);
+  --alert-threshold-normal-border: rgba(16, 185, 129, 0.3);
+  --alert-threshold-warning-zone: rgba(245, 158, 11, 0.2);
+  --alert-threshold-warning-border: rgba(245, 158, 11, 0.4);
+  --alert-threshold-warning-glow: 0 0 20px rgba(245, 158, 11, 0.3);
+  --alert-threshold-critical-zone: rgba(239, 68, 68, 0.2);
+  --alert-threshold-critical-border: rgba(239, 68, 68, 0.4);
+  --alert-threshold-critical-glow: 0 0 20px rgba(239, 68, 68, 0.4);
+  --alert-threshold-indicator: var(--color-white);
+  --alert-threshold-track: var(--color-void-700);
+}
+
+/* Comparison Chart Component Tokens */
+:root {
+  --comparison-baseline: var(--color-nebula-500);
+  --comparison-baseline-area: rgba(113, 113, 122, 0.1);
+  --comparison-current: var(--color-indigo-500);
+  --comparison-current-area: rgba(99, 102, 241, 0.15);
+  --comparison-previous: var(--color-indigo-400);
+  --comparison-delta-positive: var(--color-aurora-400);
+  --comparison-delta-positive-bg: rgba(16, 185, 129, 0.1);
+  --comparison-delta-negative: var(--color-flare-400);
+  --comparison-delta-negative-bg: rgba(239, 68, 68, 0.1);
+  --comparison-delta-neutral: var(--color-nebula-500);
+  --comparison-axis: var(--color-nebula-700);
+  --comparison-grid: rgba(255, 255, 255, 0.03);
+}
+
+/* Forecast Widget Component Tokens */
+:root {
+  --forecast-historical: var(--color-nebula-400);
+  --forecast-historical-area: rgba(161, 161, 170, 0.1);
+  --forecast-projected: var(--color-indigo-500);
+  --forecast-projected-area: rgba(99, 102, 241, 0.15);
+  --forecast-confidence-upper: rgba(99, 102, 241, 0.2);
+  --forecast-confidence-lower: rgba(99, 102, 241, 0.05);
+  --forecast-conservative: var(--color-plasma-500);
+  --forecast-conservative-area: rgba(59, 125, 209, 0.1);
+  --forecast-moderate: var(--color-indigo-500);
+  --forecast-moderate-area: rgba(99, 102, 241, 0.1);
+  --forecast-aggressive: var(--color-aurora-500);
+  --forecast-aggressive-area: rgba(16, 185, 129, 0.1);
+  --forecast-divider: rgba(255, 255, 255, 0.1);
+  --forecast-today-marker: var(--color-nebula-600);
+}
+
+/* =========================================================================
+   INSIGHTS DASHBOARD TOKENS
+   ========================================================================= */
+
+/* Cohort Heatmap Component Tokens - Retention Visualization */
+:root {
+  /* Retention rate color scale (0-100% with bioluminescent gradient) */
+  --cohort-retention-0: rgba(239, 68, 68, 0.15);      /* 0-10%: Critical loss */
+  --cohort-retention-10: rgba(239, 68, 68, 0.25);     /* 10-20% */
+  --cohort-retention-20: rgba(249, 115, 22, 0.3);     /* 20-30%: High churn */
+  --cohort-retention-30: rgba(245, 158, 11, 0.35);    /* 30-40% */
+  --cohort-retention-40: rgba(245, 158, 11, 0.45);    /* 40-50%: Warning zone */
+  --cohort-retention-50: rgba(132, 204, 22, 0.4);     /* 50-60%: Improving */
+  --cohort-retention-60: rgba(34, 211, 211, 0.45);    /* 60-70%: Good */
+  --cohort-retention-70: rgba(34, 211, 211, 0.55);    /* 70-80% */
+  --cohort-retention-80: rgba(16, 185, 129, 0.6);     /* 80-90%: Excellent */
+  --cohort-retention-90: rgba(16, 185, 129, 0.75);    /* 90-100%: Outstanding */
+  --cohort-retention-100: rgba(5, 150, 105, 0.85);    /* 100%: Perfect */
+  
+  /* Cohort cell styling */
+  --cohort-cell-bg: var(--color-void-800);
+  --cohort-cell-border: rgba(255, 255, 255, 0.05);
+  --cohort-cell-hover: rgba(255, 255, 255, 0.08);
+  --cohort-cell-selected: rgba(99, 102, 241, 0.2);
+  --cohort-cell-selected-border: rgba(99, 102, 241, 0.4);
+  
+  /* Cohort header styling */
+  --cohort-header-bg: rgba(255, 255, 255, 0.02);
+  --cohort-header-text: var(--color-nebula-500);
+  --cohort-header-text-active: var(--color-nebula-300);
+  
+  /* Cohort row labels */
+  --cohort-row-label: var(--color-nebula-400);
+  --cohort-row-label-hover: var(--color-nebula-200);
+  
+  /* Cohort diagonal (current period) */
+  --cohort-diagonal-glow: 0 0 15px rgba(99, 102, 241, 0.3);
+  --cohort-diagonal-border: rgba(99, 102, 241, 0.5);
+  
+  /* Cohort baseline indicator */
+  --cohort-baseline: var(--color-indigo-400);
+  --cohort-baseline-line: rgba(99, 102, 241, 0.4);
+}
+
+/* Engagement Gauge Component Tokens - DAU/WAU/MAU Metrics */
+:root {
+  /* Engagement level colors (stickiness ratio) */
+  --engagement-dormant: var(--color-nebula-600);       /* 0-10%: Inactive */
+  --engagement-dormant-bg: rgba(82, 82, 90, 0.1);
+  
+  --engagement-casual: var(--color-plasma-500);        /* 10-25%: Light users */
+  --engagement-casual-bg: rgba(59, 125, 209, 0.1);
+  --engagement-casual-glow: 0 0 15px rgba(59, 125, 209, 0.2);
+  
+  --engagement-regular: var(--color-electric-500);     /* 25-50%: Regular users */
+  --engagement-regular-bg: rgba(34, 211, 211, 0.1);
+  --engagement-regular-glow: 0 0 20px rgba(34, 211, 211, 0.25);
+  
+  --engagement-active: var(--color-aurora-500);        /* 50-75%: Active users */
+  --engagement-active-bg: rgba(16, 185, 129, 0.1);
+  --engagement-active-glow: 0 0 25px rgba(16, 185, 129, 0.3);
+  
+  --engagement-power: var(--color-solar-400);          /* 75-100%: Power users */
+  --engagement-power-bg: rgba(251, 191, 36, 0.1);
+  --engagement-power-glow: 0 0 30px rgba(251, 191, 36, 0.35);
+  
+  /* Gauge component styling */
+  --gauge-track: var(--color-void-700);
+  --gauge-track-opacity: 0.6;
+  --gauge-indicator-primary: var(--color-indigo-500);
+  --gauge-indicator-secondary: var(--color-electric-500);
+  --gauge-indicator-tertiary: var(--color-aurora-500);
+  --gauge-label-color: var(--color-nebula-500);
+  --gauge-value-color: var(--color-nebula-100);
+  
+  /* DAU/WAU/MAU specific colors */
+  --metric-dau: var(--color-aurora-500);
+  --metric-dau-bg: rgba(16, 185, 129, 0.1);
+  --metric-dau-glow: 0 0 20px rgba(16, 185, 129, 0.3);
+  
+  --metric-wau: var(--color-electric-500);
+  --metric-wau-bg: rgba(34, 211, 211, 0.1);
+  --metric-wau-glow: 0 0 20px rgba(34, 211, 211, 0.3);
+  
+  --metric-mau: var(--color-plasma-500);
+  --metric-mau-bg: rgba(59, 125, 209, 0.1);
+  --metric-mau-glow: 0 0 20px rgba(59, 125, 209, 0.3);
+  
+  /* Stickiness ratio (DAU/MAU) */
+  --metric-stickiness: var(--color-photon-500);
+  --metric-stickiness-bg: rgba(157, 78, 221, 0.1);
+  --metric-stickiness-glow: 0 0 20px rgba(157, 78, 221, 0.3);
+}
+
+/* Expansion Opportunity Component Tokens */
+:root {
+  /* Opportunity confidence levels */
+  --opportunity-low: var(--color-nebula-500);
+  --opportunity-low-bg: rgba(113, 113, 122, 0.1);
+  --opportunity-low-border: rgba(113, 113, 122, 0.2);
+  
+  --opportunity-medium: var(--color-plasma-500);
+  --opportunity-medium-bg: rgba(59, 125, 209, 0.1);
+  --opportunity-medium-border: rgba(59, 125, 209, 0.25);
+  --opportunity-medium-glow: 0 0 15px rgba(59, 125, 209, 0.2);
+  
+  --opportunity-high: var(--color-electric-500);
+  --opportunity-high-bg: rgba(34, 211, 211, 0.1);
+  --opportunity-high-border: rgba(34, 211, 211, 0.3);
+  --opportunity-high-glow: 0 0 20px rgba(34, 211, 211, 0.25);
+  
+  --opportunity-very-high: var(--color-aurora-500);
+  --opportunity-very-high-bg: rgba(16, 185, 129, 0.15);
+  --opportunity-very-high-border: rgba(16, 185, 129, 0.35);
+  --opportunity-very-high-glow: 0 0 25px rgba(16, 185, 129, 0.3);
+  
+  /* Opportunity type indicators */
+  --opportunity-upsell: var(--color-aurora-400);
+  --opportunity-upsell-bg: rgba(52, 211, 153, 0.1);
+  --opportunity-upsell-icon: "trending-up";
+  
+  --opportunity-cross-sell: var(--color-electric-400);
+  --opportunity-cross-sell-bg: rgba(46, 232, 232, 0.1);
+  --opportunity-cross-sell-icon: "package-plus";
+  
+  --opportunity-expansion: var(--color-photon-400);
+  --opportunity-expansion-bg: rgba(176, 109, 232, 0.1);
+  --opportunity-expansion-icon: "users-plus";
+  
+  --opportunity-renewal: var(--color-plasma-400);
+  --opportunity-renewal-bg: rgba(90, 154, 232, 0.1);
+  --opportunity-renewal-icon: "refresh-cw";
+  
+  /* Revenue impact visualization */
+  --opportunity-revenue-low: var(--color-nebula-400);
+  --opportunity-revenue-medium: var(--color-electric-400);
+  --opportunity-revenue-high: var(--color-aurora-400);
+  --opportunity-revenue-critical: var(--color-solar-400);
+  
+  /* Card styling */
+  --opportunity-card-bg: var(--color-void-850);
+  --opportunity-card-bg-hover: var(--color-void-800);
+  --opportunity-card-border: rgba(255, 255, 255, 0.05);
+  --opportunity-card-border-active: rgba(99, 102, 241, 0.3);
+  --opportunity-card-shimmer: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.03),
+    transparent
+  );
+}
+
+/* Time-to-Value Component Tokens - Progress Tracking */
+:root {
+  /* TTV milestone stages */
+  --ttv-stage-pending: var(--color-nebula-600);
+  --ttv-stage-pending-bg: rgba(82, 82, 90, 0.1);
+  --ttv-stage-pending-border: rgba(82, 82, 90, 0.2);
+  
+  --ttv-stage-active: var(--color-indigo-500);
+  --ttv-stage-active-bg: rgba(99, 102, 241, 0.1);
+  --ttv-stage-active-border: rgba(99, 102, 241, 0.3);
+  --ttv-stage-active-glow: 0 0 15px rgba(99, 102, 241, 0.25);
+  
+  --ttv-stage-completed: var(--color-aurora-500);
+  --ttv-stage-completed-bg: rgba(16, 185, 129, 0.1);
+  --ttv-stage-completed-border: rgba(16, 185, 129, 0.3);
+  --ttv-stage-completed-glow: 0 0 10px rgba(16, 185, 129, 0.2);
+  
+  --ttv-stage-skipped: var(--color-nebula-500);
+  --ttv-stage-skipped-bg: rgba(113, 113, 122, 0.05);
+  --ttv-stage-skipped-border: rgba(113, 113, 122, 0.15);
+  
+  --ttv-stage-blocked: var(--color-flare-500);
+  --ttv-stage-blocked-bg: rgba(239, 68, 68, 0.1);
+  --ttv-stage-blocked-border: rgba(239, 68, 68, 0.25);
+  --ttv-stage-blocked-glow: 0 0 15px rgba(239, 68, 68, 0.2);
+  
+  /* TTV timeline connector */
+  --ttv-connector-pending: var(--color-void-600);
+  --ttv-connector-active: var(--color-indigo-500);
+  --ttv-connector-completed: var(--color-aurora-500);
+  
+  /* TTV progress bar */
+  --ttv-progress-track: var(--color-void-700);
+  --ttv-progress-fill: linear-gradient(
+    90deg,
+    var(--color-indigo-600),
+    var(--color-indigo-500),
+    var(--color-electric-500)
+  );
+  --ttv-progress-glow: 0 0 10px rgba(99, 102, 241, 0.3);
+  
+  /* TTV speed indicators */
+  --ttv-speed-slow: var(--color-flare-400);
+  --ttv-speed-slow-bg: rgba(248, 113, 113, 0.1);
+  
+  --ttv-speed-average: var(--color-solar-400);
+  --ttv-speed-average-bg: rgba(251, 191, 36, 0.1);
+  
+  --ttv-speed-fast: var(--color-aurora-400);
+  --ttv-speed-fast-bg: rgba(52, 211, 153, 0.1);
+  
+  --ttv-speed-excellent: var(--color-electric-400);
+  --ttv-speed-excellent-bg: rgba(46, 232, 232, 0.1);
+  
+  /* TTV benchmark comparison */
+  --ttv-benchmark-line: rgba(113, 113, 122, 0.4);
+  --ttv-benchmark-label: var(--color-nebula-500);
+  --ttv-ahead-of-schedule: var(--color-aurora-500);
+  --ttv-on-schedule: var(--color-electric-500);
+  --ttv-behind-schedule: var(--color-solar-500);
+  --ttv-at-risk: var(--color-flare-500);
+}
+
+/* Product Adoption Component Tokens */
+:root {
+  /* Feature adoption levels */
+  --adoption-none: var(--color-nebula-700);
+  --adoption-none-bg: rgba(63, 63, 71, 0.1);
+  
+  --adoption-low: var(--color-plasma-600);
+  --adoption-low-bg: rgba(46, 100, 173, 0.1);
+  
+  --adoption-moderate: var(--color-electric-600);
+  --adoption-moderate-bg: rgba(20, 184, 184, 0.1);
+  
+  --adoption-high: var(--color-aurora-600);
+  --adoption-high-bg: rgba(5, 150, 105, 0.1);
+  
+  --adoption-full: var(--color-aurora-500);
+  --adoption-full-bg: rgba(16, 185, 129, 0.15);
+  --adoption-full-glow: 0 0 20px rgba(16, 185, 129, 0.3);
+  
+  /* Feature usage frequency */
+  --usage-daily: var(--color-aurora-400);
+  --usage-weekly: var(--color-electric-400);
+  --usage-monthly: var(--color-plasma-400);
+  --usage-rarely: var(--color-nebula-500);
+  --usage-never: var(--color-nebula-700);
+}
+
+/* Insights Trend Component Tokens */
+:root {
+  /* Trend direction colors */
+  --trend-improving: var(--color-aurora-500);
+  --trend-improving-bg: rgba(16, 185, 129, 0.1);
+  --trend-improving-border: rgba(16, 185, 129, 0.25);
+  
+  --trend-stable: var(--color-electric-500);
+  --trend-stable-bg: rgba(34, 211, 211, 0.1);
+  --trend-stable-border: rgba(34, 211, 211, 0.25);
+  
+  --trend-declining: var(--color-solar-500);
+  --trend-declining-bg: rgba(245, 158, 11, 0.1);
+  --trend-declining-border: rgba(245, 158, 11, 0.25);
+  
+  --trend-critical: var(--color-flare-500);
+  --trend-critical-bg: rgba(239, 68, 68, 0.1);
+  --trend-critical-border: rgba(239, 68, 68, 0.25);
+  
+  /* Insight severity */
+  --insight-info: var(--color-plasma-400);
+  --insight-info-bg: rgba(90, 154, 232, 0.1);
+  
+  --insight-suggestion: var(--color-electric-400);
+  --insight-suggestion-bg: rgba(46, 232, 232, 0.1);
+  
+  --insight-warning: var(--color-solar-400);
+  --insight-warning-bg: rgba(251, 191, 36, 0.1);
+  
+  --insight-action: var(--color-aurora-400);
+  --insight-action-bg: rgba(52, 211, 153, 0.1);
+  
+  --insight-urgent: var(--color-flare-400);
+  --insight-urgent-bg: rgba(248, 113, 113, 0.1);
+}

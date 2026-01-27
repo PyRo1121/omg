@@ -136,15 +136,17 @@ export const LiveIndicator: Component<LiveIndicatorProps> = (props) => {
         
         {variant() === 'bar' && (
           <div class="flex gap-0.5">
-            {[0, 1, 2].map((i) => (
-              <div
-                class={cn('w-0.5 rounded-full', color().dot)}
-                style={{
-                  height: '8px',
-                  animation: `data-pulse 1s ease-in-out ${i * 0.15}s infinite`,
-                }}
-              />
-            ))}
+            <For each={[0, 1, 2]}>
+              {(i) => (
+                <div
+                  class={cn('w-0.5 rounded-full', color().dot)}
+                  style={{
+                    height: '8px',
+                    animation: `data-pulse 1s ease-in-out ${i * 0.15}s infinite`,
+                  }}
+                />
+              )}
+            </For>
           </div>
         )}
       </div>
@@ -173,7 +175,7 @@ export const StreamCounter: Component<StreamCounterProps> = (props) => {
 
   let prevCount = props.count;
 
-  const updateDisplay = () => {
+  const _updateDisplay = () => {
     if (props.count !== prevCount) {
       setIsAnimating(true);
       const diff = props.count - prevCount;
