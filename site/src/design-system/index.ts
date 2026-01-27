@@ -10,4 +10,10 @@ export * from './components/KPICard';
 export * from './components/MetricRing';
 export * from './components/layouts/DashboardLayout';
 
+export * from './components/SegmentBuilder';
+export * from './components/DrilldownTable';
+export * from './components/AlertThresholdCard';
+export * from './components/ComparisonChart';
+export * from './components/ForecastWidget';
+
 export { default as omgPreset } from './tailwind.preset';

@@ -1,5 +1,5 @@
 import { Component, createSignal, Show, For } from 'solid-js';
-import { RefreshCw, Zap, CheckCircle, Monitor, Clock, Terminal, Flame, Crown, CreditCard } from './ui/Icons';
+import { RefreshCw, Zap } from './ui/Icons';
 
 interface LicenseInfo {
   license_key: string;
@@ -578,17 +578,19 @@ const Dashboard: Component<{ isOpen: boolean; onClose: () => void }> = props => 
                   </div>
 
                   <div class="grid grid-cols-2 gap-4 sm:grid-cols-4">
-                    {[
+                    <For each={[
                       { label: 'Total Cmds', value: license()!.usage?.total_commands || 0, color: 'text-indigo-400' },
                       { label: 'Today', value: license()!.usage?.queries_today || 0, color: 'text-cyan-400' },
                       { label: 'SBOMs', value: license()!.usage?.sbom_generated || 0, color: 'text-purple-400' },
                       { label: 'CVEs Found', value: license()!.usage?.vulnerabilities_found || 0, color: 'text-rose-400' },
-                    ].map(stat => (
-                      <div class="rounded-2xl border border-white/[0.05] bg-white/[0.01] p-4 text-center">
-                        <p class="text-[10px] font-bold uppercase tracking-wider text-slate-500">{stat.label}</p>
-                        <p class={`mt-1 text-xl font-bold ${stat.color}`}>{(stat.value ?? 0).toLocaleString()}</p>
-                      </div>
-                    ))}
+                    ]}>
+                      {(stat) => (
+                        <div class="rounded-2xl border border-white/[0.05] bg-white/[0.01] p-4 text-center">
+                          <p class="text-[10px] font-bold uppercase tracking-wider text-slate-500">{stat.label}</p>
+                          <p class={`mt-1 text-xl font-bold ${stat.color}`}>{(stat.value ?? 0).toLocaleString()}</p>
+                        </div>
+                      )}
+                    </For>
                   </div>
 
                   <Show when={license()!.usage?.achievements?.length}>

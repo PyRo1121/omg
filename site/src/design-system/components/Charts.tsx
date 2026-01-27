@@ -1,4 +1,4 @@
-import { Component, For, Show, createMemo, createSignal, onMount } from 'solid-js';
+import { Component, For, Show, createMemo, createSignal } from 'solid-js';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -227,7 +227,7 @@ export const Sparkline: Component<SparklineProps> = (props) => {
 
       <Show when={props.showDots}>
         <For each={points()}>
-          {(point, i) => (
+          {(point, _i) => (
             <circle
               cx={point.x}
               cy={point.y}
@@ -335,8 +335,45 @@ export const BarChart: Component<BarChartProps> = (props) => {
   const height = () => props.height || 160;
   const maxValue = createMemo(() => Math.max(...props.data.map(d => d.value), 1));
 
-  if (props.horizontal) {
-    return (
+  return (
+    <Show
+      when={props.horizontal}
+      fallback={
+        <div class={cn('flex items-end gap-2', props.class)} style={{ height: `${height()}px` }}>
+          <For each={props.data}>
+            {(item, i) => {
+              const barHeight = (item.value / maxValue()) * 100;
+              return (
+                <div class="group relative flex flex-1 flex-col items-center gap-2">
+                  <div
+                    class={cn(
+                      'w-full rounded-t-lg transition-all duration-700 ease-smooth',
+                      'group-hover:brightness-125'
+                    )}
+                    style={{
+                      height: `${Math.max(barHeight, 4)}%`,
+                      'min-height': '4px',
+                      'background-color': item.color || '#6366f1',
+                      'box-shadow': item.value > 0 ? `0 0 20px -5px ${item.color || 'rgba(99,102,241,0.3)'}` : 'none',
+                      'animation-delay': props.animated ? `${i() * 50}ms` : '0ms',
+                    }}
+                  />
+                  <Show when={props.showLabels}>
+                    <span class="w-full truncate text-center text-2xs font-bold uppercase tracking-widest text-nebula-600 group-hover:text-nebula-400 transition-colors">
+                      {item.label}
+                    </span>
+                  </Show>
+                  <div class="pointer-events-none absolute bottom-full left-1/2 z-30 mb-3 -translate-x-1/2 scale-95 rounded-xl border border-white/10 bg-void-900/95 p-2 text-xs whitespace-nowrap text-white opacity-0 shadow-xl backdrop-blur-md transition-all duration-200 group-hover:scale-100 group-hover:opacity-100">
+                    <div class="text-2xs font-bold uppercase tracking-widest text-nebula-500">{item.label}</div>
+                    <div class="text-sm font-black tabular-nums">{item.value.toLocaleString()}</div>
+                  </div>
+                </div>
+              );
+            }}
+          </For>
+        </div>
+      }
+    >
       <div class={cn('space-y-3', props.class)}>
         <For each={props.data}>
           {(item, i) => (
@@ -366,43 +403,7 @@ export const BarChart: Component<BarChartProps> = (props) => {
           )}
         </For>
       </div>
-    );
-  }
-
-  return (
-    <div class={cn('flex items-end gap-2', props.class)} style={{ height: `${height()}px` }}>
-      <For each={props.data}>
-        {(item, i) => {
-          const barHeight = (item.value / maxValue()) * 100;
-          return (
-            <div class="group relative flex flex-1 flex-col items-center gap-2">
-              <div
-                class={cn(
-                  'w-full rounded-t-lg transition-all duration-700 ease-smooth',
-                  'group-hover:brightness-125'
-                )}
-                style={{
-                  height: `${Math.max(barHeight, 4)}%`,
-                  'min-height': '4px',
-                  'background-color': item.color || '#6366f1',
-                  'box-shadow': item.value > 0 ? `0 0 20px -5px ${item.color || 'rgba(99,102,241,0.3)'}` : 'none',
-                  'animation-delay': props.animated ? `${i() * 50}ms` : '0ms',
-                }}
-              />
-              <Show when={props.showLabels}>
-                <span class="w-full truncate text-center text-2xs font-bold uppercase tracking-widest text-nebula-600 group-hover:text-nebula-400 transition-colors">
-                  {item.label}
-                </span>
-              </Show>
-              <div class="pointer-events-none absolute bottom-full left-1/2 z-30 mb-3 -translate-x-1/2 scale-95 rounded-xl border border-white/10 bg-void-900/95 p-2 text-xs whitespace-nowrap text-white opacity-0 shadow-xl backdrop-blur-md transition-all duration-200 group-hover:scale-100 group-hover:opacity-100">
-                <div class="text-2xs font-bold uppercase tracking-widest text-nebula-500">{item.label}</div>
-                <div class="text-sm font-black tabular-nums">{item.value.toLocaleString()}</div>
-              </div>
-            </div>
-          );
-        }}
-      </For>
-    </div>
+    </Show>
   );
 };
 

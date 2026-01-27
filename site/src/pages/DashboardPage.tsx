@@ -9,8 +9,8 @@ import {
   Switch,
   Match,
 } from 'solid-js';
-import { A } from '@solidjs/router';
 import { animate, stagger } from 'motion';
+import type { AnimationOptions } from 'motion';
 import * as api from '../lib/api';
 import { TeamAnalytics } from '../components/dashboard/TeamAnalytics';
 import { AdminDashboard } from '../components/dashboard/AdminDashboard';
@@ -27,7 +27,6 @@ import {
   Terminal,
   Flame,
   CheckCircle,
-  Globe,
   LogOut,
   ChevronRight,
   Shield,
@@ -77,28 +76,28 @@ const DashboardPage: Component = () => {
   const [dashboard, setDashboard] = createSignal<api.DashboardData | null>(null);
   const [teamData, setTeamData] = createSignal<api.TeamData | null>(null);
   const [activeTab, setActiveTab] = createSignal<Tab>('overview');
-  const [sessions, setSessions] = createSignal<api.Session[]>([]);
-  const [auditLog, setAuditLog] = createSignal<api.AuditLogEntry[]>([]);
+  const [_sessions, _setSessions] = createSignal<api.Session[]>([]);
+  const [auditLog, _setAuditLog] = createSignal<api.AuditLogEntry[]>([]);
   const [copied, setCopied] = createSignal(false);
   const [actionMessage, setActionMessage] = createSignal('');
 
-  // Admin state
-  const [adminData, setAdminData] = createSignal<api.AdminOverview | null>(null);
-  const [adminUsers, setAdminUsers] = createSignal<api.AdminUser[]>([]);
-  const [adminActivity, setAdminActivity] = createSignal<api.AdminActivity[]>([]);
+  // Admin state (reserved for future use)
+  const [_adminData, _setAdminData] = createSignal<api.AdminOverview | null>(null);
+  const [_adminUsers, _setAdminUsers] = createSignal<api.AdminUser[]>([]);
+  const [_adminActivity, _setAdminActivity] = createSignal<api.AdminActivity[]>([]);
 
   createEffect(() => {
     if (view() === 'dashboard' && dashboard()) {
       animate(
         'nav button',
-        { opacity: [0, 1], x: [-20, 0] } as any,
-        { delay: stagger(0.05), duration: 0.5, ease: [0.16, 1, 0.3, 1] }
+        { opacity: [0, 1], x: [-20, 0] },
+        { delay: stagger(0.05), duration: 0.5, ease: [0.16, 1, 0.3, 1] } as AnimationOptions
       );
 
       animate(
         'main > div',
-        { opacity: [0, 1], y: [10, 0] } as any,
-        { duration: 0.6, ease: [0.16, 1, 0.3, 1] }
+        { opacity: [0, 1], y: [10, 0] },
+        { duration: 0.6, ease: [0.16, 1, 0.3, 1] } as AnimationOptions
       );
     }
   });
@@ -107,7 +106,7 @@ const DashboardPage: Component = () => {
     if (!turnstileContainer || !window.turnstile) return;
     
     if (turnstileWidgetId) {
-      try { window.turnstile.remove(turnstileWidgetId); } catch {}
+      try { window.turnstile.remove(turnstileWidgetId); } catch (_e) { /* Ignore cleanup errors */ }
       turnstileWidgetId = null;
     }
     
@@ -149,7 +148,7 @@ const DashboardPage: Component = () => {
         } else {
           api.clearSession();
         }
-      } catch (e) {
+      } catch (_e) {
         api.clearSession();
       } finally {
         setLoading(false);
@@ -161,7 +160,7 @@ const DashboardPage: Component = () => {
       const script = document.createElement('script');
       script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?onload=onTurnstileLoad';
       script.async = true;
-      (window as any).onTurnstileLoad = initTurnstile;
+      (window as unknown as { onTurnstileLoad: () => void }).onTurnstileLoad = initTurnstile;
       document.head.appendChild(script);
     } else if (window.turnstile) {
       initTurnstile();
@@ -192,7 +191,8 @@ const DashboardPage: Component = () => {
       }
     } catch (e) {
       console.error('Failed to load dashboard:', e);
-      if ((e as any).message === 'Unauthorized' || (e as any).status === 401) {
+      const error = e as { message?: string; status?: number };
+      if (error.message === 'Unauthorized' || error.status === 401) {
         handleLogout();
       }
     }
@@ -236,9 +236,9 @@ const DashboardPage: Component = () => {
         }
         setTurnstileToken(null);
       }
-    } catch (e: any) {
+    } catch (e) {
       console.error('Send code error:', e);
-      setError(e.message || 'Network error');
+      setError((e as Error).message || 'Network error');
       // Reset Turnstile on error
       if (turnstileWidgetId && window.turnstile) {
         window.turnstile.reset(turnstileWidgetId);
@@ -262,9 +262,9 @@ const DashboardPage: Component = () => {
       } else {
         setError(res.error || 'Invalid code');
       }
-    } catch (e: any) {
+    } catch (e) {
       console.error('Verify code error:', e);
-      setError(e.message || 'Verification failed');
+      setError((e as Error).message || 'Verification failed');
     } finally {
       setLoading(false);
     }
@@ -304,7 +304,7 @@ const DashboardPage: Component = () => {
   const glassButton =
     'w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-medium py-3 rounded-xl shadow-lg shadow-blue-500/20 transition-all active:scale-[0.98]';
 
-  const NavItem = (props: { id: Tab; icon: any; label: string }) => {
+  const NavItem = (props: { id: Tab; icon: Component<{ class?: string }>; label: string }) => {
     const isActive = () => activeTab() === props.id;
     return (
       <button
@@ -330,7 +330,7 @@ const DashboardPage: Component = () => {
   const InsightCard = (props: {
     title: string;
     value: string;
-    icon: any;
+    icon: Component<{ class?: string }>;
     color: string;
     sub?: string;
   }) => (
@@ -585,10 +585,10 @@ const DashboardPage: Component = () => {
                   <div class="animate-fade-in space-y-8">
                     {/* License Card */}
                     <div class="relative overflow-hidden rounded-3xl bg-gradient-to-r from-blue-600 to-purple-600 p-1 shadow-2xl shadow-blue-500/20">
-                      <div
-                        class="absolute inset-0 opacity-20 mix-blend-overlay"
-                        style="background-image: url('data:image/svg+xml,%3Csvg viewBox=%220 0 200 200%22 xmlns=%22http://www.w3.org/2000/svg%22%3E%3Cfilter id=%22n%22%3E%3CfeTurbulence type=%22fractalNoise%22 baseFrequency=%220.65%22 numOctaves=%223%22 stitchTiles=%22stitch%22/%3E%3C/filter%3E%3Crect width=%22100%25%22 height=%22100%25%22 filter=%22url(%23n)%22/%3E%3C/svg%3E');"
-                      />
+                                      <div
+                                        class="absolute inset-0 opacity-20 mix-blend-overlay"
+                                        style={{ "background-image": "url('data:image/svg+xml,%3Csvg viewBox=%220 0 200 200%22 xmlns=%22http://www.w3.org/2000/svg%22%3E%3Cfilter id=%22n%22%3E%3CfeTurbulence type=%22fractalNoise%22 baseFrequency=%220.65%22 numOctaves=%223%22 stitchTiles=%22stitch%22/%3E%3C/filter%3E%3Crect width=%22100%25%22 height=%22100%25%22 filter=%22url(%23n)%22/%3E%3C/svg%3E')" }}
+                                      />
                       <div class="relative rounded-[20px] bg-black/40 p-6 backdrop-blur-xl md:p-8">
                         <div class="flex flex-col items-start justify-between gap-6 md:flex-row md:items-center">
                           <div>

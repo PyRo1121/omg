@@ -1,4 +1,4 @@
-import { Component, For, Show, createSignal, createMemo, Switch, Match } from 'solid-js';
+import { Component, For, createSignal, createMemo, Switch, Match } from 'solid-js';
 import * as api from '../../lib/api';
 import { 
   useTeamData, 
@@ -15,7 +15,7 @@ import { StatCard } from './analytics/StatCard';
 import { RoiChart } from './analytics/RoiChart';
 import { SecurityScore } from './analytics/SecurityScore';
 import { StatusBadge } from '../ui/Badge';
-import { DonutChart, LiveIndicator } from '../ui/Chart';
+import { DonutChart } from '../ui/Chart';
 import { CardSkeleton } from '../ui/Skeleton';
 import { SmartInsights } from './SmartInsights';
 import {
@@ -26,7 +26,6 @@ import {
   Shield,
   Zap,
   Clock,
-  Activity,
   Lock,
   RefreshCw,
   Crown,
