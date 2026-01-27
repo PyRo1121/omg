@@ -62,7 +62,7 @@ impl AurIndex {
     /// Access the archived data with validation
     fn archive(&self) -> Result<&ArchivedAurArchive> {
         rkyv::access::<rkyv::Archived<AurArchive>, rkyv::rancor::Error>(&self.mmap)
-            .map_err(|e| anyhow::anyhow!("Corrupted AUR index: {}", e))
+            .map_err(|e| anyhow::anyhow!("Corrupted AUR index: {e}"))
     }
 
     /// Check if a package exists in the index
@@ -76,12 +76,11 @@ impl AurIndex {
     /// Returns a reference to the archived entry in the memory-mapped file.
     pub fn get(&self, name: &str) -> Result<Option<&ArchivedAurEntry>> {
         let archive = self.archive()?;
-        let idx = match archive
+        let Ok(idx) = archive
             .entries
             .binary_search_by_key(&name, |e: &ArchivedAurEntry| e.name.as_str())
-        {
-            Ok(idx) => idx,
-            Err(_) => return Ok(None),
+        else {
+            return Ok(None);
         };
         Ok(Some(&archive.entries[idx]))
     }
