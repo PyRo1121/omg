@@ -934,7 +934,7 @@ mod tests {
             .exists()
         {
             match check_updates_fast() {
-                Ok(updates) => println!("Found {} updates", updates.len()),
+                Ok(updates) => tracing::debug!("Found {} updates", updates.len()),
                 Err(e) => panic!("Failed to check updates: {e}"),
             }
         }

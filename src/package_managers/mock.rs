@@ -161,7 +161,7 @@ impl MockPackageManager {
 
     fn save_state(state: &MockState) {
         let path = paths::data_dir().join("mock_state.json");
-        eprintln!("Mock saving state to {}", path.display());
+        tracing::debug!("Mock saving state to {}", path.display());
         let _ = fs::create_dir_all(path.parent().unwrap());
         if let Ok(data) = serde_json::to_string(state) {
             let _ = fs::write(&path, data);

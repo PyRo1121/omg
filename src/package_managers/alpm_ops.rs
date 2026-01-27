@@ -238,29 +238,29 @@ pub fn sync_dbs() -> Result<()> {
 
 /// Display package info beautifully
 pub fn display_pkg_info(info: &PackageInfo) {
-    println!("{} {}", info.name.white().bold(), info.version.green());
-    println!("  {} {}", "Description:".dimmed(), info.description);
-    println!("  {} {}", "Repository:".dimmed(), info.repo.cyan());
-    println!(
+    tracing::info!("{} {}", info.name.white().bold(), info.version.green());
+    tracing::info!("  {} {}", "Description:".dimmed(), info.description);
+    tracing::info!("  {} {}", "Repository:".dimmed(), info.repo.cyan());
+    tracing::info!(
         "  {} {}",
         "URL:".dimmed(),
         info.url.as_deref().unwrap_or("-")
     );
-    println!(
+    tracing::info!(
         "  {} {:.2} MB",
         "Size:".dimmed(),
         info.size as f64 / 1024.0 / 1024.0
     );
-    println!(
+    tracing::info!(
         "  {} {:.2} MB",
         "Download:".dimmed(),
         info.download_size.unwrap_or(0) as f64 / 1024.0 / 1024.0
     );
     if !info.licenses.is_empty() {
-        println!("  {} {}", "License:".dimmed(), info.licenses.join(", "));
+        tracing::info!("  {} {}", "License:".dimmed(), info.licenses.join(", "));
     }
     if !info.depends.is_empty() {
-        println!("  {} {}", "Depends:".dimmed(), info.depends.join(", "));
+        tracing::info!("  {} {}", "Depends:".dimmed(), info.depends.join(", "));
     }
 }
 
