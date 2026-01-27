@@ -394,6 +394,8 @@ pub fn get_machine_id() -> String {
     // Hash the combined components
     let combined = components.join(":");
     let hash = sha256_hex(combined.as_bytes());
+    // Only log the hash, never the source components (PII)
+    tracing::debug!("Generated machine ID fingerprint: {}", &hash[..16]);
     hash[..16].to_string() // First 16 chars of hash
 }
 
@@ -471,6 +473,20 @@ pub async fn validate_license_with_user(
         "user_email": user_email,
     });
 
+    // Redact key and PII
+    let redacted_key = if key.len() > 8 {
+        format!("{}...", &key[..8])
+    } else {
+        "***".to_string()
+    };
+    tracing::debug!(
+        "Validating license. Key: {}, MachineID: {}, HasUser: {}, HasEmail: {}",
+        redacted_key,
+        machine_id,
+        user_name.is_some(),  // Log presence only, not value
+        user_email.is_some()  // Log presence only, not value
+    );
+
     let response = crate::core::http::shared_client()
         .post(LICENSE_API_URL)
         .json(&payload)
@@ -479,16 +495,27 @@ pub async fn validate_license_with_user(
         .await
         .context("Failed to connect to license server")?;
 
+    let status = response.status();
     let response_text = response
         .text()
         .await
         .context("Failed to read license response body")?;
 
-    tracing::debug!("License API raw response: {}", response_text);
+    // Parse response first
+    let resp: LicenseResponse = serde_json::from_str(&response_text).context(format!(
+        "Failed to parse license response. Status: {status}"
+    ))?;
 
-    serde_json::from_str(&response_text).context(format!(
-        "Failed to parse license response. Raw response: {response_text}"
-    ))
+    // Log only safe fields
+    tracing::debug!(
+        "License API response: valid={}, tier={:?}, has_token={}, error={:?}",
+        resp.valid,
+        resp.tier,
+        resp.token.is_some(),
+        resp.error
+    );
+
+    Ok(resp)
 }
 
 /// Fetch team members associated with this license
