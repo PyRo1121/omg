@@ -1,98 +1,36 @@
-//! Reusable UI components for the OMG CLI
+//! High-level UI components for the OMG CLI
 //!
-//! This module provides pre-built, styled UI components that can be used
-//! across all CLI commands for consistent visual design.
+//! This module provides composite UI components that combine multiple
+//! `Cmd` primitives for common patterns like loading states, error messages
+//! with suggestions, and formatted lists.
+//!
+//! For basic output (success, error, info, etc.), use `Cmd` methods directly.
+//! This module is for higher-level compositions that add semantic value.
 
-use crate::cli::tea::Cmd;
+use crate::cli::tea::{Cmd, StyledTextConfig, TextStyle};
 
-/// Component library for reusable UI elements
+/// High-level component builders for common UI patterns
+///
+/// Each method returns `Cmd<M>` where `M` is inferred from usage context.
+/// Components work with any message type because they only produce output commands.
 pub struct Components;
 
-impl Default for Components {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Components {
-    /// Create a new component library instance
-    #[must_use]
-    pub fn new() -> Self {
-        Self
-    }
-
-    /// Create a styled header for command output
-    #[must_use]
-    pub fn header<M>(title: impl Into<String>, body: impl Into<String>) -> Cmd<M> {
-        Cmd::header(title.into(), body.into())
-    }
-
-    /// Create a success message with icon
-    #[must_use]
-    pub fn success<M>(message: impl Into<String>) -> Cmd<M> {
-        Cmd::success(message.into())
-    }
-
-    /// Create an error message with icon
-    #[must_use]
-    pub fn error<M>(message: impl Into<String>) -> Cmd<M> {
-        Cmd::error(message.into())
-    }
-
-    /// Create a warning message with icon
-    #[must_use]
-    pub fn warning<M>(message: impl Into<String>) -> Cmd<M> {
-        Cmd::warning(message.into())
-    }
-
-    /// Create an info message with icon
-    #[must_use]
-    pub fn info<M>(message: impl Into<String>) -> Cmd<M> {
-        Cmd::info(message.into())
-    }
-
-    /// Create a bordered card with title and content
-    #[must_use]
-    pub fn card<M>(title: impl Into<String>, content: Vec<String>) -> Cmd<M> {
-        Cmd::card(title.into(), content)
-    }
-
-    /// Print a blank line (spacer)
-    #[must_use]
-    pub fn spacer<M>() -> Cmd<M> {
-        Cmd::spacer()
-    }
-
-    /// Create bold text
-    #[must_use]
-    pub fn bold<M>(text: impl Into<String>) -> Cmd<M> {
-        Cmd::styled_text(crate::cli::tea::StyledTextConfig {
-            text: text.into(),
-            style: crate::cli::tea::TextStyle::Bold,
-        })
-    }
-
-    /// Create muted/gray text
-    #[must_use]
-    pub fn muted<M>(text: impl Into<String>) -> Cmd<M> {
-        Cmd::styled_text(crate::cli::tea::StyledTextConfig {
-            text: text.into(),
-            style: crate::cli::tea::TextStyle::Muted,
-        })
-    }
-
     /// Create a step indicator for multi-step processes
+    ///
+    /// Displays `[1/3] ⟳ Processing` for incomplete steps
+    /// and `[3/3] ✓ Complete` for the final step.
     #[must_use]
     pub fn step<M>(step: usize, total: usize, message: impl Into<String>) -> Cmd<M> {
         let icon = if step == total { "✓" } else { "⟳" };
         let style = if step == total {
-            crate::cli::tea::TextStyle::Success
+            TextStyle::Success
         } else {
-            crate::cli::tea::TextStyle::Info
+            TextStyle::Info
         };
 
         Cmd::batch([
-            Cmd::styled_text(crate::cli::tea::StyledTextConfig {
+            Cmd::styled_text(StyledTextConfig {
                 text: format!("[{step}/{total}] {icon}"),
                 style,
             }),
@@ -100,7 +38,14 @@ impl Components {
         ])
     }
 
-    /// Create a package list for search/install results
+    /// Create a formatted package list with numbering
+    ///
+    /// ```text
+    /// ┌─ Available Packages ─┐
+    /// │ 1. pkg-a - Description │
+    /// │ 2. pkg-b - Description │
+    /// └──────────────────────┘
+    /// ```
     #[must_use]
     pub fn package_list<M>(
         title: impl Into<String>,
@@ -121,7 +66,14 @@ impl Components {
         Cmd::card(title.into(), content)
     }
 
-    /// Create an update summary showing package updates
+    /// Create an update summary showing version changes
+    ///
+    /// ```text
+    /// ┌─ Updates Available ─┐
+    /// │ pkg-a 1.0 → 2.0     │
+    /// │ pkg-b 3.1 → 3.2     │
+    /// └────────────────────┘
+    /// ```
     #[must_use]
     pub fn update_summary<M>(
         packages: Vec<(impl Into<String>, impl Into<String>, impl Into<String>)>,
@@ -136,7 +88,10 @@ impl Components {
         Cmd::card("Updates Available", content)
     }
 
-    /// Create a key-value list panel
+    /// Create a key-value list, optionally in a card
+    ///
+    /// With title: renders as a card.
+    /// Without title: renders as plain lines.
     #[must_use]
     pub fn kv_list<M>(
         title: Option<impl Into<String>>,
@@ -157,98 +112,115 @@ impl Components {
         }
     }
 
-    /// Create a status summary
+    /// Create a status summary (KV list with "Status" title)
     #[must_use]
     pub fn status_summary<M>(items: Vec<(impl Into<String>, impl Into<String>)>) -> Cmd<M> {
         Self::kv_list(Some("Status"), items)
     }
 }
 
-/// Pre-built components for common use cases
+
 impl Components {
-    /// Loading message for async operations
+    /// Loading message with spinner icon
+    ///
+    /// ```text
+    ///
+    /// ℹ ⟳ Syncing repositories...
+    ///
+    /// ```
     #[must_use]
     pub fn loading<M>(message: impl Into<String>) -> Cmd<M> {
         Cmd::batch([
-            Self::spacer(),
-            Self::info(format!("⟳ {}", message.into())),
-            Self::spacer(),
+            Cmd::spacer(),
+            Cmd::info(format!("⟳ {}", message.into())),
+            Cmd::spacer(),
         ])
     }
 
-    /// "No results found" message
+    /// "No results found" message with muted styling
     #[must_use]
     pub fn no_results<M>(query: impl Into<String>) -> Cmd<M> {
         Cmd::batch([
-            Self::spacer(),
-            Self::muted(format!("No results found for '{}'", query.into())),
-            Self::spacer(),
+            Cmd::spacer(),
+            Cmd::styled_text(StyledTextConfig {
+                text: format!("No results found for '{}'", query.into()),
+                style: TextStyle::Muted,
+            }),
+            Cmd::spacer(),
         ])
     }
 
-    /// "Already up to date" message
+    /// "Already up to date" success message
     #[must_use]
     pub fn up_to_date<M>() -> Cmd<M> {
         Cmd::batch([
-            Self::spacer(),
-            Self::success("Everything is up to date!"),
-            Self::spacer(),
+            Cmd::spacer(),
+            Cmd::success("Everything is up to date!"),
+            Cmd::spacer(),
         ])
     }
 
-    /// Permission error message with suggestion
+    /// Permission denied error with sudo suggestion
     #[must_use]
     pub fn permission_error<M>(command: impl Into<String>) -> Cmd<M> {
         Cmd::batch([
-            Self::spacer(),
-            Self::error("Permission denied"),
-            Self::muted(format!("Try running: sudo {}", command.into())),
-            Self::spacer(),
+            Cmd::spacer(),
+            Cmd::error("Permission denied"),
+            Cmd::styled_text(StyledTextConfig {
+                text: format!("Try running: sudo {}", command.into()),
+                style: TextStyle::Muted,
+            }),
+            Cmd::spacer(),
         ])
     }
 
-    /// Confirmation prompt for operations
+    /// Confirmation prompt with action hint
     #[must_use]
     pub fn confirm<M>(message: impl Into<String>, action: impl Into<String>) -> Cmd<M> {
         Cmd::batch([
-            Self::spacer(),
-            Self::bold(message.into()),
-            Self::muted(format!("Proceed? ({} or --yes to skip)", action.into())),
-            Self::spacer(),
+            Cmd::spacer(),
+            Cmd::bold(message.into()),
+            Cmd::styled_text(StyledTextConfig {
+                text: format!("Proceed? ({} or --yes to skip)", action.into()),
+                style: TextStyle::Muted,
+            }),
+            Cmd::spacer(),
         ])
     }
 
-    /// Command completed successfully message
+    /// Command completed successfully with checkmark
     #[must_use]
     pub fn complete<M>(message: impl Into<String>) -> Cmd<M> {
         Cmd::batch([
-            Self::spacer(),
-            Self::success(format!("✓ {}", message.into())),
-            Self::spacer(),
+            Cmd::spacer(),
+            Cmd::success(format!("✓ {}", message.into())),
+            Cmd::spacer(),
         ])
     }
 
-    /// Error with suggestion for remediation
+    /// Error message with actionable suggestion
+    ///
+    /// Displays error followed by a lightbulb icon and suggestion.
     #[must_use]
     pub fn error_with_suggestion<M>(
         error: impl Into<String>,
         suggestion: impl Into<String>,
     ) -> Cmd<M> {
         Cmd::batch([
-            Self::spacer(),
-            Self::error(error.into()),
-            Self::info(format!("💡 {}", suggestion.into())),
-            Self::spacer(),
+            Cmd::spacer(),
+            Cmd::error(error.into()),
+            Cmd::info(format!("💡 {}", suggestion.into())),
+            Cmd::spacer(),
         ])
     }
 
-    /// Welcome/header banner for the CLI
+    /// Welcome banner for CLI commands
     #[must_use]
     pub fn welcome<M>(command: &str, description: &str) -> Cmd<M> {
         Cmd::batch([
-            Self::spacer(),
-            Self::header(command, description),
-            Self::spacer(),
+            Cmd::spacer(),
+            Cmd::header(command, description),
+            Cmd::spacer(),
         ])
     }
 
@@ -256,9 +228,9 @@ impl Components {
     #[must_use]
     pub fn section<M>(title: impl Into<String>) -> Cmd<M> {
         Cmd::batch([
-            Self::spacer(),
-            Self::header(title.into(), ""),
-            Self::spacer(),
+            Cmd::spacer(),
+            Cmd::header(title.into(), ""),
+            Cmd::spacer(),
         ])
     }
 }
@@ -268,92 +240,92 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_components_header() {
-        let cmd: Cmd<()> = Components::header("Test", "Body");
-        assert!(matches!(cmd, Cmd::Header(_, _)));
-    }
-
-    #[test]
-    fn test_components_success() {
-        let cmd: Cmd<()> = Components::success("Done");
-        assert!(matches!(cmd, Cmd::Success(_)));
-    }
-
-    #[test]
-    fn test_components_spacer() {
-        let cmd: Cmd<()> = Components::spacer();
-        assert!(matches!(cmd, Cmd::Spacer));
-    }
-
-    #[test]
-    fn test_components_bold() {
-        let cmd: Cmd<()> = Components::bold("Important");
-        assert!(matches!(cmd, Cmd::StyledText(_)));
-    }
-
-    #[test]
-    fn test_components_step() {
+    fn test_step_indicator() {
         let cmd: Cmd<()> = Components::step(1, 3, "Processing");
         assert!(matches!(cmd, Cmd::Batch(_)));
     }
 
     #[test]
-    fn test_components_package_list() {
+    fn test_package_list() {
         let cmd: Cmd<()> =
             Components::package_list("Results", vec![("pkg1", Some("desc")), ("pkg2", None)]);
         assert!(matches!(cmd, Cmd::Card(_, _)));
     }
 
     #[test]
-    fn test_components_update_summary() {
+    fn test_update_summary() {
         let cmd: Cmd<()> = Components::update_summary(vec![("pkg", "1.0", "2.0")]);
         assert!(matches!(cmd, Cmd::Card(_, _)));
     }
 
     #[test]
-    fn test_components_kv_list() {
+    fn test_kv_list_with_title() {
         let cmd: Cmd<()> = Components::kv_list(Some("Info"), vec![("k", "v")]);
         assert!(matches!(cmd, Cmd::Card(_, _)));
     }
 
     #[test]
-    fn test_components_no_results() {
+    fn test_kv_list_without_title() {
+        let cmd: Cmd<()> = Components::kv_list::<()>(None::<&str>, vec![("k", "v")]);
+        assert!(matches!(cmd, Cmd::Batch(_)));
+    }
+
+    #[test]
+    fn test_status_summary() {
+        let cmd: Cmd<()> = Components::status_summary(vec![("Status", "OK")]);
+        assert!(matches!(cmd, Cmd::Card(_, _)));
+    }
+
+    #[test]
+    fn test_loading() {
+        let cmd: Cmd<()> = Components::loading("Processing");
+        assert!(matches!(cmd, Cmd::Batch(_)));
+    }
+
+    #[test]
+    fn test_no_results() {
         let cmd: Cmd<()> = Components::no_results("test");
         assert!(matches!(cmd, Cmd::Batch(_)));
     }
 
     #[test]
-    fn test_components_up_to_date() {
+    fn test_up_to_date() {
         let cmd: Cmd<()> = Components::up_to_date();
         assert!(matches!(cmd, Cmd::Batch(_)));
     }
 
     #[test]
-    fn test_components_permission_error() {
+    fn test_permission_error() {
         let cmd: Cmd<()> = Components::permission_error("omg update");
         assert!(matches!(cmd, Cmd::Batch(_)));
     }
 
     #[test]
-    fn test_components_complete() {
+    fn test_confirm() {
+        let cmd: Cmd<()> = Components::confirm("Are you sure?", "Enter");
+        assert!(matches!(cmd, Cmd::Batch(_)));
+    }
+
+    #[test]
+    fn test_complete() {
         let cmd: Cmd<()> = Components::complete("Done");
         assert!(matches!(cmd, Cmd::Batch(_)));
     }
 
     #[test]
-    fn test_components_error_with_suggestion() {
+    fn test_error_with_suggestion() {
         let cmd: Cmd<()> = Components::error_with_suggestion("Error", "Fix it");
         assert!(matches!(cmd, Cmd::Batch(_)));
     }
 
     #[test]
-    fn test_components_welcome() {
+    fn test_welcome() {
         let cmd: Cmd<()> = Components::welcome("cmd", "desc");
         assert!(matches!(cmd, Cmd::Batch(_)));
     }
 
     #[test]
-    fn test_components_section() {
+    fn test_section() {
         let cmd: Cmd<()> = Components::section("Section");
         assert!(matches!(cmd, Cmd::Batch(_)));
     }

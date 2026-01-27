@@ -32,8 +32,8 @@ fn build_blame_output(package: &str) -> Result<Cmd<()>> {
     }
 
     let mut commands = vec![
-        Components::header("Package History", package),
-        Components::spacer(),
+        Cmd::header("Package History", package),
+        Cmd::spacer(),
     ];
 
     // Package info
@@ -63,10 +63,12 @@ fn build_blame_output(package: &str) -> Result<Cmd<()>> {
         .collect();
 
     if relevant.is_empty() {
-        commands.push(Components::spacer());
-        commands.push(Components::muted(
-            "No transaction history found (Package may have been installed before OMG tracking began)",
-        ));
+        use crate::cli::tea::{StyledTextConfig, TextStyle};
+        commands.push(Cmd::spacer());
+        commands.push(Cmd::styled_text(StyledTextConfig {
+            text: "No transaction history found (Package may have been installed before OMG tracking began)".to_string(),
+            style: TextStyle::Muted,
+        }));
     } else {
         let txn_content: Vec<String> = relevant
             .iter()
@@ -98,22 +100,23 @@ fn build_blame_output(package: &str) -> Result<Cmd<()>> {
             })
             .collect();
 
-        commands.push(Components::spacer());
-        commands.push(Components::card(
+        commands.push(Cmd::spacer());
+        commands.push(Cmd::card(
             format!("Transaction History ({})", relevant.len()),
             txn_content,
         ));
 
         if relevant.len() > 10 {
-            commands.push(Components::muted(format!(
-                "... and {} more transactions",
-                relevant.len() - 10
-            )));
+            use crate::cli::tea::{StyledTextConfig, TextStyle};
+            commands.push(Cmd::styled_text(StyledTextConfig {
+                text: format!("... and {} more transactions", relevant.len() - 10),
+                style: TextStyle::Muted,
+            }));
         }
     }
 
     // Show what requires this package
-    commands.push(Components::spacer());
+    commands.push(Cmd::spacer());
     commands.push(show_required_by(package)?);
 
     Ok(Cmd::batch(commands))
@@ -181,7 +184,6 @@ fn get_package_info(_package: &str) -> Result<(bool, Option<String>, String)> {
 
 #[cfg(feature = "arch")]
 fn show_required_by(package: &str) -> Result<Cmd<()>> {
-    use crate::cli::components::Components;
     use alpm::Alpm;
 
     let handle = Alpm::new("/", "/var/lib/pacman")
@@ -200,9 +202,9 @@ fn show_required_by(package: &str) -> Result<Cmd<()>> {
     }
 
     if required_by.is_empty() {
-        Ok(Components::info("Nothing depends on this package"))
+        Ok(Cmd::info("Nothing depends on this package"))
     } else {
-        Ok(Components::card(
+        Ok(Cmd::card(
             format!("Required by ({} packages)", required_by.len()),
             required_by,
         ))
@@ -227,9 +229,9 @@ fn show_required_by(package: &str) -> Result<Cmd<()>> {
         .collect();
 
     if deps.is_empty() {
-        Ok(Components::info("Nothing depends on this package"))
+        Ok(Cmd::info("Nothing depends on this package"))
     } else {
-        Ok(Components::card(
+        Ok(Cmd::card(
             format!("Required by ({} packages)", deps.len()),
             deps,
         ))
@@ -240,7 +242,7 @@ fn show_required_by(package: &str) -> Result<Cmd<()>> {
 #[allow(clippy::unnecessary_wraps)]
 fn show_required_by(_package: &str) -> Result<Cmd<()>> {
     use crate::cli::components::Components;
-    Ok(Components::info("Dependency information not available"))
+    Ok(Cmd::info("Dependency information not available"))
 }
 
 fn format_timestamp(ts: i64) -> String {

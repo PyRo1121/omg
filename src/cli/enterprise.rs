@@ -95,8 +95,8 @@ pub async fn reports(report_type: &str, format: &str, _ctx: &CliContext) -> Resu
     ];
 
     execute_cmd(Cmd::batch([
-        Components::success(format!("Generated {filename}")),
-        Components::spacer(),
+        Cmd::success(format!("Generated {filename}")),
+        Cmd::spacer(),
         Components::kv_list(
             Some("Report Details"),
             vec![
@@ -105,8 +105,8 @@ pub async fn reports(report_type: &str, format: &str, _ctx: &CliContext) -> Resu
                 ("File", &filename),
             ],
         ),
-        Components::spacer(),
-        Components::card("Report Contents", report_sections),
+        Cmd::spacer(),
+        Cmd::card("Report Contents", report_sections),
     ]));
 
     Ok(())
@@ -133,11 +133,11 @@ pub fn audit_export(
     if let Some(p) = period
         && (p.len() > 64 || p.chars().any(|c| !c.is_ascii_alphanumeric() && c != '-'))
     {
-        execute_cmd(Components::error("Invalid period format"));
+        execute_cmd(Cmd::error("Invalid period format"));
         anyhow::bail!("Invalid period format");
     }
     if let Err(e) = crate::core::security::validate_relative_path(output) {
-        execute_cmd(Components::error(format!("Invalid output path: {e}")));
+        execute_cmd(Cmd::error(format!("Invalid output path: {e}")));
         return Err(e);
     }
 
@@ -167,8 +167,8 @@ pub fn audit_export(
     }
 
     execute_cmd(Cmd::batch([
-        Components::success("Audit evidence exported"),
-        Components::spacer(),
+        Cmd::success("Audit evidence exported"),
+        Cmd::spacer(),
         Components::kv_list(
             Some("Export Details"),
             vec![
@@ -177,9 +177,9 @@ pub fn audit_export(
                 ("Output", output),
             ],
         ),
-        Components::spacer(),
-        Components::card("Generated Files", file_list),
-        Components::spacer(),
+        Cmd::spacer(),
+        Cmd::card("Generated Files", file_list),
+        Cmd::spacer(),
         Components::complete("Ready for auditor review"),
     ]));
 
@@ -227,30 +227,30 @@ pub fn license_scan(export: Option<&str>, _ctx: &CliContext) -> Result<()> {
     }
 
     execute_cmd(Cmd::batch([
-        Components::header(
+        Cmd::header(
             "License Compliance Scan",
             format!("{} total packages", scan.total),
         ),
-        Components::spacer(),
-        Components::card("License Inventory", license_inventory),
+        Cmd::spacer(),
+        Cmd::card("License Inventory", license_inventory),
         if violations.is_empty() {
             Cmd::none()
         } else {
             Cmd::batch([
-                Components::spacer(),
-                Components::card("Policy Violations", violations),
+                Cmd::spacer(),
+                Cmd::card("Policy Violations", violations),
             ])
         },
         if unknown.is_empty() {
             Cmd::none()
         } else {
             Cmd::batch([
-                Components::spacer(),
-                Components::card("Unknown Licenses", unknown),
+                Cmd::spacer(),
+                Cmd::card("Unknown Licenses", unknown),
             ])
         },
         if let Some(format) = export {
-            Cmd::batch([Components::spacer(), {
+            Cmd::batch([Cmd::spacer(), {
                 let filename = format!(
                     "license-scan-{}.{}",
                     jiff::Timestamp::now().as_second(),
@@ -261,7 +261,7 @@ pub fn license_scan(export: Option<&str>, _ctx: &CliContext) -> Result<()> {
                     _ => serde_json::to_string_pretty(&scan)?,
                 };
                 fs::write(&filename, content)?;
-                Components::success(format!("Exported to {filename}"))
+                Cmd::success(format!("Exported to {filename}"))
             }])
         } else {
             Cmd::none()
@@ -285,11 +285,11 @@ pub mod policy {
                 .chars()
                 .any(|c| !c.is_ascii_alphanumeric() && c != ':' && c != '-')
         {
-            execute_cmd(Components::error("Invalid policy scope"));
+            execute_cmd(Cmd::error("Invalid policy scope"));
             anyhow::bail!("Invalid policy scope");
         }
         if rule.len() > 1024 {
-            execute_cmd(Components::error(
+            execute_cmd(Cmd::error(
                 "Policy rule too long (max 1024 characters)",
             ));
             anyhow::bail!("Policy rule too long");
@@ -303,8 +303,8 @@ pub mod policy {
                 Some("Policy Rule Set"),
                 vec![("Scope", scope), ("Rule", rule)],
             ),
-            Components::spacer(),
-            Components::info("This rule will be enforced on next sync"),
+            Cmd::spacer(),
+            Cmd::info("This rule will be enforced on next sync"),
         ]));
 
         Ok(())
@@ -316,7 +316,7 @@ pub mod policy {
                 || s.chars()
                     .any(|c| !c.is_ascii_alphanumeric() && c != ':' && c != '-'))
         {
-            execute_cmd(Components::error("Invalid policy scope"));
+            execute_cmd(Cmd::error("Invalid policy scope"));
             anyhow::bail!("Invalid policy scope");
         }
 
@@ -326,9 +326,9 @@ pub mod policy {
 
         if policies.is_empty() {
             execute_cmd(Cmd::batch([
-                Components::header("Policy Configuration", "No active policies"),
-                Components::spacer(),
-                Components::info("Enterprise policies can be configured in the dashboard"),
+                Cmd::header("Policy Configuration", "No active policies"),
+                Cmd::spacer(),
+                Cmd::info("Enterprise policies can be configured in the dashboard"),
             ]));
             return Ok(());
         }
@@ -350,12 +350,12 @@ pub mod policy {
         }
 
         execute_cmd(Cmd::batch([
-            Components::header(
+            Cmd::header(
                 "Policy Configuration",
                 format!("{policy_count} active policies"),
             ),
-            Components::spacer(),
-            Components::card("Active Policies", policy_list),
+            Cmd::spacer(),
+            Cmd::card("Active Policies", policy_list),
         ]));
 
         Ok(())
@@ -368,7 +368,7 @@ pub mod policy {
                 .chars()
                 .any(|c| !c.is_ascii_alphanumeric() && c != ':' && c != '-')
         {
-            execute_cmd(Components::error("Invalid source scope"));
+            execute_cmd(Cmd::error("Invalid source scope"));
             anyhow::bail!("Invalid source scope");
         }
         if to.len() > 64
@@ -376,7 +376,7 @@ pub mod policy {
                 .chars()
                 .any(|c| !c.is_ascii_alphanumeric() && c != ':' && c != '-')
         {
-            execute_cmd(Components::error("Invalid target scope"));
+            execute_cmd(Cmd::error("Invalid target scope"));
             anyhow::bail!("Invalid target scope");
         }
 
@@ -384,7 +384,7 @@ pub mod policy {
 
         execute_cmd(Cmd::batch([
             Components::loading("Setting policy inheritance..."),
-            Components::success(format!("{to} now inherits policies from {from}")),
+            Cmd::success(format!("{to} now inherits policies from {from}")),
         ]));
 
         Ok(())
@@ -405,11 +405,11 @@ pub mod server {
                 .chars()
                 .any(|c| !c.is_ascii_alphanumeric() && c != '-')
         {
-            execute_cmd(Components::error("Invalid license key format"));
+            execute_cmd(Cmd::error("Invalid license key format"));
             anyhow::bail!("Invalid license key format");
         }
         if let Err(e) = crate::core::security::validate_relative_path(storage) {
-            execute_cmd(Components::error(format!("Invalid storage path: {e}")));
+            execute_cmd(Cmd::error(format!("Invalid storage path: {e}")));
             return Err(e);
         }
         if domain.len() > 255
@@ -417,7 +417,7 @@ pub mod server {
                 .chars()
                 .any(|c| !c.is_ascii_alphanumeric() && c != '.' && c != '-')
         {
-            execute_cmd(Components::error("Invalid domain name"));
+            execute_cmd(Cmd::error("Invalid domain name"));
             anyhow::bail!("Invalid domain name");
         }
 
@@ -436,10 +436,10 @@ pub mod server {
 
         execute_cmd(Cmd::batch([
             Components::kv_list(Some("Server Configuration"), config_details),
-            Components::spacer(),
-            Components::success("Server initialized!"),
-            Components::spacer(),
-            Components::header("Next Steps", ""),
+            Cmd::spacer(),
+            Cmd::success("Server initialized!"),
+            Cmd::spacer(),
+            Cmd::header("Next Steps", ""),
             Cmd::println("  1. Start server: omgd --server"),
             Cmd::println(format!(
                 "  2. Configure clients: omg config set registry.url https://{domain}"
@@ -460,7 +460,7 @@ pub mod server {
             anyhow::bail!("Only HTTPS upstreams allowed for security");
         }
         if upstream.len() > 1024 || upstream.chars().any(char::is_control) {
-            execute_cmd(Components::error("Invalid upstream URL"));
+            execute_cmd(Cmd::error("Invalid upstream URL"));
             anyhow::bail!("Invalid upstream URL");
         }
 
@@ -476,7 +476,7 @@ pub mod server {
 
         if updates.is_empty() {
             execute_cmd(Cmd::batch([
-                Components::success("Mirror check complete!"),
+                Cmd::success("Mirror check complete!"),
                 Components::kv_list(
                     Some("Sync Status"),
                     vec![
@@ -488,7 +488,7 @@ pub mod server {
             ]));
         } else {
             execute_cmd(Cmd::batch([
-                Components::success("Mirror check complete!"),
+                Cmd::success("Mirror check complete!"),
                 Components::kv_list(
                     Some("Sync Status"),
                     vec![

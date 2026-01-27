@@ -67,8 +67,8 @@ fn show_dependency_chain(package: &str) -> Result<Cmd<()>> {
     };
 
     let mut commands = vec![
-        Components::header("Package Analysis", format!("for {package}")),
-        Components::spacer(),
+        Cmd::header("Package Analysis", format!("for {package}")),
+        Cmd::spacer(),
         Components::kv_list(
             Some("Package Information"),
             vec![
@@ -77,7 +77,7 @@ fn show_dependency_chain(package: &str) -> Result<Cmd<()>> {
                 ("Reason", reason_str),
             ],
         ),
-        Components::spacer(),
+        Cmd::spacer(),
     ];
 
     if matches!(reason, alpm::PackageReason::Depend) {
@@ -92,10 +92,10 @@ fn show_dependency_chain(package: &str) -> Result<Cmd<()>> {
         }
 
         if required_by.is_empty() {
-            commands.push(Components::info("Required by: (orphan - can be removed)"));
-            commands.push(Components::success("This package is safe to remove"));
+            commands.push(Cmd::info("Required by: (orphan - can be removed)"));
+            commands.push(Cmd::success("This package is safe to remove"));
         } else {
-            commands.push(Components::card(
+            commands.push(Cmd::card(
                 format!("Required by ({} packages)", required_by.len()),
                 required_by.clone(),
             ));
@@ -104,7 +104,7 @@ fn show_dependency_chain(package: &str) -> Result<Cmd<()>> {
             if let Some(first_req) = required_by.first()
                 && let Some(path) = build_dependency_path(&handle, first_req, package)
             {
-                commands.push(Components::spacer());
+                commands.push(Cmd::spacer());
                 commands.push(Components::kv_list(Some("Dependency Path Example"), path));
             }
         }
@@ -112,7 +112,7 @@ fn show_dependency_chain(package: &str) -> Result<Cmd<()>> {
         // Show what this package depends on
         let deps: Vec<_> = pkg.depends().into_iter().collect();
         if deps.is_empty() {
-            commands.push(Components::info("Dependencies: (no dependencies)"));
+            commands.push(Cmd::info("Dependencies: (no dependencies)"));
         } else {
             let dep_list: Vec<(String, String)> = deps
                 .iter()
@@ -131,16 +131,17 @@ fn show_dependency_chain(package: &str) -> Result<Cmd<()>> {
             commands.push(Components::kv_list(Some("Dependencies"), dep_list));
 
             if deps.len() > 10 {
-                commands.push(Components::muted(format!(
-                    "... and {} more dependencies",
-                    deps.len() - 10
-                )));
+                use crate::cli::tea::{StyledTextConfig, TextStyle};
+                commands.push(Cmd::styled_text(StyledTextConfig {
+                    text: format!("... and {} more dependencies", deps.len() - 10),
+                    style: TextStyle::Muted,
+                }));
             }
         }
     }
 
     // Safety assessment
-    commands.push(Components::spacer());
+    commands.push(Cmd::spacer());
     let required_by_count = count_reverse_deps(&handle, package);
     let (safety_msg, safety_type) =
         if required_by_count == 0 && matches!(reason, alpm::PackageReason::Depend) {
@@ -158,9 +159,9 @@ fn show_dependency_chain(package: &str) -> Result<Cmd<()>> {
         };
 
     match safety_type {
-        "safe" => commands.push(Components::success(format!("Safe to remove: {safety_msg}"))),
-        "unsafe" => commands.push(Components::warning(format!("Safe to remove: {safety_msg}"))),
-        _ => commands.push(Components::info(format!("Safe to remove: {safety_msg}"))),
+        "safe" => commands.push(Cmd::success(format!("Safe to remove: {safety_msg}"))),
+        "unsafe" => commands.push(Cmd::warning(format!("Safe to remove: {safety_msg}"))),
+        _ => commands.push(Cmd::info(format!("Safe to remove: {safety_msg}"))),
     }
 
     Ok(Cmd::batch(commands))
@@ -268,16 +269,16 @@ fn show_reverse_deps(package: &str) -> Result<Cmd<()>> {
     }
 
     let mut commands = vec![
-        Components::header(
+        Cmd::header(
             "Reverse Dependencies",
             format!("packages that depend on {package}"),
         ),
-        Components::spacer(),
+        Cmd::spacer(),
     ];
 
     if dependents.is_empty() {
-        commands.push(Components::success("Nothing depends on this package"));
-        commands.push(Components::info("Safe to remove: YES (if not needed)"));
+        commands.push(Cmd::success("Nothing depends on this package"));
+        commands.push(Cmd::info("Safe to remove: YES (if not needed)"));
     } else {
         dependents.sort_by(|a, b| b.1.cmp(&a.1)); // Explicit first
 
@@ -301,8 +302,8 @@ fn show_reverse_deps(package: &str) -> Result<Cmd<()>> {
             dep_list,
         ));
 
-        commands.push(Components::spacer());
-        commands.push(Components::warning(format!(
+        commands.push(Cmd::spacer());
+        commands.push(Cmd::warning(format!(
             "Safe to remove: NO (would break {} dependents: {} explicit, {} dependencies)",
             dependents.len(),
             explicit_count,
@@ -342,15 +343,15 @@ fn show_dependency_chain_debian(package: &str) -> Result<Cmd<()>> {
 
     if deps.is_empty() {
         Ok(Cmd::batch(vec![
-            Components::header("Package Analysis", package),
-            Components::spacer(),
-            Components::info("No dependencies found"),
+            Cmd::header("Package Analysis", package),
+            Cmd::spacer(),
+            Cmd::info("No dependencies found"),
         ]))
     } else {
         Ok(Cmd::batch(vec![
-            Components::header("Package Analysis", package),
-            Components::spacer(),
-            Components::card(format!("Dependencies ({})", deps.len()), deps),
+            Cmd::header("Package Analysis", package),
+            Cmd::spacer(),
+            Cmd::card(format!("Dependencies ({})", deps.len()), deps),
         ]))
     }
 }
@@ -383,11 +384,11 @@ fn show_reverse_deps_debian(package: &str) -> Result<Cmd<()>> {
     }
 
     Ok(Cmd::batch(vec![
-        Components::header(
+        Cmd::header(
             "Reverse Dependencies",
             format!("packages that depend on {package}"),
         ),
-        Components::spacer(),
+        Cmd::spacer(),
         Components::kv_list(
             Some(format!("Dependents ({})", deps.len())),
             deps.into_iter()
