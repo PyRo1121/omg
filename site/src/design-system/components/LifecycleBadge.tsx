@@ -157,47 +157,50 @@ export const LifecycleBadge: Component<LifecycleBadgeProps> = (props) => {
   const showIcon = () => props.showIcon !== false;
   const showLabel = () => props.showLabel !== false;
   const variant = () => props.variant || 'badge';
-
-  if (variant() === 'dot') {
-    return (
-      <div class={cn('flex items-center gap-2', props.class)}>
-        <div
-          class={cn(
-            'rounded-full',
-            sizes().dot,
-            props.animated && 'animate-pulse'
-          )}
-          style={{ 'background-color': `var(--stage-${props.stage}, currentColor)` }}
-        />
-        <Show when={showLabel()}>
-          <span class={cn('font-medium', config().color)}>{config().label}</span>
-        </Show>
-      </div>
-    );
-  }
-
-  const IconComponent = config().icon;
+  const IconComponent = createMemo(() => config().icon);
 
   return (
-    <div
-      class={cn(
-        'inline-flex items-center rounded-full border font-bold uppercase tracking-wide transition-all',
-        config().bg,
-        config().border,
-        config().color,
-        sizes().badge,
-        props.animated && config().glow,
-        variant() === 'tag' && 'rounded-md',
-        props.class
-      )}
+    <Show
+      when={variant() !== 'dot'}
+      fallback={
+        <div class={cn('flex items-center gap-2', props.class)}>
+          <div
+            class={cn(
+              'rounded-full',
+              sizes().dot,
+              props.animated && 'animate-pulse'
+            )}
+            style={{ 'background-color': `var(--stage-${props.stage}, currentColor)` }}
+          />
+          <Show when={showLabel()}>
+            <span class={cn('font-medium', config().color)}>{config().label}</span>
+          </Show>
+        </div>
+      }
     >
-      <Show when={showIcon()}>
-        <IconComponent size={sizes().icon} class={props.animated ? 'animate-pulse-slow' : ''} />
-      </Show>
-      <Show when={showLabel()}>
-        <span>{config().label}</span>
-      </Show>
-    </div>
+      <div
+        class={cn(
+          'inline-flex items-center rounded-full border font-bold uppercase tracking-wide transition-all',
+          config().bg,
+          config().border,
+          config().color,
+          sizes().badge,
+          props.animated && config().glow,
+          variant() === 'tag' && 'rounded-md',
+          props.class
+        )}
+      >
+        <Show when={showIcon()}>
+          {(() => {
+            const Icon = IconComponent();
+            return <Icon size={sizes().icon} class={props.animated ? 'animate-pulse-slow' : ''} />;
+          })()}
+        </Show>
+        <Show when={showLabel()}>
+          <span>{config().label}</span>
+        </Show>
+      </div>
+    </Show>
   );
 };
 

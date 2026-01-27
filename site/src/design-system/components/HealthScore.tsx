@@ -1,4 +1,4 @@
-import { Component, createMemo, Show, splitProps } from 'solid-js';
+import { Component, createMemo, Show, splitProps, For, Switch, Match } from 'solid-js';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -278,26 +278,28 @@ export const HealthScoreGauge: Component<HealthScoreProps> = (props) => {
           }}
         />
         
-        {[0, 20, 40, 60, 80, 100].map((tick) => {
-          const angle = Math.PI * (1 - tick / 100);
-          const innerRadius = radius() - 12;
-          const outerRadius = radius() - 6;
-          const x1 = width() / 2 + innerRadius * Math.cos(angle);
-          const y1 = height() - innerRadius * Math.sin(angle);
-          const x2 = width() / 2 + outerRadius * Math.cos(angle);
-          const y2 = height() - outerRadius * Math.sin(angle);
-          return (
-            <line
-              x1={x1}
-              y1={y1}
-              x2={x2}
-              y2={y2}
-              stroke="currentColor"
-              stroke-width="2"
-              class="text-nebula-700"
-            />
-          );
-        })}
+        <For each={[0, 20, 40, 60, 80, 100]}>
+          {(tick) => {
+            const angle = Math.PI * (1 - tick / 100);
+            const innerRadius = radius() - 12;
+            const outerRadius = radius() - 6;
+            const x1 = width() / 2 + innerRadius * Math.cos(angle);
+            const y1 = height() - innerRadius * Math.sin(angle);
+            const x2 = width() / 2 + outerRadius * Math.cos(angle);
+            const y2 = height() - outerRadius * Math.sin(angle);
+            return (
+              <line
+                x1={x1}
+                y1={y1}
+                x2={x2}
+                y2={y2}
+                stroke="currentColor"
+                stroke-width="2"
+                class="text-nebula-700"
+              />
+            );
+          }}
+        </For>
       </svg>
       
       <div class="absolute bottom-0 left-1/2 -translate-x-1/2 flex flex-col items-center">
@@ -338,22 +340,27 @@ export const HealthScoreCompact: Component<Omit<HealthScoreProps, 'size'>> = (pr
 };
 
 export const HealthScore: Component<HealthScoreProps> = (props) => {
-  const variant = props.variant || 'ring';
+  const variant = () => props.variant || 'ring';
 
-  switch (variant) {
-    case 'gauge':
-      return <HealthScoreGauge {...props} />;
-    case 'ring':
-      return <HealthScoreRing {...props} />;
-    case 'bar':
-      return <HealthScoreBar {...props} />;
-    case 'badge':
-      return <HealthScoreBadge {...props} />;
-    case 'compact':
-      return <HealthScoreCompact {...props} />;
-    default:
-      return <HealthScoreRing {...props} />;
-  }
+  return (
+    <Switch fallback={<HealthScoreRing {...props} />}>
+      <Match when={variant() === 'gauge'}>
+        <HealthScoreGauge {...props} />
+      </Match>
+      <Match when={variant() === 'ring'}>
+        <HealthScoreRing {...props} />
+      </Match>
+      <Match when={variant() === 'bar'}>
+        <HealthScoreBar {...props} />
+      </Match>
+      <Match when={variant() === 'badge'}>
+        <HealthScoreBadge {...props} />
+      </Match>
+      <Match when={variant() === 'compact'}>
+        <HealthScoreCompact {...props} />
+      </Match>
+    </Switch>
+  );
 };
 
 export default HealthScore;

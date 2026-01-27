@@ -57,36 +57,79 @@ fn test_distro_override_ubuntu() {
 }
 
 #[tokio::test]
-async fn test_mock_package_manager_logic() {
+async fn test_mock_package_manager_search() {
     use crate::common::mocks::{MockPackage, MockPackageDb, MockPackageManager};
     use omg_lib::package_managers::PackageManager;
 
-    let db = MockPackageDb::with_packages(vec![MockPackage {
+    // ===== ARRANGE =====
+    let test_package = MockPackage {
         name: "test-pkg".to_string(),
         version: "1.0.0".to_string(),
         description: "A test package".to_string(),
         repo: "test".to_string(),
         dependencies: vec![],
         installed_size: 100,
-    }]);
-
+    };
+    let db = MockPackageDb::with_packages(vec![test_package]);
     let pm = MockPackageManager::new(db);
 
-    // Test search
+    // ===== ACT =====
     let results = pm.search("test").await.unwrap();
+
+    // ===== ASSERT =====
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].name, "test-pkg");
     assert!(!results[0].installed);
+}
 
-    // Test install
-    pm.install(&["test-pkg".to_string()]).await.unwrap();
+#[tokio::test]
+async fn test_mock_package_manager_install() {
+    use crate::common::mocks::{MockPackage, MockPackageDb, MockPackageManager};
+    use omg_lib::package_managers::PackageManager;
 
-    // Test search again (should be installed)
+    // ===== ARRANGE =====
+    let test_package = MockPackage {
+        name: "test-pkg".to_string(),
+        version: "1.0.0".to_string(),
+        description: "A test package".to_string(),
+        repo: "test".to_string(),
+        dependencies: vec![],
+        installed_size: 100,
+    };
+    let db = MockPackageDb::with_packages(vec![test_package]);
+    let pm = MockPackageManager::new(db);
+    let package_name = "test-pkg".to_string();
+
+    // ===== ACT =====
+    pm.install(&[package_name.clone()]).await.unwrap();
+
+    // ===== ASSERT =====
     let results = pm.search("test").await.unwrap();
     assert!(results[0].installed);
+}
 
-    // Test info
+#[tokio::test]
+async fn test_mock_package_manager_info() {
+    use crate::common::mocks::{MockPackage, MockPackageDb, MockPackageManager};
+    use omg_lib::package_managers::PackageManager;
+
+    // ===== ARRANGE =====
+    let test_package = MockPackage {
+        name: "test-pkg".to_string(),
+        version: "1.0.0".to_string(),
+        description: "A test package".to_string(),
+        repo: "test".to_string(),
+        dependencies: vec![],
+        installed_size: 100,
+    };
+    let db = MockPackageDb::with_packages(vec![test_package]);
+    let pm = MockPackageManager::new(db);
+    pm.install(&["test-pkg".to_string()]).await.unwrap();
+
+    // ===== ACT =====
     let info = pm.info("test-pkg").await.unwrap().unwrap();
+
+    // ===== ASSERT =====
     #[cfg(not(feature = "arch"))]
     assert_eq!(info.version, "1.0.0");
     #[cfg(feature = "arch")]

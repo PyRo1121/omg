@@ -1,18 +1,10 @@
 import { Component, Show, For, createSignal } from 'solid-js';
 import {
   X,
-  User,
-  Mail,
   Calendar,
-  Globe,
-  Zap,
-  Clock,
   CreditCard,
   Monitor,
-  TrendingUp,
-  TrendingDown,
   AlertTriangle,
-  CheckCircle,
   Star,
 } from '../../ui/Icons';
 import {
@@ -87,7 +79,7 @@ export const CustomerDetailDrawer: Component<CustomerDetailDrawerProps> = props 
     createTagMutation.mutate({ name, color });
   };
 
-  const healthScoreColor = (score: number) => {
+  const _healthScoreColor = (score: number) => {
     if (score >= 80) return 'text-emerald-400 bg-emerald-500/10';
     if (score >= 60) return 'text-amber-400 bg-amber-500/10';
     return 'text-rose-400 bg-rose-500/10';

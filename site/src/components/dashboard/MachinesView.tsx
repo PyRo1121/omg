@@ -40,7 +40,7 @@ export const MachinesView: Component<MachinesViewProps> = (props) => {
         setError(`Failed to revoke ${failedCount} machine(s)`);
         fleetQuery.refetch();
       }
-    } catch (e) {
+    } catch (_e) {
       setError('Network error during revocation');
     }
   };
