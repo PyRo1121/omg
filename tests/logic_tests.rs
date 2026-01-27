@@ -20,56 +20,66 @@ static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
 fn test_distro_override_arch() {
+    // ===== ARRANGE =====
     init_test_env();
     let _guard = ENV_LOCK.lock().unwrap();
     unsafe {
         std::env::set_var("OMG_TEST_DISTRO", "arch");
     }
 
+    // ===== ACT =====
     let pm = get_package_manager();
+
+    // ===== ASSERT =====
     assert_eq!(pm.name(), "pacman");
 }
 
 #[test]
 #[cfg(feature = "debian")]
 fn test_distro_override_debian() {
+    // ===== ARRANGE =====
     init_test_env();
     let _guard = ENV_LOCK.lock().unwrap();
     unsafe {
         std::env::set_var("OMG_TEST_DISTRO", "debian");
     }
 
+    // ===== ACT =====
     let pm = get_package_manager();
+
+    // ===== ASSERT =====
     assert_eq!(pm.name(), "apt");
 }
 
 #[test]
 #[cfg(feature = "debian")]
 fn test_distro_override_ubuntu() {
+    // ===== ARRANGE =====
     init_test_env();
     let _guard = ENV_LOCK.lock().unwrap();
     unsafe {
         std::env::set_var("OMG_TEST_DISTRO", "ubuntu");
     }
 
+    // ===== ACT =====
     let pm = get_package_manager();
+
+    // ===== ASSERT =====
     assert_eq!(pm.name(), "apt");
 }
 
 #[tokio::test]
 async fn test_mock_package_manager_search() {
-    use crate::common::mocks::{MockPackage, MockPackageDb, MockPackageManager};
+    use crate::common::fixtures::{PackageFixture, PackageFixtureExt};
+    use crate::common::mocks::{MockPackageDb, MockPackageManager};
     use omg_lib::package_managers::PackageManager;
 
     // ===== ARRANGE =====
-    let test_package = MockPackage {
-        name: "test-pkg".to_string(),
-        version: "1.0.0".to_string(),
-        description: "A test package".to_string(),
-        repo: "test".to_string(),
-        dependencies: vec![],
-        installed_size: 100,
-    };
+    let test_package = PackageFixture::new()
+        .name("test-pkg")
+        .version("1.0.0")
+        .description("A test package")
+        .to_mock_package();
     let db = MockPackageDb::with_packages(vec![test_package]);
     let pm = MockPackageManager::new(db);
 
@@ -84,18 +94,16 @@ async fn test_mock_package_manager_search() {
 
 #[tokio::test]
 async fn test_mock_package_manager_install() {
-    use crate::common::mocks::{MockPackage, MockPackageDb, MockPackageManager};
+    use crate::common::fixtures::{PackageFixture, PackageFixtureExt};
+    use crate::common::mocks::{MockPackageDb, MockPackageManager};
     use omg_lib::package_managers::PackageManager;
 
     // ===== ARRANGE =====
-    let test_package = MockPackage {
-        name: "test-pkg".to_string(),
-        version: "1.0.0".to_string(),
-        description: "A test package".to_string(),
-        repo: "test".to_string(),
-        dependencies: vec![],
-        installed_size: 100,
-    };
+    let test_package = PackageFixture::new()
+        .name("test-pkg")
+        .version("1.0.0")
+        .description("A test package")
+        .to_mock_package();
     let db = MockPackageDb::with_packages(vec![test_package]);
     let pm = MockPackageManager::new(db);
     let package_name = "test-pkg".to_string();
@@ -110,18 +118,16 @@ async fn test_mock_package_manager_install() {
 
 #[tokio::test]
 async fn test_mock_package_manager_info() {
-    use crate::common::mocks::{MockPackage, MockPackageDb, MockPackageManager};
+    use crate::common::fixtures::{PackageFixture, PackageFixtureExt};
+    use crate::common::mocks::{MockPackageDb, MockPackageManager};
     use omg_lib::package_managers::PackageManager;
 
     // ===== ARRANGE =====
-    let test_package = MockPackage {
-        name: "test-pkg".to_string(),
-        version: "1.0.0".to_string(),
-        description: "A test package".to_string(),
-        repo: "test".to_string(),
-        dependencies: vec![],
-        installed_size: 100,
-    };
+    let test_package = PackageFixture::new()
+        .name("test-pkg")
+        .version("1.0.0")
+        .description("A test package")
+        .to_mock_package();
     let db = MockPackageDb::with_packages(vec![test_package]);
     let pm = MockPackageManager::new(db);
     pm.install(&["test-pkg".to_string()]).await.unwrap();
