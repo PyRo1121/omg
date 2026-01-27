@@ -17,12 +17,12 @@ use serde::{Deserialize, Serialize};
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 
+use crate::config::Settings;
 use crate::core::{
     http::{download_client, shared_client},
     paths,
 };
 use crate::package_managers::aur_metadata::sync_aur_metadata;
-use crate::config::Settings;
 
 const MIRROR_CACHE_TTL_SECS: u64 = 6 * 60 * 60;
 
@@ -278,7 +278,7 @@ async fn download_db(
 pub async fn sync_databases_parallel() -> Result<()> {
     let mirrors = get_mirrors()?;
 
-    tracing::info!(
+    println!(
         "{} Synchronizing package databases...\n",
         "OMG".cyan().bold()
     );
@@ -386,14 +386,14 @@ pub async fn sync_databases_parallel() -> Result<()> {
         tracing::warn!("AUR sync task panicked: {}", e);
     }
 
-    tracing::info!("");
+    println!();
 
     if errors.is_empty() {
-        tracing::info!("{} Databases synchronized successfully!\n", "✓".green());
+        println!("{} Databases synchronized successfully!\n", "✓".green());
         Ok(())
     } else {
         for e in &errors {
-            tracing::error!("{} {}", "✗".red(), e);
+            tracing::error!("Sync error: {}", e);
         }
         anyhow::bail!("Failed to sync {} database(s)", errors.len())
     }
@@ -724,9 +724,9 @@ pub async fn download_packages_parallel(
     }
 
     if !errors.is_empty() {
-        tracing::warn!("\n{} {} download(s) failed:", "⚠".yellow(), errors.len());
+        tracing::warn!("{} download(s) failed", errors.len());
         for e in errors.iter().take(5) {
-            tracing::warn!("  {} {}", "✗".red(), e);
+            tracing::error!("Download error: {}", e);
         }
     }
 

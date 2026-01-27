@@ -129,7 +129,7 @@ impl Model for InstallModel {
                     Cmd::Exec(Box::new(|| InstallMsg::Execute))
                 } else {
                     self.state = InstallState::Complete;
-                    Components::warning("Installation cancelled.")
+                    Cmd::warning("Installation cancelled.")
                 }
             }
             InstallMsg::Execute => {
@@ -140,7 +140,7 @@ impl Model for InstallModel {
                 let yes = self.yes;
 
                 Cmd::batch([
-                    Components::info("Installing packages..."),
+                    Cmd::info("Installing packages..."),
                     Cmd::Exec(Box::new(move || {
                         // This blocks, but in a real async runtime we'd spawn it properly.
                         // For CLI tools, blocking briefly is often acceptable, but we'll use
@@ -151,13 +151,19 @@ impl Model for InstallModel {
                             std::thread::spawn(move || {
                                 let pm = get_package_manager();
                                 let service = PackageService::new(pm);
-                                let rt = tokio::runtime::Runtime::new().unwrap();
+                                let Ok(rt) = tokio::runtime::Runtime::new() else {
+                                    return Err(anyhow::anyhow!("Failed to create async runtime"));
+                                };
                                 rt.block_on(async { service.install(&packages_task, yes).await })
                             })
                             .join()
-                            .unwrap()
+                            .unwrap_or_else(|_| Err(anyhow::anyhow!("Thread panicked")))
                         } else {
-                            let rt = tokio::runtime::Runtime::new().unwrap();
+                            let Ok(rt) = tokio::runtime::Runtime::new() else {
+                                return InstallMsg::Error(
+                                    "Failed to create async runtime".to_string(),
+                                );
+                            };
                             rt.block_on(async {
                                 let pm = get_package_manager();
                                 let service = PackageService::new(pm);
@@ -204,7 +210,7 @@ impl Model for InstallModel {
             InstallMsg::Error(err) => {
                 self.state = InstallState::Failed;
                 self.error = Some(err.clone());
-                Components::error(format!("Installation failed: {err}"))
+                Cmd::error(format!("Installation failed: {err}"))
             }
             InstallMsg::PackageNotFound {
                 package,
@@ -214,7 +220,7 @@ impl Model for InstallModel {
                 self.suggestions = Some((package.clone(), suggestions.clone()));
 
                 if suggestions.is_empty() {
-                    Components::error(format!("Package '{package}' not found."))
+                    Cmd::error(format!("Package '{package}' not found."))
                 } else {
                     Components::error_with_suggestion(
                         format!("Package '{package}' not found."),

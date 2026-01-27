@@ -91,7 +91,7 @@ async fn run_app(
                 // Clone to avoid borrow checker issues
                 let query = last_search.clone();
                 if let Err(e) = app.search_packages(&query).await {
-                    eprintln!("Search failed: {e}");
+                    tracing::error!("Search failed: {}", e);
                 }
             }
         }
@@ -106,25 +106,25 @@ async fn handle_special_key_actions(app: &mut app::App, key_code: KeyCode) {
     match key_code {
         KeyCode::Char('u') if app.current_tab == app::Tab::Dashboard => {
             if let Err(e) = app.update_system().await {
-                eprintln!("Failed to update system: {e}");
+                tracing::error!("Failed to update system: {}", e);
             }
             force_refresh(app);
         }
         KeyCode::Char('c') if app.current_tab == app::Tab::Dashboard => {
             if let Err(e) = app.clean_cache().await {
-                eprintln!("Failed to clean cache: {e}");
+                tracing::error!("Failed to clean cache: {}", e);
             }
         }
         KeyCode::Char('o') if app.current_tab == app::Tab::Dashboard => {
             if let Err(e) = app.remove_orphans().await {
-                eprintln!("Failed to remove orphans: {e}");
+                tracing::error!("Failed to remove orphans: {}", e);
             }
         }
         KeyCode::Char('a') if app.current_tab == app::Tab::Security => {
             match app.run_security_audit().await {
-                Ok(0) => eprintln!("No vulnerabilities found!"),
-                Ok(vulns) => eprintln!("Found {vulns} vulnerabilities"),
-                Err(e) => eprintln!("Failed to run audit: {e}"),
+                Ok(0) => tracing::info!("No vulnerabilities found!"),
+                Ok(vulns) => tracing::warn!("Found {} vulnerabilities", vulns),
+                Err(e) => tracing::error!("Failed to run audit: {}", e),
             }
         }
         KeyCode::Enter
@@ -135,7 +135,7 @@ async fn handle_special_key_actions(app: &mut app::App, key_code: KeyCode) {
             if let Some(pkg) = app.search_results.get(app.selected_index) {
                 let pkg_name = pkg.name.clone();
                 if let Err(e) = app.install_package(&pkg_name).await {
-                    eprintln!("Failed to install {pkg_name}: {e}");
+                    tracing::error!("Failed to install {}: {}", pkg_name, e);
                 }
                 force_refresh(app);
             }

@@ -78,7 +78,7 @@ pub fn init(team_id: &str, name: Option<&str>, _ctx: &CliContext) -> Result<()> 
     if let Some(n) = name
         && (n.len() > 128 || n.chars().any(char::is_control))
     {
-        execute_cmd(Components::error(
+        execute_cmd(Cmd::error(
             "Invalid team name (too long or contains control characters)",
         ));
         anyhow::bail!("Invalid team name");
@@ -96,13 +96,13 @@ pub fn init(team_id: &str, name: Option<&str>, _ctx: &CliContext) -> Result<()> 
     workspace.init(team_id, display_name)?;
 
     execute_cmd(Cmd::batch([
-        Components::success("Team workspace initialized!"),
+        Cmd::success("Team workspace initialized!"),
         Components::kv_list(
             Some("Team Details"),
             vec![("Team ID", team_id), ("Name", display_name)],
         ),
-        Components::spacer(),
-        Components::header("Next Steps", ""),
+        Cmd::spacer(),
+        Cmd::header("Next Steps", ""),
         Cmd::println("  1. Run 'omg env capture' to capture your environment"),
         Cmd::println("  2. Commit 'omg.lock' to your repo"),
         Cmd::println("  3. Teammates run 'omg team pull' to sync"),
@@ -124,7 +124,7 @@ pub async fn join(remote_url: &str, _ctx: &CliContext) -> Result<()> {
         anyhow::bail!("Only HTTPS URLs allowed for security");
     }
     if remote_url.len() > 1024 || remote_url.chars().any(char::is_control) {
-        execute_cmd(Components::error("Invalid remote URL"));
+        execute_cmd(Cmd::error("Invalid remote URL"));
         anyhow::bail!("Invalid remote URL");
     }
 
@@ -148,14 +148,14 @@ pub async fn join(remote_url: &str, _ctx: &CliContext) -> Result<()> {
 
     if in_sync {
         execute_cmd(Cmd::batch([
-            Components::success("Joined team successfully!"),
+            Cmd::success("Joined team successfully!"),
             Components::status_summary(vec![("Status", "In sync")]),
         ]));
     } else {
         execute_cmd(Cmd::batch([
-            Components::success("Joined team successfully!"),
-            Components::warning("Drift detected"),
-            Components::info("Run 'omg env check' to see differences"),
+            Cmd::success("Joined team successfully!"),
+            Cmd::warning("Drift detected"),
+            Cmd::info("Run 'omg env check' to see differences"),
         ]));
     }
 
@@ -216,7 +216,7 @@ pub async fn status(_ctx: &CliContext) -> Result<()> {
     }
 
     execute_cmd(Cmd::batch([
-        Components::header(
+        Cmd::header(
             "Team Status",
             format!(
                 "{}/{} members in sync",
@@ -224,10 +224,10 @@ pub async fn status(_ctx: &CliContext) -> Result<()> {
                 team_status.members.len()
             ),
         ),
-        Components::spacer(),
-        Components::card("Team Information", details),
-        Components::spacer(),
-        Components::card("Members", member_list),
+        Cmd::spacer(),
+        Cmd::card("Team Information", details),
+        Cmd::spacer(),
+        Cmd::card("Members", member_list),
     ]));
 
     Ok(())
@@ -253,8 +253,8 @@ pub async fn push(_ctx: &CliContext) -> Result<()> {
     workspace.push().await?;
 
     execute_cmd(Cmd::batch([
-        Components::success("Team lock updated!"),
-        Components::info("Don't forget to commit and push omg.lock to share with teammates"),
+        Cmd::success("Team lock updated!"),
+        Cmd::info("Don't forget to commit and push omg.lock to share with teammates"),
     ]));
 
     Ok(())
@@ -284,8 +284,8 @@ pub async fn pull(_ctx: &CliContext) -> Result<()> {
         Ok(())
     } else {
         execute_cmd(Cmd::batch([
-            Components::warning("Environment drift detected!"),
-            Components::info("Run 'omg env check' to see differences"),
+            Cmd::warning("Environment drift detected!"),
+            Cmd::info("Run 'omg env check' to see differences"),
         ]));
         anyhow::bail!("Environment drift detected")
     }
@@ -302,11 +302,9 @@ pub async fn members(_ctx: &CliContext) -> Result<()> {
 
     if members.is_empty() {
         execute_cmd(Cmd::batch([
-            Components::header("Team Members", "No members found"),
-            Components::spacer(),
-            Components::info(
-                "Team members will appear here once they activate with your license key",
-            ),
+            Cmd::header("Team Members", "No members found"),
+            Cmd::spacer(),
+            Cmd::info("Team members will appear here once they activate with your license key"),
         ]));
         return Ok(());
     }
@@ -347,12 +345,12 @@ pub async fn members(_ctx: &CliContext) -> Result<()> {
         .count();
 
     execute_cmd(Cmd::batch([
-        Components::header(
+        Cmd::header(
             "Team Members",
             format!("{} member(s), {} in sync", members.len(), in_sync_count),
         ),
-        Components::spacer(),
-        Components::card("Active Members", member_list),
+        Cmd::spacer(),
+        Cmd::card("Active Members", member_list),
     ]));
 
     Ok(())
@@ -428,7 +426,7 @@ pub fn invite(email: Option<&str>, role: &str, _ctx: &CliContext) -> Result<()> 
     if let Some(e) = email
         && (!e.contains('@') || e.len() > 255)
     {
-        execute_cmd(Components::error("Invalid email address"));
+        execute_cmd(Cmd::error("Invalid email address"));
         anyhow::bail!("Invalid email address");
     }
 
@@ -445,13 +443,13 @@ pub fn invite(email: Option<&str>, role: &str, _ctx: &CliContext) -> Result<()> 
     }
 
     execute_cmd(Cmd::batch([
-        Components::success("Invite link generated"),
+        Cmd::success("Invite link generated"),
         Components::kv_list(Some("Invite Details"), details),
-        Components::spacer(),
-        Components::card("Invite URL", vec![invite_url.clone()]),
-        Components::spacer(),
-        Components::info("Share this link with your teammate"),
-        Components::info(format!("They can join with: omg team join {invite_url}")),
+        Cmd::spacer(),
+        Cmd::card("Invite URL", vec![invite_url.clone()]),
+        Cmd::spacer(),
+        Cmd::info("Share this link with your teammate"),
+        Cmd::info(format!("They can join with: omg team join {invite_url}")),
     ]));
 
     Ok(())
@@ -475,9 +473,9 @@ pub mod roles {
         ];
 
         execute_cmd(Cmd::batch([
-            Components::header("Team Roles", "Available roles"),
-            Components::spacer(),
-            Components::card("Role Permissions", role_list),
+            Cmd::header("Team Roles", "Available roles"),
+            Cmd::spacer(),
+            Cmd::card("Role Permissions", role_list),
         ]));
 
         Ok(())
@@ -487,11 +485,11 @@ pub mod roles {
         // SECURITY: Validate role and member
         let valid_roles = ["admin", "lead", "developer", "readonly"];
         if !valid_roles.contains(&role) {
-            execute_cmd(Components::error(format!("Invalid role: {role}")));
+            execute_cmd(Cmd::error(format!("Invalid role: {role}")));
             anyhow::bail!("Invalid role: {role}");
         }
         if member.len() > 128 || member.chars().any(char::is_control) {
-            execute_cmd(Components::error("Invalid member identifier"));
+            execute_cmd(Cmd::error("Invalid member identifier"));
             anyhow::bail!("Invalid member identifier");
         }
 
@@ -499,7 +497,7 @@ pub mod roles {
 
         execute_cmd(Cmd::batch([
             Components::loading("Assigning role..."),
-            Components::success(format!("{member} is now a {role}")),
+            Cmd::success(format!("{member} is now a {role}")),
         ]));
 
         Ok(())
@@ -510,7 +508,7 @@ pub mod roles {
 
         execute_cmd(Cmd::batch([
             Components::loading("Removing role..."),
-            Components::success(format!("Removed role from {member}")),
+            Cmd::success(format!("Removed role from {member}")),
         ]));
 
         Ok(())
@@ -549,7 +547,7 @@ pub async fn propose(message: &str, _ctx: &CliContext) -> Result<()> {
     let proposal_id = license::propose_change(message, &state).await?;
 
     execute_cmd(Cmd::batch([
-        Components::success(format!("Proposal #{proposal_id} created")),
+        Cmd::success(format!("Proposal #{proposal_id} created")),
         Components::kv_list(
             Some("Proposal Details"),
             vec![
@@ -557,9 +555,9 @@ pub async fn propose(message: &str, _ctx: &CliContext) -> Result<()> {
                 ("Message", &message.to_string()),
             ],
         ),
-        Components::spacer(),
-        Components::info("Notified reviewers for approval"),
-        Components::info(format!("Check status with: omg team review {proposal_id}")),
+        Cmd::spacer(),
+        Cmd::info("Notified reviewers for approval"),
+        Cmd::info(format!("Check status with: omg team review {proposal_id}")),
     ]));
 
     Ok(())
@@ -580,7 +578,7 @@ pub async fn review(proposal_id: u32, approve: bool, _ctx: &CliContext) -> Resul
 
     license::review_proposal(proposal_id, status).await?;
 
-    execute_cmd(Components::success("Proposal status updated"));
+    execute_cmd(Cmd::success("Proposal status updated"));
     Ok(())
 }
 
@@ -594,8 +592,8 @@ pub async fn list_proposals(_ctx: &CliContext) -> Result<()> {
 
     if proposals.is_empty() {
         execute_cmd(Cmd::batch([
-            Components::header("Team Proposals", "No pending proposals"),
-            Components::spacer(),
+            Cmd::header("Team Proposals", "No pending proposals"),
+            Cmd::spacer(),
         ]));
         return Ok(());
     }
@@ -613,9 +611,9 @@ pub async fn list_proposals(_ctx: &CliContext) -> Result<()> {
     }
 
     execute_cmd(Cmd::batch([
-        Components::header("Team Proposals", format!("{} proposal(s)", proposals.len())),
-        Components::spacer(),
-        Components::card("Pending Proposals", proposal_list),
+        Cmd::header("Team Proposals", format!("{} proposal(s)", proposals.len())),
+        Cmd::spacer(),
+        Cmd::card("Pending Proposals", proposal_list),
     ]));
 
     Ok(())
@@ -687,19 +685,19 @@ pub mod golden_path {
         if let Some(v) = node
             && let Err(e) = crate::core::security::validate_version(v)
         {
-            execute_cmd(Components::error(format!("Invalid Node version: {e}")));
+            execute_cmd(Cmd::error(format!("Invalid Node version: {e}")));
             return Err(e);
         }
         if let Some(v) = python
             && let Err(e) = crate::core::security::validate_version(v)
         {
-            execute_cmd(Components::error(format!("Invalid Python version: {e}")));
+            execute_cmd(Cmd::error(format!("Invalid Python version: {e}")));
             return Err(e);
         }
         if let Some(p) = packages {
             for pkg in p.split(',') {
                 if let Err(e) = crate::core::security::validate_package_name(pkg.trim()) {
-                    execute_cmd(Components::error(format!("Invalid package name: {e}")));
+                    execute_cmd(Cmd::error(format!("Invalid package name: {e}")));
                     return Err(e);
                 }
             }
@@ -745,10 +743,10 @@ pub mod golden_path {
         }
 
         execute_cmd(Cmd::batch([
-            Components::success(format!("Golden path '{name}' created!")),
-            Components::card("Template Details", details),
-            Components::spacer(),
-            Components::info(format!(
+            Cmd::success(format!("Golden path '{name}' created!")),
+            Cmd::card("Template Details", details),
+            Cmd::spacer(),
+            Cmd::info(format!(
                 "Developers can now use: omg new {name} <project-name>"
             )),
         ]));
@@ -763,9 +761,9 @@ pub mod golden_path {
 
         if config.templates.is_empty() {
             execute_cmd(Cmd::batch([
-                Components::header("Golden Path Templates", "No custom templates"),
-                Components::spacer(),
-                Components::card(
+                Cmd::header("Golden Path Templates", "No custom templates"),
+                Cmd::spacer(),
+                Cmd::card(
                     "Default Templates",
                     vec![
                         "react-app - Node 20, React, ESLint, Prettier".to_string(),
@@ -773,8 +771,8 @@ pub mod golden_path {
                         "go-service - Go 1.21, standard layout".to_string(),
                     ],
                 ),
-                Components::spacer(),
-                Components::info("Create new: omg team golden-path create <name>"),
+                Cmd::spacer(),
+                Cmd::info("Create new: omg team golden-path create <name>"),
             ]));
         } else {
             let mut template_list = vec![];
@@ -789,12 +787,12 @@ pub mod golden_path {
             }
 
             execute_cmd(Cmd::batch([
-                Components::header(
+                Cmd::header(
                     "Golden Path Templates",
                     format!("{} custom template(s)", config.templates.len()),
                 ),
-                Components::spacer(),
-                Components::card("Available Templates", template_list),
+                Cmd::spacer(),
+                Cmd::card("Available Templates", template_list),
             ]));
         }
 
@@ -810,9 +808,9 @@ pub mod golden_path {
 
         if config.templates.len() < original_len {
             config.save()?;
-            execute_cmd(Components::success(format!("Deleted template '{name}'")));
+            execute_cmd(Cmd::success(format!("Deleted template '{name}'")));
         } else {
-            execute_cmd(Components::warning(format!("Template '{name}' not found")));
+            execute_cmd(Cmd::warning(format!("Template '{name}' not found")));
         }
 
         Ok(())
@@ -835,24 +833,19 @@ pub fn compliance(export: Option<&str>, enforce: bool, _ctx: &CliContext) -> Res
     ];
 
     execute_cmd(Cmd::batch([
-        Components::header("Compliance Status", "Overall score: 94%"),
-        Components::spacer(),
+        Cmd::header("Compliance Status", "Overall score: 94%"),
+        Cmd::spacer(),
         Components::status_summary(compliance_items),
         if enforce {
             Cmd::batch([
-                Components::spacer(),
-                Components::warning(
-                    "Enforcement mode enabled - Non-compliant operations will be blocked",
-                ),
+                Cmd::spacer(),
+                Cmd::warning("Enforcement mode enabled - Non-compliant operations will be blocked"),
             ])
         } else {
             Cmd::none()
         },
         if let Some(path) = export {
-            Cmd::batch([
-                Components::spacer(),
-                Components::success(format!("Exported to {path}")),
-            ])
+            Cmd::batch([Cmd::spacer(), Cmd::success(format!("Exported to {path}"))])
         } else {
             Cmd::none()
         },
@@ -871,11 +864,11 @@ pub async fn activity(days: u32, _ctx: &CliContext) -> Result<()> {
 
     if logs.is_empty() {
         execute_cmd(Cmd::batch([
-            Components::header(
+            Cmd::header(
                 format!("Team Activity (last {days} days)"),
                 "No recent activity",
             ),
-            Components::spacer(),
+            Cmd::spacer(),
         ]));
         return Ok(());
     }
@@ -889,12 +882,12 @@ pub async fn activity(days: u32, _ctx: &CliContext) -> Result<()> {
     }
 
     execute_cmd(Cmd::batch([
-        Components::header(
+        Cmd::header(
             format!("Team Activity (last {days} days)"),
             format!("{event_count} event(s)"),
         ),
-        Components::spacer(),
-        Components::card("Recent Activity", activity_list),
+        Cmd::spacer(),
+        Cmd::card("Recent Activity", activity_list),
     ]));
 
     Ok(())
@@ -920,7 +913,7 @@ pub mod team_notify {
         // SECURITY: Validate type and URL
         let valid_types = ["slack", "discord", "webhook"];
         if !valid_types.contains(&notify_type) {
-            execute_cmd(Components::error(format!(
+            execute_cmd(Cmd::error(format!(
                 "Invalid notification type: {notify_type}"
             )));
             anyhow::bail!("Invalid notification type: {notify_type}");
@@ -947,8 +940,8 @@ pub mod team_notify {
                     ("URL", url.to_string()),
                 ],
             ),
-            Components::spacer(),
-            Components::info(format!("Test it with: omg team notify test {id}")),
+            Cmd::spacer(),
+            Cmd::info(format!("Test it with: omg team notify test {id}")),
         ]));
 
         Ok(())
@@ -958,9 +951,9 @@ pub mod team_notify {
         license::require_feature("team-sync")?;
 
         execute_cmd(Cmd::batch([
-            Components::header("Configured Notifications", "Webhooks and integrations"),
-            Components::spacer(),
-            Components::card(
+            Cmd::header("Configured Notifications", "Webhooks and integrations"),
+            Cmd::spacer(),
+            Cmd::card(
                 "Active Notifications",
                 vec![
                     "notify-abc123 - slack - https://hooks.slack.com/...".to_string(),
@@ -977,7 +970,7 @@ pub mod team_notify {
 
         execute_cmd(Cmd::batch([
             Components::loading("Removing notification..."),
-            Components::success(format!("Removed '{id}'")),
+            Cmd::success(format!("Removed '{id}'")),
         ]));
 
         Ok(())
@@ -988,7 +981,7 @@ pub mod team_notify {
 
         execute_cmd(Cmd::batch([
             Components::loading(format!("Testing notification '{id}'...")),
-            Components::success("Test message sent!"),
+            Cmd::success("Test message sent!"),
         ]));
 
         Ok(())

@@ -2,6 +2,33 @@
 //!
 //! Pre-defined test data and scenarios for consistent testing.
 
+// Re-export library fixtures
+pub use omg_lib::core::testing::fixtures::*;
+
+use crate::common::mocks::MockPackage;
+
+/// Extension trait to convert `PackageFixture` to `MockPackage` for testing
+pub trait PackageFixtureExt {
+    /// Convert a `PackageFixture` into a `MockPackage` for use in tests
+    fn to_mock_package(&self) -> MockPackage;
+}
+
+impl PackageFixtureExt for PackageFixture {
+    fn to_mock_package(&self) -> MockPackage {
+        // Build the Package first to get defaults applied
+        let pkg = self.clone().build();
+
+        MockPackage {
+            name: pkg.name,
+            version: pkg.version.to_string(),
+            description: pkg.description,
+            repo: "test".to_string(),
+            dependencies: vec![],
+            installed_size: 100,
+        }
+    }
+}
+
 /// Common package names for testing across distros
 pub mod packages {
     /// Packages that exist on all supported distros
@@ -277,6 +304,40 @@ pub mod perf {
 
     pub fn max_duration(ms: u64) -> Duration {
         Duration::from_millis(ms)
+    }
+}
+
+/// Error test helpers
+pub mod error_conditions {
+    use crate::common::TestProject;
+    use std::fs::File;
+    use std::io::Write;
+
+    /// Create a project with a corrupted database file
+    pub fn corrupted_database() -> TestProject {
+        let project = TestProject::new();
+        let db_path = project.data_dir.path().join("corrupted.db");
+        let mut f = File::create(&db_path).unwrap();
+        writeln!(f, "corrupted database data {{{{").unwrap();
+        project
+    }
+
+    /// Create a project with an invalid lock file
+    pub fn invalid_lock_file() -> TestProject {
+        let project = TestProject::new();
+        project.create_file("omg.lock", "invalid toml {{{{");
+        project
+    }
+
+    /// Create a project with very deep directory nesting
+    pub fn deep_nested_dirs(depth: usize) -> TestProject {
+        let project = TestProject::new();
+        let deep_path = (0..depth)
+            .map(|i| format!("d{i}"))
+            .collect::<Vec<_>>()
+            .join("/");
+        project.create_dir(&deep_path);
+        project
     }
 }
 

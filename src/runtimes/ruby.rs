@@ -42,14 +42,11 @@ pub struct RubyManager {
 
 impl RubyManager {
     pub fn new() -> Self {
-        let data_dir = super::DATA_DIR.clone();
-
-        let client = download_client().clone();
-
+        let versions_dir = super::DATA_DIR.join("versions").join("ruby");
         Self {
-            versions_dir: data_dir.join("versions").join("ruby"),
-            current_link: data_dir.join("versions").join("ruby").join("current"),
-            client,
+            current_link: versions_dir.join("current"),
+            versions_dir,
+            client: download_client().clone(),
         }
     }
 
@@ -72,29 +69,31 @@ impl RubyManager {
 
         // Extract unique Ruby versions from release tags
         // Tags are like "toolcache" or version-specific
-        let mut versions = std::collections::HashSet::new();
         let re = regex::Regex::new(r"^(\d+\.\d+\.\d+)$")?;
 
-        for release in &releases {
-            if let Some(caps) = re.captures(&release.tag_name)
-                && let Some(version) = caps.get(1)
-            {
-                versions.insert(version.as_str().to_string());
-            }
-        }
+        let mut versions: std::collections::HashSet<_> = releases
+            .iter()
+            .filter_map(|release| {
+                re.captures(&release.tag_name)
+                    .and_then(|caps| caps.get(1))
+                    .map(|m| m.as_str().to_owned())
+            })
+            .collect();
 
         // If no version tags found, return common stable versions
         if versions.is_empty() {
-            versions.insert("3.3.0".to_string());
-            versions.insert("3.2.2".to_string());
-            versions.insert("3.1.4".to_string());
-            versions.insert("3.0.6".to_string());
+            versions.extend([
+                "3.3.0".to_owned(),
+                "3.2.2".to_owned(),
+                "3.1.4".to_owned(),
+                "3.0.6".to_owned(),
+            ]);
         }
 
-        let mut result: Vec<RubyVersion> = versions
+        let mut result: Vec<_> = versions
             .into_iter()
-            .map(|v| RubyVersion {
-                version: v,
+            .map(|version| RubyVersion {
+                version,
                 prebuilt: true,
             })
             .collect();
@@ -122,43 +121,37 @@ impl RubyManager {
             return self.use_version(&version);
         }
 
-        tracing::info!(
+        println!(
             "{} Installing Ruby {}...\n",
             "OMG".cyan().bold(),
             version.yellow()
         );
 
         // Use pre-built Ruby from GitHub ruby-builder
-        let os = "ubuntu-22.04"; // Most compatible glibc version
+        const OS: &str = "ubuntu-22.04"; // Most compatible glibc version
         let filename = format!("ruby-{version}.tar.gz");
-        let url = format!("{RUBY_PREBUILT_URL}/toolcache/{os}-{filename}");
+        let url = format!("{RUBY_PREBUILT_URL}/toolcache/{OS}-{filename}");
 
         fs::create_dir_all(&self.versions_dir)?;
 
-        tracing::info!("{} Downloading pre-built Ruby {}...", "→".blue(), version);
+        println!("{} Downloading pre-built Ruby {version}...", "→".blue());
         let download_path = self.versions_dir.join(&filename);
 
-        match download_with_progress(&self.client, &url, &download_path, None).await {
-            Ok(()) => {
-                tracing::info!("{} Extracting (pure Rust)...", "→".blue());
-                extract_tar_gz(&download_path, &version_dir, 1).await?;
+        download_with_progress(&self.client, &url, &download_path, None)
+            .await
+            .with_context(|| {
+                eprintln!("{} Pre-built Ruby {version} not available", "!".yellow());
+                eprintln!("  Try: omg list ruby --available");
+                format!("Failed to download Ruby {version}")
+            })?;
 
-                let _ = fs::remove_file(&download_path);
+        println!("{} Extracting (pure Rust)...", "→".blue());
+        extract_tar_gz(&download_path, &version_dir, 1).await?;
 
-                print_installed("Ruby", &version);
-                self.use_version(&version)?;
-            }
-            Err(e) => {
-                tracing::info!(
-                    "{} Pre-built Ruby {} not available: {}",
-                    "!".yellow(),
-                    version,
-                    e
-                );
-                tracing::info!("  Try: omg list ruby --available");
-                return Err(e);
-            }
-        }
+        let _ = fs::remove_file(&download_path);
+
+        print_installed("Ruby", &version);
+        self.use_version(&version)?;
 
         Ok(())
     }
@@ -177,18 +170,19 @@ impl RubyManager {
         let version_dir = self.versions_dir.join(&version);
 
         if !version_dir.exists() {
-            tracing::info!("{} Ruby {} is not installed", "→".dimmed(), version);
+            println!("{} Ruby {version} is not installed", "→".dimmed());
             return Ok(());
         }
 
-        if let Some(current) = self.current_version()
-            && current == version
+        if self
+            .current_version()
+            .is_some_and(|current| current == version)
         {
             let _ = fs::remove_file(&self.current_link);
         }
 
         fs::remove_dir_all(&version_dir)?;
-        tracing::info!("{} Ruby {} uninstalled", "✓".green(), version);
+        println!("{} Ruby {version} uninstalled", "✓".green());
         Ok(())
     }
 }

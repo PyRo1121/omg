@@ -36,9 +36,7 @@ pub struct MiseManager {
 
 impl MiseManager {
     pub fn new() -> Self {
-        let data_dir = super::DATA_DIR.clone();
-        let bin_dir = data_dir.join("mise");
-
+        let bin_dir = super::DATA_DIR.join("mise");
         Self {
             mise_bin: bin_dir.join("mise"),
             bin_dir,
@@ -60,18 +58,17 @@ impl MiseManager {
             Command::new("mise")
                 .arg("--version")
                 .output()
-                .map(|out| out.status.success())
-                .unwrap_or(false)
+                .is_ok_and(|out| out.status.success())
         })
     }
 
     /// Get the path to the mise binary (bundled or system)
     #[must_use]
-    pub fn mise_path(&self) -> PathBuf {
+    pub fn mise_path(&self) -> &std::path::Path {
         if self.mise_bin.exists() {
-            self.mise_bin.clone()
+            &self.mise_bin
         } else {
-            PathBuf::from("mise")
+            std::path::Path::new("mise")
         }
     }
 
@@ -131,8 +128,6 @@ impl MiseManager {
 
     /// Get the latest mise version from GitHub
     async fn get_latest_version(&self) -> Result<String> {
-        let url = "https://api.github.com/repos/jdx/mise/releases/latest";
-
         #[derive(serde::Deserialize)]
         struct Release {
             tag_name: String,
@@ -140,7 +135,7 @@ impl MiseManager {
 
         let release: Release = self
             .client
-            .get(url)
+            .get("https://api.github.com/repos/jdx/mise/releases/latest")
             .header("User-Agent", "omg-package-manager")
             .send()
             .await
@@ -149,11 +144,14 @@ impl MiseManager {
             .await
             .context("Failed to parse mise release info")?;
 
-        Ok(release.tag_name.trim_start_matches('v').to_string())
+        Ok(release
+            .tag_name
+            .strip_prefix('v')
+            .unwrap_or(&release.tag_name)
+            .to_owned())
     }
 
     /// Download a file with progress bar
-    #[allow(clippy::expect_used)]
     async fn download_file(&self, url: &str, path: &PathBuf) -> Result<()> {
         let response = self
             .client
@@ -163,9 +161,8 @@ impl MiseManager {
             .await
             .with_context(|| format!("Failed to download from {url}"))?;
 
-        if !response.status().is_success() {
-            anyhow::bail!("Download failed with status: {}", response.status());
-        }
+        let status = response.status();
+        anyhow::ensure!(status.is_success(), "Download failed with status: {status}");
 
         let total_size = response.content_length().unwrap_or(0);
 
@@ -173,13 +170,14 @@ impl MiseManager {
         pb.set_style(
             ProgressStyle::default_bar()
                 .template("{spinner:.green} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")
-                .expect("valid template")
+                .unwrap_or_else(|_| ProgressStyle::default_bar())
                 .progress_chars("█▓░"),
         );
 
-        let mut file = File::create(path)?;
         let bytes = response.bytes().await?;
         pb.inc(bytes.len() as u64);
+
+        let mut file = File::create(path)?;
         file.write_all(&bytes)?;
 
         pb.finish_and_clear();
@@ -192,6 +190,7 @@ impl MiseManager {
         let decoder = flate2::read::GzDecoder::new(file);
         let mut archive = tar::Archive::new(decoder);
 
+        // First pass: try to find and extract mise directly
         for entry in archive.entries()? {
             let mut entry = entry?;
             let path = entry.path()?;
@@ -204,15 +203,18 @@ impl MiseManager {
             }
         }
 
-        // If we didn't find it with path, try extracting everything and finding it
+        // Second pass: extract everything with path stripping
         let file = File::open(tarball_path)?;
         let decoder = flate2::read::GzDecoder::new(file);
         let mut archive = tar::Archive::new(decoder);
 
         for entry in archive.entries()? {
             let mut entry = entry?;
-            let path = entry.path()?.to_path_buf();
+            if !entry.header().entry_type().is_file() {
+                continue;
+            }
 
+            let path = entry.path()?.to_path_buf();
             // Strip first component if present
             let stripped: PathBuf = path.components().skip(1).collect();
             let dest = if stripped.as_os_str().is_empty() {
@@ -221,12 +223,10 @@ impl MiseManager {
                 self.bin_dir.join(&stripped)
             };
 
-            if entry.header().entry_type().is_file() {
-                if let Some(parent) = dest.parent() {
-                    fs::create_dir_all(parent)?;
-                }
-                entry.unpack(&dest)?;
+            if let Some(parent) = dest.parent() {
+                fs::create_dir_all(parent)?;
             }
+            entry.unpack(&dest)?;
         }
 
         Ok(())
@@ -247,8 +247,7 @@ impl MiseManager {
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let line = stdout.lines().find(|line| !line.trim().is_empty());
-        let Some(line) = line else {
+        let Some(line) = stdout.lines().find(|line| !line.trim().is_empty()) else {
             return Ok(None);
         };
         let line = line.trim();
@@ -257,14 +256,14 @@ impl MiseManager {
         if let Some(rest) = line.strip_prefix(runtime)
             && let Some(version) = rest.split_whitespace().find(|token| !token.is_empty())
         {
-            return Ok(Some(version.to_string()));
+            return Ok(Some(version.to_owned()));
         }
 
         if let Some((_, version)) = line.split_once('@') {
-            return Ok(Some(version.trim().to_string()));
+            return Ok(Some(version.trim().to_owned()));
         }
 
-        Ok(Some(line.to_string()))
+        Ok(Some(line.to_owned()))
     }
 
     /// Install a runtime version via mise
@@ -292,15 +291,15 @@ impl MiseManager {
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let mut runtimes = Vec::new();
-        for line in stdout.lines() {
-            let runtime = line.split_whitespace().next().unwrap_or_default();
-            if !runtime.is_empty() {
-                runtimes.push(runtime.to_string());
-            }
-        }
+        let mut runtimes: Vec<_> = stdout
+            .lines()
+            .filter_map(|line| {
+                let runtime = line.split_whitespace().next()?;
+                (!runtime.is_empty()).then(|| runtime.to_owned())
+            })
+            .collect();
 
-        runtimes.sort();
+        runtimes.sort_unstable();
         runtimes.dedup();
         Ok(runtimes)
     }
