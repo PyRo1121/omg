@@ -574,12 +574,11 @@ impl RustToolchainSpec {
 }
 
 fn default_host_triple() -> Result<String> {
-    let triple = match (std::env::consts::ARCH, std::env::consts::OS) {
-        ("x86_64", "linux") => "x86_64-unknown-linux-gnu",
-        ("aarch64", "linux") => "aarch64-unknown-linux-gnu",
+    match (std::env::consts::ARCH, std::env::consts::OS) {
+        ("x86_64", "linux") => Ok("x86_64-unknown-linux-gnu".to_string()),
+        ("aarch64", "linux") => Ok("aarch64-unknown-linux-gnu".to_string()),
         (arch, os) => anyhow::bail!("Unsupported host platform: {arch}-{os}"),
-    };
-    Ok(triple.to_string())
+    }
 }
 
 fn profile_components(profile: &str) -> Result<Vec<String>> {
