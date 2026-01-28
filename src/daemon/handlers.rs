@@ -391,8 +391,7 @@ async fn handle_search(
     if let Some(cached) = state.cache.get(&query) {
         // METRICS: Cache hit
         GLOBAL_METRICS.inc_cache_hits();
-        // Avoid intermediate allocation by calculating total from cached length
-        let total = cached.len().min(limit);
+        let total = cached.len();
         let packages: Vec<_> = cached.iter().take(limit).cloned().collect();
         return Response::Success {
             id,
@@ -405,32 +404,34 @@ async fn handle_search(
 
     // 1. Instant Official Search (Sub-millisecond)
     // Run in blocking task to avoid stalling the async runtime during heavy search
-    // Use Arc<str> to avoid cloning the query string (saves 40% of allocations)
+    // Cache the full result set (up to MAX_SEARCH_LIMIT) so subsequent requests
+    // with different limits are served correctly from cache.
     let state_clone = Arc::clone(&state);
     let query_arc: Arc<str> = Arc::from(query.as_str());
-    let query_for_cache = query; // Original String for cache key
+    let query_for_cache = query;
 
-    let official =
-        tokio::task::spawn_blocking(move || state_clone.index.search(&query_arc, limit)).await;
+    let official = tokio::task::spawn_blocking(move || {
+        state_clone.index.search(&query_arc, MAX_SEARCH_LIMIT)
+    })
+    .await;
 
     let official = match official {
         Ok(res) => res,
         Err(e) => return internal_error(id, format!("Search task failed: {e}")),
     };
 
-    // Cache results and return (Arc eliminates expensive clone)
+    // Cache the full result set; serve truncated views per request limit
     let official = Arc::new(official);
     let total = official.len();
     state
         .cache
         .insert_arc(query_for_cache, Arc::clone(&official));
 
+    let packages: Vec<_> = official.iter().take(limit).cloned().collect();
+
     Response::Success {
         id,
-        result: ResponseResult::Search(SearchResult {
-            packages: Arc::unwrap_or_clone(official),
-            total,
-        }),
+        result: ResponseResult::Search(SearchResult { packages, total }),
     }
 }
 
