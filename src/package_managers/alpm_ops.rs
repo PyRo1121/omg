@@ -317,7 +317,7 @@ pub fn execute_transaction(
 }
 
 /// Setup ALPM callbacks for progress bars
-#[allow(clippy::expect_used)]
+#[allow(clippy::expect_used)] // ALPM database operations; failure indicates corrupted pacman database
 fn setup_alpm_callbacks(
     alpm: &mut alpm::Alpm,
     mp: &indicatif::MultiProgress,
@@ -470,7 +470,7 @@ fn prepare_alpm_transaction(
 }
 
 /// Commit an ALPM transaction
-#[allow(clippy::expect_used)]
+#[allow(clippy::expect_used)] // ALPM database operations; failure indicates corrupted pacman database
 fn commit_alpm_transaction(alpm: &mut alpm::Alpm, main_pb: &indicatif::ProgressBar) -> Result<()> {
     alpm.trans_prepare().map_err(|e| {
         anyhow::anyhow!(
@@ -520,7 +520,7 @@ fn commit_alpm_transaction(alpm: &mut alpm::Alpm, main_pb: &indicatif::ProgressB
 }
 
 /// Parse /etc/pacman.d/mirrorlist and configure ALPM servers
-#[allow(clippy::expect_used)]
+#[allow(clippy::expect_used)] // ALPM database operations; failure indicates corrupted pacman database
 fn configure_mirrors(alpm: &mut alpm::Alpm) -> Result<()> {
     let mirrorlist = paths::pacman_mirrorlist_path();
     if !mirrorlist.exists() {

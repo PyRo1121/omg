@@ -79,7 +79,7 @@ where
 ///
 /// SAFETY: Uses `catch_unwind` to ensure `RefCell` is properly released even if
 /// the closure panics, preventing the thread-local from becoming poisoned.
-#[allow(clippy::expect_used)]
+#[allow(clippy::expect_used)] // ALPM handle initialization; failure indicates system misconfiguration
 pub fn with_handle<F, R>(f: F) -> Result<R>
 where
     F: FnOnce(&Alpm) -> Result<R>,
@@ -120,7 +120,7 @@ where
 ///
 /// SAFETY: Uses `catch_unwind` to ensure `RefCell` is properly released even if
 /// the closure panics, preventing the thread-local from becoming poisoned.
-#[allow(clippy::expect_used)]
+#[allow(clippy::expect_used)] // ALPM handle initialization; failure indicates system misconfiguration
 pub fn with_handle_mut<F, R>(f: F) -> Result<R>
 where
     F: FnOnce(&mut Alpm) -> Result<R>,
