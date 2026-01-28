@@ -27,6 +27,12 @@ pub use super::packages::{
 pub use super::runtimes::{list_versions, use_version};
 // pub use super::security::audit;
 
+// Const slices for completion - avoids allocation on every call
+const TOOL_COMMANDS: &[&str] = &["install", "list", "remove"];
+const ENV_COMMANDS: &[&str] = &["capture", "check", "share", "sync"];
+const NEW_TEMPLATES: &[&str] = &["rust", "react", "react-ts", "node", "ts", "typescript", "python", "py", "go", "golang"];
+const SHELL_COMPLETIONS: &[&str] = &["bash", "zsh", "fish", "powershell", "elvish"];
+
 pub async fn complete(_shell: &str, current: &str, last: &str, full: Option<&str>) -> Result<()> {
     let db = crate::core::Database::open(crate::core::Database::default_path()?)?;
     let engine = crate::core::completion::CompletionEngine::new(db);
@@ -96,41 +102,27 @@ pub async fn complete(_shell: &str, current: &str, last: &str, full: Option<&str
             let runtimes = crate::cli::runtimes::known_runtimes();
             engine.fuzzy_match(current, runtimes)
         }
-        "tool" => vec![
-            "install".to_string(),
-            "list".to_string(),
-            "remove".to_string(),
-        ],
-        "env" => vec![
-            "capture".to_string(),
-            "check".to_string(),
-            "share".to_string(),
-            "sync".to_string(),
-        ],
+        "tool" => engine.fuzzy_match(
+            current,
+            TOOL_COMMANDS.iter().map(|s| s.to_string()).collect(),
+        ),
+        "env" => engine.fuzzy_match(
+            current,
+            ENV_COMMANDS.iter().map(|s| s.to_string()).collect(),
+        ),
         "run" => {
             let tasks = crate::core::task_runner::detect_tasks().unwrap_or_default();
             let names = tasks.into_iter().map(|task| task.name).collect();
             engine.fuzzy_match(current, names)
         }
-        "new" => vec![
-            "rust".to_string(),
-            "react".to_string(),
-            "react-ts".to_string(),
-            "node".to_string(),
-            "ts".to_string(),
-            "typescript".to_string(),
-            "python".to_string(),
-            "py".to_string(),
-            "go".to_string(),
-            "golang".to_string(),
-        ],
-        "completions" => vec![
-            "bash".to_string(),
-            "zsh".to_string(),
-            "fish".to_string(),
-            "powershell".to_string(),
-            "elvish".to_string(),
-        ],
+        "new" => engine.fuzzy_match(
+            current,
+            NEW_TEMPLATES.iter().map(|s| s.to_string()).collect(),
+        ),
+        "completions" => engine.fuzzy_match(
+            current,
+            SHELL_COMPLETIONS.iter().map(|s| s.to_string()).collect(),
+        ),
         _ => {
             // Check if last word is a runtime (for 'omg use <runtime> <TAB>')
             if crate::cli::runtimes::known_runtimes()
@@ -430,23 +422,22 @@ pub fn daemon(foreground: bool) -> Result<()> {
     } else {
         // Check if daemon is already running
         let socket_path = crate::core::client::default_socket_path();
-        if socket_path.exists() {
-            // Try to connect to verify it's actually running
-            if let Ok(mut client) = crate::core::client::DaemonClient::connect_sync() {
-                // Daemon is running, try a ping to be sure
-                if client.ping_sync().is_ok() {
-                    println!(
-                        "{} Daemon is already running at {}",
-                        style::success("✓"),
-                        socket_path.display()
-                    );
-                    return Ok(());
-                }
+
+        if let Ok(mut client) = crate::core::client::DaemonClient::connect_sync()
+            && client.ping_sync().is_ok() {
+                println!(
+                    "{} Daemon is already running at {}",
+                    style::success("✓"),
+                    socket_path.display()
+                );
+                return Ok(());
             }
-            // Socket exists but daemon is not responding, remove stale socket
-            tracing::debug!("Removing stale socket at {:?}", socket_path);
-            std::fs::remove_file(&socket_path)?;
-        }
+
+        // SECURITY: Atomic remove avoids TOCTOU race condition
+        if let Err(e) = std::fs::remove_file(&socket_path)
+            && e.kind() != std::io::ErrorKind::NotFound {
+                return Err(e.into());
+            }
 
         // Start daemon in background
         // 1. Try to find omgd in the same directory as the current executable (ensures version match)

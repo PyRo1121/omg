@@ -818,7 +818,8 @@ async fn handle_explicit_count(state: Arc<DaemonState>, id: RequestId) -> Respon
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// Create a validation error response with logging and metrics
-#[inline]
+#[cold]
+#[inline(never)]
 fn validation_error(id: RequestId, message: impl Into<String>) -> Response {
     let msg = message.into();
     audit_log(
@@ -837,7 +838,8 @@ fn validation_error(id: RequestId, message: impl Into<String>) -> Response {
 }
 
 /// Create an internal error response with metrics
-#[inline]
+#[cold]
+#[inline(never)]
 fn internal_error(id: RequestId, message: impl Into<String>) -> Response {
     GLOBAL_METRICS.inc_requests_failed();
     Response::Error {
@@ -848,7 +850,8 @@ fn internal_error(id: RequestId, message: impl Into<String>) -> Response {
 }
 
 /// Create a not found error response
-#[inline]
+#[cold]
+#[inline(never)]
 fn not_found_error(id: RequestId, message: impl Into<String>) -> Response {
     Response::Error {
         id,
