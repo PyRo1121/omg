@@ -557,24 +557,25 @@ pub fn check_updates_cached() -> Result<Vec<(String, Version, Version, String, S
     let local_cache = LOCAL_DB_CACHE.read();
 
     // Compare versions - Parallelized with Rayon for <1ms update check on 2000+ pkgs
+    // Optimized: filter references first, then clone only needed data at the end
     let updates: Vec<_> = local_cache
         .packages
         .par_iter()
         .filter_map(|(name, local_pkg)| {
-            if let Some(sync_pkg) = sync_cache.packages.get(name)
-                && local_pkg.version < sync_pkg.version
-            {
-                Some((
-                    name.clone(),
-                    local_pkg.version.clone(),
-                    sync_pkg.version.clone(),
-                    sync_pkg.repo.clone(),
-                    sync_pkg.filename.clone(),
-                    sync_pkg.csize,
-                ))
-            } else {
-                None
-            }
+            sync_cache.packages.get(name)
+                .filter(|sync_pkg| local_pkg.version < sync_pkg.version)
+                .map(|sync_pkg| (name, local_pkg, sync_pkg))
+        })
+        .map(|(name, local_pkg, sync_pkg)| {
+            // Only clone once at the end
+            (
+                name.clone(),
+                local_pkg.version.clone(),
+                sync_pkg.version.clone(),
+                sync_pkg.repo.clone(),
+                sync_pkg.filename.clone(),
+                sync_pkg.csize,
+            )
         })
         .collect();
 
@@ -610,11 +611,10 @@ fn load_cache_from_disk<T: for<'de> Deserialize<'de>>(name: &str) -> Result<T> {
 
 /// Check if cache is expired based on TTL (30-minute safety net)
 fn is_cache_expired(last_accessed: Option<SystemTime>) -> bool {
-    if let Some(last_access) = last_accessed {
-        if let Ok(elapsed) = SystemTime::now().duration_since(last_access) {
+    if let Some(last_access) = last_accessed
+        && let Ok(elapsed) = SystemTime::now().duration_since(last_access) {
             return elapsed.as_secs() > CACHE_TTL_SECS;
         }
-    }
     false
 }
 
@@ -780,6 +780,12 @@ pub fn invalidate_caches() {
         cache.last_modified = None;
     }
 
+    // Clear thread-local ALPM handle to avoid stale references after sync
+    // CRITICAL: The ALPM handle holds references to database files that may have
+    // been modified by a subprocess (e.g., `omg sync`). Failing to clear this
+    // causes segfaults when the parent process tries to read stale/corrupted data.
+    super::alpm_direct::clear_alpm_cache();
+
     // Delete disk caches to force fresh parse on next access
     let cache_dir = get_cache_dir();
     let _ = fs::remove_file(cache_dir.join("sync_db.bin"));
@@ -826,35 +832,40 @@ pub fn get_sync_package(name: &str) -> Result<Option<SyncDbPackage>> {
     Ok(cache.packages.get(name).cloned())
 }
 
-/// Search local packages using cache - FAST (<1ms)
-pub fn search_local_cached(query: &str) -> Result<Vec<LocalDbPackage>> {
+/// Internal unified implementation for listing/searching local packages
+fn list_local_cached_filtered(query: Option<&str>) -> Result<Vec<LocalDbPackage>> {
     let local_dir = paths::pacman_local_dir();
     ensure_local_cache_loaded(&local_dir)?;
 
-    let query_lower = query.to_lowercase();
     let cache = LOCAL_DB_CACHE.read();
 
-    let results = cache
-        .packages
-        .values()
-        .filter(|pkg| {
-            query_lower.is_empty()
-                || pkg.name.to_lowercase().contains(&query_lower)
-                || pkg.desc.to_lowercase().contains(&query_lower)
-        })
-        .cloned()
-        .collect();
+    let results = match query {
+        None => cache.packages.values().cloned().collect(),
+        Some(q) => {
+            let query_lower = q.to_lowercase();
+            cache
+                .packages
+                .values()
+                .filter(|pkg| {
+                    pkg.name.to_lowercase().contains(&query_lower)
+                        || pkg.desc.to_lowercase().contains(&query_lower)
+                })
+                .cloned()
+                .collect()
+        }
+    };
 
     Ok(results)
 }
 
+/// Search local packages using cache - FAST (<1ms)
+pub fn search_local_cached(query: &str) -> Result<Vec<LocalDbPackage>> {
+    list_local_cached_filtered(Some(query))
+}
+
 /// List all local packages using cache - FAST (<1ms)
 pub fn list_local_cached() -> Result<Vec<LocalDbPackage>> {
-    let local_dir = paths::pacman_local_dir();
-    ensure_local_cache_loaded(&local_dir)?;
-
-    let cache = LOCAL_DB_CACHE.read();
-    Ok(cache.packages.values().cloned().collect())
+    list_local_cached_filtered(None)
 }
 
 /// Check if package is installed using cache - INSTANT

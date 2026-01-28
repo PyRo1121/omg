@@ -63,7 +63,7 @@ impl DaemonState {
         let cache = PackageCache::default();
 
         if let Ok(Some(status)) = persistent.get_status() {
-            cache.update_status(status);
+            cache.update_status(Arc::new(status));
             tracing::debug!("Pre-warmed status cache from persistent storage");
         }
 
@@ -207,12 +207,10 @@ async fn handle_debian_search(
             let results: Vec<PackageInfo> = pkgs.into_iter().take(limit).collect();
             let results = Arc::new(results);
             state.cache.insert_debian_arc(query, Arc::clone(&results));
-            Response::Success {
-                id,
-                result: ResponseResult::DebianSearch(
-                    Arc::try_unwrap(results).unwrap_or_else(|arc| (*arc).clone())
-                ),
-            }
+        Response::Success {
+            id,
+            result: ResponseResult::DebianSearch(Arc::unwrap_or_clone(results)),
+        }
         }
         Ok(Err(e)) => internal_error(id, format!("Debian search failed: {e}")),
         Err(e) => internal_error(id, format!("Debian search task panicked: {e}")),
@@ -320,6 +318,39 @@ async fn handle_batch(state: Arc<DaemonState>, id: RequestId, requests: Vec<Requ
         };
     }
 
+    // SECURITY: Reject nested batch requests to prevent recursion DoS
+    if requests.iter().any(|r| matches!(r, Request::Batch { .. })) {
+        return Response::Error {
+            id,
+            code: error_codes::INVALID_PARAMS,
+            message: "Nested batch requests are not allowed".to_string(),
+        };
+    }
+
+    // SECURITY: Limit expensive operations per batch to prevent resource exhaustion
+    // SecurityAudit spawns 32 concurrent scans per request, so limit to 5 per batch
+    let security_audit_count = requests
+        .iter()
+        .filter(|r| matches!(r, Request::SecurityAudit { .. }))
+        .count();
+    if security_audit_count > 5 {
+        let msg = format!(
+            "Too many SecurityAudit requests in batch: {} (max 5)",
+            security_audit_count
+        );
+        audit_log(
+            AuditEventType::PolicyViolation,
+            AuditSeverity::Warning,
+            "daemon_handler",
+            &msg,
+        );
+        return Response::Error {
+            id,
+            code: error_codes::INVALID_PARAMS,
+            message: msg,
+        };
+    }
+
     // Process requests concurrently with a limit to prevent DoS
     let responses: Vec<_> = stream::iter(requests)
         .map(|req| {
@@ -395,7 +426,7 @@ async fn handle_search(
     Response::Success {
         id,
         result: ResponseResult::Search(SearchResult {
-            packages: Arc::try_unwrap(official).unwrap_or_else(|arc| (*arc).clone()),
+            packages: Arc::unwrap_or_clone(official),
             total,
         }),
     }
@@ -418,9 +449,7 @@ async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) ->
         GLOBAL_METRICS.inc_cache_hits();
         return Response::Success {
             id,
-            result: ResponseResult::Info(
-                Arc::try_unwrap(cached).unwrap_or_else(|arc| (*arc).clone()),
-            ),
+            result: ResponseResult::Info(Arc::unwrap_or_clone(cached)),
         };
     }
 
@@ -438,7 +467,7 @@ async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) ->
         state.cache.insert_info_arc(Arc::clone(&info));
         return Response::Success {
             id,
-            result: ResponseResult::Info(Arc::try_unwrap(info).unwrap_or_else(|arc| (*arc).clone())),
+            result: ResponseResult::Info(Arc::unwrap_or_clone(info)),
         };
     }
 
@@ -512,9 +541,7 @@ async fn handle_status(state: Arc<DaemonState>, id: RequestId) -> Response {
         GLOBAL_METRICS.inc_cache_hits();
         return Response::Success {
             id,
-            result: ResponseResult::Status(
-                Arc::try_unwrap(cached).unwrap_or_else(|arc| (*arc).clone()),
-            ),
+            result: ResponseResult::Status(Arc::unwrap_or_clone(cached)),
         };
     }
 
@@ -528,11 +555,11 @@ async fn handle_status(state: Arc<DaemonState>, id: RequestId) -> Response {
         // METRICS: Cache hit (persistent)
         GLOBAL_METRICS.inc_cache_hits();
         // Promote to memory cache for next hit (Arc avoids clone)
-        let status_copy = cached.clone();
-        state.cache.update_status(cached);
+        let cached_arc = Arc::new(cached);
+        state.cache.update_status(Arc::clone(&cached_arc));
         return Response::Success {
             id,
-            result: ResponseResult::Status(status_copy),
+            result: ResponseResult::Status(Arc::unwrap_or_clone(cached_arc)),
         };
     }
 
@@ -579,13 +606,13 @@ async fn handle_status(state: Arc<DaemonState>, id: RequestId) -> Response {
                 runtime_versions: state.runtime_versions.read().clone(),
             };
 
-            let res_copy = res.clone();
-            let _ = state.persistent.set_status(&res);
-            state.cache.update_status(res);
+            let res_arc = Arc::new(res);
+            let _ = state.persistent.set_status(&res_arc);
+            state.cache.update_status(Arc::clone(&res_arc));
 
             Response::Success {
                 id,
-                result: ResponseResult::Status(res_copy),
+                result: ResponseResult::Status(Arc::unwrap_or_clone(res_arc)),
             }
         }
         Ok(Err(e)) => internal_error(id, format!("Failed to get system status: {e}")),
@@ -689,7 +716,7 @@ async fn handle_list_explicit(state: Arc<DaemonState>, id: RequestId) -> Respons
         return Response::Success {
             id,
             result: ResponseResult::Explicit(ExplicitResult {
-                packages: Arc::try_unwrap(cached).unwrap_or_else(|arc| (*arc).clone()),
+                packages: Arc::unwrap_or_clone(cached),
             }),
         };
     }
