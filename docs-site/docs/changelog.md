@@ -708,6 +708,10 @@ Auto-generated from git history with git-cliff.
 
 Auto-generated from git history with git-cliff.
 
+- Update changelog [skip ci]
+
+Auto-generated from git history with git-cliff.
+
 - Add Phase 3 Task 5 tracing conversion summary
 - Task 2 summary - RuntimeManager trait removal
 - Phase 3 architecture audit
@@ -909,6 +913,16 @@ Breaking Changes:
   - ratatui: highlight_style() → row_highlight_style() (2 occurrences)
 
 ### 🔧 Maintenance
+
+- Fix all-targets warnings for release pipeline
+
+  - Remove unused std::io::Write import from slsa.rs test module
+
+  - Gate ELEVATION_MUTEX and its imports behind #[cfg(not(test))]
+
+  - Replace deprecated criterion::black_box with std::hint::black_box
+
+  - Auto-fix rustfmt ordering in benchmark imports
 
 - **Bin,cli,runtimes**: Scattered allow annotations and minor cleanups
 - **Package_managers**: Allow annotations and minor fixes
