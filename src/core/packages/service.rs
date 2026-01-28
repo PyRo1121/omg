@@ -70,7 +70,7 @@ impl PackageService {
                     changes.push(PackageChange {
                         name: info.name,
                         old_version: None,
-                        #[allow(clippy::implicit_clone)]
+                        #[allow(clippy::implicit_clone)] // Version is feature-gated type alias; .to_string() is the required conversion
                         new_version: Some(info.version.to_string()),
                         source: "official".to_string(),
                     });
@@ -85,7 +85,7 @@ impl PackageService {
                     changes.push(PackageChange {
                         name: info.name,
                         old_version: None,
-                        #[allow(clippy::implicit_clone)]
+                        #[allow(clippy::implicit_clone)] // Version is feature-gated type alias; .to_string() is the required conversion
                         new_version: Some(info.version.to_string()),
                         source: "aur".to_string(),
                     });
@@ -126,7 +126,7 @@ impl PackageService {
                     changes.push(PackageChange {
                         name: info.name,
                         old_version: None,
-                        #[allow(clippy::implicit_clone)]
+                        #[allow(clippy::implicit_clone)] // Version is feature-gated type alias; .to_string() is the required conversion
                         new_version: Some(info.version.to_string()),
                         source: self.backend.name().to_string(),
                     });
@@ -156,7 +156,7 @@ impl PackageService {
                     changes.push(PackageChange {
                         name: info.name,
                         old_version: None,
-                        #[allow(clippy::implicit_clone)]
+                        #[allow(clippy::implicit_clone)] // Version is feature-gated type alias; .to_string() is the required conversion
                         new_version: Some(info.version.to_string()),
                         source: self.backend.name().to_string(),
                     });
@@ -180,7 +180,7 @@ impl PackageService {
             if let Ok(Some(info)) = self.backend.info(pkg).await {
                 changes.push(PackageChange {
                     name: info.name,
-                    #[allow(clippy::implicit_clone)]
+                    #[allow(clippy::implicit_clone)] // Version is feature-gated type alias; .to_string() is the required conversion
                     old_version: Some(info.version.to_string()),
                     new_version: None,
                     source: self.backend.name().to_string(),
@@ -233,7 +233,7 @@ impl PackageService {
 
     /// List available updates
     pub async fn list_updates(&self) -> Result<Vec<UpdateInfo>> {
-        #[allow(unused_mut)]
+        #[allow(unused_mut)] // Mutated only inside feature-gated block
         let mut updates = self.backend.list_updates().await?;
 
         #[cfg(feature = "arch")]
