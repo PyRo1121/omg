@@ -67,6 +67,9 @@ bitcode = { version = "0.6", features = ["serde"] }
 reqwest = { version = "0.13.1", features = ["json", "stream"] }
 httpdate = "1.0.3"
 
+# Version Control
+git2 = "0.19"
+
 # Filesystem
 tokio-util = { version = "0.7.18", features = ["io", "codec", "rt"] }
 
