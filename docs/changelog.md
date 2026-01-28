@@ -29,6 +29,10 @@ formats to ensure AUR packages are found when official repos don't have them.
 
 Auto-generated from git history with git-cliff.
 
+- Update changelog [skip ci]
+
+Auto-generated from git history with git-cliff.
+
 ## [0.1.170] - 2026-01-28
 ### ♻️  Refactoring
 
