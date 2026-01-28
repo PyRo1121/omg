@@ -61,7 +61,7 @@ fn try_fast_search(args: &[String]) -> bool {
         if query.starts_with('-') {
             return false;
         }
-        if packages::search_sync_cli(query, false, false, false).unwrap_or(false) {
+        if packages::search_sync_cli(query, false, false, true).unwrap_or(false) {
             return true;
         }
     }
