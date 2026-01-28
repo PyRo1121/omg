@@ -1,40 +1,62 @@
 use ahash::AHashMap;
 use anyhow::Result;
-use parking_lot::RwLock;
 
 use crate::daemon::db::PersistentCache;
 use crate::daemon::protocol::{DetailedPackageInfo, PackageInfo};
 
-/// A highly-optimized string interner for reducing memory footprint
+// memchr::memmem provides SIMD-accelerated substring search
+// for the description-matching hot path
+
+/// String interner with O(1) lookup via packed (offset, length) encoding.
+/// Each interned string is stored once in a contiguous byte buffer; the
+/// returned handle packs both the byte offset and length into a single u64.
 #[derive(Default)]
 struct StringPool {
     pool: Vec<u8>,
-    offsets: AHashMap<String, u32>,
+    offsets: AHashMap<String, u64>,
+}
+
+/// Pack a 32-bit offset and 32-bit length into a single u64 handle.
+const fn pack(offset: u32, len: u32) -> u64 {
+    (offset as u64) | ((len as u64) << 32)
+}
+
+/// Unpack a handle back into (offset, length).
+const fn unpack(handle: u64) -> (u32, u32) {
+    (handle as u32, (handle >> 32) as u32)
 }
 
 impl StringPool {
-    fn intern(&mut self, s: &str) -> u32 {
-        if let Some(&offset) = self.offsets.get(s) {
-            return offset;
+    fn intern(&mut self, s: &str) -> u64 {
+        if let Some(&handle) = self.offsets.get(s) {
+            return handle;
         }
         debug_assert!(
             u32::try_from(self.pool.len()).is_ok(),
             "String pool exceeded u32 address space"
         );
         let offset = self.pool.len() as u32;
+        let len = s.len() as u32;
         self.pool.extend_from_slice(s.as_bytes());
-        self.pool.push(0); // Null terminator
-        self.offsets.insert(s.to_string(), offset);
-        offset
+        let handle = pack(offset, len);
+        self.offsets.insert(s.to_string(), handle);
+        handle
     }
 
-    fn get(&self, offset: u32) -> &str {
+    /// O(1) string lookup — no scanning required.
+    ///
+    /// SAFETY: The pool is append-only and every string was written from a
+    /// valid `&str` (guaranteed UTF-8 by Rust's type system).  No data is
+    /// ever mutated after insertion, so the byte range `[offset, offset+len)`
+    /// is always valid UTF-8.
+    #[inline]
+    fn get(&self, handle: u64) -> &str {
+        let (offset, len) = unpack(handle);
         let start = offset as usize;
-        let mut end = start;
-        while end < self.pool.len() && self.pool[end] != 0 {
-            end += 1;
-        }
-        std::str::from_utf8(&self.pool[start..end]).unwrap_or("")
+        let end = start + len as usize;
+        debug_assert!(end <= self.pool.len(), "StringPool handle out of bounds");
+        // SAFETY: see doc comment above
+        unsafe { std::str::from_utf8_unchecked(&self.pool[start..end]) }
     }
 }
 
@@ -45,19 +67,19 @@ pub struct PackageIndex {
     pool: StringPool,
     /// Maps package name to index in `items`
     name_to_idx: AHashMap<String, usize>,
-    /// Reader-writer lock for package lookups
-    lock: RwLock<()>,
 }
 
 struct CompactPackageInfo {
-    name_offset: u32,
-    version_offset: u32,
-    description_offset: u32,
-    url_offset: u32,
+    name_offset: u64,
+    name_lower_offset: u64,
+    version_offset: u64,
+    description_offset: u64,
+    description_lower_offset: u64,
+    url_offset: u64,
     size: u64,
     download_size: u64,
-    repo_offset: u32,
-    source_offset: u32,
+    repo_offset: u64,
+    source_offset: u64,
 }
 
 /// Relevance score for a search match
@@ -123,7 +145,7 @@ impl Ord for RelevanceScore {
 impl PackageIndex {
     pub fn new() -> Result<Self> {
         #[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
-        use crate::core::env::distro::{Distro, detect_distro};
+        use crate::core::env::distro::{detect_distro, Distro};
         #[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
         let distro = detect_distro();
 
@@ -174,12 +196,17 @@ impl PackageIndex {
         let db_packages = debian_db::get_detailed_packages()?;
         for pkg in db_packages {
             let name_offset = pool.intern(&pkg.name);
+            let name_lower_offset = pool.intern(&pkg.name.to_ascii_lowercase());
+            let description_offset = pool.intern(&pkg.description);
+            let description_lower_offset = pool.intern(&pkg.description.to_ascii_lowercase());
             let idx = items.len();
 
             items.push(CompactPackageInfo {
                 name_offset,
+                name_lower_offset,
                 version_offset: pool.intern(&pkg.version),
-                description_offset: pool.intern(&pkg.description),
+                description_offset,
+                description_lower_offset,
                 url_offset: pool.intern(&pkg.homepage),
                 size: pkg.installed_size,
                 download_size: pkg.size,
@@ -194,7 +221,6 @@ impl PackageIndex {
             items,
             pool,
             name_to_idx,
-            lock: RwLock::new(()),
         })
     }
 
@@ -208,12 +234,17 @@ impl PackageIndex {
         let db_packages = pacman_db::get_detailed_packages()?;
         for pkg in db_packages {
             let name_offset = pool.intern(&pkg.name);
+            let name_lower_offset = pool.intern(&pkg.name.to_ascii_lowercase());
+            let description_offset = pool.intern(&pkg.desc);
+            let description_lower_offset = pool.intern(&pkg.desc.to_ascii_lowercase());
             let idx = items.len();
 
             items.push(CompactPackageInfo {
                 name_offset,
+                name_lower_offset,
                 version_offset: pool.intern(&pkg.version.to_string()),
-                description_offset: pool.intern(&pkg.desc),
+                description_offset,
+                description_lower_offset,
                 url_offset: pool.intern(&pkg.url),
                 size: pkg.isize,
                 download_size: pkg.csize,
@@ -228,7 +259,6 @@ impl PackageIndex {
             items,
             pool,
             name_to_idx,
-            lock: RwLock::new(()),
         })
     }
 
@@ -237,37 +267,52 @@ impl PackageIndex {
             return Vec::new();
         }
         let query_lower = query.to_ascii_lowercase();
+        let query_bytes = query_lower.as_bytes();
 
-        // Collect all matches with relevance scores
-        let mut scored_matches: Vec<(RelevanceScore, usize)> = Vec::new();
+        // Pre-build SIMD-accelerated description searcher (amortises needle
+        // preprocessing across all packages)
+        let desc_finder = memchr::memmem::Finder::new(query_bytes);
 
-        // Check each package for matches
+        // Capacity hint: ~4% match rate on typical repos
+        let mut scored_matches: Vec<(RelevanceScore, usize)> =
+            Vec::with_capacity(self.items.len() / 25);
+
+        let mut name_match_count: usize = 0;
+
         for (idx, item) in self.items.iter().enumerate() {
-            let name = self.pool.get(item.name_offset);
-            let description = self.pool.get(item.description_offset);
-            let name_lower = name.to_ascii_lowercase();
+            // Zero-allocation: pre-lowercased slices from the string pool
+            let name_lower = self.pool.get(item.name_lower_offset);
 
-            // Score this package
-            let score =
-                if let Some(name_score) = Self::score_name_match(&query_lower, &name_lower, idx) {
-                    name_score
-                } else if description.to_ascii_lowercase().contains(&query_lower) {
-                    // Match in description only (lowest priority)
-                    RelevanceScore::new(RelevanceScore::DESCRIPTION_ONLY, name.len(), idx)
-                } else {
-                    continue; // No match at all
-                };
-
-            scored_matches.push((score, idx));
+            if let Some(name_score) = Self::score_name_match(&query_lower, name_lower, idx) {
+                scored_matches.push((name_score, idx));
+                name_match_count += 1;
+            } else if name_match_count < limit {
+                // Only scan descriptions while we still need more results;
+                // description-only matches are lowest priority and cannot
+                // displace name matches in the top-K output.
+                let desc_lower = self.pool.get(item.description_lower_offset);
+                if desc_finder.find(desc_lower.as_bytes()).is_some() {
+                    scored_matches.push((
+                        RelevanceScore::new(
+                            RelevanceScore::DESCRIPTION_ONLY,
+                            name_lower.len(),
+                            idx,
+                        ),
+                        idx,
+                    ));
+                }
+            }
         }
 
-        // Sort by relevance (higher scores first)
-        scored_matches.sort_by(|a, b| b.0.cmp(&a.0));
+        // Partial sort: O(n) selection for top-K, then O(k log k) final sort
+        if scored_matches.len() > limit {
+            scored_matches.select_nth_unstable_by(limit - 1, |a, b| b.0.cmp(&a.0));
+            scored_matches.truncate(limit);
+        }
+        scored_matches.sort_unstable_by(|a, b| b.0.cmp(&a.0));
 
-        // Convert to PackageInfo, respecting limit
         scored_matches
             .into_iter()
-            .take(limit)
             .filter_map(|(_, idx)| {
                 let item = self.items.get(idx)?;
                 Some(PackageInfo {
@@ -280,96 +325,68 @@ impl PackageIndex {
             .collect()
     }
 
-    /// Score a name match, returning Some(score) if there's a match, None otherwise
+    /// Score a name match via single-pass classification.
+    /// `match_indices` finds all occurrence positions; we return the highest-ranked one.
     fn score_name_match(query_lower: &str, name_lower: &str, idx: usize) -> Option<RelevanceScore> {
-        // 1. Exact match (highest priority)
-        if query_lower == name_lower {
-            return Some(RelevanceScore::new(
-                RelevanceScore::EXACT_NAME_MATCH,
-                name_lower.len(),
-                idx,
-            ));
-        }
+        let query_len = query_lower.len();
+        let mut found_substring = false;
 
-        // 2. Prefix match (e.g., "brave" matches "brave-browser")
-        if name_lower.starts_with(query_lower) {
-            return Some(RelevanceScore::new(
-                RelevanceScore::PREFIX_MATCH,
-                name_lower.len(),
-                idx,
-            ));
-        }
-
-        // 3. Word boundary match (e.g., "brave" matches "brave-browser" or "my-brave-app")
-        // Check if query appears at start of name or after a separator (-, _, ., space)
         for (pos, _) in name_lower.match_indices(query_lower) {
-            // At word boundary if at position 0 or preceded by separator
-            if pos == 0
-                || name_lower.as_bytes()[pos - 1].is_ascii_whitespace()
-                || name_lower.as_bytes()[pos - 1] == b'-'
-                || name_lower.as_bytes()[pos - 1] == b'_'
-                || name_lower.as_bytes()[pos - 1] == b'.'
-            {
+            // Exact: query spans the entire name
+            if pos == 0 && name_lower.len() == query_len {
+                return Some(RelevanceScore::new(
+                    RelevanceScore::EXACT_NAME_MATCH,
+                    name_lower.len(),
+                    idx,
+                ));
+            }
+            // Prefix: query at position 0 but name is longer
+            if pos == 0 {
+                return Some(RelevanceScore::new(
+                    RelevanceScore::PREFIX_MATCH,
+                    name_lower.len(),
+                    idx,
+                ));
+            }
+            // Word boundary: preceded by separator
+            let prev = name_lower.as_bytes()[pos - 1];
+            if prev == b'-' || prev == b'_' || prev == b'.' || prev.is_ascii_whitespace() {
                 return Some(RelevanceScore::new(
                     RelevanceScore::WORD_BOUNDARY_MATCH,
                     name_lower.len(),
                     idx,
                 ));
             }
+            // Non-boundary substring — keep scanning for a better match
+            found_substring = true;
         }
 
-        // 4. Simple substring match (e.g., "rav" matches "brave")
-        if name_lower.contains(query_lower) {
-            return Some(RelevanceScore::new(
+        if found_substring {
+            Some(RelevanceScore::new(
                 RelevanceScore::SUBSTRING_MATCH,
                 name_lower.len(),
                 idx,
-            ));
+            ))
+        } else {
+            None
         }
-
-        None
     }
 
     pub fn get(&self, name: &str) -> Option<DetailedPackageInfo> {
-        // CRITICAL OPTIMIZATION: Copy offsets under lock, release lock, THEN allocate strings
-        // This improves concurrent throughput by 3-5x by not holding lock during allocations
-        let (
-            name_offset,
-            version_offset,
-            desc_offset,
-            url_offset,
-            repo_offset,
-            source_offset,
-            size,
-            download_size,
-        ) = {
-            let _read_guard = self.lock.read();
-            let &idx = self.name_to_idx.get(name)?;
-            let item = &self.items[idx];
-            (
-                item.name_offset,
-                item.version_offset,
-                item.description_offset,
-                item.url_offset,
-                item.repo_offset,
-                item.source_offset,
-                item.size,
-                item.download_size,
-            )
-        }; // Lock released here!
+        let &idx = self.name_to_idx.get(name)?;
+        let item = &self.items[idx];
 
-        // Now do string allocations without holding lock
         Some(DetailedPackageInfo {
-            name: self.pool.get(name_offset).to_string(),
-            version: self.pool.get(version_offset).to_string(),
-            description: self.pool.get(desc_offset).to_string(),
-            url: self.pool.get(url_offset).to_string(),
-            size,
-            download_size,
-            repo: self.pool.get(repo_offset).to_string(),
+            name: self.pool.get(item.name_offset).to_string(),
+            version: self.pool.get(item.version_offset).to_string(),
+            description: self.pool.get(item.description_offset).to_string(),
+            url: self.pool.get(item.url_offset).to_string(),
+            size: item.size,
+            download_size: item.download_size,
+            repo: self.pool.get(item.repo_offset).to_string(),
             depends: Vec::new(),
             licenses: Vec::new(),
-            source: self.pool.get(source_offset).to_string(),
+            source: self.pool.get(item.source_offset).to_string(),
         })
     }
 
@@ -389,10 +406,10 @@ impl PackageIndex {
         if query.is_empty() {
             return Vec::new();
         }
-        let query_lower = query.to_lowercase();
+        let query_lower = query.to_ascii_lowercase();
         self.name_to_idx
             .keys()
-            .filter(|name| name.to_lowercase().starts_with(&query_lower))
+            .filter(|name| name.to_ascii_lowercase().starts_with(&query_lower))
             .take(limit)
             .cloned()
             .collect()
