@@ -62,9 +62,9 @@ async fn status_json(fast: bool) -> Result<()> {
         query_time_ms: start.elapsed().as_secs_f64() * 1000.0,
     };
 
-    if let Ok(json_str) = serde_json::to_string_pretty(&status) {
-        println!("{json_str}");
-    }
+    let json_str = serde_json::to_string_pretty(&status)
+        .unwrap_or_else(|_| "{}".to_string());
+    println!("{json_str}");
 
     Ok(())
 }
@@ -107,55 +107,61 @@ fn display_status_report(
     writeln!(
         stdout,
         "  {} Status Overview ({:.1}ms)",
-        "📋".bold(),
+        style::maybe_color("📋", |t| t.bold().to_string()),
         duration.as_secs_f64() * 1000.0
     )?;
-    writeln!(stdout, "  {}", "─".repeat(40).dimmed())?;
+    writeln!(stdout, "  {}", style::dim(&"─".repeat(40)))?;
 
     writeln!(
         stdout,
         "  {:<20} {}",
-        "Total Packages:".bold(),
-        total.to_string().cyan()
+        style::maybe_color("Total Packages:", |t| t.bold().to_string()),
+        style::maybe_color(&total.to_string(), |t| t.cyan().to_string())
     )?;
     writeln!(
         stdout,
         "  {:<20} {}",
-        "Explicitly Installed:".bold(),
-        explicit.to_string().green()
+        style::maybe_color("Explicitly Installed:", |t| t.bold().to_string()),
+        style::version(&explicit.to_string())
     )?;
 
     if fast {
         writeln!(
             stdout,
             "  {:<20} {}",
-            "Orphans/Updates:".dimmed(),
-            "skipped (fast mode)".dimmed()
+            style::dim("Orphans/Updates:"),
+            style::dim("skipped (fast mode)")
         )?;
     } else {
         writeln!(
             stdout,
             "  {:<20} {}",
-            "Orphan Packages:".bold(),
+            style::maybe_color("Orphan Packages:", |t| t.bold().to_string()),
             if orphans > 0 {
-                orphans.to_string().yellow().to_string()
+                style::maybe_color(&orphans.to_string(), |t| t.yellow().to_string())
             } else {
-                "0".dimmed().to_string()
+                style::dim("0")
             }
         )?;
         writeln!(
             stdout,
             "  {:<20} {}",
-            "Updates Available:".bold(),
+            style::maybe_color("Updates Available:", |t| t.bold().to_string()),
             if updates > 0 {
-                updates.to_string().bright_magenta().to_string()
+                style::maybe_color(&updates.to_string(), |t| {
+                    t.bright_magenta().to_string()
+                })
             } else {
-                "0".dimmed().to_string()
+                style::dim("0")
             }
         )?;
     }
 
-    writeln!(stdout, "\n  {} Environment Status:", "🌍".bold())?;
+    writeln!(
+        stdout,
+        "\n  {} Environment Status:",
+        style::maybe_color("🌍", |t| t.bold().to_string())
+    )?;
     // Add runtime versions if available
     #[cfg(feature = "arch")]
     {
