@@ -38,6 +38,10 @@ Auto-generated from git history with git-cliff.
 
 Auto-generated from git history with git-cliff.
 
+- Update changelog [skip ci]
+
+Auto-generated from git history with git-cliff.
+
 ### 🔧 Maintenance
 
 - Bump version to 0.1.171
