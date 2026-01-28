@@ -3,16 +3,20 @@
 //! Automatically elevates to root when needed for system operations,
 //! similar to how paru/yay handle this seamlessly.
 
-use std::sync::LazyLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+#[cfg(not(test))]
+use std::sync::LazyLock;
+
 use anyhow::Context;
+#[cfg(not(test))]
 use parking_lot::Mutex;
 use wait_timeout::ChildExt;
 
 /// Global mutex to serialize privilege elevation attempts
 /// Prevents deadlocks when multiple threads try to elevate simultaneously
+#[cfg(not(test))]
 static ELEVATION_MUTEX: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 /// Global flag to track if --yes was specified for non-interactive mode
