@@ -241,4 +241,3 @@ async fn handle_aur_package(
     crate::core::usage::track_install(&[pkg_name.to_string()]);
     Ok(())
 }
-

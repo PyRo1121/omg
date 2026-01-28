@@ -208,8 +208,8 @@ pub async fn run_self_sudo(args: &[&str]) -> anyhow::Result<()> {
     let exe = std::env::current_exe()?;
 
     // Detect if we're running in development/test mode
-    let is_test_mode = std::env::var("OMG_TEST_MODE").is_ok()
-        || std::env::var("CARGO_PRIMARY_PACKAGE").is_ok();
+    let is_test_mode =
+        std::env::var("OMG_TEST_MODE").is_ok() || std::env::var("CARGO_PRIMARY_PACKAGE").is_ok();
 
     if is_test_mode {
         anyhow::bail!(
