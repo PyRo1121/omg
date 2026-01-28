@@ -1102,14 +1102,7 @@ impl AurClient {
         let spinner = create_spinner(&format!("Building {package_name}..."));
 
         // Check if bubblewrap is available
-        let bwrap_available = Command::new("which")
-            .arg("bwrap")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .await
-            .map(|s| s.success())
-            .unwrap_or(false);
+        let bwrap_available = which("bwrap").is_ok();
 
         if bwrap_available {
             tracing::info!("Using bubblewrap sandbox for secure AUR build");
@@ -1339,30 +1332,14 @@ impl AurClient {
         .await??;
         let spinner = create_spinner(&format!("Building {package_name} (chroot)..."));
 
-        let mut cmd = if Command::new("which")
-            .arg("pkgctl")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .await
-            .map(|s| s.success())
-            .unwrap_or(false)
-        {
+        let mut cmd = if which("pkgctl").is_ok() {
             let mut cmd = Command::new("pkgctl");
             cmd.arg("build");
             if self.settings.aur.secure_makepkg {
                 cmd.arg("--clean");
             }
             cmd
-        } else if Command::new("which")
-            .arg("makechrootpkg")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .await
-            .map(|s| s.success())
-            .unwrap_or(false)
-        {
+        } else if which("makechrootpkg").is_ok() {
             let mut cmd = Command::new("makechrootpkg");
             cmd.args(["-r", "/var/lib/archbuild"]).arg("--");
             cmd
