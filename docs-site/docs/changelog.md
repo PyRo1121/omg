@@ -38,6 +38,14 @@ Performance improvements:
 - Replace yay wrapper with native AUR build system ⚠️ **BREAKING CHANGE**
 ### 🐛 Bug Fixes
 
+- Enable privilege elevation for debug builds
+
+Previously, debug builds (cfg!(debug_assertions)) were blocked from elevating
+
+privileges, which prevented developers from testing functionality like 'omg update'
+
+or 'omg sync' that require root access.
+
 - Suppress misleading 'Sudo failed' error when command fails after successful auth
 
 When an elevated command fails (e.g., user cancels AUR install), the parent
@@ -49,6 +57,10 @@ authentication succeeded. The error was already printed by the elevated
 process, so the parent should just exit silently with the same code.
 
 ### 📚 Documentation
+
+- Update changelog [skip ci]
+
+Auto-generated from git history with git-cliff.
 
 - Update changelog [skip ci]
 
