@@ -329,6 +329,20 @@ cargo-outdated tools.
 
 ### ⚡ Performance
 
+- Bypass tokio runtime for official-only search via PooledSyncClient
+
+The fast path (try_fast_search) previously created a fresh
+
+current_thread runtime + async UnixStream on every search invocation.
+
+New search_sync_official_only uses the already-implemented
+
+PooledSyncClient for a single syscall connect + synchronous IPC
+
+round-trip. The async path is retained only when AUR results are
+
+needed. Expected: ~1.5-2.5ms reduction on the fast path.
+
 - Advanced optimizations - Arc<str>, RwLock scope, format! buffers, function splitting
 
 This commit implements three critical performance optimizations and a major refactoring
@@ -665,6 +679,22 @@ Performance improvements:
 - Introduce `runtime_resolver` module, optimize daemon cache, simplify sync client, and add new integration tests and benchmarks
 ### 🐛 Bug Fixes
 
+- Correct search result semantics and eliminate dead code
+
+  - handlers.rs: total field on cache hit no longer caps at limit (was
+
+breaking pagination semantics); cache now stores full result set so
+
+different limit values are served correctly from the same entry
+
+  - index.rs: StringPool::get() bounds-guarded against invalid offsets;
+
+score_name_match collapsed to single-pass (eliminates redundant
+
+contains() scan and dead pos==0 branch); suggest() aligned to
+
+to_ascii_lowercase() matching search(); dead RwLock<()> removed
+
 - Remove target-cpu=native from release build to prevent LLVM SIGSEGV
 
 target-cpu=native triggers a SelectionDAGBuilder crash in LLVM when
@@ -695,6 +725,10 @@ flags cannot leak into the retry.
 - Inline format args in license.rs for clippy compliance
 - Substitute `$repo` and `$arch` placeholders in parsed server URLs
 ### 📚 Documentation
+
+- Update changelog [skip ci]
+
+Auto-generated from git history with git-cliff.
 
 - Update changelog [skip ci]
 
