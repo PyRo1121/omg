@@ -18,7 +18,7 @@ pub type Version = String;
 #[cfg(feature = "arch")]
 static ZERO_VERSION: LazyLock<AlpmVersion> = LazyLock::new(|| {
     // "0" is always a valid version string per alpm-types spec
-    #[allow(clippy::expect_used)]
+    #[allow(clippy::expect_used)] // Static initialization; failure is unrecoverable build misconfiguration
     AlpmVersion::from_str("0").expect("0 is always valid")
 });
 
