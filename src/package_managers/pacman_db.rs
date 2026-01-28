@@ -262,151 +262,72 @@ pub fn parse_sync_db(path: &Path, repo_name: &str) -> Result<HashMap<String, Syn
     Ok(packages)
 }
 
+/// Extract a human-readable message from a `catch_unwind` panic payload.
+fn panic_message(info: &(dyn std::any::Any + Send)) -> &str {
+    info.downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| info.downcast_ref::<&str>().copied())
+        .unwrap_or("unknown panic")
+}
+
+/// Convert an alpm desc (V1 or V2) into a `SyncDbPackage`.
+/// Both desc types expose identical field names, so a macro avoids duplication.
+macro_rules! sync_pkg_from_desc {
+    ($desc:expr, $repo:expr) => {
+        SyncDbPackage {
+            name: $desc.name.to_string(),
+            version: Version::from_str(&$desc.version.to_string())
+                .unwrap_or_else(|_| super::types::zero_version()),
+            desc: $desc.description.to_string(),
+            filename: $desc.file_name.to_string(),
+            csize: $desc.compressed_size,
+            isize: $desc.installed_size,
+            url: $desc.url.as_ref().map(std::string::ToString::to_string).unwrap_or_default(),
+            arch: $desc.arch.to_string(),
+            repo: $repo.to_string(),
+            licenses: $desc.license.iter().map(ToString::to_string).collect(),
+            depends: $desc.dependencies.iter().map(std::string::ToString::to_string).collect(),
+            makedepends: $desc.make_dependencies.iter().map(std::string::ToString::to_string).collect(),
+            optdepends: $desc.optional_dependencies.iter().map(std::string::ToString::to_string).collect(),
+            provides: $desc.provides.iter().map(std::string::ToString::to_string).collect(),
+            conflicts: $desc.conflicts.iter().map(std::string::ToString::to_string).collect(),
+            replaces: $desc.replaces.iter().map(std::string::ToString::to_string).collect(),
+        }
+    };
+}
+
 fn parse_desc_content(content: &str, repo: &str) -> SyncDbPackage {
-    // Try V2 first (newer format without MD5SUM - most packages use this now)
+    // Try V2 first (newer format without MD5SUM).
     // Wrap in catch_unwind because alpm_repo_db can panic on corrupted data
-    // (e.g., PackageRelation::from_str panics on malformed dependency strings)
+    // (e.g., PackageRelation::from_str panics on malformed dependency strings).
     let v2_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         alpm_repo_db::desc::RepoDescFileV2::from_str(content)
     }));
 
     match v2_result {
-        Ok(Ok(desc)) => {
-            return SyncDbPackage {
-                name: desc.name.to_string(),
-                version: Version::from_str(&desc.version.to_string())
-                    .unwrap_or_else(|_| super::types::zero_version()),
-                desc: desc.description.to_string(),
-                filename: desc.file_name.to_string(),
-                csize: desc.compressed_size,
-                isize: desc.installed_size,
-                url: desc
-                    .url
-                    .as_ref()
-                    .map(std::string::ToString::to_string)
-                    .unwrap_or_default(),
-                arch: desc.arch.to_string(),
-                repo: repo.to_string(),
-                licenses: desc.license.iter().map(ToString::to_string).collect(),
-                depends: desc
-                    .dependencies
-                    .iter()
-                    .map(std::string::ToString::to_string)
-                    .collect(),
-                makedepends: desc
-                    .make_dependencies
-                    .iter()
-                    .map(std::string::ToString::to_string)
-                    .collect(),
-                optdepends: desc
-                    .optional_dependencies
-                    .iter()
-                    .map(std::string::ToString::to_string)
-                    .collect(),
-                provides: desc
-                    .provides
-                    .iter()
-                    .map(std::string::ToString::to_string)
-                    .collect(),
-                conflicts: desc
-                    .conflicts
-                    .iter()
-                    .map(std::string::ToString::to_string)
-                    .collect(),
-                replaces: desc
-                    .replaces
-                    .iter()
-                    .map(std::string::ToString::to_string)
-                    .collect(),
-            };
-        }
-        Ok(Err(_)) => {
-            // V2 parsing failed normally, try V1 below
-        }
+        Ok(Ok(desc)) => return sync_pkg_from_desc!(desc, repo),
+        Ok(Err(_)) => {} // V2 parsing failed normally, try V1 below
         Err(panic_info) => {
-            // V2 parsing panicked on corrupted data - log warning and try V1
-            let panic_msg = panic_info
-                .downcast_ref::<String>()
-                .map(String::as_str)
-                .or_else(|| panic_info.downcast_ref::<&str>().copied())
-                .unwrap_or("unknown panic");
             tracing::warn!(
                 repo = repo,
-                error = panic_msg,
+                error = panic_message(&panic_info),
                 "Corrupted package desc in repo (V2 parse panic), trying V1 fallback"
             );
         }
     }
 
     // Fallback to V1 (older format with MD5SUM)
-    // Also wrap in catch_unwind for the same reason
     let v1_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         alpm_repo_db::desc::RepoDescFileV1::from_str(content)
     }));
 
     match v1_result {
-        Ok(Ok(desc)) => {
-            return SyncDbPackage {
-                name: desc.name.to_string(),
-                version: Version::from_str(&desc.version.to_string())
-                    .unwrap_or_else(|_| super::types::zero_version()),
-                desc: desc.description.to_string(),
-                filename: desc.file_name.to_string(),
-                csize: desc.compressed_size,
-                isize: desc.installed_size,
-                url: desc
-                    .url
-                    .as_ref()
-                    .map(std::string::ToString::to_string)
-                    .unwrap_or_default(),
-                arch: desc.arch.to_string(),
-                repo: repo.to_string(),
-                licenses: desc.license.iter().map(ToString::to_string).collect(),
-                depends: desc
-                    .dependencies
-                    .iter()
-                    .map(std::string::ToString::to_string)
-                    .collect(),
-                makedepends: desc
-                    .make_dependencies
-                    .iter()
-                    .map(std::string::ToString::to_string)
-                    .collect(),
-                optdepends: desc
-                    .optional_dependencies
-                    .iter()
-                    .map(std::string::ToString::to_string)
-                    .collect(),
-                provides: desc
-                    .provides
-                    .iter()
-                    .map(std::string::ToString::to_string)
-                    .collect(),
-                conflicts: desc
-                    .conflicts
-                    .iter()
-                    .map(std::string::ToString::to_string)
-                    .collect(),
-                replaces: desc
-                    .replaces
-                    .iter()
-                    .map(std::string::ToString::to_string)
-                    .collect(),
-            };
-        }
-        Ok(Err(_)) => {
-            // V1 parsing also failed normally - return empty package
-        }
+        Ok(Ok(desc)) => return sync_pkg_from_desc!(desc, repo),
+        Ok(Err(_)) => {} // V1 parsing also failed
         Err(panic_info) => {
-            // V1 parsing also panicked - log warning and return empty package
-            let panic_msg = panic_info
-                .downcast_ref::<String>()
-                .map(String::as_str)
-                .or_else(|| panic_info.downcast_ref::<&str>().copied())
-                .unwrap_or("unknown panic");
             tracing::warn!(
                 repo = repo,
-                error = panic_msg,
+                error = panic_message(&panic_info),
                 "Corrupted package desc in repo (V1 parse panic), skipping package"
             );
         }
@@ -1071,7 +992,7 @@ pub fn get_explicit_count() -> Result<usize> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used)] // Idiomatic in tests: panics on failure with clear error context
 mod tests {
     use super::*;
 
