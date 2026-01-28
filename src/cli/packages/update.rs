@@ -85,7 +85,7 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
     Ok(())
 }
 
-#[allow(clippy::unnecessary_wraps)]
+#[allow(clippy::unnecessary_wraps)] // Result return required: API compat with feature-gated impls
 fn update_dry_run(updates: &[UpdateInfo]) -> Result<()> {
     ui::print_header("OMG", "Dry Run - Update Preview");
     ui::print_spacer();
@@ -95,7 +95,7 @@ fn update_dry_run(updates: &[UpdateInfo]) -> Result<()> {
         style::info("→")
     );
 
-    #[allow(unused_mut)]
+    #[allow(unused_mut)] // Mutated only inside feature-gated block
     let mut total_download: u64 = 0;
 
     for update in updates.iter().take(50) {
@@ -143,7 +143,7 @@ fn update_dry_run(updates: &[UpdateInfo]) -> Result<()> {
         style::info("→"),
         total_download as f64 / 1024.0 / 1024.0
     );
-    println!("\n  {} No changes made (dry run)", style::dim("ℹ"));
+    ui::print_dry_run_footer();
 
     Ok(())
 }

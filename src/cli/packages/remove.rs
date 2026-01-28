@@ -25,7 +25,7 @@ pub async fn remove(packages: &[String], recursive: bool, _yes: bool, dry_run: b
     remove_fallback(packages, recursive).await
 }
 
-#[allow(clippy::unnecessary_wraps)]
+#[allow(clippy::unnecessary_wraps)] // Result return required: API compat with feature-gated impls
 fn remove_dry_run(packages: &[String], recursive: bool) -> Result<()> {
     ui::print_header("OMG", "Dry Run - Remove Preview");
     ui::print_spacer();
@@ -35,7 +35,7 @@ fn remove_dry_run(packages: &[String], recursive: bool) -> Result<()> {
         style::info("→")
     );
 
-    #[allow(unused_mut)]
+    #[allow(unused_mut)] // Mutated only inside feature-gated block
     let mut total_size: u64 = 0;
 
     for pkg_name in packages {
@@ -102,7 +102,7 @@ fn remove_dry_run(packages: &[String], recursive: bool) -> Result<()> {
         style::info("→"),
         total_size as f64 / 1024.0 / 1024.0
     );
-    println!("\n  {} No changes made (dry run)", style::dim("ℹ"));
+    ui::print_dry_run_footer();
 
     Ok(())
 }
