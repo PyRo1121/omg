@@ -187,7 +187,7 @@ async fn handle_debian_search(
                 pkgs.into_iter()
                     .map(|p| PackageInfo {
                         name: p.name,
-                        #[allow(clippy::implicit_clone)]
+                        #[allow(clippy::implicit_clone)] // Version is feature-gated type alias; .to_string() is the required conversion
                         version: p.version.to_string(),
                         description: p.description,
                         source: "apt".to_string(),
@@ -334,10 +334,7 @@ async fn handle_batch(state: Arc<DaemonState>, id: RequestId, requests: Vec<Requ
         .filter(|r| matches!(r, Request::SecurityAudit { .. }))
         .count();
     if security_audit_count > 5 {
-        let msg = format!(
-            "Too many SecurityAudit requests in batch: {} (max 5)",
-            security_audit_count
-        );
+        let msg = format!("Too many SecurityAudit requests in batch: {security_audit_count} (max 5)");
         audit_log(
             AuditEventType::PolicyViolation,
             AuditSeverity::Warning,
@@ -477,7 +474,7 @@ async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) ->
     if let Ok(Some(info)) = state.package_manager.info(&package).await {
         let detailed = DetailedPackageInfo {
             name: info.name,
-            #[allow(clippy::implicit_clone)]
+            #[allow(clippy::implicit_clone)] // Version is feature-gated type alias; .to_string() is the required conversion
             version: info.version.to_string(),
             description: info.description,
             url: String::new(), // info.url not in Package struct currently
