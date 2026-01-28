@@ -13,6 +13,7 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ## [Unreleased]
 ### 🐛 Bug Fixes
 
+- Clippy warnings in AUR install fallback (single-match-else, uninlined-format-args)
 - Correct AUR fallback pattern to match actual ALPM error message
 
 The extract_missing_package pattern was looking for 'Package not found: {name}'
@@ -33,6 +34,13 @@ Auto-generated from git history with git-cliff.
 
 Auto-generated from git history with git-cliff.
 
+- Update changelog [skip ci]
+
+Auto-generated from git history with git-cliff.
+
+### 🔧 Maintenance
+
+- Bump version to 0.1.171
 ## [0.1.170] - 2026-01-28
 ### ♻️  Refactoring
 
