@@ -6,9 +6,11 @@
 //! - Handler dispatch overhead
 //! - Runtime resolution functions
 
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use std::hint::black_box;
 use std::sync::Arc;
 use std::time::Duration;
+
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
 use omg_lib::core::runtime_resolver;
 use omg_lib::daemon::cache::PackageCache;
