@@ -43,141 +43,195 @@ pub async fn complete(_shell: &str, current: &str, last: &str, full: Option<&str
 
     let suggestions = match last {
         "install" | "i" | "remove" | "r" | "info" => {
-            if in_tool && last == "install" {
-                output_suggestions(&engine, current, crate::cli::tool::registry_tool_names());
-                return Ok(());
-            }
-            if in_tool && last == "remove" {
-                output_suggestions(&engine, current, crate::cli::tool::installed_tool_names());
-                return Ok(());
-            }
-            // Try daemon for package list
-            #[allow(unused_mut)]
-            let mut names = if use_debian_backend() {
-                #[cfg(feature = "debian")]
-                {
-                    apt_list_all_package_names().unwrap_or_default()
-                }
-                #[cfg(not(feature = "debian"))]
-                {
-                    Vec::new()
-                }
-            } else if let Ok(mut client) = crate::core::client::DaemonClient::connect().await {
-                if let Ok(res) = client.search("", None).await {
-                    res.packages.into_iter().map(|p| p.name).collect()
-                } else {
-                    #[cfg(feature = "arch")]
-                    {
-                        crate::package_managers::alpm_direct::list_all_package_names()
-                            .unwrap_or_default()
-                    }
-                    #[cfg(not(feature = "arch"))]
-                    {
-                        Vec::new()
-                    }
-                }
-            } else {
-                #[cfg(feature = "arch")]
-                {
-                    crate::package_managers::alpm_direct::list_all_package_names()
-                        .unwrap_or_default()
-                }
-                #[cfg(not(feature = "arch"))]
-                {
-                    Vec::new()
-                }
-            };
-
-            // Also include AUR package names (from cache) - Arch only
-            #[cfg(feature = "arch")]
-            if let Ok(aur_names) = engine.get_aur_package_names().await {
-                names.extend(aur_names);
-                names.sort();
-                names.dedup();
-            }
-
-            engine.fuzzy_match(current, names)
+            complete_package_names(&engine, current, last, in_tool).await?
         }
         "use" | "ls" | "list" | "which" => {
-            let runtimes = crate::cli::runtimes::known_runtimes();
-            engine.fuzzy_match(current, runtimes)
+            complete_runtime_names(&engine, current)
         }
-        "tool" => engine.fuzzy_match(
-            current,
-            TOOL_COMMANDS.iter().map(|s| s.to_string()).collect(),
-        ),
-        "env" => engine.fuzzy_match(
-            current,
-            ENV_COMMANDS.iter().map(|s| s.to_string()).collect(),
-        ),
-        "run" => {
-            let tasks = crate::core::task_runner::detect_tasks().unwrap_or_default();
-            let names = tasks.into_iter().map(|task| task.name).collect();
-            engine.fuzzy_match(current, names)
-        }
-        "new" => engine.fuzzy_match(
-            current,
-            NEW_TEMPLATES.iter().map(|s| s.to_string()).collect(),
-        ),
-        "completions" => engine.fuzzy_match(
-            current,
-            SHELL_COMPLETIONS.iter().map(|s| s.to_string()).collect(),
-        ),
-        _ => {
-            // Check if last word is a runtime (for 'omg use <runtime> <TAB>')
-            if crate::cli::runtimes::known_runtimes()
-                .iter()
-                .any(|rt| rt == last)
-            {
-                // Priority 1: Context awareness (package.json, .nvmrc, etc.)
-                let mut suggestions = engine.probe_context(last);
-
-                // Priority 2: Installed versions
-                let data_dir = crate::core::Database::default_path()?
-                    .parent()
-                    .ok_or_else(|| anyhow::anyhow!("Invalid database path"))?
-                    .to_path_buf();
-                let runtime_dir = data_dir.join("versions").join(last);
-                let mut installed_versions = Vec::new();
-                if let Ok(entries) = std::fs::read_dir(runtime_dir) {
-                    for entry in entries.flatten() {
-                        if let Ok(file_type) = entry.file_type()
-                            && file_type.is_dir()
-                            && let Some(name) = entry.file_name().to_str()
-                            && name != "current"
-                        {
-                            installed_versions.push(name.to_string());
-                        }
-                    }
-                }
-
-                let fuzzy_installed = engine.fuzzy_match(current, installed_versions);
-                suggestions.extend(fuzzy_installed);
-                suggestions.dedup();
-                suggestions
-            } else if in_env {
-                let options = vec![
-                    "capture".to_string(),
-                    "check".to_string(),
-                    "share".to_string(),
-                    "sync".to_string(),
-                ];
-                engine.fuzzy_match(current, options)
-            } else if in_tool {
-                let options = vec![
-                    "install".to_string(),
-                    "list".to_string(),
-                    "remove".to_string(),
-                ];
-                engine.fuzzy_match(current, options)
-            } else {
-                Vec::new()
-            }
-        }
+        "tool" => complete_tool_commands(&engine, current),
+        "env" => complete_env_commands(&engine, current),
+        "run" => complete_task_names(&engine, current),
+        "new" => complete_templates(&engine, current),
+        "completions" => complete_shells(&engine, current),
+        _ => complete_fallback(&engine, current, last, in_tool, in_env).await?,
     };
 
     output_suggestions(&engine, current, suggestions);
     Ok(())
+}
+
+/// Complete package names for install/remove/info commands
+async fn complete_package_names(
+    engine: &crate::core::completion::CompletionEngine,
+    current: &str,
+    last: &str,
+    in_tool: bool,
+) -> Result<Vec<String>> {
+    // Handle tool subcommands
+    if in_tool && last == "install" {
+        return Ok(engine.fuzzy_match(current, crate::cli::tool::registry_tool_names()));
+    }
+    if in_tool && last == "remove" {
+        return Ok(engine.fuzzy_match(current, crate::cli::tool::installed_tool_names()));
+    }
+
+    // Get package names from daemon or fallback to direct ALPM
+    #[allow(unused_mut)]
+    let mut names = get_package_names_with_fallback().await;
+
+    // Include AUR packages on Arch
+    #[cfg(feature = "arch")]
+    if let Ok(aur_names) = engine.get_aur_package_names().await {
+        names.extend(aur_names);
+        names.sort();
+        names.dedup();
+    }
+
+    Ok(engine.fuzzy_match(current, names))
+}
+
+/// Get package names from daemon with fallback to direct access
+async fn get_package_names_with_fallback() -> Vec<String> {
+    if use_debian_backend() {
+        #[cfg(feature = "debian")]
+        return apt_list_all_package_names().unwrap_or_default();
+        #[cfg(not(feature = "debian"))]
+        return Vec::new();
+    }
+
+    // Try daemon first
+    if let Ok(mut client) = crate::core::client::DaemonClient::connect().await {
+        if let Ok(res) = client.search("", None).await {
+            return res.packages.into_iter().map(|p| p.name).collect();
+        }
+    }
+
+    // Fallback to direct ALPM
+    #[cfg(feature = "arch")]
+    return crate::package_managers::alpm_direct::list_all_package_names().unwrap_or_default();
+    #[cfg(not(feature = "arch"))]
+    Vec::new()
+}
+
+/// Complete runtime names
+#[inline]
+fn complete_runtime_names(
+    engine: &crate::core::completion::CompletionEngine,
+    current: &str,
+) -> Vec<String> {
+    let runtimes = crate::cli::runtimes::known_runtimes();
+    engine.fuzzy_match(current, runtimes)
+}
+
+/// Complete tool subcommands
+#[inline]
+fn complete_tool_commands(
+    engine: &crate::core::completion::CompletionEngine,
+    current: &str,
+) -> Vec<String> {
+    engine.fuzzy_match(current, TOOL_COMMANDS.iter().map(|s| s.to_string()).collect())
+}
+
+/// Complete env subcommands
+#[inline]
+fn complete_env_commands(
+    engine: &crate::core::completion::CompletionEngine,
+    current: &str,
+) -> Vec<String> {
+    engine.fuzzy_match(current, ENV_COMMANDS.iter().map(|s| s.to_string()).collect())
+}
+
+/// Complete task runner task names
+#[inline]
+fn complete_task_names(
+    engine: &crate::core::completion::CompletionEngine,
+    current: &str,
+) -> Vec<String> {
+    let tasks = crate::core::task_runner::detect_tasks().unwrap_or_default();
+    let names = tasks.into_iter().map(|task| task.name).collect();
+    engine.fuzzy_match(current, names)
+}
+
+/// Complete new project templates
+#[inline]
+fn complete_templates(
+    engine: &crate::core::completion::CompletionEngine,
+    current: &str,
+) -> Vec<String> {
+    engine.fuzzy_match(current, NEW_TEMPLATES.iter().map(|s| s.to_string()).collect())
+}
+
+/// Complete shell names for completion generation
+#[inline]
+fn complete_shells(
+    engine: &crate::core::completion::CompletionEngine,
+    current: &str,
+) -> Vec<String> {
+    engine.fuzzy_match(current, SHELL_COMPLETIONS.iter().map(|s| s.to_string()).collect())
+}
+
+/// Fallback completion for runtime versions and other contexts
+async fn complete_fallback(
+    engine: &crate::core::completion::CompletionEngine,
+    current: &str,
+    last: &str,
+    in_tool: bool,
+    in_env: bool,
+) -> Result<Vec<String>> {
+    // Check if completing runtime version (e.g., 'omg use node <TAB>')
+    if crate::cli::runtimes::known_runtimes().iter().any(|rt| rt == last) {
+        return Ok(complete_runtime_versions(engine, current, last)?);
+    }
+
+    // Fallback to tool/env subcommands if in those contexts
+    if in_env {
+        return Ok(engine.fuzzy_match(
+            current,
+            ENV_COMMANDS.iter().map(|s| s.to_string()).collect(),
+        ));
+    }
+    if in_tool {
+        return Ok(engine.fuzzy_match(
+            current,
+            TOOL_COMMANDS.iter().map(|s| s.to_string()).collect(),
+        ));
+    }
+
+    Ok(Vec::new())
+}
+
+/// Complete runtime version numbers
+fn complete_runtime_versions(
+    engine: &crate::core::completion::CompletionEngine,
+    current: &str,
+    runtime: &str,
+) -> Result<Vec<String>> {
+    // Priority 1: Context awareness (package.json, .nvmrc, etc.)
+    let mut suggestions = engine.probe_context(runtime);
+
+    // Priority 2: Installed versions
+    let data_dir = crate::core::Database::default_path()?
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("Invalid database path"))?
+        .to_path_buf();
+    let runtime_dir = data_dir.join("versions").join(runtime);
+    let mut installed_versions = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(runtime_dir) {
+        for entry in entries.flatten() {
+            if let Ok(file_type) = entry.file_type()
+                && file_type.is_dir()
+                && let Some(name) = entry.file_name().to_str()
+                && name != "current"
+            {
+                installed_versions.push(name.to_string());
+            }
+        }
+    }
+
+    let fuzzy_installed = engine.fuzzy_match(current, installed_versions);
+    suggestions.extend(fuzzy_installed);
+    suggestions.dedup();
+    Ok(suggestions)
 }
 
 fn output_suggestions(
