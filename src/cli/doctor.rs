@@ -37,15 +37,9 @@ pub async fn run() -> Result<()> {
     let deps = vec!["git", "curl", "tar", "sudo"];
     for dep in deps {
         if check_command(dep) {
-            println!(
-                "  {}",
-                style::success(&format!("Found dependency: {dep}"))
-            );
+            println!("  {}", style::success(&format!("Found dependency: {dep}")));
         } else {
-            println!(
-                "  {}",
-                style::error(&format!("Missing dependency: {dep}"))
-            );
+            println!("  {}", style::error(&format!("Missing dependency: {dep}")));
             issues += 1;
         }
     }
@@ -65,10 +59,7 @@ pub async fn run() -> Result<()> {
     if check_path() {
         println!("  {}", style::success("PATH configured correctly"));
     } else {
-        println!(
-            "  {}",
-            style::error("OMG bin directory not in PATH")
-        );
+        println!("  {}", style::error("OMG bin directory not in PATH"));
         issues += 1;
     }
 

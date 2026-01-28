@@ -143,8 +143,8 @@ impl DaemonClient {
         // 1. Encode
         let request_bytes =
             bitcode::serialize(request).context("Failed to serialize daemon request")?;
-        let len = u32::try_from(request_bytes.len())
-            .context("Request too large for protocol framing")?;
+        let len =
+            u32::try_from(request_bytes.len()).context("Request too large for protocol framing")?;
 
         // 2. Send length-delimited (Big Endian) combined to save a syscall
         let mut send_buf = Vec::with_capacity(4 + request_bytes.len());
@@ -423,8 +423,8 @@ impl PooledSyncClient {
         // Encode
         let request_bytes =
             bitcode::serialize(request).context("Failed to serialize daemon request")?;
-        let len = u32::try_from(request_bytes.len())
-            .context("Request too large for protocol framing")?;
+        let len =
+            u32::try_from(request_bytes.len()).context("Request too large for protocol framing")?;
 
         // Send length-delimited
         let mut send_buf = Vec::with_capacity(4 + request_bytes.len());

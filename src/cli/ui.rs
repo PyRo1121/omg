@@ -219,9 +219,9 @@ pub fn prompt_theme() -> dialoguer::theme::ColorfulTheme {
 
 /// Wrap a block of text in a "Charm-style" bordered card.
 pub fn print_card(title: &str, content: Vec<String>) {
+    use comfy_table::Table;
     use comfy_table::modifiers::UTF8_ROUND_CORNERS;
     use comfy_table::presets::UTF8_FULL;
-    use comfy_table::Table;
 
     let mut table = Table::new();
     table

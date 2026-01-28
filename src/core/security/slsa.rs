@@ -445,10 +445,7 @@ mod tests {
         let verifier = SlsaVerifier::default();
 
         // AUR packages have no SLSA guarantees
-        assert_eq!(
-            verifier.determine_slsa_level("yay", false),
-            SlsaLevel::None
-        );
+        assert_eq!(verifier.determine_slsa_level("yay", false), SlsaLevel::None);
         assert_eq!(
             verifier.determine_slsa_level("spotify", false),
             SlsaLevel::None

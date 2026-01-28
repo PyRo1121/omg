@@ -117,7 +117,8 @@ pub use types::{LocalPackage, SyncPackage};
 
 /// Get the appropriate package manager for the current distribution
 pub fn get_package_manager() -> Arc<dyn PackageManager> {
-    #[allow(unused_imports)] // Feature-gated re-exports; not all features compile the same subset
+    #[allow(unused_imports)]
+    // Feature-gated re-exports; not all features compile the same subset
     use crate::core::env::distro::{Distro, detect_distro};
 
     if crate::core::paths::test_mode() {

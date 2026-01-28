@@ -228,18 +228,10 @@ pub fn view_audit_log(
         let sev_str = entry.severity.to_string();
         let severity_color = match entry.severity {
             AuditSeverity::Debug => style::dim(&sev_str),
-            AuditSeverity::Info => {
-                style::maybe_color(&sev_str, |t| t.blue().to_string())
-            }
-            AuditSeverity::Warning => {
-                style::maybe_color(&sev_str, |t| t.yellow().to_string())
-            }
-            AuditSeverity::Error => {
-                style::maybe_color(&sev_str, |t| t.red().to_string())
-            }
-            AuditSeverity::Critical => {
-                style::maybe_color(&sev_str, |t| t.red().bold().to_string())
-            }
+            AuditSeverity::Info => style::maybe_color(&sev_str, |t| t.blue().to_string()),
+            AuditSeverity::Warning => style::maybe_color(&sev_str, |t| t.yellow().to_string()),
+            AuditSeverity::Error => style::maybe_color(&sev_str, |t| t.red().to_string()),
+            AuditSeverity::Critical => style::maybe_color(&sev_str, |t| t.red().bold().to_string()),
         };
 
         println!(
@@ -252,11 +244,7 @@ pub fn view_audit_log(
             entry.description
         );
         if !entry.resource.is_empty() {
-            println!(
-                "      {} {}",
-                style::dim("Resource:"),
-                entry.resource
-            );
+            println!("      {} {}", style::dim("Resource:"), entry.resource);
         }
     }
 
@@ -473,11 +461,7 @@ pub fn scan_secrets(path: Option<String>, _ctx: &CliContext) -> Result<()> {
         );
     }
     if result.low_count > 0 {
-        println!(
-            "  {} {} LOW",
-            style::dim("●"),
-            result.low_count
-        );
+        println!("  {} {} LOW", style::dim("●"), result.low_count);
     }
 
     println!();

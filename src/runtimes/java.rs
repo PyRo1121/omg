@@ -16,8 +16,8 @@ use owo_colors::OwoColorize;
 use serde::Deserialize;
 
 use super::common::{
-    download_with_progress, extract_tar_gz,
-    print_already_installed, print_installed, set_current_version,
+    download_with_progress, extract_tar_gz, print_already_installed, print_installed,
+    set_current_version,
 };
 use crate::core::http::download_client;
 

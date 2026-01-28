@@ -111,10 +111,9 @@ pub fn cache() -> Result<()> {
     );
     println!(
         "  {}",
-        style::maybe_color(
-            "omg-${{ runner.os }}-${{ hashFiles('omg.lock') }}",
-            |t| t.cyan().to_string()
-        )
+        style::maybe_color("omg-${{ runner.os }}-${{ hashFiles('omg.lock') }}", |t| t
+            .cyan()
+            .to_string())
     );
 
     Ok(())

@@ -140,9 +140,7 @@ where
         // Execute user function with panic safety
         // SAFETY: We wrap in catch_unwind to ensure RefCell is properly released
         // even if f panics. This prevents the thread-local from becoming poisoned.
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            f(handle_ref)
-        }));
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(handle_ref)));
 
         // Drop the borrow before handling panic
         drop(maybe_handle);

@@ -246,7 +246,8 @@ pub fn search_sync(query: &str) -> Result<Vec<SyncPackage>> {
         // Match name first (fast)
         let mut matched = name.contains(&query_lower);
 
-        #[allow(clippy::collapsible_if)] // let-chain condition with multiple guards cannot be further collapsed
+        #[allow(clippy::collapsible_if)]
+        // let-chain condition with multiple guards cannot be further collapsed
         // If name doesn't match, check summary (slower as it might load more data)
         let mut summary = None;
         if !matched
@@ -258,7 +259,8 @@ pub fn search_sync(query: &str) -> Result<Vec<SyncPackage>> {
         }
 
         #[allow(clippy::redundant_closure_for_method_calls)] // rust-apt API requires closure; method ref would conflict with pkg borrow
-        #[allow(clippy::unnecessary_map_or)] // Readability: map_or is clearer than if-let for this size fallback
+        #[allow(clippy::unnecessary_map_or)]
+        // Readability: map_or is clearer than if-let for this size fallback
         if matched {
             let candidate = pkg.candidate();
             let version: String = if let Some(ref c) = candidate {
