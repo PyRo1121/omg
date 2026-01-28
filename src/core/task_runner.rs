@@ -110,13 +110,8 @@ impl TaskDetector {
     }
 
     fn load_config(path: &Path) -> Option<OmgProjectConfig> {
-        let config_path = path.join(".omg.toml");
-        if config_path.exists() {
-            let content = std::fs::read_to_string(config_path).ok()?;
-            toml::from_str(&content).ok()
-        } else {
-            None
-        }
+        let content = std::fs::read_to_string(path.join(".omg.toml")).ok()?;
+        toml::from_str(&content).ok()
     }
 
     pub fn detect(&self) -> Result<Vec<Task>> {
@@ -124,36 +119,33 @@ impl TaskDetector {
 
         // 1. Node.js / Bun (package.json)
         if let Some(package_manager) = detect_js_package_manager(&self.current_dir) {
+            let js_ecosystem = if package_manager == "bun" {
+                Ecosystem::Bun
+            } else {
+                Ecosystem::Node
+            };
+
             if let Ok(file) = std::fs::File::open(self.current_dir.join("package.json"))
                 && let Ok(pkg) = serde_json::from_reader::<_, PackageJson>(file)
                 && let Some(scripts) = pkg.scripts
             {
                 for (name, _) in scripts {
-                    let ecosystem = if package_manager == "bun" {
-                        Ecosystem::Bun
-                    } else {
-                        Ecosystem::Node
-                    };
                     tasks.push(Task {
                         name: name.clone(),
                         command: package_manager.clone(),
                         args: vec!["run".to_string(), name],
                         source: "package.json".to_string(),
-                        ecosystem,
+                        ecosystem: js_ecosystem.clone(),
                     });
                 }
             }
 
             tasks.push(Task {
                 name: "install".to_string(),
-                command: package_manager.clone(),
+                command: package_manager,
                 args: vec!["install".to_string()],
                 source: "package.json".to_string(),
-                ecosystem: if package_manager == "bun" {
-                    Ecosystem::Bun
-                } else {
-                    Ecosystem::Node
-                },
+                ecosystem: js_ecosystem,
             });
         }
 
@@ -271,33 +263,30 @@ impl TaskDetector {
         }
 
         // 9. Python (Pipenv)
-        #[allow(clippy::collapsible_if)]
-        if self.current_dir.join("Pipfile").exists() {
-            if let Ok(content) = std::fs::read_to_string(self.current_dir.join("Pipfile")) {
-                let mut in_scripts = false;
-                for line in content.lines() {
-                    let line = line.trim();
-                    if line == "[scripts]" {
-                        in_scripts = true;
-                        continue;
-                    }
-                    if line.starts_with('[') && line != "[scripts]" {
-                        in_scripts = false;
-                    }
-                    if in_scripts
-                        && !line.is_empty()
-                        && !line.starts_with('#')
-                        && let Some((key, _)) = line.split_once('=')
-                    {
-                        let key = key.trim();
-                        tasks.push(Task {
-                            name: key.to_string(),
-                            command: "pipenv".to_string(),
-                            args: vec!["run".to_string(), key.to_string()],
-                            source: "Pipfile".to_string(),
-                            ecosystem: Ecosystem::Python,
-                        });
-                    }
+        if let Ok(content) = std::fs::read_to_string(self.current_dir.join("Pipfile")) {
+            let mut in_scripts = false;
+            for line in content.lines() {
+                let line = line.trim();
+                if line == "[scripts]" {
+                    in_scripts = true;
+                    continue;
+                }
+                if line.starts_with('[') && line != "[scripts]" {
+                    in_scripts = false;
+                }
+                if in_scripts
+                    && !line.is_empty()
+                    && !line.starts_with('#')
+                    && let Some((key, _)) = line.split_once('=')
+                {
+                    let key = key.trim();
+                    tasks.push(Task {
+                        name: key.to_string(),
+                        command: "pipenv".to_string(),
+                        args: vec!["run".to_string(), key.to_string()],
+                        source: "Pipfile".to_string(),
+                        ecosystem: Ecosystem::Python,
+                    });
                 }
             }
         }
@@ -404,7 +393,6 @@ impl TaskDetector {
     }
 }
 
-/// Detect available tasks in the current directory
 pub fn detect_tasks() -> Result<Vec<Task>> {
     let detector = TaskDetector::new(std::env::current_dir()?);
     detector.detect()
@@ -430,115 +418,36 @@ pub fn run_task_advanced(
     let matches = detector.resolve(task_name, using, all)?;
 
     if matches.is_empty() {
-        // Fallback: Smart guessing
         let current_dir = std::env::current_dir()?;
 
-        if current_dir.join("Makefile").exists() {
-            println!(
-                "{} Task '{}' not explicitly found, trying 'make {}'...",
-                "→".yellow(),
-                task_name,
-                task_name
-            );
-            return execute_process(
-                "make",
-                &[task_name.to_string()],
-                extra_args,
-                backend_override,
-            );
+        // Ordered fallback table: (marker_files, command, args_before_task)
+        let fallbacks: &[(&[&str], &str, &[&str])] = &[
+            (&["Makefile"], "make", &[]),
+            (&["package.json"], "npm", &["run"]),
+            (&["Taskfile.yml", "Taskfile.yaml"], "task", &[]),
+            (&["Rakefile"], "rake", &[]),
+            (&["Pipfile"], "pipenv", &["run"]),
+            (&["deno.json"], "deno", &["task"]),
+            (&["composer.json"], "composer", &["run-script"]),
+        ];
+
+        for (markers, cmd, prefix_args) in fallbacks {
+            if markers.iter().any(|f| current_dir.join(f).exists()) {
+                let display_cmd = if prefix_args.is_empty() {
+                    format!("{cmd} {task_name}")
+                } else {
+                    format!("{cmd} {} {task_name}", prefix_args.join(" "))
+                };
+                println!(
+                    "{} Task '{task_name}' not found, trying '{display_cmd}'...",
+                    "→".yellow()
+                );
+                let mut args: Vec<String> = prefix_args.iter().map(std::string::ToString::to_string).collect();
+                args.push(task_name.to_string());
+                return execute_process(cmd, &args, extra_args, backend_override);
+            }
         }
 
-        if current_dir.join("package.json").exists() {
-            println!(
-                "{} Task '{}' not explicitly found, trying 'npm run {}'...",
-                "→".yellow(),
-                task_name,
-                task_name
-            );
-            return execute_process(
-                "npm",
-                &["run".to_string(), task_name.to_string()],
-                extra_args,
-                backend_override,
-            );
-        }
-
-        if current_dir.join("Taskfile.yml").exists() || current_dir.join("Taskfile.yaml").exists() {
-            println!(
-                "{} Task '{}' not parsed, trying 'task {}'...",
-                "→".yellow(),
-                task_name,
-                task_name
-            );
-            return execute_process(
-                "task",
-                &[task_name.to_string()],
-                extra_args,
-                backend_override,
-            );
-        }
-
-        if current_dir.join("Rakefile").exists() {
-            println!(
-                "{} Task '{}' not parsed, trying 'rake {}'...",
-                "→".yellow(),
-                task_name,
-                task_name
-            );
-            return execute_process(
-                "rake",
-                &[task_name.to_string()],
-                extra_args,
-                backend_override,
-            );
-        }
-
-        if current_dir.join("Pipfile").exists() {
-            println!(
-                "{} Task '{}' not explicitly found, trying 'pipenv run {}'...",
-                "→".yellow(),
-                task_name,
-                task_name
-            );
-            return execute_process(
-                "pipenv",
-                &["run".to_string(), task_name.to_string()],
-                extra_args,
-                backend_override,
-            );
-        }
-
-        if current_dir.join("deno.json").exists() {
-            println!(
-                "{} Task '{}' not explicitly found, trying 'deno task {}'...",
-                "→".yellow(),
-                task_name,
-                task_name
-            );
-            return execute_process(
-                "deno",
-                &["task".to_string(), task_name.to_string()],
-                extra_args,
-                backend_override,
-            );
-        }
-
-        if current_dir.join("composer.json").exists() {
-            println!(
-                "{} Task '{}' not explicitly found, trying 'composer run-script {}'...",
-                "→".yellow(),
-                task_name,
-                task_name
-            );
-            return execute_process(
-                "composer",
-                &["run-script".to_string(), task_name.to_string()],
-                extra_args,
-                backend_override,
-            );
-        }
-
-        // Final fallback: run the command directly with runtime-aware PATH
         return execute_process(task_name, &[], extra_args, backend_override);
     }
 
@@ -557,7 +466,6 @@ pub fn run_task_advanced(
     Ok(())
 }
 
-/// Execute a task (compatibility wrapper)
 pub fn run_task(
     task_name: &str,
     extra_args: &[String],
@@ -566,8 +474,6 @@ pub fn run_task(
     run_task_advanced(task_name, extra_args, backend_override, None, false)
 }
 
-/// Run an async future from sync context, reusing existing runtime if available
-/// This is the Rust 2024 best practice - avoid creating multiple runtimes
 fn run_async<F, T>(future: F) -> Result<T>
 where
     F: Future<Output = Result<T>>,
@@ -1140,7 +1046,7 @@ pub async fn run_tasks_parallel(
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used)] // Idiomatic in tests: panics on failure with clear error context
 mod tests {
     use super::*;
     use std::fs;
