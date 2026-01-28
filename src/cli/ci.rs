@@ -4,6 +4,8 @@ use anyhow::Result;
 use owo_colors::OwoColorize;
 use std::fs;
 
+use crate::cli::style;
+
 /// Initialize CI configuration
 pub fn init(provider: &str, advanced: bool) -> Result<()> {
     // SECURITY: Validate provider
@@ -13,15 +15,15 @@ pub fn init(provider: &str, advanced: bool) -> Result<()> {
     }
 
     let mode_str = if advanced {
-        "advanced".magenta().to_string()
+        style::maybe_color("advanced", |t| t.magenta().to_string())
     } else {
-        "basic".blue().to_string()
+        style::maybe_color("basic", |t| t.blue().to_string())
     };
 
     println!(
         "{} Generating {} CI configuration ({} mode)...\n",
-        "OMG".cyan().bold(),
-        provider.yellow(),
+        style::runtime("OMG"),
+        style::path(provider),
         mode_str
     );
 
@@ -37,7 +39,7 @@ pub fn init(provider: &str, advanced: bool) -> Result<()> {
 
 /// Validate environment matches CI expectations
 pub async fn validate() -> Result<()> {
-    println!("{} Validating CI environment...\n", "OMG".cyan().bold());
+    println!("{} Validating CI environment...\n", style::runtime("OMG"));
 
     let state = crate::core::env::fingerprint::EnvironmentState::capture().await?;
 
@@ -45,8 +47,8 @@ pub async fn validate() -> Result<()> {
     if !std::path::Path::new("omg.lock").exists() {
         println!(
             "  {} No omg.lock found - run {} first",
-            "⚠".yellow(),
-            "omg env capture".cyan()
+            style::maybe_color("⚠", |t| t.yellow().to_string()),
+            style::command("omg env capture")
         );
         return Ok(());
     }
@@ -54,20 +56,32 @@ pub async fn validate() -> Result<()> {
     let lock = crate::core::env::fingerprint::EnvironmentState::load("omg.lock")?;
 
     if state.hash == lock.hash {
-        println!("  {} Environment matches omg.lock", "✓".green());
+        println!(
+            "  {} Environment matches omg.lock",
+            style::maybe_color("✓", |t| t.green().to_string())
+        );
         Ok(())
     } else {
-        println!("  {} Environment drift detected!", "✗".red());
-        println!("  Run {} to see differences", "omg diff omg.lock".cyan());
+        println!(
+            "  {} Environment drift detected!",
+            style::maybe_color("✗", |t| t.red().to_string())
+        );
+        println!(
+            "  Run {} to see differences",
+            style::command("omg diff omg.lock")
+        );
         anyhow::bail!("Environment drift detected")
     }
 }
 
 /// Generate cache manifest for CI
 pub fn cache() -> Result<()> {
-    println!("{} CI Cache Paths\n", "OMG".cyan().bold());
+    println!("{} CI Cache Paths\n", style::runtime("OMG"));
 
-    println!("  {}", "Recommended cache paths:".bold());
+    println!(
+        "  {}",
+        style::maybe_color("Recommended cache paths:", |t| t.bold().to_string())
+    );
     println!();
     println!("  # OMG data directory");
     println!("  ~/.local/share/omg/");
@@ -91,10 +105,16 @@ pub fn cache() -> Result<()> {
     println!("  ~/.npm/");
     println!();
 
-    println!("  {}", "Cache key suggestion:".bold());
     println!(
         "  {}",
-        "omg-${{ runner.os }}-${{ hashFiles('omg.lock') }}".cyan()
+        style::maybe_color("Cache key suggestion:", |t| t.bold().to_string())
+    );
+    println!(
+        "  {}",
+        style::maybe_color(
+            "omg-${{ runner.os }}-${{ hashFiles('omg.lock') }}",
+            |t| t.cyan().to_string()
+        )
     );
 
     Ok(())
@@ -262,18 +282,25 @@ jobs:
     if std::path::Path::new(path).exists() {
         println!(
             "  {} {} already exists - not overwriting",
-            "⚠".yellow(),
+            style::maybe_color("⚠", |t| t.yellow().to_string()),
             path
         );
         println!("  Here's what we'd generate:\n");
-        println!("{}", config.dimmed());
+        println!("{}", style::dim(config));
     } else {
         fs::write(path, config)?;
-        println!("  {} Created {}", "✓".green(), path.cyan());
+        println!(
+            "  {} Created {}",
+            style::maybe_color("✓", |t| t.green().to_string()),
+            style::maybe_color(path, |t| t.cyan().to_string())
+        );
     }
 
     println!();
-    println!("  {}", "Next steps:".bold());
+    println!(
+        "  {}",
+        style::maybe_color("Next steps:", |t| t.bold().to_string())
+    );
     println!("    1. Commit the workflow file");
     println!("    2. Ensure omg.lock is committed");
     println!("    3. Push to trigger the workflow");
@@ -382,14 +409,18 @@ test:
     if std::path::Path::new(path).exists() {
         println!(
             "  {} {} already exists - not overwriting",
-            "⚠".yellow(),
+            style::maybe_color("⚠", |t| t.yellow().to_string()),
             path
         );
         println!("  Here's what we'd generate:\n");
-        println!("{}", config.dimmed());
+        println!("{}", style::dim(config));
     } else {
         fs::write(path, config)?;
-        println!("  {} Created {}", "✓".green(), path.cyan());
+        println!(
+            "  {} Created {}",
+            style::maybe_color("✓", |t| t.green().to_string()),
+            style::maybe_color(path, |t| t.cyan().to_string())
+        );
     }
 
     Ok(())
@@ -523,14 +554,18 @@ workflows:
     if std::path::Path::new(path).exists() {
         println!(
             "  {} {} already exists - not overwriting",
-            "⚠".yellow(),
+            style::maybe_color("⚠", |t| t.yellow().to_string()),
             path
         );
         println!("  Here's what we'd generate:\n");
-        println!("{}", config.dimmed());
+        println!("{}", style::dim(config));
     } else {
         fs::write(path, config)?;
-        println!("  {} Created {}", "✓".green(), path.cyan());
+        println!(
+            "  {} Created {}",
+            style::maybe_color("✓", |t| t.green().to_string()),
+            style::maybe_color(path, |t| t.cyan().to_string())
+        );
     }
 
     Ok(())

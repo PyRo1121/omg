@@ -118,8 +118,9 @@ pub async fn run(listener: UnixListener, state: Arc<DaemonState>) -> Result<()> 
                         security_vulnerabilities: vuln_count,
                         runtime_versions: versions,
                     };
-                    let _ = state.persistent.set_status(&res);
-                    state.cache.update_status(res);
+                    let res_arc = Arc::new(res);
+                    let _ = state.persistent.set_status(&res_arc);
+                    state.cache.update_status(res_arc);
                 }
             } else if let Err(e) = result {
                 tracing::error!("Status refresh panic: {e}");

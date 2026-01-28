@@ -342,7 +342,8 @@ async fn async_main(args: Vec<String>) -> Result<()> {
             interactive,
             no_aur,
         } => {
-            packages::search_with_json(query, *detailed, *interactive, cli.json, *no_aur).await?;
+            packages::search_with_json(query, *detailed, *interactive, cli.json, *no_aur)
+                .await?;
         }
         Commands::Install {
             packages,
@@ -411,9 +412,16 @@ async fn async_main(args: Vec<String>) -> Result<()> {
         }
         Commands::Which { runtime } => {
             if let Some(version) = runtimes::resolve_active_version(runtime) {
-                println!("{runtime} {version}");
+                println!(
+                    "{} {}",
+                    omg_lib::cli::style::runtime(runtime),
+                    omg_lib::cli::style::version(&version)
+                );
             } else {
-                println!("{runtime}: no version set");
+                println!(
+                    "{}: no version set (check .tool-versions, .nvmrc, etc.)",
+                    omg_lib::cli::style::runtime(runtime)
+                );
             }
         }
         Commands::Complete {
@@ -554,8 +562,8 @@ async fn async_main(args: Vec<String>) -> Result<()> {
         Commands::Why { package, reverse } => {
             why::run(package, *reverse)?;
         }
-        Commands::Outdated { security, json } => {
-            outdated::run(*security, *json).await?;
+        Commands::Outdated { security } => {
+            outdated::run(*security, cli.json).await?;
         }
         Commands::Pin {
             target,

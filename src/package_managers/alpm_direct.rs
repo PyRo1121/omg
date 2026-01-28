@@ -77,9 +77,9 @@ where
 
 /// Get a cached ALPM handle or create a new one for this thread
 ///
-/// SAFETY: Uses catch_unwind to ensure RefCell is properly released even if
+/// SAFETY: Uses `catch_unwind` to ensure `RefCell` is properly released even if
 /// the closure panics, preventing the thread-local from becoming poisoned.
-#[allow(clippy::expect_used)]
+#[allow(clippy::expect_used)] // ALPM handle initialization; failure indicates system misconfiguration
 pub fn with_handle<F, R>(f: F) -> Result<R>
 where
     F: FnOnce(&Alpm) -> Result<R>,
@@ -118,9 +118,9 @@ where
 
 /// Get a mutable cached ALPM handle
 ///
-/// SAFETY: Uses catch_unwind to ensure RefCell is properly released even if
+/// SAFETY: Uses `catch_unwind` to ensure `RefCell` is properly released even if
 /// the closure panics, preventing the thread-local from becoming poisoned.
-#[allow(clippy::expect_used)]
+#[allow(clippy::expect_used)] // ALPM handle initialization; failure indicates system misconfiguration
 pub fn with_handle_mut<F, R>(f: F) -> Result<R>
 where
     F: FnOnce(&mut Alpm) -> Result<R>,
@@ -244,7 +244,7 @@ pub fn get_package_info(name: &str) -> Result<Option<PackageInfo>> {
                 version: super::types::parse_version_or_zero(pkg.version()),
                 description: pkg.desc().unwrap_or("").to_string(),
                 url: pkg.url().map(std::string::ToString::to_string),
-                size: pkg.isize() as u64,
+                size: pkg.isize().try_into().unwrap_or(0),
                 install_size: Some(pkg.isize()),
                 download_size: None,
                 repo: "local".to_string(),
@@ -266,9 +266,9 @@ pub fn get_package_info(name: &str) -> Result<Option<PackageInfo>> {
                     version: super::types::parse_version_or_zero(pkg.version()),
                     description: pkg.desc().unwrap_or("").to_string(),
                     url: pkg.url().map(std::string::ToString::to_string),
-                    size: pkg.isize() as u64,
+                    size: pkg.isize().try_into().unwrap_or(0),
                     install_size: Some(pkg.isize()),
-                    download_size: Some(pkg.download_size() as u64),
+                    download_size: Some(pkg.download_size().try_into().unwrap_or(0)),
                     repo: db.name().to_string(),
                     depends: pkg.depends().iter().map(|d| d.name().to_string()).collect(),
                     licenses: pkg

@@ -51,11 +51,7 @@ pub fn info_sync(package: &str) -> Result<bool> {
                 .flatten()
             {
                 display_package_info(&info);
-                println!(
-                    "\n  {} Official repository ({})",
-                    style::success("Source:"),
-                    style::info("apt")
-                );
+                ui::print_kv("Source", &format!("Official repository ({})", style::info("apt")));
                 return Ok(true);
             }
         }
@@ -67,11 +63,7 @@ pub fn info_sync(package: &str) -> Result<bool> {
                 .flatten()
             {
                 crate::package_managers::display_pkg_info(&info);
-                println!(
-                    "\n  {} Official repository ({})",
-                    style::success("Source:"),
-                    style::info(&info.repo)
-                );
+                ui::print_kv("Source", &format!("Official repository ({})", style::info(&info.repo)));
 
                 // Track usage
                 crate::core::usage::track_info();
@@ -89,9 +81,8 @@ pub fn info_sync(package: &str) -> Result<bool> {
 pub async fn info_aur(package: &str) -> Result<()> {
     let aur = AurClient::new();
     let Some(info) = aur.info(package).await? else {
-        ui::print_error(format!(
-            "Package '{package}' not found in official repos or AUR."
-        ));
+        ui::print_error(format!("Package '{package}' not found"));
+        ui::print_tip("Try: omg search {package}");
         return Ok(());
     };
 
@@ -125,6 +116,7 @@ pub async fn info_aur(package: &str) -> Result<()> {
 #[cfg(not(feature = "arch"))]
 pub async fn info_aur(package: &str) -> Result<()> {
     ui::print_error(format!("Package '{package}' not found"));
+    ui::print_tip(&format!("Try: omg search {package}"));
     Ok(())
 }
 
@@ -170,11 +162,8 @@ async fn info_fallback(package: &str) -> Result<()> {
     }
 
     if use_debian_backend() {
-        println!(
-            "{} Package '{}' not found in apt repositories.",
-            style::error("Error:"),
-            style::package(package)
-        );
+        ui::print_error(format!("Package '{package}' not found"));
+        ui::print_tip(&format!("Try: omg search {package}"));
         return Ok(());
     }
 
@@ -191,6 +180,7 @@ async fn info_fallback(package: &str) -> Result<()> {
 
         let Some(pkg) = details.into_iter().find(|p| p.name == package) else {
             ui::print_error(format!("Package '{package}' not found"));
+            ui::print_tip(&format!("Try: omg search {package}"));
             return Ok(());
         };
 
@@ -216,6 +206,7 @@ async fn info_fallback(package: &str) -> Result<()> {
     #[cfg(not(feature = "arch"))]
     {
         ui::print_error(format!("Package '{package}' not found"));
+        ui::print_tip(&format!("Try: omg search {package}"));
     }
 
     Ok(())

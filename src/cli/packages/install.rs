@@ -47,7 +47,7 @@ pub async fn install(packages: &[String], yes: bool, dry_run: bool) -> Result<()
     Ok(())
 }
 
-#[allow(clippy::unnecessary_wraps)]
+#[allow(clippy::unnecessary_wraps)] // Result return required: API compat with feature-gated impls
 fn install_dry_run(packages: &[String]) -> Result<()> {
     ui::print_header("OMG", "Dry Run - Install Preview");
     ui::print_spacer();
@@ -57,7 +57,7 @@ fn install_dry_run(packages: &[String]) -> Result<()> {
         style::info("→")
     );
 
-    #[allow(unused_mut)]
+    #[allow(unused_mut)] // Mutated only inside feature-gated block
     let mut total_size: u64 = 0;
 
     for pkg_name in packages {
@@ -100,7 +100,7 @@ fn install_dry_run(packages: &[String]) -> Result<()> {
         style::info("→"),
         total_size as f64 / 1024.0 / 1024.0
     );
-    println!("\n  {} No changes made (dry run)", style::dim("ℹ"));
+    ui::print_dry_run_footer();
 
     Ok(())
 }
@@ -118,7 +118,7 @@ fn handle_missing_package(
         }
 
         println!();
-        ui::print_error(format!("Package '{pkg_name}' not found."));
+        ui::print_error(format!("Package '{pkg_name}' not found"));
         println!("Did you mean one of these?");
         println!();
 

@@ -176,6 +176,14 @@ pub fn print_warning(msg: impl Display) {
     println!("  {} {}", icon_style.render("⚠"), msg);
 }
 
+/// Dry-run footer: confirms no mutations occurred.
+pub fn print_dry_run_footer() {
+    println!(
+        "\n  {} No changes made (dry run)",
+        crate::cli::style::dim("ℹ")
+    );
+}
+
 /// Print a step in a multi-step process.
 pub fn print_step(step: usize, total: usize, msg: &str) {
     let step_str = format!(" {step:02}/{total:02} ");
@@ -211,9 +219,9 @@ pub fn prompt_theme() -> dialoguer::theme::ColorfulTheme {
 
 /// Wrap a block of text in a "Charm-style" bordered card.
 pub fn print_card(title: &str, content: Vec<String>) {
-    use comfy_table::Table;
     use comfy_table::modifiers::UTF8_ROUND_CORNERS;
     use comfy_table::presets::UTF8_FULL;
+    use comfy_table::Table;
 
     let mut table = Table::new();
     table

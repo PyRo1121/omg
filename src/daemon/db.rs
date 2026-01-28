@@ -144,8 +144,13 @@ impl PersistentCache {
     pub fn save_index(&self, packages: &[DetailedPackageInfo], db_mtime: u64) -> Result<()> {
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
+            .map_or_else(
+                |e| {
+                    tracing::warn!("System clock error, using fallback timestamp: {e}");
+                    u64::MAX // Force cache miss on clock errors
+                },
+                |d| d.as_secs(),
+            );
 
         let index = SerializedIndex {
             packages: packages.to_vec(),

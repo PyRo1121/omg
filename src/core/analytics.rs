@@ -334,7 +334,7 @@ fn create_event(
 }
 
 /// Queue an event for sending
-#[allow(clippy::implicit_hasher)]
+#[allow(clippy::implicit_hasher)] // Public API: callers pass HashMap directly; specifying hasher would break ergonomics
 pub fn queue_event(
     event_type: EventType,
     event_name: &str,
@@ -388,7 +388,7 @@ pub fn track_command(
 }
 
 /// Track a feature usage
-#[allow(clippy::implicit_hasher)]
+#[allow(clippy::implicit_hasher)] // Public API: callers pass HashMap directly; specifying hasher would break ergonomics
 pub fn track_feature(feature: &str, properties: HashMap<String, serde_json::Value>) {
     if !is_enabled() {
         return;
@@ -424,7 +424,7 @@ pub fn track_error(error_type: &str, message: &str, context: Option<&str>) {
 }
 
 /// Track performance metric
-#[allow(clippy::implicit_hasher)]
+#[allow(clippy::implicit_hasher)] // Public API: callers pass HashMap directly; specifying hasher would break ergonomics
 pub fn track_performance(
     operation: &str,
     duration_ms: u64,

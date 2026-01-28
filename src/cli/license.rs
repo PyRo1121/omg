@@ -4,6 +4,7 @@ use anyhow::Result;
 use owo_colors::OwoColorize;
 use std::io::{self, Write};
 
+use crate::cli::style;
 use crate::core::license::{
     self, ENTERPRISE_FEATURES, FREE_FEATURES, Feature, PRO_FEATURES, TEAM_FEATURES, Tier,
 };
@@ -24,12 +25,12 @@ pub async fn activate(key: &str) -> Result<()> {
         anyhow::bail!("Invalid license key format");
     }
 
-    println!("{} Activating license...\n", "OMG".cyan().bold());
+    println!("{} Activating license...\n", style::runtime("OMG"));
 
     // Prompt for user identification (for team management)
     println!(
         "  {} For team licenses, please provide your info so your manager",
-        "📋".cyan()
+        style::maybe_color("📋", |t| t.cyan().to_string())
     );
     println!("     can identify you in the dashboard. Press Enter to skip.\n");
 
@@ -52,11 +53,14 @@ pub async fn activate(key: &str) -> Result<()> {
     match license::activate_with_user(key, user_name_opt, user_email_opt).await {
         Ok(stored) => {
             let tier = stored.tier_enum();
-            println!("\n{} License activated successfully!\n", "✓".green());
+            println!(
+                "\n{} License activated successfully!\n",
+                style::maybe_color("✓", |t| t.green().to_string())
+            );
             println!(
                 "  Tier: {} {}",
-                tier.display_name().cyan().bold(),
-                tier.price().dimmed()
+                style::runtime(tier.display_name()),
+                style::dim(tier.price())
             );
             if let Some(customer) = &stored.customer {
                 println!("  Customer: {customer}");
@@ -66,14 +70,22 @@ pub async fn activate(key: &str) -> Result<()> {
             }
             println!("\n  Features unlocked:");
             for feature in license::features_for_tier(tier) {
-                println!("    {} {}", "✓".green(), feature.display_name());
+                println!(
+                    "    {} {}",
+                    style::maybe_color("✓", |t| t.green().to_string()),
+                    feature.display_name()
+                );
             }
         }
         Err(e) => {
-            println!("\n{} Activation failed: {}", "✗".red(), e);
+            println!(
+                "\n{} Activation failed: {}",
+                style::maybe_color("✗", |t| t.red().to_string()),
+                e
+            );
             println!(
                 "\n  Get a license at: {}",
-                "https://pyro1121.com/pricing".cyan()
+                style::url("https://pyro1121.com/pricing")
             );
         }
     }
@@ -83,17 +95,20 @@ pub async fn activate(key: &str) -> Result<()> {
 
 /// Show current license status
 pub fn status() -> Result<()> {
-    println!("{} License Status\n", "OMG".cyan().bold());
+    println!("{} License Status\n", style::runtime("OMG"));
 
     let tier = license::current_tier();
 
     match license::status() {
         Some(stored) => {
-            println!("  Status: {} ✓", "Active".green());
+            println!(
+                "  Status: {} ✓",
+                style::version("Active")
+            );
             println!(
                 "  Tier: {} {}",
-                tier.display_name().cyan().bold(),
-                tier.price().dimmed()
+                style::runtime(tier.display_name()),
+                style::dim(tier.price())
             );
             if let Some(customer) = &stored.customer {
                 println!("  Customer: {customer}");
@@ -103,72 +118,86 @@ pub fn status() -> Result<()> {
             }
         }
         None => {
-            println!("  Status: {} (Free tier)", "No license".yellow());
+            println!(
+                "  Status: {} (Free tier)",
+                style::maybe_color("No license", |t| t.yellow().to_string())
+            );
         }
     }
 
     // Show features by tier
-    println!("\n  {} {} features:", "Free".green().bold(), "✓".green());
+    println!(
+        "\n  {} {} features:",
+        style::maybe_color("Free", |t| t.green().bold().to_string()),
+        style::maybe_color("✓", |t| t.green().to_string())
+    );
     for feature in FREE_FEATURES {
-        println!("    {} {}", "✓".green(), feature.display_name());
+        println!(
+            "    {} {}",
+            style::maybe_color("✓", |t| t.green().to_string()),
+            feature.display_name()
+        );
     }
 
     println!(
         "\n  {} {} features:",
-        "Pro".cyan().bold(),
+        style::runtime("Pro"),
         if tier >= Tier::Pro {
-            "✓".green().to_string()
+            style::maybe_color("✓", |t| t.green().to_string())
         } else {
-            format!("{}", "$9/mo".dimmed())
+            style::dim("$9/mo")
         }
     );
     for feature in PRO_FEATURES {
         let icon = if license::has_feature(feature.as_str()) {
-            "✓".green().to_string()
+            style::maybe_color("✓", |t| t.green().to_string())
         } else {
-            "✗".red().to_string()
+            style::maybe_color("✗", |t| t.red().to_string())
         };
         println!("    {} {}", icon, feature.display_name());
     }
 
     println!(
         "\n  {} {} features:",
-        "Team".magenta().bold(),
+        style::maybe_color("Team", |t| t.magenta().bold().to_string()),
         if tier >= Tier::Team {
-            "✓".green().to_string()
+            style::maybe_color("✓", |t| t.green().to_string())
         } else {
-            format!("{}", "$200/mo".dimmed())
+            style::dim("$200/mo")
         }
     );
     for feature in TEAM_FEATURES {
         let icon = if license::has_feature(feature.as_str()) {
-            "✓".green().to_string()
+            style::maybe_color("✓", |t| t.green().to_string())
         } else {
-            "✗".red().to_string()
+            style::maybe_color("✗", |t| t.red().to_string())
         };
         println!("    {} {}", icon, feature.display_name());
     }
 
     println!(
         "\n  {} {} features:",
-        "Enterprise".yellow().bold(),
+        style::highlight("Enterprise"),
         if tier >= Tier::Enterprise {
-            "✓".green().to_string()
+            style::maybe_color("✓", |t| t.green().to_string())
         } else {
-            format!("{}", "$200/mo".dimmed())
+            style::dim("$200/mo")
         }
     );
     for feature in ENTERPRISE_FEATURES {
         let icon = if license::has_feature(feature.as_str()) {
-            "✓".green().to_string()
+            style::maybe_color("✓", |t| t.green().to_string())
         } else {
-            "✗".red().to_string()
+            style::maybe_color("✗", |t| t.red().to_string())
         };
         println!("    {} {}", icon, feature.display_name());
     }
 
     if tier == Tier::Free {
-        println!("\n  Upgrade: {}", "https://pyro1121.com/pricing".cyan());
+        println!(
+            "\n  Upgrade: {}",
+            style::url("https://pyro1121.com/pricing")
+        );
     }
 
     Ok(())
@@ -176,11 +205,14 @@ pub fn status() -> Result<()> {
 
 /// Deactivate current license
 pub fn deactivate() -> Result<()> {
-    println!("{} Deactivating license...", "OMG".cyan().bold());
+    println!("{} Deactivating license...", style::runtime("OMG"));
 
     license::remove_license()?;
 
-    println!("\n{} License deactivated.", "✓".green());
+    println!(
+        "\n{} License deactivated.",
+        style::maybe_color("✓", |t| t.green().to_string())
+    );
     println!("  You are now on the free tier.");
 
     Ok(())
@@ -198,10 +230,14 @@ pub fn check_feature(feature_name: &str) -> Result<()> {
     }
 
     let Some(feature) = Feature::from_str(feature_name) else {
-        println!("{} Unknown feature '{}'", "✗".red(), feature_name.cyan());
+        println!(
+            "{} Unknown feature '{}'",
+            style::maybe_color("✗", |t| t.red().to_string()),
+            style::maybe_color(feature_name, |t| t.cyan().to_string())
+        );
         println!(
             "  Run {} to see available features.",
-            "omg license status".cyan()
+            style::command("omg license status")
         );
         return Ok(());
     };
@@ -209,20 +245,27 @@ pub fn check_feature(feature_name: &str) -> Result<()> {
     if license::has_feature(feature_name) {
         println!(
             "{} Feature '{}' is available",
-            "✓".green(),
-            feature_name.cyan()
+            style::maybe_color("✓", |t| t.green().to_string()),
+            style::maybe_color(feature_name, |t| t.cyan().to_string())
         );
     } else {
         let required = feature.required_tier();
         println!(
             "{} Feature '{}' requires {} tier",
-            "✗".red(),
-            feature_name.cyan(),
-            required.display_name().bold()
+            style::maybe_color("✗", |t| t.red().to_string()),
+            style::maybe_color(feature_name, |t| t.cyan().to_string()),
+            style::maybe_color(required.display_name(), |t| t.bold().to_string())
         );
-        println!("\n  {} tier: {}", required.display_name(), required.price());
+        println!(
+            "\n  {} tier: {}",
+            required.display_name(),
+            required.price()
+        );
         println!("  Activate: omg license activate <key>");
-        println!("  Upgrade: {}", "https://pyro1121.com/pricing".cyan());
+        println!(
+            "  Upgrade: {}",
+            style::url("https://pyro1121.com/pricing")
+        );
     }
 
     Ok(())

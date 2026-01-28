@@ -69,7 +69,7 @@ fn test_system_status_cache() {
         runtime_versions: vec![],
     };
 
-    cache.update_status(status);
+    cache.update_status(Arc::new(status));
     let cached = cache.get_status().unwrap();
     assert_eq!(cached.total_packages, 100);
 }

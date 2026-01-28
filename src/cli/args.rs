@@ -43,7 +43,7 @@ pub enum Commands {
     /// Search for packages across system repositories and AUR (22x faster)
     #[command(visible_alias = "s", next_help_heading = "Package Management")]
     Search {
-        /// Search query
+        /// Package name or keyword to search for (e.g., firefox)
         query: String,
         /// Show detailed AUR info (votes, popularity)
         #[arg(short, long)]
@@ -103,7 +103,7 @@ pub enum Commands {
 
     /// Show package information
     Info {
-        /// Package name
+        /// Package name to look up (e.g., firefox)
         package: String,
     },
 
@@ -121,9 +121,6 @@ pub enum Commands {
         /// Show security updates only
         #[arg(short, long)]
         security: bool,
-        /// Output as JSON
-        #[arg(long)]
-        json: bool,
     },
 
     /// Pin a package to prevent updates
@@ -214,7 +211,7 @@ pub enum Commands {
     /// Instantly switch runtime versions (Node, Python, Rust, etc.)
     #[command(disable_version_flag = true, next_help_heading = "Runtime Management")]
     Use {
-        /// Runtime name (node, python, go, rust, ruby, java, bun)
+        /// Runtime to switch (node, python, go, rust, ruby, java, bun)
         runtime: String,
         /// Version to use (e.g., 20.10.0, latest, lts). If omitted, detects from version file.
         version: Option<String>,

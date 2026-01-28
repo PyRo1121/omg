@@ -112,9 +112,9 @@ fn display_explicit_list(mut packages: Vec<String>, json: bool) -> Result<()> {
             count: packages.len(),
             packages,
         };
-        if let Ok(json_str) = serde_json::to_string_pretty(&output) {
-            println!("{json_str}");
-        }
+        let json_str = serde_json::to_string_pretty(&output)
+            .unwrap_or_else(|_| r#"{"packages": [], "count": 0}"#.to_string());
+        println!("{json_str}");
         return Ok(());
     }
 

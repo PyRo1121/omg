@@ -216,7 +216,7 @@ impl SbomGenerator {
                 mime_type: None,
                 bom_ref: Some(bom_ref.clone()),
                 name: pkg.name.clone(),
-                #[allow(clippy::implicit_clone)]
+                #[allow(clippy::implicit_clone)] // Version is feature-gated type alias; .to_string() is the required conversion
                 version: pkg.version.to_string(),
                 description: Some(pkg.description.clone()),
                 purl: Some(format!("pkg:pacman/archlinux/{}@{}", pkg.name, pkg.version)),
@@ -339,7 +339,7 @@ impl SbomGenerator {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used)] // Idiomatic in tests: panics on failure with clear error context
 mod tests {
     use super::*;
 

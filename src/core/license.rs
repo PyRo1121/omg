@@ -653,7 +653,9 @@ pub async fn propose_change(message: &str, state: &serde_json::Value) -> Result<
         .await
         .context("Failed to parse proposal response")?;
 
-    Ok(res["proposal_id"].as_u64().unwrap_or(0) as u32)
+    let proposal_id = res["proposal_id"].as_u64().unwrap_or(0);
+    u32::try_from(proposal_id)
+        .with_context(|| format!("Proposal ID {proposal_id} exceeds u32 range"))
 }
 
 /// Review a team proposal

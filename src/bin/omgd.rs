@@ -117,7 +117,7 @@ async fn main() -> Result<()> {
     match result {
         Ok(run_result) => run_result?,
         Err(e) => {
-            #[allow(clippy::option_if_let_else)]
+            #[allow(clippy::option_if_let_else)] // Multiple downcast_ref checks; map_or_else cannot chain successive type attempts
             let msg = if let Some(s) = e.downcast_ref::<&str>() {
                 format!("Daemon panicked: {s}")
             } else if let Some(s) = e.downcast_ref::<String>() {

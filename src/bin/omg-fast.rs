@@ -19,6 +19,8 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 
+use anyhow::{Context, Result};
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let cmd = args.get(1).map_or("ec", String::as_str);
@@ -141,11 +143,10 @@ fn fast_info(package: &str) {
     }
 }
 
-fn send_search_request(
-    stream: &mut UnixStream,
-    query: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+fn send_search_request(stream: &mut UnixStream, query: &str) -> Result<()> {
     use omg_lib::daemon::protocol::{Request, Response, ResponseResult};
+    // Compile-time guarantee: u32 response lengths fit in usize on all supported targets.
+    const { assert!(usize::BITS >= 32, "omg-fast requires at least 32-bit usize") };
 
     let request = Request::Search {
         id: 0,
@@ -154,7 +155,8 @@ fn send_search_request(
     };
 
     let request_bytes = bitcode::serialize(&request)?;
-    let len = request_bytes.len() as u32;
+    let len = u32::try_from(request_bytes.len())
+        .context("Search request too large for protocol framing")?;
 
     stream.write_all(&len.to_be_bytes())?;
     stream.write_all(&request_bytes)?;
@@ -192,11 +194,10 @@ fn send_search_request(
     Ok(())
 }
 
-fn send_info_request(
-    stream: &mut UnixStream,
-    package: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+fn send_info_request(stream: &mut UnixStream, package: &str) -> Result<()> {
     use omg_lib::daemon::protocol::{Request, Response, ResponseResult};
+    // Compile-time guarantee: u32 response lengths fit in usize on all supported targets.
+    const { assert!(usize::BITS >= 32, "omg-fast requires at least 32-bit usize") };
 
     let request = Request::Info {
         id: 0,
@@ -204,7 +205,8 @@ fn send_info_request(
     };
 
     let request_bytes = bitcode::serialize(&request)?;
-    let len = request_bytes.len() as u32;
+    let len = u32::try_from(request_bytes.len())
+        .context("Info request too large for protocol framing")?;
 
     stream.write_all(&len.to_be_bytes())?;
     stream.write_all(&request_bytes)?;
@@ -230,7 +232,7 @@ fn send_info_request(
             }
         }
         Response::Error { message, .. } => {
-            eprintln!("Package not found: {message}");
+            eprintln!("{message}");
         }
         Response::Success { .. } => {}
     }
