@@ -208,20 +208,14 @@ pub async fn run_self_sudo(args: &[&str]) -> anyhow::Result<()> {
     let exe = std::env::current_exe()?;
 
     // Detect if we're running in development/test mode
-    let is_dev_build = cfg!(debug_assertions)
-        || std::env::var("OMG_TEST_MODE").is_ok()
+    let is_test_mode = std::env::var("OMG_TEST_MODE").is_ok()
         || std::env::var("CARGO_PRIMARY_PACKAGE").is_ok();
 
-    if is_dev_build {
+    if is_test_mode {
         anyhow::bail!(
-            "Privilege elevation is not supported in development builds.\n\
+            "Privilege elevation is not supported in test mode.\n\
              \n\
-             For development, either:\n\
-             1. Run with appropriate sudo permissions: sudo {} {:?}\n\
-             2. Install the release binary: cargo install --path .\n\
-             3. Build and install release binary: cargo build --release && sudo cp target/release/omg /usr/local/bin/\n\
-             \n\
-             In production, this command will automatically elevate when needed.",
+             For testing, run with appropriate sudo permissions: sudo {} {:?}",
             exe.display(),
             args
         );
