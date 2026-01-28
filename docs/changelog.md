@@ -10,6 +10,25 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 
 ---
 
+## [Unreleased]
+### ✨ New Features
+
+- Implement yay-style privilege dropping for AUR builds
+
+  - Drop to SUDO_USER/DOAS_USER or 'nobody' when running as root
+
+  - Prevents makepkg root execution error (security restriction)
+
+  - Applies to both native and sandboxed builds
+
+  - Matches yay's privilege handling pattern
+
+### 📚 Documentation
+
+- Update changelog [skip ci]
+
+Auto-generated from git history with git-cliff.
+
 ## [0.1.175] - 2026-01-28
 ### 📚 Documentation
 
