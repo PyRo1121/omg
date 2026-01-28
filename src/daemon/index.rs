@@ -145,7 +145,7 @@ impl Ord for RelevanceScore {
 impl PackageIndex {
     pub fn new() -> Result<Self> {
         #[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
-        use crate::core::env::distro::{detect_distro, Distro};
+        use crate::core::env::distro::{Distro, detect_distro};
         #[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
         let distro = detect_distro();
 

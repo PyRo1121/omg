@@ -215,7 +215,10 @@ fn search_sync_official_only(query: &str) -> Result<bool> {
             style::package(&pkg.name),
             style::version(&pkg.version),
             source_style,
-            style::dim(&crate::cli::packages::common::truncate(&pkg.description, 50))
+            style::dim(&crate::cli::packages::common::truncate(
+                &pkg.description,
+                50
+            ))
         )?;
     }
 
