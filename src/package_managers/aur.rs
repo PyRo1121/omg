@@ -1003,7 +1003,7 @@ impl AurClient {
         let dest = self.build_dir.join(package);
 
         let spinner = create_spinner("Cloning repository...");
-        
+
         let url_clone = url.clone();
         let dest_clone = dest.clone();
         let result = tokio::task::spawn_blocking(move || {
@@ -1016,9 +1016,9 @@ impl AurClient {
             builder.clone(&url_clone, &dest_clone)
         })
         .await?;
-        
+
         spinner.finish_and_clear();
-        
+
         result.with_context(|| format!("Failed to clone {url}"))?;
         Ok(())
     }
@@ -1026,36 +1026,43 @@ impl AurClient {
     /// Update existing clone
     async fn git_pull(&self, pkg_dir: &Path) -> Result<()> {
         let spinner = create_spinner("Pulling latest changes...");
-        
+
         let pkg_dir_clone = pkg_dir.to_path_buf();
         let result = tokio::task::spawn_blocking(move || -> Result<()> {
-            let repo = git2::Repository::open(&pkg_dir_clone)
-                .context("Failed to open git repository")?;
-            
-            let mut remote = repo.find_remote("origin")
+            let repo =
+                git2::Repository::open(&pkg_dir_clone).context("Failed to open git repository")?;
+
+            let mut remote = repo
+                .find_remote("origin")
                 .context("Failed to find origin remote")?;
-            
-            remote.fetch(&["main", "master"], None, None)
+
+            remote
+                .fetch(&["main", "master"], None, None)
                 .context("Failed to fetch from remote")?;
-            
-            let fetch_head = repo.find_reference("FETCH_HEAD")
+
+            let fetch_head = repo
+                .find_reference("FETCH_HEAD")
                 .context("Failed to find FETCH_HEAD")?;
-            let fetch_commit = repo.reference_to_annotated_commit(&fetch_head)
+            let fetch_commit = repo
+                .reference_to_annotated_commit(&fetch_head)
                 .context("Failed to get fetch commit")?;
-            
-            let (analysis, _) = repo.merge_analysis(&[&fetch_commit])
+
+            let (analysis, _) = repo
+                .merge_analysis(&[&fetch_commit])
                 .context("Failed to analyze merge")?;
-            
+
             if analysis.is_up_to_date() {
                 return Ok(());
             }
-            
+
             if analysis.is_fast_forward() {
                 let refname = "refs/heads/master";
-                let mut reference = repo.find_reference(refname)
+                let mut reference = repo
+                    .find_reference(refname)
                     .or_else(|_| repo.find_reference("refs/heads/main"))
                     .context("Failed to find branch reference")?;
-                reference.set_target(fetch_commit.id(), "Fast-forward")
+                reference
+                    .set_target(fetch_commit.id(), "Fast-forward")
                     .context("Failed to fast-forward")?;
                 repo.set_head(refname)
                     .or_else(|_| repo.set_head("refs/heads/main"))
@@ -1064,14 +1071,14 @@ impl AurClient {
                     .context("Failed to checkout HEAD")?;
                 return Ok(());
             }
-            
+
             anyhow::bail!(
                 "Cannot fast-forward, manual merge required in {}",
                 pkg_dir_clone.display()
             )
         })
         .await?;
-        
+
         spinner.finish_and_clear();
         result
     }
@@ -1650,10 +1657,7 @@ impl AurClient {
 
     /// Install the built package via sudo omg install <path>
     async fn install_built_package(pkg_path: &Path) -> Result<()> {
-        println!(
-            "{} Installing built package...",
-            "→".blue()
-        );
+        println!("{} Installing built package...", "→".blue());
 
         let pkg_path_str = pkg_path.to_string_lossy().to_string();
 
