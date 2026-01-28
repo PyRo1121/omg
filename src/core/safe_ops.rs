@@ -4,8 +4,6 @@
 //! require `unwrap()` or `expect()`. This module helps eliminate panic-prone patterns
 //! throughout the codebase while maintaining performance and ergonomics.
 
-#![allow(clippy::unwrap_used, clippy::expect_used)]
-
 use anyhow::{Context, Result};
 use std::num::{NonZeroU32, NonZeroU64, NonZeroUsize};
 use std::path::{Path, PathBuf};
@@ -52,19 +50,31 @@ pub fn nonzero_usize(value: usize, context: &str) -> Result<NonZeroUsize> {
         .with_context(|| format!("Failed to create NonZeroUsize for {context}"))
 }
 
-/// Create a `NonZeroU32` with a default fallback value
+/// Create a `NonZeroU32` with a default fallback value.
+///
+/// If both `value` and `default` are zero, falls back to `NonZeroU32::MIN` (1).
 pub fn nonzero_u32_or_default(value: u32, default: u32) -> NonZeroU32 {
-    NonZeroU32::new(value).unwrap_or_else(|| NonZeroU32::new(default).unwrap())
+    NonZeroU32::new(value)
+        .or_else(|| NonZeroU32::new(default))
+        .unwrap_or(NonZeroU32::MIN)
 }
 
-/// Create a `NonZeroU64` with a default fallback value
+/// Create a `NonZeroU64` with a default fallback value.
+///
+/// If both `value` and `default` are zero, falls back to `NonZeroU64::MIN` (1).
 pub fn nonzero_u64_or_default(value: u64, default: u64) -> NonZeroU64 {
-    NonZeroU64::new(value).unwrap_or_else(|| NonZeroU64::new(default).unwrap())
+    NonZeroU64::new(value)
+        .or_else(|| NonZeroU64::new(default))
+        .unwrap_or(NonZeroU64::MIN)
 }
 
-/// Create a `NonZeroUsize` with a default fallback value
+/// Create a `NonZeroUsize` with a default fallback value.
+///
+/// If both `value` and `default` are zero, falls back to `NonZeroUsize::MIN` (1).
 pub fn nonzero_usize_or_default(value: usize, default: usize) -> NonZeroUsize {
-    NonZeroUsize::new(value).unwrap_or_else(|| NonZeroUsize::new(default).unwrap())
+    NonZeroUsize::new(value)
+        .or_else(|| NonZeroUsize::new(default))
+        .unwrap_or(NonZeroUsize::MIN)
 }
 
 /// Safe alternative to `expect()` with better error context
@@ -177,6 +187,10 @@ pub struct TransactionGuard<T> {
     committed: bool,
 }
 
+// SAFETY: The expects below guard a logical invariant — `inner` is `Some` until
+// `commit()` consumes it. Calling `inner()`/`inner_mut()` after `commit()` is a
+// programming error (use-after-move), so panicking is correct.
+#[allow(clippy::expect_used)]
 impl<T> TransactionGuard<T> {
     /// Create a new transaction guard
     pub fn new(transaction: T) -> Self {
@@ -272,10 +286,10 @@ impl RateLimiterConfig {
 
 impl Default for RateLimiterConfig {
     fn default() -> Self {
-        // Safe default - use expect_or for backwards compatibility
         Self {
-            requests_per_second: expect_or(NonZeroU32::new(100), "default rate limit").unwrap(),
-            burst_size: expect_or(NonZeroU32::new(200), "default burst size").unwrap(),
+            // SAFETY: 100 and 200 are known non-zero constants; these cannot fail.
+            requests_per_second: NonZeroU32::new(100).expect("100 is non-zero"),
+            burst_size: NonZeroU32::new(200).expect("200 is non-zero"),
         }
     }
 }

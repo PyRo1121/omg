@@ -80,7 +80,7 @@ impl PackageCache {
     }
 
     /// Get cached system status (Arc clone is cheap - just pointer copy)
-    #[inline(always)]
+    #[inline]
     #[must_use]
     pub fn get_status(&self) -> Option<Arc<StatusResult>> {
         self.system_status.get(KEY_STATUS)
@@ -90,19 +90,18 @@ impl PackageCache {
     pub fn update_status(&self, result: Arc<StatusResult>) {
         self.explicit_count
             .insert(KEY_EXPLICIT_COUNT.to_string(), result.explicit_packages);
-        self.system_status
-            .insert(KEY_STATUS.to_string(), result);
+        self.system_status.insert(KEY_STATUS.to_string(), result);
     }
 
     /// Get cached explicit packages (Arc clone is cheap - just pointer copy)
-    #[inline(always)]
+    #[inline]
     #[must_use]
     pub fn get_explicit(&self) -> Option<Arc<Vec<String>>> {
         self.explicit_packages.get(KEY_EXPLICIT)
     }
 
     /// Get cached explicit package count
-    #[inline(always)]
+    #[inline]
     #[must_use]
     pub fn get_explicit_count(&self) -> Option<usize> {
         self.explicit_count.get(KEY_EXPLICIT_COUNT)
@@ -118,11 +117,12 @@ impl PackageCache {
 
     /// Update explicit package count cache
     pub fn update_explicit_count(&self, count: usize) {
-        self.explicit_count.insert(KEY_EXPLICIT_COUNT.to_string(), count);
+        self.explicit_count
+            .insert(KEY_EXPLICIT_COUNT.to_string(), count);
     }
 
     /// Get cached results for a query (Arc clone is cheap - just pointer copy)
-    #[inline(always)]
+    #[inline]
     #[must_use]
     pub fn get(&self, query: &str) -> Option<Arc<Vec<PackageInfo>>> {
         self.cache.get(query)
@@ -159,7 +159,7 @@ impl PackageCache {
     #[must_use]
     pub fn stats(&self) -> CacheStats {
         CacheStats {
-            size: self.cache.entry_count() as usize,
+            size: self.cache.entry_count().min(usize::MAX as u64) as usize,
             max_size: self.max_size,
         }
     }

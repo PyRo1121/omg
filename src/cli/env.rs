@@ -131,7 +131,8 @@ pub async fn share(description: String, public: bool) -> Result<()> {
 
     let token =
         std::env::var("GITHUB_TOKEN").context("GITHUB_TOKEN environment variable not set")?;
-    let content = std::fs::read_to_string("omg.lock")?;
+    let content =
+        std::fs::read_to_string("omg.lock").context("Failed to read omg.lock for sharing")?;
 
     let mut files = HashMap::new();
     files.insert("omg.lock".to_string(), GistFile { content });
@@ -235,7 +236,7 @@ pub async fn sync(url_or_id: String) -> Result<()> {
             client.get(&file.raw_url).send().await?.text().await?
         };
 
-        std::fs::write("omg.lock", content)?;
+        std::fs::write("omg.lock", content).context("Failed to write omg.lock from Gist")?;
         execute_cmd(Cmd::batch([
             Cmd::success("omg.lock updated from Gist"),
             Cmd::info("Running environment check..."),

@@ -1,10 +1,10 @@
 //! OMG Settings and Configuration
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-use crate::core::{RuntimeBackend, paths};
+use crate::core::{paths, RuntimeBackend};
 
 /// OMG configuration settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,7 +36,7 @@ pub struct Settings {
 }
 
 /// AUR build configuration
-#[allow(clippy::struct_excessive_bools)]
+#[allow(clippy::struct_excessive_bools)] // Configuration struct: booleans map to user-facing toggle options
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AurBuildSettings {
@@ -132,8 +132,10 @@ impl Settings {
         let config_path = Self::config_path()?;
 
         if config_path.exists() {
-            let content = std::fs::read_to_string(&config_path)?;
-            Ok(toml::from_str(&content)?)
+            let content = std::fs::read_to_string(&config_path)
+                .with_context(|| format!("Failed to read config: {}", config_path.display()))?;
+            Ok(toml::from_str(&content)
+                .with_context(|| format!("Failed to parse config: {}", config_path.display()))?)
         } else {
             Ok(Self::default())
         }
@@ -144,11 +146,13 @@ impl Settings {
         let config_path = Self::config_path()?;
 
         if let Some(parent) = config_path.parent() {
-            std::fs::create_dir_all(parent)?;
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to create config dir: {}", parent.display()))?;
         }
 
-        let content = toml::to_string_pretty(self)?;
-        std::fs::write(&config_path, content)?;
+        let content = toml::to_string_pretty(self).context("Failed to serialize config")?;
+        std::fs::write(&config_path, &content)
+            .with_context(|| format!("Failed to write config: {}", config_path.display()))?;
 
         Ok(())
     }
