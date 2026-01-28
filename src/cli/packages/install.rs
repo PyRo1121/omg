@@ -217,66 +217,59 @@ async fn handle_aur_package(
 
     let aur_helper = detect_aur_helper();
 
-    match aur_helper {
-        Some(helper) => {
-            let should_install = if yes {
-                true
-            } else if console::user_attended() {
-                use dialoguer::Confirm;
-                Confirm::with_theme(&ui::prompt_theme())
-                    .with_prompt(format!("Install {} from AUR via {}?", pkg_name, helper))
-                    .default(false)
-                    .interact()?
-            } else {
-                false
-            };
+    if let Some(helper) = aur_helper {
+        let should_install = if yes {
+            true
+        } else if console::user_attended() {
+            use dialoguer::Confirm;
+            Confirm::with_theme(&ui::prompt_theme())
+                .with_prompt(format!("Install {pkg_name} from AUR via {helper}?"))
+                .default(false)
+                .interact()?
+        } else {
+            false
+        };
 
-            if should_install {
-                println!();
-                ui::print_header("AUR", &format!("Installing via {}", helper));
+        if should_install {
+            println!();
+            ui::print_header("AUR", &format!("Installing via {helper}"));
+            ui::print_spacer();
+
+            let status = tokio::process::Command::new(&helper)
+                .args(["-S", "--noconfirm", pkg_name])
+                .status()
+                .await
+                .with_context(|| format!("Failed to execute {helper}"))?;
+
+            if status.success() {
                 ui::print_spacer();
-
-                let status = tokio::process::Command::new(&helper)
-                    .args(["-S", "--noconfirm", pkg_name])
-                    .status()
-                    .await
-                    .with_context(|| format!("Failed to execute {}", helper))?;
-
-                if status.success() {
-                    ui::print_spacer();
-                    ui::print_success(format!("{} installed successfully from AUR", pkg_name));
-                    crate::core::usage::track_install(&[pkg_name.to_string()]);
-                    Ok(())
-                } else {
-                    anyhow::bail!("{} failed to install {}", helper, pkg_name);
-                }
+                ui::print_success(format!("{pkg_name} installed successfully from AUR"));
+                crate::core::usage::track_install(&[pkg_name.to_string()]);
+                Ok(())
             } else {
-                anyhow::bail!("Installation cancelled by user");
+                anyhow::bail!("{helper} failed to install {pkg_name}");
             }
+        } else {
+            anyhow::bail!("Installation cancelled by user");
         }
-        None => {
-            println!();
-            ui::print_error("No AUR helper found (yay or paru required)");
-            println!();
-            println!("  {} Install an AUR helper first:", style::info("→"));
-            println!(
-                "    {} sudo pacman -S --needed base-devel git",
-                style::dim("$")
-            );
-            println!(
-                "    {} git clone https://aur.archlinux.org/yay.git",
-                style::dim("$")
-            );
-            println!("    {} cd yay && makepkg -si", style::dim("$"));
-            println!();
-            println!(
-                "  {} Then retry: omg install {}",
-                style::info("→"),
-                pkg_name
-            );
+    } else {
+        println!();
+        ui::print_error("No AUR helper found (yay or paru required)");
+        println!();
+        println!("  {} Install an AUR helper first:", style::info("→"));
+        println!(
+            "    {} sudo pacman -S --needed base-devel git",
+            style::dim("$")
+        );
+        println!(
+            "    {} git clone https://aur.archlinux.org/yay.git",
+            style::dim("$")
+        );
+        println!("    {} cd yay && makepkg -si", style::dim("$"));
+        println!();
+        println!("  {} Then retry: omg install {pkg_name}", style::info("→"));
 
-            anyhow::bail!("AUR helper required but not found");
-        }
+        anyhow::bail!("AUR helper required but not found");
     }
 }
 
