@@ -7,18 +7,20 @@ use crate::daemon::protocol::{DetailedPackageInfo, PackageInfo};
 
 /// A highly-optimized string interner for reducing memory footprint
 #[derive(Default)]
-#[allow(dead_code)]
 struct StringPool {
     pool: Vec<u8>,
     offsets: AHashMap<String, u32>,
 }
 
 impl StringPool {
-    #[allow(dead_code)]
     fn intern(&mut self, s: &str) -> u32 {
         if let Some(&offset) = self.offsets.get(s) {
             return offset;
         }
+        debug_assert!(
+            u32::try_from(self.pool.len()).is_ok(),
+            "String pool exceeded u32 address space"
+        );
         let offset = self.pool.len() as u32;
         self.pool.extend_from_slice(s.as_bytes());
         self.pool.push(0); // Null terminator
@@ -43,12 +45,6 @@ pub struct PackageIndex {
     pool: StringPool,
     /// Maps package name to index in `items`
     name_to_idx: AHashMap<String, usize>,
-    /// Contiguous lowercased search text for all packages (reserved for future use)
-    #[allow(dead_code)]
-    search_buffer: Vec<u8>,
-    /// Starting offset of each package in `search_buffer` (reserved for future use)
-    #[allow(dead_code)]
-    package_offsets: Vec<u32>,
     /// Reader-writer lock for package lookups
     lock: RwLock<()>,
 }
@@ -127,7 +123,7 @@ impl Ord for RelevanceScore {
 impl PackageIndex {
     pub fn new() -> Result<Self> {
         #[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
-        use crate::core::env::distro::{Distro, detect_distro};
+        use crate::core::env::distro::{detect_distro, Distro};
         #[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
         let distro = detect_distro();
 
@@ -174,8 +170,6 @@ impl PackageIndex {
         let mut pool = StringPool::default();
         let mut items = Vec::new();
         let mut name_to_idx = AHashMap::default();
-        let mut search_buffer = Vec::new();
-        let mut package_offsets = Vec::new();
 
         let db_packages = debian_db::get_detailed_packages()?;
         for pkg in db_packages {
@@ -193,27 +187,13 @@ impl PackageIndex {
                 source_offset: pool.intern("official"),
             });
 
-            package_offsets.push(search_buffer.len() as u32);
-            // OPTIMIZATION: Pre-allocate buffer to avoid format! + to_ascii_lowercase double allocation
-            // This is 25% faster index build (80ms → 60ms on 20K packages)
-            let mut temp_buf = String::with_capacity(pkg.name.len() + pkg.description.len() + 1);
-            temp_buf.push_str(&pkg.name);
-            temp_buf.push(' ');
-            temp_buf.push_str(&pkg.description);
-            let search_str = temp_buf.to_ascii_lowercase();
-            search_buffer.extend_from_slice(search_str.as_bytes());
-            search_buffer.push(0);
-
             name_to_idx.insert(pkg.name.clone(), idx);
         }
-        package_offsets.push(search_buffer.len() as u32);
 
         Ok(Self {
             items,
             pool,
             name_to_idx,
-            search_buffer,
-            package_offsets,
             lock: RwLock::new(()),
         })
     }
@@ -224,8 +204,6 @@ impl PackageIndex {
         let mut pool = StringPool::default();
         let mut items = Vec::new();
         let mut name_to_idx = AHashMap::default();
-        let mut search_buffer = Vec::new();
-        let mut package_offsets = Vec::new();
 
         let db_packages = pacman_db::get_detailed_packages()?;
         for pkg in db_packages {
@@ -243,27 +221,13 @@ impl PackageIndex {
                 source_offset: pool.intern("official"),
             });
 
-            package_offsets.push(search_buffer.len() as u32);
-            // OPTIMIZATION: Pre-allocate buffer to avoid format! + to_ascii_lowercase double allocation
-            // This is 25% faster index build (80ms → 60ms on 20K packages)
-            let mut temp_buf = String::with_capacity(pkg.name.len() + pkg.desc.len() + 1);
-            temp_buf.push_str(&pkg.name);
-            temp_buf.push(' ');
-            temp_buf.push_str(&pkg.desc);
-            let search_str = temp_buf.to_ascii_lowercase();
-            search_buffer.extend_from_slice(search_str.as_bytes());
-            search_buffer.push(0);
-
             name_to_idx.insert(pkg.name.clone(), idx);
         }
-        package_offsets.push(search_buffer.len() as u32);
 
         Ok(Self {
             items,
             pool,
             name_to_idx,
-            search_buffer,
-            package_offsets,
             lock: RwLock::new(()),
         })
     }
@@ -369,7 +333,16 @@ impl PackageIndex {
     pub fn get(&self, name: &str) -> Option<DetailedPackageInfo> {
         // CRITICAL OPTIMIZATION: Copy offsets under lock, release lock, THEN allocate strings
         // This improves concurrent throughput by 3-5x by not holding lock during allocations
-        let (name_offset, version_offset, desc_offset, url_offset, repo_offset, source_offset, size, download_size) = {
+        let (
+            name_offset,
+            version_offset,
+            desc_offset,
+            url_offset,
+            repo_offset,
+            source_offset,
+            size,
+            download_size,
+        ) = {
             let _read_guard = self.lock.read();
             let &idx = self.name_to_idx.get(name)?;
             let item = &self.items[idx];

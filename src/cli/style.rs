@@ -109,18 +109,8 @@ pub fn theme() -> ColorTheme {
     }
 }
 
-/// Set the color theme
-pub fn set_theme(new_theme: ColorTheme) {
-    let theme_id = if new_theme.primary == ColorTheme::nord().primary {
-        THEME_NORD
-    } else if new_theme.primary == ColorTheme::gruvbox().primary {
-        THEME_GRUVBOX
-    } else if new_theme.primary == ColorTheme::dracula().primary {
-        THEME_DRACULA
-    } else {
-        THEME_CATPPUCCIN
-    };
-    CURRENT_THEME.store(theme_id, Ordering::Relaxed);
+fn set_theme_id(id: u8) {
+    CURRENT_THEME.store(id, Ordering::Relaxed);
 }
 
 /// Detect if colors should be enabled
@@ -338,8 +328,7 @@ pub fn duration(ms: u64) -> String {
 
 /// Create a spinner for indeterminate progress
 #[must_use]
-#[allow(clippy::expect_used)]
-#[allow(clippy::literal_string_with_formatting_args)]
+#[allow(clippy::expect_used, clippy::literal_string_with_formatting_args)] // Static indicatif templates are always valid; braces are template syntax not Rust format args
 pub fn spinner(msg: &str) -> ProgressBar {
     let pb = ProgressBar::new_spinner();
 
@@ -369,8 +358,7 @@ pub fn spinner(msg: &str) -> ProgressBar {
 
 /// Create a progress bar for determinate progress
 #[must_use]
-#[allow(clippy::expect_used)]
-#[allow(clippy::literal_string_with_formatting_args)]
+#[allow(clippy::expect_used, clippy::literal_string_with_formatting_args)] // Static indicatif templates are always valid; braces are template syntax not Rust format args
 pub fn progress_bar(total: u64, msg: &str) -> ProgressBar {
     let pb = ProgressBar::new(total);
 
@@ -392,8 +380,7 @@ pub fn progress_bar(total: u64, msg: &str) -> ProgressBar {
 
 /// Create a download progress bar with speed and ETA
 #[must_use]
-#[allow(clippy::expect_used)]
-#[allow(clippy::literal_string_with_formatting_args)]
+#[allow(clippy::expect_used, clippy::literal_string_with_formatting_args)] // Static indicatif templates are always valid; braces are template syntax not Rust format args
 pub fn download_bar(total: u64, filename: &str) -> ProgressBar {
     let pb = ProgressBar::new(total);
 
@@ -426,63 +413,17 @@ pub fn multi_progress() -> MultiProgress {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// FORMATTED OUTPUT HELPERS
-// ═══════════════════════════════════════════════════════════════════════════
-
-/// Print a key-value pair with consistent formatting
-pub fn print_kv(key: &str, value: &str) {
-    println!("  {}: {}", key.bold(), value);
-}
-
-/// Print a list item with bullet
-pub fn print_bullet(item: &str) {
-    let bullet = if use_unicode() { "•" } else { "*" };
-    println!(
-        "  {} {}",
-        maybe_color(bullet, |b| b.cyan().to_string()),
-        item
-    );
-}
-
-/// Print a numbered list item
-pub fn print_numbered(n: usize, item: &str) {
-    println!("  {}. {}", n.to_string().bold(), item);
-}
-
-/// Print a section header
-pub fn print_section(title: &str) {
-    println!("\n{}\n", title.bold().underline());
-}
-
-/// Print a horizontal rule
-pub fn print_hr() {
-    let char = if use_unicode() { "─" } else { "-" };
-    println!("{}", char.repeat(60).dimmed());
-}
-
-/// Print a blank line
-pub fn print_blank() {
-    println!();
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
 // THEME INITIALIZATION
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Initialize the color theme from environment or config
-///
-/// Called during CLI startup to set up the theme based on:
-/// - `OMG_THEME` environment variable
-/// - User config file (future)
 pub fn init_theme() {
-    let theme = match env::var("OMG_THEME").as_deref() {
-        Ok("nord") => ColorTheme::nord(),
-        Ok("gruvbox") => ColorTheme::gruvbox(),
-        Ok("dracula") => ColorTheme::dracula(),
-        Ok("catppuccin" | _) | Err(_) => ColorTheme::catppuccin(), // Default
+    let id = match env::var("OMG_THEME").as_deref() {
+        Ok("nord") => THEME_NORD,
+        Ok("gruvbox") => THEME_GRUVBOX,
+        Ok("dracula") => THEME_DRACULA,
+        Ok("catppuccin" | _) | Err(_) => THEME_CATPPUCCIN,
     };
-
-    set_theme(theme);
+    set_theme_id(id);
 }
 
 #[cfg(test)]
