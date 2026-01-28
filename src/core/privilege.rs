@@ -313,10 +313,9 @@ pub async fn run_self_sudo(args: &[&str]) -> anyhow::Result<()> {
                         tracing::info!("Interactive sudo succeeded, process replaced");
                         std::process::exit(0);
                     } else {
-                        anyhow::bail!(
-                            "Sudo failed with exit code: {}",
-                            status.code().unwrap_or(-1)
-                        );
+                        // Sudo authentication succeeded, but the command failed
+                        // The elevated process already printed its error, so exit silently
+                        std::process::exit(status.code().unwrap_or(1));
                     }
                 } else {
                     // Timeout - kill the process
