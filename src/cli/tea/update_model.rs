@@ -209,10 +209,10 @@ impl Model for UpdateModel {
                 self.updates = updates;
                 self.state = UpdateState::ShowingUpdates;
 
-                let summary_data: Vec<(String, String, String)> = self
+                let summary_data: Vec<_> = self
                     .updates
                     .iter()
-                    .map(|u| (u.name.clone(), u.old_version.clone(), u.new_version.clone()))
+                    .map(|u| (u.name.as_str(), u.old_version.as_str(), u.new_version.as_str()))
                     .collect();
 
                 let summary_cmd = Components::update_summary(summary_data);
