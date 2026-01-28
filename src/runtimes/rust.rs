@@ -632,7 +632,7 @@ fn manifest_component_url(manifest: &toml::Value, component: &str, target: &str)
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used)] // Idiomatic in tests: panics on failure with clear error context
 mod tests {
     use super::*;
 
