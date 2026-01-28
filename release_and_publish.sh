@@ -263,8 +263,14 @@ build_release() {
   log_info "Target: $TARGET"
   
   # Build with optimizations (arch feature for Arch Linux)
-  RUSTFLAGS="-C target-cpu=native" cargo build --release --features arch --locked 2>&1 || \
-    cargo build --release --features arch  # Fallback without --locked
+  # NOTE: target-cpu=native is intentionally omitted — it triggers an LLVM
+  # SelectionDAGBuilder SIGSEGV when combined with lto=fat + codegen-units=1.
+  # The profile.release settings already provide maximum optimisation.
+  cargo build --release --features arch --locked 2>&1 || {
+    log_warn "Locked build failed, retrying without --locked"
+    unset RUSTFLAGS  # Ensure no stale flags leak into the retry
+    cargo build --release --features arch
+  }
   
   # Verify binaries exist
   [[ -f target/release/omg ]] || die "Binary 'omg' not found"
