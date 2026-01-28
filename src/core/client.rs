@@ -141,26 +141,35 @@ impl DaemonClient {
             .context("Client is in async mode")?;
 
         // 1. Encode
-        let request_bytes = bitcode::serialize(request)?;
-        let len = request_bytes.len() as u32;
+        let request_bytes =
+            bitcode::serialize(request).context("Failed to serialize daemon request")?;
+        let len = u32::try_from(request_bytes.len())
+            .context("Request too large for protocol framing")?;
 
         // 2. Send length-delimited (Big Endian) combined to save a syscall
         let mut send_buf = Vec::with_capacity(4 + request_bytes.len());
         send_buf.extend_from_slice(&len.to_be_bytes());
         send_buf.extend_from_slice(&request_bytes);
-        stream.write_all(&send_buf)?;
+        stream
+            .write_all(&send_buf)
+            .context("Failed to write request to daemon socket")?;
 
         // 3. Read length
         let mut len_buf = [0u8; 4];
-        stream.read_exact(&mut len_buf)?;
+        stream
+            .read_exact(&mut len_buf)
+            .context("Failed to read response length from daemon")?;
         let resp_len = u32::from_be_bytes(len_buf) as usize;
 
         // 4. Read body
         let mut resp_bytes = vec![0u8; resp_len];
-        stream.read_exact(&mut resp_bytes)?;
+        stream
+            .read_exact(&mut resp_bytes)
+            .context("Failed to read response body from daemon")?;
 
         // 5. Decode
-        let response: Response = bitcode::deserialize(&resp_bytes)?;
+        let response: Response =
+            bitcode::deserialize(&resp_bytes).context("Failed to deserialize daemon response")?;
 
         match response {
             Response::Success {
@@ -412,26 +421,35 @@ impl PooledSyncClient {
         let stream = self.stream.as_mut().context("Connection not available")?;
 
         // Encode
-        let request_bytes = bitcode::serialize(request)?;
-        let len = request_bytes.len() as u32;
+        let request_bytes =
+            bitcode::serialize(request).context("Failed to serialize daemon request")?;
+        let len = u32::try_from(request_bytes.len())
+            .context("Request too large for protocol framing")?;
 
         // Send length-delimited
         let mut send_buf = Vec::with_capacity(4 + request_bytes.len());
         send_buf.extend_from_slice(&len.to_be_bytes());
         send_buf.extend_from_slice(&request_bytes);
-        stream.write_all(&send_buf)?;
+        stream
+            .write_all(&send_buf)
+            .context("Failed to write request to daemon socket")?;
 
         // Read length
         let mut len_buf = [0u8; 4];
-        stream.read_exact(&mut len_buf)?;
+        stream
+            .read_exact(&mut len_buf)
+            .context("Failed to read response length from daemon")?;
         let resp_len = u32::from_be_bytes(len_buf) as usize;
 
         // Read body
         let mut resp_bytes = vec![0u8; resp_len];
-        stream.read_exact(&mut resp_bytes)?;
+        stream
+            .read_exact(&mut resp_bytes)
+            .context("Failed to read response body from daemon")?;
 
         // Decode
-        let response: Response = bitcode::deserialize(&resp_bytes)?;
+        let response: Response =
+            bitcode::deserialize(&resp_bytes).context("Failed to deserialize daemon response")?;
 
         match response {
             Response::Success {

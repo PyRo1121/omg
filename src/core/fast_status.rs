@@ -46,10 +46,10 @@ impl FastStatus {
             magic: MAGIC,
             version: VERSION,
             pad: [0; 3],
-            total_packages: total as u32,
-            explicit_packages: explicit as u32,
-            orphan_packages: orphans as u32,
-            updates_available: updates as u32,
+            total_packages: total.min(u32::MAX as usize) as u32,
+            explicit_packages: explicit.min(u32::MAX as usize) as u32,
+            orphan_packages: orphans.min(u32::MAX as usize) as u32,
+            updates_available: updates.min(u32::MAX as usize) as u32,
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |d| d.as_secs()),
@@ -109,7 +109,7 @@ impl FastStatus {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used)] // Idiomatic in tests: panics on failure with clear error context
 mod tests {
     use super::*;
     use tempfile::tempdir;
