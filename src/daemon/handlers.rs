@@ -410,10 +410,9 @@ async fn handle_search(
     let query_arc: Arc<str> = Arc::from(query.as_str());
     let query_for_cache = query;
 
-    let official = tokio::task::spawn_blocking(move || {
-        state_clone.index.search(&query_arc, MAX_SEARCH_LIMIT)
-    })
-    .await;
+    let official =
+        tokio::task::spawn_blocking(move || state_clone.index.search(&query_arc, MAX_SEARCH_LIMIT))
+            .await;
 
     let official = match official {
         Ok(res) => res,
