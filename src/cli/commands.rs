@@ -53,7 +53,7 @@ pub async fn complete(_shell: &str, current: &str, last: &str, full: Option<&str
         "run" => complete_task_names(&engine, current),
         "new" => complete_templates(&engine, current),
         "completions" => complete_shells(&engine, current),
-        _ => complete_fallback(&engine, current, last, in_tool, in_env).await?,
+        _ => complete_fallback(&engine, current, last, in_tool, in_env)?,
     };
 
     output_suggestions(&engine, current, suggestions);
@@ -76,7 +76,7 @@ async fn complete_package_names(
     }
 
     // Get package names from daemon or fallback to direct ALPM
-    #[allow(unused_mut)]
+    #[allow(unused_mut)] // Mutated only inside feature-gated block
     let mut names = get_package_names_with_fallback().await;
 
     // Include AUR packages on Arch
@@ -100,10 +100,10 @@ async fn get_package_names_with_fallback() -> Vec<String> {
     }
 
     // Try daemon first
-    if let Ok(mut client) = crate::core::client::DaemonClient::connect().await {
-        if let Ok(res) = client.search("", None).await {
-            return res.packages.into_iter().map(|p| p.name).collect();
-        }
+    if let Ok(mut client) = crate::core::client::DaemonClient::connect().await
+        && let Ok(res) = client.search("", None).await
+    {
+        return res.packages.into_iter().map(|p| p.name).collect();
     }
 
     // Fallback to direct ALPM
@@ -129,7 +129,7 @@ fn complete_tool_commands(
     engine: &crate::core::completion::CompletionEngine,
     current: &str,
 ) -> Vec<String> {
-    engine.fuzzy_match(current, TOOL_COMMANDS.iter().map(|s| s.to_string()).collect())
+    engine.fuzzy_match(current, TOOL_COMMANDS.iter().map(std::string::ToString::to_string).collect())
 }
 
 /// Complete env subcommands
@@ -138,7 +138,7 @@ fn complete_env_commands(
     engine: &crate::core::completion::CompletionEngine,
     current: &str,
 ) -> Vec<String> {
-    engine.fuzzy_match(current, ENV_COMMANDS.iter().map(|s| s.to_string()).collect())
+    engine.fuzzy_match(current, ENV_COMMANDS.iter().map(std::string::ToString::to_string).collect())
 }
 
 /// Complete task runner task names
@@ -158,7 +158,7 @@ fn complete_templates(
     engine: &crate::core::completion::CompletionEngine,
     current: &str,
 ) -> Vec<String> {
-    engine.fuzzy_match(current, NEW_TEMPLATES.iter().map(|s| s.to_string()).collect())
+    engine.fuzzy_match(current, NEW_TEMPLATES.iter().map(std::string::ToString::to_string).collect())
 }
 
 /// Complete shell names for completion generation
@@ -167,11 +167,11 @@ fn complete_shells(
     engine: &crate::core::completion::CompletionEngine,
     current: &str,
 ) -> Vec<String> {
-    engine.fuzzy_match(current, SHELL_COMPLETIONS.iter().map(|s| s.to_string()).collect())
+    engine.fuzzy_match(current, SHELL_COMPLETIONS.iter().map(std::string::ToString::to_string).collect())
 }
 
 /// Fallback completion for runtime versions and other contexts
-async fn complete_fallback(
+fn complete_fallback(
     engine: &crate::core::completion::CompletionEngine,
     current: &str,
     last: &str,
@@ -180,20 +180,20 @@ async fn complete_fallback(
 ) -> Result<Vec<String>> {
     // Check if completing runtime version (e.g., 'omg use node <TAB>')
     if crate::cli::runtimes::known_runtimes().iter().any(|rt| rt == last) {
-        return Ok(complete_runtime_versions(engine, current, last)?);
+        return complete_runtime_versions(engine, current, last);
     }
 
     // Fallback to tool/env subcommands if in those contexts
     if in_env {
         return Ok(engine.fuzzy_match(
             current,
-            ENV_COMMANDS.iter().map(|s| s.to_string()).collect(),
+            ENV_COMMANDS.iter().map(std::string::ToString::to_string).collect(),
         ));
     }
     if in_tool {
         return Ok(engine.fuzzy_match(
             current,
-            TOOL_COMMANDS.iter().map(|s| s.to_string()).collect(),
+            TOOL_COMMANDS.iter().map(std::string::ToString::to_string).collect(),
         ));
     }
 
@@ -651,7 +651,7 @@ pub fn history(limit: usize) -> Result<()> {
     Ok(())
 }
 
-#[allow(clippy::unused_async)]
+#[allow(clippy::unused_async)] // Async required: feature-gated branches call .await; fallback stubs omit it
 pub async fn rollback(id: Option<String>, yes: bool) -> Result<()> {
     if let Some(ref r_id) = id {
         // SECURITY: Validate transaction ID

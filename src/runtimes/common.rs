@@ -13,7 +13,7 @@ use owo_colors::OwoColorize;
 use sha2::{Digest, Sha256};
 
 /// Progress bar style for downloads
-#[allow(clippy::expect_used)]
+#[allow(clippy::expect_used)] // Path operations on known-valid HOME directory; failure is unrecoverable
 pub fn download_progress_style() -> ProgressStyle {
     ProgressStyle::default_bar()
         .template(
@@ -24,7 +24,7 @@ pub fn download_progress_style() -> ProgressStyle {
 }
 
 /// Progress bar style for extraction
-#[allow(clippy::expect_used)]
+#[allow(clippy::expect_used)] // Path operations on known-valid HOME directory; failure is unrecoverable
 pub fn extract_progress_style() -> ProgressStyle {
     ProgressStyle::default_spinner()
         .template("{spinner:.green} {msg}")
@@ -32,7 +32,7 @@ pub fn extract_progress_style() -> ProgressStyle {
 }
 
 /// Download a file with progress bar and optional checksum verification
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used)] // Path parsing on validated runtime paths; failure indicates corrupted state
 pub async fn download_with_progress(
     client: &reqwest::Client,
     url: &str,
@@ -64,7 +64,9 @@ pub async fn download_with_progress(
     pb.set_style(download_progress_style());
 
     if let Some(parent) = dest.parent() {
-        tokio::fs::create_dir_all(parent).await?;
+        tokio::fs::create_dir_all(parent)
+            .await
+            .with_context(|| format!("Failed to create parent directory: {}", parent.display()))?;
     }
 
     let mut file = tokio::fs::File::create(dest)
@@ -93,7 +95,9 @@ pub async fn download_with_progress(
         pb.set_position(downloaded);
     }
 
-    file.flush().await?;
+    file.flush()
+        .await
+        .with_context(|| format!("Failed to flush download to: {}", dest.display()))?;
 
     // Verify checksum if provided
     if let Some(expected) = expected_sha256 {
@@ -450,7 +454,7 @@ macro_rules! impl_runtime_common {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used)] // Idiomatic in tests: panics on failure with clear error context
 mod tests {
     use super::*;
     use tempfile::TempDir;

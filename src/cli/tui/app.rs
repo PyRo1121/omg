@@ -322,7 +322,7 @@ impl App {
         crate::cli::packages::clean(true, true, true, false).await
     }
 
-    #[allow(clippy::unused_async)]
+    #[allow(clippy::unused_async)] // Async required: feature-gated branches call .await; fallback stubs omit it
     pub async fn remove_orphans(&self) -> Result<()> {
         // Use the actual orphan removal
         #[cfg(feature = "arch")]
