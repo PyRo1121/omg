@@ -1657,12 +1657,17 @@ impl AurClient {
     /// Install the built package via sudo omg install <path>
     async fn install_built_package(pkg_path: &Path) -> Result<()> {
         println!(
-            "{} Installing built package (elevating with sudo)...",
+            "{} Installing built package...",
             "→".blue()
         );
 
-        let pkg_path_str = pkg_path.to_string_lossy();
-        crate::core::privilege::run_self_sudo(&["install", "--", &pkg_path_str]).await?;
+        let pkg_path_str = pkg_path.to_string_lossy().to_string();
+
+        if crate::core::is_root() {
+            crate::package_managers::execute_transaction(vec![pkg_path_str], false, false, None)?;
+        } else {
+            crate::core::privilege::run_self_sudo(&["install", "--", &pkg_path_str]).await?;
+        }
 
         Ok(())
     }
