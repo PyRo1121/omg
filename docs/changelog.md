@@ -66,6 +66,10 @@ Auto-generated from git history with git-cliff.
 
 Auto-generated from git history with git-cliff.
 
+- Update changelog [skip ci]
+
+Auto-generated from git history with git-cliff.
+
 ## [0.1.172] - 2026-01-28
 ### 🐛 Bug Fixes
 
