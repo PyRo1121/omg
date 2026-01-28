@@ -162,9 +162,9 @@ impl Drop for DebianFileWatcher {
             // If we're in a tokio runtime, block until task finishes
             // If not, the task will be aborted when the handle is dropped
             if let Ok(runtime_handle) = tokio::runtime::Handle::try_current() {
-                if let Ok(result) = runtime_handle.block_on(async {
-                    tokio::time::timeout(Duration::from_secs(5), handle).await
-                }) {
+                if let Ok(result) = runtime_handle
+                    .block_on(async { tokio::time::timeout(Duration::from_secs(5), handle).await })
+                {
                     if let Err(e) = result {
                         tracing::warn!("File watcher task failed during shutdown: {e}");
                     } else {

@@ -432,7 +432,12 @@ macro_rules! impl_runtime_common {
                 let version_dir = self.versions_dir.join(&version);
 
                 if !version_dir.exists() {
-                    println!("{} {} {} is not installed", "→".dimmed(), $runtime_name, version);
+                    println!(
+                        "{} {} {} is not installed",
+                        "→".dimmed(),
+                        $runtime_name,
+                        version
+                    );
                     return Ok(());
                 }
 
@@ -443,8 +448,9 @@ macro_rules! impl_runtime_common {
                     let _ = fs::remove_file(&self.current_link);
                 }
 
-                fs::remove_dir_all(&version_dir)
-                    .with_context(|| format!("Failed to remove {} directory", version_dir.display()))?;
+                fs::remove_dir_all(&version_dir).with_context(|| {
+                    format!("Failed to remove {} directory", version_dir.display())
+                })?;
 
                 println!("{} {} {} uninstalled", "✓".green(), $runtime_name, version);
                 Ok(())

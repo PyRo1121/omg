@@ -107,8 +107,7 @@ pub async fn run(force: bool, version: Option<String>) -> Result<()> {
         }
 
         // Replace current binary
-        let current_exe =
-            env::current_exe().context("Failed to find current executable path")?;
+        let current_exe = env::current_exe().context("Failed to find current executable path")?;
 
         // On Linux we can rename over the running executable
         // We rename the *current* exe to .old first to be safe, then move new one in

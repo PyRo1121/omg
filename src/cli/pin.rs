@@ -37,8 +37,9 @@ impl PinConfig {
     pub fn save(&self) -> Result<()> {
         let path = Self::path();
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("Failed to create pins directory: {}", parent.display()))?;
+            std::fs::create_dir_all(parent).with_context(|| {
+                format!("Failed to create pins directory: {}", parent.display())
+            })?;
         }
         let content = toml::to_string_pretty(self).context("Failed to serialize pins")?;
         std::fs::write(&path, &content)
@@ -118,10 +119,7 @@ fn list_pins() -> Result<()> {
         println!();
     }
 
-    println!(
-        "  To unpin: {}",
-        style::command("omg pin <name> --unpin")
-    );
+    println!("  To unpin: {}", style::command("omg pin <name> --unpin"));
 
     Ok(())
 }

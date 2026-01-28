@@ -207,10 +207,10 @@ async fn handle_debian_search(
             let results: Vec<PackageInfo> = pkgs.into_iter().take(limit).collect();
             let results = Arc::new(results);
             state.cache.insert_debian_arc(query, Arc::clone(&results));
-        Response::Success {
-            id,
-            result: ResponseResult::DebianSearch(Arc::unwrap_or_clone(results)),
-        }
+            Response::Success {
+                id,
+                result: ResponseResult::DebianSearch(Arc::unwrap_or_clone(results)),
+            }
         }
         Ok(Err(e)) => internal_error(id, format!("Debian search failed: {e}")),
         Err(e) => internal_error(id, format!("Debian search task panicked: {e}")),
@@ -334,7 +334,8 @@ async fn handle_batch(state: Arc<DaemonState>, id: RequestId, requests: Vec<Requ
         .filter(|r| matches!(r, Request::SecurityAudit { .. }))
         .count();
     if security_audit_count > 5 {
-        let msg = format!("Too many SecurityAudit requests in batch: {security_audit_count} (max 5)");
+        let msg =
+            format!("Too many SecurityAudit requests in batch: {security_audit_count} (max 5)");
         audit_log(
             AuditEventType::PolicyViolation,
             AuditSeverity::Warning,
@@ -409,8 +410,8 @@ async fn handle_search(
     let query_arc: Arc<str> = Arc::from(query.as_str());
     let query_for_cache = query; // Original String for cache key
 
-    let official = tokio::task::spawn_blocking(move || state_clone.index.search(&query_arc, limit))
-        .await;
+    let official =
+        tokio::task::spawn_blocking(move || state_clone.index.search(&query_arc, limit)).await;
 
     let official = match official {
         Ok(res) => res,
@@ -420,7 +421,9 @@ async fn handle_search(
     // Cache results and return (Arc eliminates expensive clone)
     let official = Arc::new(official);
     let total = official.len();
-    state.cache.insert_arc(query_for_cache, Arc::clone(&official));
+    state
+        .cache
+        .insert_arc(query_for_cache, Arc::clone(&official));
 
     Response::Success {
         id,

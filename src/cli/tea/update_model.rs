@@ -212,7 +212,13 @@ impl Model for UpdateModel {
                 let summary_data: Vec<_> = self
                     .updates
                     .iter()
-                    .map(|u| (u.name.as_str(), u.old_version.as_str(), u.new_version.as_str()))
+                    .map(|u| {
+                        (
+                            u.name.as_str(),
+                            u.old_version.as_str(),
+                            u.new_version.as_str(),
+                        )
+                    })
                     .collect();
 
                 let summary_cmd = Components::update_summary(summary_data);

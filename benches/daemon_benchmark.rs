@@ -10,10 +10,10 @@ use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, 
 use std::sync::Arc;
 use std::time::Duration;
 
+use omg_lib::core::runtime_resolver;
 use omg_lib::daemon::cache::PackageCache;
 use omg_lib::daemon::index::PackageIndex;
 use omg_lib::daemon::protocol::PackageInfo;
-use omg_lib::core::runtime_resolver;
 
 /// Benchmark cache operations with Arc optimization
 fn bench_cache_operations(c: &mut Criterion) {
@@ -104,28 +104,20 @@ fn bench_index_search(c: &mut Criterion) {
 
     for term in search_terms {
         group.throughput(Throughput::Elements(1));
-        group.bench_with_input(
-            BenchmarkId::new("search", term),
-            &term,
-            |b, &term| {
-                b.iter(|| {
-                    let results = index.search(black_box(term), black_box(50));
-                    black_box(results);
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("search", term), &term, |b, &term| {
+            b.iter(|| {
+                let results = index.search(black_box(term), black_box(50));
+                black_box(results);
+            });
+        });
 
         // Benchmark exact package lookup (hash map lookup)
-        group.bench_with_input(
-            BenchmarkId::new("get_exact", term),
-            &term,
-            |b, &term| {
-                b.iter(|| {
-                    let result = index.get(black_box(term));
-                    black_box(result);
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("get_exact", term), &term, |b, &term| {
+            b.iter(|| {
+                let result = index.get(black_box(term));
+                black_box(result);
+            });
+        });
     }
 
     // Benchmark index.len() (should be inlined)
@@ -159,7 +151,8 @@ fn bench_runtime_resolution(c: &mut Criterion) {
 
     group.bench_function("find_in_path_nonexistent", |b| {
         b.iter(|| {
-            let result = runtime_resolver::find_in_path(black_box("definitely-does-not-exist-12345"));
+            let result =
+                runtime_resolver::find_in_path(black_box("definitely-does-not-exist-12345"));
             black_box(result);
         });
     });
@@ -175,10 +168,8 @@ fn bench_runtime_resolution(c: &mut Criterion) {
     // Benchmark native runtime path resolution
     group.bench_function("native_runtime_bin_path", |b| {
         b.iter(|| {
-            let result = runtime_resolver::native_runtime_bin_path(
-                black_box("node"),
-                black_box("20.0.0"),
-            );
+            let result =
+                runtime_resolver::native_runtime_bin_path(black_box("node"), black_box("20.0.0"));
             black_box(result);
         });
     });

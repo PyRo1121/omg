@@ -26,8 +26,7 @@ pub enum TableStyle {
     Minimal,
 }
 
-impl TableStyle {
-}
+impl TableStyle {}
 
 /// Create a new table with OMG styling
 #[must_use]

@@ -127,10 +127,7 @@ pub async fn run(from: Option<&str>, to: &str) -> Result<()> {
         if runtime_diff.is_empty() {
             style::version("0")
         } else {
-            style::maybe_color(
-                &runtime_diff.len().to_string(),
-                |t| t.yellow().to_string(),
-            )
+            style::maybe_color(&runtime_diff.len().to_string(), |t| t.yellow().to_string())
         }
     );
     println!(
@@ -150,10 +147,7 @@ pub async fn run(from: Option<&str>, to: &str) -> Result<()> {
             "  {} To sync to the target environment:",
             style::dim("Hint:")
         );
-        println!(
-            "       {}",
-            style::command(&format!("omg env sync {to}"))
-        );
+        println!("       {}", style::command(&format!("omg env sync {to}")));
     }
 
     Ok(())
@@ -207,9 +201,15 @@ fn diff_packages(from: &[String], to: &[String]) -> PackageDiff {
     let from_set: HashSet<&str> = from.iter().map(String::as_str).collect();
     let to_set: HashSet<&str> = to.iter().map(String::as_str).collect();
 
-    let added: Vec<String> = to_set.difference(&from_set).map(std::string::ToString::to_string).collect();
+    let added: Vec<String> = to_set
+        .difference(&from_set)
+        .map(std::string::ToString::to_string)
+        .collect();
 
-    let removed: Vec<String> = from_set.difference(&to_set).map(std::string::ToString::to_string).collect();
+    let removed: Vec<String> = from_set
+        .difference(&to_set)
+        .map(std::string::ToString::to_string)
+        .collect();
 
     PackageDiff {
         added,

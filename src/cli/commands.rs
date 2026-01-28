@@ -30,7 +30,18 @@ pub use super::runtimes::{list_versions, use_version};
 // Const slices for completion - avoids allocation on every call
 const TOOL_COMMANDS: &[&str] = &["install", "list", "remove"];
 const ENV_COMMANDS: &[&str] = &["capture", "check", "share", "sync"];
-const NEW_TEMPLATES: &[&str] = &["rust", "react", "react-ts", "node", "ts", "typescript", "python", "py", "go", "golang"];
+const NEW_TEMPLATES: &[&str] = &[
+    "rust",
+    "react",
+    "react-ts",
+    "node",
+    "ts",
+    "typescript",
+    "python",
+    "py",
+    "go",
+    "golang",
+];
 const SHELL_COMPLETIONS: &[&str] = &["bash", "zsh", "fish", "powershell", "elvish"];
 
 pub async fn complete(_shell: &str, current: &str, last: &str, full: Option<&str>) -> Result<()> {
@@ -45,9 +56,7 @@ pub async fn complete(_shell: &str, current: &str, last: &str, full: Option<&str
         "install" | "i" | "remove" | "r" | "info" => {
             complete_package_names(&engine, current, last, in_tool).await?
         }
-        "use" | "ls" | "list" | "which" => {
-            complete_runtime_names(&engine, current)
-        }
+        "use" | "ls" | "list" | "which" => complete_runtime_names(&engine, current),
         "tool" => complete_tool_commands(&engine, current),
         "env" => complete_env_commands(&engine, current),
         "run" => complete_task_names(&engine, current),
@@ -129,7 +138,13 @@ fn complete_tool_commands(
     engine: &crate::core::completion::CompletionEngine,
     current: &str,
 ) -> Vec<String> {
-    engine.fuzzy_match(current, TOOL_COMMANDS.iter().map(std::string::ToString::to_string).collect())
+    engine.fuzzy_match(
+        current,
+        TOOL_COMMANDS
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect(),
+    )
 }
 
 /// Complete env subcommands
@@ -138,7 +153,13 @@ fn complete_env_commands(
     engine: &crate::core::completion::CompletionEngine,
     current: &str,
 ) -> Vec<String> {
-    engine.fuzzy_match(current, ENV_COMMANDS.iter().map(std::string::ToString::to_string).collect())
+    engine.fuzzy_match(
+        current,
+        ENV_COMMANDS
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect(),
+    )
 }
 
 /// Complete task runner task names
@@ -158,7 +179,13 @@ fn complete_templates(
     engine: &crate::core::completion::CompletionEngine,
     current: &str,
 ) -> Vec<String> {
-    engine.fuzzy_match(current, NEW_TEMPLATES.iter().map(std::string::ToString::to_string).collect())
+    engine.fuzzy_match(
+        current,
+        NEW_TEMPLATES
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect(),
+    )
 }
 
 /// Complete shell names for completion generation
@@ -167,7 +194,13 @@ fn complete_shells(
     engine: &crate::core::completion::CompletionEngine,
     current: &str,
 ) -> Vec<String> {
-    engine.fuzzy_match(current, SHELL_COMPLETIONS.iter().map(std::string::ToString::to_string).collect())
+    engine.fuzzy_match(
+        current,
+        SHELL_COMPLETIONS
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect(),
+    )
 }
 
 /// Fallback completion for runtime versions and other contexts
@@ -179,7 +212,10 @@ fn complete_fallback(
     in_env: bool,
 ) -> Result<Vec<String>> {
     // Check if completing runtime version (e.g., 'omg use node <TAB>')
-    if crate::cli::runtimes::known_runtimes().iter().any(|rt| rt == last) {
+    if crate::cli::runtimes::known_runtimes()
+        .iter()
+        .any(|rt| rt == last)
+    {
         return complete_runtime_versions(engine, current, last);
     }
 
@@ -187,13 +223,19 @@ fn complete_fallback(
     if in_env {
         return Ok(engine.fuzzy_match(
             current,
-            ENV_COMMANDS.iter().map(std::string::ToString::to_string).collect(),
+            ENV_COMMANDS
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
         ));
     }
     if in_tool {
         return Ok(engine.fuzzy_match(
             current,
-            TOOL_COMMANDS.iter().map(std::string::ToString::to_string).collect(),
+            TOOL_COMMANDS
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
         ));
     }
 
@@ -478,20 +520,22 @@ pub fn daemon(foreground: bool) -> Result<()> {
         let socket_path = crate::core::client::default_socket_path();
 
         if let Ok(mut client) = crate::core::client::DaemonClient::connect_sync()
-            && client.ping_sync().is_ok() {
-                println!(
-                    "{} Daemon is already running at {}",
-                    style::success("✓"),
-                    socket_path.display()
-                );
-                return Ok(());
-            }
+            && client.ping_sync().is_ok()
+        {
+            println!(
+                "{} Daemon is already running at {}",
+                style::success("✓"),
+                socket_path.display()
+            );
+            return Ok(());
+        }
 
         // SECURITY: Atomic remove avoids TOCTOU race condition
         if let Err(e) = std::fs::remove_file(&socket_path)
-            && e.kind() != std::io::ErrorKind::NotFound {
-                return Err(e.into());
-            }
+            && e.kind() != std::io::ErrorKind::NotFound
+        {
+            return Err(e.into());
+        }
 
         // Start daemon in background
         // 1. Try to find omgd in the same directory as the current executable (ensures version match)

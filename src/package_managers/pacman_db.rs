@@ -282,16 +282,44 @@ macro_rules! sync_pkg_from_desc {
             filename: $desc.file_name.to_string(),
             csize: $desc.compressed_size,
             isize: $desc.installed_size,
-            url: $desc.url.as_ref().map(std::string::ToString::to_string).unwrap_or_default(),
+            url: $desc
+                .url
+                .as_ref()
+                .map(std::string::ToString::to_string)
+                .unwrap_or_default(),
             arch: $desc.arch.to_string(),
             repo: $repo.to_string(),
             licenses: $desc.license.iter().map(ToString::to_string).collect(),
-            depends: $desc.dependencies.iter().map(std::string::ToString::to_string).collect(),
-            makedepends: $desc.make_dependencies.iter().map(std::string::ToString::to_string).collect(),
-            optdepends: $desc.optional_dependencies.iter().map(std::string::ToString::to_string).collect(),
-            provides: $desc.provides.iter().map(std::string::ToString::to_string).collect(),
-            conflicts: $desc.conflicts.iter().map(std::string::ToString::to_string).collect(),
-            replaces: $desc.replaces.iter().map(std::string::ToString::to_string).collect(),
+            depends: $desc
+                .dependencies
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
+            makedepends: $desc
+                .make_dependencies
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
+            optdepends: $desc
+                .optional_dependencies
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
+            provides: $desc
+                .provides
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
+            conflicts: $desc
+                .conflicts
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
+            replaces: $desc
+                .replaces
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
         }
     };
 }
@@ -483,7 +511,9 @@ pub fn check_updates_cached() -> Result<Vec<(String, Version, Version, String, S
         .packages
         .par_iter()
         .filter_map(|(name, local_pkg)| {
-            sync_cache.packages.get(name)
+            sync_cache
+                .packages
+                .get(name)
                 .filter(|sync_pkg| local_pkg.version < sync_pkg.version)
                 .map(|sync_pkg| (name, local_pkg, sync_pkg))
         })
@@ -533,9 +563,10 @@ fn load_cache_from_disk<T: for<'de> Deserialize<'de>>(name: &str) -> Result<T> {
 /// Check if cache is expired based on TTL (30-minute safety net)
 fn is_cache_expired(last_accessed: Option<SystemTime>) -> bool {
     if let Some(last_access) = last_accessed
-        && let Ok(elapsed) = SystemTime::now().duration_since(last_access) {
-            return elapsed.as_secs() > CACHE_TTL_SECS;
-        }
+        && let Ok(elapsed) = SystemTime::now().duration_since(last_access)
+    {
+        return elapsed.as_secs() > CACHE_TTL_SECS;
+    }
     false
 }
 
@@ -1015,15 +1046,39 @@ mod tests {
         let db_paths = collect_sync_db_paths(&temp_dir);
 
         // Should only collect .db files, NOT .db.sig files
-        let collected_names: Vec<_> = db_paths.iter().map(|(path, _)| path.file_name().unwrap().to_str().unwrap()).collect();
+        let collected_names: Vec<_> = db_paths
+            .iter()
+            .map(|(path, _)| path.file_name().unwrap().to_str().unwrap())
+            .collect();
 
-        assert!(collected_names.contains(&"core.db"), "Should include core.db");
-        assert!(collected_names.contains(&"extra.db"), "Should include extra.db");
-        assert!(collected_names.contains(&"custom-repo.db"), "Should include custom-repo.db");
-        assert!(!collected_names.contains(&"core.db.sig"), "Should NOT include .sig files");
-        assert!(!collected_names.contains(&"extra.db.sig"), "Should NOT include .sig files");
-        assert!(!collected_names.contains(&"custom-repo.db.sig"), "Should NOT include .sig files");
-        assert!(!collected_names.contains(&"not-a-db.txt"), "Should NOT include non-.db files");
+        assert!(
+            collected_names.contains(&"core.db"),
+            "Should include core.db"
+        );
+        assert!(
+            collected_names.contains(&"extra.db"),
+            "Should include extra.db"
+        );
+        assert!(
+            collected_names.contains(&"custom-repo.db"),
+            "Should include custom-repo.db"
+        );
+        assert!(
+            !collected_names.contains(&"core.db.sig"),
+            "Should NOT include .sig files"
+        );
+        assert!(
+            !collected_names.contains(&"extra.db.sig"),
+            "Should NOT include .sig files"
+        );
+        assert!(
+            !collected_names.contains(&"custom-repo.db.sig"),
+            "Should NOT include .sig files"
+        );
+        assert!(
+            !collected_names.contains(&"not-a-db.txt"),
+            "Should NOT include non-.db files"
+        );
 
         // Cleanup
         std::fs::remove_dir_all(&temp_dir).unwrap();

@@ -442,7 +442,10 @@ pub fn run_task_advanced(
                     "{} Task '{task_name}' not found, trying '{display_cmd}'...",
                     "→".yellow()
                 );
-                let mut args: Vec<String> = prefix_args.iter().map(std::string::ToString::to_string).collect();
+                let mut args: Vec<String> = prefix_args
+                    .iter()
+                    .map(std::string::ToString::to_string)
+                    .collect();
                 args.push(task_name.to_string());
                 return execute_process(cmd, &args, extra_args, backend_override);
             }
@@ -706,8 +709,13 @@ fn execute_process(
     // SECURITY: Validate extra_args to prevent command injection
     for arg in extra_args {
         // Check for shell metacharacters that could be dangerous
-        if arg.contains(';') || arg.contains('|') || arg.contains('&')
-            || arg.contains('`') || arg.contains('$') || arg.contains('\n') {
+        if arg.contains(';')
+            || arg.contains('|')
+            || arg.contains('&')
+            || arg.contains('`')
+            || arg.contains('$')
+            || arg.contains('\n')
+        {
             anyhow::bail!("Invalid argument '{arg}' - contains shell metacharacters");
         }
         // Warn about potentially dangerous options (but allow them)

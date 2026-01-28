@@ -53,8 +53,9 @@ fn load_index() -> Result<SnapshotIndex> {
 fn save_index(index: &SnapshotIndex) -> Result<()> {
     let path = index_path();
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("Failed to create snapshot directory: {}", parent.display()))?;
+        fs::create_dir_all(parent).with_context(|| {
+            format!("Failed to create snapshot directory: {}", parent.display())
+        })?;
     }
     let content =
         serde_json::to_string_pretty(index).context("Failed to serialize snapshot index")?;
@@ -223,8 +224,14 @@ pub async fn restore(id: &str, dry_run: bool, yes: bool) -> Result<()> {
     let current_pkgs: std::collections::HashSet<_> = current.packages.iter().collect();
     let target_pkgs: std::collections::HashSet<_> = snapshot.state.packages.iter().collect();
 
-    let to_install: Vec<String> = target_pkgs.difference(&current_pkgs).map(|s| (*s).clone()).collect();
-    let to_remove: Vec<String> = current_pkgs.difference(&target_pkgs).map(|s| (*s).clone()).collect();
+    let to_install: Vec<String> = target_pkgs
+        .difference(&current_pkgs)
+        .map(|s| (*s).clone())
+        .collect();
+    let to_remove: Vec<String> = current_pkgs
+        .difference(&target_pkgs)
+        .map(|s| (*s).clone())
+        .collect();
 
     if !to_install.is_empty() {
         println!("  Packages to install ({}):", to_install.len());

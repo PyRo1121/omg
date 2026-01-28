@@ -15,16 +15,13 @@ static MISE: LazyLock<MiseManager> = LazyLock::new(MiseManager::new);
 
 pub fn resolve_active_version(runtime: &str) -> Option<String> {
     let versions = crate::hooks::get_active_versions();
-    versions
-        .get(&runtime.to_lowercase())
-        .cloned()
-        .or_else(|| {
-            if MISE.is_available() {
-                MISE.current_version(runtime).ok().flatten()
-            } else {
-                None
-            }
-        })
+    versions.get(&runtime.to_lowercase()).cloned().or_else(|| {
+        if MISE.is_available() {
+            MISE.current_version(runtime).ok().flatten()
+        } else {
+            None
+        }
+    })
 }
 
 pub fn ensure_active_version(runtime: &str) -> Option<String> {
@@ -75,7 +72,14 @@ macro_rules! impl_runtime_install_use {
     };
 }
 
-impl_runtime_install_use!(NodeManager, PythonManager, GoManager, RubyManager, JavaManager, BunManager);
+impl_runtime_install_use!(
+    NodeManager,
+    PythonManager,
+    GoManager,
+    RubyManager,
+    JavaManager,
+    BunManager
+);
 
 /// Use an already-installed version, or install it first if missing.
 async fn install_or_use<M: RuntimeInstallUse>(mgr: &M, version: &str) -> Result<()> {
@@ -221,31 +225,52 @@ pub fn list_versions_sync(runtime: Option<&str>) -> Result<()> {
         match rt.to_lowercase().as_str() {
             "node" | "nodejs" => {
                 let mgr = NodeManager::new();
-                print_installed_versions(mgr.list_installed().unwrap_or_default(), mgr.current_version().as_deref());
+                print_installed_versions(
+                    mgr.list_installed().unwrap_or_default(),
+                    mgr.current_version().as_deref(),
+                );
             }
             "python" => {
                 let mgr = PythonManager::new();
-                print_installed_versions(mgr.list_installed().unwrap_or_default(), mgr.current_version().as_deref());
+                print_installed_versions(
+                    mgr.list_installed().unwrap_or_default(),
+                    mgr.current_version().as_deref(),
+                );
             }
             "rust" => {
                 let mgr = RustManager::new();
-                print_installed_versions(mgr.list_installed().unwrap_or_default(), mgr.current_version().as_deref());
+                print_installed_versions(
+                    mgr.list_installed().unwrap_or_default(),
+                    mgr.current_version().as_deref(),
+                );
             }
             "go" | "golang" => {
                 let mgr = GoManager::new();
-                print_installed_versions(mgr.list_installed().unwrap_or_default(), mgr.current_version().as_deref());
+                print_installed_versions(
+                    mgr.list_installed().unwrap_or_default(),
+                    mgr.current_version().as_deref(),
+                );
             }
             "ruby" => {
                 let mgr = RubyManager::new();
-                print_installed_versions(mgr.list_installed().unwrap_or_default(), mgr.current_version().as_deref());
+                print_installed_versions(
+                    mgr.list_installed().unwrap_or_default(),
+                    mgr.current_version().as_deref(),
+                );
             }
             "java" | "jdk" => {
                 let mgr = JavaManager::new();
-                print_installed_versions(mgr.list_installed().unwrap_or_default(), mgr.current_version().as_deref());
+                print_installed_versions(
+                    mgr.list_installed().unwrap_or_default(),
+                    mgr.current_version().as_deref(),
+                );
             }
             "bun" | "bunjs" => {
                 let mgr = BunManager::new();
-                print_installed_versions(mgr.list_installed().unwrap_or_default(), mgr.current_version().as_deref());
+                print_installed_versions(
+                    mgr.list_installed().unwrap_or_default(),
+                    mgr.current_version().as_deref(),
+                );
             }
             _ => {
                 mise_list_versions(rt, false)?;

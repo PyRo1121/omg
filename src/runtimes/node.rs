@@ -15,8 +15,8 @@ use std::fs;
 use std::path::PathBuf;
 
 use super::common::{
-    download_with_progress, extract_tar_xz,
-    normalize_version, print_already_installed, print_installed, print_using, set_current_version,
+    download_with_progress, extract_tar_xz, normalize_version, print_already_installed,
+    print_installed, print_using, set_current_version,
 };
 use crate::core::http::download_client;
 

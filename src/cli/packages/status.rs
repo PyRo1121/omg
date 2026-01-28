@@ -62,8 +62,7 @@ async fn status_json(fast: bool) -> Result<()> {
         query_time_ms: start.elapsed().as_secs_f64() * 1000.0,
     };
 
-    let json_str = serde_json::to_string_pretty(&status)
-        .unwrap_or_else(|_| "{}".to_string());
+    let json_str = serde_json::to_string_pretty(&status).unwrap_or_else(|_| "{}".to_string());
     println!("{json_str}");
 
     Ok(())
@@ -148,9 +147,7 @@ fn display_status_report(
             "  {:<20} {}",
             style::maybe_color("Updates Available:", |t| t.bold().to_string()),
             if updates > 0 {
-                style::maybe_color(&updates.to_string(), |t| {
-                    t.bright_magenta().to_string()
-                })
+                style::maybe_color(&updates.to_string(), |t| t.bright_magenta().to_string())
             } else {
                 style::dim("0")
             }

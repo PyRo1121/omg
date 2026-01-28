@@ -112,8 +112,8 @@ async fn search_internal(
     display_packages.extend(aur_packages);
 
     if json {
-        let json_str = serde_json::to_string_pretty(&display_packages)
-            .unwrap_or_else(|_| "[]".to_string());
+        let json_str =
+            serde_json::to_string_pretty(&display_packages).unwrap_or_else(|_| "[]".to_string());
         println!("{json_str}");
         return Ok(());
     }

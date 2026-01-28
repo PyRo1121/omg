@@ -26,11 +26,8 @@ async fn test_slsa_rekor_query_real() {
     let test_hash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
     // Query real Rekor instance
-    let result = tokio::time::timeout(
-        Duration::from_secs(10),
-        verifier.query_rekor(test_hash),
-    )
-    .await;
+    let result =
+        tokio::time::timeout(Duration::from_secs(10), verifier.query_rekor(test_hash)).await;
 
     // Should complete without timeout
     assert!(
@@ -100,7 +97,11 @@ async fn test_vulnerability_scanner_alsa_real() {
         );
 
         // Should have severity
-        assert!(!issue.severity.is_empty(), "Issue {} missing severity", issue.name);
+        assert!(
+            !issue.severity.is_empty(),
+            "Issue {} missing severity",
+            issue.name
+        );
 
         // Should have affected version
         assert!(

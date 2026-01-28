@@ -101,10 +101,7 @@ pub fn status() -> Result<()> {
 
     match license::status() {
         Some(stored) => {
-            println!(
-                "  Status: {} ✓",
-                style::version("Active")
-            );
+            println!("  Status: {} ✓", style::version("Active"));
             println!(
                 "  Tier: {} {}",
                 style::runtime(tier.display_name()),
@@ -256,16 +253,9 @@ pub fn check_feature(feature_name: &str) -> Result<()> {
             style::maybe_color(feature_name, |t| t.cyan().to_string()),
             style::maybe_color(required.display_name(), |t| t.bold().to_string())
         );
-        println!(
-            "\n  {} tier: {}",
-            required.display_name(),
-            required.price()
-        );
+        println!("\n  {} tier: {}", required.display_name(), required.price());
         println!("  Activate: omg license activate <key>");
-        println!(
-            "  Upgrade: {}",
-            style::url("https://pyro1121.com/pricing")
-        );
+        println!("  Upgrade: {}", style::url("https://pyro1121.com/pricing"));
     }
 
     Ok(())

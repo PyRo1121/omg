@@ -15,8 +15,8 @@ use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::LazyLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use ahash::AHashSet;
 use anyhow::{Context, Result};
@@ -373,26 +373,30 @@ pub fn ensure_index_loaded() -> Result<()> {
 
         // Save compressed version for space efficiency
         let compressed = lz4_flex::compress_prepend_size(&bytes);
-        
+
         // Atomic write for compressed cache
         let parent = cache_path.parent().unwrap_or_else(|| Path::new("."));
-        let mut temp_cache = NamedTempFile::new_in(parent)
-            .context("Failed to create temporary cache file")?;
-        temp_cache.write_all(&compressed)
+        let mut temp_cache =
+            NamedTempFile::new_in(parent).context("Failed to create temporary cache file")?;
+        temp_cache
+            .write_all(&compressed)
             .context("Failed to write compressed cache data")?;
-        temp_cache.persist(&cache_path)
+        temp_cache
+            .persist(&cache_path)
             .context("Failed to persist compressed cache file")?;
 
         // Also save uncompressed version for zero-copy mmap access
         let mmap_path = paths::cache_dir().join("debian_index_v5.mmap");
-        
+
         // Atomic write for mmap index
         // CRITICAL: Must use atomic rename to avoid crashing readers holding an mmap
-        let mut temp_mmap = NamedTempFile::new_in(parent)
-            .context("Failed to create temporary mmap file")?;
-        temp_mmap.write_all(&bytes)
+        let mut temp_mmap =
+            NamedTempFile::new_in(parent).context("Failed to create temporary mmap file")?;
+        temp_mmap
+            .write_all(&bytes)
             .context("Failed to write mmap data")?;
-        temp_mmap.persist(&mmap_path)
+        temp_mmap
+            .persist(&mmap_path)
             .context("Failed to persist mmap file")?;
 
         // Load the mmap index for zero-copy access

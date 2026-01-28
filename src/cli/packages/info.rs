@@ -51,7 +51,10 @@ pub fn info_sync(package: &str) -> Result<bool> {
                 .flatten()
             {
                 display_package_info(&info);
-                ui::print_kv("Source", &format!("Official repository ({})", style::info("apt")));
+                ui::print_kv(
+                    "Source",
+                    &format!("Official repository ({})", style::info("apt")),
+                );
                 return Ok(true);
             }
         }
@@ -63,7 +66,10 @@ pub fn info_sync(package: &str) -> Result<bool> {
                 .flatten()
             {
                 crate::package_managers::display_pkg_info(&info);
-                ui::print_kv("Source", &format!("Official repository ({})", style::info(&info.repo)));
+                ui::print_kv(
+                    "Source",
+                    &format!("Official repository ({})", style::info(&info.repo)),
+                );
 
                 // Track usage
                 crate::core::usage::track_info();

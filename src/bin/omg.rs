@@ -342,8 +342,7 @@ async fn async_main(args: Vec<String>) -> Result<()> {
             interactive,
             no_aur,
         } => {
-            packages::search_with_json(query, *detailed, *interactive, cli.json, *no_aur)
-                .await?;
+            packages::search_with_json(query, *detailed, *interactive, cli.json, *no_aur).await?;
         }
         Commands::Install {
             packages,
