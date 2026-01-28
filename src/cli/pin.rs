@@ -1,11 +1,12 @@
 //! `omg pin` - Pin packages or runtimes to prevent updates
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use owo_colors::OwoColorize;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use crate::cli::style;
 use crate::core::paths;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -24,8 +25,10 @@ impl PinConfig {
     pub fn load() -> Result<Self> {
         let path = Self::path();
         if path.exists() {
-            let content = std::fs::read_to_string(&path)?;
-            Ok(toml::from_str(&content)?)
+            let content = std::fs::read_to_string(&path)
+                .with_context(|| format!("Failed to read pins file: {}", path.display()))?;
+            Ok(toml::from_str(&content)
+                .with_context(|| format!("Failed to parse pins file: {}", path.display()))?)
         } else {
             Ok(Self::default())
         }
@@ -34,10 +37,12 @@ impl PinConfig {
     pub fn save(&self) -> Result<()> {
         let path = Self::path();
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to create pins directory: {}", parent.display()))?;
         }
-        let content = toml::to_string_pretty(self)?;
-        std::fs::write(path, content)?;
+        let content = toml::to_string_pretty(self).context("Failed to serialize pins")?;
+        std::fs::write(&path, &content)
+            .with_context(|| format!("Failed to write pins file: {}", path.display()))?;
         Ok(())
     }
 
@@ -67,44 +72,56 @@ pub fn run(target: &str, unpin: bool, list: bool) -> Result<()> {
 fn list_pins() -> Result<()> {
     let config = PinConfig::load()?;
 
-    println!("{} Pinned Packages & Runtimes\n", "OMG".cyan().bold());
+    println!("{} Pinned Packages & Runtimes\n", style::runtime("OMG"));
 
     if config.packages.is_empty() && config.runtimes.is_empty() {
-        println!("  {} No pins configured", "○".dimmed());
+        println!("  {} No pins configured", style::dim("○"));
         println!();
-        println!("  Pin a package:  {}", "omg pin gcc".cyan());
-        println!("  Pin a runtime:  {}", "omg pin node@20.10.0".cyan());
+        println!("  Pin a package:  {}", style::command("omg pin gcc"));
+        println!(
+            "  Pin a runtime:  {}",
+            style::command("omg pin node@20.10.0")
+        );
         return Ok(());
     }
 
     if !config.packages.is_empty() {
-        println!("  {}", "Packages:".bold());
+        println!(
+            "  {}",
+            style::maybe_color("Packages:", |t| t.bold().to_string())
+        );
         for (name, version) in &config.packages {
             let ver_str = version.as_deref().unwrap_or("(current)");
             println!(
                 "    {} {} @ {}",
-                "📌".dimmed(),
-                name.yellow(),
-                ver_str.dimmed()
+                style::dim("📌"),
+                style::path(name),
+                style::dim(ver_str)
             );
         }
         println!();
     }
 
     if !config.runtimes.is_empty() {
-        println!("  {}", "Runtimes:".bold());
+        println!(
+            "  {}",
+            style::maybe_color("Runtimes:", |t| t.bold().to_string())
+        );
         for (runtime, version) in &config.runtimes {
             println!(
                 "    {} {} @ {}",
-                "📌".dimmed(),
-                runtime.yellow(),
-                version.dimmed()
+                style::dim("📌"),
+                style::path(runtime),
+                style::dim(version)
             );
         }
         println!();
     }
 
-    println!("  To unpin: {}", "omg pin <name> --unpin".cyan());
+    println!(
+        "  To unpin: {}",
+        style::command("omg pin <name> --unpin")
+    );
 
     Ok(())
 }
@@ -130,9 +147,9 @@ fn pin_target(config: &mut PinConfig, target: &str) -> Result<()> {
             .insert(runtime.to_string(), version.to_string());
         println!(
             "{} Pinned {} to version {}",
-            "✓".green(),
-            runtime.yellow(),
-            version.cyan()
+            style::maybe_color("✓", |t| t.green().to_string()),
+            style::path(runtime),
+            style::maybe_color(version, |t| t.cyan().to_string())
         );
         println!("  This runtime will not be auto-updated.");
     } else {
@@ -148,9 +165,9 @@ fn pin_target(config: &mut PinConfig, target: &str) -> Result<()> {
         let ver_display = current_version.as_deref().unwrap_or("current version");
         println!(
             "{} Pinned {} to {}",
-            "✓".green(),
-            target.yellow(),
-            ver_display.cyan()
+            style::maybe_color("✓", |t| t.green().to_string()),
+            style::path(target),
+            style::maybe_color(ver_display, |t| t.cyan().to_string())
         );
         println!("  This package will be excluded from updates.");
     }
@@ -167,13 +184,21 @@ fn unpin_target(config: &mut PinConfig, target: &str) {
     };
 
     if config.runtimes.remove(runtime_name).is_some() {
-        println!("{} Unpinned runtime {}", "✓".green(), runtime_name.yellow());
+        println!(
+            "{} Unpinned runtime {}",
+            style::maybe_color("✓", |t| t.green().to_string()),
+            style::path(runtime_name)
+        );
         println!("  This runtime will now receive updates.");
         return;
     }
 
     if config.packages.remove(target).is_some() {
-        println!("{} Unpinned package {}", "✓".green(), target.yellow());
+        println!(
+            "{} Unpinned package {}",
+            style::maybe_color("✓", |t| t.green().to_string()),
+            style::path(target)
+        );
         println!("  This package will now receive updates.");
         return;
     }
@@ -181,10 +206,18 @@ fn unpin_target(config: &mut PinConfig, target: &str) {
     if let Some(_v) = version
         && config.runtimes.remove(runtime_name).is_some()
     {
-        println!("{} Unpinned runtime {}", "✓".green(), runtime_name.yellow());
+        println!(
+            "{} Unpinned runtime {}",
+            style::maybe_color("✓", |t| t.green().to_string()),
+            style::path(runtime_name)
+        );
         return;
     }
-    println!("{} '{}' is not pinned", "⚠".yellow(), target);
+    println!(
+        "{} '{}' is not pinned",
+        style::maybe_color("⚠", |t| t.yellow().to_string()),
+        target
+    );
 }
 
 #[cfg(feature = "arch")]
@@ -235,7 +268,7 @@ fn get_package_version(name: &str) -> Result<Option<String>> {
 }
 
 #[cfg(not(any(feature = "arch", feature = "debian")))]
-#[allow(clippy::unnecessary_wraps)]
+#[allow(clippy::unnecessary_wraps)] // Result return required: API compat with feature-gated impls
 fn get_package_version(_name: &str) -> Result<Option<String>> {
     Ok(None)
 }

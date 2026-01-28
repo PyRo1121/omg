@@ -5,6 +5,8 @@ use owo_colors::OwoColorize;
 use std::env;
 use std::fs;
 
+use crate::cli::style;
+
 const UPDATE_URL: &str = "https://releases.pyro1121.com";
 
 /// Update OMG to the latest version
@@ -12,7 +14,7 @@ pub async fn run(force: bool, version: Option<String>) -> Result<()> {
     let current_version = env!("CARGO_PKG_VERSION");
     println!(
         "{} Checking for updates... (current: v{})",
-        "OMG".cyan().bold(),
+        style::runtime("OMG"),
         current_version
     );
 
@@ -35,13 +37,16 @@ pub async fn run(force: bool, version: Option<String>) -> Result<()> {
     };
 
     if !force && target_version == current_version {
-        println!("  {} You are already on the latest version.", "✓".green());
+        println!(
+            "  {} You are already on the latest version.",
+            style::maybe_color("✓", |t| t.green().to_string())
+        );
         return Ok(());
     }
 
     println!(
         "  {} Downloading version v{}...",
-        "⬇".blue(),
+        style::maybe_color("⬇", |t| t.blue().to_string()),
         target_version
     );
 
@@ -65,12 +70,14 @@ pub async fn run(force: bool, version: Option<String>) -> Result<()> {
         .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")?
         .progress_chars("#>-"));
 
-    let mut bytes = Vec::with_capacity(total_size as usize);
+    let capacity =
+        usize::try_from(total_size).context("Update file size exceeds platform address space")?;
+    let mut bytes = Vec::with_capacity(capacity);
     let mut stream = response.bytes_stream();
 
     use futures::StreamExt;
     while let Some(item) = stream.next().await {
-        let chunk = item?;
+        let chunk = item.context("Failed to read update download chunk")?;
         bytes.extend_from_slice(&chunk);
         pb.inc(chunk.len() as u64);
     }
@@ -81,22 +88,27 @@ pub async fn run(force: bool, version: Option<String>) -> Result<()> {
     let mut archive = tar::Archive::new(decoder);
 
     // Create temp directory for extraction
-    let temp_dir = tempfile::tempdir()?;
-    archive.unpack(temp_dir.path())?;
+    let temp_dir = tempfile::tempdir().context("Failed to create temp directory for update")?;
+    archive
+        .unpack(temp_dir.path())
+        .context("Failed to extract update archive")?;
 
     // Find the new binary
     let new_binary = temp_dir.path().join("omg");
 
     // Perform blocking I/O operations in a separate thread
     tokio::task::spawn_blocking(move || -> Result<()> {
-        archive.unpack(temp_dir.path())?;
+        archive
+            .unpack(temp_dir.path())
+            .context("Failed to extract update archive in temp dir")?;
 
         if !new_binary.exists() {
             anyhow::bail!("Update archive did not contain 'omg' binary");
         }
 
         // Replace current binary
-        let current_exe = env::current_exe()?;
+        let current_exe =
+            env::current_exe().context("Failed to find current executable path")?;
 
         // On Linux we can rename over the running executable
         // We rename the *current* exe to .old first to be safe, then move new one in
@@ -107,9 +119,12 @@ pub async fn run(force: bool, version: Option<String>) -> Result<()> {
             Ok(()) => {
                 // Fix permissions
                 use std::os::unix::fs::PermissionsExt;
-                let mut perms = fs::metadata(&current_exe)?.permissions();
+                let mut perms = fs::metadata(&current_exe)
+                    .context("Failed to read updated binary metadata")?
+                    .permissions();
                 perms.set_mode(0o755);
-                fs::set_permissions(&current_exe, perms)?;
+                fs::set_permissions(&current_exe, perms)
+                    .context("Failed to set updated binary permissions")?;
 
                 // Cleanup backup
                 let _ = fs::remove_file(backup_path);
@@ -124,10 +139,13 @@ pub async fn run(force: bool, version: Option<String>) -> Result<()> {
     })
     .await??;
 
-    println!("  {} Update successful!", "✓".green());
+    println!(
+        "  {} Update successful!",
+        style::maybe_color("✓", |t| t.green().to_string())
+    );
     println!(
         "  {} is now installed.",
-        format!("v{target_version}").cyan()
+        style::maybe_color(&format!("v{target_version}"), |t| t.cyan().to_string())
     );
 
     Ok(())

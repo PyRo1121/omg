@@ -1,9 +1,10 @@
-use crate::cli::{AuditCommands, CliContext, LocalCommandRunner, ui};
+use anyhow::Result;
+use owo_colors::OwoColorize;
+
+use crate::cli::{AuditCommands, CliContext, LocalCommandRunner, style, ui};
 use crate::core::client::DaemonClient;
 use crate::core::license;
 use crate::core::security::{AuditLogger, AuditSeverity, SbomGenerator, SecurityPolicy};
-use anyhow::Result;
-use owo_colors::OwoColorize;
 
 impl LocalCommandRunner for AuditCommands {
     async fn execute(&self, ctx: &CliContext) -> Result<()> {
@@ -51,7 +52,11 @@ pub async fn scan(_ctx: &CliContext) -> Result<()> {
                 ));
                 println!();
                 for (pkg, vulns) in res.vulnerabilities {
-                    println!("  {} ({} issues):", pkg.white().bold(), vulns.len());
+                    println!(
+                        "  {} ({} issues):",
+                        style::maybe_color(&pkg, |t| t.white().bold().to_string()),
+                        vulns.len()
+                    );
                     for vuln in vulns {
                         let score = vuln
                             .score
@@ -59,10 +64,10 @@ pub async fn scan(_ctx: &CliContext) -> Result<()> {
                             .unwrap_or_default();
                         println!(
                             "    {} {} - {}{}",
-                            "→".red(),
-                            vuln.id.yellow(),
+                            style::maybe_color("→", |t| t.red().to_string()),
+                            style::maybe_color(&vuln.id, |t| t.yellow().to_string()),
                             vuln.summary,
-                            score.dimmed()
+                            style::dim(&score)
                         );
                     }
                     println!();
@@ -89,7 +94,7 @@ pub async fn generate_sbom(
 
     println!(
         "{} Generating Software Bill of Materials (CycloneDX 1.5)...\n",
-        "OMG".cyan().bold()
+        style::runtime("OMG")
     );
 
     let generator = SbomGenerator::new().with_vulnerabilities(include_vulns);
@@ -106,24 +111,26 @@ pub async fn generate_sbom(
 
     println!(
         "{} SBOM generated with {} components",
-        "✓".green(),
-        sbom.components.len().to_string().cyan().bold()
+        style::maybe_color("✓", |t| t.green().to_string()),
+        style::runtime(&sbom.components.len().to_string())
     );
 
     if !sbom.vulnerabilities.is_empty() {
         println!(
             "{} {} vulnerabilities included",
-            "⚠".yellow(),
-            sbom.vulnerabilities.len().to_string().yellow().bold()
+            style::maybe_color("⚠", |t| t.yellow().to_string()),
+            style::maybe_color(&sbom.vulnerabilities.len().to_string(), |t| {
+                t.yellow().bold().to_string()
+            })
         );
     }
 
     println!(
         "\n  {} {}",
-        "Output:".dimmed(),
-        path.display().to_string().white()
+        style::dim("Output:"),
+        style::maybe_color(&path.display().to_string(), |t| t.white().to_string())
     );
-    println!("  {} CycloneDX 1.5 (JSON)", "Format:".dimmed());
+    println!("  {} CycloneDX 1.5 (JSON)", style::dim("Format:"));
 
     Ok(())
 }
@@ -141,7 +148,7 @@ pub fn view_audit_log(
     let Ok(logger) = AuditLogger::new() else {
         println!(
             "  {} No audit log exists yet. Events will be logged during package operations.",
-            "ℹ".blue()
+            style::maybe_color("ℹ", |t| t.blue().to_string())
         );
         return Ok(());
     };
@@ -154,7 +161,11 @@ pub fn view_audit_log(
             "error" => AuditSeverity::Error,
             "critical" => AuditSeverity::Critical,
             _ => {
-                println!("{} Invalid severity: {}", "✗".red(), sev);
+                println!(
+                    "{} Invalid severity: {}",
+                    style::maybe_color("✗", |t| t.red().to_string()),
+                    sev
+                );
                 return Ok(());
             }
         };
@@ -166,8 +177,8 @@ pub fn view_audit_log(
     if let Some(export_path) = export {
         println!(
             "{} Exporting audit log to {}...",
-            "OMG".cyan().bold(),
-            export_path.white()
+            style::runtime("OMG"),
+            style::maybe_color(&export_path, |t| t.white().to_string())
         );
         let path = std::path::PathBuf::from(&export_path);
         let format = if std::path::Path::new(&export_path)
@@ -196,41 +207,62 @@ pub fn view_audit_log(
             let json = serde_json::to_string_pretty(&entries)?;
             std::fs::write(&path, json)?;
         }
-        println!("{} Export successful", "✓".green());
+        println!(
+            "{} Export successful",
+            style::maybe_color("✓", |t| t.green().to_string())
+        );
         return Ok(());
     }
 
-    println!("{} Security Audit Log\n", "OMG".cyan().bold());
+    println!("{} Security Audit Log\n", style::runtime("OMG"));
 
     if entries.is_empty() {
-        println!("  {} No audit entries found.", "ℹ".blue());
+        println!(
+            "  {} No audit entries found.",
+            style::maybe_color("ℹ", |t| t.blue().to_string())
+        );
         return Ok(());
     }
 
     for entry in entries.iter().take(limit) {
+        let sev_str = entry.severity.to_string();
         let severity_color = match entry.severity {
-            AuditSeverity::Debug => entry.severity.to_string().dimmed().to_string(),
-            AuditSeverity::Info => entry.severity.to_string().blue().to_string(),
-            AuditSeverity::Warning => entry.severity.to_string().yellow().to_string(),
-            AuditSeverity::Error => entry.severity.to_string().red().to_string(),
-            AuditSeverity::Critical => entry.severity.to_string().red().bold().to_string(),
+            AuditSeverity::Debug => style::dim(&sev_str),
+            AuditSeverity::Info => {
+                style::maybe_color(&sev_str, |t| t.blue().to_string())
+            }
+            AuditSeverity::Warning => {
+                style::maybe_color(&sev_str, |t| t.yellow().to_string())
+            }
+            AuditSeverity::Error => {
+                style::maybe_color(&sev_str, |t| t.red().to_string())
+            }
+            AuditSeverity::Critical => {
+                style::maybe_color(&sev_str, |t| t.red().bold().to_string())
+            }
         };
 
         println!(
             "  {} [{}] {} - {}",
-            entry.timestamp.dimmed(),
+            style::dim(&entry.timestamp),
             severity_color,
-            format!("{:?}", entry.event_type).cyan(),
+            style::maybe_color(&format!("{:?}", entry.event_type), |t| {
+                t.cyan().to_string()
+            }),
             entry.description
         );
         if !entry.resource.is_empty() {
-            println!("      {} {}", "Resource:".dimmed(), entry.resource);
+            println!(
+                "      {} {}",
+                style::dim("Resource:"),
+                entry.resource
+            );
         }
     }
 
     println!(
         "\n  {} Showing {} of {} entries",
-        "ℹ".blue(),
+        style::maybe_color("ℹ", |t| t.blue().to_string()),
         entries.len().min(limit),
         entries.len()
     );
@@ -240,89 +272,144 @@ pub fn view_audit_log(
 
 /// Verify audit log integrity
 pub fn verify_audit_log(_ctx: &CliContext) -> Result<()> {
-    println!("{} Verifying Audit Log Integrity...\n", "OMG".cyan().bold());
+    println!(
+        "{} Verifying Audit Log Integrity...\n",
+        style::runtime("OMG")
+    );
 
     let Ok(logger) = AuditLogger::new() else {
-        println!("  {} No audit log exists yet.", "ℹ".blue());
+        println!(
+            "  {} No audit log exists yet.",
+            style::maybe_color("ℹ", |t| t.blue().to_string())
+        );
         return Ok(());
     };
     let Ok(report) = logger.verify_integrity() else {
-        println!("  {} No audit log exists yet.", "ℹ".blue());
+        println!(
+            "  {} No audit log exists yet.",
+            style::maybe_color("ℹ", |t| t.blue().to_string())
+        );
         return Ok(());
     };
 
     if report.is_valid() {
-        println!("{} Audit log integrity verified", "✓".green());
-        println!("  {} {} entries", "Total:".dimmed(), report.total_entries);
-        println!("  {} {} entries", "Valid:".dimmed(), report.valid_entries);
-        println!("  {} Intact", "Chain:".dimmed());
+        println!(
+            "{} Audit log integrity verified",
+            style::maybe_color("✓", |t| t.green().to_string())
+        );
+        println!(
+            "  {} {} entries",
+            style::dim("Total:"),
+            report.total_entries
+        );
+        println!(
+            "  {} {} entries",
+            style::dim("Valid:"),
+            report.valid_entries
+        );
+        println!("  {} Intact", style::dim("Chain:"));
     } else {
-        println!("{} Audit log integrity FAILED", "✗".red().bold());
-        println!("  {} {} entries", "Total:".dimmed(), report.total_entries);
-        println!("  {} {} entries", "Valid:".dimmed(), report.valid_entries);
+        println!(
+            "{} Audit log integrity FAILED",
+            style::maybe_color("✗", |t| t.red().bold().to_string())
+        );
+        println!(
+            "  {} {} entries",
+            style::dim("Total:"),
+            report.total_entries
+        );
+        println!(
+            "  {} {} entries",
+            style::dim("Valid:"),
+            report.valid_entries
+        );
         let chain_status = if report.chain_valid {
             "Intact".to_string()
         } else {
-            "BROKEN".red().to_string()
+            style::maybe_color("BROKEN", |t| t.red().to_string())
         };
-        println!("  {} {}", "Chain:".dimmed(), chain_status);
+        println!("  {} {}", style::dim("Chain:"), chain_status);
         if let Some(first_invalid) = &report.first_invalid_entry {
-            println!("  {} {}", "First Invalid:".dimmed(), first_invalid.red());
+            println!(
+                "  {} {}",
+                style::dim("First Invalid:"),
+                style::maybe_color(first_invalid, |t| t.red().to_string())
+            );
         }
     }
 
-    println!("\n  {} {}", "Log Path:".dimmed(), report.log_path.display());
+    println!(
+        "\n  {} {}",
+        style::dim("Log Path:"),
+        report.log_path.display()
+    );
 
     Ok(())
 }
 
 /// Show security policy status
 pub fn show_policy(_ctx: &CliContext) -> Result<()> {
-    println!("{} Security Policy Status\n", "OMG".cyan().bold());
+    println!("{} Security Policy Status\n", style::runtime("OMG"));
 
     let policy = SecurityPolicy::load_default().unwrap_or_default();
 
     println!(
         "  {} {}",
-        "Minimum Grade:".dimmed(),
-        format!("{}", policy.minimum_grade).cyan()
+        style::dim("Minimum Grade:"),
+        style::maybe_color(&policy.minimum_grade.to_string(), |t| {
+            t.cyan().to_string()
+        })
     );
     println!(
         "  {} {}",
-        "AUR Allowed:".dimmed(),
+        style::dim("AUR Allowed:"),
         if policy.allow_aur {
-            "Yes".green().to_string()
+            style::version("Yes")
         } else {
-            "No".red().to_string()
+            style::maybe_color("No", |t| t.red().to_string())
         }
     );
     println!(
         "  {} {}",
-        "PGP Required:".dimmed(),
+        style::dim("PGP Required:"),
         if policy.require_pgp {
-            "Yes".green().to_string()
+            style::version("Yes")
         } else {
-            "No".yellow().to_string()
+            style::maybe_color("No", |t| t.yellow().to_string())
         }
     );
 
     if !policy.banned_packages.is_empty() {
-        println!("\n  {} Banned Packages:", "⚠".yellow());
+        println!(
+            "\n  {} Banned Packages:",
+            style::maybe_color("⚠", |t| t.yellow().to_string())
+        );
         for pkg in &policy.banned_packages {
-            println!("    {} {}", "•".red(), pkg);
+            println!(
+                "    {} {}",
+                style::maybe_color("•", |t| t.red().to_string()),
+                pkg
+            );
         }
     }
 
     if !policy.allowed_licenses.is_empty() {
-        println!("\n  {} Allowed Licenses:", "ℹ".blue());
+        println!(
+            "\n  {} Allowed Licenses:",
+            style::maybe_color("ℹ", |t| t.blue().to_string())
+        );
         for lic in &policy.allowed_licenses {
-            println!("    {} {}", "•".green(), lic);
+            println!(
+                "    {} {}",
+                style::maybe_color("•", |t| t.green().to_string()),
+                lic
+            );
         }
     }
 
     println!(
         "\n  {} Edit ~/.config/omg/policy.toml to customize",
-        "ℹ".blue()
+        style::maybe_color("ℹ", |t| t.blue().to_string())
     );
 
     Ok(())
@@ -339,15 +426,18 @@ pub fn scan_secrets(path: Option<String>, _ctx: &CliContext) -> Result<()> {
 
     println!(
         "{} Scanning for secrets in {}...\n",
-        "OMG".cyan().bold(),
-        scan_path.white()
+        style::runtime("OMG"),
+        style::maybe_color(&scan_path, |t| t.white().to_string())
     );
 
     let scanner = SecretScanner::new();
     let findings = scanner.scan_directory(&scan_path)?;
 
     if findings.is_empty() {
-        println!("{} No secrets detected.", "✓".green());
+        println!(
+            "{} No secrets detected.",
+            style::maybe_color("✓", |t| t.green().to_string())
+        );
         return Ok(());
     }
 
@@ -355,55 +445,74 @@ pub fn scan_secrets(path: Option<String>, _ctx: &CliContext) -> Result<()> {
 
     println!(
         "{} Found {} potential secrets:\n",
-        "⚠".yellow().bold(),
-        result.total_findings.to_string().red().bold()
+        style::maybe_color("⚠", |t| t.yellow().bold().to_string()),
+        style::maybe_color(&result.total_findings.to_string(), |t| {
+            t.red().bold().to_string()
+        })
     );
 
     if result.critical_count > 0 {
-        println!("  {} {} CRITICAL", "●".red(), result.critical_count);
+        println!(
+            "  {} {} CRITICAL",
+            style::maybe_color("●", |t| t.red().to_string()),
+            result.critical_count
+        );
     }
     if result.high_count > 0 {
-        println!("  {} {} HIGH", "●".yellow(), result.high_count);
+        println!(
+            "  {} {} HIGH",
+            style::maybe_color("●", |t| t.yellow().to_string()),
+            result.high_count
+        );
     }
     if result.medium_count > 0 {
-        println!("  {} {} MEDIUM", "●".blue(), result.medium_count);
+        println!(
+            "  {} {} MEDIUM",
+            style::maybe_color("●", |t| t.blue().to_string()),
+            result.medium_count
+        );
     }
     if result.low_count > 0 {
-        println!("  {} {} LOW", "●".dimmed(), result.low_count);
+        println!(
+            "  {} {} LOW",
+            style::dim("●"),
+            result.low_count
+        );
     }
 
     println!();
 
     for finding in result.findings.iter().take(20) {
+        let sev_str = finding.severity.to_string();
         let severity_color = match finding.severity {
             crate::core::security::secrets::SecretSeverity::Critical => {
-                finding.severity.to_string().red().bold().to_string()
+                style::maybe_color(&sev_str, |t| t.red().bold().to_string())
             }
             crate::core::security::secrets::SecretSeverity::High => {
-                finding.severity.to_string().yellow().to_string()
+                style::maybe_color(&sev_str, |t| t.yellow().to_string())
             }
             crate::core::security::secrets::SecretSeverity::Medium => {
-                finding.severity.to_string().blue().to_string()
+                style::maybe_color(&sev_str, |t| t.blue().to_string())
             }
-            crate::core::security::secrets::SecretSeverity::Low => {
-                finding.severity.to_string().dimmed().to_string()
-            }
+            crate::core::security::secrets::SecretSeverity::Low => style::dim(&sev_str),
         };
 
         println!(
             "  [{}] {} in {}:{}",
             severity_color,
-            finding.secret_type.to_string().cyan(),
-            finding.file_path.dimmed(),
+            style::maybe_color(&finding.secret_type.to_string(), |t| {
+                t.cyan().to_string()
+            }),
+            style::dim(&finding.file_path),
             finding.line_number
         );
-        println!("      {}", finding.redacted.dimmed());
+        println!("      {}", style::dim(&finding.redacted));
     }
 
     if result.total_findings > 20 {
         println!(
             "\n  {} ... and {} more",
-            "ℹ".blue(),
+            style::maybe_color("ℹ", |t| t.blue().to_string()),
             result.total_findings - 20
         );
     }
@@ -411,7 +520,7 @@ pub fn scan_secrets(path: Option<String>, _ctx: &CliContext) -> Result<()> {
     if result.has_critical() {
         println!(
             "\n{} Critical secrets found! Remove them before committing.",
-            "⚠".red().bold()
+            style::maybe_color("⚠", |t| t.red().bold().to_string())
         );
     }
 
@@ -430,13 +539,13 @@ pub async fn check_slsa(package: &str, _ctx: &CliContext) -> Result<()> {
 
     println!(
         "{} Checking SLSA provenance for {}...\n",
-        "OMG".cyan().bold(),
-        package.white()
+        style::runtime("OMG"),
+        style::maybe_color(package, |t| t.white().to_string())
     );
 
     let path = std::path::Path::new(package);
     if !path.exists() {
-        println!("{} File not found: {}", "✗".red(), package);
+        println!("{}", style::error(&format!("File not found: {package}")));
         return Ok(());
     }
 
@@ -446,32 +555,41 @@ pub async fn check_slsa(package: &str, _ctx: &CliContext) -> Result<()> {
         .await?;
 
     if result.verified {
-        println!("{} SLSA verification passed", "✓".green());
+        println!(
+            "{} SLSA verification passed",
+            style::maybe_color("✓", |t| t.green().to_string())
+        );
         println!(
             "  {} {}",
-            "Level:".dimmed(),
-            result.slsa_level.to_string().cyan()
+            style::dim("Level:"),
+            style::maybe_color(&result.slsa_level.to_string(), |t| t.cyan().to_string())
         );
 
         if let Some(entry) = &result.transparency_log_entry {
-            println!("  {} {}", "Rekor Entry:".dimmed(), entry);
+            println!("  {} {}", style::dim("Rekor Entry:"), entry);
         }
         if let Some(builder) = &result.builder_id {
-            println!("  {} {}", "Builder:".dimmed(), builder);
+            println!("  {} {}", style::dim("Builder:"), builder);
         }
         if let Some(timestamp) = &result.build_timestamp {
-            println!("  {} {}", "Build Time:".dimmed(), timestamp);
+            println!("  {} {}", style::dim("Build Time:"), timestamp);
         }
     } else {
-        println!("{} SLSA verification failed", "✗".red());
+        println!(
+            "{} SLSA verification failed",
+            style::maybe_color("✗", |t| t.red().to_string())
+        );
         if let Some(error) = &result.error {
-            println!("  {} {}", "Reason:".dimmed(), error);
+            println!("  {} {}", style::dim("Reason:"), error);
         }
         println!(
             "\n  {} Package has no SLSA provenance attestation.",
-            "ℹ".blue()
+            style::maybe_color("ℹ", |t| t.blue().to_string())
         );
-        println!("  {} This is normal for AUR packages.", "ℹ".blue());
+        println!(
+            "  {} This is normal for AUR packages.",
+            style::maybe_color("ℹ", |t| t.blue().to_string())
+        );
     }
 
     Ok(())

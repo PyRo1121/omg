@@ -1,6 +1,7 @@
 use anyhow::Result;
 use owo_colors::OwoColorize;
 
+use crate::cli::style;
 use crate::config::Settings;
 use crate::core::telemetry::is_telemetry_opt_out;
 
@@ -8,13 +9,18 @@ pub fn status() -> Result<()> {
     let opt_out = is_telemetry_opt_out();
     let settings = Settings::load().unwrap_or_default();
 
-    println!("{}", "OMG Telemetry Status".bold().underline());
+    println!(
+        "{}",
+        style::maybe_color("OMG Telemetry Status", |t| {
+            t.bold().underline().to_string()
+        })
+    );
     println!();
 
     let status_str = if opt_out {
-        "Disabled".red().bold().to_string()
+        style::maybe_color("Disabled", |t| t.red().bold().to_string())
     } else {
-        "Enabled".green().bold().to_string()
+        style::maybe_color("Enabled", |t| t.green().bold().to_string())
     };
 
     println!("  Status: {}", status_str);
@@ -28,7 +34,7 @@ pub fn status() -> Result<()> {
     );
 
     if std::env::var("OMG_TELEMETRY").is_ok() || std::env::var("OMG_DISABLE_TELEMETRY").is_ok() {
-        println!("  Environment: {}", "Overridden by env var".yellow());
+        println!("  Environment: {}", style::path("Overridden by env var"));
     }
 
     println!();
@@ -45,16 +51,23 @@ pub fn set_enabled(enabled: bool) -> Result<()> {
     settings.save()?;
 
     let status = if enabled {
-        "enabled".green().bold().to_string()
+        style::maybe_color("enabled", |t| t.green().bold().to_string())
     } else {
-        "disabled".red().bold().to_string()
+        style::maybe_color("disabled", |t| t.red().bold().to_string())
     };
 
-    println!("{} Telemetry has been {}.", "✓".green(), status);
+    println!(
+        "{} Telemetry has been {}.",
+        style::maybe_color("✓", |t| t.green().to_string()),
+        status
+    );
 
     if std::env::var("OMG_TELEMETRY").is_ok() || std::env::var("OMG_DISABLE_TELEMETRY").is_ok() {
         println!();
-        println!("{} {}", "Note:".bold().yellow(), "An environment variable (OMG_TELEMETRY or OMG_DISABLE_TELEMETRY) is currently set and may override this setting.");
+        println!(
+            "{} An environment variable (OMG_TELEMETRY or OMG_DISABLE_TELEMETRY) is currently set and may override this setting.",
+            style::maybe_color("Note:", |t| t.bold().yellow().to_string())
+        );
     }
 
     Ok(())
