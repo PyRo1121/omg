@@ -178,9 +178,9 @@ async fn try_get_suggestions(query: &str) -> Vec<String> {
 #[cfg(feature = "arch")]
 async fn try_aur_package(pkg_name: &str) -> Result<crate::core::Package> {
     let aur = AurClient::new();
-    
+
     let results = aur.search(pkg_name).await?;
-    
+
     results
         .into_iter()
         .find(|p| p.name == pkg_name)
@@ -194,26 +194,29 @@ async fn handle_aur_package(
     yes: bool,
 ) -> Result<()> {
     println!();
-    ui::print_warning(format!("Package '{pkg_name}' not found in official repositories"));
-    println!("  {} Found in AUR: {} ({})", 
+    ui::print_warning(format!(
+        "Package '{pkg_name}' not found in official repositories"
+    ));
+    println!(
+        "  {} Found in AUR: {} ({})",
         style::info("→"),
         style::package(&aur_pkg.name),
         style::version(&aur_pkg.version.to_string())
     );
-    
+
     if !aur_pkg.description.is_empty() {
-        println!("  {} {}", 
-            style::dim("│"),
-            style::dim(&aur_pkg.description)
-        );
+        println!("  {} {}", style::dim("│"), style::dim(&aur_pkg.description));
     }
-    
+
     println!();
     ui::print_warning("AUR packages are user-submitted and not vetted by Arch Linux");
-    println!("  {} Review the PKGBUILD before installing", style::dim("ℹ"));
-    
+    println!(
+        "  {} Review the PKGBUILD before installing",
+        style::dim("ℹ")
+    );
+
     let aur_helper = detect_aur_helper();
-    
+
     match aur_helper {
         Some(helper) => {
             let should_install = if yes {
@@ -227,18 +230,18 @@ async fn handle_aur_package(
             } else {
                 false
             };
-            
+
             if should_install {
                 println!();
                 ui::print_header("AUR", &format!("Installing via {}", helper));
                 ui::print_spacer();
-                
+
                 let status = tokio::process::Command::new(&helper)
                     .args(["-S", "--noconfirm", pkg_name])
                     .status()
                     .await
                     .with_context(|| format!("Failed to execute {}", helper))?;
-                
+
                 if status.success() {
                     ui::print_spacer();
                     ui::print_success(format!("{} installed successfully from AUR", pkg_name));
@@ -256,12 +259,22 @@ async fn handle_aur_package(
             ui::print_error("No AUR helper found (yay or paru required)");
             println!();
             println!("  {} Install an AUR helper first:", style::info("→"));
-            println!("    {} sudo pacman -S --needed base-devel git", style::dim("$"));
-            println!("    {} git clone https://aur.archlinux.org/yay.git", style::dim("$"));
+            println!(
+                "    {} sudo pacman -S --needed base-devel git",
+                style::dim("$")
+            );
+            println!(
+                "    {} git clone https://aur.archlinux.org/yay.git",
+                style::dim("$")
+            );
             println!("    {} cd yay && makepkg -si", style::dim("$"));
             println!();
-            println!("  {} Then retry: omg install {}", style::info("→"), pkg_name);
-            
+            println!(
+                "  {} Then retry: omg install {}",
+                style::info("→"),
+                pkg_name
+            );
+
             anyhow::bail!("AUR helper required but not found");
         }
     }
