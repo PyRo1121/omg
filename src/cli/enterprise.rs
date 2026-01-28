@@ -163,7 +163,7 @@ pub fn audit_export(
     for (filename, content) in &files {
         let path = Path::new(output).join(filename);
         fs::write(&path, content)?;
-        file_list.push(format!("{}", path.display()));
+        file_list.push(path.display().to_string());
     }
 
     execute_cmd(Cmd::batch([
@@ -606,7 +606,7 @@ struct LicenseViolation {
     reason: String,
 }
 
-#[allow(unused_mut)]
+#[allow(unused_mut)] // Mutated only inside feature-gated block
 fn perform_license_scan() -> LicenseScan {
     let mut by_license: HashMap<String, usize> = HashMap::new();
     let mut violations: Vec<LicenseViolation> = Vec::new();
