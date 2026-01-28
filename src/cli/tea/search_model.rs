@@ -138,7 +138,7 @@ impl SearchModel {
 
         format!(
             "  {:>2}) {} {} ({}){} - {}{}{}",
-            style::dim(&format!("{}", index + 1)),
+            style::dim(&(index + 1).to_string()),
             style::package(&result.name),
             style::version(&result.version),
             result.source.styled_label(),
