@@ -665,6 +665,18 @@ Performance improvements:
 - Introduce `runtime_resolver` module, optimize daemon cache, simplify sync client, and add new integration tests and benchmarks
 ### 🐛 Bug Fixes
 
+- Remove target-cpu=native from release build to prevent LLVM SIGSEGV
+
+target-cpu=native triggers a SelectionDAGBuilder crash in LLVM when
+
+combined with lto=fat + codegen-units=1. The profile.release settings
+
+already provide maximum optimisation without it.
+
+Also fixes the fallback branch to properly unset RUSTFLAGS so stale
+
+flags cannot leak into the retry.
+
 - **Safety**: Add truncation guards and error context on I/O
 - Make tests resilient to signal termination and optimize release script
 
@@ -683,6 +695,10 @@ Performance improvements:
 - Inline format args in license.rs for clippy compliance
 - Substitute `$repo` and `$arch` placeholders in parsed server URLs
 ### 📚 Documentation
+
+- Update changelog [skip ci]
+
+Auto-generated from git history with git-cliff.
 
 - Update changelog [skip ci]
 
