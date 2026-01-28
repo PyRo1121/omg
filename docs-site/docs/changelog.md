@@ -11,6 +11,50 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ---
 
 ## [Unreleased]
+### ⚡ Performance
+
+- Replace which subprocess calls with which crate (pure Rust)
+
+Eliminates 3 subprocess spawns by using the which crate directly instead
+
+of shelling out to the which binary.
+
+### ✨ New Features
+
+- Replace git subprocess with git2 library (pure Rust, 10-50x faster)
+
+Eliminates git CLI dependency by using libgit2 bindings (git2 crate).
+
+Performance improvements:
+
+  - 10-50x faster than subprocess git
+
+  - No process spawn overhead
+
+  - Direct in-process library calls
+
+  - Used by cargo, rust-analyzer, and other Rust tools
+
+- Replace yay wrapper with native AUR build system ⚠️ **BREAKING CHANGE**
+### 🐛 Bug Fixes
+
+- Suppress misleading 'Sudo failed' error when command fails after successful auth
+
+When an elevated command fails (e.g., user cancels AUR install), the parent
+
+process was printing 'Sudo failed with exit code: 1' even though sudo
+
+authentication succeeded. The error was already printed by the elevated
+
+process, so the parent should just exit silently with the same code.
+
+### 📚 Documentation
+
+- Update changelog [skip ci]
+
+Auto-generated from git history with git-cliff.
+
+## [0.1.172] - 2026-01-28
 ### 🐛 Bug Fixes
 
 - Clippy warnings in AUR install fallback (single-match-else, uninlined-format-args)
