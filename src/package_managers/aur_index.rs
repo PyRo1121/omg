@@ -66,7 +66,7 @@ impl AurIndex {
     }
 
     /// Check if a package exists in the index
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Struct fields used by daemon indexer; deserialized at runtime
     pub fn contains(&self, name: &str) -> Result<bool> {
         Ok(self.get(name)?.is_some())
     }
@@ -86,7 +86,7 @@ impl AurIndex {
     }
 
     /// Search for packages matching a query (substring match in name or description)
-    #[allow(clippy::map_unwrap_or)]
+    #[allow(clippy::map_unwrap_or)] // Readability: map().unwrap_or() is explicit about the transformation
     pub fn search(&self, query: &str, limit: usize) -> Result<Vec<&ArchivedAurEntry>> {
         let archive = self.archive()?;
         let query = query.to_lowercase();

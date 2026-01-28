@@ -3,7 +3,7 @@
 //! Shared utilities for resolving runtime binary paths across native installations
 //! and mise-managed toolchains. Used by both task runner and hooks system.
 //!
-//! This module eliminates ~150 lines of duplication between task_runner.rs and hooks/mod.rs
+//! This module eliminates ~150 lines of duplication between `task_runner.rs` and `hooks/mod.rs`
 
 use std::collections::{HashMap, HashSet};
 use std::hash::BuildHasher;
@@ -94,7 +94,7 @@ pub fn find_in_path(binary: &str) -> Option<PathBuf> {
     None
 }
 
-/// Add mise runtime paths to path_additions, respecting backend preference
+/// Add mise runtime paths to `path_additions`, respecting backend preference
 ///
 /// This function adds bin directories for mise-managed runtimes to the PATH additions vector.
 /// It deduplicates paths and respects the backend preference (native-first or mise-only).

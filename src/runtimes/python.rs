@@ -25,8 +25,6 @@ const PBS_RELEASES_URL: &str =
 
 #[derive(Debug, Deserialize)]
 struct GithubRelease {
-    #[allow(dead_code)]
-    tag_name: String,
     assets: Vec<GithubAsset>,
 }
 

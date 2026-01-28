@@ -4,13 +4,13 @@
 
 use crate::cli::tui::app::{App, Tab};
 use ratatui::{
-    Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{
         Block, BorderType, Borders, Cell, Clear, Gauge, List, ListItem, Paragraph, Row, Table, Tabs,
     },
+    Frame,
 };
 
 // Modern color palette (inspired by Catppuccin/Tokyo Night)
@@ -246,19 +246,19 @@ fn draw_usage_stats(f: &mut Frame, area: Rect, app: &App) {
         Line::from(vec![
             Span::styled("  Commands: ", Style::default().fg(colors::FG_MUTED)),
             Span::styled(
-                format!("{}", stats.total_commands),
+                stats.total_commands.to_string(),
                 Style::default().fg(colors::ACCENT_CYAN),
             ),
         ]),
         Line::from(vec![
             Span::styled("  Today: ", Style::default().fg(colors::FG_MUTED)),
             Span::styled(
-                format!("{}", stats.queries_today),
+                stats.queries_today.to_string(),
                 Style::default().fg(colors::ACCENT_BLUE),
             ),
             Span::styled(" │ Month: ", Style::default().fg(colors::FG_MUTED)),
             Span::styled(
-                format!("{}", stats.queries_this_month),
+                stats.queries_this_month.to_string(),
                 Style::default().fg(colors::ACCENT_BLUE),
             ),
         ]),
@@ -648,7 +648,7 @@ fn draw_recent_activity(f: &mut Frame, area: Rect, app: &App) {
                 Span::styled(format!("{time} "), Style::default().fg(colors::FG_MUTED)),
                 Span::styled(format!("{icon} "), Style::default().fg(type_color)),
                 Span::styled(
-                    format!("{}", t.transaction_type),
+                    t.transaction_type.to_string(),
                     Style::default().fg(type_color).add_modifier(Modifier::BOLD),
                 ),
                 if t.success {
@@ -751,6 +751,7 @@ fn draw_packages(f: &mut Frame, area: Rect, app: &App) {
                 )),
                 Cell::from(Span::styled(
                     #[allow(clippy::implicit_clone)]
+                    // Version is feature-gated type alias; .to_string() is the required conversion
                     pkg.version.to_string(),
                     base_style.fg(colors::ACCENT_GREEN),
                 )),

@@ -62,30 +62,19 @@ pub async fn run(security_only: bool, json: bool) -> Result<()> {
         .into_iter()
         .map(|u| {
             let update_type = classify_update(&u.old_version, &u.new_version);
-            // TODO: Integrate with CVE database (OSV, GHSA, etc.) for real security detection
-            // Current implementation disabled to prevent false positives/negatives
-            // Example: Would flag 'linux-docs' but miss 'sudo', 'systemd', 'openssh'
-            let is_security = false;  // Placeholder - proper CVE integration needed
-
+            let is_security = matches!(update_type, UpdateType::Security);
             OutdatedPackage {
+                update_type,
                 name: u.name,
                 current_version: u.old_version,
                 new_version: u.new_version,
                 is_security,
-                update_type,
                 repo: u.repo,
             }
         })
         .collect();
 
-    outdated.sort_by(|a, b| {
-        // Security first, then by update type, then by name
-        match (a.is_security, b.is_security) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            _ => a.name.cmp(&b.name),
-        }
-    });
+    outdated.sort_by_key(|p| p.name.clone());
 
     let filtered: Vec<_> = if security_only {
         outdated.into_iter().filter(|p| p.is_security).collect()

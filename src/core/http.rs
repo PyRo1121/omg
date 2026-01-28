@@ -30,7 +30,7 @@ static DOWNLOAD_CLIENT: LazyLock<Client> =
 /// Panics if the HTTP client cannot be built, which should only happen with:
 /// - Missing TLS certificates (system misconfiguration)
 /// - Incompatible TLS backend (build issue)
-#[allow(clippy::expect_used)]
+#[allow(clippy::expect_used)] // System misconfiguration or build issue; panics documented above
 fn build_client(timeout: Duration, connect_timeout: Duration) -> Client {
     Client::builder()
         .user_agent("omg-package-manager")

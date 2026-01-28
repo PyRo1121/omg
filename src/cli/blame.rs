@@ -1,9 +1,8 @@
 //! `omg blame` - Show when and why a package was installed
 
 use anyhow::Result;
-#[cfg(any(feature = "arch", feature = "debian"))]
-use owo_colors::OwoColorize;
 
+use crate::cli::style;
 use crate::cli::tea::Cmd;
 use crate::core::history::{HistoryManager, TransactionType};
 
@@ -131,8 +130,8 @@ fn get_package_info(package: &str) -> Result<(bool, Option<String>, String)> {
     match localdb.pkg(package) {
         Ok(pkg) => {
             let reason = match pkg.reason() {
-                alpm::PackageReason::Explicit => "explicit (user installed)".green().to_string(),
-                alpm::PackageReason::Depend => "dependency".yellow().to_string(),
+                alpm::PackageReason::Explicit => style::version("explicit (user installed)"),
+                alpm::PackageReason::Depend => style::path("dependency"),
             };
             Ok((true, Some(pkg.version().to_string()), reason))
         }
@@ -161,9 +160,9 @@ fn get_package_info(package: &str) -> Result<(bool, Option<String>, String)> {
                 .contains(package);
 
             let reason = if is_auto {
-                "dependency (auto-installed)".yellow().to_string()
+                style::path("dependency (auto-installed)")
             } else {
-                "explicit (user installed)".green().to_string()
+                style::version("explicit (user installed)")
             };
 
             return Ok((true, Some(parts[0].to_string()), reason));
@@ -174,7 +173,7 @@ fn get_package_info(package: &str) -> Result<(bool, Option<String>, String)> {
 }
 
 #[cfg(not(any(feature = "arch", feature = "debian")))]
-#[allow(clippy::unnecessary_wraps)]
+#[allow(clippy::unnecessary_wraps)] // Result return required: API compat with feature-gated impls
 fn get_package_info(_package: &str) -> Result<(bool, Option<String>, String)> {
     Ok((false, None, "unknown".to_string()))
 }
@@ -236,7 +235,7 @@ fn show_required_by(package: &str) -> Result<Cmd<()>> {
 }
 
 #[cfg(not(any(feature = "arch", feature = "debian")))]
-#[allow(clippy::unnecessary_wraps)]
+#[allow(clippy::unnecessary_wraps)] // Result return required: API compat with feature-gated impls
 fn show_required_by(_package: &str) -> Result<Cmd<()>> {
     use crate::cli::components::Components;
     Ok(Cmd::info("Dependency information not available"))

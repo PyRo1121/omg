@@ -1695,7 +1695,7 @@ impl Default for AurClient {
 }
 
 /// Create a spinner
-#[allow(clippy::literal_string_with_formatting_args, clippy::expect_used)]
+#[allow(clippy::literal_string_with_formatting_args, clippy::expect_used)] // Static indicatif template is always valid; braces are template syntax not Rust format args
 fn create_spinner(msg: &str) -> ProgressBar {
     let pb = ProgressBar::new_spinner();
     pb.set_style(
@@ -1815,7 +1815,7 @@ pub struct AurPackageDetail {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used)] // Idiomatic in tests: panics on failure with clear error context
 mod tests {
     use super::*;
     use std::path::PathBuf;

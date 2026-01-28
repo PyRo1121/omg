@@ -24,7 +24,7 @@ use crate::runtimes::{
 
 /// Represents the captured state of the environment
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
-#[allow(clippy::unsafe_derive_deserialize)]
+#[allow(clippy::unsafe_derive_deserialize)] // Struct fields are all owned safe types (HashMap, Vec, String, i64); no unsafe in fields
 pub struct EnvironmentState {
     /// Runtime versions (`runtime_name` -> version)
     pub runtimes: HashMap<String, String>,

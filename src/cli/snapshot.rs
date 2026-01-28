@@ -1,6 +1,6 @@
 //! `omg snapshot` - Create and restore environment snapshots
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use owo_colors::OwoColorize;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -41,8 +41,10 @@ fn index_path() -> PathBuf {
 fn load_index() -> Result<SnapshotIndex> {
     let path = index_path();
     if path.exists() {
-        let content = fs::read_to_string(&path)?;
-        Ok(serde_json::from_str(&content)?)
+        let content = fs::read_to_string(&path)
+            .with_context(|| format!("Failed to read snapshot index: {}", path.display()))?;
+        Ok(serde_json::from_str(&content)
+            .with_context(|| format!("Failed to parse snapshot index: {}", path.display()))?)
     } else {
         Ok(SnapshotIndex::default())
     }
@@ -51,10 +53,13 @@ fn load_index() -> Result<SnapshotIndex> {
 fn save_index(index: &SnapshotIndex) -> Result<()> {
     let path = index_path();
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
+        fs::create_dir_all(parent)
+            .with_context(|| format!("Failed to create snapshot directory: {}", parent.display()))?;
     }
-    let content = serde_json::to_string_pretty(index)?;
-    fs::write(path, content)?;
+    let content =
+        serde_json::to_string_pretty(index).context("Failed to serialize snapshot index")?;
+    fs::write(&path, &content)
+        .with_context(|| format!("Failed to write snapshot index: {}", path.display()))?;
     Ok(())
 }
 
@@ -81,9 +86,11 @@ pub async fn create(message: Option<String>) -> Result<()> {
 
     // Save snapshot file
     let snapshot_path = snapshots_dir().join(format!("{id}.json"));
-    fs::create_dir_all(snapshots_dir())?;
-    let content = serde_json::to_string_pretty(&snapshot)?;
-    fs::write(&snapshot_path, content)?;
+    fs::create_dir_all(snapshots_dir()).context("Failed to create snapshots directory")?;
+    let content =
+        serde_json::to_string_pretty(&snapshot).context("Failed to serialize snapshot")?;
+    fs::write(&snapshot_path, &content)
+        .with_context(|| format!("Failed to write snapshot: {}", snapshot_path.display()))?;
 
     // Update index
     let mut index = load_index()?;
@@ -177,8 +184,10 @@ pub async fn restore(id: &str, dry_run: bool, yes: bool) -> Result<()> {
         anyhow::bail!("Snapshot '{id}' not found");
     }
 
-    let content = fs::read_to_string(&snapshot_path)?;
-    let snapshot: Snapshot = serde_json::from_str(&content)?;
+    let content = fs::read_to_string(&snapshot_path)
+        .with_context(|| format!("Failed to read snapshot file: {}", snapshot_path.display()))?;
+    let snapshot: Snapshot = serde_json::from_str(&content)
+        .with_context(|| format!("Failed to parse snapshot: {}", snapshot_path.display()))?;
 
     // Capture current state
     let current = EnvironmentState::capture().await?;
@@ -214,8 +223,8 @@ pub async fn restore(id: &str, dry_run: bool, yes: bool) -> Result<()> {
     let current_pkgs: std::collections::HashSet<_> = current.packages.iter().collect();
     let target_pkgs: std::collections::HashSet<_> = snapshot.state.packages.iter().collect();
 
-    let to_install: Vec<_> = target_pkgs.difference(&current_pkgs).collect();
-    let to_remove: Vec<_> = current_pkgs.difference(&target_pkgs).collect();
+    let to_install: Vec<String> = target_pkgs.difference(&current_pkgs).map(|s| (*s).clone()).collect();
+    let to_remove: Vec<String> = current_pkgs.difference(&target_pkgs).map(|s| (*s).clone()).collect();
 
     if !to_install.is_empty() {
         println!("  Packages to install ({}):", to_install.len());
@@ -245,7 +254,7 @@ pub async fn restore(id: &str, dry_run: bool, yes: bool) -> Result<()> {
     }
 
     if dry_run {
-        println!("  {} Dry run - no changes made", "ℹ".blue());
+        println!("  {} No changes made (dry run)", "ℹ".blue());
         println!(
             "  Run without --dry-run to apply: {}",
             format!("omg snapshot restore {id}").cyan()
@@ -295,15 +304,13 @@ pub async fn restore(id: &str, dry_run: bool, yes: bool) -> Result<()> {
         }
 
         if !to_install.is_empty() {
-            let pkgs: Vec<String> = to_install.iter().map(|s| (**s).clone()).collect();
-            println!("    Installing {} packages...", pkgs.len());
-            crate::cli::packages::install(&pkgs, true, false).await?;
+            println!("    Installing {} packages...", to_install.len());
+            crate::cli::packages::install(&to_install, true, false).await?;
         }
 
         if !to_remove.is_empty() {
-            let pkgs: Vec<String> = to_remove.iter().map(|s| (**s).clone()).collect();
-            println!("    Removing {} packages...", pkgs.len());
-            crate::cli::packages::remove(&pkgs, false, true, false).await?;
+            println!("    Removing {} packages...", to_remove.len());
+            crate::cli::packages::remove(&to_remove, false, true, false).await?;
         }
     }
 

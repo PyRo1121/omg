@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 
+use crate::cli::style;
 use crate::core::env::distro::detect_distro;
 use crate::core::env::fingerprint::EnvironmentState;
 
@@ -31,7 +32,7 @@ pub async fn export(output: &str) -> Result<()> {
     // SECURITY: Validate output path
     crate::core::security::validate_relative_path(output)?;
 
-    println!("{} Exporting environment...\n", "OMG".cyan().bold());
+    println!("{} Exporting environment...\n", style::runtime("OMG"));
 
     let state = EnvironmentState::capture().await?;
     let distro = format!("{:?}", detect_distro()).to_lowercase();
@@ -53,17 +54,29 @@ pub async fn export(output: &str) -> Result<()> {
     let content = serde_json::to_string_pretty(&manifest)?;
     fs::write(output, &content)?;
 
-    println!("  {} Exported to {}", "✓".green(), output.cyan());
+    println!(
+        "  {} Exported to {}",
+        style::maybe_color("✓", |t| t.green().to_string()),
+        style::maybe_color(output, |t| t.cyan().to_string())
+    );
     println!();
-    println!("  Source distro: {}", distro.yellow());
+    println!("  Source distro: {}", style::path(&distro));
     println!("  Runtimes: {}", state.runtimes.len());
     println!("  Packages: {}", state.packages.len());
     println!();
-    println!("  {}", "To import on another machine:".bold());
-    println!("    1. Copy {} to the target machine", output.cyan());
+    println!(
+        "  {}",
+        style::maybe_color("To import on another machine:", |t| {
+            t.bold().to_string()
+        })
+    );
+    println!(
+        "    1. Copy {} to the target machine",
+        style::maybe_color(output, |t| t.cyan().to_string())
+    );
     println!(
         "    2. Run {}",
-        format!("omg migrate import {output}").cyan()
+        style::command(&format!("omg migrate import {output}"))
     );
 
     Ok(())
@@ -76,7 +89,7 @@ pub async fn import(manifest_path: &str, dry_run: bool) -> Result<()> {
 
     println!(
         "{} {} manifest...\n",
-        "OMG".cyan().bold(),
+        style::runtime("OMG"),
         if dry_run { "Previewing" } else { "Importing" }
     );
 
@@ -87,13 +100,16 @@ pub async fn import(manifest_path: &str, dry_run: bool) -> Result<()> {
 
     println!(
         "  Source: {} → Target: {}",
-        manifest.source_distro.yellow(),
-        target_distro.cyan()
+        style::path(&manifest.source_distro),
+        style::maybe_color(&target_distro, |t| t.cyan().to_string())
     );
     println!();
 
     // Map packages
-    println!("  {}", "Package mapping:".bold());
+    println!(
+        "  {}",
+        style::maybe_color("Package mapping:", |t| t.bold().to_string())
+    );
 
     let mut mapped = 0;
     let mut unmapped = Vec::new();
@@ -106,9 +122,9 @@ pub async fn import(manifest_path: &str, dry_run: bool) -> Result<()> {
             if target != pkg.original_name {
                 println!(
                     "    {} {} → {}",
-                    "✓".green(),
-                    pkg.original_name.dimmed(),
-                    target.cyan()
+                    style::maybe_color("✓", |t| t.green().to_string()),
+                    style::dim(&pkg.original_name),
+                    style::maybe_color(&target, |t| t.cyan().to_string())
                 );
             }
             to_install.push(target);
@@ -121,15 +137,23 @@ pub async fn import(manifest_path: &str, dry_run: bool) -> Result<()> {
     println!();
     println!(
         "  Mapped: {}/{} packages",
-        mapped.to_string().green(),
+        style::version(&mapped.to_string()),
         manifest.packages.len()
     );
 
     if !unmapped.is_empty() {
         println!();
-        println!("  {} No direct mapping ({}):", "⚠".yellow(), unmapped.len());
+        println!(
+            "  {} No direct mapping ({}):",
+            style::maybe_color("⚠", |t| t.yellow().to_string()),
+            unmapped.len()
+        );
         for pkg in unmapped.iter().take(10) {
-            println!("    {} {}", "?".yellow(), pkg);
+            println!(
+                "    {} {}",
+                style::maybe_color("?", |t| t.yellow().to_string()),
+                pkg
+            );
         }
         if unmapped.len() > 10 {
             println!("    ... and {} more", unmapped.len() - 10);
@@ -138,30 +162,47 @@ pub async fn import(manifest_path: &str, dry_run: bool) -> Result<()> {
 
     // Runtimes
     println!();
-    println!("  {}", "Runtimes:".bold());
+    println!(
+        "  {}",
+        style::maybe_color("Runtimes:", |t| t.bold().to_string())
+    );
     for (runtime, version) in &manifest.runtimes {
-        println!("    {} {} @ {}", "→".blue(), runtime, version.cyan());
+        println!(
+            "    {} {} @ {}",
+            style::maybe_color("→", |t| t.blue().to_string()),
+            runtime,
+            style::maybe_color(version, |t| t.cyan().to_string())
+        );
     }
 
     if dry_run {
         println!();
-        println!("  {} Dry run complete - no changes made", "ℹ".blue());
+        println!(
+            "  {} No changes made (dry run)",
+            style::maybe_color("ℹ", |t| t.blue().to_string())
+        );
         println!(
             "  Run without --dry-run to install: {}",
-            format!("omg migrate import {manifest_path}").cyan()
+            style::command(&format!("omg migrate import {manifest_path}"))
         );
         return Ok(());
     }
 
     // Apply changes
     println!();
-    println!("  {}", "Applying...".bold());
+    println!(
+        "  {}",
+        style::maybe_color("Applying...", |t| t.bold().to_string())
+    );
 
     // Install runtimes
     for (runtime, version) in &manifest.runtimes {
         println!("    Installing {runtime} {version}...");
         if let Err(e) = crate::cli::runtimes::use_version(runtime, Some(version)).await {
-            println!("      {} Failed to install {runtime}: {e}", "✗".red());
+            println!(
+                "      {} Failed to install {runtime}: {e}",
+                style::maybe_color("✗", |t| t.red().to_string())
+            );
         }
     }
 
@@ -170,12 +211,18 @@ pub async fn import(manifest_path: &str, dry_run: bool) -> Result<()> {
         println!();
         println!("    Installing {} packages...", to_install.len());
         if let Err(e) = crate::cli::packages::install(&to_install, true, false).await {
-            println!("      {} Package installation failed: {e}", "✗".red());
+            println!(
+                "      {} Package installation failed: {e}",
+                style::maybe_color("✗", |t| t.red().to_string())
+            );
         }
     }
 
     println!();
-    println!("  {} Migration complete!", "✓".green());
+    println!(
+        "  {} Migration complete!",
+        style::maybe_color("✓", |t| t.green().to_string())
+    );
     println!("  Some packages may need manual installation - check the unmapped list above.");
 
     Ok(())

@@ -220,10 +220,10 @@ impl Model for InstallModel {
                 self.suggestions = Some((package.clone(), suggestions.clone()));
 
                 if suggestions.is_empty() {
-                    Cmd::error(format!("Package '{package}' not found."))
+                    Cmd::error(format!("Package '{package}' not found"))
                 } else {
                     Components::error_with_suggestion(
-                        format!("Package '{package}' not found."),
+                        format!("Package '{package}' not found"),
                         format!("Did you mean: {}", suggestions.join(", ")),
                     )
                 }

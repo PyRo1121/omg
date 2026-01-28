@@ -1,15 +1,14 @@
 //! In-memory package cache with LRU eviction
 
 use moka::sync::Cache;
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 use std::time::Duration;
 
 use super::protocol::{DetailedPackageInfo, PackageInfo, StatusResult};
 
-// Static cache keys - allocated once, reused forever (no clones)
-static KEY_STATUS: LazyLock<String> = LazyLock::new(|| "status".to_string());
-static KEY_EXPLICIT: LazyLock<String> = LazyLock::new(|| "explicit".to_string());
-static KEY_EXPLICIT_COUNT: LazyLock<String> = LazyLock::new(|| "explicit_count".to_string());
+const KEY_STATUS: &str = "status";
+const KEY_EXPLICIT: &str = "explicit";
+const KEY_EXPLICIT_COUNT: &str = "explicit_count";
 
 /// LRU cache for package search results
 pub struct PackageCache {
@@ -84,29 +83,28 @@ impl PackageCache {
     #[inline]
     #[must_use]
     pub fn get_status(&self) -> Option<Arc<StatusResult>> {
-        self.system_status.get(&**KEY_STATUS)
+        self.system_status.get(KEY_STATUS)
     }
 
-    /// Update system status cache
-    pub fn update_status(&self, result: StatusResult) {
+    /// Update system status cache (accepts Arc to avoid double-wrapping)
+    pub fn update_status(&self, result: Arc<StatusResult>) {
         self.explicit_count
             .insert(KEY_EXPLICIT_COUNT.to_string(), result.explicit_packages);
-        self.system_status
-            .insert(KEY_STATUS.to_string(), Arc::new(result));
+        self.system_status.insert(KEY_STATUS.to_string(), result);
     }
 
     /// Get cached explicit packages (Arc clone is cheap - just pointer copy)
     #[inline]
     #[must_use]
     pub fn get_explicit(&self) -> Option<Arc<Vec<String>>> {
-        self.explicit_packages.get(&**KEY_EXPLICIT)
+        self.explicit_packages.get(KEY_EXPLICIT)
     }
 
     /// Get cached explicit package count
     #[inline]
     #[must_use]
     pub fn get_explicit_count(&self) -> Option<usize> {
-        self.explicit_count.get(&**KEY_EXPLICIT_COUNT)
+        self.explicit_count.get(KEY_EXPLICIT_COUNT)
     }
 
     /// Update explicit package cache
@@ -161,7 +159,7 @@ impl PackageCache {
     #[must_use]
     pub fn stats(&self) -> CacheStats {
         CacheStats {
-            size: self.cache.entry_count() as usize,
+            size: self.cache.entry_count().min(usize::MAX as u64) as usize,
             max_size: self.max_size,
         }
     }
