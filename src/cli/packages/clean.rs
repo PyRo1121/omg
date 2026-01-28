@@ -13,7 +13,7 @@ use crate::package_managers::{AurClient, clean_cache, list_orphans_direct, remov
 use crate::package_managers::apt_remove_orphans;
 
 /// Clean up orphans and caches
-#[allow(clippy::fn_params_excessive_bools)]
+#[allow(clippy::fn_params_excessive_bools)] // Parameters map directly to CLI boolean flags (orphans, cache, aur, all)
 pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool) -> Result<()> {
     println!("{} Cleaning up...\n", style::header("OMG"));
 

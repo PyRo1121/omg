@@ -241,9 +241,10 @@ pub async fn remediate(dry_run: bool, confirm: bool, _ctx: &CliContext) -> Resul
 
     if dry_run {
         execute_cmd(Cmd::batch([
-            Cmd::header("Fleet Remediation", "Dry run - no changes will be made"),
+            Cmd::header("Fleet Remediation", "Dry run"),
             Cmd::spacer(),
             Cmd::card("Remediation Plan", plan_details),
+            Cmd::info("No changes made (dry run)"),
             Cmd::info("Run without --dry-run and with --confirm to apply"),
         ]));
         return Ok(());
