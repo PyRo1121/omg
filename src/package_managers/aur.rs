@@ -1133,7 +1133,21 @@ impl AurClient {
             println!("{} Building in sandbox (bubblewrap)...", "🔒".green());
 
             // Install dependencies BEFORE entering sandbox (requires sudo)
-            let dep_status = Command::new("makepkg")
+            // If running as root, drop to original user or nobody
+            let build_user = std::env::var("SUDO_USER")
+                .ok()
+                .or_else(|| std::env::var("DOAS_USER").ok());
+
+            let mut dep_cmd = if crate::core::is_root() {
+                let user = build_user.as_deref().unwrap_or("nobody");
+                let mut c = Command::new("sudo");
+                c.args(["-u", user, "makepkg"]);
+                c
+            } else {
+                Command::new("makepkg")
+            };
+
+            let dep_status = dep_cmd
                 .args(["--syncdeps", "--noconfirm", "--nobuild"])
                 .current_dir(pkg_dir)
                 .stdout(Stdio::null())
@@ -1312,7 +1326,26 @@ impl AurClient {
         log_file_err: File,
         spinner: ProgressBar,
     ) -> Result<std::process::ExitStatus> {
-        let mut cmd = Command::new("makepkg");
+        // Get build user (original user from sudo/doas, or fallback to nobody)
+        let build_user = std::env::var("SUDO_USER")
+            .ok()
+            .or_else(|| std::env::var("DOAS_USER").ok());
+
+        // If running as root, drop privileges to original user or nobody
+        // makepkg refuses to run as root for security reasons
+        let mut cmd = if crate::core::is_root() {
+            let user = build_user.as_deref().unwrap_or("nobody");
+            tracing::debug!(
+                "Running makepkg as user '{}' (de-escalated from root)",
+                user
+            );
+            let mut c = Command::new("sudo");
+            c.args(["-u", user, "makepkg"]);
+            c
+        } else {
+            Command::new("makepkg")
+        };
+
         cmd.args(self.makepkg_args())
             .env("MAKEFLAGS", &env.makeflags)
             .env("PKGDEST", &env.pkgdest)
