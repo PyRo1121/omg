@@ -668,12 +668,13 @@ pub fn history(
     let entries = history_mgr.load()?;
 
     // Parse optional transaction type filter
-    let type_filter = transaction_type.map(|t| match t.to_lowercase().as_str() {
-        "install" => crate::core::history::TransactionType::Install,
-        "remove" => crate::core::history::TransactionType::Remove,
-        "update" => crate::core::history::TransactionType::Update,
-        "sync" => crate::core::history::TransactionType::Sync,
-        _ => crate::core::history::TransactionType::Install, // Default fallback
+    let type_filter = transaction_type.map(|t| {
+        match t.to_lowercase().as_str() {
+            "install" => crate::core::history::TransactionType::Install,
+            "remove" => crate::core::history::TransactionType::Remove,
+            "update" => crate::core::history::TransactionType::Update,
+            _ => crate::core::history::TransactionType::Sync,
+        }
     });
 
     // Parse date filters
@@ -681,7 +682,7 @@ pub fn history(
     let to_date = to.and_then(|d| jiff::civil::Date::strptime("%Y-%m-%d", d).ok());
 
     // Build header
-    let mut header = format!("Transaction History (last {})", limit);
+    let mut header = format!("Transaction History (last {limit})");
     if search.is_some() || transaction_type.is_some() || from.is_some() || to.is_some() {
         header = "Transaction History (filtered)".to_string();
     }
@@ -699,14 +700,14 @@ pub fn history(
         .rev()
         .filter(|entry| {
             // Filter by transaction type
-            if let Some(ref t) = type_filter {
-                if entry.transaction_type != *t {
-                    return false;
-                }
+            if let Some(ref t) = type_filter
+                && entry.transaction_type != *t
+            {
+                return false;
             }
 
             // Filter by search term (package name)
-            if let Some(ref query) = search {
+            if let Some(query) = search {
                 let query_lower = query.to_lowercase();
                 let matches = entry
                     .changes
@@ -772,7 +773,7 @@ pub fn history(
 
         // If searching, highlight matching packages
         for change in &entry.changes {
-            let pkg_display = if let Some(ref query) = search {
+            let pkg_display = if let Some(query) = search {
                 if change.name.to_lowercase().contains(&query.to_lowercase()) {
                     style::success(&change.name)
                 } else {

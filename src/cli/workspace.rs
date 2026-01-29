@@ -100,7 +100,7 @@ impl Workspace {
         result: &mut Vec<String>,
     ) -> Result<()> {
         if temp_mark.get(name).copied().unwrap_or(false) {
-            anyhow::bail!("Circular dependency detected involving project: {}", name);
+            anyhow::bail!("Circular dependency detected involving project: {name}");
         }
 
         if !visited.contains_key(name) {
@@ -132,8 +132,7 @@ pub fn init(name: &str) -> Result<()> {
     let path = PathBuf::from(WORKSPACE_FILE);
     if path.exists() {
         anyhow::bail!(
-            "Workspace already exists. Delete {} to reinitialize.",
-            WORKSPACE_FILE
+            "Workspace already exists. Delete {WORKSPACE_FILE} to reinitialize."
         );
     }
 
@@ -159,7 +158,7 @@ pub fn add(path: &str, name: Option<&str>) -> Result<()> {
 
     let project_path = PathBuf::from(path);
     if !project_path.exists() {
-        anyhow::bail!("Project path does not exist: {}", path);
+        anyhow::bail!("Project path does not exist: {path}");
     }
 
     // Determine project name
@@ -174,7 +173,7 @@ pub fn add(path: &str, name: Option<&str>) -> Result<()> {
         .unwrap_or_else(|| "project".to_string());
 
     if workspace.projects.contains_key(&project_name) {
-        anyhow::bail!("Project '{}' already exists in workspace", project_name);
+        anyhow::bail!("Project '{project_name}' already exists in workspace");
     }
 
     // Detect project type and commands
@@ -190,10 +189,8 @@ pub fn add(path: &str, name: Option<&str>) -> Result<()> {
     workspace.save()?;
 
     println!(
-        "{} Added project '{}' ({})",
-        style::success("✓"),
-        project_name,
-        path
+        "{} Added project '{project_name}' ({path})",
+        style::success("✓")
     );
 
     Ok(())
@@ -204,7 +201,7 @@ pub fn remove(project: &str) -> Result<()> {
     let mut workspace = Workspace::load()?;
 
     if workspace.projects.remove(project).is_none() {
-        anyhow::bail!("Project '{}' not found in workspace", project);
+        anyhow::bail!("Project '{project}' not found in workspace");
     }
 
     // Remove from dependencies of other projects
@@ -214,7 +211,7 @@ pub fn remove(project: &str) -> Result<()> {
 
     workspace.save()?;
 
-    println!("{} Removed project '{}'", style::success("✓"), project);
+    println!("{} Removed project '{project}'", style::success("✓"));
 
     Ok(())
 }
@@ -252,7 +249,7 @@ pub fn list() -> Result<()> {
 
             // Show available commands
             if !project.commands.is_empty() {
-                let cmds: Vec<&str> = project.commands.keys().map(|s| s.as_str()).collect();
+                let cmds: Vec<&str> = project.commands.keys().map(std::string::String::as_str).collect();
                 println!("     {} {}", style::dim("commands:"), cmds.join(", "));
             }
         }
@@ -284,9 +281,8 @@ pub async fn run(
     let workspace = Workspace::load()?;
 
     println!(
-        "{} Running '{}' across workspace...\n",
-        style::header("OMG"),
-        command
+        "{} Running '{command}' across workspace...\n",
+        style::header("OMG")
     );
 
     // Get sorted projects
@@ -314,7 +310,7 @@ pub async fn run(
         run_parallel(&workspace, &projects, command, args).await?;
     } else {
         // Run sequentially
-        run_sequential(&workspace, &projects, command, args)?;
+        run_sequential(&workspace, &projects, command, args);
     }
 
     Ok(())
@@ -325,7 +321,7 @@ fn run_sequential(
     projects: &[&String],
     command: &str,
     args: &[String],
-) -> Result<()> {
+) {
     let mut success = 0;
     let mut failed = 0;
 
@@ -336,12 +332,12 @@ fn run_sequential(
             let result = run_project_command(&project.path, project, command, args);
 
             match result {
-                Ok(_) => {
+                Ok(()) => {
                     println!("  {}", style::success("✓ completed"));
                     success += 1;
                 }
                 Err(e) => {
-                    println!("  {} {}", style::error("✗"), e);
+                    println!("  {} {e}", style::error("✗"));
                     failed += 1;
                 }
             }
@@ -350,17 +346,13 @@ fn run_sequential(
     }
 
     println!(
-        "{} {} succeeded, {} failed",
+        "{} {success} succeeded, {failed} failed",
         if failed == 0 {
             style::success("✓")
         } else {
             style::warning("⚠")
-        },
-        success,
-        failed
+        }
     );
-
-    Ok(())
 }
 
 async fn run_parallel(
@@ -396,7 +388,7 @@ async fn run_parallel(
     for handle in handles {
         let (name, result) = handle.await?;
         match result {
-            Ok(_) => {
+            Ok(()) => {
                 println!(
                     "{} {} {}",
                     style::success("✓"),
@@ -406,7 +398,7 @@ async fn run_parallel(
                 success += 1;
             }
             Err(e) => {
-                println!("{} {} {}", style::error("✗"), style::package(&name), e);
+                println!("{} {} {e}", style::error("✗"), style::package(&name));
                 failed += 1;
             }
         }

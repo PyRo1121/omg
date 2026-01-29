@@ -111,7 +111,7 @@ pub async fn run(network: bool, eol: bool) -> Result<()> {
     if eol {
         println!();
         println!("{}", style::header("Runtime EOL Status"));
-        issues += check_eol_runtimes().await;
+        issues += check_eol_runtimes();
     }
 
     println!();
@@ -183,7 +183,7 @@ async fn check_network() -> usize {
 }
 
 /// Check for end-of-life runtimes
-async fn check_eol_runtimes() -> usize {
+fn check_eol_runtimes() -> usize {
     let mut issues = 0;
     let now = jiff::Timestamp::now();
 
@@ -196,25 +196,25 @@ async fn check_eol_runtimes() -> usize {
             let mut eol_warning = None;
 
             for (rt, ver_prefix, eol_date) in EOL_DATES {
-                if *rt == *runtime && version.starts_with(ver_prefix) {
-                    // Parse the EOL date
-                    if let Ok(eol_ts) = jiff::civil::Date::strptime("%Y-%m-%d", eol_date) {
-                        let eol_timestamp = eol_ts
-                            .at(0, 0, 0, 0)
-                            .to_zoned(jiff::tz::TimeZone::UTC)
-                            .unwrap()
-                            .timestamp();
+                if *rt == *runtime
+                    && version.starts_with(ver_prefix)
+                    && let Ok(eol_ts) = jiff::civil::Date::strptime("%Y-%m-%d", eol_date)
+                {
+                    let eol_timestamp = eol_ts
+                        .at(0, 0, 0, 0)
+                        .to_zoned(jiff::tz::TimeZone::UTC)
+                        .unwrap()
+                        .timestamp();
 
-                        if now > eol_timestamp {
-                            eol_warning = Some(format!("EOL since {eol_date}"));
-                        } else {
-                            // Check if EOL is within 6 months
-                            let six_months = jiff::Span::new().months(6);
-                            if let Ok(warning_ts) = now.checked_add(six_months) {
-                                if warning_ts > eol_timestamp {
-                                    eol_warning = Some(format!("EOL on {eol_date}"));
-                                }
-                            }
+                    if now > eol_timestamp {
+                        eol_warning = Some(format!("EOL since {eol_date}"));
+                    } else {
+                        // Check if EOL is within 6 months
+                        let six_months = jiff::Span::new().months(6);
+                        if let Ok(warning_ts) = now.checked_add(six_months)
+                            && warning_ts > eol_timestamp
+                        {
+                            eol_warning = Some(format!("EOL on {eol_date}"));
                         }
                     }
                     break;

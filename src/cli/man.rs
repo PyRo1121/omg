@@ -1,6 +1,6 @@
 //! Man page generation for OMG CLI
 //!
-//! Generates man pages from clap command definitions using clap_mangen.
+//! Generates man pages from clap command definitions using `clap_mangen`.
 
 use anyhow::{Context, Result};
 use clap::CommandFactory;
@@ -62,7 +62,7 @@ pub fn generate(output_dir: Option<String>) -> Result<()> {
         println!("  {} omg-{name}.1", style::success("✓"));
         generated += 1;
 
-        // Generate nested subcommand pages (e.g., omg-env-capture.1)
+        // Generate nested subcommand pages (e.g., `omg-env-capture.1`)
         for nested in subcommand.get_subcommands() {
             if nested.is_hide_set() {
                 continue;
@@ -94,10 +94,10 @@ pub fn generate(output_dir: Option<String>) -> Result<()> {
 
 /// Simple shell expansion for ~ paths
 fn shellexpand(path: &str) -> String {
-    if path.starts_with("~/") {
-        if let Ok(home) = std::env::var("HOME") {
-            return path.replacen('~', &home, 1);
-        }
+    if path.starts_with("~/")
+        && let Ok(home) = std::env::var("HOME")
+    {
+        return path.replacen('~', &home, 1);
     }
     path.to_string()
 }

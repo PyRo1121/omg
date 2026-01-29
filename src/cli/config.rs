@@ -34,7 +34,7 @@ pub fn get(key: &str) -> Result<()> {
         }
     };
 
-    println!("{}", value);
+    println!("{value}");
     Ok(())
 }
 
@@ -190,7 +190,7 @@ pub fn validate() -> Result<()> {
             "  {} No config file found (using defaults)",
             style::dim("•")
         );
-        println!("    Path: {}", config_file);
+        println!("    Path: {config_file}");
         println!();
         println!(
             "{} Configuration is valid (using defaults)",
@@ -268,12 +268,12 @@ pub fn validate() -> Result<()> {
         if let Ok(meta) = std::fs::metadata(&config_file) {
             let mode = meta.permissions().mode();
             if mode & 0o077 != 0 {
+                let perm_str = format!("{:o}", mode & 0o777);
                 println!(
-                    "  {} Config file has loose permissions ({})",
-                    style::warning("⚠"),
-                    format!("{:o}", mode & 0o777)
+                    "  {} Config file has loose permissions ({perm_str})",
+                    style::warning("⚠")
                 );
-                println!("    Consider running: chmod 600 {}", config_file);
+                println!("    Consider running: chmod 600 {config_file}");
             } else {
                 println!("  {} File permissions are secure", style::success("✓"));
             }
@@ -312,9 +312,9 @@ pub fn reset(yes: bool) -> Result<()> {
     }
 
     // Create backup
-    let backup_path = format!("{}.backup", config_file);
+    let backup_path = format!("{config_file}.backup");
     std::fs::copy(&config_file, &backup_path)?;
-    println!("  {} Created backup at {}", style::dim("•"), backup_path);
+    println!("  {} Created backup at {backup_path}", style::dim("•"));
 
     // Remove the config file
     std::fs::remove_file(&config_file)?;

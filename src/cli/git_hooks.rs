@@ -113,14 +113,16 @@ pub fn install(force: bool) -> Result<()> {
         let hook_path = hooks_dir.join(name);
 
         // Check if hook already exists
+        if hook_path.exists()
+            && !force
+            && let Ok(existing) = fs::read_to_string(&hook_path)
+            && existing.contains("# OMG")
+        {
+            println!("  {} {} (already installed)", style::dim("•"), name);
+            continue;
+        }
+
         if hook_path.exists() && !force {
-            // Check if it's our hook
-            if let Ok(existing) = fs::read_to_string(&hook_path) {
-                if existing.contains("# OMG") {
-                    println!("  {} {} (already installed)", style::dim("•"), name);
-                    continue;
-                }
-            }
 
             println!(
                 "  {} {} (exists, use --force to overwrite)",
@@ -182,15 +184,15 @@ pub fn uninstall() -> Result<()> {
         }
 
         // Check if it's our hook before removing
-        if let Ok(content) = fs::read_to_string(&hook_path) {
-            if !content.contains("# OMG") {
-                println!(
-                    "  {} {} (not an OMG hook, skipping)",
-                    style::warning("⚠"),
-                    name
-                );
-                continue;
-            }
+        if let Ok(content) = fs::read_to_string(&hook_path)
+            && !content.contains("# OMG")
+        {
+            println!(
+                "  {} {} (not an OMG hook, skipping)",
+                style::warning("⚠"),
+                name
+            );
+            continue;
         }
 
         fs::remove_file(&hook_path).with_context(|| format!("Failed to remove {name} hook"))?;
@@ -213,12 +215,9 @@ pub fn uninstall() -> Result<()> {
 pub fn status() -> Result<()> {
     println!("{} Git Hooks Status\n", style::header("OMG"));
 
-    let hooks_dir = match get_hooks_dir() {
-        Ok(dir) => dir,
-        Err(_) => {
-            println!("  {} Not a git repository", style::error("✗"));
-            return Ok(());
-        }
+    let Ok(hooks_dir) = get_hooks_dir() else {
+        println!("  {} Not a git repository", style::error("✗"));
+        return Ok(());
     };
 
     let hooks = ["pre-commit", "post-checkout", "post-merge"];
@@ -263,10 +262,10 @@ pub fn run_hook(hook_name: &str) -> Result<()> {
     let hook_path = hooks_dir.join(hook_name);
 
     if !hook_path.exists() {
-        anyhow::bail!("Hook '{}' is not installed", hook_name);
+        anyhow::bail!("Hook '{hook_name}' is not installed");
     }
 
-    println!("{} Running {} hook...\n", style::header("OMG"), hook_name);
+    println!("{} Running {hook_name} hook...\n", style::header("OMG"));
 
     let status = std::process::Command::new(&hook_path)
         .status()
