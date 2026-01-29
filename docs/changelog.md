@@ -13,6 +13,16 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ## [Unreleased]
 ### 🐛 Bug Fixes
 
+- Add retry loop for rustc LTO crash in release script
+
+Root Cause:
+
+  - rustc 1.92.0 with LTO fat + codegen-units=1 crashes randomly (SIGSEGV)
+
+  - LLVM inliner/linker crashes are transient and succeed on retry
+
+  - Previous single retry was insufficient for reliability
+
 - Use original user's cache directory when running with sudo
 
 Root Cause:
