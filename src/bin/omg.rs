@@ -447,10 +447,10 @@ async fn async_main(args: Vec<String>) -> Result<()> {
                     omg_lib::cli::workspace::run(cmd, args, *parallel, filter.as_deref()).await?;
                 }
                 WorkspaceCommands::Diff { branch } => {
-                    omg_lib::cli::workspace::diff(branch).await?;
+                    omg_lib::cli::workspace::diff(branch)?;
                 }
                 WorkspaceCommands::Sync { yes } => {
-                    omg_lib::cli::workspace::sync(*yes).await?;
+                    omg_lib::cli::workspace::sync(*yes)?;
                 }
                 WorkspaceCommands::Status => {
                     omg_lib::cli::workspace::status()?;

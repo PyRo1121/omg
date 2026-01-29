@@ -29,7 +29,7 @@ impl LocalCommandRunner for AuditCommands {
                 export,
                 filter,
                 check_policy,
-            } => scan_licenses(format, export.clone(), filter.clone(), *check_policy, ctx).await,
+            } => scan_licenses(format, export.clone(), filter.clone(), *check_policy, ctx),
             AuditCommands::Fix {
                 dry_run,
                 yes,
@@ -40,7 +40,7 @@ impl LocalCommandRunner for AuditCommands {
                 period,
                 output,
             } => export_compliance(framework, period.clone(), output, ctx).await,
-            AuditCommands::Eol => check_eol(ctx).await,
+            AuditCommands::Eol => check_eol(ctx),
         }?;
         ui::print_spacer();
         Ok(())
@@ -641,7 +641,7 @@ impl LicenseCategory {
 }
 
 /// Scan for software license compliance
-pub async fn scan_licenses(
+pub fn scan_licenses(
     format: &str,
     export: Option<String>,
     filter: Option<String>,
@@ -1110,7 +1110,7 @@ pub async fn export_compliance(
 }
 
 /// Check end-of-life status for installed runtimes
-pub async fn check_eol(_ctx: &CliContext) -> Result<()> {
+pub fn check_eol(_ctx: &CliContext) -> Result<()> {
     println!("{} Checking runtime EOL status...\n", style::runtime("OMG"));
 
     // EOL dates from endoflife.date API (cached)
