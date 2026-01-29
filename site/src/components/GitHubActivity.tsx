@@ -55,14 +55,19 @@ const GitHubActivity: Component = () => {
     }
 
     try {
-      const response = await fetch(
-        'https://api.github.com/repos/PyRo1121/omg/stats/commit_activity',
-        { headers: { Accept: 'application/vnd.github.v3+json' } }
-      );
+      let response = await fetch('https://api.pyro1121.com/api/github-stats');
+
+      if (!response.ok) {
+        console.warn('Proxy failed, falling back to direct GitHub API');
+        response = await fetch(
+          'https://api.github.com/repos/PyRo1121/omg/stats/commit_activity',
+          { headers: { Accept: 'application/vnd.github.v3+json' } }
+        );
+      }
 
       if (response.status === 202) {
-        setError('Loading stats...');
-        setTimeout(() => window.location.reload(), 3000);
+        setError('GitHub is computing statistics. Refresh in 60 seconds.');
+        setLoading(false);
         return;
       }
 
@@ -70,7 +75,15 @@ const GitHubActivity: Component = () => {
         throw new Error(`HTTP ${response.status}`);
       }
 
-      const weeks: WeekData[] = await response.json();
+      const responseData = await response.json();
+
+      if (responseData.computing) {
+        setError(responseData.message || 'GitHub is computing statistics');
+        setLoading(false);
+        return;
+      }
+
+      const weeks: WeekData[] = responseData;
 
       if (!Array.isArray(weeks) || weeks.length === 0) {
         throw new Error('Invalid response');

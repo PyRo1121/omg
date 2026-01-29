@@ -62,6 +62,9 @@ simple = { limit = 1000, period = 60 }
 # Required: STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, JWT_SECRET, ADMIN_USER_ID, RESEND_API_KEY, META_API_KEY
 # Optional: TURNSTILE_SECRET_KEY, SENTRY_DSN
 
+[placement]
+mode = "smart"
+
 [vars]
 ACCOUNT_ID = "f1e95b3e1b502cf366dfc81a863695fa"
 
