@@ -63,7 +63,7 @@ jobs:
   quick-gate:
     name: "Quick Gate"
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     outputs:
       should-build: ${{ steps.changes.outputs.rust }}
     steps:
