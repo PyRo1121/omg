@@ -3,8 +3,6 @@
 //! Uses `LengthDelimitedCodec` and bitcode for maximum IPC performance.
 //! Only available on Unix platforms (uses Unix domain sockets).
 
-#![cfg(unix)]
-
 use anyhow::{Context, Result};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
