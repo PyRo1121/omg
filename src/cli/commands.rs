@@ -487,6 +487,7 @@ pub fn status_sync() -> Result<()> {
 }
 
 /// Show system metrics in Prometheus format
+#[cfg(unix)]
 pub async fn metrics() -> Result<()> {
     let mut client = crate::core::client::DaemonClient::connect().await?;
 
@@ -544,6 +545,7 @@ pub async fn metrics() -> Result<()> {
 }
 
 /// Start the daemon
+#[cfg(unix)]
 pub fn daemon(foreground: bool) -> Result<()> {
     if foreground {
         println!("{} Run 'omgd' directly for daemon mode", style::info("→"));

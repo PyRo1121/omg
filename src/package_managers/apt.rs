@@ -5,7 +5,6 @@
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use futures::future::BoxFuture;
 
 use crate::core::is_root;
 use crate::core::{Package, PackageSource};
@@ -38,202 +37,171 @@ impl AptPackageManager {
     }
 }
 
+#[async_trait]
 impl crate::package_managers::PackageManager for AptPackageManager {
     fn name(&self) -> &'static str {
         "apt"
     }
 
-    fn search(&self, query: &str) -> BoxFuture<'static, Result<Vec<Package>>> {
+    async fn search(&self, query: &str) -> Result<Vec<Package>> {
         let query = query.to_string();
-        async move {
-            // Try fast path first
-            let fast_results = super::debian_db::search_fast(&query);
-            if let Ok(results) = fast_results
-                && !results.is_empty()
-            {
-                return Ok(results);
-            }
-
-            let results = tokio::task::spawn_blocking(move || search_sync(&query))
-                .await
-                .context("APT search task failed")??;
-
-            Ok(sync_to_packages(results))
+        // Try fast path first
+        let fast_results = super::debian_db::search_fast(&query);
+        if let Ok(results) = fast_results
+            && !results.is_empty()
+        {
+            return Ok(results);
         }
-        .boxed()
+
+        let results = tokio::task::spawn_blocking(move || search_sync(&query))
+            .await
+            .context("APT search task failed")??;
+
+        Ok(sync_to_packages(results))
     }
 
-    fn install(&self, packages: &[String]) -> BoxFuture<'static, Result<()>> {
+    async fn install(&self, packages: &[String]) -> Result<()> {
         let packages = packages.to_vec();
-        async move {
-            // SECURITY: Validate package names
-            crate::core::security::validate_package_names(&packages)?;
+        // SECURITY: Validate package names
+        crate::core::security::validate_package_names(&packages)?;
 
-            if !is_root() {
-                let mut args = vec!["install", "--"];
-                let pkg_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
-                args.extend_from_slice(&pkg_refs);
-                crate::core::privilege::run_self_sudo(&args).await?;
-                return Ok(());
-            }
-
-            tokio::task::spawn_blocking(move || install_blocking(&packages))
-                .await
-                .context("APT install task failed")??;
-            Ok(())
+        if !is_root() {
+            let mut args = vec!["install", "--"];
+            let pkg_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
+            args.extend_from_slice(&pkg_refs);
+            crate::core::privilege::run_self_sudo(&args).await?;
+            return Ok(());
         }
-        .boxed()
+
+        tokio::task::spawn_blocking(move || install_blocking(&packages))
+            .await
+            .context("APT install task failed")??;
+        Ok(())
     }
 
-    fn remove(&self, packages: &[String]) -> BoxFuture<'static, Result<()>> {
+    async fn remove(&self, packages: &[String]) -> Result<()> {
         let packages = packages.to_vec();
-        async move {
-            // SECURITY: Validate package names
-            crate::core::security::validate_package_names(&packages)?;
+        // SECURITY: Validate package names
+        crate::core::security::validate_package_names(&packages)?;
 
-            if !is_root() {
-                let mut args = vec!["remove", "--"];
-                let pkg_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
-                args.extend_from_slice(&pkg_refs);
-                crate::core::privilege::run_self_sudo(&args).await?;
-                return Ok(());
-            }
-
-            tokio::task::spawn_blocking(move || remove_blocking(&packages))
-                .await
-                .context("APT remove task failed")??;
-            Ok(())
+        if !is_root() {
+            let mut args = vec!["remove", "--"];
+            let pkg_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
+            args.extend_from_slice(&pkg_refs);
+            crate::core::privilege::run_self_sudo(&args).await?;
+            return Ok(());
         }
-        .boxed()
+
+        tokio::task::spawn_blocking(move || remove_blocking(&packages))
+            .await
+            .context("APT remove task failed")??;
+        Ok(())
     }
 
-    fn update(&self) -> BoxFuture<'static, Result<()>> {
-        async move {
-            if !is_root() {
-                crate::core::privilege::run_self_sudo(&["update"]).await?;
-                return Ok(());
-            }
-
-            tokio::task::spawn_blocking(update_blocking)
-                .await
-                .context("APT update task failed")??;
-            Ok(())
+    async fn update(&self) -> Result<()> {
+        if !is_root() {
+            crate::core::privilege::run_self_sudo(&["update"]).await?;
+            return Ok(());
         }
-        .boxed()
+
+        tokio::task::spawn_blocking(update_blocking)
+            .await
+            .context("APT update task failed")??;
+        Ok(())
     }
 
-    fn sync(&self) -> BoxFuture<'static, Result<()>> {
-        async move { AptPackageManager::new().sync_databases().await }.boxed()
+    async fn sync(&self) -> Result<()> {
+        AptPackageManager::new().sync_databases().await
     }
 
-    fn info(&self, package: &str) -> BoxFuture<'static, Result<Option<Package>>> {
+    async fn info(&self, package: &str) -> Result<Option<Package>> {
         let package = package.to_string();
-        async move {
-            // SECURITY: Validate package name
-            crate::core::security::validate_package_name(&package)?;
+        // SECURITY: Validate package name
+        crate::core::security::validate_package_name(&package)?;
 
-            // Try fast path first
-            if let Ok(Some(pkg)) = super::debian_db::get_info_fast(&package) {
-                return Ok(Some(pkg));
-            }
-
-            let info = tokio::task::spawn_blocking(move || get_sync_pkg_info(&package))
-                .await
-                .context("APT info task failed")??;
-            Ok(info.map(|info| Package {
-                name: info.name,
-                version: info.version,
-                description: info.description,
-                source: PackageSource::Official,
-                installed: info.installed,
-            }))
+        // Try fast path first
+        if let Ok(Some(pkg)) = super::debian_db::get_info_fast(&package) {
+            return Ok(Some(pkg));
         }
-        .boxed()
+
+        let info = tokio::task::spawn_blocking(move || get_sync_pkg_info(&package))
+            .await
+            .context("APT info task failed")??;
+        Ok(info.map(|info| Package {
+            name: info.name,
+            version: info.version,
+            description: info.description,
+            source: PackageSource::Official,
+            installed: info.installed,
+        }))
     }
 
-    fn list_installed(&self) -> BoxFuture<'static, Result<Vec<Package>>> {
-        async move {
-            // Try fast path first
-            if let Ok(installed) = super::debian_db::list_installed_fast() {
-                return Ok(installed
-                    .into_iter()
-                    .map(|p| Package {
-                        name: p.name,
-                        version: p.version,
-                        description: p.description,
-                        source: PackageSource::Official,
-                        installed: true,
-                    })
-                    .collect());
-            }
-            Ok(local_to_packages(list_installed_fast()?))
+    async fn list_installed(&self) -> Result<Vec<Package>> {
+        // Try fast path first
+        if let Ok(installed) = super::debian_db::list_installed_fast() {
+            return Ok(installed
+                .into_iter()
+                .map(|p| Package {
+                    name: p.name,
+                    version: p.version,
+                    description: p.description,
+                    source: PackageSource::Official,
+                    installed: true,
+                })
+                .collect());
         }
-        .boxed()
+        Ok(local_to_packages(list_installed_fast()?))
     }
 
-    fn get_status(&self, fast: bool) -> BoxFuture<'static, Result<(usize, usize, usize, usize)>> {
-        async move {
-            // Try fast path for counts
-            if let Ok((total, explicit, _, _)) = super::debian_db::get_counts_fast() {
-                if fast {
-                    return Ok((total, explicit, 0, 0));
-                }
-
-                // If not fast, we still want accuracy for orphans/updates
-                if let Ok((_, _, orphans, updates)) = get_system_status() {
-                    return Ok((total, explicit, orphans, updates));
-                }
+    async fn get_status(&self, fast: bool) -> Result<(usize, usize, usize, usize)> {
+        // Try fast path for counts
+        if let Ok((total, explicit, _, _)) = super::debian_db::get_counts_fast() {
+            if fast {
                 return Ok((total, explicit, 0, 0));
             }
 
-            get_system_status()
-        }
-        .boxed()
-    }
-
-    fn list_explicit(&self) -> BoxFuture<'static, Result<Vec<String>>> {
-        async move {
-            if let Ok(explicit) = super::debian_db::list_explicit_fast() {
-                return Ok(explicit);
+            // If not fast, we still want accuracy for orphans/updates
+            if let Ok((_, _, orphans, updates)) = get_system_status() {
+                return Ok((total, explicit, orphans, updates));
             }
-            list_explicit()
+            return Ok((total, explicit, 0, 0));
         }
-        .boxed()
+
+        get_system_status()
     }
 
-    fn list_updates(
-        &self,
-    ) -> BoxFuture<'static, Result<Vec<crate::package_managers::types::UpdateInfo>>> {
-        async move {
-            let updates = list_updates()?;
-            Ok(updates
-                .into_iter()
-                .map(
-                    |(name, old_ver, new_ver)| crate::package_managers::types::UpdateInfo {
-                        name,
-                        old_version: old_ver,
-                        new_version: new_ver,
-                        repo: "apt".to_string(),
-                    },
-                )
-                .collect())
+    async fn list_explicit(&self) -> Result<Vec<String>> {
+        if let Ok(explicit) = super::debian_db::list_explicit_fast() {
+            return Ok(explicit);
         }
-        .boxed()
+        list_explicit()
     }
 
-    fn is_installed(&self, package: &str) -> BoxFuture<'static, bool> {
+    async fn list_updates(&self) -> Result<Vec<crate::package_managers::types::UpdateInfo>> {
+        let updates = list_updates()?;
+        Ok(updates
+            .into_iter()
+            .map(
+                |(name, old_ver, new_ver)| crate::package_managers::types::UpdateInfo {
+                    name,
+                    old_version: old_ver,
+                    new_version: new_ver,
+                    repo: "apt".to_string(),
+                },
+            )
+            .collect())
+    }
+
+    async fn is_installed(&self, package: &str) -> bool {
         let package = package.to_string();
-        async move {
-            if let Ok(installed) = super::debian_db::list_installed_fast() {
-                return installed.iter().any(|p| p.name == package);
-            }
-            if let Ok(installed) = list_installed_fast() {
-                installed.iter().any(|p| p.name == package)
-            } else {
-                false
-            }
+        if let Ok(installed) = super::debian_db::list_installed_fast() {
+            return installed.iter().any(|p| p.name == package);
         }
-        .boxed()
+        if let Ok(installed) = list_installed_fast() {
+            installed.iter().any(|p| p.name == package)
+        } else {
+            false
+        }
     }
 }
 pub fn search_sync(query: &str) -> Result<Vec<SyncPackage>> {
