@@ -13,6 +13,83 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ## [Unreleased]
 ### 🐛 Bug Fixes
 
+- Use original user's cache directory when running with sudo
+
+Root Cause:
+
+  - AUR build logs were written to /root/.cache/ instead of ~/.cache/
+
+  - paths::cache_dir() used dirs::cache_dir() which returns CURRENT user's cache
+
+  - When running 'sudo omg install', current user is root
+
+  - Result: logs at /root/.cache/omg/aur/_logs/ (inaccessible to user)
+
+Previous Incomplete Fix (commit 9058914):
+
+  - Added HOME/XDG_CACHE_HOME to makepkg subprocess environment
+
+  - But log files were created by PARENT process before privilege drop
+
+  - makepkg got correct HOME, but logs were already in wrong location
+
+Complete Solution:
+
+  - Modified cache_dir() to detect privilege escalation
+
+  - Checks SUDO_USER and DOAS_USER environment variables
+
+  - When running as root via sudo, constructs cache path from original user's home
+
+  - Fallback chain: SUDO_HOME → /home/$SUDO_USER → normal behavior
+
+- Filter changelog bot commits from release notes
+
+Changed pattern from generic [skip ci] regex to specific matcher:
+
+  - Pattern: ^docs?: update changelog
+
+  - Matches: 'docs: update changelog' or 'doc: update changelog'
+
+  - Prevents false positives matching [skip ci] in commit bodies
+
+Previous approach failed because:
+
+  - Pattern .*\[skip ci\].* matched commit BODIES too
+
+  - Our own fix commit mentioned [skip ci] in explanation
+
+  - Result: Our fix was incorrectly filtered out
+
+- Generate complete release notes with git-cliff
+
+Problems Fixed:
+
+1. Release notes only showed 'Update changelog [skip ci]' commit
+
+2. Actual feature/fix commits were missing from GitHub releases
+
+Root Causes:
+
+1. --unreleased flag excluded commits after tag was created
+
+  - release_and_publish.sh creates tag before generating notes
+
+  - --unreleased only shows commits without tags
+
+  - Result: actual release commits were excluded
+
+2. [skip ci] commits not filtered in cliff.toml
+
+  - Changelog update commits matched ^docs? pattern first
+
+  - Skip patterns were at bottom of commit_parsers array
+
+  - Pattern matching is order-dependent in git-cliff
+
+## [0.1.184] - 2026-01-29
+### 🐛 Bug Fixes
+
 - Set HOME and XDG_CACHE_HOME when dropping privileges for AUR builds
 
 Root Cause:
@@ -24,12 +101,6 @@ Root Cause:
   - But didn't set HOME environment variable
 
   - Result: logs written to /root/.cache/omg/aur/_logs/ instead of user's cache
-
-### 📚 Documentation
-
-- Update changelog [skip ci]
-
-Auto-generated from git history with git-cliff.
 
 ## [0.1.183] - 2026-01-29
 ### ✨ New Features
@@ -140,27 +211,6 @@ Technical Changes:
 
 and dist/ validation
 
-### 📚 Documentation
-
-- Update changelog [skip ci]
-
-Auto-generated from git history with git-cliff.
-
-- Update changelog [skip ci]
-
-Auto-generated from git history with git-cliff.
-
-- Update changelog [skip ci]
-
-Auto-generated from git history with git-cliff.
-
-## [0.1.175] - 2026-01-28
-### 📚 Documentation
-
-- Update changelog [skip ci]
-
-Auto-generated from git history with git-cliff.
-
 ## [0.1.174] - 2026-01-28
 ### ⚡ Performance
 
@@ -207,24 +257,6 @@ authentication succeeded. The error was already printed by the elevated
 
 process, so the parent should just exit silently with the same code.
 
-### 📚 Documentation
-
-- Update changelog [skip ci]
-
-Auto-generated from git history with git-cliff.
-
-- Update changelog [skip ci]
-
-Auto-generated from git history with git-cliff.
-
-- Update changelog [skip ci]
-
-Auto-generated from git history with git-cliff.
-
-- Update changelog [skip ci]
-
-Auto-generated from git history with git-cliff.
-
 ### 🔧 Maintenance
 
 - Bump version to 0.1.174
@@ -241,24 +273,6 @@ but alpm_ops.rs line 463 emits 'Package {name} not found in any repository'.
 Pattern mismatch prevented AUR fallback from triggering. Now matches both
 
 formats to ensure AUR packages are found when official repos don't have them.
-
-### 📚 Documentation
-
-- Update changelog [skip ci]
-
-Auto-generated from git history with git-cliff.
-
-- Update changelog [skip ci]
-
-Auto-generated from git history with git-cliff.
-
-- Update changelog [skip ci]
-
-Auto-generated from git history with git-cliff.
-
-- Update changelog [skip ci]
-
-Auto-generated from git history with git-cliff.
 
 ### 🔧 Maintenance
 
@@ -979,46 +993,6 @@ flags cannot leak into the retry.
 - Substitute `$repo` and `$arch` placeholders in parsed server URLs
 ### 📚 Documentation
 
-- Update changelog [skip ci]
-
-Auto-generated from git history with git-cliff.
-
-- Update changelog [skip ci]
-
-Auto-generated from git history with git-cliff.
-
-- Update changelog [skip ci]
-
-Auto-generated from git history with git-cliff.
-
-- Update changelog [skip ci]
-
-Auto-generated from git history with git-cliff.
-
-- Update changelog [skip ci]
-
-Auto-generated from git history with git-cliff.
-
-- Update changelog [skip ci]
-
-Auto-generated from git history with git-cliff.
-
-- Update changelog [skip ci]
-
-Auto-generated from git history with git-cliff.
-
-- Update changelog [skip ci]
-
-Auto-generated from git history with git-cliff.
-
-- Update changelog [skip ci]
-
-Auto-generated from git history with git-cliff.
-
-- Update changelog [skip ci]
-
-Auto-generated from git history with git-cliff.
-
 - Add Phase 3 Task 5 tracing conversion summary
 - Task 2 summary - RuntimeManager trait removal
 - Phase 3 architecture audit
@@ -1143,18 +1117,6 @@ showing usage patterns and why removing generics would break compilation.
 
 Part of Phase 3: Architecture & Consistency.
 
-- Update changelog
-
-Auto-generated from git history with git-cliff.
-
-- Update changelog [skip ci]
-
-Auto-generated from git history with git-cliff.
-
-- Update changelog [skip ci]
-
-Auto-generated from git history with git-cliff.
-
 - Add Phase 1 Safety implementation plan
 
 Detailed task-by-task plan for eliminating unsafe code and panics:
@@ -1182,10 +1144,6 @@ Ready for execution in isolated worktree.
   - Phase 3: Architecture (DDD, consistency, remove AI slop)
 
   - Quality gates and success metrics defined
-
-- Update changelog [skip ci]
-
-Auto-generated from git history with git-cliff.
 
 ### 🔒 Security
 
@@ -1787,14 +1745,6 @@ Run before pushing to keep changelog up to date with latest commits.
 
 ### 📚 Documentation
 
-- Update changelog [skip ci]
-
-Auto-generated from git history with git-cliff.
-
-- Update changelog [skip ci]
-
-Auto-generated from git history with git-cliff.
-
 - **License**: Complete BSD-3-Clause and GPL/LGPL attribution
 
 Add comprehensive third-party license documentation per compliance audit:
@@ -1854,18 +1804,6 @@ License Compatibility Clarifications:
   - Add repository links and contact information
 
 Honors mise's MIT license while maintaining OMG's AGPL-3.0 copyleft.
-
-- Update changelog
-
-Auto-generated from git history with git-cliff.
-
-- Update changelog
-
-Auto-generated from git history with git-cliff.
-
-- Update changelog
-
-Auto-generated from git history with git-cliff.
 
 ### 🔧 Maintenance
 
@@ -2939,18 +2877,6 @@ Add unit tests covering ecosystem priority, config loading, priority-based resol
 - Replace "200x faster than yay/paru" with "6ms average query time" in feature list
 - Update FAQ responses to remove yay comparisons and cite 22x vs pacman
 - Revise benchmark tables
-## [0.1.67] - 2026-01-18
-### ⚡ Performance
-
-- Release v0.1.65
-
-- Bump version to 0.1.65 in Cargo.toml
-- Add memchr dependency for SIMD-accelerated string search
-- Switch from thin to fat LTO for maximum cross-crate inlining
-- Add opt-level = 2 for dependencies in dev profile to speed up iteration
-- Update README performance claims from "50-200x" to "22x faster than pacman/yay"
-- Revise benchmark table with updated timings and add yay --repo flag note
-- Replace annual time savings table with cost savings analysis ($470-$530/year for 10-person
 ## [0.1.62] - 2026-01-18
 ## [0.1.61] - 2026-01-18
 ## [0.1.60] - 2026-01-17
