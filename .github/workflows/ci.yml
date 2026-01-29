@@ -5,7 +5,6 @@
 # - Path filtering: Only runs when relevant files change
 # - Quick gate: Fast checks run first, gate expensive builds
 # - Matrix strategy: 6 platforms tested in parallel
-# - sccache: ~35% faster builds via compiler caching
 # - cargo-nextest: 10-35% faster test execution
 # - Artifact caching: Shared caches across jobs
 # - Timeout protection: Prevents runaway jobs
@@ -164,16 +163,7 @@ jobs:
       - name: Fix git permissions
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
-      - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.7
-        continue-on-error: true
-
-      - name: Configure build environment
-        run: |
-          if command -v sccache &> /dev/null; then
-            echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
-            echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
-          fi
+      # sccache temporarily disabled due to service outage
 
       - name: Cache cargo registry
         if: inputs.skip-cache != true
@@ -225,9 +215,6 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
-      - name: sccache stats
-        if: always()
-        run: sccache --show-stats 2>/dev/null || true
 
   #############################################################################
   # STAGE 2b: Native Platform Builds (macOS, Windows)
@@ -250,13 +237,10 @@ jobs:
         with:
           prefix-key: "v1-macos-arm64"
 
-      - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.7
+      # sccache temporarily disabled due to service outage
 
       - name: Build
         run: cargo build --release --no-default-features --features macos,pgp,license --locked
-        env:
-          RUSTC_WRAPPER: sccache
 
       - name: Run tests
         run: cargo test --lib --no-default-features --features macos,pgp,license --locked
@@ -291,13 +275,10 @@ jobs:
         with:
           prefix-key: "v1-windows"
 
-      - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.7
+      # sccache temporarily disabled due to service outage
 
       - name: Build
         run: cargo build --release --no-default-features --features windows,pgp,license --locked
-        env:
-          RUSTC_WRAPPER: sccache
 
       - name: Run tests
         run: cargo test --lib --no-default-features --features windows,pgp,license --locked
