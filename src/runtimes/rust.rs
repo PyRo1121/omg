@@ -581,6 +581,10 @@ fn default_host_triple() -> Result<String> {
     match (std::env::consts::ARCH, std::env::consts::OS) {
         ("x86_64", "linux") => Ok("x86_64-unknown-linux-gnu".to_string()),
         ("aarch64", "linux") => Ok("aarch64-unknown-linux-gnu".to_string()),
+        ("x86_64", "macos") => Ok("x86_64-apple-darwin".to_string()),
+        ("aarch64", "macos") => Ok("aarch64-apple-darwin".to_string()),
+        ("x86_64", "windows") => Ok("x86_64-pc-windows-msvc".to_string()),
+        ("aarch64", "windows") => Ok("aarch64-pc-windows-msvc".to_string()),
         (arch, os) => anyhow::bail!("Unsupported host platform: {arch}-{os}"),
     }
 }
