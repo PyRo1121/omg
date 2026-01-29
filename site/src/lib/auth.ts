@@ -1,4 +1,7 @@
 import { betterAuth } from "better-auth";
+import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { drizzle } from "drizzle-orm/d1";
+import * as schema from "../db/auth-schema";
 
 export interface CloudflareEnv {
   DB: D1Database;
@@ -12,10 +15,16 @@ export interface CloudflareEnv {
 }
 
 export function createAuth(env: CloudflareEnv) {
+  const db = drizzle(env.DB, { schema });
+  
   return betterAuth({
-    database: env.DB,
+    database: drizzleAdapter(db, {
+      provider: "sqlite",
+      usePlural: false,
+    }),
     secret: env.BETTER_AUTH_SECRET,
     baseURL: env.BETTER_AUTH_URL,
+    trustedOrigins: ["https://pyro1121.com"],
     secondaryStorage: {
       get: async (key: string) => {
         const value = await env.BETTER_AUTH_KV.get(key);
@@ -37,6 +46,7 @@ export function createAuth(env: CloudflareEnv) {
             github: {
               clientId: env.GITHUB_CLIENT_ID,
               clientSecret: env.GITHUB_CLIENT_SECRET,
+              redirectURI: "https://pyro1121.com/api/auth/callback/github",
             },
           }
         : {}),
@@ -45,14 +55,11 @@ export function createAuth(env: CloudflareEnv) {
             google: {
               clientId: env.GOOGLE_CLIENT_ID,
               clientSecret: env.GOOGLE_CLIENT_SECRET,
+              redirectURI: "https://pyro1121.com/api/auth/callback/google",
             },
           }
         : {}),
     },
-    trustedOrigins: [
-      "http://localhost:3000",
-      "https://pyro1121.com",
-    ],
   });
 }
 
