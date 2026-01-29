@@ -1,6 +1,17 @@
 name = "omg-site"
-compatibility_date = "2024-01-01"
+compatibility_date = "2024-11-25"
 
 # Cloudflare Pages configuration
 pages_build_output_dir = "dist"
 compatibility_flags = ["nodejs_compat"]
+
+# D1 Database for Better Auth
+[[d1_databases]]
+binding = "DB"
+database_name = "omg-auth-db"
+database_id = "871b70ca-79f7-4bb0-bfba-0f9f9aca4de9"
+
+# KV Namespace for session cache
+[[kv_namespaces]]
+binding = "BETTER_AUTH_KV"
+id = "5a8185a498b24e7a9883a77e8a1a246b"

@@ -1,0 +1,137 @@
+/* OMG Documentation - Custom Theme
+ * Brand colors: Indigo/Purple gradient
+ */
+
+/* Starlight CSS Custom Properties */
+:root {
+	/* Accent colors - Indigo palette */
+	--sl-color-accent-low: #312e81;      /* indigo-900 */
+	--sl-color-accent: #6366f1;          /* indigo-500 */
+	--sl-color-accent-high: #818cf8;     /* indigo-400 */
+
+	/* Text accent colors */
+	--sl-color-text-accent: #818cf8;
+
+	/* Heading gradient for hero sections */
+	--omg-gradient-start: #6366f1;
+	--omg-gradient-end: #a855f7;         /* purple-500 */
+}
+
+/* Dark mode adjustments */
+:root[data-theme='dark'] {
+	--sl-color-accent-low: #312e81;
+	--sl-color-accent: #818cf8;
+	--sl-color-accent-high: #a5b4fc;
+
+	--sl-color-text-accent: #a5b4fc;
+}
+
+/* Hero gradient text */
+.hero-title,
+h1.hero-title {
+	background: linear-gradient(135deg, var(--omg-gradient-start), var(--omg-gradient-end));
+	-webkit-background-clip: text;
+	-webkit-text-fill-color: transparent;
+	background-clip: text;
+}
+
+/* Code block enhancements */
+.expressive-code .frame {
+	border-radius: 0.75rem;
+	box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+}
+
+:root[data-theme='dark'] .expressive-code .frame {
+	box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.3), 0 2px 4px -2px rgb(0 0 0 / 0.2);
+}
+
+/* Performance badge styling */
+.sl-badge {
+	font-weight: 600;
+}
+
+/* Table improvements */
+table {
+	border-radius: 0.5rem;
+	overflow: hidden;
+}
+
+table th {
+	background: var(--sl-color-gray-6);
+	font-weight: 600;
+}
+
+:root[data-theme='dark'] table th {
+	background: var(--sl-color-gray-5);
+}
+
+/* Sidebar navigation enhancements */
+.sidebar-content nav ul li a[aria-current='page'] {
+	border-left-color: var(--sl-color-accent);
+	background: linear-gradient(90deg, var(--sl-color-accent-low) 0%, transparent 100%);
+}
+
+/* Custom admonition styling for performance tips */
+.starlight-aside--tip {
+	border-left-color: var(--sl-color-accent);
+}
+
+.starlight-aside--tip .starlight-aside__title {
+	color: var(--sl-color-accent-high);
+}
+
+/* Smooth scrolling */
+html {
+	scroll-behavior: smooth;
+}
+
+/* Focus states for accessibility */
+a:focus-visible,
+button:focus-visible {
+	outline: 2px solid var(--sl-color-accent);
+	outline-offset: 2px;
+}
+
+/* Command reference table styling */
+.command-table td:first-child {
+	font-family: var(--sl-font-mono);
+	font-size: 0.9em;
+	color: var(--sl-color-accent-high);
+}
+
+/* Version badge */
+.version-badge {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.25rem;
+	padding: 0.125rem 0.5rem;
+	background: var(--sl-color-accent-low);
+	color: var(--sl-color-accent-high);
+	border-radius: 9999px;
+	font-size: 0.75rem;
+	font-weight: 600;
+}
+
+/* Performance metrics highlight */
+.perf-metric {
+	font-weight: 700;
+	color: var(--sl-color-green-high);
+}
+
+/* Benchmark table styling */
+.benchmark-table td:nth-child(2) {
+	font-weight: 600;
+	color: var(--sl-color-accent-high);
+}
+
+/* Header site title styling */
+.site-title {
+	font-weight: 700;
+}
+
+/* Mobile responsive adjustments */
+@media (max-width: 50rem) {
+	.sl-markdown-content h1 {
+		font-size: 2rem;
+	}
+}
