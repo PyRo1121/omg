@@ -2,11 +2,11 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0" />
-    <title>OMG Package Manager — Fastest Linux Package & Runtime Manager | 22x Faster</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OMG — Fastest Linux Package Manager | 22x Faster</title>
     <meta name="theme-color" content="#0a0a0b" />
     <link rel="manifest" href="/manifest.json" />
-    <meta name="description" content="OMG is the fastest unified package manager for Arch Linux, Debian & Ubuntu. Manage Node.js, Python, Go, Rust, Ruby, Java & Bun runtimes. 22x faster than pacman, 80x faster than nvm/pyenv. Pure Rust CLI." />
+    <meta name="description" content="Fastest Linux package manager for Arch, Debian & Ubuntu. Manage Node, Python, Go, Rust, Ruby, Java, Bun. 22x faster. Pure Rust CLI. Install now." />
     <meta name="keywords" content="package manager, linux package manager, arch linux, pacman alternative, yay alternative, nvm alternative, pyenv alternative, runtime manager, node version manager, python version manager, rust package manager, unified package manager, fast package manager, omg package manager" />
     <meta name="author" content="OMG Team" />
     <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
@@ -54,7 +54,7 @@
         "releaseNotes": "https://github.com/PyRo1121/omg/releases",
         "downloadUrl": "https://pyro1121.com/#install",
         "installUrl": "https://pyro1121.com/#install",
-        "screenshot": "https://pyro1121.com/og/omg-og.png",
+        "screenshot": "https://api.pyro1121.com/img/og-image.png",
         "featureList": [
           "6ms average query time",
           "22x faster than pacman",
@@ -198,7 +198,7 @@
         "url": "https://pyro1121.com/",
         "logo": {
           "@type": "ImageObject",
-          "url": "https://pyro1121.com/favicon.png",
+          "url": "https://api.pyro1121.com/img/favicon.png",
           "width": 512,
           "height": 512
         },
@@ -280,10 +280,19 @@
     <link rel="icon" type="image/png" href="/favicon.png" sizes="any" />
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="preload" href="/og/omg-og.png" as="image">
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <noscript>
+        <main style="padding: 2rem; max-width: 800px; margin: 0 auto; font-family: system-ui, sans-serif;">
+          <h1>OMG Package Manager — Fastest Linux Package & Runtime Manager</h1>
+          <p>Native managers for Node.js, Python, Go, Rust, Ruby, Java, and Bun. 22x faster than pacman. Pure Rust CLI for Arch Linux, Debian, and Ubuntu.</p>
+          <p><strong>JavaScript is required to use this website.</strong> Please enable JavaScript in your browser.</p>
+        </main>
+      </noscript>
+    </div>
     <script type="module" src="/src/index.tsx"></script>
   </body>
 </html>

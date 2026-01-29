@@ -8,6 +8,8 @@ interface RateLimit {
 
 export interface Env {
   DB: D1Database;
+  ANALYTICS_DB: D1Database;
+  ASSETS: R2Bucket;
   AI: any;
   STRIPE_SECRET_KEY: string;
   STRIPE_WEBHOOK_SECRET: string;

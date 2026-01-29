@@ -17,7 +17,8 @@ const HomePage: Component = () => {
   const [show3D, setShow3D] = createSignal(false);
 
   onMount(() => {
-    requestIdleCallback(() => setShow3D(true), { timeout: 2000 });
+    // Defer Three.js load to 8 seconds for better TBT (Total Blocking Time)
+    requestIdleCallback(() => setShow3D(true), { timeout: 8000 });
   });
   const [licenseKey, setLicenseKey] = createSignal<string | null>(null);
   const [tier, setTier] = createSignal<string | null>(null);
