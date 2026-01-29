@@ -542,10 +542,6 @@ impl AurClient {
         );
         println!();
 
-        if self.info(package).await?.is_none() {
-            return Err(AurError::PackageNotFound(package.to_string()).into());
-        }
-
         tokio::fs::create_dir_all(&self.build_dir)
             .await
             .with_context(|| {
@@ -567,7 +563,16 @@ impl AurClient {
             println!("{} Cloning from AUR...", "→".blue());
             self.git_clone(package).await.map_err(|e| {
                 tracing::warn!("Git clone failed for {}: {}", package, e);
-                AurError::GitCloneFailed(package.to_string())
+                // Provide helpful error that explains the failure
+                anyhow::anyhow!(
+                    "Failed to clone {} from AUR.\n  \
+                     → Package may not exist: https://aur.archlinux.org/packages/{}\n  \
+                     → Check your internet connection\n  \
+                     → Original error: {}",
+                    package,
+                    package,
+                    e
+                )
             })?;
         }
 
