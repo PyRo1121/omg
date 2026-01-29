@@ -269,14 +269,40 @@ build_release() {
   log_info "Target: $TARGET"
   
   # Build with optimizations (arch feature for Arch Linux)
-  # NOTE: target-cpu=native is intentionally omitted — it triggers an LLVM
-  # SelectionDAGBuilder SIGSEGV when combined with lto=fat + codegen-units=1.
-  # The profile.release settings already provide maximum optimisation.
-  cargo build --release --features arch --locked 2>&1 || {
-    log_warn "Locked build failed, retrying without --locked"
-    unset RUSTFLAGS  # Ensure no stale flags leak into the retry
-    cargo build --release --features arch
-  }
+  # NOTE: rustc 1.92.0 + LTO occasionally crashes (SIGSEGV) - retry up to 5 times
+  # See: https://github.com/rust-lang/rust/issues (LLVM inliner/linker crashes)
+  local max_attempts=5
+  local attempt=1
+  local build_success=0
+  
+  while [[ $attempt -le $max_attempts ]]; do
+    log_info "Build attempt $attempt/$max_attempts..."
+    
+    if cargo build --release --features arch --locked 2>&1; then
+      build_success=1
+      break
+    fi
+    
+    log_warn "Build attempt $attempt failed, retrying without --locked..."
+    unset RUSTFLAGS  # Ensure no stale flags leak
+    
+    if cargo build --release --features arch 2>&1; then
+      build_success=1
+      break
+    fi
+    
+    if [[ $attempt -lt $max_attempts ]]; then
+      log_warn "Build attempt $attempt/$max_attempts failed (likely rustc LTO crash)"
+      log_info "Waiting 2 seconds before retry..."
+      sleep 2
+    fi
+    
+    attempt=$((attempt + 1))
+  done
+  
+  if [[ $build_success -eq 0 ]]; then
+    die "Build failed after $max_attempts attempts. This is likely a transient rustc SIGSEGV bug. Try running the script again."
+  fi
   
   # Verify binaries exist
   [[ -f target/release/omg ]] || die "Binary 'omg' not found"
