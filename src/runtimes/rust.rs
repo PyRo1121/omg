@@ -692,6 +692,8 @@ mod tests {
     fn test_default_host_triple() {
         let triple = default_host_triple().unwrap();
         // Platform-agnostic check: should contain any valid OS component
-        assert!(triple.contains("linux") || triple.contains("darwin") || triple.contains("windows"));
+        assert!(
+            triple.contains("linux") || triple.contains("darwin") || triple.contains("windows")
+        );
     }
 }
