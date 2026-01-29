@@ -23,9 +23,9 @@ fn bench_search(c: &mut Criterion) {
             &term,
             |b, &term| {
                 b.iter(|| {
-                    let _ = std::hint::black_box(package_managers::pacman_db::search_sync_fast(std::hint::black_box(
-                        term,
-                    )));
+                    let _ = std::hint::black_box(package_managers::pacman_db::search_sync_fast(
+                        std::hint::black_box(term),
+                    ));
                 });
             },
         );
@@ -35,9 +35,9 @@ fn bench_search(c: &mut Criterion) {
             &term,
             |b, &term| {
                 b.iter(|| {
-                    let _ = std::hint::black_box(package_managers::pacman_db::search_local_cached(std::hint::black_box(
-                        term,
-                    )));
+                    let _ = std::hint::black_box(package_managers::pacman_db::search_local_cached(
+                        std::hint::black_box(term),
+                    ));
                 });
             },
         );
@@ -80,11 +80,17 @@ fn bench_unified_search(c: &mut Criterion) {
     let search_terms = vec!["rust", "python", "vim"];
 
     for term in search_terms {
-        group.bench_with_input(criterion::BenchmarkId::new("search_sync", term), &term, |b, &term| {
-            b.iter(|| {
-                let _ = std::hint::black_box(package_managers::search_sync(std::hint::black_box(term)));
-            });
-        });
+        group.bench_with_input(
+            criterion::BenchmarkId::new("search_sync", term),
+            &term,
+            |b, &term| {
+                b.iter(|| {
+                    let _ = std::hint::black_box(package_managers::search_sync(
+                        std::hint::black_box(term),
+                    ));
+                });
+            },
+        );
     }
 
     group.finish();
