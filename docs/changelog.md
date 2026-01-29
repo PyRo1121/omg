@@ -10,6 +10,27 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 
 ---
 
+## [Unreleased]
+### 🐛 Bug Fixes
+
+- Set HOME and XDG_CACHE_HOME when dropping privileges for AUR builds
+
+Root Cause:
+
+  - When running as root (sudo omg install), cache paths resolved to /root/.cache/
+
+  - Previous implementation used 'sudo -u <user> makepkg' to drop privileges
+
+  - But didn't set HOME environment variable
+
+  - Result: logs written to /root/.cache/omg/aur/_logs/ instead of user's cache
+
+### 📚 Documentation
+
+- Update changelog [skip ci]
+
+Auto-generated from git history with git-cliff.
+
 ## [0.1.183] - 2026-01-29
 ### ✨ New Features
 
