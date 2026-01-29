@@ -10,7 +10,7 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 
 ---
 
-## [Unreleased]
+## [0.1.183] - 2026-01-29
 ### ✨ New Features
 
 - Use git-cliff for release notes generation
@@ -34,6 +34,54 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
   - Matches yay's privilege handling pattern
 
 ### 🐛 Bug Fixes
+
+- Resolve all clippy pedantic/nursery warnings with proper Rust idioms
+
+Fixes 24 clippy warnings by addressing root causes, not suppressing:
+
+1. Type Safety (13 fixes):
+
+  - Add Eq derive to all state machine enums (PartialEq + Eq)
+
+  - Files: tea/{info,install,remove,search,status,update}_model.rs
+
+  - Benefit: Stronger type guarantees, enables HashMap keys
+
+2. Performance (5 fixes):
+
+  - Remove redundant clones in hot paths
+
+  - Files: tea/info_model.rs, daemon/handlers.rs, core/testing/fixtures.rs
+
+  - Benefit: Eliminates unnecessary allocations
+
+3. Maintainability (2 fixes):
+
+  - Extract duplicate code from if/else branches
+
+  - Files: cli/size.rs, core/privilege.rs
+
+  - Benefit: DRY principle, single source of truth
+
+4. Concurrency (2 fixes):
+
+  - Add Sync bound to async trait: RuntimeInstallUse + Sync
+
+  - Add module-level allow for trait_variant false positive
+
+  - Files: cli/runtimes.rs, cli/mod.rs
+
+  - Benefit: Fixes future-not-send, tokio multi-threaded compatibility
+
+5. API Improvements (2 fixes):
+
+  - Improve Box<dyn Any> coercion: &panic_info → &*panic_info
+
+  - Remove needless mut: &mut Alpm → &Alpm
+
+  - Files: package_managers/{pacman_db,alpm_ops}.rs
+
+  - Benefit: Cleaner API, better borrow checker ergonomics
 
 - Add cargo bin to PATH in update-changelog.sh
 
@@ -72,6 +120,10 @@ Technical Changes:
 and dist/ validation
 
 ### 📚 Documentation
+
+- Update changelog [skip ci]
+
+Auto-generated from git history with git-cliff.
 
 - Update changelog [skip ci]
 
