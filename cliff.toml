@@ -81,6 +81,17 @@ commit_preprocessors = [
 ]
 
 commit_parsers = [
+    # === SKIP THESE FIRST (Pattern matching is order-dependent) ===
+    
+    # Skip CI-automated changelog updates
+    { message = ".*\\[skip ci\\].*", skip = true },
+    
+    # Skip release commits (redundant)
+    { message = "^chore\\(release\\)", skip = true },
+    { message = "^Release v", skip = true },
+    { message = "^release:", skip = true },
+    { message = "^Bump version", skip = true },
+
     # === USER-FACING CHANGES (Priority) ===
 
     # New Features (what users can now do)
@@ -131,13 +142,7 @@ commit_parsers = [
     { message = "^ci", group = "👷 CI/CD" },
     { message = "^cd", group = "👷 CI/CD" },
 
-    # === SKIP THESE (Too noisy for users) ===
-
-    # Skip release commits (redundant)
-    { message = "^chore\\(release\\)", skip = true },
-    { message = "^Release v", skip = true },
-    { message = "^release:", skip = true },
-    { message = "^Bump version", skip = true },
+    # === MORE SKIP PATTERNS (After categorization attempts) ===
 
     # Skip trivial chores
     { message = "^chore: remove.*", skip = true },

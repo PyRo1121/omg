@@ -358,13 +358,16 @@ generate_release_notes() {
   
   if command -v git-cliff >/dev/null 2>&1; then
     if [[ -n "$last_tag" ]]; then
-      git-cliff --strip all --unreleased --tag "v${version}" "${last_tag}..HEAD" 2>/dev/null || {
+      # Generate notes for commits between last tag and this release
+      # Don't use --unreleased since the tag already exists at this point
+      git-cliff --strip all "${last_tag}..v${version}" 2>/dev/null || {
         log_warn "git-cliff failed, falling back to git log"
         generate_fallback_notes "$version" "$last_tag"
         return
       }
     else
-      git-cliff --strip all --unreleased --tag "v${version}" 2>/dev/null || {
+      # No previous tag, show all history for this version
+      git-cliff --strip all --tag "v${version}" 2>/dev/null || {
         log_warn "git-cliff failed, falling back to git log"
         generate_fallback_notes "$version" "$last_tag"
         return
