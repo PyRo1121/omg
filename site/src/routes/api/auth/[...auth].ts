@@ -1,37 +1,47 @@
-import { APIEvent } from "@solidjs/start/server";
-import { createAuth, CloudflareEnv } from "~/lib/auth";
+import type { APIEvent } from "@solidjs/start/server";
+import { betterAuth } from "better-auth";
+import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { drizzle } from "drizzle-orm/d1";
 
-function getEnv(event: APIEvent): CloudflareEnv {
-  const cf = (event.nativeEvent as any).context?.cloudflare?.env;
-  
-  if (!cf?.DB) {
-    throw new Error("D1 database binding not found. Ensure 'DB' is configured in wrangler.toml");
+async function handleAuth(event: APIEvent): Promise<Response> {
+  try {
+    const cf = (event.nativeEvent as any).context?.cloudflare?.env;
+    const db = drizzle(cf.DB);
+
+    const auth = betterAuth({
+      database: drizzleAdapter(db, {
+        provider: "sqlite",
+        usePlural: false,
+      }),
+      secret: cf.BETTER_AUTH_SECRET,
+      baseURL: cf.BETTER_AUTH_URL,
+      emailAndPassword: {
+        enabled: true,
+      },
+      socialProviders: {
+        github: {
+          clientId: cf.GITHUB_CLIENT_ID,
+          clientSecret: cf.GITHUB_CLIENT_SECRET,
+        },
+        google: {
+          clientId: cf.GOOGLE_CLIENT_ID,
+          clientSecret: cf.GOOGLE_CLIENT_SECRET,
+        },
+      },
+    });
+
+    return await auth.handler(event.request);
+  } catch (error) {
+    console.error("[AUTH ERROR]", error);
+    return new Response(JSON.stringify({
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" }
+    });
   }
-  
-  if (!cf?.BETTER_AUTH_KV) {
-    throw new Error("KV namespace binding not found. Ensure 'BETTER_AUTH_KV' is configured in wrangler.toml");
-  }
-
-  return {
-    DB: cf.DB,
-    BETTER_AUTH_KV: cf.BETTER_AUTH_KV,
-    BETTER_AUTH_SECRET: cf.BETTER_AUTH_SECRET || process.env.BETTER_AUTH_SECRET || "dev-secret-change-me",
-    BETTER_AUTH_URL: cf.BETTER_AUTH_URL || process.env.BETTER_AUTH_URL || "http://localhost:3000",
-    GITHUB_CLIENT_ID: cf.GITHUB_CLIENT_ID || process.env.GITHUB_CLIENT_ID,
-    GITHUB_CLIENT_SECRET: cf.GITHUB_CLIENT_SECRET || process.env.GITHUB_CLIENT_SECRET,
-    GOOGLE_CLIENT_ID: cf.GOOGLE_CLIENT_ID || process.env.GOOGLE_CLIENT_ID,
-    GOOGLE_CLIENT_SECRET: cf.GOOGLE_CLIENT_SECRET || process.env.GOOGLE_CLIENT_SECRET,
-  };
 }
 
-export async function GET(event: APIEvent) {
-  const env = getEnv(event);
-  const auth = createAuth(env);
-  return auth.handler(event.request);
-}
-
-export async function POST(event: APIEvent) {
-  const env = getEnv(event);
-  const auth = createAuth(env);
-  return auth.handler(event.request);
-}
+export const GET = handleAuth;
+export const POST = handleAuth;
