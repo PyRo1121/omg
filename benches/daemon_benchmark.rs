@@ -10,11 +10,10 @@ use std::hint::black_box;
 use std::sync::Arc;
 use std::time::Duration;
 
-use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
 
 use omg_lib::core::runtime_resolver;
 use omg_lib::daemon::cache::PackageCache;
-use omg_lib::daemon::index::PackageIndex;
 use omg_lib::daemon::protocol::PackageInfo;
 
 /// Benchmark cache operations with Arc optimization
@@ -58,7 +57,7 @@ fn bench_cache_operations(c: &mut Criterion) {
     group.bench_function("cache_insert_arc", |b| {
         let mut counter = 0;
         b.iter(|| {
-            let key = format!("new_query{}", counter);
+            let key = format!("new_query{counter}");
             let data = Arc::new(test_packages.clone());
             cache.insert_arc(black_box(key), data);
             counter += 1;
@@ -67,9 +66,9 @@ fn bench_cache_operations(c: &mut Criterion) {
 
     // Benchmark cache insert without Arc (sub-optimal for comparison)
     group.bench_function("cache_insert_vec", |b| {
-        let mut counter = 100000;
+        let mut counter = 100_000;
         b.iter(|| {
-            let key = format!("new_query{}", counter);
+            let key = format!("new_query{counter}");
             cache.insert(black_box(key), test_packages.clone());
             counter += 1;
         });
@@ -94,7 +93,7 @@ fn bench_index_search(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(5));
 
     // Build real index from system packages
-    let index = match PackageIndex::new() {
+    let index = match omg_lib::daemon::index::PackageIndex::new() {
         Ok(idx) => idx,
         Err(_) => {
             eprintln!("Skipping index benchmarks - failed to build index");
@@ -105,8 +104,8 @@ fn bench_index_search(c: &mut Criterion) {
     let search_terms = vec!["rust", "python", "vim", "gcc", "linux"];
 
     for term in search_terms {
-        group.throughput(Throughput::Elements(1));
-        group.bench_with_input(BenchmarkId::new("search", term), &term, |b, &term| {
+        group.throughput(criterion::Throughput::Elements(1));
+        group.bench_with_input(criterion::BenchmarkId::new("search", term), &term, |b, &term| {
             b.iter(|| {
                 let results = index.search(black_box(term), black_box(50));
                 black_box(results);
@@ -114,7 +113,7 @@ fn bench_index_search(c: &mut Criterion) {
         });
 
         // Benchmark exact package lookup (hash map lookup)
-        group.bench_with_input(BenchmarkId::new("get_exact", term), &term, |b, &term| {
+        group.bench_with_input(criterion::BenchmarkId::new("get_exact", term), &term, |b, &term| {
             b.iter(|| {
                 let result = index.get(black_box(term));
                 black_box(result);

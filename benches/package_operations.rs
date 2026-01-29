@@ -3,9 +3,7 @@
 //! These benchmarks measure the performance of critical operations
 //! to ensure Phase 3 architectural changes haven't introduced regressions.
 
-use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use std::hint::black_box;
-use std::time::Duration;
+use criterion::{Criterion, criterion_group, criterion_main};
 
 #[cfg(feature = "arch")]
 use omg_lib::package_managers;
@@ -14,18 +12,18 @@ use omg_lib::package_managers;
 #[cfg(feature = "arch")]
 fn bench_search(c: &mut Criterion) {
     let mut group = c.benchmark_group("search");
-    group.measurement_time(Duration::from_secs(10));
+    group.measurement_time(std::time::Duration::from_secs(10));
 
     // Test various search patterns
     let search_terms = vec!["rust", "python", "vim", "gcc", "kernel"];
 
     for term in search_terms {
         group.bench_with_input(
-            BenchmarkId::new("search_sync_fast", term),
+            criterion::BenchmarkId::new("search_sync_fast", term),
             &term,
             |b, &term| {
                 b.iter(|| {
-                    let _ = black_box(package_managers::pacman_db::search_sync_fast(black_box(
+                    let _ = std::hint::black_box(package_managers::pacman_db::search_sync_fast(std::hint::black_box(
                         term,
                     )));
                 });
@@ -33,11 +31,11 @@ fn bench_search(c: &mut Criterion) {
         );
 
         group.bench_with_input(
-            BenchmarkId::new("search_local_cached", term),
+            criterion::BenchmarkId::new("search_local_cached", term),
             &term,
             |b, &term| {
                 b.iter(|| {
-                    let _ = black_box(package_managers::pacman_db::search_local_cached(black_box(
+                    let _ = std::hint::black_box(package_managers::pacman_db::search_local_cached(std::hint::black_box(
                         term,
                     )));
                 });
@@ -57,11 +55,11 @@ fn bench_search(_c: &mut Criterion) {
 #[cfg(feature = "arch")]
 fn bench_explicit(c: &mut Criterion) {
     let mut group = c.benchmark_group("explicit");
-    group.measurement_time(Duration::from_secs(10));
+    group.measurement_time(std::time::Duration::from_secs(10));
 
     group.bench_function("list_explicit_fast", |b| {
         b.iter(|| {
-            let _ = black_box(package_managers::list_explicit_fast());
+            let _ = std::hint::black_box(package_managers::list_explicit_fast());
         });
     });
 
@@ -77,14 +75,14 @@ fn bench_explicit(_c: &mut Criterion) {
 #[cfg(feature = "arch")]
 fn bench_unified_search(c: &mut Criterion) {
     let mut group = c.benchmark_group("unified_search");
-    group.measurement_time(Duration::from_secs(10));
+    group.measurement_time(std::time::Duration::from_secs(10));
 
     let search_terms = vec!["rust", "python", "vim"];
 
     for term in search_terms {
-        group.bench_with_input(BenchmarkId::new("search_sync", term), &term, |b, &term| {
+        group.bench_with_input(criterion::BenchmarkId::new("search_sync", term), &term, |b, &term| {
             b.iter(|| {
-                let _ = black_box(package_managers::search_sync(black_box(term)));
+                let _ = std::hint::black_box(package_managers::search_sync(std::hint::black_box(term)));
             });
         });
     }

@@ -61,6 +61,8 @@ import {
   handleDocsAnalyticsDashboard,
   cleanupDocsAnalytics,
 } from './handlers/docs-analytics';
+import { handleGitHubProxy } from './handlers/github-proxy';
+import { handleBinaryDownload } from './handlers/downloads';
 
 export default Sentry.withSentry(
   (env: Env) => ({
@@ -158,6 +160,16 @@ export default Sentry.withSentry(
       // Docs analytics dashboard (admin view)
       if (path === '/api/docs/analytics/dashboard' && request.method === 'GET') {
         return handleDocsAnalyticsDashboard(request, env);
+      }
+
+      // GitHub commit activity proxy (caching layer)
+      if (path === '/api/github-stats' && request.method === 'GET') {
+        return handleGitHubProxy(request, env, ctx);
+      }
+
+      // Binary downloads from R2 (with Range support)
+      if (path.startsWith('/download/') && request.method === 'GET') {
+        return handleBinaryDownload(request, env);
       }
 
       // ============================================
