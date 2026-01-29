@@ -397,6 +397,22 @@ Fixes clippy warnings:
 
   - Fixes CI formatting check failure
 
+### 👷 CI/CD
+
+- Temporarily disable sccache due to service outage
+
+Removed sccache configuration from all CI jobs to work around GitHub Actions
+
+cache service downtime. Builds will run without compiler caching until service
+
+is restored.
+
+  - Linux: Removed sccache setup and stats steps
+
+  - macOS: Removed sccache setup and RUSTC_WRAPPER
+
+  - Windows: Removed sccache setup and RUSTC_WRAPPER
+
 ## [0.1.199] - 2026-01-29
 ### ⚡ Performance
 
