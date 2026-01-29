@@ -211,7 +211,6 @@ fn show_required_by(package: &str) -> Result<Cmd<()>> {
 
 #[cfg(all(feature = "debian", not(feature = "arch")))]
 fn show_required_by(package: &str) -> Result<Cmd<()>> {
-    use crate::cli::components::Components;
     use std::process::Command;
 
     let output = Command::new("apt-cache")
