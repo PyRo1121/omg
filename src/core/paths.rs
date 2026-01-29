@@ -65,9 +65,34 @@ pub fn config_dir() -> PathBuf {
 }
 
 /// Cache directory (default: XDG cache dir/omg or ~/.cache/omg).
+/// When running with sudo, uses the original user's cache directory.
 #[must_use]
 pub fn cache_dir() -> PathBuf {
     env_path("OMG_CACHE_DIR").unwrap_or_else(|| {
+        // If running as root via sudo, use original user's cache directory
+        if let Ok(sudo_user) = std::env::var("SUDO_USER")
+            && crate::core::is_root()
+        {
+            // Try SUDO_HOME first, fallback to /home/<username>
+            let home = std::env::var("SUDO_HOME")
+                .ok()
+                .map_or_else(
+                    || PathBuf::from(format!("/home/{sudo_user}")),
+                    PathBuf::from,
+                );
+            
+            return home.join(".cache/omg");
+        }
+        
+        // Check DOAS_USER as well
+        if let Ok(doas_user) = std::env::var("DOAS_USER")
+            && crate::core::is_root()
+        {
+            let home = PathBuf::from(format!("/home/{doas_user}"));
+            return home.join(".cache/omg");
+        }
+
+        // Normal case: use current user's cache directory
         dirs::cache_dir().map_or_else(|| fallback_home_dir().join(".cache/omg"), |d| d.join("omg"))
     })
 }
