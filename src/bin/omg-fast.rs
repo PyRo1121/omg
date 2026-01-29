@@ -117,6 +117,7 @@ fn main() {
 }
 
 /// Get socket path
+#[cfg(unix)]
 fn socket_path() -> String {
     std::env::var("OMG_SOCKET_PATH").unwrap_or_else(|_| {
         std::env::var("XDG_RUNTIME_DIR")
@@ -125,6 +126,7 @@ fn socket_path() -> String {
 }
 
 /// Fast search via raw IPC (no serde, minimal parsing)
+#[cfg(unix)]
 fn fast_search(query: &str) {
     let Ok(mut stream) = UnixStream::connect(socket_path()) else {
         eprintln!("Daemon not running");
@@ -141,6 +143,7 @@ fn fast_search(query: &str) {
 }
 
 /// Fast info via raw IPC
+#[cfg(unix)]
 fn fast_info(package: &str) {
     let Ok(mut stream) = UnixStream::connect(socket_path()) else {
         eprintln!("Daemon not running");
@@ -153,6 +156,7 @@ fn fast_info(package: &str) {
     }
 }
 
+#[cfg(unix)]
 fn send_search_request(stream: &mut UnixStream, query: &str) -> Result<()> {
     use omg_lib::daemon::protocol::{Request, Response, ResponseResult};
     // Compile-time guarantee: u32 response lengths fit in usize on all supported targets.
@@ -204,6 +208,7 @@ fn send_search_request(stream: &mut UnixStream, query: &str) -> Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
 fn send_info_request(stream: &mut UnixStream, package: &str) -> Result<()> {
     use omg_lib::daemon::protocol::{Request, Response, ResponseResult};
     // Compile-time guarantee: u32 response lengths fit in usize on all supported targets.
