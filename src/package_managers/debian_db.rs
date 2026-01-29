@@ -979,15 +979,15 @@ pub fn get_counts_fast() -> Result<(usize, usize, usize, usize)> {
 pub fn cleanup_expired_mmaps() {
     let mut mmap_guard = DEBIAN_MMAP_INDEX.write();
 
-    if let Some(ref mmap) = *mmap_guard {
-        if mmap.is_expired() {
-            let size = mmap.mmap.len();
-            tracing::info!(
-                "Cleaning up expired Debian mmap index (size: {} MB)",
-                size / 1024 / 1024
-            );
-            *mmap_guard = None;
-        }
+    if let Some(ref mmap) = *mmap_guard
+        && mmap.is_expired()
+    {
+        let size = mmap.mmap.len();
+        tracing::info!(
+            "Cleaning up expired Debian mmap index (size: {} MB)",
+            size / 1024 / 1024
+        );
+        *mmap_guard = None;
     }
 }
 

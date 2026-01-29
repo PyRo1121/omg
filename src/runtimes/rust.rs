@@ -672,7 +672,8 @@ mod tests {
         let spec = RustToolchainSpec::parse("stable").unwrap();
         let name = spec.name();
         assert!(name.starts_with("stable-"));
-        assert!(name.contains("linux"));
+        // Platform-agnostic check: should contain any valid OS component
+        assert!(name.contains("linux") || name.contains("darwin") || name.contains("windows"));
     }
 
     #[test]
@@ -690,6 +691,7 @@ mod tests {
     #[test]
     fn test_default_host_triple() {
         let triple = default_host_triple().unwrap();
-        assert!(triple.contains("linux"));
+        // Platform-agnostic check: should contain any valid OS component
+        assert!(triple.contains("linux") || triple.contains("darwin") || triple.contains("windows"));
     }
 }
