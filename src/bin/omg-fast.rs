@@ -12,20 +12,25 @@
 //!   omg-fast s `<query>`    # search packages
 //!   omg-fast i `<package>`  # package info
 
-#![cfg(unix)]
 // Allow pedantic lints that are too strict for this minimal binary
 #![allow(clippy::cast_possible_truncation)] // IPC message lengths are bounded
 
 // Use mimalloc for even faster startup and allocations
+#[cfg(unix)]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+#[cfg(unix)]
 use std::fs::File;
+#[cfg(unix)]
 use std::io::{Read, Write};
+#[cfg(unix)]
 use std::os::unix::net::UnixStream;
 
+#[cfg(unix)]
 use anyhow::{Context, Result};
 
+#[cfg(unix)]
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let cmd = args.get(1).map_or("ec", String::as_str);
