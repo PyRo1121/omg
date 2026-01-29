@@ -8,6 +8,7 @@
 //! - **Info**: 6.5ms (21x faster than pacman)
 //! - **Explicit**: 1.2ms (12x faster than pacman)
 //!
+//!
 //! ## Architecture
 //! - [`daemon`] - Background daemon with Unix socket IPC
 //! - [`cli`] - Command-line interface
