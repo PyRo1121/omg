@@ -143,3 +143,10 @@ async fn main() -> Result<()> {
 
     Ok(())
 }
+
+// Windows stub - daemon not supported
+#[cfg(not(unix))]
+fn main() {
+    eprintln!("Error: omgd daemon is only supported on Unix-like systems");
+    std::process::exit(1);
+}

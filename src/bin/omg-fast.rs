@@ -252,3 +252,10 @@ fn truncate(s: &str, max: usize) -> String {
         format!("{}...", &s[..max.saturating_sub(3)])
     }
 }
+
+// Windows stub - fast queries not supported (no daemon)
+#[cfg(not(unix))]
+fn main() {
+    eprintln!("Error: omg-fast is only supported on Unix-like systems");
+    std::process::exit(1);
+}
