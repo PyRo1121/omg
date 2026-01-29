@@ -13,6 +13,30 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ## [Unreleased]
 ### ✨ New Features
 
+- **Site**: Migrate from Vite SPA to SolidStart SSG for SEO optimization
+
+  - Replace Vite + vite-plugin-solid with SolidStart 1.0 + Vinxi
+
+  - Enable static site generation with pre-rendered HTML
+
+  - Add server-rendered SEO meta tags (title, description, OG, Twitter)
+
+  - Embed JSON-LD structured data in HTML head
+
+  - Convert to file-based routing (src/routes/)
+
+  - Configure cloudflare-pages preset for deployment
+
+  - Pre-render 5 routes: /, /docs, /dashboard, /privacy, /terms
+
+Expected improvements:
+
+  - SEO score: 92 -> 98-100/100
+
+  - Google indexing: 7-14 days -> 24-48 hours
+
+  - Full HTML content visible without JavaScript
+
 - **Ci**: World-class CI pipeline with 6-platform matrix and ~67% faster builds
 
 ## CI/CD Optimization Summary
