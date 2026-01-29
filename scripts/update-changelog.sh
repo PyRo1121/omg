@@ -6,6 +6,8 @@
 
 set -e
 
+export PATH="$HOME/.cargo/bin:$PATH"
+
 # Get repo root
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
