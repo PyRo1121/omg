@@ -33,10 +33,10 @@ const CACHE_TTL_SECS: u64 = 30 * 60;
 
 /// Check if cache is expired based on TTL (30-minute safety net)
 fn is_cache_expired(last_accessed: Option<std::time::SystemTime>) -> bool {
-    if let Some(last_access) = last_accessed {
-        if let Ok(elapsed) = std::time::SystemTime::now().duration_since(last_access) {
-            return elapsed.as_secs() > CACHE_TTL_SECS;
-        }
+    if let Some(last_access) = last_accessed
+        && let Ok(elapsed) = std::time::SystemTime::now().duration_since(last_access)
+    {
+        return elapsed.as_secs() > CACHE_TTL_SECS;
     }
     false
 }
@@ -90,7 +90,7 @@ static DEBIAN_MMAP_INDEX: LazyLock<RwLock<Option<DebianMmapIndex>>> =
 pub struct DebianMmapIndex {
     mmap: Mmap,
     /// Last access time (Unix timestamp) for TTL-based eviction
-    /// AtomicU64 allows lock-free updates from read-only methods
+    /// `AtomicU64` allows lock-free updates from read-only methods
     last_accessed: AtomicU64,
 }
 
@@ -125,7 +125,7 @@ impl DebianMmapIndex {
     #[inline]
     fn archive(&self) -> Result<&rkyv::Archived<DebianPackageIndex>> {
         rkyv::access::<rkyv::Archived<DebianPackageIndex>, rkyv::rancor::Error>(&self.mmap)
-            .map_err(|e| anyhow::anyhow!("Corrupted Debian package index: {}", e))
+            .map_err(|e| anyhow::anyhow!("Corrupted Debian package index: {e}"))
     }
 
     /// Get a package by name (zero-copy, O(1) via hash lookup in archived data)
@@ -321,11 +321,11 @@ pub fn ensure_index_loaded() -> Result<()> {
         let mut mmap_guard = DEBIAN_MMAP_INDEX.write();
 
         // Clear expired mmap (TTL-based cleanup for 500MB+ resource leak)
-        if let Some(ref mmap) = *mmap_guard {
-            if mmap.is_expired() {
-                tracing::debug!("Clearing expired Debian mmap index (TTL exceeded)");
-                *mmap_guard = None;
-            }
+        if let Some(ref mmap) = *mmap_guard
+            && mmap.is_expired()
+        {
+            tracing::debug!("Clearing expired Debian mmap index (TTL exceeded)");
+            *mmap_guard = None;
         }
 
         if mmap_guard.is_none()
