@@ -63,48 +63,50 @@ pub async fn scan(_ctx: &CliContext) -> Result<()> {
         };
 
         match client.security_audit().await {
-        Ok(res) => {
-            if res.total_vulnerabilities == 0 {
-                ui::print_success("No vulnerabilities found in scanned packages.");
-            } else {
-                ui::print_warning(format!(
-                    "Found {} vulnerabilities ({} high severity)",
-                    res.total_vulnerabilities, res.high_severity
-                ));
-                println!();
-                for (pkg, vulns) in res.vulnerabilities {
-                    println!(
-                        "  {} ({} issues):",
-                        style::maybe_color(&pkg, |t| t.white().bold().to_string()),
-                        vulns.len()
-                    );
-                    for vuln in vulns {
-                        let score = vuln
-                            .score
-                            .map(|s| format!(" [Score: {s}]"))
-                            .unwrap_or_default();
-                        println!(
-                            "    {} {} - {}{}",
-                            style::maybe_color("→", |t| t.red().to_string()),
-                            style::maybe_color(&vuln.id, |t| t.yellow().to_string()),
-                            vuln.summary,
-                            style::dim(&score)
-                        );
-                    }
+            Ok(res) => {
+                if res.total_vulnerabilities == 0 {
+                    ui::print_success("No vulnerabilities found in scanned packages.");
+                } else {
+                    ui::print_warning(format!(
+                        "Found {} vulnerabilities ({} high severity)",
+                        res.total_vulnerabilities, res.high_severity
+                    ));
                     println!();
+                    for (pkg, vulns) in res.vulnerabilities {
+                        println!(
+                            "  {} ({} issues):",
+                            style::maybe_color(&pkg, |t| t.white().bold().to_string()),
+                            vulns.len()
+                        );
+                        for vuln in vulns {
+                            let score = vuln
+                                .score
+                                .map(|s| format!(" [Score: {s}]"))
+                                .unwrap_or_default();
+                            println!(
+                                "    {} {} - {}{}",
+                                style::maybe_color("→", |t| t.red().to_string()),
+                                style::maybe_color(&vuln.id, |t| t.yellow().to_string()),
+                                vuln.summary,
+                                style::dim(&score)
+                            );
+                        }
+                        println!();
+                    }
+                    ui::print_tip("Run 'omg audit sbom' to generate a full security report.");
                 }
-                ui::print_tip("Run 'omg audit sbom' to generate a full security report.");
             }
-        }
-        Err(e) => {
-            ui::print_error(format!("Audit failed: {e}"));
-        }
+            Err(e) => {
+                ui::print_error(format!("Audit failed: {e}"));
+            }
         }
     }
 
     #[cfg(not(unix))]
     {
-        ui::print_error("Security audit requires the daemon, which is only available on Unix systems.");
+        ui::print_error(
+            "Security audit requires the daemon, which is only available on Unix systems.",
+        );
     }
 
     Ok(())
@@ -877,134 +879,135 @@ pub async fn fix_vulnerabilities(
 
     #[cfg(not(unix))]
     {
-        ui::print_error("Vulnerability scanning requires the daemon, which is only available on Unix systems.");
+        ui::print_error(
+            "Vulnerability scanning requires the daemon, which is only available on Unix systems.",
+        );
         return Ok(());
     }
 
     #[cfg(unix)]
     {
+        if scan_result.total_vulnerabilities == 0 {
+            println!("{} No vulnerabilities found!", style::success("✓"));
+            return Ok(());
+        }
 
-    if scan_result.total_vulnerabilities == 0 {
-        println!("{} No vulnerabilities found!", style::success("✓"));
-        return Ok(());
-    }
+        // Determine minimum severity threshold
+        let min_sev = match min_severity.to_lowercase().as_str() {
+            "critical" => 9.0,
+            "high" => 7.0,
+            "low" => 0.0,
+            _ => 4.0, // Default to medium or unknown
+        };
 
-    // Determine minimum severity threshold
-    let min_sev = match min_severity.to_lowercase().as_str() {
-        "critical" => 9.0,
-        "high" => 7.0,
-        "low" => 0.0,
-        _ => 4.0, // Default to medium or unknown
-    };
+        // Find packages with fixable vulnerabilities
+        #[allow(unused_mut)] // Mutated only inside feature-gated block
+        let mut to_upgrade: Vec<String> = Vec::new();
+        #[allow(unused_mut)] // Mutated only inside feature-gated block
+        let mut unfixable: Vec<(String, String)> = Vec::new();
 
-    // Find packages with fixable vulnerabilities
-    #[allow(unused_mut)] // Mutated only inside feature-gated block
-    let mut to_upgrade: Vec<String> = Vec::new();
-    #[allow(unused_mut)] // Mutated only inside feature-gated block
-    let mut unfixable: Vec<(String, String)> = Vec::new();
+        for (pkg, vulns) in &scan_result.vulnerabilities {
+            let has_severe = vulns.iter().any(|v| {
+                let score = v
+                    .score
+                    .as_ref()
+                    .and_then(|s| s.parse::<f64>().ok())
+                    .unwrap_or(0.0);
+                score >= min_sev
+            });
 
-    for (pkg, vulns) in &scan_result.vulnerabilities {
-        let has_severe = vulns.iter().any(|v| {
-            let score = v
-                .score
-                .as_ref()
-                .and_then(|s| s.parse::<f64>().ok())
-                .unwrap_or(0.0);
-            score >= min_sev
-        });
-
-        if has_severe {
-            // Check if there's an available update
-            #[cfg(feature = "arch")]
-            {
-                if crate::package_managers::alpm_direct::has_update(pkg).unwrap_or(false) {
-                    to_upgrade.push(pkg.clone());
-                } else {
-                    for vuln in vulns {
-                        let score = vuln
-                            .score
-                            .as_ref()
-                            .and_then(|s| s.parse::<f64>().ok())
-                            .unwrap_or(0.0);
-                        if score >= min_sev {
-                            unfixable.push((pkg.clone(), vuln.id.clone()));
+            if has_severe {
+                // Check if there's an available update
+                #[cfg(feature = "arch")]
+                {
+                    if crate::package_managers::alpm_direct::has_update(pkg).unwrap_or(false) {
+                        to_upgrade.push(pkg.clone());
+                    } else {
+                        for vuln in vulns {
+                            let score = vuln
+                                .score
+                                .as_ref()
+                                .and_then(|s| s.parse::<f64>().ok())
+                                .unwrap_or(0.0);
+                            if score >= min_sev {
+                                unfixable.push((pkg.clone(), vuln.id.clone()));
+                            }
                         }
                     }
                 }
-            }
-            #[cfg(not(feature = "arch"))]
-            {
-                unfixable.push((pkg.clone(), "Update check not available".to_string()));
+                #[cfg(not(feature = "arch"))]
+                {
+                    unfixable.push((pkg.clone(), "Update check not available".to_string()));
+                }
             }
         }
-    }
 
-    if to_upgrade.is_empty() {
-        println!("{} No packages can be auto-fixed.", style::dim("•"));
-        if !unfixable.is_empty() {
-            println!(
-                "\n  {} Unfixable vulnerabilities (no update available):\n",
-                style::warning("⚠")
-            );
-            for (pkg, vuln) in &unfixable {
-                println!("    {} {} - {}", style::error("✗"), pkg, vuln);
+        if to_upgrade.is_empty() {
+            println!("{} No packages can be auto-fixed.", style::dim("•"));
+            if !unfixable.is_empty() {
+                println!(
+                    "\n  {} Unfixable vulnerabilities (no update available):\n",
+                    style::warning("⚠")
+                );
+                for (pkg, vuln) in &unfixable {
+                    println!("    {} {} - {}", style::error("✗"), pkg, vuln);
+                }
+                println!(
+                    "\n  {} These may require manual intervention or upstream patches.",
+                    style::dim("ℹ")
+                );
             }
-            println!(
-                "\n  {} These may require manual intervention or upstream patches.",
-                style::dim("ℹ")
-            );
-        }
-        return Ok(());
-    }
-
-    println!(
-        "{} Found {} packages to upgrade:\n",
-        style::success("✓"),
-        to_upgrade.len()
-    );
-    for pkg in &to_upgrade {
-        println!("    {} {}", style::arrow("→"), style::package(pkg));
-    }
-
-    if dry_run {
-        println!("\n{} Dry run - no changes made.", style::dim("•"));
-        return Ok(());
-    }
-
-    if !yes {
-        println!();
-        let confirm = dialoguer::Confirm::new()
-            .with_prompt("Proceed with upgrades?")
-            .default(true)
-            .interact()?;
-
-        if !confirm {
-            println!("{} Cancelled.", style::dim("•"));
             return Ok(());
         }
-    }
 
-    // Perform upgrades
-    #[cfg(feature = "arch")]
-    {
-        let pacman = crate::package_managers::ArchPackageManager::new();
-        use crate::package_managers::PackageManager;
-        pacman.install(&to_upgrade).await?;
-    }
-
-    println!(
-        "\n{} Fixed {} packages.",
-        style::success("✓"),
-        to_upgrade.len()
-    );
-
-    if !unfixable.is_empty() {
         println!(
-            "\n{} {} vulnerabilities remain unfixable.",
-            style::warning("⚠"),
-            unfixable.len()
+            "{} Found {} packages to upgrade:\n",
+            style::success("✓"),
+            to_upgrade.len()
         );
-    }
+        for pkg in &to_upgrade {
+            println!("    {} {}", style::arrow("→"), style::package(pkg));
+        }
+
+        if dry_run {
+            println!("\n{} Dry run - no changes made.", style::dim("•"));
+            return Ok(());
+        }
+
+        if !yes {
+            println!();
+            let confirm = dialoguer::Confirm::new()
+                .with_prompt("Proceed with upgrades?")
+                .default(true)
+                .interact()?;
+
+            if !confirm {
+                println!("{} Cancelled.", style::dim("•"));
+                return Ok(());
+            }
+        }
+
+        // Perform upgrades
+        #[cfg(feature = "arch")]
+        {
+            let pacman = crate::package_managers::ArchPackageManager::new();
+            use crate::package_managers::PackageManager;
+            pacman.install(&to_upgrade).await?;
+        }
+
+        println!(
+            "\n{} Fixed {} packages.",
+            style::success("✓"),
+            to_upgrade.len()
+        );
+
+        if !unfixable.is_empty() {
+            println!(
+                "\n{} {} vulnerabilities remain unfixable.",
+                style::warning("⚠"),
+                unfixable.len()
+            );
+        }
     }
 
     Ok(())
