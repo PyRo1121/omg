@@ -269,6 +269,24 @@ Added `validate_package_names()` to all install/remove methods:
 
 ### 🐛 Bug Fixes
 
+- Add cross-platform support to Rust runtime
+
+Added support for macOS (x86_64 and aarch64) and Windows (x86_64 and
+
+aarch64) to the Rust runtime's default_host_triple() function.
+
+This fixes test failures on macOS ARM64 runners where the function
+
+would panic with "Unsupported host platform: aarch64-macos".
+
+Platforms now supported:
+
+  - Linux: x86_64, aarch64
+
+  - macOS: x86_64 (Intel), aarch64 (Apple Silicon)
+
+  - Windows: x86_64, aarch64
+
 - Restore style import for arch feature in blame.rs
 
 The clippy fix incorrectly removed the style import that's used in
