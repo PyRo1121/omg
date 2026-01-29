@@ -13,7 +13,10 @@
 
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
-use nucleo_matcher::{Config as MatcherConfig, Matcher, Utf32Str, pattern::{Pattern, CaseMatching, Normalization}};
+use nucleo_matcher::{
+    Config as MatcherConfig, Matcher, Utf32Str,
+    pattern::{CaseMatching, Normalization, Pattern},
+};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -277,8 +280,9 @@ impl HomebrewPackageManager {
         let cache_path = Self::binary_cache_path()?;
 
         // Serialize using rkyv
-        let data = rkyv::to_bytes::<rkyv::rancor::Error>(&(cache.formulas.clone(), cache.casks.clone()))
-            .context("Failed to serialize cache")?;
+        let data =
+            rkyv::to_bytes::<rkyv::rancor::Error>(&(cache.formulas.clone(), cache.casks.clone()))
+                .context("Failed to serialize cache")?;
 
         fs::write(&cache_path, &data).await?;
 
