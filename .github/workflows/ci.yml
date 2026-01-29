@@ -143,6 +143,7 @@ jobs:
                 libssl-dev libapt-pkg-dev clang cmake zlib1g-dev liblzma-dev libbz2-dev
               curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
               echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+              "$HOME/.cargo/bin/rustup" component add clippy
 
           - platform: fedora
             image: fedora:latest

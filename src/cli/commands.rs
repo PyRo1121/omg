@@ -442,7 +442,7 @@ pub fn status_sync() -> Result<()> {
     println!("{}", "Runtimes:".bold());
 
     if let Some(versions) = cached_runtimes {
-        for (rt_name, v) in versions {
+        for (rt_name, v) in &versions {
             let label = match rt_name.as_str() {
                 "node" => "Node.js",
                 "python" => "Python",
@@ -451,9 +451,9 @@ pub fn status_sync() -> Result<()> {
                 "bun" => "Bun",
                 "java" => "Java",
                 "ruby" => "Ruby",
-                _ => &rt_name,
+                _ => rt_name,
             };
-            ui::print_list_item(label, Some(&v));
+            ui::print_list_item(label, Some(v));
         }
     } else {
         // Fallback to local probing if daemon is down
