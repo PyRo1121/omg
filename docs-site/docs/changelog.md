@@ -269,6 +269,7 @@ Added `validate_package_names()` to all install/remove methods:
 
 ### 🐛 Bug Fixes
 
+- **Fmt**: Apply rustfmt to cfg-guarded code
 - **Windows**: Add cfg(unix) guards for daemon/client usage
 
 Added platform guards to 13 CLI files that import daemon/client modules.
