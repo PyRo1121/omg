@@ -13,6 +13,7 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ## [Unreleased]
 ### ✨ New Features
 
+- Add Starlight docs at /docs + Better Auth + UI enhancements
 - **Site**: Migrate from Vite SPA to SolidStart SSG for SEO optimization
 
   - Replace Vite + vite-plugin-solid with SolidStart 1.0 + Vinxi
