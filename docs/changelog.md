@@ -269,6 +269,44 @@ Added `validate_package_names()` to all install/remove methods:
 
 ### 🐛 Bug Fixes
 
+- **Windows**: Add cfg(unix) guards for daemon/client usage
+
+Added platform guards to 13 CLI files that import daemon/client modules.
+
+The daemon uses Unix domain sockets (not available on Windows), so all
+
+daemon-related code is now Unix-only with graceful fallbacks on Windows.
+
+Files fixed:
+
+  - cli/security.rs   - Daemon fast-path in scan/fix/export
+
+  - cli/daemon_status.rs   - Entire daemon status command
+
+  - cli/doctor.rs   - Daemon health check
+
+  - cli/packages/{install,info,search,status,explicit}.rs   - Daemon queries
+
+  - cli/tea/{info_model,status_model}.rs   - Tea UI daemon integration
+
+  - cli/tui/app.rs   - TUI daemon status display
+
+  - cli/commands.rs   - Package name lookup
+
+Windows behavior:
+
+  - Core package management works (install/remove/upgrade)
+
+  - No daemon (uses direct package manager calls)
+
+  - Graceful error messages for daemon-only features
+
+Unix behavior:
+
+  - No change   - daemon fast paths still work
+
+  - Falls back to direct calls if daemon unavailable
+
 - **Clippy**: Remove duplicate cfg(unix) attribute
 
 The client module is already gated at the module declaration level,
