@@ -150,7 +150,7 @@ impl UpdateFixture {
     pub fn add_major(mut self, name: impl Into<String>) -> Self {
         let name = name.into();
         self.updates.push(UpdateInfo {
-            name: name.clone(),
+            name,
             old_version: "1.0.0-1".to_string(),
             new_version: "2.0.0-1".to_string(),
             repo: "extra".to_string(),
@@ -163,7 +163,7 @@ impl UpdateFixture {
     pub fn add_minor(mut self, name: impl Into<String>) -> Self {
         let name = name.into();
         self.updates.push(UpdateInfo {
-            name: name.clone(),
+            name,
             old_version: "1.0.0-1".to_string(),
             new_version: "1.1.0-1".to_string(),
             repo: "extra".to_string(),
@@ -176,7 +176,7 @@ impl UpdateFixture {
     pub fn add_patch(mut self, name: impl Into<String>) -> Self {
         let name = name.into();
         self.updates.push(UpdateInfo {
-            name: name.clone(),
+            name,
             old_version: "1.0.0-1".to_string(),
             new_version: "1.0.1-1".to_string(),
             repo: "extra".to_string(),

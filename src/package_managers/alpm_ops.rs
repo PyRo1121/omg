@@ -309,7 +309,7 @@ pub fn execute_transaction(
     configure_mirrors(&mut alpm)?;
 
     let mp = indicatif::MultiProgress::new();
-    let main_pb = setup_alpm_callbacks(&mut alpm, &mp);
+    let main_pb = setup_alpm_callbacks(&alpm, &mp);
     let tx_guard = prepare_alpm_transaction(&mut alpm, packages, remove, sysupgrade)?;
     commit_alpm_transaction(tx_guard.0, &main_pb)?;
 
@@ -319,7 +319,7 @@ pub fn execute_transaction(
 /// Setup ALPM callbacks for progress bars
 #[allow(clippy::expect_used)] // ALPM database operations; failure indicates corrupted pacman database
 fn setup_alpm_callbacks(
-    alpm: &mut alpm::Alpm,
+    alpm: &alpm::Alpm,
     mp: &indicatif::MultiProgress,
 ) -> indicatif::ProgressBar {
     let main_pb = mp.add(indicatif::ProgressBar::new(100));
@@ -363,7 +363,7 @@ fn setup_alpm_callbacks(
                     let pb = mp_clone.add(indicatif::ProgressBar::new_spinner());
                     pb.set_style(
                         indicatif::ProgressStyle::default_spinner()
-                            .template("  {spinner:.green} {msg:20} [Starting download...]")
+                            .template("  {{spinner:.green}} {{msg:20}} [Starting download...]")
                             .expect("valid template"),
                     );
                     pb.set_message(filename.to_string());
@@ -376,7 +376,7 @@ fn setup_alpm_callbacks(
                         pb.set_length(prog.total as u64);
                         pb.set_style(
                             indicatif::ProgressStyle::default_bar()
-                                .template("  {spinner:.green} {msg:20} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({bytes_per_sec})")
+                                .template("  {{spinner:.green}} {{msg:20}} [{{bar:40.cyan/blue}}] {{bytes}}/{{total_bytes}} ({{bytes_per_sec}})")
                                 .expect("valid template")
                                 .progress_chars("█▓▒░"),
                         );

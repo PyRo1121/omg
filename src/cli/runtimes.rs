@@ -82,7 +82,7 @@ impl_runtime_install_use!(
 );
 
 /// Use an already-installed version, or install it first if missing.
-async fn install_or_use<M: RuntimeInstallUse>(mgr: &M, version: &str) -> Result<()> {
+async fn install_or_use<M: RuntimeInstallUse + Sync>(mgr: &M, version: &str) -> Result<()> {
     let installed = mgr.list_installed().unwrap_or_default();
     if installed.iter().any(|v| v == version) {
         mgr.use_version(version)?;

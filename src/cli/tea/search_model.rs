@@ -12,7 +12,7 @@ use std::fmt::Write;
 use crate::package_managers::AurPackageDetail;
 
 /// Search state machine
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SearchState {
     Idle,
     Searching,
@@ -22,7 +22,7 @@ pub enum SearchState {
 }
 
 /// Package source for styling
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PackageSource {
     Official,
     Aur,

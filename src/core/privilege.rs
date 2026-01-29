@@ -226,17 +226,19 @@ pub async fn run_self_sudo(args: &[&str]) -> anyhow::Result<()> {
 
     // If --yes is specified, use only non-interactive sudo (-n flag)
     // Otherwise, try -n first and fall back to interactive mode
-    if yes_flag {
-        // Non-interactive mode: use -n flag and fail if password required
-        let status = tokio::process::Command::new("sudo")
-            .env("OMG_ELEVATED", "1")
-            .arg("-n")
-            .arg("--")
-            .arg(&exe)
-            .args(args)
-            .status()
-            .await;
+    
+    // Try non-interactive sudo first (both modes start with this)
+    let status = tokio::process::Command::new("sudo")
+        .env("OMG_ELEVATED", "1")
+        .arg("-n")
+        .arg("--")
+        .arg(&exe)
+        .args(args)
+        .status()
+        .await;
 
+    if yes_flag {
+        // Non-interactive mode: fail if password required
         match status {
             Ok(s) if s.success() => Ok(()),
             Ok(s) => {
@@ -279,16 +281,7 @@ pub async fn run_self_sudo(args: &[&str]) -> anyhow::Result<()> {
             }
         }
     } else {
-        // Interactive mode: try -n first, fall back to interactive sudo
-        let status = tokio::process::Command::new("sudo")
-            .env("OMG_ELEVATED", "1")
-            .arg("-n")
-            .arg("--")
-            .arg(&exe)
-            .args(args)
-            .status()
-            .await;
-
+        // Interactive mode: fall back to interactive sudo if password needed
         match status {
             Ok(s) if s.success() => Ok(()),
             // If sudo -n fails with exit code 1, it means a password is required

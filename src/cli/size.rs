@@ -6,17 +6,15 @@ use crate::cli::tea::Cmd;
 
 /// Show disk usage analysis
 pub fn run(tree: Option<&str>, limit: usize) -> Result<()> {
-    if let Some(package) = tree {
+    let cmd = if let Some(package) = tree {
         // SECURITY: Validate package name
         crate::core::security::validate_package_name(package)?;
-        let cmd = show_package_tree(package)?;
-        crate::cli::packages::execute_cmd(cmd);
-        Ok(())
+        show_package_tree(package)?
     } else {
-        let cmd = show_top_packages(limit)?;
-        crate::cli::packages::execute_cmd(cmd);
-        Ok(())
-    }
+        show_top_packages(limit)?
+    };
+    crate::cli::packages::execute_cmd(cmd);
+    Ok(())
 }
 
 #[cfg(feature = "arch")]

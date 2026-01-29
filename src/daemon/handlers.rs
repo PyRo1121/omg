@@ -465,7 +465,7 @@ async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) ->
     // 2. Try official index (Instant hash lookup)
     if let Some(pkg) = state.index.get(&package) {
         // Clone once, then use Arc for cheap sharing
-        let info = Arc::new(pkg.clone());
+        let info = Arc::new(pkg);
         state.cache.insert_info_arc(Arc::clone(&info));
         return Response::Success {
             id,
