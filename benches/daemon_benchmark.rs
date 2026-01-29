@@ -105,20 +105,28 @@ fn bench_index_search(c: &mut Criterion) {
 
     for term in search_terms {
         group.throughput(criterion::Throughput::Elements(1));
-        group.bench_with_input(criterion::BenchmarkId::new("search", term), &term, |b, &term| {
-            b.iter(|| {
-                let results = index.search(black_box(term), black_box(50));
-                black_box(results);
-            });
-        });
+        group.bench_with_input(
+            criterion::BenchmarkId::new("search", term),
+            &term,
+            |b, &term| {
+                b.iter(|| {
+                    let results = index.search(black_box(term), black_box(50));
+                    black_box(results);
+                });
+            },
+        );
 
         // Benchmark exact package lookup (hash map lookup)
-        group.bench_with_input(criterion::BenchmarkId::new("get_exact", term), &term, |b, &term| {
-            b.iter(|| {
-                let result = index.get(black_box(term));
-                black_box(result);
-            });
-        });
+        group.bench_with_input(
+            criterion::BenchmarkId::new("get_exact", term),
+            &term,
+            |b, &term| {
+                b.iter(|| {
+                    let result = index.get(black_box(term));
+                    black_box(result);
+                });
+            },
+        );
     }
 
     // Benchmark index.len() (should be inlined)
