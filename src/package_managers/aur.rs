@@ -1194,7 +1194,9 @@ impl AurClient {
                 tracing::warn!("Failed to install dependencies: {e}");
                 println!("{} Dependency installation failed: {}", "⚠".yellow(), e);
                 println!("{} Continuing with build - may fail if deps are missing", "→".dimmed());
-            } else if let Ok(status) = dep_status {
+            } else {
+                // Safe unwrap: we know it's Ok since it's not Err
+                let status = dep_status.unwrap();
                 if !status.success() {
                     println!("{} Some dependencies may have failed to install", "⚠".yellow());
                     println!("{} Continuing with build...", "→".dimmed());
