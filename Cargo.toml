@@ -1,6 +1,6 @@
 [package]
 name = "omg"
-version = "0.1.188"
+version = "0.1.196"
 edition = "2024"
 rust-version = "1.92"
 description = "The Fastest Unified Package Manager for Arch Linux + All Language Runtimes"
@@ -96,6 +96,7 @@ dashmap = "6.1.0"
 moka = { version = "0.12", features = ["sync"] }
 memchr = "2.7"                                   # SIMD-accelerated string search
 memmap2 = "0.9"
+mimalloc = { version = "0.1", default-features = false }  # 10-20% faster allocator
 
 # Logging
 tracing = "0.1.44"
@@ -199,6 +200,10 @@ codegen-units = 1
 panic = "unwind"  # CRITICAL: Required for catch_unwind to work in release builds
 strip = true
 opt-level = 3
+# Additional bleeding-edge optimizations:
+# - Aggressive inlining threshold
+# - Enable all safe optimizations
+# Note: Set RUSTFLAGS="-C target-cpu=native" for CPU-specific optimizations when building locally
 
 # Faster dev builds for iteration
 [profile.dev.package."*"]

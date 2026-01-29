@@ -1610,6 +1610,18 @@ impl AurClient {
         std::fs::create_dir_all(&srcdest)?;
         std::fs::create_dir_all(&builddir)?;
 
+        // Fix permissions when running as root - makepkg needs write access as the build user
+        if crate::core::is_root()
+            && let Some(build_user) = std::env::var("SUDO_USER")
+                .ok()
+                .or_else(|| std::env::var("DOAS_USER").ok())
+        {
+            // Change ownership of builddir to the original user so makepkg can write to it
+            let _ = std::process::Command::new("chown")
+                .args(["-R", &build_user, builddir.to_str().unwrap_or("")])
+                .output();
+        }
+
         let mut extra_env = Vec::new();
 
         if self.settings.aur.enable_ccache {

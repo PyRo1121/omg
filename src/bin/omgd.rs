@@ -2,6 +2,10 @@
 //!
 //! Persistent daemon with Unix socket IPC for fast package operations.
 
+// Use mimalloc as global allocator for 10-20% faster allocations
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use anyhow::Result;
 use clap::Parser;
 use futures::FutureExt;
@@ -12,8 +16,6 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use omg_lib::core::paths;
 use omg_lib::daemon::server;
-
-// Using system allocator (pure Rust - no C dependency)
 
 /// OMG Daemon - Background service for fast package operations
 #[derive(Parser, Debug)]

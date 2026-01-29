@@ -15,6 +15,10 @@
 // Allow pedantic lints that are too strict for this minimal binary
 #![allow(clippy::cast_possible_truncation)] // IPC message lengths are bounded
 
+// Use mimalloc for even faster startup and allocations
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use std::fs::File;
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
