@@ -499,7 +499,26 @@ publish_release() {
     # Check if we're behind
     if ! git merge-base --is-ancestor origin/main HEAD; then
       log_info "Remote has new commits, rebasing..."
-      git rebase origin/main
+      
+      local stash_needed=0
+      if [[ -n "$(git status --porcelain)" ]]; then
+        log_info "Stashing unstaged changes before rebase..."
+        git stash push -u -m "Release script: temporary stash before rebase"
+        stash_needed=1
+      fi
+      
+      if ! git rebase origin/main; then
+        log_error "Rebase failed"
+        if [[ $stash_needed -eq 1 ]]; then
+          git stash pop
+        fi
+        die "Failed to rebase. Manual intervention required."
+      fi
+      
+      if [[ $stash_needed -eq 1 ]]; then
+        log_info "Restoring stashed changes..."
+        git stash pop
+      fi
     fi
     
     # Try push again
