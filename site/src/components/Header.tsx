@@ -1,12 +1,15 @@
 import { Component, createSignal, onMount, onCleanup, Show } from 'solid-js';
 import { A, useNavigate } from '@solidjs/router';
+import { useSession } from '~/lib/auth-client';
 
 const Header: Component = () => {
   const [menuOpen, setMenuOpen] = createSignal(false);
   const [showShortcuts, setShowShortcuts] = createSignal(false);
+  const [userMenuOpen, setUserMenuOpen] = createSignal(false);
   const navigate = useNavigate();
+  const session = useSession();
 
-  // Global keyboard shortcuts
+  // Global keyboard shortcuts and click outside handler
   onMount(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Don't trigger if typing in an input
@@ -17,15 +20,26 @@ const Header: Component = () => {
         setShowShortcuts(prev => !prev);
       } else if (e.key === 'Escape') {
         setShowShortcuts(false);
+        setUserMenuOpen(false);
       } else if (e.key === 'd' && !e.ctrlKey && !e.metaKey) {
         e.preventDefault();
         navigate('/dashboard');
       }
     };
 
-    document.addEventListener('keydown', handleKeyDown);
+    const handleClickOutside = (e: MouseEvent) => {
+      if (userMenuOpen() && !(e.target as Element).closest('.user-menu-container')) {
+        setUserMenuOpen(false);
+      }
+    };
 
-    onCleanup(() => document.removeEventListener('keydown', handleKeyDown));
+    document.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('click', handleClickOutside);
+
+    onCleanup(() => {
+      document.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener('click', handleClickOutside);
+    });
   });
 
   return (
@@ -80,21 +94,47 @@ const Header: Component = () => {
             >
               ?
             </button>
-            <A
-              href="/dashboard"
-              class="flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm text-slate-400 transition-colors hover:bg-slate-800/50 hover:text-white"
-              activeClass="bg-slate-800 text-white"
+            <Show 
+              when={session()?.user}
+              fallback={
+                <A href="/login" class="btn-secondary px-4 py-2 text-sm">
+                  Sign In
+                </A>
+              }
             >
-              <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                  d="M5.121 17.804A13.937 13.937 0 0112 16c2.5 0 4.847.655 6.879 1.804M15 10a3 3 0 11-6 0 3 3 0 016 0zm6 2a9 9 0 11-18 0 9 9 0 0118 0z"
-                />
-              </svg>
-              Dashboard
-            </A>
+              <div class="user-menu-container relative">
+                <button
+                  onClick={() => setUserMenuOpen(!userMenuOpen())}
+                  class="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-slate-400 transition-colors hover:bg-slate-800/50 hover:text-white"
+                >
+                  <div class="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-500/20 text-indigo-400">
+                    {session()?.user?.email?.[0].toUpperCase()}
+                  </div>
+                  <span class="max-w-[150px] truncate">{session()?.user?.email}</span>
+                  <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                  </svg>
+                </button>
+                
+                <Show when={userMenuOpen()}>
+                  <div class="absolute right-0 top-full mt-2 w-48 rounded-lg border border-slate-700 bg-slate-900 shadow-xl">
+                    <A 
+                      href="/dashboard" 
+                      class="block px-4 py-2 text-sm text-slate-300 transition-colors hover:bg-slate-800"
+                      onClick={() => setUserMenuOpen(false)}
+                    >
+                      Dashboard
+                    </A>
+                    <a
+                      href="/api/auth/sign-out"
+                      class="block px-4 py-2 text-sm text-red-400 transition-colors hover:bg-slate-800"
+                    >
+                      Sign Out
+                    </a>
+                  </div>
+                </Show>
+              </div>
+            </Show>
             <a href="/#install" class="btn-secondary px-4 py-2 text-sm">
               Install
             </a>
@@ -136,9 +176,21 @@ const Header: Component = () => {
               <a href="https://github.com/PyRo1121/omg/" class="text-slate-400 hover:text-white">
                 GitHub
               </a>
-              <A href="/dashboard" class="text-slate-400 hover:text-white">
-                Dashboard
-              </A>
+              <Show 
+                when={session()?.user}
+                fallback={
+                  <A href="/login" class="text-slate-400 hover:text-white">
+                    Sign In
+                  </A>
+                }
+              >
+                <A href="/dashboard" class="text-slate-400 hover:text-white">
+                  Dashboard
+                </A>
+                <a href="/api/auth/sign-out" class="text-red-400 hover:text-red-300">
+                  Sign Out
+                </a>
+              </Show>
               <a href="/#install" class="btn-secondary px-4 py-2 text-center text-sm" onClick={() => setMenuOpen(false)}>
                 Install
               </a>
