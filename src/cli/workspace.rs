@@ -464,7 +464,7 @@ fn run_project_command(
 }
 
 /// Show environment diff across workspace
-pub async fn diff(branch: &str) -> Result<()> {
+pub fn diff(branch: &str) -> Result<()> {
     let workspace = Workspace::load()?;
 
     println!(
@@ -509,7 +509,7 @@ pub async fn diff(branch: &str) -> Result<()> {
 }
 
 /// Sync all project environments
-pub async fn sync(yes: bool) -> Result<()> {
+pub fn sync(yes: bool) -> Result<()> {
     let workspace = Workspace::load()?;
 
     println!(
