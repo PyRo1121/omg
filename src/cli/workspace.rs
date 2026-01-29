@@ -131,9 +131,7 @@ pub fn init(name: &str) -> Result<()> {
 
     let path = PathBuf::from(WORKSPACE_FILE);
     if path.exists() {
-        anyhow::bail!(
-            "Workspace already exists. Delete {WORKSPACE_FILE} to reinitialize."
-        );
+        anyhow::bail!("Workspace already exists. Delete {WORKSPACE_FILE} to reinitialize.");
     }
 
     let workspace = Workspace {
@@ -249,7 +247,11 @@ pub fn list() -> Result<()> {
 
             // Show available commands
             if !project.commands.is_empty() {
-                let cmds: Vec<&str> = project.commands.keys().map(std::string::String::as_str).collect();
+                let cmds: Vec<&str> = project
+                    .commands
+                    .keys()
+                    .map(std::string::String::as_str)
+                    .collect();
                 println!("     {} {}", style::dim("commands:"), cmds.join(", "));
             }
         }
@@ -316,12 +318,7 @@ pub async fn run(
     Ok(())
 }
 
-fn run_sequential(
-    workspace: &Workspace,
-    projects: &[&String],
-    command: &str,
-    args: &[String],
-) {
+fn run_sequential(workspace: &Workspace, projects: &[&String], command: &str, args: &[String]) {
     let mut success = 0;
     let mut failed = 0;
 

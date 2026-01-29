@@ -123,7 +123,6 @@ pub fn install(force: bool) -> Result<()> {
         }
 
         if hook_path.exists() && !force {
-
             println!(
                 "  {} {} (exists, use --force to overwrite)",
                 style::warning("⚠"),
