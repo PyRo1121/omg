@@ -460,6 +460,7 @@ async fn async_main(args: Vec<String>) -> Result<()> {
         Commands::HookEnv { shell } => {
             hooks::hook_env(shell)?;
         }
+        #[cfg(unix)]
         Commands::Daemon { foreground } => {
             commands::daemon(*foreground)?;
         }
@@ -527,6 +528,7 @@ async fn async_main(args: Vec<String>) -> Result<()> {
         Commands::GenerateMan { output } => {
             omg_lib::cli::man::generate(output.clone())?;
         }
+        #[cfg(unix)]
         Commands::DaemonStatus => {
             omg_lib::cli::daemon_status::run().await?;
         }

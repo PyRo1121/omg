@@ -263,6 +263,7 @@ pub enum Commands {
     // DAEMON & CONFIG
     // ═══════════════════════════════════════════════════════════════════════
     /// Start the OMG daemon
+    #[cfg(unix)]
     #[command(next_help_heading = "System & Configuration")]
     Daemon {
         /// Run in foreground (don't daemonize)
@@ -284,6 +285,7 @@ pub enum Commands {
     },
 
     /// Show detailed daemon status
+    #[cfg(unix)]
     DaemonStatus,
 
     /// Generate shell completions
