@@ -293,6 +293,40 @@ Added `validate_package_names()` to all install/remove methods:
 
 ### 🐛 Bug Fixes
 
+- Add platform-specific feature gates for cross-compilation
+
+Platform-specific code properly gated for Windows/Unix compatibility:
+
+  - Added #[cfg(unix)] guards to std::os::unix imports in:
+
+* git_hooks.rs   - PermissionsExt for hook file permissions
+
+* self_update.rs   - PermissionsExt for binary permissions
+
+* tool.rs   - symlink for Unix symbolic links
+
+* mise.rs   - PermissionsExt for mise binary permissions
+
+  - Fixed daemon/client usage in commands.rs:
+
+* Wrapped daemon query path in #[cfg(unix)] block
+
+* Added Windows fallback paths
+
+* Restructured if-else chain to support cfg guards
+
+  - Added BoxFuture import to apt.rs for async trait methods
+
+  - Fixed Fedora CI: Added clippy to dnf install packages
+
+All platforms now compile successfully:
+
+  - cargo check --features windows,pgp,license ✓
+
+  - cargo check --features debian,pgp,license ✓
+
+  - cargo check --features fedora,pgp,license ✓
+
 - **Clippy**: Collapse nested if blocks in search
 - **Fmt**: Apply rustfmt to cfg-guarded code
 - **Windows**: Add cfg(unix) guards for daemon/client usage
