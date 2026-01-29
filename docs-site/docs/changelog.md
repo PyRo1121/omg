@@ -294,6 +294,7 @@ Added `validate_package_names()` to all install/remove methods:
 
 ### 🐛 Bug Fixes
 
+- Auth client uses window.location.origin, update CSP for auth endpoints
 - Comprehensive cross-platform compilation fixes for all targets
 
 Applied systematic fixes for Windows, Debian, Fedora, Arch, and macOS:
