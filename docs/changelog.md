@@ -269,6 +269,10 @@ Added `validate_package_names()` to all install/remove methods:
 
 ### 🐛 Bug Fixes
 
+- **Fmt**: Apply rustfmt to benchmark files
+
+Applied rustfmt formatting to benches/ after clippy fixes.
+
 - **Clippy**: Resolve benchmark and example errors
 
 Fixed remaining clippy pedantic warnings in benchmarks and removed
