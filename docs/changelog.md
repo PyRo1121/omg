@@ -269,6 +269,12 @@ Added `validate_package_names()` to all install/remove methods:
 
 ### 🐛 Bug Fixes
 
+- **Clippy**: Resolve benchmark and example errors
+
+Fixed remaining clippy pedantic warnings in benchmarks and removed
+
+broken homebrew example that referenced unexported types.
+
 - **Fmt**: Apply rustfmt to clippy-fixed code
 
 Applied rustfmt formatting to all files modified during clippy fixes.
