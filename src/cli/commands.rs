@@ -437,29 +437,15 @@ pub fn status_sync() -> Result<()> {
 
     ui::print_card("Overview", content);
 
-    // Runtimes - INSTANT FROM CACHE
-    ui::print_spacer();
-    println!("{}", "Runtimes:".bold());
+    // Runtimes - INSTANT FROM CACHE (Unix only, from daemon)
+    #[cfg(unix)]
+    {
+        ui::print_spacer();
+        println!("{}", "Runtimes:".bold());
 
-    if let Some(versions) = cached_runtimes {
-        for (rt_name, v) in &versions {
-            let label: &str = match rt_name.as_str() {
-                "node" => "Node.js",
-                "python" => "Python",
-                "rust" => "Rust",
-                "go" => "Go",
-                "bun" => "Bun",
-                "java" => "Java",
-                "ruby" => "Ruby",
-                _ => rt_name.as_str(),
-            };
-            ui::print_list_item(label, Some(v));
-        }
-    } else {
-        // Fallback to local probing if daemon is down
-        for rt_name in &["node", "python", "rust", "go", "bun", "java", "ruby"] {
-            if let Some(v) = crate::runtimes::probe_version(rt_name) {
-                let label = match *rt_name {
+        if let Some(versions) = cached_runtimes {
+            for (rt_name, v) in &versions {
+                let label: &str = match rt_name.as_str() {
                     "node" => "Node.js",
                     "python" => "Python",
                     "rust" => "Rust",
@@ -467,9 +453,26 @@ pub fn status_sync() -> Result<()> {
                     "bun" => "Bun",
                     "java" => "Java",
                     "ruby" => "Ruby",
-                    _ => rt_name,
+                    _ => rt_name.as_str(),
                 };
-                ui::print_list_item(label, Some(&v));
+                ui::print_list_item(label, Some(v));
+            }
+        } else {
+            // Fallback to local probing if daemon is down
+            for rt_name in &["node", "python", "rust", "go", "bun", "java", "ruby"] {
+                if let Some(v) = crate::runtimes::probe_version(rt_name) {
+                    let label = match *rt_name {
+                        "node" => "Node.js",
+                        "python" => "Python",
+                        "rust" => "Rust",
+                        "go" => "Go",
+                        "bun" => "Bun",
+                        "java" => "Java",
+                        "ruby" => "Ruby",
+                        _ => rt_name,
+                    };
+                    ui::print_list_item(label, Some(&v));
+                }
             }
         }
     }
