@@ -195,8 +195,6 @@ criterion = { version = "0.8", features = ["html_reports"] }
 tempfile = "3.24.0"
 assert_cmd = "2.1"
 predicates = "3.1"
-[target.'cfg(unix)'.dependencies]
-pprof = { version = "0.15", features = ["flamegraph"] }
 cargo-audit = "0.22"                                         # Security vulnerability auditing
 proptest = "1.4"                                             # Property-based testing
 rand = "0.9"                                                 # Random generation for fuzz tests
@@ -207,6 +205,10 @@ tar = "0.4"
 flate2 = "1.0"
 chrono = "0.4"
 temp-env = "0.3"
+
+# Unix-specific dependencies
+[target.'cfg(unix)'.dependencies]
+pprof = { version = "0.15", features = ["flamegraph"] }
 
 [profile.release]
 lto = "fat"       # Full LTO for maximum cross-crate inlining
