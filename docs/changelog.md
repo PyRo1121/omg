@@ -269,6 +269,60 @@ Added `validate_package_names()` to all install/remove methods:
 
 ### 🐛 Bug Fixes
 
+- **Clippy**: Resolve all 53 pedantic warnings for CI compliance
+
+Systematically fixed all clippy pedantic lints across 13 files following
+
+Rust 1.92 best practices. This ensures the codebase passes strict CI checks
+
+with `-D warnings -D clippy::pedantic`.
+
+Key fixes:
+
+  - Inline format args: format!("{limit}") vs format!("{}", limit)
+
+  - Collapsed nested ifs using && in let bindings
+
+  - Removed needless ref in patterns: query vs ref query
+
+  - Used let...else instead of match with early returns
+
+  - Used if let instead of single-arm match expressions
+
+  - Fixed double-ended iterators: next_back() vs last()
+
+  - Added backticks to doc comments for code identifiers
+
+  - Annotated infrastructure code with #[allow(dead_code)]
+
+Files modified:
+
+  - src/cli/blame.rs: Removed unused imports (2)
+
+  - src/cli/commands.rs: Format args, collapsed ifs, removed ref (5)
+
+  - src/cli/config.rs: Inline format args (5)
+
+  - src/cli/daemon_status.rs: Match arms, format args (2)
+
+  - src/cli/doctor.rs: Removed async, collapsed ifs (2)
+
+  - src/cli/git_hooks.rs: Collapsed ifs, let...else, format args (5)
+
+  - src/cli/init.rs: Collapsed ifs, used next_back() (5)
+
+  - src/cli/man.rs: Doc comments, collapsed if (2)
+
+  - src/cli/security.rs: Bool ops, format args, write! macro (7)
+
+  - src/cli/size.rs: Infrastructure annotations (2)
+
+  - src/cli/workspace.rs: Format args, unit returns, closures (8)
+
+  - src/core/env/distro.rs: Doc comment backticks (4)
+
+  - src/daemon/index.rs: Infrastructure annotations (3)
+
 - **Clippy**: Remove unused async from synchronous functions
 
 Removed async keyword from 4 functions that contained no await calls:
