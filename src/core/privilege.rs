@@ -226,7 +226,7 @@ pub async fn run_self_sudo(args: &[&str]) -> anyhow::Result<()> {
 
     // If --yes is specified, use only non-interactive sudo (-n flag)
     // Otherwise, try -n first and fall back to interactive mode
-    
+
     // Try non-interactive sudo first (both modes start with this)
     let status = tokio::process::Command::new("sudo")
         .env("OMG_ELEVATED", "1")
