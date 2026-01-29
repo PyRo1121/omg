@@ -57,9 +57,9 @@ export default function Dashboard() {
       <Meta name="description" content="OMG Package Manager admin dashboard - manage licenses, analytics, and team settings." />
       <Meta name="robots" content="noindex, nofollow" />
       
-      <Show when={session()}>
+      <Show when={session()} fallback={<PageLoader />}>
         <Suspense fallback={<PageLoader />}>
-          <DashboardPage />
+          <DashboardPage session={session()!} />
         </Suspense>
       </Show>
     </>

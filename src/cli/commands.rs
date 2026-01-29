@@ -318,13 +318,13 @@ pub fn status_sync() -> Result<()> {
                 fast.orphan_packages as usize,
                 fast.updates_available as usize,
                 0,
-                None,
+                None::<Vec<(String, String)>>,
             )
         } else if use_debian_backend() {
             #[cfg(feature = "debian")]
             {
                 let s = apt_get_system_status().unwrap_or((0, 0, 0, 0));
-                (s.0, s.1, s.2, s.3, 0, None)
+                (s.0, s.1, s.2, s.3, 0, None::<Vec<(String, String)>>)
             }
             #[cfg(not(feature = "debian"))]
             {
@@ -351,11 +351,11 @@ pub fn status_sync() -> Result<()> {
                         #[cfg(feature = "arch")]
                         {
                             let s = get_system_status().unwrap_or((0, 0, 0, 0));
-                            (s.0, s.1, s.2, s.3, 0, None)
+                            (s.0, s.1, s.2, s.3, 0, None::<Vec<(String, String)>>)
                         }
                         #[cfg(not(feature = "arch"))]
                         {
-                            (0, 0, 0, 0, 0, None)
+                            (0, 0, 0, 0, 0, None::<Vec<(String, String)>>)
                         }
                     }
                 } else {
@@ -363,11 +363,11 @@ pub fn status_sync() -> Result<()> {
                     #[cfg(feature = "arch")]
                     {
                         let s = get_system_status().unwrap_or((0, 0, 0, 0));
-                        (s.0, s.1, s.2, s.3, 0, None)
+                        (s.0, s.1, s.2, s.3, 0, None::<Vec<(String, String)>>)
                     }
                     #[cfg(not(feature = "arch"))]
                     {
-                        (0, 0, 0, 0, 0, None)
+                        (0, 0, 0, 0, 0, None::<Vec<(String, String)>>)
                     }
                 }
             }
@@ -377,11 +377,11 @@ pub fn status_sync() -> Result<()> {
                 #[cfg(feature = "arch")]
                 {
                     let s = get_system_status().unwrap_or((0, 0, 0, 0));
-                    (s.0, s.1, s.2, s.3, 0, None)
+                    (s.0, s.1, s.2, s.3, 0, None::<Vec<(String, String)>>)
                 }
                 #[cfg(not(feature = "arch"))]
                 {
-                    (0, 0, 0, 0, 0, None)
+                    (0, 0, 0, 0, 0, None::<Vec<(String, String)>>)
                 }
             }
         };

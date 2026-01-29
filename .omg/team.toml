@@ -1,0 +1,10 @@
+team_id = "OMG-CLI"
+name = "OMG-CLI"
+member_id = "pyro1121"
+auto_sync = true
+auto_push = false
+
+[notifications]
+on_lock_update = true
+on_drift = true
+on_member_join = false
