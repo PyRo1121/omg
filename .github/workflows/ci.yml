@@ -149,7 +149,7 @@ jobs:
             features: fedora,pgp,license
             setup: |
               dnf install -y --setopt=install_weak_deps=False \
-                git rust cargo clang cmake openssl-devel pkgconfig findutils
+                git rust cargo clippy clang cmake openssl-devel pkgconfig findutils
 
     container:
       image: ${{ matrix.image }}

@@ -16,6 +16,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use owo_colors::OwoColorize;
 use std::fs::{self, File};
 use std::io::Write;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::Command;
@@ -117,10 +118,13 @@ impl MiseManager {
             anyhow::bail!("mise binary not found after extraction");
         }
 
-        // Make executable
-        let mut perms = fs::metadata(&self.mise_bin)?.permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(&self.mise_bin, perms)?;
+        // Make executable (Unix only)
+        #[cfg(unix)]
+        {
+            let mut perms = fs::metadata(&self.mise_bin)?.permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(&self.mise_bin, perms)?;
+        }
 
         tracing::info!("{} mise v{} installed!", "✓".green(), version);
         Ok(())

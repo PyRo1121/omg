@@ -7,6 +7,7 @@
 
 use anyhow::{Context, Result};
 use std::fs;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 
@@ -135,10 +136,13 @@ pub fn install(force: bool) -> Result<()> {
         // Write the hook
         fs::write(&hook_path, content).with_context(|| format!("Failed to write {name} hook"))?;
 
-        // Make executable
-        let mut perms = fs::metadata(&hook_path)?.permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(&hook_path, perms)?;
+        // Make executable (Unix only)
+        #[cfg(unix)]
+        {
+            let mut perms = fs::metadata(&hook_path)?.permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(&hook_path, perms)?;
+        }
 
         println!("  {} {}", style::success("✓"), name);
         installed += 1;

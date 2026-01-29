@@ -5,6 +5,7 @@
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
+use futures::future::BoxFuture;
 
 use crate::core::is_root;
 use crate::core::{Package, PackageSource};

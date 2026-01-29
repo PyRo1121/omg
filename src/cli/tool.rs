@@ -3,6 +3,7 @@ use anyhow::{Context, Result};
 use console::user_attended;
 use dialoguer::{Select, theme::ColorfulTheme};
 use std::fs;
+#[cfg(unix)]
 use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 use std::process::Command;
