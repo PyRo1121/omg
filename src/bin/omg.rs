@@ -4,6 +4,10 @@
 //!
 //! Uses a single tokio runtime for all async operations (Rust 2024 best practice).
 
+// Use mimalloc as global allocator for 10-20% faster allocations
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use anyhow::Result;
 use clap::Parser;
 

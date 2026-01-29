@@ -74,16 +74,14 @@ pub fn cache_dir() -> PathBuf {
             && crate::core::is_root()
         {
             // Try SUDO_HOME first, fallback to /home/<username>
-            let home = std::env::var("SUDO_HOME")
-                .ok()
-                .map_or_else(
-                    || PathBuf::from(format!("/home/{sudo_user}")),
-                    PathBuf::from,
-                );
-            
+            let home = std::env::var("SUDO_HOME").ok().map_or_else(
+                || PathBuf::from(format!("/home/{sudo_user}")),
+                PathBuf::from,
+            );
+
             return home.join(".cache/omg");
         }
-        
+
         // Check DOAS_USER as well
         if let Ok(doas_user) = std::env::var("DOAS_USER")
             && crate::core::is_root()
