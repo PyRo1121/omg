@@ -297,7 +297,8 @@ pub async fn run_self_sudo(args: &[&str]) -> anyhow::Result<()> {
 
                 if let Some(status) = child.wait_timeout(Duration::from_secs(30))? {
                     if status.success() {
-                        tracing::info!("Interactive sudo succeeded, process replaced");
+                        // Silent success - no need to spam logs
+                        tracing::debug!("Interactive sudo succeeded, process replaced");
                         std::process::exit(0);
                     } else {
                         // Sudo authentication succeeded, but the command failed

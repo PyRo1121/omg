@@ -238,29 +238,30 @@ pub fn sync_dbs() -> Result<()> {
 
 /// Display package info beautifully
 pub fn display_pkg_info(info: &PackageInfo) {
-    tracing::info!("{} {}", info.name.white().bold(), info.version.green());
-    tracing::info!("  {} {}", "Description:".dimmed(), info.description);
-    tracing::info!("  {} {}", "Repository:".dimmed(), info.repo.cyan());
-    tracing::info!(
+    // Use println! instead of tracing to avoid logs bleeding into output
+    println!("{} {}", info.name.white().bold(), info.version.green());
+    println!("  {} {}", "Description:".dimmed(), info.description);
+    println!("  {} {}", "Repository:".dimmed(), info.repo.cyan());
+    println!(
         "  {} {}",
         "URL:".dimmed(),
         info.url.as_deref().unwrap_or("-")
     );
-    tracing::info!(
+    println!(
         "  {} {:.2} MB",
         "Size:".dimmed(),
         info.size as f64 / 1024.0 / 1024.0
     );
-    tracing::info!(
+    println!(
         "  {} {:.2} MB",
         "Download:".dimmed(),
         info.download_size.unwrap_or(0) as f64 / 1024.0 / 1024.0
     );
     if !info.licenses.is_empty() {
-        tracing::info!("  {} {}", "License:".dimmed(), info.licenses.join(", "));
+        println!("  {} {}", "License:".dimmed(), info.licenses.join(", "));
     }
     if !info.depends.is_empty() {
-        tracing::info!("  {} {}", "Depends:".dimmed(), info.depends.join(", "));
+        println!("  {} {}", "Depends:".dimmed(), info.depends.join(", "));
     }
 }
 
@@ -325,11 +326,11 @@ fn setup_alpm_callbacks(
     let main_pb = mp.add(indicatif::ProgressBar::new(100));
     main_pb.set_style(
         indicatif::ProgressStyle::default_bar()
-            .template("{spinner:.green} {prefix:.bold.dim} {msg} {wide_bar:.cyan/blue} {pos}/{len}")
+            .template("  {spinner:.cyan} {msg} {wide_bar:.cyan/blue} {percent}%")
             .expect("valid template")
-            .progress_chars("━━╸ "),
+            .progress_chars("█▓▒░ "),
     );
-    main_pb.set_prefix("Transaction");
+    main_pb.set_prefix("");
 
     let main_pb_clone = main_pb.clone();
     alpm.set_progress_cb((), move |op, name, percent, _n, _max, ()| {
@@ -363,10 +364,10 @@ fn setup_alpm_callbacks(
                     let pb = mp_clone.add(indicatif::ProgressBar::new_spinner());
                     pb.set_style(
                         indicatif::ProgressStyle::default_spinner()
-                            .template("  {{spinner:.green}} {{msg:20}} [Starting download...]")
+                            .template("  {{spinner:.cyan}} {{msg:30}}")
                             .expect("valid template"),
                     );
-                    pb.set_message(filename.to_string());
+                    pb.set_message(format!("⬇ {filename}"));
                     map.insert(filename.to_string(), pb);
                 }
             }
@@ -376,10 +377,11 @@ fn setup_alpm_callbacks(
                         pb.set_length(prog.total as u64);
                         pb.set_style(
                             indicatif::ProgressStyle::default_bar()
-                                .template("  {{spinner:.green}} {{msg:20}} [{{bar:40.cyan/blue}}] {{bytes}}/{{total_bytes}} ({{bytes_per_sec}})")
+                                .template("  {{spinner:.cyan}} {{msg:30}} {{bar:30.cyan/blue}} {{bytes}}/{{total_bytes}}")
                                 .expect("valid template")
-                                .progress_chars("█▓▒░"),
+                                .progress_chars("█▓▒░ "),
                         );
+                        pb.set_message(format!("⬇ {filename}"));
                     }
                     pb.set_position(prog.downloaded as u64);
                 }
@@ -506,15 +508,22 @@ fn commit_alpm_transaction(alpm: &mut alpm::Alpm, main_pb: &indicatif::ProgressB
     }
 
     if alpm.trans_add().is_empty() && alpm.trans_remove().is_empty() {
-        main_pb.finish_with_message("Nothing to do: system is already up to date.");
+        main_pb.finish_and_clear();
+        use owo_colors::OwoColorize;
+        println!();
+        println!(
+            "  {} Nothing to do - system is up to date",
+            "✓".green().bold()
+        );
+        println!();
         return Ok(());
     }
 
-    main_pb.set_message("Committing transaction...");
+    main_pb.set_message("Finalizing...");
     alpm.trans_commit()
         .context("Transaction failed to commit. Run 'omg cleanup' if issue persists.")?;
 
-    main_pb.finish_with_message("Transaction successful");
+    main_pb.finish_and_clear();
 
     Ok(())
 }

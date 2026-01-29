@@ -303,13 +303,21 @@ async fn async_main(args: Vec<String>) -> Result<()> {
         _ => {}
     }
 
+    // Only show tracing logs in verbose mode or when RUST_LOG is set
+    // This prevents tracing::info! from bleeding into normal CLI output
+    let default_level = if cli.verbose > 0 || std::env::var("RUST_LOG").is_ok() {
+        tracing::Level::INFO
+    } else {
+        tracing::Level::WARN // Only show warnings/errors by default
+    };
+
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive(tracing::Level::INFO.into()),
+            tracing_subscriber::EnvFilter::from_default_env().add_directive(default_level.into()),
         )
         .with_target(false)
         .with_ansi(console::colors_enabled())
+        .without_time() // Remove timestamps from output
         .init();
 
     if omg_lib::core::telemetry::is_first_run() && !omg_lib::core::telemetry::is_telemetry_opt_out()

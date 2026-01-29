@@ -33,7 +33,9 @@ where
     Fut: Future<Output = AnyhowResult<()>>,
 {
     if !is_root() {
-        tracing::info!("{} Elevating privileges for {command}...", "→".blue());
+        // Silent elevation - no need to spam logs for this common operation
+        // Only log at debug level for troubleshooting
+        tracing::debug!("Elevating privileges for {command}");
         let mut args = vec![command, "--"];
         let pkg_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
         args.extend_from_slice(&pkg_refs);

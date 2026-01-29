@@ -3,23 +3,35 @@
 _omg() {
     local -a commands
     local -a subcommands
-    
-    # Check if we should use dynamic completion
+
+    # Get current context
     local last_word="${words[$CURRENT-1]}"
     local current_word="${words[$CURRENT]}"
-    
+    local full_line="${BUFFER}"
+
+    # Dynamic completion for package names and other contexts
     case "$last_word" in
-        install|i|remove|r|info|use|ls|list|which)
+        install|i|remove|r|info|use|ls|list|which|tool|env|run|new)
             local -a suggestions
-            suggestions=(${(f)"$(omg complete --shell zsh --current "$current_word" --last "$last_word")"})
-            if [[ -n "$suggestions" ]]; then
-                _values 'suggestions' $suggestions
+            suggestions=(${(f)"$(omg complete --shell zsh --current "$current_word" --last "$last_word" --full "$full_line" 2>/dev/null)"})
+            if [[ ${#suggestions[@]} -gt 0 ]]; then
+                compadd -a suggestions
                 return 0
             fi
             ;;
     esac
 
-    # Fallback to standard clap-generated completions (simplified)
+    # Fallback to dynamic completion for any context beyond the first command
+    if [[ $CURRENT -gt 2 ]]; then
+        local -a suggestions
+        suggestions=(${(f)"$(omg complete --shell zsh --current "$current_word" --last "$last_word" --full "$full_line" 2>/dev/null)"})
+        if [[ ${#suggestions[@]} -gt 0 ]]; then
+            compadd -a suggestions
+            return 0
+        fi
+    fi
+
+    # Main command completion
     _arguments -C \
         '1: :->command' \
         '*:: :->args'
@@ -28,10 +40,10 @@ _omg() {
         command)
             commands=(
                 'search:Search for packages'
-                'install:Install packages'
-                'remove:Remove packages'
+                'install:Install packages (supports tab completion for package names)'
+                'remove:Remove packages (supports tab completion for installed packages)'
                 'update:Update all packages'
-                'info:Show package information'
+                'info:Show package information (supports tab completion)'
                 'why:Explain why a package is installed'
                 'outdated:Show what packages would be updated'
                 'pin:Pin a package to prevent updates'
@@ -66,6 +78,9 @@ _omg() {
                 'history:View package transaction history'
                 'rollback:Roll back to a previous system state'
                 'dash:Interactive TUI dashboard'
+                'stats:Usage statistics'
+                'metrics:Performance metrics'
+                'init:Initialize OMG configuration'
                 'help:Show help'
             )
             _describe -t commands 'omg commands' commands
