@@ -2,6 +2,7 @@
 
 pub mod analytics;
 pub mod archive;
+#[cfg(unix)]
 pub mod client;
 pub mod completion;
 pub mod container;

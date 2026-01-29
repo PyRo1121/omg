@@ -45,6 +45,7 @@
 pub mod cli;
 pub mod config;
 pub mod core;
+#[cfg(unix)]
 pub mod daemon;
 pub mod hooks;
 pub mod package_managers;

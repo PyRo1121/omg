@@ -2,6 +2,8 @@
 //!
 //! Persistent daemon with Unix socket IPC for fast package operations.
 
+#![cfg(unix)]
+
 // Use mimalloc as global allocator for 10-20% faster allocations
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;

@@ -1,21 +1,33 @@
 //! IPC Client for communicating with the daemon
 //!
 //! Uses `LengthDelimitedCodec` and bitcode for maximum IPC performance.
+//! Only available on Unix platforms (uses Unix domain sockets).
+
+#![cfg(unix)]
 
 use anyhow::{Context, Result};
-use futures::sink::SinkExt;
-use futures::stream::StreamExt;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use tokio::net::UnixStream;
-use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
 use crate::core::paths;
+
+#[cfg(unix)]
+use futures::sink::SinkExt;
+#[cfg(unix)]
+use futures::stream::StreamExt;
+#[cfg(unix)]
+use tokio::net::UnixStream;
+#[cfg(unix)]
+use tokio_util::codec::{Framed, LengthDelimitedCodec};
+
+#[cfg(unix)]
 use crate::daemon::protocol::{
     DetailedPackageInfo, PackageInfo, Request, Response, ResponseResult, SearchResult,
     SecurityAuditResult, StatusResult,
 };
+#[cfg(unix)]
 use std::io::{Read, Write};
+#[cfg(unix)]
 use std::os::unix::net::UnixStream as SyncUnixStream;
 
 /// Create a new sync connection to the daemon
