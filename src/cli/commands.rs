@@ -328,7 +328,7 @@ pub fn status_sync() -> Result<()> {
             }
             #[cfg(not(feature = "debian"))]
             {
-                (0, 0, 0, 0, 0, None)
+                (0, 0, 0, 0, 0, None::<Vec<(String, String)>>)
             }
         } else {
             // Try daemon (Unix only), then fallback to local status
