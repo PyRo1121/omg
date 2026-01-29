@@ -319,19 +319,14 @@ impl WindowsPackageManager {
         use winreg::RegKey;
         use winreg::enums::*;
 
-        let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+        let hklm_uninstall = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall";
+        let hklm_wow6432 = r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall";
+        let hkcu_uninstall = r"Software\Microsoft\Windows\CurrentVersion\Uninstall";
 
-        let registry_paths = vec![
-            (
-                hklm.clone(),
-                r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
-            ),
-            (
-                hklm,
-                r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
-            ),
-            (hkcu, r"Software\Microsoft\Windows\CurrentVersion\Uninstall"),
+        let registry_paths: Vec<(RegKey, &str)> = vec![
+            (RegKey::predef(HKEY_LOCAL_MACHINE), hklm_uninstall),
+            (RegKey::predef(HKEY_LOCAL_MACHINE), hklm_wow6432),
+            (RegKey::predef(HKEY_CURRENT_USER), hkcu_uninstall),
         ];
 
         let mut packages = Vec::new();
@@ -341,12 +336,12 @@ impl WindowsPackageManager {
                 for subkey_name in uninstall_key.enum_keys().filter_map(Result::ok) {
                     if let Ok(app_key) = uninstall_key.open_subkey(&subkey_name) {
                         let name: String = app_key
-                            .get_value("DisplayName")
+                            .get_value::<String, _>("DisplayName")
                             .unwrap_or_else(|_| subkey_name.clone());
 
                         let version: String = app_key
-                            .get_value("DisplayVersion")
-                            .unwrap_or_else(|_| "0.0.0".to_string());
+                            .get_value::<String, _>("DisplayVersion")
+                            .unwrap_or_else(|_| String::from("0.0.0"));
 
                         // Filter out system components and updates
                         if name.contains("Update for") || name.starts_with("KB") {

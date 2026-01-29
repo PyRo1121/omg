@@ -361,7 +361,7 @@ pub fn list_installed_with_licenses() -> Result<Vec<(String, String, String)>> {
                 } else {
                     licenses
                         .iter()
-                        .map(|l| l.to_string())
+                        .map(std::string::ToString::to_string)
                         .collect::<Vec<_>>()
                         .join(", ")
                 };
