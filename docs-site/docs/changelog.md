@@ -269,6 +269,12 @@ Added `validate_package_names()` to all install/remove methods:
 
 ### 🐛 Bug Fixes
 
+- **Clippy**: Remove duplicate cfg(unix) attribute
+
+The client module is already gated at the module declaration level,
+
+so the inner attribute was duplicated.
+
 - **Fmt**: Remove extra blank line in omg-fast.rs
 - **Windows**: Make daemon Unix-only to fix Windows builds
 
