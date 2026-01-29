@@ -239,6 +239,18 @@ pub enum Commands {
         shell: String,
     },
 
+    /// Manage Git hooks for environment synchronization
+    Hooks {
+        #[command(subcommand)]
+        command: HooksCommands,
+    },
+
+    /// Workspace management for monorepos
+    Workspace {
+        #[command(subcommand)]
+        command: WorkspaceCommands,
+    },
+
     /// Internal: Called by shell hook on directory change
     #[command(hide = true)]
     HookEnv {
@@ -260,11 +272,19 @@ pub enum Commands {
 
     /// Get or set configuration
     Config {
-        /// Configuration key
-        key: Option<String>,
-        /// Configuration value (if setting)
-        value: Option<String>,
+        #[command(subcommand)]
+        command: Option<ConfigCommands>,
     },
+
+    /// Generate man pages for OMG commands
+    GenerateMan {
+        /// Output directory for man pages (default: ~/.local/share/man/man1)
+        #[arg(short, long)]
+        output: Option<String>,
+    },
+
+    /// Show detailed daemon status
+    DaemonStatus,
 
     /// Generate shell completions
     Completions {
@@ -306,7 +326,14 @@ pub enum Commands {
     },
 
     /// Check system health and environment configuration
-    Doctor,
+    Doctor {
+        /// Test network connectivity to package mirrors
+        #[arg(long)]
+        network: bool,
+        /// Check for end-of-life runtime versions
+        #[arg(long)]
+        eol: bool,
+    },
 
     /// Security audit and compliance tools
     Audit {
@@ -410,6 +437,18 @@ pub enum Commands {
         /// Number of entries to show
         #[arg(short, long, default_value = "20")]
         limit: usize,
+        /// Search for a specific package in history
+        #[arg(short, long)]
+        search: Option<String>,
+        /// Filter by transaction type (install, remove, update, sync)
+        #[arg(short = 't', long = "type")]
+        transaction_type: Option<String>,
+        /// Filter transactions from this date (YYYY-MM-DD)
+        #[arg(long)]
+        from: Option<String>,
+        /// Filter transactions until this date (YYYY-MM-DD)
+        #[arg(long)]
+        to: Option<String>,
     },
 
     /// Roll back to a previous system state
@@ -457,6 +496,105 @@ pub enum Commands {
         #[arg(long)]
         skip_daemon: bool,
     },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum HooksCommands {
+    /// Install Git hooks for environment synchronization
+    Install {
+        /// Force overwrite existing hooks
+        #[arg(short, long)]
+        force: bool,
+    },
+    /// Uninstall Git hooks
+    Uninstall,
+    /// Show installed hooks status
+    Status,
+    /// Run a specific hook manually
+    Run {
+        /// Hook name (pre-commit, post-checkout, post-merge)
+        hook: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum WorkspaceCommands {
+    /// Initialize a new workspace
+    Init {
+        /// Workspace name
+        name: String,
+    },
+    /// Add a project to the workspace
+    Add {
+        /// Path to project directory
+        path: String,
+        /// Optional project name (defaults to directory name)
+        #[arg(short, long)]
+        name: Option<String>,
+    },
+    /// Remove a project from the workspace
+    Remove {
+        /// Project name or path
+        project: String,
+    },
+    /// List all projects in the workspace
+    List,
+    /// Run a command across all projects
+    Run {
+        /// Command to run (e.g., build, test, lint)
+        command: String,
+        /// Additional arguments
+        #[arg(last = true)]
+        args: Vec<String>,
+        /// Run in parallel
+        #[arg(short, long)]
+        parallel: bool,
+        /// Only run in projects matching filter
+        #[arg(short, long)]
+        filter: Option<String>,
+    },
+    /// Show environment diff across workspace vs a branch
+    Diff {
+        /// Branch to compare against (default: main)
+        #[arg(default_value = "main")]
+        branch: String,
+    },
+    /// Sync all project environments
+    Sync {
+        /// Skip confirmation
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
+    /// Show workspace status
+    Status,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ConfigCommands {
+    /// Get a configuration value
+    Get {
+        /// Configuration key to get
+        key: String,
+    },
+    /// Set a configuration value
+    Set {
+        /// Configuration key to set
+        key: String,
+        /// Value to set
+        value: String,
+    },
+    /// List all configuration values
+    List,
+    /// Validate configuration file syntax and values
+    Validate,
+    /// Reset configuration to defaults
+    Reset {
+        /// Skip confirmation
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
+    /// Show configuration file path
+    Path,
 }
 
 #[derive(Subcommand, Debug)]
@@ -810,6 +948,47 @@ pub enum AuditCommands {
         /// Package file to verify
         package: String,
     },
+    /// Scan for software license compliance issues
+    Licenses {
+        /// Output format (table, json, csv)
+        #[arg(short, long, default_value = "table")]
+        format: String,
+        /// Export results to file
+        #[arg(short, long)]
+        export: Option<String>,
+        /// Show only packages with specific license types (comma-separated)
+        #[arg(long)]
+        filter: Option<String>,
+        /// Check against policy (warn on restricted licenses)
+        #[arg(long)]
+        check_policy: bool,
+    },
+    /// Auto-fix vulnerabilities by upgrading packages
+    Fix {
+        /// Show what would be fixed without making changes
+        #[arg(long)]
+        dry_run: bool,
+        /// Skip confirmation
+        #[arg(short = 'y', long)]
+        yes: bool,
+        /// Only fix vulnerabilities with this minimum severity (low, medium, high, critical)
+        #[arg(long, default_value = "medium")]
+        min_severity: String,
+    },
+    /// Export compliance evidence for audit frameworks
+    Export {
+        /// Compliance framework (soc2, iso27001, fedramp, hipaa, pci-dss)
+        #[arg(short, long, default_value = "soc2")]
+        framework: String,
+        /// Time period (e.g., "2024-Q4", "2024-01" to "2024-03")
+        #[arg(short, long)]
+        period: Option<String>,
+        /// Output directory
+        #[arg(short, long, default_value = "audit-evidence")]
+        output: String,
+    },
+    /// Check end-of-life status for installed runtimes
+    Eol,
 }
 
 #[derive(Subcommand, Debug)]

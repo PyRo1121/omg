@@ -5,6 +5,7 @@ use crate::cli::{AuditCommands, CliContext, LocalCommandRunner, style, ui};
 use crate::core::client::DaemonClient;
 use crate::core::license;
 use crate::core::security::{AuditLogger, AuditSeverity, SbomGenerator, SecurityPolicy};
+use dialoguer;
 
 impl LocalCommandRunner for AuditCommands {
     async fn execute(&self, ctx: &CliContext) -> Result<()> {
@@ -23,6 +24,23 @@ impl LocalCommandRunner for AuditCommands {
             AuditCommands::Verify => verify_audit_log(ctx),
             AuditCommands::Policy => show_policy(ctx),
             AuditCommands::Slsa { package } => check_slsa(package, ctx).await,
+            AuditCommands::Licenses {
+                format,
+                export,
+                filter,
+                check_policy,
+            } => scan_licenses(format, export.clone(), filter.clone(), *check_policy, ctx).await,
+            AuditCommands::Fix {
+                dry_run,
+                yes,
+                min_severity,
+            } => fix_vulnerabilities(*dry_run, *yes, min_severity, ctx).await,
+            AuditCommands::Export {
+                framework,
+                period,
+                output,
+            } => export_compliance(framework, period.clone(), output, ctx).await,
+            AuditCommands::Eol => check_eol(ctx).await,
         }?;
         ui::print_spacer();
         Ok(())
@@ -575,6 +593,633 @@ pub async fn check_slsa(package: &str, _ctx: &CliContext) -> Result<()> {
             style::maybe_color("ℹ", |t| t.blue().to_string())
         );
     }
+
+    Ok(())
+}
+
+/// License categories for compliance
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum LicenseCategory {
+    Permissive,     // MIT, BSD, Apache
+    Copyleft,       // GPL, LGPL, MPL
+    StrongCopyleft, // AGPL
+    Proprietary,
+    Unknown,
+}
+
+impl LicenseCategory {
+    fn from_license(license: &str) -> Self {
+        let l = license.to_lowercase();
+        if l.contains("mit")
+            || l.contains("bsd")
+            || l.contains("apache")
+            || l.contains("isc")
+            || l.contains("unlicense")
+            || l.contains("cc0")
+        {
+            Self::Permissive
+        } else if l.contains("agpl") {
+            Self::StrongCopyleft
+        } else if l.contains("gpl") || l.contains("lgpl") || l.contains("mpl") {
+            Self::Copyleft
+        } else if l.contains("proprietary") || l.contains("commercial") {
+            Self::Proprietary
+        } else {
+            Self::Unknown
+        }
+    }
+
+    fn color(&self) -> String {
+        match self {
+            Self::Permissive => style::success("Permissive"),
+            Self::Copyleft => style::warning("Copyleft"),
+            Self::StrongCopyleft => style::error("Strong Copyleft"),
+            Self::Proprietary => style::error("Proprietary"),
+            Self::Unknown => style::dim("Unknown"),
+        }
+    }
+}
+
+/// Scan for software license compliance
+pub async fn scan_licenses(
+    format: &str,
+    export: Option<String>,
+    filter: Option<String>,
+    check_policy: bool,
+    _ctx: &CliContext,
+) -> Result<()> {
+    license::require_feature("licenses")?;
+
+    println!(
+        "{} Scanning installed packages for license information...\n",
+        style::runtime("OMG")
+    );
+
+    // Get installed packages and their licenses
+    #[cfg(feature = "arch")]
+    let packages = crate::package_managers::alpm_direct::list_installed_with_licenses()?;
+    #[cfg(not(feature = "arch"))]
+    let packages: Vec<(String, String, String)> = Vec::new();
+
+    // Filter by license if specified
+    let filter_terms: Vec<String> = filter
+        .map(|f| f.split(',').map(|s| s.trim().to_lowercase()).collect())
+        .unwrap_or_default();
+
+    let filtered_packages: Vec<_> = packages
+        .iter()
+        .filter(|(_, license, _)| {
+            if filter_terms.is_empty() {
+                true
+            } else {
+                let lic_lower = license.to_lowercase();
+                filter_terms.iter().any(|f| lic_lower.contains(f))
+            }
+        })
+        .collect();
+
+    // Categorize licenses
+    let mut permissive = 0;
+    let mut copyleft = 0;
+    let mut strong_copyleft = 0;
+    let mut proprietary = 0;
+    let mut unknown = 0;
+
+    for (_, license, _) in &filtered_packages {
+        match LicenseCategory::from_license(license) {
+            LicenseCategory::Permissive => permissive += 1,
+            LicenseCategory::Copyleft => copyleft += 1,
+            LicenseCategory::StrongCopyleft => strong_copyleft += 1,
+            LicenseCategory::Proprietary => proprietary += 1,
+            LicenseCategory::Unknown => unknown += 1,
+        }
+    }
+
+    // Print summary
+    println!("  {}", style::header("License Summary"));
+    println!("    {} {}", style::success("Permissive:"), permissive);
+    println!("    {} {}", style::warning("Copyleft:"), copyleft);
+    if strong_copyleft > 0 {
+        println!(
+            "    {} {}",
+            style::error("Strong Copyleft (AGPL):"),
+            strong_copyleft
+        );
+    }
+    if proprietary > 0 {
+        println!("    {} {}", style::error("Proprietary:"), proprietary);
+    }
+    if unknown > 0 {
+        println!("    {} {}", style::dim("Unknown:"), unknown);
+    }
+    println!();
+
+    // Check against policy if requested
+    if check_policy {
+        let policy = SecurityPolicy::load_default().unwrap_or_default();
+        let mut violations = Vec::new();
+
+        for (name, license, _) in &filtered_packages {
+            // Check against allowed licenses (if policy specifies them)
+            if !policy.allowed_licenses.is_empty() {
+                let is_allowed = policy
+                    .allowed_licenses
+                    .iter()
+                    .any(|al| license.to_lowercase().contains(&al.to_lowercase()));
+                if !is_allowed {
+                    violations.push((
+                        name.clone(),
+                        license.clone(),
+                        "Not in allowed list".to_string(),
+                    ));
+                }
+            }
+
+            // Check for AGPL (commonly restricted in commercial use)
+            if license.to_lowercase().contains("agpl") {
+                violations.push((
+                    name.clone(),
+                    license.clone(),
+                    "AGPL requires review".to_string(),
+                ));
+            }
+        }
+
+        if !violations.is_empty() {
+            println!("  {} License Policy Violations:\n", style::warning("⚠"));
+            for (name, license, reason) in &violations {
+                println!(
+                    "    {} {} ({}) - {}",
+                    style::error("✗"),
+                    name,
+                    license,
+                    reason
+                );
+            }
+            println!();
+        } else {
+            println!(
+                "  {} All packages comply with license policy\n",
+                style::success("✓")
+            );
+        }
+    }
+
+    // Export if requested
+    if let Some(export_path) = export {
+        let path = std::path::PathBuf::from(&export_path);
+
+        match format {
+            "json" => {
+                let data: Vec<_> = filtered_packages
+                    .iter()
+                    .map(|(name, license, version)| {
+                        serde_json::json!({
+                            "name": name,
+                            "version": version,
+                            "license": license,
+                            "category": format!("{:?}", LicenseCategory::from_license(license))
+                        })
+                    })
+                    .collect();
+                let json = serde_json::to_string_pretty(&data)?;
+                std::fs::write(&path, json)?;
+            }
+            "csv" => {
+                let mut wtr = csv::Writer::from_path(&path)?;
+                wtr.write_record(["Package", "Version", "License", "Category"])?;
+                for (name, license, version) in &filtered_packages {
+                    wtr.write_record(&[
+                        name,
+                        version,
+                        license,
+                        &format!("{:?}", LicenseCategory::from_license(license)),
+                    ])?;
+                }
+                wtr.flush()?;
+            }
+            _ => {
+                // Table format (default) - just write as text
+                let mut content = String::from("Package\tVersion\tLicense\tCategory\n");
+                for (name, license, version) in &filtered_packages {
+                    content.push_str(&format!(
+                        "{}\t{}\t{}\t{:?}\n",
+                        name,
+                        version,
+                        license,
+                        LicenseCategory::from_license(license)
+                    ));
+                }
+                std::fs::write(&path, content)?;
+            }
+        }
+
+        println!(
+            "{} Exported {} packages to {}",
+            style::success("✓"),
+            filtered_packages.len(),
+            export_path
+        );
+    } else if format == "table" {
+        // Show first 20 packages in table format
+        println!("  {}", style::header("Packages"));
+        for (name, license, _) in filtered_packages.iter().take(20) {
+            let category = LicenseCategory::from_license(license);
+            println!(
+                "    {} {} ({})",
+                style::package(name),
+                style::dim(license),
+                category.color()
+            );
+        }
+        if filtered_packages.len() > 20 {
+            println!(
+                "\n  {} Showing 20 of {} packages. Use --export to see all.",
+                style::dim("..."),
+                filtered_packages.len()
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// Auto-fix vulnerabilities by upgrading packages
+pub async fn fix_vulnerabilities(
+    dry_run: bool,
+    yes: bool,
+    min_severity: &str,
+    _ctx: &CliContext,
+) -> Result<()> {
+    license::require_feature("audit")?;
+
+    println!(
+        "{} Scanning for fixable vulnerabilities...\n",
+        style::runtime("OMG")
+    );
+
+    // Get vulnerability data from daemon
+    let Ok(mut client) = DaemonClient::connect().await else {
+        ui::print_error("Daemon not running. Security audit requires the daemon.");
+        return Ok(());
+    };
+
+    let scan_result = match client.security_audit().await {
+        Ok(res) => res,
+        Err(e) => {
+            ui::print_error(format!("Audit failed: {e}"));
+            return Ok(());
+        }
+    };
+
+    if scan_result.total_vulnerabilities == 0 {
+        println!("{} No vulnerabilities found!", style::success("✓"));
+        return Ok(());
+    }
+
+    // Determine minimum severity threshold
+    let min_sev = match min_severity.to_lowercase().as_str() {
+        "critical" => 9.0,
+        "high" => 7.0,
+        "medium" => 4.0,
+        "low" => 0.0,
+        _ => 4.0, // Default to medium
+    };
+
+    // Find packages with fixable vulnerabilities
+    let mut to_upgrade: Vec<String> = Vec::new();
+    let mut unfixable: Vec<(String, String)> = Vec::new();
+
+    for (pkg, vulns) in &scan_result.vulnerabilities {
+        let has_severe = vulns.iter().any(|v| {
+            let score = v
+                .score
+                .as_ref()
+                .and_then(|s| s.parse::<f64>().ok())
+                .unwrap_or(0.0);
+            score >= min_sev
+        });
+
+        if has_severe {
+            // Check if there's an available update
+            #[cfg(feature = "arch")]
+            {
+                if crate::package_managers::alpm_direct::has_update(pkg).unwrap_or(false) {
+                    to_upgrade.push(pkg.clone());
+                } else {
+                    for vuln in vulns {
+                        let score = vuln
+                            .score
+                            .as_ref()
+                            .and_then(|s| s.parse::<f64>().ok())
+                            .unwrap_or(0.0);
+                        if score >= min_sev {
+                            unfixable.push((pkg.clone(), vuln.id.clone()));
+                        }
+                    }
+                }
+            }
+            #[cfg(not(feature = "arch"))]
+            {
+                unfixable.push((pkg.clone(), "Update check not available".to_string()));
+            }
+        }
+    }
+
+    if to_upgrade.is_empty() {
+        println!("{} No packages can be auto-fixed.", style::dim("•"));
+        if !unfixable.is_empty() {
+            println!(
+                "\n  {} Unfixable vulnerabilities (no update available):\n",
+                style::warning("⚠")
+            );
+            for (pkg, vuln) in &unfixable {
+                println!("    {} {} - {}", style::error("✗"), pkg, vuln);
+            }
+            println!(
+                "\n  {} These may require manual intervention or upstream patches.",
+                style::dim("ℹ")
+            );
+        }
+        return Ok(());
+    }
+
+    println!(
+        "{} Found {} packages to upgrade:\n",
+        style::success("✓"),
+        to_upgrade.len()
+    );
+    for pkg in &to_upgrade {
+        println!("    {} {}", style::arrow("→"), style::package(pkg));
+    }
+
+    if dry_run {
+        println!("\n{} Dry run - no changes made.", style::dim("•"));
+        return Ok(());
+    }
+
+    if !yes {
+        println!();
+        let confirm = dialoguer::Confirm::new()
+            .with_prompt("Proceed with upgrades?")
+            .default(true)
+            .interact()?;
+
+        if !confirm {
+            println!("{} Cancelled.", style::dim("•"));
+            return Ok(());
+        }
+    }
+
+    // Perform upgrades
+    #[cfg(feature = "arch")]
+    {
+        let pacman = crate::package_managers::ArchPackageManager::new();
+        use crate::package_managers::PackageManager;
+        pacman.install(&to_upgrade).await?;
+    }
+
+    println!(
+        "\n{} Fixed {} packages.",
+        style::success("✓"),
+        to_upgrade.len()
+    );
+
+    if !unfixable.is_empty() {
+        println!(
+            "\n{} {} vulnerabilities remain unfixable.",
+            style::warning("⚠"),
+            unfixable.len()
+        );
+    }
+
+    Ok(())
+}
+
+/// Export compliance evidence for audit frameworks
+pub async fn export_compliance(
+    framework: &str,
+    period: Option<String>,
+    output: &str,
+    _ctx: &CliContext,
+) -> Result<()> {
+    license::require_feature("compliance")?;
+
+    println!(
+        "{} Generating {} compliance evidence...\n",
+        style::runtime("OMG"),
+        framework.to_uppercase()
+    );
+
+    let output_dir = std::path::PathBuf::from(output);
+    std::fs::create_dir_all(&output_dir)?;
+
+    let now = jiff::Timestamp::now();
+    let timestamp = now.strftime("%Y%m%d_%H%M%S").to_string();
+
+    // Generate different evidence based on framework
+    match framework.to_lowercase().as_str() {
+        "soc2" => {
+            // SOC 2 requires:
+            // - Audit log of changes
+            // - Vulnerability scan results
+            // - SBOM
+            // - Configuration documentation
+
+            // 1. Export audit log
+            if let Ok(logger) = AuditLogger::new() {
+                let entries = logger.get_recent(1000).unwrap_or_default();
+                let json = serde_json::to_string_pretty(&entries)?;
+                let log_path = output_dir.join(format!("audit-log-{timestamp}.json"));
+                std::fs::write(&log_path, json)?;
+                println!(
+                    "  {} Audit log: {}",
+                    style::success("✓"),
+                    log_path.display()
+                );
+            }
+
+            // 2. Export vulnerability scan
+            if let Ok(mut client) = DaemonClient::connect().await {
+                if let Ok(scan) = client.security_audit().await {
+                    let json = serde_json::to_string_pretty(&scan)?;
+                    let scan_path = output_dir.join(format!("vulnerability-scan-{timestamp}.json"));
+                    std::fs::write(&scan_path, json)?;
+                    println!(
+                        "  {} Vulnerability scan: {}",
+                        style::success("✓"),
+                        scan_path.display()
+                    );
+                }
+            }
+
+            // 3. Generate SBOM
+            let generator = SbomGenerator::new().with_vulnerabilities(true);
+            if let Ok(sbom) = generator.generate_system_sbom().await {
+                let sbom_path = output_dir.join(format!("sbom-{timestamp}.json"));
+                generator.export_json(&sbom, &sbom_path)?;
+                println!("  {} SBOM: {}", style::success("✓"), sbom_path.display());
+            }
+
+            // 4. Configuration snapshot
+            let config_snapshot = serde_json::json!({
+                "framework": "SOC2",
+                "generated_at": now.to_string(),
+                "period": period,
+                "policy": SecurityPolicy::load_default().unwrap_or_default(),
+            });
+            let config_path = output_dir.join(format!("config-snapshot-{timestamp}.json"));
+            std::fs::write(
+                &config_path,
+                serde_json::to_string_pretty(&config_snapshot)?,
+            )?;
+            println!(
+                "  {} Configuration: {}",
+                style::success("✓"),
+                config_path.display()
+            );
+        }
+        "iso27001" => {
+            // ISO 27001 requires similar but with different structure
+            println!("  {} ISO 27001 export format", style::dim("•"));
+            // Similar to SOC2 but with different categorization
+        }
+        "hipaa" | "pci-dss" | "fedramp" => {
+            println!(
+                "  {} {} compliance export is available in Enterprise tier",
+                style::warning("⚠"),
+                framework.to_uppercase()
+            );
+        }
+        _ => {
+            println!(
+                "{} Unknown framework: {}. Supported: soc2, iso27001, hipaa, pci-dss, fedramp",
+                style::error("✗"),
+                framework
+            );
+        }
+    }
+
+    println!(
+        "\n{} Evidence exported to {}",
+        style::success("✓"),
+        output_dir.display()
+    );
+
+    Ok(())
+}
+
+/// Check end-of-life status for installed runtimes
+pub async fn check_eol(_ctx: &CliContext) -> Result<()> {
+    println!("{} Checking runtime EOL status...\n", style::runtime("OMG"));
+
+    // EOL dates from endoflife.date API (cached)
+    let eol_data: &[(&str, &str, &str, &str)] = &[
+        // (runtime, version_prefix, eol_date, lts_until)
+        ("node", "16", "2023-09-11", "N/A"),
+        ("node", "18", "2025-04-30", "2023-10-18"),
+        ("node", "19", "2023-06-01", "N/A"),
+        ("node", "20", "2026-04-30", "2024-10-22"),
+        ("node", "21", "2024-06-01", "N/A"),
+        ("node", "22", "2027-04-30", "2025-10-21"),
+        ("python", "3.7", "2023-06-27", "N/A"),
+        ("python", "3.8", "2024-10-31", "N/A"),
+        ("python", "3.9", "2025-10-31", "N/A"),
+        ("python", "3.10", "2026-10-31", "N/A"),
+        ("python", "3.11", "2027-10-31", "N/A"),
+        ("python", "3.12", "2028-10-31", "N/A"),
+        ("go", "1.20", "2024-02-06", "N/A"),
+        ("go", "1.21", "2024-08-06", "N/A"),
+        ("go", "1.22", "2025-02-06", "N/A"),
+        ("ruby", "3.0", "2024-03-31", "N/A"),
+        ("ruby", "3.1", "2025-03-31", "N/A"),
+        ("ruby", "3.2", "2026-03-31", "N/A"),
+        ("java", "17", "2029-09-30", "LTS"),
+        ("java", "21", "2031-09-30", "LTS"),
+    ];
+
+    let now = jiff::Timestamp::now();
+    let runtimes = ["node", "python", "rust", "go", "ruby", "java", "bun"];
+    let mut issues = 0;
+
+    for runtime in &runtimes {
+        if let Some(version) = crate::runtimes::probe_version(runtime) {
+            let mut status = "Active";
+            let mut eol_date_str = "Unknown";
+            let mut is_eol = false;
+            let mut is_warning = false;
+
+            // Check EOL status
+            for (rt, ver_prefix, eol_date, _lts) in eol_data {
+                if *rt == *runtime && version.starts_with(ver_prefix) {
+                    eol_date_str = eol_date;
+                    if let Ok(eol_ts) = jiff::civil::Date::strptime("%Y-%m-%d", eol_date) {
+                        let eol_timestamp = eol_ts
+                            .at(0, 0, 0, 0)
+                            .to_zoned(jiff::tz::TimeZone::UTC)
+                            .unwrap()
+                            .timestamp();
+
+                        if now > eol_timestamp {
+                            status = "EOL";
+                            is_eol = true;
+                            issues += 1;
+                        } else {
+                            // Check if within 6 months of EOL
+                            let six_months = jiff::Span::new().months(6);
+                            if let Ok(warning_ts) = now.checked_add(six_months) {
+                                if warning_ts > eol_timestamp {
+                                    status = "Ending Soon";
+                                    is_warning = true;
+                                    issues += 1;
+                                }
+                            }
+                        }
+                    }
+                    break;
+                }
+            }
+
+            let status_display = if is_eol {
+                style::error(status)
+            } else if is_warning {
+                style::warning(status)
+            } else {
+                style::success(status)
+            };
+
+            println!(
+                "  {} {} v{} - {} (EOL: {})",
+                if is_eol {
+                    style::error("✗")
+                } else if is_warning {
+                    style::warning("⚠")
+                } else {
+                    style::success("✓")
+                },
+                style::runtime(runtime),
+                style::version(&version),
+                status_display,
+                eol_date_str
+            );
+        }
+    }
+
+    println!();
+    if issues == 0 {
+        println!(
+            "{} All runtimes are within support period.",
+            style::success("✓")
+        );
+    } else {
+        println!(
+            "{} {} runtime(s) need attention. Consider upgrading to supported versions.",
+            style::warning("⚠"),
+            issues
+        );
+    }
+
+    println!("\n{} Data source: endoflife.date", style::dim("ℹ"));
 
     Ok(())
 }

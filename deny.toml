@@ -67,9 +67,8 @@ skip-tree = []
 unknown-registry = "deny"
 # Deny crates from unknown git repos
 unknown-git = "deny"
-# Allow git sources (empty = deny all git dependencies for supply chain security)
-allow-git = []
-# Allow these specific git repos if needed
-# allow-git = [
-#     "https://github.com/yourusername/forked-crate",
-# ]
+# Allow specific git sources for supply chain security
+# Only the official Arch Linux ALPM repository is allowed
+allow-git = [
+    "https://gitlab.archlinux.org/archlinux/alpm/alpm.git",
+]

@@ -657,22 +657,103 @@ pub fn config(key: Option<&str>, value: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-pub fn history(limit: usize) -> Result<()> {
+pub fn history(
+    limit: usize,
+    search: Option<&str>,
+    transaction_type: Option<&str>,
+    from: Option<&str>,
+    to: Option<&str>,
+) -> Result<()> {
     let history_mgr = crate::core::history::HistoryManager::new()?;
     let entries = history_mgr.load()?;
 
-    println!(
-        "{} Transaction History (last {})\n",
-        style::header("OMG"),
-        limit
-    );
+    // Parse optional transaction type filter
+    let type_filter = transaction_type.map(|t| match t.to_lowercase().as_str() {
+        "install" => crate::core::history::TransactionType::Install,
+        "remove" => crate::core::history::TransactionType::Remove,
+        "update" => crate::core::history::TransactionType::Update,
+        "sync" => crate::core::history::TransactionType::Sync,
+        _ => crate::core::history::TransactionType::Install, // Default fallback
+    });
+
+    // Parse date filters
+    let from_date = from.and_then(|d| jiff::civil::Date::strptime("%Y-%m-%d", d).ok());
+    let to_date = to.and_then(|d| jiff::civil::Date::strptime("%Y-%m-%d", d).ok());
+
+    // Build header
+    let mut header = format!("Transaction History (last {})", limit);
+    if search.is_some() || transaction_type.is_some() || from.is_some() || to.is_some() {
+        header = "Transaction History (filtered)".to_string();
+    }
+
+    println!("{} {}\n", style::header("OMG"), header);
 
     if entries.is_empty() {
         println!("  {}", style::dim("No transactions recorded yet"));
         return Ok(());
     }
 
-    for entry in entries.iter().rev().take(limit) {
+    // Filter entries
+    let filtered: Vec<_> = entries
+        .iter()
+        .rev()
+        .filter(|entry| {
+            // Filter by transaction type
+            if let Some(ref t) = type_filter {
+                if entry.transaction_type != *t {
+                    return false;
+                }
+            }
+
+            // Filter by search term (package name)
+            if let Some(ref query) = search {
+                let query_lower = query.to_lowercase();
+                let matches = entry
+                    .changes
+                    .iter()
+                    .any(|c| c.name.to_lowercase().contains(&query_lower));
+                if !matches {
+                    return false;
+                }
+            }
+
+            // Filter by date range
+            if let Some(ref from_d) = from_date {
+                let entry_date = entry
+                    .timestamp
+                    .to_zoned(jiff::tz::TimeZone::system())
+                    .date();
+                if entry_date < *from_d {
+                    return false;
+                }
+            }
+            if let Some(ref to_d) = to_date {
+                let entry_date = entry
+                    .timestamp
+                    .to_zoned(jiff::tz::TimeZone::system())
+                    .date();
+                if entry_date > *to_d {
+                    return false;
+                }
+            }
+
+            true
+        })
+        .take(limit)
+        .collect();
+
+    if filtered.is_empty() {
+        println!("  {}", style::dim("No matching transactions found"));
+        if search.is_some() {
+            println!(
+                "  {}",
+                style::dim("Try a different search term or remove filters.")
+            );
+        }
+        return Ok(());
+    }
+
+    for entry in filtered {
         let timestamp = entry.timestamp.strftime("%Y-%m-%d %H:%M:%S");
         let status = if entry.success {
             style::success("✓")
@@ -685,15 +766,26 @@ pub fn history(limit: usize) -> Result<()> {
             status,
             style::dim(&timestamp.to_string()),
             style::info(&entry.id[..8]),
-            style::warning(&format!("{:?}", entry.transaction_type)),
+            style::warning(&format!("{}", entry.transaction_type)),
             style::dim(&format!("({} changes)", entry.changes.len()))
         );
 
+        // If searching, highlight matching packages
         for change in &entry.changes {
+            let pkg_display = if let Some(ref query) = search {
+                if change.name.to_lowercase().contains(&query.to_lowercase()) {
+                    style::success(&change.name)
+                } else {
+                    style::package(&change.name)
+                }
+            } else {
+                style::package(&change.name)
+            };
+
             println!(
                 "    {} {} {} → {}",
                 style::arrow("→"),
-                style::package(&change.name),
+                pkg_display,
                 style::dim(change.old_version.as_deref().unwrap_or("None")),
                 style::version(change.new_version.as_deref().unwrap_or("None"))
             );

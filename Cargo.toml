@@ -35,6 +35,7 @@ path = "src/bin/omg-fast.rs"
 # CLI Framework
 clap = { version = "4.5.54", features = ["derive", "env", "wrap_help"] }
 clap_complete = "4.5"
+clap_mangen = "0.2"  # Man page generation
 
 # Error handling
 anyhow = "1.0.100"
@@ -135,11 +136,12 @@ redb = "3.1"
 alpm = { version = "5.0.2", optional = true }
 
 # Official Arch Linux pure Rust ALPM ecosystem (archlinux/alpm)
-alpm-types = { git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", package = "alpm-types", optional = true }
-alpm-srcinfo = { git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", package = "alpm-srcinfo", optional = true }
-alpm-db = { git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", package = "alpm-db", optional = true }
-alpm-repo-db = { git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", package = "alpm-repo-db", optional = true }
-alpm-pkginfo = { git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", package = "alpm-pkginfo", optional = true }
+# Pinned to specific commit for supply chain security - update periodically
+alpm-types = { git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", package = "alpm-types", rev = "b5463fcd4b677e55792dfb0c708da9659db0368a", optional = true }
+alpm-srcinfo = { git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", package = "alpm-srcinfo", rev = "b5463fcd4b677e55792dfb0c708da9659db0368a", optional = true }
+alpm-db = { git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", package = "alpm-db", rev = "b5463fcd4b677e55792dfb0c708da9659db0368a", optional = true }
+alpm-repo-db = { git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", package = "alpm-repo-db", rev = "b5463fcd4b677e55792dfb0c708da9659db0368a", optional = true }
+alpm-pkginfo = { git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", package = "alpm-pkginfo", rev = "b5463fcd4b677e55792dfb0c708da9659db0368a", optional = true }
 
 # Process execution
 which = "8.0"
@@ -150,6 +152,9 @@ semver = "1.0.27"
 
 # Tempfile handling
 tempfile = "3.24.0"
+
+# URL encoding (for DNF/COPR API)
+urlencoding = "2.1"
 
 # Data parallelism
 rayon = "1.11.0"
@@ -176,6 +181,14 @@ governor = "0.10.4"
 jsonwebtoken = { version = "10.2.0", default-features = false, features = ["rust_crypto"] }
 sentry = { version = "0.46.1", features = ["anyhow", "tracing"] }
 sentry-tracing = "0.46.1"
+
+# Cross-platform package manager support
+rusqlite = { version = "0.33", features = ["bundled"], optional = true }  # SQLite for RPM db
+quick-xml = { version = "0.37", features = ["serialize"], optional = true }  # Fast XML parsing
+
+# Windows-specific (conditional) - only compiled on Windows
+[target.'cfg(target_os = "windows")'.dependencies]
+winreg = { version = "0.55" }  # Windows registry access
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
@@ -225,12 +238,21 @@ arch = [
 ]
 pgp = ["sequoia-openpgp"] # Optional PGP verification (requires Rust 1.80+)
 
+# Windows support - pure Rust implementation (winreg auto-enabled on Windows via target cfg)
+windows = []
+
 # Debian/Ubuntu support - unified feature
 # Requires libapt-pkg-dev: `apt install libapt-pkg-dev`
 debian = ["debian-packaging", "winnow", "gzp", "ar", "rust-apt"]
 
 # Pure Rust Debian support (no FFI, no system dependencies) - for testing/indexing
 debian-pure = ["debian-packaging", "winnow", "gzp", "ar"]
+
+# Fedora/RHEL support (DNF/RPM) - Pure Rust, no system dependencies
+fedora = ["rusqlite", "quick-xml"]
+
+# macOS/Homebrew support - Pure Rust
+macos = []
 
 license = [] # Enable license/subscription features (Pro, Team, Enterprise tiers)
 proptest = [] # Enable property-based tests
