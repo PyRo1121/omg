@@ -31,7 +31,8 @@ export function createAuth(env: CloudflareEnv) {
         return value ?? null;
       },
       set: async (key: string, value: string, ttl?: number) => {
-        await env.BETTER_AUTH_KV.put(key, value, ttl ? { expirationTtl: ttl } : undefined);
+        const minTtl = ttl && ttl < 60 ? 60 : ttl;
+        await env.BETTER_AUTH_KV.put(key, value, minTtl ? { expirationTtl: minTtl } : undefined);
       },
       delete: async (key: string) => {
         await env.BETTER_AUTH_KV.delete(key);
