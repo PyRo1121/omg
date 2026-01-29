@@ -5,8 +5,35 @@ use crate::cli::style;
 use crate::core::client::DaemonClient;
 use crate::core::http::shared_client;
 
+/// Mirror endpoints to test connectivity
+const MIRROR_ENDPOINTS: &[(&str, &str)] = &[
+    ("Arch Linux", "https://archlinux.org"),
+    ("Kernel.org", "https://kernel.org"),
+    ("GitHub", "https://github.com"),
+    ("AUR", "https://aur.archlinux.org"),
+];
+
+/// EOL information for common runtimes
+const EOL_DATES: &[(&str, &str, &str)] = &[
+    // (runtime, version_prefix, eol_date)
+    ("node", "16", "2023-09-11"),
+    ("node", "18", "2025-04-30"),
+    ("node", "19", "2023-06-01"),
+    ("python", "3.7", "2023-06-27"),
+    ("python", "3.8", "2024-10-31"),
+    ("python", "3.9", "2025-10-31"),
+    ("rust", "1.70", "2024-01-01"), // Approximate, Rust has short support cycles
+    ("go", "1.19", "2023-08-08"),
+    ("go", "1.20", "2024-02-06"),
+    ("ruby", "2.7", "2023-03-31"),
+    ("ruby", "3.0", "2024-03-31"),
+    ("java", "8", "2030-12-31"), // Extended support varies by vendor
+    ("java", "11", "2026-09-30"),
+    ("java", "17", "2029-09-30"),
+];
+
 /// Run all health checks
-pub async fn run() -> Result<()> {
+pub async fn run(network: bool, eol: bool) -> Result<()> {
     println!(
         "{} Checking system health...\n",
         style::header("OMG Doctor")
@@ -25,7 +52,7 @@ pub async fn run() -> Result<()> {
         issues += 1;
     }
 
-    // 2. Internet Connectivity
+    // 2. Internet Connectivity (basic check)
     if check_internet().await {
         println!("  {}", style::success("Internet connectivity"));
     } else {
@@ -71,23 +98,157 @@ pub async fn run() -> Result<()> {
             "  {}",
             style::warning("Shell hook not detected in environment")
         );
-        // Hard to detect reliably without inspecting shell rc, but we can check env vars if hook sets any?
-        // Our hook sets nothing persistent env vars other than PATH.
-        // So this check is heuristic.
+    }
+
+    // 7. Network diagnostics (if requested)
+    if network {
+        println!();
+        println!("{}", style::header("Network Diagnostics"));
+        issues += check_network().await;
+    }
+
+    // 8. EOL runtime checks (if requested)
+    if eol {
+        println!();
+        println!("{}", style::header("Runtime EOL Status"));
+        issues += check_eol_runtimes().await;
     }
 
     println!();
     if issues == 0 {
-        println!("{}", style::success("System is healthy! Ready to rock. 🚀"));
+        println!("{}", style::success("System is healthy! Ready to rock."));
     } else {
         println!(
-            "{} Found {} issue(s). Please fix them.",
+            "{} Found {} issue(s). Please review.",
             style::warning("→"),
             issues
         );
     }
 
     Ok(())
+}
+
+/// Check network connectivity to multiple mirrors
+async fn check_network() -> usize {
+    let client = shared_client();
+    let mut issues = 0;
+
+    for (name, url) in MIRROR_ENDPOINTS {
+        let start = std::time::Instant::now();
+        let result = tokio::time::timeout(Duration::from_secs(5), client.get(*url).send()).await;
+
+        match result {
+            Ok(Ok(response)) => {
+                let latency = start.elapsed().as_millis();
+                let status = response.status();
+                if status.is_success() || status.is_redirection() {
+                    println!("  {} {} ({} ms)", style::success("✓"), name, latency);
+                } else {
+                    println!(
+                        "  {} {} (HTTP {})",
+                        style::warning("⚠"),
+                        name,
+                        status.as_u16()
+                    );
+                }
+            }
+            Ok(Err(e)) => {
+                println!("  {} {} ({})", style::error("✗"), name, e);
+                issues += 1;
+            }
+            Err(_) => {
+                println!("  {} {} (timeout)", style::error("✗"), name);
+                issues += 1;
+            }
+        }
+    }
+
+    // DNS resolution test
+    println!();
+    println!("  {}", style::dim("DNS Resolution:"));
+    for host in &["archlinux.org", "aur.archlinux.org", "github.com"] {
+        match std::net::ToSocketAddrs::to_socket_addrs(&format!("{host}:443")) {
+            Ok(addrs) => {
+                let count = addrs.count();
+                println!("    {} {} ({} addresses)", style::success("✓"), host, count);
+            }
+            Err(e) => {
+                println!("    {} {} ({})", style::error("✗"), host, e);
+                issues += 1;
+            }
+        }
+    }
+
+    issues
+}
+
+/// Check for end-of-life runtimes
+async fn check_eol_runtimes() -> usize {
+    let mut issues = 0;
+    let now = jiff::Timestamp::now();
+
+    // Get installed runtime versions
+    let runtimes = ["node", "python", "rust", "go", "ruby", "java", "bun"];
+
+    for runtime in &runtimes {
+        if let Some(version) = crate::runtimes::probe_version(runtime) {
+            // Check against EOL dates
+            let mut eol_warning = None;
+
+            for (rt, ver_prefix, eol_date) in EOL_DATES {
+                if *rt == *runtime && version.starts_with(ver_prefix) {
+                    // Parse the EOL date
+                    if let Ok(eol_ts) = jiff::civil::Date::strptime("%Y-%m-%d", eol_date) {
+                        let eol_timestamp = eol_ts
+                            .at(0, 0, 0, 0)
+                            .to_zoned(jiff::tz::TimeZone::UTC)
+                            .unwrap()
+                            .timestamp();
+
+                        if now > eol_timestamp {
+                            eol_warning = Some(format!("EOL since {eol_date}"));
+                        } else {
+                            // Check if EOL is within 6 months
+                            let six_months = jiff::Span::new().months(6);
+                            if let Ok(warning_ts) = now.checked_add(six_months) {
+                                if warning_ts > eol_timestamp {
+                                    eol_warning = Some(format!("EOL on {eol_date}"));
+                                }
+                            }
+                        }
+                    }
+                    break;
+                }
+            }
+
+            if let Some(warning) = eol_warning {
+                println!(
+                    "  {} {} {} - {}",
+                    style::warning("⚠"),
+                    style::runtime(runtime),
+                    style::version(&version),
+                    style::error(&warning)
+                );
+                issues += 1;
+            } else {
+                println!(
+                    "  {} {} {}",
+                    style::success("✓"),
+                    style::runtime(runtime),
+                    style::version(&version)
+                );
+            }
+        }
+    }
+
+    if issues == 0 {
+        println!(
+            "  {}",
+            style::dim("All runtimes are within support period.")
+        );
+    }
+
+    issues
 }
 
 fn check_os() -> bool {

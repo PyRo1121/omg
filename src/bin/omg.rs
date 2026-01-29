@@ -406,14 +406,89 @@ async fn async_main(args: Vec<String>) -> Result<()> {
         Commands::Hook { shell } => {
             hooks::print_hook(shell)?;
         }
+        Commands::Hooks { command } => {
+            use omg_lib::cli::HooksCommands;
+            match command {
+                HooksCommands::Install { force } => {
+                    omg_lib::cli::git_hooks::install(*force)?;
+                }
+                HooksCommands::Uninstall => {
+                    omg_lib::cli::git_hooks::uninstall()?;
+                }
+                HooksCommands::Status => {
+                    omg_lib::cli::git_hooks::status()?;
+                }
+                HooksCommands::Run { hook } => {
+                    omg_lib::cli::git_hooks::run_hook(hook)?;
+                }
+            }
+        }
+        Commands::Workspace { command } => {
+            use omg_lib::cli::WorkspaceCommands;
+            match command {
+                WorkspaceCommands::Init { name } => {
+                    omg_lib::cli::workspace::init(name)?;
+                }
+                WorkspaceCommands::Add { path, name } => {
+                    omg_lib::cli::workspace::add(path, name.as_deref())?;
+                }
+                WorkspaceCommands::Remove { project } => {
+                    omg_lib::cli::workspace::remove(project)?;
+                }
+                WorkspaceCommands::List => {
+                    omg_lib::cli::workspace::list()?;
+                }
+                WorkspaceCommands::Run {
+                    command: cmd,
+                    args,
+                    parallel,
+                    filter,
+                } => {
+                    omg_lib::cli::workspace::run(cmd, args, *parallel, filter.as_deref()).await?;
+                }
+                WorkspaceCommands::Diff { branch } => {
+                    omg_lib::cli::workspace::diff(branch).await?;
+                }
+                WorkspaceCommands::Sync { yes } => {
+                    omg_lib::cli::workspace::sync(*yes).await?;
+                }
+                WorkspaceCommands::Status => {
+                    omg_lib::cli::workspace::status()?;
+                }
+            }
+        }
         Commands::HookEnv { shell } => {
             hooks::hook_env(shell)?;
         }
         Commands::Daemon { foreground } => {
             commands::daemon(*foreground)?;
         }
-        Commands::Config { key, value } => {
-            commands::config(key.as_deref(), value.as_deref())?;
+        Commands::Config { command } => {
+            use omg_lib::cli::ConfigCommands;
+            match command {
+                Some(ConfigCommands::Get { key }) => {
+                    omg_lib::cli::config::get(key)?;
+                }
+                Some(ConfigCommands::Set { key, value }) => {
+                    omg_lib::cli::config::set(key, value)?;
+                }
+                Some(ConfigCommands::List) => {
+                    omg_lib::cli::config::list()?;
+                }
+                Some(ConfigCommands::Validate) => {
+                    omg_lib::cli::config::validate()?;
+                }
+                Some(ConfigCommands::Reset { yes }) => {
+                    omg_lib::cli::config::reset(*yes)?;
+                }
+                Some(ConfigCommands::Path) => {
+                    omg_lib::cli::config::path()?;
+                }
+                None => {
+                    // Default: list all config
+                    omg_lib::cli::config::list()?;
+                }
+            }
         }
         Commands::SelfUpdate { force, version } => {
             omg_lib::cli::self_update::run(*force, version.clone()).await?;
@@ -446,8 +521,14 @@ async fn async_main(args: Vec<String>) -> Result<()> {
         Commands::Status { fast } => {
             packages::status_with_json(*fast, cli.json).await?;
         }
-        Commands::Doctor => {
-            doctor::run().await?;
+        Commands::Doctor { network, eol } => {
+            doctor::run(*network, *eol).await?;
+        }
+        Commands::GenerateMan { output } => {
+            omg_lib::cli::man::generate(output.clone())?;
+        }
+        Commands::DaemonStatus => {
+            omg_lib::cli::daemon_status::run().await?;
         }
         Commands::Audit { command } => {
             if let Some(cmd) = command {
@@ -544,8 +625,20 @@ async fn async_main(args: Vec<String>) -> Result<()> {
                 }
             }
         }
-        Commands::History { limit } => {
-            commands::history(*limit)?;
+        Commands::History {
+            limit,
+            search,
+            transaction_type,
+            from,
+            to,
+        } => {
+            commands::history(
+                *limit,
+                search.as_deref(),
+                transaction_type.as_deref(),
+                from.as_deref(),
+                to.as_deref(),
+            )?;
         }
         Commands::Rollback { id, yes } => {
             commands::rollback(id.clone(), *yes).await?;

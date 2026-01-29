@@ -1,0 +1,76 @@
+name: Mutation Testing
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # Run weekly on Sundays at 00:00 UTC
+    - cron: '0 0 * * 0'
+  workflow_dispatch:
+
+concurrency:
+  group: mutation-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  mutation:
+    name: cargo-mutants
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "mutation"
+          cache-on-failure: true
+
+      - name: Install cargo-mutants
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-mutants
+
+      - name: Run mutation testing
+        run: |
+          # Run on core modules only (full codebase would take too long)
+          cargo mutants \
+            --package omg_lib \
+            --timeout 60 \
+            --jobs 2 \
+            --exclude-re 'tests?|bench|mock' \
+            --output-html mutants-report \
+            -- --no-default-features --features pgp,license
+        continue-on-error: true
+
+      - name: Upload mutation report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mutation-report
+          path: mutants-report/
+          retention-days: 30
+
+      - name: Check mutation score
+        run: |
+          if [ -f mutants-report/mutants.json ]; then
+            total=$(jq '.outcomes | length' mutants-report/mutants.json)
+            caught=$(jq '[.outcomes[] | select(.outcome == "Caught")] | length' mutants-report/mutants.json)
+            if [ "$total" -gt 0 ]; then
+              score=$((caught * 100 / total))
+              echo "Mutation score: $score% ($caught/$total mutants caught)"
+              # Warn if mutation score is low but don't fail
+              if [ "$score" -lt 60 ]; then
+                echo "::warning::Mutation score is below 60%"
+              fi
+            fi
+          fi

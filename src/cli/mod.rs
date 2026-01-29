@@ -12,17 +12,21 @@ pub mod blame;
 pub mod ci;
 pub mod commands;
 pub mod components;
+pub mod config;
 pub mod container;
+pub mod daemon_status;
 pub mod diff;
 pub mod doctor;
 pub mod enterprise;
 pub mod env;
 pub mod fleet;
+pub mod git_hooks;
 pub mod help;
 pub mod init;
 pub mod json_output;
 #[cfg(feature = "license")]
 pub mod license;
+pub mod man;
 pub mod migrate;
 pub mod new;
 pub mod outdated;
@@ -42,13 +46,15 @@ pub mod tool;
 pub mod tui;
 pub mod ui;
 pub mod why;
+pub mod workspace;
 
 #[cfg(feature = "license")]
 pub use args::LicenseCommands;
 pub use args::{
-    AuditCommands, CiCommands, Cli, Commands, ContainerCommands, EnterpriseCommands,
-    EnterprisePolicyCommands, EnvCommands, FleetCommands, GoldenPathCommands, MigrateCommands,
-    NotifyCommands, ServerCommands, SnapshotCommands, TeamCommands, TeamRoleCommands, ToolCommands,
+    AuditCommands, CiCommands, Cli, Commands, ConfigCommands, ContainerCommands,
+    EnterpriseCommands, EnterprisePolicyCommands, EnvCommands, FleetCommands, GoldenPathCommands,
+    HooksCommands, MigrateCommands, NotifyCommands, ServerCommands, SnapshotCommands, TeamCommands,
+    TeamRoleCommands, ToolCommands, WorkspaceCommands,
 };
 
 /// Global context for CLI command execution

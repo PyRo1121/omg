@@ -347,6 +347,60 @@ pub fn list_orphans_fast() -> Result<Vec<String>> {
     })
 }
 
+/// List installed packages with license information - for compliance scanning
+pub fn list_installed_with_licenses() -> Result<Vec<(String, String, String)>> {
+    with_handle(|handle| {
+        let results = handle
+            .localdb()
+            .pkgs()
+            .iter()
+            .map(|pkg| {
+                let licenses = pkg.licenses();
+                let license_str = if licenses.is_empty() {
+                    "Unknown".to_string()
+                } else {
+                    licenses
+                        .iter()
+                        .map(|l| l.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                };
+                (
+                    pkg.name().to_string(),
+                    license_str,
+                    pkg.version().to_string(),
+                )
+            })
+            .collect();
+
+        Ok(results)
+    })
+}
+
+/// Check if a package has an available update
+pub fn has_update(package: &str) -> Result<bool> {
+    with_handle(|handle| {
+        // Get local version
+        let localdb = handle.localdb();
+        let local_pkg = localdb.pkg(package)?;
+        let local_ver = local_pkg.version();
+
+        // Check sync databases for newer version
+        for db in handle.syncdbs() {
+            if let Ok(sync_pkg) = db.pkg(package) {
+                let sync_ver = sync_pkg.version();
+                if alpm::vercmp(sync_ver.as_str(), local_ver.as_str())
+                    == std::cmp::Ordering::Greater
+                {
+                    return Ok(true);
+                }
+            }
+        }
+
+        Ok(false)
+    })
+}
+
 /// Check if package is installed - INSTANT
 pub fn is_installed_fast(name: &str) -> Result<bool> {
     with_handle(|handle| Ok(handle.localdb().pkg(name).is_ok()))

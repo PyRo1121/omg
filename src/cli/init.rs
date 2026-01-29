@@ -359,16 +359,87 @@ fn print_header(stdout: &mut io::Stdout) -> Result<()> {
 }
 
 fn detect_current_shell() -> Option<Shell> {
+    // Method 1: Check $SHELL environment variable (user's default shell)
     if let Ok(shell) = std::env::var("SHELL") {
-        if shell.contains("zsh") {
-            return Some(Shell::Zsh);
-        } else if shell.contains("bash") {
-            return Some(Shell::Bash);
-        } else if shell.contains("fish") {
-            return Some(Shell::Fish);
+        if let Some(s) = parse_shell_path(&shell) {
+            return Some(s);
         }
     }
+
+    // Method 2: Check parent process (actual running shell)
+    #[cfg(unix)]
+    {
+        if let Some(s) = detect_shell_from_parent_process() {
+            return Some(s);
+        }
+    }
+
+    // Method 3: Check /etc/passwd for user's configured shell
+    #[cfg(unix)]
+    {
+        if let Ok(user) = std::env::var("USER") {
+            if let Ok(passwd) = std::fs::read_to_string("/etc/passwd") {
+                for line in passwd.lines() {
+                    if line.starts_with(&format!("{user}:")) {
+                        if let Some(shell_path) = line.split(':').last() {
+                            if let Some(s) = parse_shell_path(shell_path) {
+                                return Some(s);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     None
+}
+
+/// Parse a shell path and return the Shell enum
+fn parse_shell_path(path: &str) -> Option<Shell> {
+    let shell_name = std::path::Path::new(path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(path);
+
+    match shell_name {
+        "zsh" => Some(Shell::Zsh),
+        "bash" => Some(Shell::Bash),
+        "fish" => Some(Shell::Fish),
+        _ => None,
+    }
+}
+
+/// Detect shell from parent process (for actual running shell, not default)
+#[cfg(unix)]
+fn detect_shell_from_parent_process() -> Option<Shell> {
+    use std::fs;
+
+    // Get parent process ID
+    let ppid = std::process::id();
+
+    // Try to read /proc/{ppid}/comm or /proc/{ppid}/cmdline
+    if let Ok(comm) = fs::read_to_string(format!("/proc/{ppid}/comm")) {
+        let comm = comm.trim();
+        if let Some(s) = parse_shell_path(comm) {
+            return Some(s);
+        }
+    }
+
+    // Fallback: check cmdline
+    if let Ok(cmdline) = fs::read_to_string(format!("/proc/{ppid}/cmdline")) {
+        let first_arg = cmdline.split('\0').next().unwrap_or("");
+        if let Some(s) = parse_shell_path(first_arg) {
+            return Some(s);
+        }
+    }
+
+    None
+}
+
+/// Get the detected shell for use in non-interactive mode
+pub fn auto_detect_shell() -> Option<Shell> {
+    detect_current_shell()
 }
 
 fn select_shell(stdout: &mut io::Stdout) -> Result<Shell> {

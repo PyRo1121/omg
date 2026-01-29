@@ -27,8 +27,13 @@ pub mod aur_metadata;
 pub mod debian_db;
 #[cfg(feature = "debian-pure")]
 pub mod debian_pure;
+#[cfg(feature = "fedora")]
+pub mod dnf;
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
 pub mod file_watcher;
+// macOS Homebrew support - can be enabled via feature or auto-detected on macOS
+#[cfg(any(feature = "macos", target_os = "macos"))]
+pub mod homebrew;
 pub mod mock;
 #[cfg(feature = "arch")]
 pub mod pacman_db;
@@ -38,6 +43,8 @@ pub mod parallel_sync;
 pub mod pkgbuild;
 mod traits;
 pub mod types;
+#[cfg(feature = "windows")]
+pub mod windows;
 
 pub use types::{parse_version_or_zero, zero_version};
 
@@ -135,6 +142,15 @@ pub fn get_package_manager() -> Arc<dyn PackageManager> {
         // debian-pure provides PureDebianPackageManager
         #[cfg(all(not(feature = "debian"), feature = "debian-pure"))]
         Distro::Debian | Distro::Ubuntu => Arc::new(debian_pure::PureDebianPackageManager::new()),
+        // Fedora/RHEL provides DnfPackageManager (pure Rust)
+        #[cfg(feature = "fedora")]
+        Distro::Fedora => Arc::new(dnf::DnfPackageManager::new()),
+        // macOS provides HomebrewPackageManager
+        #[cfg(any(feature = "macos", target_os = "macos"))]
+        Distro::MacOS => Arc::new(homebrew::HomebrewPackageManager::new()),
+        // Windows provides WindowsPackageManager
+        #[cfg(feature = "windows")]
+        Distro::Windows => Arc::new(windows::WindowsPackageManager::new()),
         _ => {
             // Fallback or default
             #[cfg(feature = "arch")]
@@ -150,9 +166,42 @@ pub fn get_package_manager() -> Arc<dyn PackageManager> {
             ))]
             return Arc::new(debian_pure::PureDebianPackageManager::new());
 
-            #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
+            #[cfg(all(
+                not(feature = "arch"),
+                not(feature = "debian"),
+                not(feature = "debian-pure"),
+                any(feature = "macos", target_os = "macos")
+            ))]
+            return Arc::new(homebrew::HomebrewPackageManager::new());
+
+            #[cfg(all(
+                not(feature = "arch"),
+                not(feature = "debian"),
+                not(feature = "debian-pure"),
+                not(any(feature = "macos", target_os = "macos")),
+                feature = "fedora"
+            ))]
+            return Arc::new(dnf::DnfPackageManager::new());
+
+            #[cfg(all(
+                not(feature = "arch"),
+                not(feature = "debian"),
+                not(feature = "debian-pure"),
+                not(any(feature = "macos", target_os = "macos")),
+                not(feature = "fedora"),
+                feature = "windows"
+            ))]
+            return Arc::new(windows::WindowsPackageManager::new());
+
+            #[cfg(not(any(
+                feature = "arch",
+                feature = "debian",
+                feature = "debian-pure",
+                feature = "windows"
+            )))]
+            #[cfg(not(target_os = "macos"))]
             panic!(
-                "No package manager backend enabled! Build with --features arch or --features debian"
+                "No package manager backend enabled! Build with --features arch, debian, or windows"
             );
         }
     }
@@ -210,3 +259,15 @@ pub use debian_db::list_installed_fast as apt_list_installed_fast;
 
 #[cfg(all(feature = "debian", feature = "debian-pure"))]
 pub use debian_db::list_installed_fast as apt_list_installed_db_fast;
+
+// Homebrew exports are available on macOS
+#[cfg(any(feature = "macos", target_os = "macos"))]
+pub use homebrew::HomebrewPackageManager;
+
+// DNF/RPM exports are available with fedora feature
+#[cfg(feature = "fedora")]
+pub use dnf::DnfPackageManager;
+
+// Windows exports are available with windows feature
+#[cfg(feature = "windows")]
+pub use windows::WindowsPackageManager;

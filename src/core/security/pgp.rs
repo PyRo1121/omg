@@ -27,8 +27,13 @@ impl PgpVerifier {
             crate::core::env::distro::Distro::Debian | crate::core::env::distro::Distro::Ubuntu => {
                 "/usr/share/keyrings/debian-archive-keyring.gpg"
             }
+            crate::core::env::distro::Distro::Fedora => "/etc/pki/rpm-gpg/RPM-GPG-KEY-fedora",
             crate::core::env::distro::Distro::Arch | crate::core::env::distro::Distro::Unknown => {
                 "/usr/share/pacman/keyrings/archlinux.gpg"
+            }
+            crate::core::env::distro::Distro::MacOS | crate::core::env::distro::Distro::Windows => {
+                // No default keyring for macOS/Windows
+                ""
             }
         };
 
