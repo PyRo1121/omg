@@ -294,6 +294,14 @@ Added `validate_package_names()` to all install/remove methods:
 
 ### 🐛 Bug Fixes
 
+- Final cross-platform compilation issues
+
+  - Added clippy component installation for Debian CI
+
+  - Added platform-specific binary installation (symlink on Unix, copy on Windows)
+
+  - Fixed type inference in runtime version iterator
+
 - Auth client uses window.location.origin, update CSP for auth endpoints
 - Comprehensive cross-platform compilation fixes for all targets
 
