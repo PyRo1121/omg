@@ -43,6 +43,7 @@ use which::which;
 #[derive(Error, Debug)]
 pub enum AurError {
     #[error("Package '{0}' not found on AUR")]
+    #[allow(dead_code)]
     PackageNotFound(String),
 
     #[error("PKGBUILD not found for '{package}'\n  → The AUR package may not exist or the clone failed\n  → Try: omg aur clean {package} && omg install {package}", package = .0)]
@@ -73,6 +74,7 @@ pub enum AurError {
     PackageArchiveNotFound(String),
 }
 
+use super::aur_deps::check_dependencies;
 use super::aur_index::AurIndex;
 use super::aur_metadata::{
     AurJsonPackage, get_metadata_path, read_metadata_archive, sync_aur_metadata,
@@ -565,13 +567,10 @@ impl AurClient {
                 tracing::warn!("Git clone failed for {}: {}", package, e);
                 // Provide helpful error that explains the failure
                 anyhow::anyhow!(
-                    "Failed to clone {} from AUR.\n  \
-                     → Package may not exist: https://aur.archlinux.org/packages/{}\n  \
+                    "Failed to clone {package} from AUR.\n  \
+                     → Package may not exist: https://aur.archlinux.org/packages/{package}\n  \
                      → Check your internet connection\n  \
-                     → Original error: {}",
-                    package,
-                    package,
-                    e
+                     → Original error: {e}"
                 )
             })?;
         }
@@ -1185,37 +1184,70 @@ impl AurClient {
                 Command::new("makepkg")
             };
 
-            println!(
-                "{} Checking and installing dependencies...",
-                "→".cyan().bold()
-            );
+            // Check dependencies using .SRCINFO before running makepkg
+            let dep_info = check_dependencies(pkg_dir).unwrap_or_else(|e| {
+                tracing::debug!("Failed to check dependencies: {e}");
+                // Fallback: empty info means we'll run makepkg --syncdeps
+                super::aur_deps::DependencyInfo {
+                    missing: Vec::new(),
+                    satisfied: Vec::new(),
+                    total: 0,
+                }
+            });
 
-            let dep_status = dep_cmd
-                .args(["--syncdeps", "--noconfirm", "--nobuild"])
-                .current_dir(pkg_dir)
-                .stdout(Stdio::inherit()) // Show makepkg output
-                .stderr(Stdio::inherit()) // Show errors
-                .status()
-                .await;
-
-            if let Err(e) = dep_status {
-                tracing::warn!("Failed to install dependencies: {e}");
-                println!("{} Dependency installation failed: {}", "⚠".yellow(), e);
-                println!(
-                    "{} Continuing with build - may fail if deps are missing",
-                    "→".dimmed()
-                );
-            } else {
-                // Safe unwrap: we know it's Ok since it's not Err
-                let status = dep_status.unwrap();
-                if !status.success() {
+            if dep_info.total > 0 {
+                if dep_info.missing.is_empty() {
                     println!(
-                        "{} Some dependencies may have failed to install",
-                        "⚠".yellow()
+                        "{} All {} dependencies already installed",
+                        "✓".green(),
+                        dep_info.total
                     );
-                    println!("{} Continuing with build...", "→".dimmed());
                 } else {
-                    println!("{} Dependencies ready", "✓".green());
+                    println!(
+                        "{} Installing {} missing dependencies ({} already satisfied)...",
+                        "→".cyan().bold(),
+                        dep_info.missing.len(),
+                        dep_info.satisfied.len()
+                    );
+                }
+            } else {
+                println!("{} No dependencies required", "✓".green());
+            }
+
+            // Only run makepkg --syncdeps if there are missing dependencies
+            if !dep_info.missing.is_empty() || dep_info.total == 0 {
+                println!(
+                    "{} Checking and installing dependencies...",
+                    "→".cyan().bold()
+                );
+
+                let dep_status = dep_cmd
+                    .args(["--syncdeps", "--noconfirm", "--nobuild"])
+                    .current_dir(pkg_dir)
+                    .stdout(Stdio::inherit()) // Show makepkg output
+                    .stderr(Stdio::inherit()) // Show errors
+                    .status()
+                    .await;
+
+                if let Err(e) = dep_status {
+                    tracing::warn!("Failed to install dependencies: {e}");
+                    println!("{} Dependency installation failed: {}", "⚠".yellow(), e);
+                    println!(
+                        "{} Continuing with build - may fail if deps are missing",
+                        "→".dimmed()
+                    );
+                } else {
+                    // Safe unwrap: we know it's Ok since it's not Err
+                    let status = dep_status.unwrap();
+                    if status.success() {
+                        println!("{} Dependencies ready", "✓".green());
+                    } else {
+                        println!(
+                            "{} Some dependencies may have failed to install",
+                            "⚠".yellow()
+                        );
+                        println!("{} Continuing with build...", "→".dimmed());
+                    }
                 }
             }
 

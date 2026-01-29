@@ -20,6 +20,8 @@ pub mod arch;
 #[cfg(feature = "arch")]
 mod aur;
 #[cfg(feature = "arch")]
+pub mod aur_deps;
+#[cfg(feature = "arch")]
 mod aur_index;
 #[cfg(feature = "arch")]
 pub mod aur_metadata;
