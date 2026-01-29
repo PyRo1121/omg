@@ -293,13 +293,13 @@ fn test_pgp_verification_real_packages() {
         let entry = entry.unwrap();
         let path = entry.path();
 
-        if path.extension().map_or(false, |ext| ext == "sig") {
+        if path.extension().is_some_and(|ext| ext == "sig") {
             continue;
         }
 
         if !path
             .extension()
-            .map_or(false, |ext| ext == "zst" || ext == "xz")
+            .is_some_and(|ext| ext == "zst" || ext == "xz")
         {
             continue;
         }

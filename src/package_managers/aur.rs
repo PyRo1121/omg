@@ -1140,8 +1140,30 @@ impl AurClient {
 
             let mut dep_cmd = if crate::core::is_root() {
                 let user = build_user.as_deref().unwrap_or("nobody");
+                
+                // Get the original user's home directory
+                let user_home = if let Some(ref username) = build_user {
+                    // Try to get home directory from passwd
+                    std::env::var("SUDO_HOME")
+                        .ok()
+                        .or_else(|| {
+                            // Fallback: construct from /home/<username>
+                            Some(format!("/home/{username}"))
+                        })
+                } else {
+                    None
+                };
+                
                 let mut c = Command::new("sudo");
-                c.args(["-u", user, "makepkg"]);
+                c.args(["-E", "-u", user, "makepkg"]);
+                
+                // Set HOME to original user's home directory
+                if let Some(home) = user_home {
+                    c.env("HOME", &home);
+                    // Also set XDG_CACHE_HOME to ensure cache goes to user's directory
+                    c.env("XDG_CACHE_HOME", format!("{home}/.cache"));
+                }
+                
                 c
             } else {
                 Command::new("makepkg")
@@ -1335,12 +1357,30 @@ impl AurClient {
         // makepkg refuses to run as root for security reasons
         let mut cmd = if crate::core::is_root() {
             let user = build_user.as_deref().unwrap_or("nobody");
+            
+            // Get the original user's home directory for proper path resolution
+            let user_home = if let Some(ref username) = build_user {
+                std::env::var("SUDO_HOME")
+                    .ok()
+                    .or_else(|| Some(format!("/home/{username}")))
+            } else {
+                None
+            };
+            
             tracing::debug!(
-                "Running makepkg as user '{}' (de-escalated from root)",
-                user
+                "Running makepkg as user '{}' (de-escalated from root), HOME={:?}",
+                user,
+                user_home
             );
             let mut c = Command::new("sudo");
-            c.args(["-u", user, "makepkg"]);
+            c.args(["-E", "-u", user, "makepkg"]);
+            
+            // Set HOME to original user's home directory so paths resolve correctly
+            if let Some(home) = user_home {
+                c.env("HOME", &home);
+                c.env("XDG_CACHE_HOME", format!("{home}/.cache"));
+            }
+            
             c
         } else {
             Command::new("makepkg")
