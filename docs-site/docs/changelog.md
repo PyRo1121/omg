@@ -293,6 +293,36 @@ Added `validate_package_names()` to all install/remove methods:
 
 ### 🐛 Bug Fixes
 
+- Comprehensive cross-platform compilation fixes for all targets
+
+Applied systematic fixes for Windows, Debian, Fedora, Arch, and macOS:
+
+**Windows Compilation Fixes:**
+
+  - commands.rs: Added #[cfg(unix)] guards to metrics() and daemon() functions
+
+  - tui/app.rs: Guarded rustix::fs usage with Unix-only cfg blocks
+
+  - privilege.rs: Guarded rustix::process usage with platform-specific cfg
+
+**Debian Compilation Fix:**
+
+  - apt.rs: Complete refactor from manual BoxFuture to async_trait pattern
+
+  - Added #[async_trait] to impl block to match trait definition
+
+  - Converted all 10 methods from fn->BoxFuture to async fn
+
+  - Removed unnecessary .boxed() calls and BoxFuture import
+
+  - Now matches arch.rs implementation pattern
+
+**rustix Guards:**
+
+  - All Unix-specific rustix crate usage now properly feature-gated
+
+  - Windows gets fallback implementations (return false for privilege checks)
+
 - Add platform-specific feature gates for cross-compilation
 
 Platform-specific code properly gated for Windows/Unix compatibility:
