@@ -13,6 +13,16 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ## [Unreleased]
 ### ✨ New Features
 
+- Use git-cliff for release notes generation
+
+  - Generate categorized release notes with conventional commits
+
+  - Graceful fallback to git log if git-cliff not installed
+
+  - Warn users to install git-cliff for better release notes
+
+  - Add generate_fallback_notes() for backward compatibility
+
 - Implement yay-style privilege dropping for AUR builds
 
   - Drop to SUDO_USER/DOAS_USER or 'nobody' when running as root
@@ -23,7 +33,49 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 
   - Matches yay's privilege handling pattern
 
+### 🐛 Bug Fixes
+
+- Add cargo bin to PATH in update-changelog.sh
+
+git-cliff is installed in ~/.cargo/bin but not in default PATH,
+
+causing the script to fail with 'git-cliff not installed' error.
+
+This matches the fix already in release_and_publish.sh line 15.
+
+- Resolve git push race condition and website deployment failures
+
+  - Fetch and rebase when GitHub Actions changelog bot creates commits
+
+  - Build site before deploying (was missing vite build step)
+
+  - Show deployment errors instead of suppressing them
+
+  - Validate dist/ directory exists after build
+
+Root Causes Fixed:
+
+1. Git push race: Script pushes → GitHub Actions creates changelog commit
+
+→ Script's tag push fails with 'fetch first'
+
+2. Website deployment: Never ran 'vite build', errors suppressed with
+
+'2>&1 || log_warn', no validation of dist/ directory
+
+Technical Changes:
+
+  - publish_release(): Added fetch/rebase logic for race condition
+
+  - sync_and_deploy_site(): Added vite build step, error visibility,
+
+and dist/ validation
+
 ### 📚 Documentation
+
+- Update changelog [skip ci]
+
+Auto-generated from git history with git-cliff.
 
 - Update changelog [skip ci]
 
