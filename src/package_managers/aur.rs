@@ -1185,25 +1185,34 @@ impl AurClient {
                 Command::new("makepkg")
             };
 
-            println!("{} Checking and installing dependencies...", "→".cyan().bold());
+            println!(
+                "{} Checking and installing dependencies...",
+                "→".cyan().bold()
+            );
 
             let dep_status = dep_cmd
                 .args(["--syncdeps", "--noconfirm", "--nobuild"])
                 .current_dir(pkg_dir)
-                .stdout(Stdio::inherit())  // Show makepkg output
-                .stderr(Stdio::inherit())  // Show errors
+                .stdout(Stdio::inherit()) // Show makepkg output
+                .stderr(Stdio::inherit()) // Show errors
                 .status()
                 .await;
 
             if let Err(e) = dep_status {
                 tracing::warn!("Failed to install dependencies: {e}");
                 println!("{} Dependency installation failed: {}", "⚠".yellow(), e);
-                println!("{} Continuing with build - may fail if deps are missing", "→".dimmed());
+                println!(
+                    "{} Continuing with build - may fail if deps are missing",
+                    "→".dimmed()
+                );
             } else {
                 // Safe unwrap: we know it's Ok since it's not Err
                 let status = dep_status.unwrap();
                 if !status.success() {
-                    println!("{} Some dependencies may have failed to install", "⚠".yellow());
+                    println!(
+                        "{} Some dependencies may have failed to install",
+                        "⚠".yellow()
+                    );
                     println!("{} Continuing with build...", "→".dimmed());
                 } else {
                     println!("{} Dependencies ready", "✓".green());
