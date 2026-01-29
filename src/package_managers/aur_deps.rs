@@ -35,23 +35,23 @@ pub fn check_dependencies(pkg_dir: &Path) -> Result<DependencyInfo> {
 
     let srcinfo = SourceInfoV1::from_string(&content).context("Failed to parse .SRCINFO")?;
 
-    // Get dependencies for current architecture
-    let base = srcinfo.base();
+    // Get base package info from srcinfo
+    let base = &srcinfo.base;
     let mut all_deps = Vec::new();
 
-    // Collect depends
-    for dep in base.depends() {
-        all_deps.push(dep.pkgname().to_string());
+    // Collect runtime dependencies (RelationOrSoname type - use to_string())
+    for dep in &base.dependencies {
+        all_deps.push(dep.to_string());
     }
 
-    // Collect makedepends
-    for dep in base.makedepends() {
-        all_deps.push(dep.pkgname().to_string());
+    // Collect make dependencies (PackageRelation type - use name field)
+    for dep in &base.make_dependencies {
+        all_deps.push(dep.name.to_string());
     }
 
-    // Collect checkdepends
-    for dep in base.checkdepends() {
-        all_deps.push(dep.pkgname().to_string());
+    // Collect check dependencies (PackageRelation type - use name field)
+    for dep in &base.check_dependencies {
+        all_deps.push(dep.name.to_string());
     }
 
     // Remove duplicates
@@ -68,7 +68,7 @@ pub fn check_dependencies(pkg_dir: &Path) -> Result<DependencyInfo> {
 
         for dep in &all_deps {
             // Extract package name (strip version constraints)
-            let pkg_name = dep.split(['>', '<', '=']).next().unwrap_or(dep);
+            let pkg_name: &str = dep.split(['>', '<', '=']).next().unwrap_or(dep);
 
             if localdb.pkg(pkg_name).is_ok() {
                 satisfied.push(dep.clone());
