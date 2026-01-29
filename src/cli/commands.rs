@@ -52,9 +52,14 @@ pub async fn complete(_shell: &str, current: &str, last: &str, full: Option<&str
     let in_tool = full_tokens.contains(&"tool");
     let in_env = full_tokens.contains(&"env");
 
+    // Fast path: empty current means show top suggestions only (limit 50 for speed)
+    let limit = if current.is_empty() { 50 } else { 200 };
+
     let suggestions = match last {
         "install" | "i" | "remove" | "r" | "info" => {
-            complete_package_names(&engine, current, last, in_tool).await?
+            let mut results = complete_package_names(&engine, current, last, in_tool).await?;
+            results.truncate(limit);
+            results
         }
         "use" | "ls" | "list" | "which" => complete_runtime_names(&engine, current),
         "tool" => complete_tool_commands(&engine, current),
@@ -62,7 +67,11 @@ pub async fn complete(_shell: &str, current: &str, last: &str, full: Option<&str
         "run" => complete_task_names(&engine, current),
         "new" => complete_templates(&engine, current),
         "completions" => complete_shells(&engine, current),
-        _ => complete_fallback(&engine, current, last, in_tool, in_env)?,
+        _ => {
+            let mut results = complete_fallback(&engine, current, last, in_tool, in_env)?;
+            results.truncate(limit);
+            results
+        }
     };
 
     output_suggestions(&engine, current, suggestions);

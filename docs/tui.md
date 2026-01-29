@@ -42,7 +42,7 @@ omg dash
 │ System Status                   │ Recent Activity                       │
 │                                 │                                       │
 │ ┌─────────────────────────────┐ │ ┌───────────────────────────────────┐ │
-│ │ Packages                    │ │ │ [13:45:30] Install ✓             │ │
+│ │ Packages                    │ │ │ [13:45:30] Install ✓              │ │
 │ │   Total:      1,847         │ │ │   firefox, neovim                 │ │
 │ │   Explicit:   423           │ │ │ [13:30:15] Update ✓               │ │
 │ │   Orphans:    12            │ │ │   linux, mesa, nvidia-dkms        │ │

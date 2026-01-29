@@ -523,11 +523,24 @@ impl AurClient {
     pub async fn install(&self, package: &str) -> Result<()> {
         crate::core::security::validate_package_name(package)?;
 
+        // Beautiful header matching the new install.rs style
+        use owo_colors::OwoColorize;
+        println!();
         println!(
-            "{} Installing AUR package: {}\n",
-            "OMG".cyan().bold(),
-            package.yellow()
+            "  {}",
+            "╭─────────────────────────────────────────╮".magenta()
         );
+        println!(
+            "  {} {} {}",
+            "│".magenta(),
+            format!("  Building {package}  ").bold().magenta(),
+            "│".magenta()
+        );
+        println!(
+            "  {}",
+            "╰─────────────────────────────────────────╯".magenta()
+        );
+        println!();
 
         if self.info(package).await?.is_none() {
             return Err(AurError::PackageNotFound(package.to_string()).into());
