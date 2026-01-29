@@ -11,6 +11,162 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ---
 
 ## [Unreleased]
+### ✨ New Features
+
+- Phase 4 cross-platform expansion with Fedora, macOS, and Windows backends
+
+This release adds pure Rust package manager backends for three major platforms,
+
+along with comprehensive CI/CD hardening and security enhancements.
+
+## Cross-Platform Package Manager Backends
+
+### Fedora/RHEL DNF Backend (`src/package_managers/dnf.rs`)
+
+  - Pure Rust implementation with direct RPM database access
+
+  - Parses `/var/lib/rpm/rpmdb.sqlite` for installed packages
+
+  - Repository metadata parsing from `/etc/yum.repos.d/*.repo`
+
+  - Feature-gated: `--features fedora`
+
+  - ~830 lines of idiomatic Rust 1.92 code
+
+### macOS Homebrew Backend (`src/package_managers/homebrew.rs`)
+
+  - Direct Cellar filesystem access (no `brew` CLI wrapper)
+
+  - ARM64 (`/opt/homebrew`) and Intel (`/usr/local`) support
+
+  - Formula + Cask support via Homebrew JSON API
+
+  - Binary caching with `rkyv` for zero-copy deserialization
+
+  - Fuzzy search using `nucleo-matcher` Pattern API
+
+  - Feature-gated: `--features macos` (auto-enabled on macOS)
+
+  - ~755 lines, targets <50ms search (vs brew's 2s)
+
+### Windows Scoop Backend (`src/package_managers/windows.rs`)
+
+  - Scoop bucket manifest parsing (JSON)
+
+  - Windows registry enumeration for installed software
+
+  - `OnceCell` initialization for race-condition safety
+
+  - Binary caching with `bitcode` for fast startup
+
+  - Feature-gated: `--features windows`
+
+  - ~740 lines of cross-platform safe code
+
+## Security Enhancements
+
+### Critical: Command Injection Prevention (C-01)
+
+Added `validate_package_names()` to all install/remove methods:
+
+  - DNF backend: lines 623, 638
+
+  - Homebrew backend: lines 580, 593
+
+  - Windows backend: lines 495, 520
+
+### Supply Chain Security
+
+  - Pinned git dependencies in `Cargo.toml` (alpm-types)
+
+  - Added `allow-git` to `deny.toml` for cargo-deny compliance
+
+### Removed Insecure Defaults
+
+  - DNF: Removed `/tmp` fallback, now fails explicitly if `$HOME` unset
+
+  - Added `#[must_use]` to constructors per Rust API guidelines
+
+## CI/CD Hardening
+
+### New Workflows
+
+  - `.github/workflows/codeql.yml`: CodeQL SAST for Rust security analysis
+
+  - `.github/workflows/secrets.yml`: Gitleaks + TruffleHog secret scanning
+
+  - `.github/workflows/mutation.yml`: cargo-mutants mutation testing
+
+### Pre-commit Hooks (`.pre-commit-config.yaml`)
+
+  - cargo fmt, cargo check, cargo clippy
+
+  - Conventional commits validation (commitizen)
+
+  - Secret scanning (gitleaks)
+
+  - GitHub workflow validation
+
+## CLI Enhancements (Phases 1-3)
+
+### New Commands
+
+  - `omg config validate`: Validate policy.toml syntax
+
+  - `omg daemon status`: Show daemon uptime/memory/requests
+
+  - `omg generate-man`: Generate man pages from clap
+
+  - `omg hooks install`: Install git hooks (pre-commit, post-checkout)
+
+  - `omg workspace init/add/run/diff`: Monorepo orchestration
+
+  - `omg doctor --network`: Test mirror connectivity
+
+  - `omg audit licenses`: License compliance scanning
+
+### Enhanced Security Auditing
+
+  - EOL/deprecation warnings with endoflife.date API
+
+  - Vulnerability auto-remediation suggestions
+
+  - Enhanced audit exports (SOC2/ISO27001 formats)
+
+## Rust 1.92 / Edition 2024 Compliance
+
+  - `let...else` patterns for early returns
+
+  - `if let && let` chains for collapsed conditionals
+
+  - `LazyLock` for static initialization
+
+  - Inline format string arguments
+
+  - Proper doc comments with backtick code formatting
+
+  - All clippy lints resolved with `-D warnings`
+
+## Test Results
+
+  - 280 tests passing with all features enabled
+
+  - All feature combinations compile cleanly
+
+  - Example file (`examples/homebrew_usage.rs`) updated
+
+## Files Changed
+
+  - 31 files modified
+
+  - ~7,100 lines added
+
+  - 3 new package manager backends
+
+  - 4 new CLI modules
+
+  - 4 new CI/CD workflows
+
 ## [0.1.199] - 2026-01-29
 ### ⚡ Performance
 
