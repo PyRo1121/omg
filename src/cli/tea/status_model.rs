@@ -22,7 +22,7 @@ pub struct StatusData {
 }
 
 /// Status state machine
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StatusState {
     Idle,
     Loading,

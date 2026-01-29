@@ -2,6 +2,9 @@
 //!
 //! Handles command-line argument parsing and command definitions.
 
+// trait_variant macro generates Send bounds correctly but clippy can't see through the expansion
+#![allow(clippy::future_not_send)]
+
 use anyhow::Result;
 
 mod args;
@@ -65,6 +68,7 @@ pub struct CliContext {
 /// - `CommandRunner`: Send-bounded variant for multi-threaded executors (default)
 /// - `LocalCommandRunner`: Non-Send variant for single-threaded executors
 #[trait_variant::make(CommandRunner: Send)]
+#[allow(clippy::future_not_send)] // False positive: trait_variant macro generates Send bounds
 pub trait LocalCommandRunner {
     /// Execute the command
     async fn execute(&self, ctx: &CliContext) -> Result<()>;

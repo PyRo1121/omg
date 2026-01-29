@@ -338,7 +338,7 @@ fn parse_desc_content(content: &str, repo: &str) -> SyncDbPackage {
         Err(panic_info) => {
             tracing::warn!(
                 repo = repo,
-                error = panic_message(&panic_info),
+                error = panic_message(&*panic_info),
                 "Corrupted package desc in repo (V2 parse panic), trying V1 fallback"
             );
         }
@@ -355,7 +355,7 @@ fn parse_desc_content(content: &str, repo: &str) -> SyncDbPackage {
         Err(panic_info) => {
             tracing::warn!(
                 repo = repo,
-                error = panic_message(&panic_info),
+                error = panic_message(&*panic_info),
                 "Corrupted package desc in repo (V1 parse panic), skipping package"
             );
         }

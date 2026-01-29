@@ -13,7 +13,7 @@ use std::fmt::Write;
 use crate::package_managers::{AurClient, search_detailed};
 
 /// Source of package information
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InfoSource {
     Official,
     Aur,
@@ -47,7 +47,7 @@ pub struct PackageInfo {
 }
 
 /// Info state machine
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InfoState {
     Idle,
     Loading,
@@ -122,7 +122,7 @@ impl Model for InfoModel {
                 self.state = InfoState::Loading;
 
                 Cmd::Exec(Box::new(move || {
-                    let pkg_name = pkg.clone();
+                    let pkg_name = pkg;
 
                     // Logic mirrors src/cli/packages/info.rs
                     if tokio::runtime::Handle::try_current().is_ok() {

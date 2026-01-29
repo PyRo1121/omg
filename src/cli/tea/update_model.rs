@@ -9,7 +9,7 @@ use crate::package_managers::get_package_manager;
 use semver::Version;
 
 /// Update state machine
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UpdateState {
     Idle,
     Checking,
@@ -32,7 +32,7 @@ pub struct UpdatePackage {
 }
 
 /// Type of update (for styling)
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UpdateType {
     Major,
     Minor,

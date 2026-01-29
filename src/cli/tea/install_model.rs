@@ -11,7 +11,7 @@ use crate::package_managers::get_package_manager;
 use owo_colors::OwoColorize;
 
 /// Installation state machine
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InstallState {
     Idle,
     Resolving,

@@ -10,7 +10,7 @@ use owo_colors::OwoColorize;
 use std::fmt::Write;
 
 /// Removal state machine
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RemoveState {
     Idle,
     Confirming,
