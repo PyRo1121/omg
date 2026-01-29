@@ -84,6 +84,12 @@ check_prerequisites() {
     die "GitHub CLI not authenticated. Run: gh auth login"
   fi
   
+  if ! command -v git-cliff >/dev/null 2>&1; then
+    log_warn "git-cliff not installed (recommended for better release notes)"
+    log_info "Install with: cargo install git-cliff"
+    log_info "Will fallback to basic git log for now"
+  fi
+  
   # Check git status
   if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
     log_warn "Working directory has uncommitted changes"
@@ -349,6 +355,45 @@ generate_release_notes() {
   local version="$1"
   local last_tag
   last_tag=$(last_release_tag)
+  
+  if command -v git-cliff >/dev/null 2>&1; then
+    if [[ -n "$last_tag" ]]; then
+      git-cliff --strip all --unreleased --tag "v${version}" "${last_tag}..HEAD" 2>/dev/null || {
+        log_warn "git-cliff failed, falling back to git log"
+        generate_fallback_notes "$version" "$last_tag"
+        return
+      }
+    else
+      git-cliff --strip all --unreleased --tag "v${version}" 2>/dev/null || {
+        log_warn "git-cliff failed, falling back to git log"
+        generate_fallback_notes "$version" "$last_tag"
+        return
+      }
+    fi
+    
+    echo ""
+    echo "### Installation"
+    echo ""
+    echo '```bash'
+    echo "curl -fsSL https://github.com/PyRo1121/omg/releases/download/v${version}/omg-v${version}-x86_64-unknown-linux-gnu.tar.gz | tar xz"
+    echo "sudo mv omg /usr/local/bin/"
+    echo '```'
+    echo ""
+    echo "### Checksums"
+    echo ""
+    echo "Verify your download:"
+    echo '```bash'
+    echo "sha256sum -c omg-v${version}-*.sha256"
+    echo '```'
+  else
+    log_warn "git-cliff not installed, using basic git log (install: cargo install git-cliff)"
+    generate_fallback_notes "$version" "$last_tag"
+  fi
+}
+
+generate_fallback_notes() {
+  local version="$1"
+  local last_tag="$2"
   
   echo "## OMG v${version}"
   echo ""
