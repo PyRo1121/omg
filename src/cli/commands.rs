@@ -330,20 +330,50 @@ pub fn status_sync() -> Result<()> {
             {
                 (0, 0, 0, 0, 0, None)
             }
-        } else if let Ok(mut client) = crate::core::client::DaemonClient::connect_sync() {
-            // Fixed ID for zero-overhead
-            if let Ok(crate::daemon::protocol::ResponseResult::Status(res)) =
-                client.call_sync(&crate::daemon::protocol::Request::Status { id: 0 })
+        } else {
+            // Try daemon (Unix only), then fallback to local status
+            #[cfg(unix)]
             {
-                (
-                    res.total_packages,
-                    res.explicit_packages,
-                    res.orphan_packages,
-                    res.updates_available,
-                    res.security_vulnerabilities,
-                    Some(res.runtime_versions),
-                )
-            } else {
+                if let Ok(mut client) = crate::core::client::DaemonClient::connect_sync() {
+                    // Fixed ID for zero-overhead
+                    if let Ok(crate::daemon::protocol::ResponseResult::Status(res)) =
+                        client.call_sync(&crate::daemon::protocol::Request::Status { id: 0 })
+                    {
+                        (
+                            res.total_packages,
+                            res.explicit_packages,
+                            res.orphan_packages,
+                            res.updates_available,
+                            res.security_vulnerabilities,
+                            Some(res.runtime_versions),
+                        )
+                    } else {
+                        #[cfg(feature = "arch")]
+                        {
+                            let s = get_system_status().unwrap_or((0, 0, 0, 0));
+                            (s.0, s.1, s.2, s.3, 0, None)
+                        }
+                        #[cfg(not(feature = "arch"))]
+                        {
+                            (0, 0, 0, 0, 0, None)
+                        }
+                    }
+                } else {
+                    // Fallback to local optimized ALPM query
+                    #[cfg(feature = "arch")]
+                    {
+                        let s = get_system_status().unwrap_or((0, 0, 0, 0));
+                        (s.0, s.1, s.2, s.3, 0, None)
+                    }
+                    #[cfg(not(feature = "arch"))]
+                    {
+                        (0, 0, 0, 0, 0, None)
+                    }
+                }
+            }
+            #[cfg(not(unix))]
+            {
+                // Windows fallback
                 #[cfg(feature = "arch")]
                 {
                     let s = get_system_status().unwrap_or((0, 0, 0, 0));
@@ -353,17 +383,6 @@ pub fn status_sync() -> Result<()> {
                 {
                     (0, 0, 0, 0, 0, None)
                 }
-            }
-        } else {
-            // Fallback to local optimized ALPM query
-            #[cfg(feature = "arch")]
-            {
-                let s = get_system_status().unwrap_or((0, 0, 0, 0));
-                (s.0, s.1, s.2, s.3, 0, None)
-            }
-            #[cfg(not(feature = "arch"))]
-            {
-                (0, 0, 0, 0, 0, None)
             }
         };
 
@@ -404,14 +423,17 @@ pub fn status_sync() -> Result<()> {
         content.push(format!("Security:  {}", "No known issues".green()));
     }
 
-    // Daemon
-    let socket = crate::core::client::default_socket_path();
-    let daemon_status = if socket.exists() {
-        "Running".green()
-    } else {
-        "Offline".gray()
-    };
-    content.push(format!("Daemon:    {daemon_status}"));
+    // Daemon status
+    #[cfg(unix)]
+    {
+        let socket = crate::core::client::default_socket_path();
+        let daemon_status = if socket.exists() {
+            "Running".green()
+        } else {
+            "Offline".gray()
+        };
+        content.push(format!("Daemon:    {daemon_status}"));
+    }
 
     ui::print_card("Overview", content);
 

@@ -116,14 +116,17 @@ pub async fn run(force: bool, version: Option<String>) -> Result<()> {
 
         match fs::rename(&new_binary, &current_exe) {
             Ok(()) => {
-                // Fix permissions
-                use std::os::unix::fs::PermissionsExt;
-                let mut perms = fs::metadata(&current_exe)
-                    .context("Failed to read updated binary metadata")?
-                    .permissions();
-                perms.set_mode(0o755);
-                fs::set_permissions(&current_exe, perms)
-                    .context("Failed to set updated binary permissions")?;
+                // Fix permissions on Unix
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let mut perms = fs::metadata(&current_exe)
+                        .context("Failed to read updated binary metadata")?
+                        .permissions();
+                    perms.set_mode(0o755);
+                    fs::set_permissions(&current_exe, perms)
+                        .context("Failed to set updated binary permissions")?;
+                }
 
                 // Cleanup backup
                 let _ = fs::remove_file(backup_path);
