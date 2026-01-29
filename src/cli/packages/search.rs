@@ -202,54 +202,54 @@ fn search_sync_official_only(query: &str) -> Result<bool> {
 
     #[cfg(unix)]
     {
-    let Ok(mut client) = PooledSyncClient::acquire() else {
-        return Ok(false); // Daemon not running; caller falls back to async
-    };
-
-    let Ok(res) = client.search(query, Some(50)) else {
-        return Ok(false);
-    };
-
-    if res.packages.is_empty() {
-        use crate::cli::components::Components;
-        use crate::cli::packages::execute_cmd;
-        execute_cmd(Components::no_results(query));
-        return Ok(true);
-    }
-
-    let mut stdout = std::io::BufWriter::new(std::io::stdout());
-    writeln!(stdout, "\n{}", style::header("Search Results"))?;
-
-    for pkg in res.packages.iter().take(50) {
-        let source_style = if pkg.source == "AUR" {
-            style::warning(&pkg.source)
-        } else {
-            style::info(&pkg.source)
+        let Ok(mut client) = PooledSyncClient::acquire() else {
+            return Ok(false); // Daemon not running; caller falls back to async
         };
-        writeln!(
-            stdout,
-            "  {} {} ({}) - {}",
-            style::package(&pkg.name),
-            style::version(&pkg.version),
-            source_style,
-            style::dim(&crate::cli::packages::common::truncate(
-                &pkg.description,
-                50
-            ))
-        )?;
-    }
 
-    if res.total > 50 {
-        writeln!(
-            stdout,
-            "  {}",
-            style::dim(&format!("(+{} more packages...)", res.total - 50))
-        )?;
-    }
+        let Ok(res) = client.search(query, Some(50)) else {
+            return Ok(false);
+        };
 
-    writeln!(stdout)?;
-    stdout.flush()?;
-    Ok(true)
+        if res.packages.is_empty() {
+            use crate::cli::components::Components;
+            use crate::cli::packages::execute_cmd;
+            execute_cmd(Components::no_results(query));
+            return Ok(true);
+        }
+
+        let mut stdout = std::io::BufWriter::new(std::io::stdout());
+        writeln!(stdout, "\n{}", style::header("Search Results"))?;
+
+        for pkg in res.packages.iter().take(50) {
+            let source_style = if pkg.source == "AUR" {
+                style::warning(&pkg.source)
+            } else {
+                style::info(&pkg.source)
+            };
+            writeln!(
+                stdout,
+                "  {} {} ({}) - {}",
+                style::package(&pkg.name),
+                style::version(&pkg.version),
+                source_style,
+                style::dim(&crate::cli::packages::common::truncate(
+                    &pkg.description,
+                    50
+                ))
+            )?;
+        }
+
+        if res.total > 50 {
+            writeln!(
+                stdout,
+                "  {}",
+                style::dim(&format!("(+{} more packages...)", res.total - 50))
+            )?;
+        }
+
+        writeln!(stdout)?;
+        stdout.flush()?;
+        Ok(true)
     }
 }
 
