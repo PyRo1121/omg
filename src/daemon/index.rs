@@ -13,10 +13,12 @@ use crate::daemon::protocol::{DetailedPackageInfo, PackageInfo};
 #[derive(Default)]
 struct StringPool {
     pool: Vec<u8>,
+    #[allow(dead_code)] // Infrastructure field for string interning optimization
     offsets: AHashMap<String, u64>,
 }
 
 /// Pack a 32-bit offset and 32-bit length into a single u64 handle.
+#[allow(dead_code)] // Infrastructure function for string interning optimization
 const fn pack(offset: u32, len: u32) -> u64 {
     (offset as u64) | ((len as u64) << 32)
 }
@@ -27,6 +29,7 @@ const fn unpack(handle: u64) -> (u32, u32) {
 }
 
 impl StringPool {
+    #[allow(dead_code)] // Infrastructure method for string interning optimization
     fn intern(&mut self, s: &str) -> u64 {
         if let Some(&handle) = self.offsets.get(s) {
             return handle;

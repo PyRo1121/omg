@@ -1,6 +1,6 @@
 //! Performance tests for Phase 3 - Measure critical operations
 //!
-//! Run with: cargo test --release --test performance_tests --features arch -- --nocapture
+//! Run with: `cargo test --release --test performance_tests --features arch -- --nocapture`
 
 use std::time::Instant;
 
@@ -8,6 +8,7 @@ use std::time::Instant;
 use omg_lib::package_managers;
 
 /// Helper to measure operation time
+#[allow(dead_code)] // Used only in feature-gated tests
 fn measure<F, T>(name: &str, f: F) -> T
 where
     F: FnOnce() -> T,

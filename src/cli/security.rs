@@ -721,18 +721,17 @@ pub fn scan_licenses(
 
         for (name, license, _) in &filtered_packages {
             // Check against allowed licenses (if policy specifies them)
-            if !policy.allowed_licenses.is_empty() {
-                let is_allowed = policy
+            if !policy.allowed_licenses.is_empty()
+                && policy
                     .allowed_licenses
                     .iter()
-                    .any(|al| license.to_lowercase().contains(&al.to_lowercase()));
-                if !is_allowed {
-                    violations.push((
-                        name.clone(),
-                        license.clone(),
-                        "Not in allowed list".to_string(),
-                    ));
-                }
+                    .all(|al| !license.to_lowercase().contains(&al.to_lowercase()))
+            {
+                violations.push((
+                    name.clone(),
+                    license.clone(),
+                    "Not in allowed list".to_string(),
+                ));
             }
 
             // Check for AGPL (commonly restricted in commercial use)
@@ -745,7 +744,12 @@ pub fn scan_licenses(
             }
         }
 
-        if !violations.is_empty() {
+        if violations.is_empty() {
+            println!(
+                "  {} All packages comply with license policy\n",
+                style::success("✓")
+            );
+        } else {
             println!("  {} License Policy Violations:\n", style::warning("⚠"));
             for (name, license, reason) in &violations {
                 println!(
@@ -757,11 +761,6 @@ pub fn scan_licenses(
                 );
             }
             println!();
-        } else {
-            println!(
-                "  {} All packages comply with license policy\n",
-                style::success("✓")
-            );
         }
     }
 
@@ -789,28 +788,25 @@ pub fn scan_licenses(
                 let mut wtr = csv::Writer::from_path(&path)?;
                 wtr.write_record(["Package", "Version", "License", "Category"])?;
                 for (name, license, version) in &filtered_packages {
-                    wtr.write_record(&[
-                        name,
+                    let category_str = format!("{:?}", LicenseCategory::from_license(license));
+                    wtr.write_record([
+                        name.as_str(),
                         version,
                         license,
-                        &format!("{:?}", LicenseCategory::from_license(license)),
+                        &category_str,
                     ])?;
                 }
                 wtr.flush()?;
             }
             _ => {
                 // Table format (default) - just write as text
+                use std::fmt::Write as _;
                 let mut content = String::from("Package\tVersion\tLicense\tCategory\n");
                 for (name, license, version) in &filtered_packages {
-                    content.push_str(&format!(
-                        "{}\t{}\t{}\t{:?}\n",
-                        name,
-                        version,
-                        license,
-                        LicenseCategory::from_license(license)
-                    ));
+                    let category_str = format!("{:?}", LicenseCategory::from_license(license));
+                    let _ = writeln!(content, "{name}\t{version}\t{license}\t{category_str}");
                 }
-                std::fs::write(&path, content)?;
+                std::fs::write(&path, &content)?;
             }
         }
 
@@ -881,13 +877,14 @@ pub async fn fix_vulnerabilities(
     let min_sev = match min_severity.to_lowercase().as_str() {
         "critical" => 9.0,
         "high" => 7.0,
-        "medium" => 4.0,
         "low" => 0.0,
-        _ => 4.0, // Default to medium
+        _ => 4.0, // Default to medium or unknown
     };
 
     // Find packages with fixable vulnerabilities
+    #[allow(unused_mut)] // Mutated only inside feature-gated block
     let mut to_upgrade: Vec<String> = Vec::new();
+    #[allow(unused_mut)] // Mutated only inside feature-gated block
     let mut unfixable: Vec<(String, String)> = Vec::new();
 
     for (pkg, vulns) in &scan_result.vulnerabilities {
@@ -1040,23 +1037,24 @@ pub async fn export_compliance(
             }
 
             // 2. Export vulnerability scan
-            if let Ok(mut client) = DaemonClient::connect().await {
-                if let Ok(scan) = client.security_audit().await {
-                    let json = serde_json::to_string_pretty(&scan)?;
-                    let scan_path = output_dir.join(format!("vulnerability-scan-{timestamp}.json"));
-                    std::fs::write(&scan_path, json)?;
-                    println!(
-                        "  {} Vulnerability scan: {}",
-                        style::success("✓"),
-                        scan_path.display()
-                    );
-                }
+            if let Ok(mut client) = DaemonClient::connect().await
+                && let Ok(scan) = client.security_audit().await
+            {
+                let json = serde_json::to_string_pretty(&scan)?;
+                let scan_path = output_dir.join(format!("vulnerability-scan-{timestamp}.json"));
+                std::fs::write(&scan_path, json)?;
+                println!(
+                    "  {} Vulnerability scan: {}",
+                    style::success("✓"),
+                    scan_path.display()
+                );
             }
 
             // 3. Generate SBOM
             let generator = SbomGenerator::new().with_vulnerabilities(true);
             if let Ok(sbom) = generator.generate_system_sbom().await {
-                let sbom_path = output_dir.join(format!("sbom-{timestamp}.json"));
+                let sbom_filename = format!("sbom-{timestamp}.json");
+                let sbom_path = output_dir.join(sbom_filename);
                 generator.export_json(&sbom, &sbom_path)?;
                 println!("  {} SBOM: {}", style::success("✓"), sbom_path.display());
             }
@@ -1167,12 +1165,12 @@ pub fn check_eol(_ctx: &CliContext) -> Result<()> {
                         } else {
                             // Check if within 6 months of EOL
                             let six_months = jiff::Span::new().months(6);
-                            if let Ok(warning_ts) = now.checked_add(six_months) {
-                                if warning_ts > eol_timestamp {
-                                    status = "Ending Soon";
-                                    is_warning = true;
-                                    issues += 1;
-                                }
+                            if let Ok(warning_ts) = now.checked_add(six_months)
+                                && warning_ts > eol_timestamp
+                            {
+                                status = "Ending Soon";
+                                is_warning = true;
+                                issues += 1;
                             }
                         }
                     }

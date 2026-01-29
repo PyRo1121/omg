@@ -1,11 +1,11 @@
 //! Distro detection helpers
 //!
 //! Supports detection of:
-//! - Arch Linux and derivatives (Manjaro, EndeavourOS, etc.)
-//! - Debian and derivatives (Ubuntu, Linux Mint, Pop!_OS, etc.)
-//! - Fedora and derivatives (RHEL, CentOS, Rocky, Alma, etc.)
-//! - macOS (via uname)
-//! - Windows (via cfg)
+//! - Arch Linux and derivatives (Manjaro, `EndeavourOS`, etc.)
+//! - Debian and derivatives (Ubuntu, Linux Mint, `Pop!_OS`, etc.)
+//! - Fedora and derivatives (RHEL, `CentOS`, Rocky, Alma, etc.)
+//! - macOS (via `uname`)
+//! - Windows (via `cfg`)
 
 use std::collections::HashMap;
 use std::fs;
@@ -14,17 +14,17 @@ use std::sync::OnceLock;
 /// Supported operating systems and distributions
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Distro {
-    /// Arch Linux and derivatives (pacman/ALPM)
+    /// Arch Linux and derivatives (`pacman`/ALPM)
     Arch,
-    /// Debian GNU/Linux
+    /// Debian `GNU/Linux`
     Debian,
     /// Ubuntu
     Ubuntu,
-    /// Fedora, RHEL, CentOS, Rocky, Alma (DNF/RPM)
+    /// Fedora, RHEL, `CentOS`, Rocky, Alma (`DNF`/RPM)
     Fedora,
-    /// macOS (Homebrew)
+    /// macOS (`Homebrew`)
     MacOS,
-    /// Windows (Scoop/Winget)
+    /// Windows (`Scoop`/`Winget`)
     Windows,
     /// Unknown or unsupported
     Unknown,
@@ -141,7 +141,7 @@ pub fn is_debian_like() -> bool {
     matches!(detect_distro(), Distro::Debian | Distro::Ubuntu)
 }
 
-/// Returns true if running on Fedora or RHEL-family (CentOS, Rocky, Alma)
+/// Returns true if running on Fedora or RHEL-family (`CentOS`, Rocky, Alma)
 pub fn is_fedora_like() -> bool {
     matches!(detect_distro(), Distro::Fedora)
 }

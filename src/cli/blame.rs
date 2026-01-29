@@ -2,7 +2,6 @@
 
 use anyhow::Result;
 
-use crate::cli::style;
 use crate::cli::tea::Cmd;
 use crate::core::history::{HistoryManager, TransactionType};
 
@@ -18,12 +17,12 @@ pub fn run(package: &str) -> Result<()> {
 }
 
 fn build_blame_output(package: &str) -> Result<Cmd<()>> {
-    use crate::cli::components::Components;
 
     // First check if package is installed
     let (is_installed, version, install_reason) = get_package_info(package)?;
 
     if !is_installed {
+        use crate::cli::components::Components;
         return Ok(Components::error_with_suggestion(
             format!("Package '{package}' is not installed"),
             "Try 'omg search' to find available packages",
@@ -34,6 +33,7 @@ fn build_blame_output(package: &str) -> Result<Cmd<()>> {
 
     // Package info
     if let Some(ver) = &version {
+        use crate::cli::components::Components;
         commands.push(Components::kv_list(
             Some("Package Information"),
             vec![
@@ -43,6 +43,7 @@ fn build_blame_output(package: &str) -> Result<Cmd<()>> {
             ],
         ));
     } else {
+        use crate::cli::components::Components;
         commands.push(Components::kv_list(
             Some("Package Information"),
             vec![("Name", package), ("Install Reason", &install_reason)],
@@ -142,6 +143,7 @@ fn get_package_info(package: &str) -> Result<(bool, Option<String>, String)> {
 #[cfg(all(feature = "debian", not(feature = "arch")))]
 fn get_package_info(package: &str) -> Result<(bool, Option<String>, String)> {
     use std::process::Command;
+    use crate::cli::style;
 
     let output = Command::new("dpkg-query")
         .args(["-W", "-f=${Version}\t${Status}", "--", package])
@@ -237,7 +239,6 @@ fn show_required_by(package: &str) -> Result<Cmd<()>> {
 #[cfg(not(any(feature = "arch", feature = "debian")))]
 #[allow(clippy::unnecessary_wraps)] // Result return required: API compat with feature-gated impls
 fn show_required_by(_package: &str) -> Result<Cmd<()>> {
-    use crate::cli::components::Components;
     Ok(Cmd::info("Dependency information not available"))
 }
 

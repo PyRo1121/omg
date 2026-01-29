@@ -17,7 +17,7 @@ use std::time::Duration;
 /// This test queries the actual Sigstore Rekor instance to verify
 /// that our SLSA verification can communicate with production infrastructure.
 #[tokio::test]
-#[ignore] // Run with --ignored flag to test against real external services
+#[ignore = "Run with --ignored flag to test against real external services"]
 async fn test_slsa_rekor_query_real() {
     let verifier = SlsaVerifier::new().expect("Failed to create SLSA verifier");
 
@@ -54,7 +54,7 @@ async fn test_slsa_rekor_query_real() {
 /// Queries the actual Arch Linux Security Advisories API to verify
 /// our scanner can fetch and parse real vulnerability data.
 #[tokio::test]
-#[ignore] // Run with --ignored flag to test against real external services
+#[ignore = "Run with --ignored flag to test against real external services"]
 async fn test_vulnerability_scanner_alsa_real() {
     let scanner = VulnerabilityScanner::new();
 
@@ -122,7 +122,7 @@ async fn test_vulnerability_scanner_alsa_real() {
 /// Queries the actual OSV (Open Source Vulnerabilities) database
 /// to verify our scanner can look up CVEs for real packages.
 #[tokio::test]
-#[ignore] // Run with --ignored flag to test against real external services
+#[ignore = "Run with --ignored flag to test against real external services"]
 async fn test_vulnerability_scanner_osv_real() {
     let scanner = VulnerabilityScanner::new();
 
@@ -188,8 +188,7 @@ fn test_slsa_level_production_rules() {
         assert_eq!(
             level,
             SlsaLevel::Level3,
-            "Core package {} should be Level 3",
-            pkg
+            "Core package {pkg} should be Level 3"
         );
     }
 
@@ -200,8 +199,7 @@ fn test_slsa_level_production_rules() {
         assert_eq!(
             level,
             SlsaLevel::Level2,
-            "Official package {} should be Level 2",
-            pkg
+            "Official package {pkg} should be Level 2"
         );
     }
 
@@ -212,8 +210,7 @@ fn test_slsa_level_production_rules() {
         assert_eq!(
             level,
             SlsaLevel::None,
-            "AUR package {} should have no SLSA level",
-            pkg
+            "AUR package {pkg} should have no SLSA level"
         );
     }
 
@@ -250,14 +247,13 @@ fn test_hash_verification_test_vectors() {
         use tempfile::NamedTempFile;
 
         let mut temp = NamedTempFile::new().unwrap();
-        write!(temp, "{}", input).unwrap();
+        write!(temp, "{input}").unwrap();
         temp.flush().unwrap();
 
         // Verify hash matches
         assert!(
             verifier.verify_hash(temp.path(), expected_hash).unwrap(),
-            "Hash mismatch for input: {:?}",
-            input
+            "Hash mismatch for input: {input:?}"
         );
     }
 
@@ -360,9 +356,7 @@ async fn test_vulnerability_cache_effectiveness() {
     // Cache hit should be significantly faster (at least 10x)
     assert!(
         second_duration < first_duration / 10,
-        "Cache not effective: first={:?}, second={:?}",
-        first_duration,
-        second_duration
+        "Cache not effective: first={first_duration:?}, second={second_duration:?}"
     );
 
     println!(

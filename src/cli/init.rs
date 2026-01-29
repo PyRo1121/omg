@@ -360,34 +360,29 @@ fn print_header(stdout: &mut io::Stdout) -> Result<()> {
 
 fn detect_current_shell() -> Option<Shell> {
     // Method 1: Check $SHELL environment variable (user's default shell)
-    if let Ok(shell) = std::env::var("SHELL") {
-        if let Some(s) = parse_shell_path(&shell) {
-            return Some(s);
-        }
+    if let Ok(shell) = std::env::var("SHELL")
+        && let Some(s) = parse_shell_path(&shell)
+    {
+        return Some(s);
     }
 
     // Method 2: Check parent process (actual running shell)
     #[cfg(unix)]
-    {
-        if let Some(s) = detect_shell_from_parent_process() {
-            return Some(s);
-        }
+    if let Some(s) = detect_shell_from_parent_process() {
+        return Some(s);
     }
 
     // Method 3: Check /etc/passwd for user's configured shell
     #[cfg(unix)]
+    if let Ok(user) = std::env::var("USER")
+        && let Ok(passwd) = std::fs::read_to_string("/etc/passwd")
     {
-        if let Ok(user) = std::env::var("USER") {
-            if let Ok(passwd) = std::fs::read_to_string("/etc/passwd") {
-                for line in passwd.lines() {
-                    if line.starts_with(&format!("{user}:")) {
-                        if let Some(shell_path) = line.split(':').last() {
-                            if let Some(s) = parse_shell_path(shell_path) {
-                                return Some(s);
-                            }
-                        }
-                    }
-                }
+        for line in passwd.lines() {
+            if line.starts_with(&format!("{user}:"))
+                && let Some(shell_path) = line.split(':').next_back()
+                && let Some(s) = parse_shell_path(shell_path)
+            {
+                return Some(s);
             }
         }
     }

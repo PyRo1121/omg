@@ -131,53 +131,54 @@ pub async fn run() -> Result<()> {
     }
 
     // Get system status from daemon
-    match client.call(Request::Status { id: 0 }).await {
-        Ok(ResponseResult::Status(status)) => {
-            println!();
-            println!("  {}", style::header("Package Cache"));
-            println!(
-                "    Total packages:     {}",
-                style::info(&status.total_packages.to_string())
-            );
-            println!(
-                "    Explicit packages:  {}",
-                style::info(&status.explicit_packages.to_string())
-            );
-            println!(
-                "    Orphan packages:    {}",
-                if status.orphan_packages > 0 {
-                    style::warning(&status.orphan_packages.to_string())
-                } else {
-                    style::dim(&status.orphan_packages.to_string())
-                }
-            );
-            println!(
-                "    Updates available:  {}",
-                if status.updates_available > 0 {
-                    style::warning(&status.updates_available.to_string())
-                } else {
-                    style::success("0")
-                }
-            );
-            println!(
-                "    Vulnerabilities:    {}",
-                if status.security_vulnerabilities > 0 {
-                    style::error(&status.security_vulnerabilities.to_string())
-                } else {
-                    style::success("0")
-                }
-            );
+    if let Ok(ResponseResult::Status(status)) = client.call(Request::Status { id: 0 }).await {
+        println!();
+        println!("  {}", style::header("Package Cache"));
+        let total_str = status.total_packages.to_string();
+        let explicit_str = status.explicit_packages.to_string();
+        let orphan_str = status.orphan_packages.to_string();
+        let updates_str = status.updates_available.to_string();
+        let vulns_str = status.security_vulnerabilities.to_string();
+        println!(
+            "    Total packages:     {}",
+            style::info(&total_str)
+        );
+        println!(
+            "    Explicit packages:  {}",
+            style::info(&explicit_str)
+        );
+        println!(
+            "    Orphan packages:    {}",
+            if status.orphan_packages > 0 {
+                style::warning(&orphan_str)
+            } else {
+                style::dim(&orphan_str)
+            }
+        );
+        println!(
+            "    Updates available:  {}",
+            if status.updates_available > 0 {
+                style::warning(&updates_str)
+            } else {
+                style::success("0")
+            }
+        );
+        println!(
+            "    Vulnerabilities:    {}",
+            if status.security_vulnerabilities > 0 {
+                style::error(&vulns_str)
+            } else {
+                style::success("0")
+            }
+        );
 
-            if !status.runtime_versions.is_empty() {
-                println!();
-                println!("  {}", style::header("Runtime Versions"));
-                for (name, version) in &status.runtime_versions {
-                    println!("    {}: {}", style::runtime(name), style::version(version));
-                }
+        if !status.runtime_versions.is_empty() {
+            println!();
+            println!("  {}", style::header("Runtime Versions"));
+            for (name, version) in &status.runtime_versions {
+                println!("    {}: {}", style::runtime(name), style::version(version));
             }
         }
-        Ok(_) => {}
-        Err(_) => {}
     }
 
     println!();
@@ -197,6 +198,6 @@ fn format_bytes(bytes: u64) -> String {
     } else if bytes >= KB {
         format!("{:.2} KB", bytes as f64 / KB as f64)
     } else {
-        format!("{} B", bytes)
+        format!("{bytes} B")
     }
 }
