@@ -267,6 +267,16 @@ Added `validate_package_names()` to all install/remove methods:
 
   - 4 new CI/CD workflows
 
+### 🐛 Bug Fixes
+
+- **Fmt**: Apply rustfmt formatting to homebrew.rs
+
+  - Split long nucleo_matcher import across multiple lines
+
+  - Reformat rkyv::to_bytes call for better readability
+
+  - Fixes CI formatting check failure
+
 ## [0.1.199] - 2026-01-29
 ### ⚡ Performance
 
