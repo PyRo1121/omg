@@ -269,6 +269,24 @@ Added `validate_package_names()` to all install/remove methods:
 
 ### 🐛 Bug Fixes
 
+- **Clippy**: Remove unused async from synchronous functions
+
+Removed async keyword from 4 functions that contained no await calls:
+
+  - security::scan_licenses()   - pure synchronous license scanning
+
+  - security::check_eol()   - synchronous EOL date checking
+
+  - workspace::diff()   - uses blocking Command::new()
+
+  - workspace::sync()   - uses blocking Command::new()
+
+Also removed corresponding .await calls from all call sites.
+
+Fixes clippy warnings:
+
+  - unused `async` for function with no await statements
+
 - **Fmt**: Apply rustfmt formatting to homebrew.rs
 
   - Split long nucleo_matcher import across multiple lines
