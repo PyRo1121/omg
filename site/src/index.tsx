@@ -5,6 +5,7 @@ import './index.css';
 render(() => <App />, document.getElementById('root')!);
 
 if (import.meta.env.PROD) {
+  // Defer Sentry initialization to 15s for better TBT (Total Blocking Time)
   requestIdleCallback(
     async () => {
       const Sentry = await import('@sentry/solid');
@@ -15,6 +16,6 @@ if (import.meta.env.PROD) {
         tracesSampleRate: 0.1,
       });
     },
-    { timeout: 3000 }
+    { timeout: 15000 }
   );
 }

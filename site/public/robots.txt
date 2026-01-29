@@ -183,4 +183,4 @@ Disallow: /
 # ===========================================
 # Host directive (canonical domain)
 # ===========================================
-Host: https://pyro1121.com
+Host: pyro1121.com

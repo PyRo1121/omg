@@ -63,6 +63,7 @@ import {
 } from './handlers/docs-analytics';
 import { handleGitHubProxy } from './handlers/github-proxy';
 import { handleBinaryDownload } from './handlers/downloads';
+import { handleImageOptimization } from './handlers/images';
 
 export default Sentry.withSentry(
   (env: Env) => ({
@@ -170,6 +171,11 @@ export default Sentry.withSentry(
       // Binary downloads from R2 (with Range support)
       if (path.startsWith('/download/') && request.method === 'GET') {
         return handleBinaryDownload(request, env);
+      }
+
+      // Optimized image delivery (auto WebP/AVIF, resizing)
+      if (path.startsWith('/img/') && request.method === 'GET') {
+        return handleImageOptimization(request, env);
       }
 
       // ============================================

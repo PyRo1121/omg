@@ -8,6 +8,7 @@ export default defineConfig({
   },
   build: {
     target: 'esnext',
+    minify: 'esbuild',
     rollupOptions: {
       output: {
         manualChunks: id => {
@@ -29,6 +30,12 @@ export default defineConfig({
             }
             if (id.includes('apexcharts') || id.includes('solid-apexcharts')) {
               return 'charts';
+            }
+            if (id.includes('shiki') || id.includes('highlight')) {
+              return 'syntax';
+            }
+            if (id.includes('markdown') || id.includes('remark') || id.includes('rehype')) {
+              return 'markdown';
             }
           }
         },
