@@ -4,9 +4,9 @@
   "description": "OMG Package Manager - Marketing Site",
   "type": "module",
   "scripts": {
-    "dev": "bunx --bun vite",
-    "build": "bunx --bun vite build",
-    "preview": "bunx --bun vite preview",
+    "dev": "vinxi dev",
+    "build": "vinxi build",
+    "preview": "vinxi start",
     "lint": "eslint src --ext .ts,.tsx --report-unused-disable-directives --max-warnings 0",
     "lint:fix": "eslint src --ext .ts,.tsx --fix",
     "format": "prettier --write \"src/**/*.{ts,tsx,css}\"",
@@ -48,7 +48,6 @@
     "prettier-plugin-tailwindcss": "^0.6.0",
     "tailwindcss": "^4.1.7",
     "typescript": "^5.7.0",
-    "vite": "^6.3.5",
-    "vite-plugin-solid": "^2.11.6"
+    "vite": "^6.3.5"
   }
 }
