@@ -269,6 +269,12 @@ Added `validate_package_names()` to all install/remove methods:
 
 ### 🐛 Bug Fixes
 
+- **Windows**: Make daemon Unix-only to fix Windows builds
+
+Windows doesn't support Unix domain sockets, so daemon binaries and IPC
+
+client are Unix-only. This fixes compilation errors on Windows CI.
+
 - **Fmt**: Reorder imports in blame.rs
 
 rustfmt requires imports to be in alphabetical order.
