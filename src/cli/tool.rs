@@ -452,8 +452,11 @@ fn link_binaries(install_dir: &Path, bin_dir: &Path, _tool_name: &str) -> Result
                     fs::remove_file(&dest)?;
                 }
 
-                // Create symlink
+                // Create symlink on Unix, copy on Windows
+                #[cfg(unix)]
                 symlink(&path, &dest).context("Failed to symlink binary")?;
+                #[cfg(not(unix))]
+                std::fs::copy(&path, &dest).context("Failed to copy binary")?;
 
                 // If the tool name matches the binary name, or if we requested a specific tool, print it
                 println!(
