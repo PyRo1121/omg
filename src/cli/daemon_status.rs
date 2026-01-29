@@ -5,11 +5,23 @@
 use anyhow::Result;
 
 use crate::cli::style;
+#[cfg(unix)]
 use crate::core::client::DaemonClient;
+#[cfg(unix)]
 use crate::daemon::protocol::{Request, ResponseResult};
 
 /// Display detailed daemon status
 pub async fn run() -> Result<()> {
+    #[cfg(not(unix))]
+    {
+        println!("  {} Daemon is not supported on Windows", style::error("✗"));
+        println!("    The daemon feature requires Unix domain sockets (Unix/Linux/macOS only).");
+        println!();
+        return Ok(());
+    }
+
+    #[cfg(unix)]
+    {
     println!("{}", style::header("OMG Daemon Status"));
     println!();
 
@@ -176,10 +188,12 @@ pub async fn run() -> Result<()> {
     }
 
     println!();
+    }
     Ok(())
 }
 
 /// Format bytes as human-readable string
+#[cfg(unix)]
 fn format_bytes(bytes: u64) -> String {
     const KB: u64 = 1024;
     const MB: u64 = KB * 1024;
