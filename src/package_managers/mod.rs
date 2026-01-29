@@ -201,10 +201,12 @@ pub fn get_package_manager() -> Arc<dyn PackageManager> {
                 feature = "windows"
             )))]
             #[cfg(not(target_os = "macos"))]
-            #[allow(unused_attributes, unreachable_code)]
-            panic!(
-                "No package manager backend enabled! Build with --features arch, debian, fedora, or windows"
-            );
+            {
+                #[allow(unreachable_code)]
+                panic!(
+                    "No package manager backend enabled! Build with --features arch, debian, fedora, or windows"
+                );
+            }
         }
     }
 }
