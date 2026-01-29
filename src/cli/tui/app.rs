@@ -240,14 +240,17 @@ impl App {
     }
 
     fn get_disk_usage_sync() -> (u64, u64) {
-        // Use rustix for safe statvfs
-        if let Ok(stat) = rustix::fs::statvfs("/") {
-            let block_size = stat.f_frsize;
-            let total_blocks = stat.f_blocks;
-            let free_blocks = stat.f_bfree;
-            let used = (total_blocks - free_blocks) * block_size / 1024; // KB
-            let free = free_blocks * block_size / 1024; // KB
-            return (used, free);
+        #[cfg(unix)]
+        {
+            // Use rustix for safe statvfs
+            if let Ok(stat) = rustix::fs::statvfs("/") {
+                let block_size = stat.f_frsize;
+                let total_blocks = stat.f_blocks;
+                let free_blocks = stat.f_bfree;
+                let used = (total_blocks - free_blocks) * block_size / 1024; // KB
+                let free = free_blocks * block_size / 1024; // KB
+                return (used, free);
+            }
         }
         (0, 0)
     }

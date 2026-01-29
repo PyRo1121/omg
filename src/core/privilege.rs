@@ -46,7 +46,14 @@ pub struct SystemPrivilegeChecker;
 
 impl PrivilegeChecker for SystemPrivilegeChecker {
     fn is_root(&self) -> bool {
-        rustix::process::geteuid().is_root()
+        #[cfg(unix)]
+        {
+            rustix::process::geteuid().is_root()
+        }
+        #[cfg(not(unix))]
+        {
+            false
+        }
     }
 
     fn elevate(&self, operation: &str, args: &[String]) -> std::io::Result<()> {
@@ -141,9 +148,14 @@ pub fn is_root() -> bool {
         get_privilege_checker().is_root()
     }
 
-    #[cfg(not(test))]
+    #[cfg(all(not(test), unix))]
     {
         rustix::process::geteuid().is_root()
+    }
+
+    #[cfg(all(not(test), not(unix)))]
+    {
+        false
     }
 }
 
