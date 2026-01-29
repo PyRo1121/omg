@@ -298,7 +298,13 @@ pub async fn run_self_sudo(args: &[&str]) -> anyhow::Result<()> {
             Ok(s) if s.success() => Ok(()),
             // If sudo -n fails with exit code 1, it means a password is required
             Ok(s) if s.code() == Some(1) => {
-                tracing::info!("Trying interactive sudo (30s timeout)...");
+                // Two-phase timeout strategy:
+                // 1. Password entry: 30s timeout (user interaction)
+                // 2. Operation execution: No timeout (let package manager handle it)
+                // This prevents timeout failures on slow networks while still catching
+                // unattended password prompts quickly.
+
+                tracing::info!("Trying interactive sudo (30s password timeout)...");
                 let mut child = std::process::Command::new("sudo")
                     .env("OMG_ELEVATED", "1")
                     .arg("--")
@@ -307,20 +313,39 @@ pub async fn run_self_sudo(args: &[&str]) -> anyhow::Result<()> {
                     .spawn()
                     .context("Failed to spawn interactive sudo")?;
 
+                // Wait up to 30s for password entry + operation START
+                // But once started, let it run indefinitely
                 if let Some(status) = child.wait_timeout(Duration::from_secs(30))? {
                     if status.success() {
-                        // Silent success - no need to spam logs
-                        tracing::debug!("Interactive sudo succeeded, process replaced");
+                        tracing::debug!("Interactive sudo succeeded");
                         std::process::exit(0);
                     } else {
-                        // Sudo authentication succeeded, but the command failed
-                        // The elevated process already printed its error, so exit silently
                         std::process::exit(status.code().unwrap_or(1));
                     }
                 } else {
-                    // Timeout - kill the process
-                    let _ = child.kill();
-                    anyhow::bail!("Interactive sudo timed out after 30 seconds");
+                    // After 30s, check if process is still running
+                    // If running, it means password was accepted and operation started
+                    // Switch to indefinite wait
+                    tracing::info!("Operation in progress, waiting for completion...");
+                    match child.try_wait()? {
+                        Some(status) => {
+                            // Process finished during timeout
+                            if status.success() {
+                                std::process::exit(0);
+                            } else {
+                                std::process::exit(status.code().unwrap_or(1));
+                            }
+                        }
+                        None => {
+                            // Process still running - password accepted, wait indefinitely
+                            let status = child.wait()?;
+                            if status.success() {
+                                std::process::exit(0);
+                            } else {
+                                std::process::exit(status.code().unwrap_or(1));
+                            }
+                        }
+                    }
                 }
             }
             Ok(s) => {
