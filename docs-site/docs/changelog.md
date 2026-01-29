@@ -269,6 +269,7 @@ Added `validate_package_names()` to all install/remove methods:
 
 ### 🐛 Bug Fixes
 
+- **Fmt**: Remove extra blank line in omg-fast.rs
 - **Windows**: Make daemon Unix-only to fix Windows builds
 
 Windows doesn't support Unix domain sockets, so daemon binaries and IPC
