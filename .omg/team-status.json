@@ -1,0 +1,27 @@
+{
+  "config": {
+    "team_id": "OMG-CLI",
+    "name": "OMG-CLI",
+    "member_id": "pyro1121",
+    "remote_url": null,
+    "auto_sync": true,
+    "auto_push": false,
+    "notifications": {
+      "on_lock_update": true,
+      "on_drift": true,
+      "on_member_join": false
+    }
+  },
+  "lock_hash": "",
+  "members": [
+    {
+      "id": "pyro1121",
+      "name": "Unknown",
+      "env_hash": "",
+      "last_sync": 1769699122,
+      "in_sync": true,
+      "drift_summary": null
+    }
+  ],
+  "updated_at": 1769699122
+}

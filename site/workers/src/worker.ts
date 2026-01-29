@@ -64,6 +64,7 @@ import {
 import { handleGitHubProxy } from './handlers/github-proxy';
 import { handleBinaryDownload } from './handlers/downloads';
 import { handleImageOptimization } from './handlers/images';
+import { handleProvisionUser } from './handlers/provision';
 
 export default Sentry.withSentry(
   (env: Env) => ({
@@ -176,6 +177,11 @@ export default Sentry.withSentry(
       // Optimized image delivery (auto WebP/AVIF, resizing)
       if (path.startsWith('/img/') && request.method === 'GET') {
         return handleImageOptimization(request, env);
+      }
+
+      // Provision user (create customer + license for Better Auth users)
+      if (path === '/api/provision-user' && request.method === 'POST') {
+        return handleProvisionUser(request, env);
       }
 
       // ============================================

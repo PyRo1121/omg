@@ -197,11 +197,12 @@ pub fn get_package_manager() -> Arc<dyn PackageManager> {
                 feature = "arch",
                 feature = "debian",
                 feature = "debian-pure",
+                feature = "fedora",
                 feature = "windows"
             )))]
             #[cfg(not(target_os = "macos"))]
             panic!(
-                "No package manager backend enabled! Build with --features arch, debian, or windows"
+                "No package manager backend enabled! Build with --features arch, debian, fedora, or windows"
             );
         }
     }

@@ -45,6 +45,15 @@ export default function SignupPage() {
       if (result.error) {
         setError(result.error.message || "Signup failed");
       } else {
+        // Auto-provision license for new user
+        try {
+          await fetch('/api/provision-license', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+          });
+        } catch (err) {
+          console.warn('License auto-provision failed (non-critical):', err);
+        }
         navigate("/dashboard");
       }
     } catch (err) {
