@@ -151,8 +151,8 @@ fn install_dry_run(packages: &[String]) -> Result<()> {
             } else {
                 table.add_row(vec![
                     format!("{}", pkg_name.bold()),
-                    "".to_string(),
-                    "".to_string(),
+                    String::new(),
+                    String::new(),
                     format!("{} AUR?", "?".yellow()),
                 ]);
             }
@@ -161,9 +161,9 @@ fn install_dry_run(packages: &[String]) -> Result<()> {
         {
             table.add_row(vec![
                 format!("{}", pkg_name.bold()),
-                "".to_string(),
-                "".to_string(),
-                "".to_string(),
+                String::new(),
+                String::new(),
+                String::new(),
             ]);
         }
     }
@@ -211,7 +211,12 @@ fn handle_missing_package(
 
         println!();
         println!("  {}", "╭─────────────────────────────────────────╮".red());
-        println!("  {} {} {}", "│".red(), format!("  Package '{}' Not Found  ", pkg_name).bold().red(), "│".red());
+        println!(
+            "  {} {} {}",
+            "│".red(),
+            format!("  Package '{pkg_name}' Not Found  ").bold().red(),
+            "│".red()
+        );
         println!("  {}", "╰─────────────────────────────────────────╯".red());
         println!();
         println!("  {} Did you mean one of these?", "→".cyan().bold());
@@ -287,7 +292,7 @@ async fn handle_aur_package(
     println!(
         "  {} {} {}",
         "│".yellow(),
-        format!("  ⚠ Package '{}' not found  ", pkg_name)
+        format!("  ⚠ Package '{pkg_name}' not found  ")
             .bold()
             .yellow(),
         "│".yellow()
@@ -376,7 +381,7 @@ async fn handle_aur_package(
     println!(
         "  {} {} {}",
         "│".magenta(),
-        format!("  Building {}  ", pkg_name).bold().magenta(),
+        format!("  Building {pkg_name}  ").bold().magenta(),
         "│".magenta()
     );
     println!(
