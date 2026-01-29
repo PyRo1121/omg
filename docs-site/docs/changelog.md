@@ -13,6 +13,18 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ## [Unreleased]
 ### 🐛 Bug Fixes
 
+- Stash unstaged changes before rebase in release script
+
+Root Cause:
+
+  - Changelog bot race condition triggers rebase
+
+  - Build/test/website processes leave unstaged changes
+
+  - git rebase fails with 'You have unstaged changes'
+
+  - Release pipeline stops with manual intervention required
+
 - Add retry loop for rustc LTO crash in release script
 
 Root Cause:
