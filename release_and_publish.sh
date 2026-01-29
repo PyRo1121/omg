@@ -415,12 +415,30 @@ publish_release() {
     log_success "Created tag v${version}"
   fi
   
-  # Push
-  git push origin main "v${version}" 2>&1 || {
-    log_warn "Push failed, trying with --force-with-lease for tag"
-    git push origin main
-    git push origin "v${version}" --force-with-lease
-  }
+  # Push with race condition handling
+  # GitHub Actions may have created a changelog commit between our commit and push
+  # Fetch and rebase to avoid "fetch first" errors
+  if ! git push origin main "v${version}" 2>&1; then
+    log_warn "Push failed (likely due to changelog bot), fetching and rebasing..."
+    git fetch origin main
+    
+    # Check if we're behind
+    if ! git merge-base --is-ancestor origin/main HEAD; then
+      log_info "Remote has new commits, rebasing..."
+      git rebase origin/main
+    fi
+    
+    # Try push again
+    if ! git push origin main; then
+      die "Failed to push to main after rebase. Manual intervention required."
+    fi
+    
+    # Push tag separately (may already exist from failed first push)
+    if ! git push origin "v${version}" 2>&1; then
+      log_info "Tag push failed, trying with --force-with-lease"
+      git push origin "v${version}" --force-with-lease
+    fi
+  fi
   log_success "Pushed to origin"
   
   # Generate release notes
@@ -460,24 +478,46 @@ sync_and_deploy_site() {
     return
   fi
   
-  # Sync install.sh to site/public
   cp "$ROOT_DIR/install.sh" "$site_dir/public/install.sh"
   log_success "Synced install.sh to site/public/"
   
-  # Deploy site if wrangler is available
-  if command -v bunx >/dev/null 2>&1 || command -v npx >/dev/null 2>&1; then
-    log_info "Deploying website to Cloudflare Pages..."
-    (
-      cd "$site_dir"
-      if command -v bunx >/dev/null 2>&1; then
-        bunx wrangler pages deploy dist --project-name=omg-site 2>&1 || log_warn "Site deploy failed (non-blocking)"
-      else
-        npx wrangler pages deploy dist --project-name=omg-site 2>&1 || log_warn "Site deploy failed (non-blocking)"
-      fi
-    ) && log_success "Website deployed"
-  else
-    log_warn "wrangler not available, skipping site deploy"
+  if ! command -v bunx >/dev/null 2>&1 && ! command -v npx >/dev/null 2>&1; then
+    log_warn "bunx/npx not available, skipping site build & deploy"
+    return
   fi
+  
+  log_info "Building website..."
+  (
+    cd "$site_dir"
+    if command -v bunx >/dev/null 2>&1; then
+      bunx --bun vite build
+    else
+      npx vite build
+    fi
+  ) || {
+    log_error "Site build failed"
+    return
+  }
+  log_success "Site built successfully"
+  
+  if [[ ! -d "$site_dir/dist" ]]; then
+    log_error "Site dist/ directory not found after build"
+    return
+  fi
+  
+  log_info "Deploying website to Cloudflare Pages..."
+  (
+    cd "$site_dir"
+    if command -v bunx >/dev/null 2>&1; then
+      bunx wrangler pages deploy dist --project-name=omg-site
+    else
+      npx wrangler pages deploy dist --project-name=omg-site
+    fi
+  ) || {
+    log_error "Site deploy failed"
+    return
+  }
+  log_success "Website deployed"
 }
 
 #=============================================================================
