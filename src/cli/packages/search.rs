@@ -89,10 +89,10 @@ async fn search_internal(
             results.extend(packages.into_iter().map(DisplayPackage::from_package));
         }
         #[cfg(unix)]
-        if results.is_empty() {
-            if let Ok(packages) = get_package_manager().search(query).await {
-                results.extend(packages.into_iter().map(DisplayPackage::from_package));
-            }
+        if results.is_empty()
+            && let Ok(packages) = get_package_manager().search(query).await
+        {
+            results.extend(packages.into_iter().map(DisplayPackage::from_package));
         }
         results
     };
