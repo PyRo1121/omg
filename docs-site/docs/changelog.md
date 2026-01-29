@@ -269,6 +269,12 @@ Added `validate_package_names()` to all install/remove methods:
 
 ### 🐛 Bug Fixes
 
+- **Fmt**: Reorder imports in blame.rs
+
+rustfmt requires imports to be in alphabetical order.
+
+Moved alpm import before crate import.
+
 - Add cross-platform support to Rust runtime
 
 Added support for macOS (x86_64 and aarch64) and Windows (x86_64 and
