@@ -2,24 +2,33 @@
 //!
 //! Persistent daemon with Unix socket IPC for fast package operations.
 
-#![cfg(unix)]
-
 // Use mimalloc as global allocator for 10-20% faster allocations
+#[cfg(unix)]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+#[cfg(unix)]
 use anyhow::Result;
+#[cfg(unix)]
 use clap::Parser;
+#[cfg(unix)]
 use futures::FutureExt;
+#[cfg(unix)]
 use sentry_tracing::EventFilter;
+#[cfg(unix)]
 use std::path::PathBuf;
+#[cfg(unix)]
 use tokio::net::UnixListener;
+#[cfg(unix)]
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+#[cfg(unix)]
 use omg_lib::core::paths;
+#[cfg(unix)]
 use omg_lib::daemon::server;
 
 /// OMG Daemon - Background service for fast package operations
+#[cfg(unix)]
 #[derive(Parser, Debug)]
 #[command(name = "omgd")]
 #[command(author = "OMG Team")]
@@ -35,6 +44,7 @@ struct Args {
     socket: Option<PathBuf>,
 }
 
+#[cfg(unix)]
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
