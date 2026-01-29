@@ -269,6 +269,14 @@ Added `validate_package_names()` to all install/remove methods:
 
 ### 🐛 Bug Fixes
 
+- Restore style import for arch feature in blame.rs
+
+The clippy fix incorrectly removed the style import that's used in
+
+feature-gated arch code. Restored the import to the arch-specific
+
+get_package_info() function.
+
 - **Fmt**: Apply rustfmt to benchmark files
 
 Applied rustfmt formatting to benches/ after clippy fixes.
