@@ -84,7 +84,7 @@ commit_parsers = [
     # === SKIP THESE FIRST (Pattern matching is order-dependent) ===
     
     # Skip CI-automated changelog updates
-    { message = ".*\\[skip ci\\].*", skip = true },
+    { message = "^docs?: update changelog", skip = true },
     
     # Skip release commits (redundant)
     { message = "^chore\\(release\\)", skip = true },
