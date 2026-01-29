@@ -4,6 +4,7 @@ use anyhow::Result;
 
 use crate::cli::tea::run_info_elm;
 use crate::cli::{style, ui};
+#[cfg(unix)]
 use crate::core::client::DaemonClient;
 use crate::core::env::distro::use_debian_backend;
 use crate::package_managers::get_package_manager;
@@ -28,6 +29,7 @@ pub fn info_sync(package: &str) -> Result<bool> {
     let pm_name = pm.name();
 
     // 1. Try daemon first (ULTRA FAST - <1ms)
+    #[cfg(unix)]
     if let Ok(mut client) = DaemonClient::connect_sync()
         && let Ok(info) = client.info_sync(package)
     {
@@ -127,6 +129,7 @@ pub async fn info_aur(package: &str) -> Result<()> {
 }
 
 /// Helper to display detailed info from daemon
+#[cfg(unix)]
 fn display_detailed_info(info: &crate::daemon::protocol::DetailedPackageInfo) {
     ui::print_kv("Name", &style::package(&info.name));
     ui::print_kv("Version", &style::version(&info.version));

@@ -2,6 +2,7 @@ use anyhow::Result;
 use tokio::time::Duration;
 
 use crate::cli::style;
+#[cfg(unix)]
 use crate::core::client::DaemonClient;
 use crate::core::http::shared_client;
 
@@ -283,6 +284,13 @@ async fn check_daemon() -> bool {
         return true;
     }
 
+    #[cfg(not(unix))]
+    {
+        // Daemon not supported on Windows
+        return false;
+    }
+
+    #[cfg(unix)]
     match DaemonClient::connect().await {
         Ok(_) => true,
         Err(e) => {

@@ -5,6 +5,7 @@ use serde::Serialize;
 
 use crate::cli::style;
 use crate::core::Package;
+#[cfg(unix)]
 use crate::core::client::{DaemonClient, PooledSyncClient};
 use crate::package_managers::get_package_manager;
 
@@ -70,6 +71,7 @@ async fn search_internal(
 
     let official_search = async {
         let mut results = Vec::new();
+        #[cfg(unix)]
         if let Ok(mut client) = DaemonClient::connect().await
             && let Ok(res) = client.search(query, Some(50)).await
         {
@@ -81,8 +83,16 @@ async fn search_internal(
                     source: pkg.source,
                 });
             }
-        } else if let Ok(packages) = get_package_manager().search(query).await {
+        }
+        #[cfg(not(unix))]
+        if let Ok(packages) = get_package_manager().search(query).await {
             results.extend(packages.into_iter().map(DisplayPackage::from_package));
+        }
+        #[cfg(unix)]
+        if results.is_empty() {
+            if let Ok(packages) = get_package_manager().search(query).await {
+                results.extend(packages.into_iter().map(DisplayPackage::from_package));
+            }
         }
         results
     };
@@ -185,6 +195,13 @@ pub fn search_sync_cli(
 
 /// Sync-only search: daemon IPC via `PooledSyncClient`, no tokio runtime.
 fn search_sync_official_only(query: &str) -> Result<bool> {
+    #[cfg(not(unix))]
+    {
+        return Ok(false); // Daemon not supported on Windows
+    }
+
+    #[cfg(unix)]
+    {
     let Ok(mut client) = PooledSyncClient::acquire() else {
         return Ok(false); // Daemon not running; caller falls back to async
     };
@@ -233,6 +250,7 @@ fn search_sync_official_only(query: &str) -> Result<bool> {
     writeln!(stdout)?;
     stdout.flush()?;
     Ok(true)
+    }
 }
 
 fn format_package(pkg: &DisplayPackage) -> String {

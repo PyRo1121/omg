@@ -4,7 +4,9 @@
 
 use crate::cli::style;
 use crate::cli::tea::{Cmd, Model};
+#[cfg(unix)]
 use crate::core::client::DaemonClient;
+#[cfg(unix)]
 use crate::daemon::protocol::{Request, ResponseResult};
 use crate::package_managers::get_package_manager;
 use owo_colors::OwoColorize;
@@ -96,6 +98,7 @@ impl Model for StatusModel {
                     let start = std::time::Instant::now();
 
                     // 1. Try Daemon (Hot Path)
+                    #[cfg(unix)]
                     let daemon_result = if tokio::runtime::Handle::try_current().is_ok() {
                         // Already in runtime
                         std::thread::spawn(move || {
@@ -144,6 +147,9 @@ impl Model for StatusModel {
                             None
                         })
                     };
+
+                    #[cfg(not(unix))]
+                    let daemon_result: Option<StatusData> = None;
 
                     if let Some(data) = daemon_result {
                         return StatusMsg::Loaded(data);

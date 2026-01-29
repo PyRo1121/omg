@@ -118,6 +118,7 @@ async fn get_package_names_with_fallback() -> Vec<String> {
     }
 
     // Try daemon first
+    #[cfg(unix)]
     if let Ok(mut client) = crate::core::client::DaemonClient::connect().await
         && let Ok(res) = client.search("", None).await
     {

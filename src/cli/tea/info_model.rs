@@ -4,6 +4,7 @@
 
 use crate::cli::style;
 use crate::cli::tea::{Cmd, Model};
+#[cfg(unix)]
 use crate::core::client::DaemonClient;
 use crate::package_managers::get_package_manager;
 use owo_colors::OwoColorize;
@@ -274,6 +275,7 @@ impl Model for InfoModel {
 /// Helper function to fetch package info
 async fn fetch_info(package: &str) -> InfoMsg {
     // 1. Try Daemon first
+    #[cfg(unix)]
     if let Ok(mut client) = DaemonClient::connect().await
         && let Ok(info) = client.info(package).await
     {

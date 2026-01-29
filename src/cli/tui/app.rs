@@ -1,5 +1,6 @@
 use crate::core::env::team::TeamStatus;
 use crate::core::history::Transaction;
+#[cfg(unix)]
 use crate::daemon::protocol::StatusResult;
 use anyhow::Result;
 use crossterm::event::KeyCode;
@@ -16,7 +17,10 @@ pub enum Tab {
 }
 
 pub struct App {
+    #[cfg(unix)]
     pub status: Option<StatusResult>,
+    #[cfg(not(unix))]
+    pub status: Option<()>,
     pub team_status: Option<TeamStatus>,
     pub history: Vec<Transaction>,
     pub last_tick: Instant,
@@ -80,15 +84,22 @@ impl App {
 
     pub async fn refresh(&mut self) -> Result<()> {
         // Check if daemon is connected
-        self.daemon_connected = crate::core::client::DaemonClient::connect().await.is_ok();
-
-        // 1. Fetch status from daemon
-        if let Ok(mut client) = crate::core::client::DaemonClient::connect().await
-            && let Ok(crate::daemon::protocol::ResponseResult::Status(status)) = client
-                .call(crate::daemon::protocol::Request::Status { id: 0 })
-                .await
+        #[cfg(unix)]
         {
-            self.status = Some(status);
+            self.daemon_connected = crate::core::client::DaemonClient::connect().await.is_ok();
+
+            // 1. Fetch status from daemon
+            if let Ok(mut client) = crate::core::client::DaemonClient::connect().await
+                && let Ok(crate::daemon::protocol::ResponseResult::Status(status)) = client
+                    .call(crate::daemon::protocol::Request::Status { id: 0 })
+                    .await
+            {
+                self.status = Some(status);
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            self.daemon_connected = false;
         }
 
         // 2. Fetch history
@@ -271,6 +282,7 @@ impl App {
         }
 
         // Search packages using the actual package manager
+        #[cfg(unix)]
         if let Ok(mut client) = crate::core::client::DaemonClient::connect().await
             && let Ok(crate::daemon::protocol::ResponseResult::Search(res)) = client
                 .call(crate::daemon::protocol::Request::Search {
@@ -454,28 +466,43 @@ impl App {
     }
 
     pub fn get_total_packages(&self) -> usize {
-        self.status.as_ref().map_or(0, |s| s.total_packages)
+        #[cfg(unix)]
+        return self.status.as_ref().map_or(0, |s| s.total_packages);
+        #[cfg(not(unix))]
+        0
     }
 
     pub fn get_orphan_packages(&self) -> usize {
-        self.status.as_ref().map_or(0, |s| s.orphan_packages)
+        #[cfg(unix)]
+        return self.status.as_ref().map_or(0, |s| s.orphan_packages);
+        #[cfg(not(unix))]
+        0
     }
 
     pub fn get_updates_available(&self) -> usize {
-        self.status.as_ref().map_or(0, |s| s.updates_available)
+        #[cfg(unix)]
+        return self.status.as_ref().map_or(0, |s| s.updates_available);
+        #[cfg(not(unix))]
+        0
     }
 
     pub fn get_security_vulnerabilities(&self) -> usize {
-        self.status
+        #[cfg(unix)]
+        return self.status
             .as_ref()
-            .map_or(0, |s| s.security_vulnerabilities)
+            .map_or(0, |s| s.security_vulnerabilities);
+        #[cfg(not(unix))]
+        0
     }
 
     pub fn get_runtime_versions(&self) -> std::collections::HashMap<String, String> {
-        self.status
+        #[cfg(unix)]
+        return self.status
             .as_ref()
             .map(|s| s.runtime_versions.iter().cloned().collect())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        #[cfg(not(unix))]
+        std::collections::HashMap::new()
     }
 }
 

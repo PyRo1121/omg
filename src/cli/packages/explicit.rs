@@ -4,7 +4,9 @@ use anyhow::Result;
 use serde::Serialize;
 
 use crate::cli::ui;
+#[cfg(unix)]
 use crate::core::client::DaemonClient;
+#[cfg(unix)]
 use crate::daemon::protocol::{Request, ResponseResult};
 
 use super::common::use_debian_backend;
@@ -20,6 +22,7 @@ pub fn explicit_sync(count: bool) -> Result<()> {
 }
 
 pub fn explicit_sync_with_json(count: bool, json: bool) -> Result<()> {
+    #[cfg(unix)]
     if let Ok(mut client) = DaemonClient::connect_sync() {
         let request = if count {
             Request::ExplicitCount { id: 0 }

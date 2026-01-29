@@ -4,6 +4,7 @@ use anyhow::Result;
 use dialoguer::Select;
 
 use crate::cli::ui;
+#[cfg(unix)]
 use crate::core::client::DaemonClient;
 use crate::package_managers::get_package_manager;
 
@@ -255,6 +256,7 @@ fn handle_missing_package(
 }
 
 async fn try_get_suggestions(query: &str) -> Vec<String> {
+    #[cfg(unix)]
     if let Ok(mut client) = DaemonClient::connect().await
         && let Ok(suggestions) = client.suggest(query, Some(5)).await
     {

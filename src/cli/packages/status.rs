@@ -7,7 +7,9 @@ use std::io::Write;
 
 use crate::cli::style;
 use crate::cli::tea::run_status_elm;
+#[cfg(unix)]
 use crate::core::client::DaemonClient;
+#[cfg(unix)]
 use crate::daemon::protocol::{Request, ResponseResult};
 use crate::package_managers::get_package_manager;
 
@@ -40,6 +42,7 @@ pub async fn status_with_json(fast: bool, json: bool) -> Result<()> {
 async fn status_json(fast: bool) -> Result<()> {
     let start = std::time::Instant::now();
 
+    #[cfg(unix)]
     let (total, explicit, orphans, updates) = if let Ok(mut client) = DaemonClient::connect().await
         && let Ok(ResponseResult::Status(status)) = client.call(Request::Status { id: 0 }).await
     {
@@ -50,6 +53,12 @@ async fn status_json(fast: bool) -> Result<()> {
             status.updates_available,
         )
     } else {
+        let pm = get_package_manager();
+        pm.get_status(fast).await?
+    };
+
+    #[cfg(not(unix))]
+    let (total, explicit, orphans, updates) = {
         let pm = get_package_manager();
         pm.get_status(fast).await?
     };
@@ -73,6 +82,7 @@ async fn status_fallback(fast: bool) -> Result<()> {
     let start = std::time::Instant::now();
 
     // 1. Try Daemon first (Hot Path)
+    #[cfg(unix)]
     if let Ok(mut client) = DaemonClient::connect().await
         && let Ok(ResponseResult::Status(status)) = client.call(Request::Status { id: 0 }).await
     {

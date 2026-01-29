@@ -2,6 +2,7 @@ use anyhow::Result;
 use owo_colors::OwoColorize;
 
 use crate::cli::{AuditCommands, CliContext, LocalCommandRunner, style, ui};
+#[cfg(unix)]
 use crate::core::client::DaemonClient;
 use crate::core::license;
 use crate::core::security::{AuditLogger, AuditSeverity, SbomGenerator, SecurityPolicy};
@@ -54,12 +55,14 @@ pub async fn scan(_ctx: &CliContext) -> Result<()> {
 
     ui::print_header("Secure", "Vulnerability Scan");
 
-    let Ok(mut client) = DaemonClient::connect().await else {
-        ui::print_error("Daemon not running. Security audit requires the daemon.");
-        return Ok(());
-    };
+    #[cfg(unix)]
+    {
+        let Ok(mut client) = DaemonClient::connect().await else {
+            ui::print_error("Daemon not running. Security audit requires the daemon.");
+            return Ok(());
+        };
 
-    match client.security_audit().await {
+        match client.security_audit().await {
         Ok(res) => {
             if res.total_vulnerabilities == 0 {
                 ui::print_success("No vulnerabilities found in scanned packages.");
@@ -96,6 +99,12 @@ pub async fn scan(_ctx: &CliContext) -> Result<()> {
         Err(e) => {
             ui::print_error(format!("Audit failed: {e}"));
         }
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        ui::print_error("Security audit requires the daemon, which is only available on Unix systems.");
     }
 
     Ok(())
@@ -850,18 +859,30 @@ pub async fn fix_vulnerabilities(
     );
 
     // Get vulnerability data from daemon
-    let Ok(mut client) = DaemonClient::connect().await else {
-        ui::print_error("Daemon not running. Security audit requires the daemon.");
-        return Ok(());
-    };
-
-    let scan_result = match client.security_audit().await {
-        Ok(res) => res,
-        Err(e) => {
-            ui::print_error(format!("Audit failed: {e}"));
+    #[cfg(unix)]
+    let scan_result = {
+        let Ok(mut client) = DaemonClient::connect().await else {
+            ui::print_error("Daemon not running. Security audit requires the daemon.");
             return Ok(());
+        };
+
+        match client.security_audit().await {
+            Ok(res) => res,
+            Err(e) => {
+                ui::print_error(format!("Audit failed: {e}"));
+                return Ok(());
+            }
         }
     };
+
+    #[cfg(not(unix))]
+    {
+        ui::print_error("Vulnerability scanning requires the daemon, which is only available on Unix systems.");
+        return Ok(());
+    }
+
+    #[cfg(unix)]
+    {
 
     if scan_result.total_vulnerabilities == 0 {
         println!("{} No vulnerabilities found!", style::success("✓"));
@@ -984,6 +1005,7 @@ pub async fn fix_vulnerabilities(
             unfixable.len()
         );
     }
+    }
 
     Ok(())
 }
@@ -1032,6 +1054,7 @@ pub async fn export_compliance(
             }
 
             // 2. Export vulnerability scan
+            #[cfg(unix)]
             if let Ok(mut client) = DaemonClient::connect().await
                 && let Ok(scan) = client.security_audit().await
             {
