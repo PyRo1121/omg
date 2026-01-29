@@ -17,7 +17,6 @@ pub fn run(package: &str) -> Result<()> {
 }
 
 fn build_blame_output(package: &str) -> Result<Cmd<()>> {
-
     // First check if package is installed
     let (is_installed, version, install_reason) = get_package_info(package)?;
 
@@ -142,8 +141,8 @@ fn get_package_info(package: &str) -> Result<(bool, Option<String>, String)> {
 
 #[cfg(all(feature = "debian", not(feature = "arch")))]
 fn get_package_info(package: &str) -> Result<(bool, Option<String>, String)> {
-    use std::process::Command;
     use crate::cli::style;
+    use std::process::Command;
 
     let output = Command::new("dpkg-query")
         .args(["-W", "-f=${Version}\t${Status}", "--", package])

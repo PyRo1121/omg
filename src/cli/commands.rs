@@ -668,13 +668,11 @@ pub fn history(
     let entries = history_mgr.load()?;
 
     // Parse optional transaction type filter
-    let type_filter = transaction_type.map(|t| {
-        match t.to_lowercase().as_str() {
-            "install" => crate::core::history::TransactionType::Install,
-            "remove" => crate::core::history::TransactionType::Remove,
-            "update" => crate::core::history::TransactionType::Update,
-            _ => crate::core::history::TransactionType::Sync,
-        }
+    let type_filter = transaction_type.map(|t| match t.to_lowercase().as_str() {
+        "install" => crate::core::history::TransactionType::Install,
+        "remove" => crate::core::history::TransactionType::Remove,
+        "update" => crate::core::history::TransactionType::Update,
+        _ => crate::core::history::TransactionType::Sync,
     });
 
     // Parse date filters

@@ -139,14 +139,8 @@ pub async fn run() -> Result<()> {
         let orphan_str = status.orphan_packages.to_string();
         let updates_str = status.updates_available.to_string();
         let vulns_str = status.security_vulnerabilities.to_string();
-        println!(
-            "    Total packages:     {}",
-            style::info(&total_str)
-        );
-        println!(
-            "    Explicit packages:  {}",
-            style::info(&explicit_str)
-        );
+        println!("    Total packages:     {}", style::info(&total_str));
+        println!("    Explicit packages:  {}", style::info(&explicit_str));
         println!(
             "    Orphan packages:    {}",
             if status.orphan_packages > 0 {

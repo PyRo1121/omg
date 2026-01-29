@@ -789,12 +789,7 @@ pub fn scan_licenses(
                 wtr.write_record(["Package", "Version", "License", "Category"])?;
                 for (name, license, version) in &filtered_packages {
                     let category_str = format!("{:?}", LicenseCategory::from_license(license));
-                    wtr.write_record([
-                        name.as_str(),
-                        version,
-                        license,
-                        &category_str,
-                    ])?;
+                    wtr.write_record([name.as_str(), version, license, &category_str])?;
                 }
                 wtr.flush()?;
             }
