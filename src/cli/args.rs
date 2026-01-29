@@ -470,6 +470,7 @@ pub enum Commands {
     Stats,
 
     /// Show system metrics (Prometheus-style)
+    #[cfg(unix)]
     Metrics,
 
     /// Update OMG to the latest version

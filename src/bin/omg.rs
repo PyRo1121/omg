@@ -651,6 +651,7 @@ async fn async_main(args: Vec<String>) -> Result<()> {
         Commands::Stats => {
             commands::stats()?;
         }
+        #[cfg(unix)]
         Commands::Metrics => {
             commands::metrics().await?;
         }
