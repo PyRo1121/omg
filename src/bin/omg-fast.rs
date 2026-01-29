@@ -12,6 +12,8 @@
 //!   omg-fast s `<query>`    # search packages
 //!   omg-fast i `<package>`  # package info
 
+#![cfg(unix)]
+
 // Allow pedantic lints that are too strict for this minimal binary
 #![allow(clippy::cast_possible_truncation)] // IPC message lengths are bounded
 
