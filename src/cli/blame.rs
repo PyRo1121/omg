@@ -120,8 +120,8 @@ fn build_blame_output(package: &str) -> Result<Cmd<()>> {
 
 #[cfg(feature = "arch")]
 fn get_package_info(package: &str) -> Result<(bool, Option<String>, String)> {
-    use alpm::Alpm;
     use crate::cli::style;
+    use alpm::Alpm;
 
     let handle = Alpm::new("/", "/var/lib/pacman")
         .map_err(|e| anyhow::anyhow!("Failed to open ALPM: {e}"))?;
