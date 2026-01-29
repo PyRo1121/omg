@@ -327,23 +327,20 @@ pub async fn run_self_sudo(args: &[&str]) -> anyhow::Result<()> {
                     // If running, it means password was accepted and operation started
                     // Switch to indefinite wait
                     tracing::info!("Operation in progress, waiting for completion...");
-                    match child.try_wait()? {
-                        Some(status) => {
-                            // Process finished during timeout
-                            if status.success() {
-                                std::process::exit(0);
-                            } else {
-                                std::process::exit(status.code().unwrap_or(1));
-                            }
+                    if let Some(status) = child.try_wait()? {
+                        // Process finished during timeout
+                        if status.success() {
+                            std::process::exit(0);
+                        } else {
+                            std::process::exit(status.code().unwrap_or(1));
                         }
-                        None => {
-                            // Process still running - password accepted, wait indefinitely
-                            let status = child.wait()?;
-                            if status.success() {
-                                std::process::exit(0);
-                            } else {
-                                std::process::exit(status.code().unwrap_or(1));
-                            }
+                    } else {
+                        // Process still running - password accepted, wait indefinitely
+                        let status = child.wait()?;
+                        if status.success() {
+                            std::process::exit(0);
+                        } else {
+                            std::process::exit(status.code().unwrap_or(1));
                         }
                     }
                 }
