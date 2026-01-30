@@ -22,9 +22,9 @@ pub mod privilege;
 pub mod runtime_resolver;
 pub mod safe_ops;
 pub mod security;
-pub mod sysinfo;
 #[cfg(unix)]
 pub mod sudoloop;
+pub mod sysinfo;
 pub mod task_runner;
 pub mod telemetry;
 pub mod testing;

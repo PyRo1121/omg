@@ -39,8 +39,7 @@ pub fn parse_sources(pkg_dir: &Path) -> Result<Vec<SourceFile>> {
     let content = std::fs::read_to_string(&srcinfo_path)
         .with_context(|| format!("Failed to read .SRCINFO at {}", srcinfo_path.display()))?;
 
-    let srcinfo = SourceInfoV1::from_string(&content)
-        .context("Failed to parse .SRCINFO")?;
+    let srcinfo = SourceInfoV1::from_string(&content).context("Failed to parse .SRCINFO")?;
 
     let mut sources = Vec::new();
 
@@ -141,7 +140,7 @@ async fn download_file(url: &str, dest_path: &Path, pb: ProgressBar) -> Result<(
         .get(url)
         .send()
         .await
-        .with_context(|| format!("Failed to fetch {}", url))?;
+        .with_context(|| format!("Failed to fetch {url}"))?;
 
     if !response.status().is_success() {
         pb.finish_with_message(format!("Failed: HTTP {}", response.status()));
@@ -188,6 +187,9 @@ async fn download_file(url: &str, dest_path: &Path, pb: ProgressBar) -> Result<(
             )
         })?;
 
-    pb.finish_with_message(format!("{} ✓", dest_path.file_name().unwrap().to_string_lossy()));
+    pb.finish_with_message(format!(
+        "{} ✓",
+        dest_path.file_name().unwrap().to_string_lossy()
+    ));
     Ok(())
 }
