@@ -7,6 +7,7 @@
 use std::path::Path;
 
 use alpm_srcinfo::SourceInfoV1;
+use alpm_types::SystemArchitecture;
 use anyhow::{Context, Result};
 use futures::stream::{self, StreamExt};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
@@ -21,8 +22,19 @@ use crate::core::http::shared_client;
 pub struct SourceFile {
     /// Full URL to download from
     pub url: String,
-    /// Base filename (extracted from URL)
+    /// Base filename (may be renamed via :: syntax)
     pub filename: String,
+}
+
+/// Get the current system architecture
+fn current_arch() -> Option<SystemArchitecture> {
+    match std::env::consts::ARCH {
+        "x86_64" => Some(SystemArchitecture::X86_64),
+        "aarch64" => Some(SystemArchitecture::Aarch64),
+        "arm" => Some(SystemArchitecture::Arm),
+        "i686" => Some(SystemArchitecture::I686),
+        _ => None,
+    }
 }
 
 /// Parse .SRCINFO to extract HTTP/HTTPS source URLs
@@ -45,10 +57,21 @@ pub fn parse_sources(pkg_dir: &Path) -> Result<Vec<SourceFile>> {
 
     // Parse common sources (apply to all architectures)
     for source in &srcinfo.base.sources {
-        // Source type is a complex struct; convert to string to get the URL
         let source_str = source.to_string();
         if let Some(source_file) = extract_http_source(&source_str) {
             sources.push(source_file);
+        }
+    }
+
+    // Also parse architecture-specific sources
+    if let Some(arch) = current_arch()
+        && let Some(arch_props) = srcinfo.base.architecture_properties.get(&arch)
+    {
+        for source in &arch_props.sources {
+            let source_str = source.to_string();
+            if let Some(source_file) = extract_http_source(&source_str) {
+                sources.push(source_file);
+            }
         }
     }
 
@@ -58,25 +81,39 @@ pub fn parse_sources(pkg_dir: &Path) -> Result<Vec<SourceFile>> {
 
 /// Extract HTTP/HTTPS source from a source URL string
 ///
+/// Handles PKGBUILD rename syntax: `newname::https://url/oldname.tar.gz`
 /// Returns None for local files, git repos, or other non-downloadable sources.
 fn extract_http_source(source_url: &str) -> Option<SourceFile> {
+    // Handle PKGBUILD rename syntax: "newname::url"
+    let (custom_filename, url) = if let Some(idx) = source_url.find("::") {
+        let name = &source_url[..idx];
+        let url = &source_url[idx + 2..];
+        (Some(name.to_string()), url)
+    } else {
+        (None, source_url)
+    };
+
     // Skip non-HTTP sources
-    if !source_url.starts_with("http://") && !source_url.starts_with("https://") {
+    if !url.starts_with("http://") && !url.starts_with("https://") {
         return None;
     }
 
-    // Extract filename from URL
-    let filename = source_url
-        .rsplit('/')
-        .next()
-        .unwrap_or("unknown")
-        .split('?')
-        .next()
-        .unwrap_or("unknown")
-        .to_string();
+    // Use custom filename if provided, otherwise extract from URL
+    let filename = custom_filename.unwrap_or_else(|| {
+        url.rsplit('/')
+            .next()
+            .unwrap_or("unknown")
+            .split('?')
+            .next()
+            .unwrap_or("unknown")
+            .split('#')
+            .next()
+            .unwrap_or("unknown")
+            .to_string()
+    });
 
     Some(SourceFile {
-        url: source_url.to_string(),
+        url: url.to_string(),
         filename,
     })
 }
@@ -103,7 +140,7 @@ pub async fn download_sources(sources: Vec<SourceFile>, srcdest: &Path) -> usize
     let style = ProgressStyle::with_template(
         "{spinner:.green} [{bar:40.cyan/blue}] {bytes}/{total_bytes} {msg}",
     )
-    .unwrap()
+    .expect("valid progress template")
     .progress_chars("#>-");
 
     let download_futures = sources.into_iter().map(|source| {
@@ -148,13 +185,35 @@ async fn download_file(url: &str, dest_path: &Path, pb: ProgressBar) -> Result<(
     }
 
     // Get content length for progress bar
-    if let Some(total) = response.content_length() {
+    let expected_length = response.content_length();
+    if let Some(total) = expected_length {
         pb.set_length(total);
     }
 
     // Create temporary file
     let temp_path = dest_path.with_extension("tmp");
-    let mut file = File::create(&temp_path)
+
+    // Use a scope guard pattern to clean up temp file on error
+    let result = download_to_file(url, &temp_path, dest_path, &pb, expected_length, response).await;
+
+    // Clean up temp file on error
+    if result.is_err() {
+        let _ = tokio::fs::remove_file(&temp_path).await;
+    }
+
+    result
+}
+
+/// Inner download function that can be cleaned up on error
+async fn download_to_file(
+    _url: &str,
+    temp_path: &Path,
+    dest_path: &Path,
+    pb: &ProgressBar,
+    expected_length: Option<u64>,
+    response: reqwest::Response,
+) -> Result<()> {
+    let mut file = File::create(temp_path)
         .await
         .with_context(|| format!("Failed to create file at {}", temp_path.display()))?;
 
@@ -176,8 +235,17 @@ async fn download_file(url: &str, dest_path: &Path, pb: ProgressBar) -> Result<(
     file.flush().await.context("Failed to flush file")?;
     drop(file);
 
+    // Validate download size if Content-Length was provided
+    if let Some(expected) = expected_length
+        && downloaded != expected
+    {
+        return Err(anyhow::anyhow!(
+            "Download incomplete: got {downloaded} bytes, expected {expected}"
+        ));
+    }
+
     // Atomically move to final location
-    tokio::fs::rename(&temp_path, dest_path)
+    tokio::fs::rename(temp_path, dest_path)
         .await
         .with_context(|| {
             format!(
@@ -188,8 +256,59 @@ async fn download_file(url: &str, dest_path: &Path, pb: ProgressBar) -> Result<(
         })?;
 
     pb.finish_with_message(format!(
-        "{} ✓",
+        "{} (done)",
         dest_path.file_name().unwrap().to_string_lossy()
     ));
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_http_source_simple() {
+        let result = extract_http_source("https://example.com/file.tar.gz");
+        assert!(result.is_some());
+        let source = result.unwrap();
+        assert_eq!(source.url, "https://example.com/file.tar.gz");
+        assert_eq!(source.filename, "file.tar.gz");
+    }
+
+    #[test]
+    fn test_extract_http_source_with_query_string() {
+        let result = extract_http_source("https://example.com/file.tar.gz?token=abc");
+        assert!(result.is_some());
+        let source = result.unwrap();
+        assert_eq!(source.filename, "file.tar.gz");
+    }
+
+    #[test]
+    fn test_extract_http_source_with_fragment() {
+        let result = extract_http_source("https://example.com/file.tar.gz#hash");
+        assert!(result.is_some());
+        let source = result.unwrap();
+        assert_eq!(source.filename, "file.tar.gz");
+    }
+
+    #[test]
+    fn test_extract_http_source_with_rename() {
+        let result = extract_http_source("custom-name.tar.gz::https://example.com/original.tar.gz");
+        assert!(result.is_some());
+        let source = result.unwrap();
+        assert_eq!(source.url, "https://example.com/original.tar.gz");
+        assert_eq!(source.filename, "custom-name.tar.gz");
+    }
+
+    #[test]
+    fn test_extract_http_source_git_ignored() {
+        let result = extract_http_source("git+https://github.com/user/repo.git");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_extract_http_source_local_ignored() {
+        let result = extract_http_source("local-file.patch");
+        assert!(result.is_none());
+    }
 }
