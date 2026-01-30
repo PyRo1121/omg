@@ -526,6 +526,15 @@ impl AurClient {
     pub async fn install(&self, package: &str) -> Result<()> {
         crate::core::security::validate_package_name(package)?;
 
+        // Start sudoloop for long build operations
+        #[cfg(unix)]
+        let _sudoloop = if crate::core::sudoloop::can_use_sudoloop() {
+            tracing::debug!("Starting sudoloop for AUR build");
+            Some(crate::core::sudoloop::SudoLoop::start())
+        } else {
+            None
+        };
+
         // Beautiful header matching the new install.rs style
         use owo_colors::OwoColorize;
         println!();
