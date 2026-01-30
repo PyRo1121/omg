@@ -34,7 +34,9 @@ jobs:
       - name: Install dependencies
         run: |
           pacman -Syu --noconfirm
-          pacman -S --noconfirm base-devel git rust cargo pkgconf openssl libarchive clang cmake
+          pacman -S --noconfirm base-devel git rustup pkgconf openssl libarchive clang cmake
+          rustup default stable
+          rustup component add llvm-tools-preview
 
       - name: Fix git permissions
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
