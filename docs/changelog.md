@@ -964,6 +964,12 @@ increased timeout. All code fixes from f9fc64a are ready for validation.
 
 ### 🧪 Testing
 
+- Fix config tests to use proper subcommand syntax
+
+  - test_config_get_key: Use 'config get telemetry.enabled'
+
+  - test_config_get_invalid_key: Check stdout (not stderr) for error message
+
 - Fix test_team_status to be environment-agnostic
 
 The test was expecting 'Not a team workspace' error but team status
