@@ -79,6 +79,7 @@ use super::aur_index::AurIndex;
 use super::aur_metadata::{
     AurJsonPackage, get_metadata_path, read_metadata_archive, sync_aur_metadata,
 };
+use super::aur_sources::{download_sources, parse_sources};
 use super::pkgbuild::PkgBuild;
 use crate::config::{AurBuildMethod, Settings};
 use crate::core::http::shared_client;
@@ -583,6 +584,14 @@ impl AurClient {
         Self::fetch_missing_pgp_keys(&pkgbuild_path).await;
 
         let env = self.makepkg_env(&pkg_dir)?;
+
+        // Parse and download sources in parallel
+        let sources = parse_sources(&pkg_dir).unwrap_or_default();
+        if !sources.is_empty() {
+            let _ = download_sources(sources, &env.srcdest).await;
+            // Errors are logged but not fatal - makepkg will retry
+        }
+
         let cache_key = self.cache_key(&pkg_dir, &env.makeflags)?;
 
         if self.settings.aur.review_pkgbuild {

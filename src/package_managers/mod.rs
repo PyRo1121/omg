@@ -22,6 +22,8 @@ mod aur;
 #[cfg(feature = "arch")]
 pub mod aur_deps;
 #[cfg(feature = "arch")]
+pub mod aur_sources;
+#[cfg(feature = "arch")]
 mod aur_index;
 #[cfg(feature = "arch")]
 pub mod aur_metadata;
