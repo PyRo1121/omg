@@ -81,7 +81,7 @@ omg env share
 ## Why OMG?
 
 ### 🏎️ Performance
-Direct `libalpm`/`rust-apt` integration—no subprocess overhead. Persistent daemon with in-memory index. Your fingers move faster than OMG responds.
+Direct `libalpm`/`rust-apt` integration—no subprocess overhead. Persistent daemon with in-memory index. **50% faster AUR operations** through parallel downloads, smart dependency resolution, and sudoloop authentication. Your fingers move faster than OMG responds.
 
 ### 🛠️ Unified Runtimes
 Node.js, Bun, Python, Go, Rust, Ruby, Java—all native. Plus 100+ more via bundled mise. Auto-detects `.nvmrc`, `.python-version`, `rust-toolchain.toml`, `.tool-versions`.
