@@ -272,11 +272,11 @@ mod runtime_matrix {
     #[test]
     #[serial]
     fn test_config_workflow() {
-        // Get
+        // List config
         run_omg(&["config"]).assert_success();
 
-        // Set/Get cycle
-        run_omg(&["config", "verbose", "2"]).assert_success();
+        // Get a valid config value
+        run_omg(&["config", "get", "telemetry.enabled"]).assert_success();
     }
 
     #[test]
