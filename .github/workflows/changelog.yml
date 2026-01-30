@@ -5,7 +5,6 @@ on:
     branches: [main]
     paths-ignore:
       - 'docs/changelog.md'
-      - 'docs-site/docs/changelog.md'
   release:
     types: [published]
   workflow_dispatch:
@@ -56,14 +55,11 @@ jobs:
             } > docs/changelog.md.tmp
             mv docs/changelog.md.tmp docs/changelog.md
           fi
-          
-          # Copy to docs-site
-          cp docs/changelog.md docs-site/docs/changelog.md
 
       - name: Check for changes
         id: changes
         run: |
-          if git diff --quiet docs/changelog.md docs-site/docs/changelog.md; then
+          if git diff --quiet docs/changelog.md; then
             echo "changed=false" >> $GITHUB_OUTPUT
           else
             echo "changed=true" >> $GITHUB_OUTPUT
@@ -73,7 +69,7 @@ jobs:
       - name: Commit and Push
         if: steps.changes.outputs.changed == 'true'
         run: |
-          git add docs/changelog.md docs-site/docs/changelog.md
+          git add docs/changelog.md
           git commit -m "docs: update changelog [skip ci]
 
           Auto-generated from git history with git-cliff."

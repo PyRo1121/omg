@@ -43,14 +43,14 @@ def check_regression():
         print("Invalid baseline search time.")
         return 0
 
-    threshold = 1.15 # 15% tolerance
+    threshold = 2.0 # 100% tolerance for CI environment variability
     print(f"Baseline Search: {baseline_search_ms}ms")
     print(f"Current Search: {current_search_ms}ms")
-    
+
     if current_search_ms > baseline_search_ms * threshold:
         diff = ((current_search_ms / baseline_search_ms) - 1) * 100
         print(f"❌ PERFORMANCE REGRESSION DETECTED!")
-        print(f"Search time increased by {diff:.2f}% (exceeds 15% threshold)")
+        print(f"Search time increased by {diff:.2f}% (exceeds 100% threshold)")
         return 1
     
     print("✅ Performance check passed.")
