@@ -3,8 +3,8 @@
 //! Similar to yay's --sudoloop, this runs a background task that
 //! periodically runs `sudo -v` to refresh the sudo timestamp.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::process::Command;
 use tokio::time::sleep;
@@ -29,10 +29,7 @@ impl SudoLoop {
 
             while running_clone.load(Ordering::Relaxed) {
                 // Refresh sudo timestamp with -v (validate, extend timeout)
-                let result = Command::new("sudo")
-                    .arg("-v")
-                    .output()
-                    .await;
+                let result = Command::new("sudo").arg("-v").output().await;
 
                 match result {
                     Ok(output) if output.status.success() => {

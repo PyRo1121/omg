@@ -31,7 +31,15 @@ async fn test_aur_install_speed() {
 
         // Run OMG install
         let output = std::process::Command::new("cargo")
-            .args(&["run", "--release", "--features", "arch", "--", "install", package])
+            .args([
+                "run",
+                "--release",
+                "--features",
+                "arch",
+                "--",
+                "install",
+                package,
+            ])
             .output()
             .expect("Failed to execute omg install");
 
@@ -70,7 +78,15 @@ async fn test_parallel_downloads() {
 
     // Run OMG install with parallel downloads
     let output = std::process::Command::new("cargo")
-        .args(&["run", "--release", "--features", "arch", "--", "install", package])
+        .args([
+            "run",
+            "--release",
+            "--features",
+            "arch",
+            "--",
+            "install",
+            package,
+        ])
         .output()
         .expect("Failed to execute omg install");
 
@@ -105,7 +121,15 @@ async fn test_smart_dependency_resolution() {
     println!("Installing base package: {}", base_package);
 
     let output = std::process::Command::new("cargo")
-        .args(&["run", "--release", "--features", "arch", "--", "install", base_package])
+        .args([
+            "run",
+            "--release",
+            "--features",
+            "arch",
+            "--",
+            "install",
+            base_package,
+        ])
         .output()
         .expect("Failed to install base package");
 
@@ -114,12 +138,23 @@ async fn test_smart_dependency_resolution() {
     // Now install a package that might share dependencies
     // Smart resolution should skip already-satisfied dependencies
     let test_package = "paru-bin";
-    println!("Installing package with potential shared deps: {}", test_package);
+    println!(
+        "Installing package with potential shared deps: {}",
+        test_package
+    );
 
     let start = Instant::now();
 
     let output = std::process::Command::new("cargo")
-        .args(&["run", "--release", "--features", "arch", "--", "install", test_package])
+        .args([
+            "run",
+            "--release",
+            "--features",
+            "arch",
+            "--",
+            "install",
+            test_package,
+        ])
         .output()
         .expect("Failed to install test package");
 
