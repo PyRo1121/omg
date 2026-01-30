@@ -1011,15 +1011,22 @@ mod config {
 
     #[test]
     fn test_config_get_key() {
-        let (success, _, _) = run_omg(&["config", "data_dir"]);
+        // Use proper config get subcommand
+        let (success, _, _) = run_omg(&["config", "get", "telemetry.enabled"]);
         assert!(success, "Config get should succeed");
     }
 
     #[test]
     fn test_config_get_invalid_key() {
-        let (success, stdout, _) = run_omg(&["config", "nonexistent_key"]);
-        assert!(success, "Config get for invalid key should not crash");
-        // Should show "(not set)" or similar
+        // Use proper config get subcommand - invalid key reports error message
+        let (_, stdout, _) = run_omg(&["config", "get", "nonexistent_key"]);
+        assert!(
+            stdout.contains("Unknown")
+                || stdout.contains("not found")
+                || stdout.contains("invalid"),
+            "Config get for invalid key should report error, got: {}",
+            stdout
+        );
     }
 }
 
