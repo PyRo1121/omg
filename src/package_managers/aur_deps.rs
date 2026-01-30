@@ -4,6 +4,7 @@
 //! to avoid redundant pacman operations.
 
 use alpm_srcinfo::SourceInfoV1;
+use alpm_types::SystemArchitecture;
 use anyhow::{Context, Result};
 use std::path::Path;
 
@@ -16,6 +17,17 @@ pub struct DependencyInfo {
     pub satisfied: Vec<String>,
     /// Total dependency count
     pub total: usize,
+}
+
+/// Get the current system architecture
+fn current_arch() -> Option<SystemArchitecture> {
+    match std::env::consts::ARCH {
+        "x86_64" => Some(SystemArchitecture::X86_64),
+        "aarch64" => Some(SystemArchitecture::Aarch64),
+        "arm" => Some(SystemArchitecture::Arm),
+        "i686" => Some(SystemArchitecture::I686),
+        _ => None,
+    }
 }
 
 /// Parse .SRCINFO and check which dependencies are missing
@@ -35,24 +47,42 @@ pub fn check_dependencies(pkg_dir: &Path) -> Result<DependencyInfo> {
 
     let srcinfo = SourceInfoV1::from_string(&content).context("Failed to parse .SRCINFO")?;
 
-    // Get base package info from srcinfo
     let base = &srcinfo.base;
     let mut all_deps = Vec::new();
 
-    // Collect runtime dependencies (RelationOrSoname type - use to_string())
+    // Collect runtime dependencies from base
     for dep in &base.dependencies {
         all_deps.push(dep.to_string());
     }
 
-    // Collect make dependencies (PackageRelation type - use name field)
+    // Collect make dependencies from base
     for dep in &base.make_dependencies {
         all_deps.push(dep.name.to_string());
     }
 
-    // Collect check dependencies (PackageRelation type - use name field)
+    // Collect check dependencies from base
     for dep in &base.check_dependencies {
         all_deps.push(dep.name.to_string());
     }
+
+    // Also collect architecture-specific dependencies if available
+    if let Some(arch) = current_arch()
+        && let Some(arch_props) = base.architecture_properties.get(&arch)
+    {
+        for dep in &arch_props.dependencies {
+            all_deps.push(dep.to_string());
+        }
+        for dep in &arch_props.make_dependencies {
+            all_deps.push(dep.name.to_string());
+        }
+        for dep in &arch_props.check_dependencies {
+            all_deps.push(dep.name.to_string());
+        }
+    }
+
+    // Note: Split packages have Override<Vec> for dependencies which may override
+    // or clear base dependencies. For simplicity, we rely on base dependencies
+    // which covers the common case. makepkg will handle any edge cases.
 
     // Remove duplicates
     all_deps.sort();
@@ -66,14 +96,14 @@ pub fn check_dependencies(pkg_dir: &Path) -> Result<DependencyInfo> {
         let mut satisfied = Vec::new();
         let mut missing = Vec::new();
 
-        for dep in &all_deps {
-            // Extract package name (strip version constraints)
-            let pkg_name: &str = dep.split(['>', '<', '=']).next().unwrap_or(dep);
+        for dep in all_deps {
+            // Extract package name (strip version constraints like >=, <=, =, >, <)
+            let pkg_name = extract_package_name(&dep);
 
             if localdb.pkg(pkg_name).is_ok() {
-                satisfied.push(dep.clone());
+                satisfied.push(dep);
             } else {
-                missing.push(dep.clone());
+                missing.push(dep);
             }
         }
 
@@ -85,4 +115,45 @@ pub fn check_dependencies(pkg_dir: &Path) -> Result<DependencyInfo> {
         satisfied,
         total,
     })
+}
+
+/// Extract package name from a dependency string, stripping version constraints
+///
+/// Handles formats like:
+/// - "package" -> "package"
+/// - "package>=1.0" -> "package"
+/// - "package>1.0" -> "package"
+/// - "package=1.0" -> "package"
+/// - "package<=1.0" -> "package"
+/// - "package<1.0" -> "package"
+fn extract_package_name(dep: &str) -> &str {
+    // Find the first occurrence of any version operator
+    let operators = ['>', '<', '='];
+
+    for (i, c) in dep.char_indices() {
+        if operators.contains(&c) {
+            return &dep[..i];
+        }
+    }
+
+    dep
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_package_name() {
+        assert_eq!(extract_package_name("gcc"), "gcc");
+        assert_eq!(extract_package_name("gcc>=10"), "gcc");
+        assert_eq!(extract_package_name("gcc>10"), "gcc");
+        assert_eq!(extract_package_name("gcc=10"), "gcc");
+        assert_eq!(extract_package_name("gcc<=10"), "gcc");
+        assert_eq!(extract_package_name("gcc<10"), "gcc");
+        assert_eq!(
+            extract_package_name("lib32-gcc-libs>=10.2"),
+            "lib32-gcc-libs"
+        );
+    }
 }
