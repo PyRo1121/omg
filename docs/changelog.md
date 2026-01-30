@@ -962,6 +962,14 @@ Trivial change to trigger full CI with the cross-platform fixes and
 
 increased timeout. All code fixes from f9fc64a are ready for validation.
 
+### 🧪 Testing
+
+- Fix test_config_workflow to use valid config subcommand
+
+The test was using the deprecated `config verbose 2` syntax.
+
+Updated to use `config get telemetry.enabled` which is valid.
+
 ## [0.1.199] - 2026-01-29
 ### ⚡ Performance
 
