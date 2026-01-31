@@ -541,7 +541,7 @@ mod tests {
     use super::*;
 
     #[test]
-    #[allow(clippy::implicit_clone)] // Version is feature-gated type alias; .to_string() is the required conversion
+    #[allow(clippy::implicit_clone, clippy::redundant_clone)] // Version is feature-gated type alias; .to_string() is the required conversion
     fn test_package_fixture_builder() {
         let pkg = PackageFixture::new()
             .name("test")
