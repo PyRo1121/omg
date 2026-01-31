@@ -230,15 +230,16 @@ fn extract_package_internal(
         let entry_type = entry.header().entry_type();
         if entry_type.is_symlink()
             && let Ok(Some(link_target)) = entry.link_name()
-                && !validate_symlink_target(&root, &dest, &link_target) {
-                    tracing::warn!(
-                        package = %pkg.path.display(),
-                        link = %dest.display(),
-                        target = %link_target.display(),
-                        "Blocked symlink escape attempt"
-                    );
-                    continue;
-                }
+            && !validate_symlink_target(&root, &dest, &link_target)
+        {
+            tracing::warn!(
+                package = %pkg.path.display(),
+                link = %dest.display(),
+                target = %link_target.display(),
+                "Blocked symlink escape attempt"
+            );
+            continue;
+        }
 
         if let Some(parent) = dest.parent() {
             fs::create_dir_all(parent)?;
@@ -248,10 +249,11 @@ fn extract_package_internal(
         extracted_bytes += entry.size();
 
         if let Some(p) = progress
-            && extracted_bytes >= 1024 * 1024 {
-                p.add_bytes(extracted_bytes);
-                extracted_bytes = 0;
-            }
+            && extracted_bytes >= 1024 * 1024
+        {
+            p.add_bytes(extracted_bytes);
+            extracted_bytes = 0;
+        }
     }
 
     // Final progress update

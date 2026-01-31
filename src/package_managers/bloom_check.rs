@@ -179,9 +179,10 @@ fn get_sync_db_mtime() -> Option<SystemTime> {
         for entry in entries.flatten() {
             if let Ok(meta) = entry.metadata()
                 && let Ok(mtime) = meta.modified()
-                    && mtime > newest {
-                        newest = mtime;
-                    }
+                && mtime > newest
+            {
+                newest = mtime;
+            }
         }
     }
 
@@ -260,10 +261,9 @@ pub fn quick_update_check() -> Result<bool> {
     for pkg in &local_packages {
         let version_str = pkg.version.to_string();
 
-        if !filter.contains(&pkg.name, &version_str)
-            && get_sync_package(&pkg.name)?.is_some() {
-                return Ok(true);
-            }
+        if !filter.contains(&pkg.name, &version_str) && get_sync_package(&pkg.name)?.is_some() {
+            return Ok(true);
+        }
     }
 
     Ok(false)

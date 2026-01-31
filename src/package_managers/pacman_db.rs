@@ -1115,9 +1115,10 @@ pub fn search_sync_mmap(query: &str) -> Result<Vec<SyncDbPackage>> {
     {
         let mmap_guard = SYNC_MMAP_INDEX.read();
         if let Some(ref idx) = *mmap_guard
-            && idx.mtime() == mtime_secs {
-                return Ok(convert_mmap_results(idx.search(query)));
-            }
+            && idx.mtime() == mtime_secs
+        {
+            return Ok(convert_mmap_results(idx.search(query)));
+        }
     }
 
     if let Some(idx) = try_load_mmap_index(mtime_secs) {
@@ -1144,13 +1145,41 @@ fn convert_mmap_results(archived: Vec<&rkyv::Archived<RkyvSyncPackage>>) -> Vec<
             url: p.url.to_string(),
             arch: p.arch.to_string(),
             repo: p.repo.to_string(),
-            licenses: p.licenses.iter().map(std::string::ToString::to_string).collect(),
-            depends: p.depends.iter().map(std::string::ToString::to_string).collect(),
-            makedepends: p.makedepends.iter().map(std::string::ToString::to_string).collect(),
-            optdepends: p.optdepends.iter().map(std::string::ToString::to_string).collect(),
-            provides: p.provides.iter().map(std::string::ToString::to_string).collect(),
-            conflicts: p.conflicts.iter().map(std::string::ToString::to_string).collect(),
-            replaces: p.replaces.iter().map(std::string::ToString::to_string).collect(),
+            licenses: p
+                .licenses
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
+            depends: p
+                .depends
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
+            makedepends: p
+                .makedepends
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
+            optdepends: p
+                .optdepends
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
+            provides: p
+                .provides
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
+            conflicts: p
+                .conflicts
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
+            replaces: p
+                .replaces
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
         })
         .collect()
 }
