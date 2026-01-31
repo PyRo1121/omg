@@ -349,7 +349,7 @@ jobs:
             setup: |
               pacman -Syu --noconfirm
               pacman -S --noconfirm --needed base-devel git pkgconf openssl libarchive clang cmake curl
-              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --component llvm-tools-preview
+              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.92.0 --component llvm-tools-preview
               echo "$HOME/.cargo/bin" >> $GITHUB_PATH
             test_args: "--lib --test arch_tests --test cross_platform_mock_tests"
             
@@ -362,7 +362,7 @@ jobs:
               DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
                 ca-certificates curl git build-essential pkg-config \
                 libssl-dev libapt-pkg-dev clang cmake zlib1g-dev liblzma-dev libbz2-dev
-              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --component llvm-tools-preview
+              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.92.0 --component llvm-tools-preview
               echo "$HOME/.cargo/bin" >> $GITHUB_PATH
             test_args: "--lib --test debian_tests --test cross_platform_mock_tests"
             
@@ -373,7 +373,7 @@ jobs:
             setup: |
               dnf install -y --setopt=install_weak_deps=False \
                 git clang cmake openssl-devel pkgconfig findutils curl
-              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --component llvm-tools-preview
+              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.92.0 --component llvm-tools-preview
               echo "$HOME/.cargo/bin" >> $GITHUB_PATH
             test_args: "--lib --test fedora_tests --test cross_platform_mock_tests"
             
