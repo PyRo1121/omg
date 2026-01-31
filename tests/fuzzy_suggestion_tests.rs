@@ -12,6 +12,7 @@ use tempfile::TempDir;
 
 #[tokio::test]
 #[serial]
+#[allow(unsafe_code)] // Test setup requires env var modification
 async fn test_fuzzy_suggestions() {
     // Setup
     let temp_dir = TempDir::new().unwrap();

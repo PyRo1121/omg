@@ -287,7 +287,7 @@ pub struct BenchmarkRunner {
 }
 
 impl BenchmarkRunner {
-    pub fn new(warmup: usize, measure: usize) -> Self {
+    pub const fn new(warmup: usize, measure: usize) -> Self {
         Self {
             warmup_iterations: warmup,
             measure_iterations: measure,

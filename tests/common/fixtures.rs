@@ -302,7 +302,7 @@ pub mod perf {
     pub const ENV_CAPTURE_MAX_MS: u64 = 2000;
     pub const VERSION_SWITCH_MAX_MS: u64 = 500;
 
-    pub fn max_duration(ms: u64) -> Duration {
+    pub const fn max_duration(ms: u64) -> Duration {
         Duration::from_millis(ms)
     }
 }
