@@ -201,6 +201,16 @@ Updated CLI commands to use pure Rust:
 
 ### 🐛 Bug Fixes
 
+- Resolve Fedora tests clippy warnings
+
+  - Use inline format args in assert! macros (clippy::uninlined_format_args)
+
+  - Replace map_or(false, ...) with is_some_and(...) (clippy::unnecessary_map_or)
+
+  - Use char literals '[' and ']' instead of string constants (clippy::single_char_pattern)
+
+All fixes in tests/fedora_tests.rs lines 247, 264, 333, 337
+
 - Apply cargo fmt formatting
 
   - Fixed unsafe block formatting in pacman_db.rs
