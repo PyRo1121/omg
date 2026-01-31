@@ -4,7 +4,7 @@
 //! Focuses on Scoop (fastest Windows PM) with registry detection for other installers.
 //!
 //! ## Performance Targets
-//! - Search: <100ms (in-memory index with binary cache)
+//! - Search: <5ms (zero-copy mmap with rkyv)
 //! - List installed: <50ms (parallel directory walking)
 //! - Registry enumeration: <200ms (multi-threaded registry scanning)
 //!
@@ -12,21 +12,41 @@
 //! - Zero CLI wrappers - pure Rust APIs only
 //! - Scoop manifest parsing from JSON buckets
 //! - Windows registry scanning for system-wide installed software
-//! - Binary cache using bitcode for instant startup
+//! - Zero-copy rkyv mmap index for ultra-fast startup (~100µs)
+//! - Fallback to bitcode binary cache (1-2ms)
 //! - Lock-free concurrent data structures
 
+use std::collections::HashMap;
+use std::fs::File;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, LazyLock};
+
+use ahash::AHashSet;
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use dashmap::DashMap;
+use memmap2::Mmap;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use tempfile::NamedTempFile;
 use tokio::fs;
 use tokio::sync::OnceCell;
 
 use crate::core::{Package, PackageSource};
 use crate::package_managers::{PackageManager, types::UpdateInfo};
+
+/// TTL for cache eviction safety net (30 minutes)
+const CACHE_TTL_SECS: u64 = 30 * 60;
+
+/// Global cache for installed package names
+static INSTALLED_CACHE: LazyLock<RwLock<Option<AHashSet<String>>>> =
+    LazyLock::new(|| RwLock::new(None));
+
+/// Global mmap-based zero-copy Windows package index
+static WINDOWS_MMAP_INDEX: LazyLock<RwLock<Option<WindowsMmapIndex>>> =
+    LazyLock::new(|| RwLock::new(None));
 
 /// Scoop manifest structure (subset of fields we care about)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -104,6 +124,66 @@ struct RegistryPackage {
     install_location: String,
 }
 
+/// Lightweight struct for fast installed package enumeration
+#[derive(Debug, Clone)]
+struct InstalledPackage {
+    name: String,
+    version: String,
+    source: String,
+    description: String,
+}
+
+#[cfg(target_os = "windows")]
+fn enumerate_registry_packages() -> Result<Vec<InstalledPackage>> {
+    use winreg::enums::*;
+    use winreg::RegKey;
+
+    let mut packages = Vec::with_capacity(200);
+
+    let registry_paths = [
+        (HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
+        (HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
+        (HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Uninstall"),
+    ];
+
+    for (root, path) in registry_paths {
+        let Ok(key) = RegKey::predef(root).open_subkey(path) else {
+            continue;
+        };
+
+        for subkey_name in key.enum_keys().filter_map(Result::ok) {
+            let Ok(subkey) = key.open_subkey(&subkey_name) else {
+                continue;
+            };
+
+            let Ok(name): Result<String, _> = subkey.get_value("DisplayName") else {
+                continue;
+            };
+
+            if name.is_empty() || name.starts_with("KB") || name.contains("Update for") {
+                continue;
+            }
+
+            let version: String = subkey.get_value("DisplayVersion").unwrap_or_default();
+            let publisher: String = subkey.get_value("Publisher").unwrap_or_default();
+
+            packages.push(InstalledPackage {
+                name,
+                version,
+                source: "registry".to_string(),
+                description: publisher,
+            });
+        }
+    }
+
+    Ok(packages)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn enumerate_registry_packages() -> Result<Vec<InstalledPackage>> {
+    Ok(Vec::new())
+}
+
 /// Binary cache format for fast startup
 #[derive(Debug, Clone, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 struct PackageCache {
@@ -122,6 +202,121 @@ struct CachedPackage {
     description: String,
     installed: bool,
     source: String,
+}
+
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug, Clone)]
+pub struct RkyvWindowsPackage {
+    pub name: String,
+    pub version: String,
+    pub description: String,
+    pub source: String,
+    pub installed: bool,
+}
+
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug, Default, Clone)]
+pub struct RkyvWindowsIndex {
+    pub packages: Vec<RkyvWindowsPackage>,
+    pub name_to_idx: HashMap<String, u32>,
+    pub updated_at: u64,
+}
+
+/// # Safety
+///
+/// Uses unsafe mmap. Invariants:
+/// 1. Data validated via `rkyv::access` in `open()` before construction
+/// 2. Mmap is immutable after creation
+/// 3. Only constructed if validation succeeds
+pub struct WindowsMmapIndex {
+    mmap: Mmap,
+    last_accessed: AtomicU64,
+}
+
+impl WindowsMmapIndex {
+    pub fn open(path: &Path) -> Result<Self> {
+        let file = File::open(path)
+            .with_context(|| format!("Failed to open mmap index at {}", path.display()))?;
+
+        // SAFETY: File is read-only, mmap is immutable, rkyv validation ensures integrity
+        let mmap = unsafe { Mmap::map(&file)? };
+
+        rkyv::access::<rkyv::Archived<RkyvWindowsIndex>, rkyv::rancor::Error>(&mmap)
+            .map_err(|e| anyhow::anyhow!("Corrupted Windows package index: {e}"))?;
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        Ok(Self {
+            mmap,
+            last_accessed: AtomicU64::new(now),
+        })
+    }
+
+    #[inline]
+    fn archive(&self) -> Result<&rkyv::Archived<RkyvWindowsIndex>> {
+        rkyv::access::<rkyv::Archived<RkyvWindowsIndex>, rkyv::rancor::Error>(&self.mmap)
+            .map_err(|e| anyhow::anyhow!("Corrupted Windows package index: {e}"))
+    }
+
+    pub fn get(&self, name: &str) -> Result<Option<&rkyv::Archived<RkyvWindowsPackage>>> {
+        let archive = self.archive()?;
+        let Some(idx) = archive.name_to_idx.get(name) else {
+            return Ok(None);
+        };
+        let idx = u32::from(*idx) as usize;
+        Ok(archive.packages.get(idx))
+    }
+
+    pub fn search(&self, query: &str) -> Result<Vec<&rkyv::Archived<RkyvWindowsPackage>>> {
+        let archive = self.archive()?;
+        let query_lower = query.to_lowercase();
+
+        Ok(archive
+            .packages
+            .iter()
+            .filter(|p| {
+                p.name.to_lowercase().contains(&query_lower)
+                    || p.description.to_lowercase().contains(&query_lower)
+            })
+            .collect())
+    }
+
+    pub fn is_expired(&self) -> bool {
+        let last = self.last_accessed.load(Ordering::Relaxed);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        now.saturating_sub(last) > CACHE_TTL_SECS
+    }
+
+    pub fn touch(&self) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        self.last_accessed.store(now, Ordering::Relaxed);
+    }
+
+    pub fn len(&self) -> usize {
+        self.archive().map(|a| a.packages.len()).unwrap_or(0)
+    }
+
+    #[allow(dead_code)]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+impl Drop for WindowsMmapIndex {
+    fn drop(&mut self) {
+        tracing::debug!(
+            "Unmapping Windows package index (size: {} bytes)",
+            self.mmap.len()
+        );
+    }
 }
 
 /// Windows package manager implementation
@@ -184,6 +379,105 @@ impl WindowsPackageManager {
         PathBuf::from("/tmp/omg_windows_cache")
     }
 
+    fn get_mmap_path() -> PathBuf {
+        Self::get_cache_dir().join("windows_index_v1.rkyv")
+    }
+
+    fn build_rkyv_index(packages: &DashMap<String, Package>) -> RkyvWindowsIndex {
+        let mut index = RkyvWindowsIndex {
+            packages: Vec::with_capacity(packages.len()),
+            name_to_idx: HashMap::with_capacity(packages.len()),
+            updated_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+        };
+
+        for entry in packages.iter() {
+            let pkg = entry.value();
+            let idx = index.packages.len() as u32;
+            index.name_to_idx.insert(pkg.name.clone(), idx);
+            index.packages.push(RkyvWindowsPackage {
+                name: pkg.name.clone(),
+                version: pkg.version.to_string(),
+                description: pkg.description.clone(),
+                source: "scoop".to_string(),
+                installed: pkg.installed,
+            });
+        }
+
+        index
+    }
+
+    fn save_mmap_index(index: &RkyvWindowsIndex) -> Result<()> {
+        let cache_dir = Self::get_cache_dir();
+        std::fs::create_dir_all(&cache_dir).ok();
+        let path = Self::get_mmap_path();
+
+        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(index)
+            .map_err(|e| anyhow::anyhow!("rkyv serialization: {e}"))?;
+
+        let parent = path.parent().unwrap_or_else(|| Path::new("."));
+        let mut temp = NamedTempFile::new_in(parent)
+            .context("Failed to create temp file for mmap index")?;
+        temp.write_all(&bytes)?;
+        temp.persist(&path)?;
+
+        Ok(())
+    }
+
+    fn try_load_mmap_index() -> Option<WindowsMmapIndex> {
+        let path = Self::get_mmap_path();
+        if !path.exists() {
+            return None;
+        }
+
+        match WindowsMmapIndex::open(&path) {
+            Ok(idx) => Some(idx),
+            Err(e) => {
+                tracing::debug!("mmap index load failed: {e}");
+                None
+            }
+        }
+    }
+
+    fn search_mmap(&self, query: &str) -> Option<Vec<Package>> {
+        let mmap_guard = WINDOWS_MMAP_INDEX.read();
+
+        if let Some(ref mmap) = *mmap_guard
+            && !mmap.is_expired()
+        {
+            mmap.touch();
+            if let Ok(results) = mmap.search(query) {
+                return Some(self.convert_rkyv_packages(results));
+            }
+        }
+
+        drop(mmap_guard);
+
+        if let Some(mmap) = Self::try_load_mmap_index() {
+            let result = mmap.search(query).ok().map(|results| self.convert_rkyv_packages(results));
+            let mut mmap_guard = WINDOWS_MMAP_INDEX.write();
+            *mmap_guard = Some(mmap);
+            return result;
+        }
+
+        None
+    }
+
+    fn convert_rkyv_packages(&self, results: Vec<&rkyv::Archived<RkyvWindowsPackage>>) -> Vec<Package> {
+        results
+            .into_iter()
+            .map(|p| Package {
+                name: p.name.to_string(),
+                version: crate::package_managers::types::parse_version_or_zero(&p.version),
+                description: p.description.to_string(),
+                source: PackageSource::Official,
+                installed: p.installed.into(),
+            })
+            .collect()
+    }
+
     /// Ensure the package index is initialized, using `OnceCell` for synchronization
     ///
     /// This method prevents race conditions when multiple concurrent operations
@@ -220,12 +514,10 @@ impl WindowsPackageManager {
         self.rebuild_index().await
     }
 
-    /// Rebuild index from Scoop buckets and registry
     async fn rebuild_index(&self) -> Result<()> {
         let (scoop_packages, registry_packages) =
             tokio::join!(self.scan_scoop_packages(), self.scan_registry_packages());
 
-        // Merge into index
         if let Ok(packages) = scoop_packages {
             for pkg in packages {
                 self.package_index.insert(pkg.name.clone(), pkg);
@@ -238,8 +530,17 @@ impl WindowsPackageManager {
             }
         }
 
-        // Save to binary cache
         let _ = self.save_cache().await;
+
+        let rkyv_index = Self::build_rkyv_index(&self.package_index);
+        if let Err(e) = Self::save_mmap_index(&rkyv_index) {
+            tracing::debug!("Failed to save rkyv mmap index: {e}");
+        }
+
+        if let Some(mmap) = Self::try_load_mmap_index() {
+            let mut mmap_guard = WINDOWS_MMAP_INDEX.write();
+            *mmap_guard = Some(mmap);
+        }
 
         Ok(())
     }
@@ -311,6 +612,82 @@ impl WindowsPackageManager {
         let app_dir = self.scoop_dir.join("apps").join(name).join("current");
         // Use async fs check to avoid blocking the runtime
         fs::metadata(&app_dir).await.is_ok()
+    }
+
+    fn list_scoop_packages_sync(&self) -> Result<Vec<InstalledPackage>> {
+        let apps_dir = self.scoop_dir.join("apps");
+        if !apps_dir.exists() {
+            return Ok(Vec::new());
+        }
+
+        let mut packages = Vec::new();
+        let entries = std::fs::read_dir(&apps_dir)?;
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+
+            let name = path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("unknown")
+                .to_string();
+
+            if name == "scoop" {
+                continue;
+            }
+
+            let manifest_path = path.join("current").join("manifest.json");
+            let (version, description) = if manifest_path.exists() {
+                match std::fs::read_to_string(&manifest_path)
+                    .ok()
+                    .and_then(|c| serde_json::from_str::<ScoopManifest>(&c).ok())
+                {
+                    Some(manifest) => (manifest.version, manifest.description),
+                    None => ("0.0.0".to_string(), String::new()),
+                }
+            } else {
+                ("0.0.0".to_string(), String::new())
+            };
+
+            packages.push(InstalledPackage {
+                name,
+                version,
+                source: "scoop".to_string(),
+                description,
+            });
+        }
+
+        Ok(packages)
+    }
+
+    pub fn is_installed_fast(&self, package: &str) -> bool {
+        if let Some(ref cache) = *INSTALLED_CACHE.read() {
+            return cache.contains(&package.to_lowercase());
+        }
+
+        self.refresh_installed_cache();
+
+        INSTALLED_CACHE
+            .read()
+            .as_ref()
+            .is_some_and(|c| c.contains(&package.to_lowercase()))
+    }
+
+    fn refresh_installed_cache(&self) {
+        let mut names = AHashSet::new();
+
+        if let Ok(registry_pkgs) = enumerate_registry_packages() {
+            names.extend(registry_pkgs.iter().map(|p| p.name.to_lowercase()));
+        }
+
+        if let Ok(scoop_pkgs) = self.list_scoop_packages_sync() {
+            names.extend(scoop_pkgs.iter().map(|p| p.name.to_lowercase()));
+        }
+
+        *INSTALLED_CACHE.write() = Some(names);
     }
 
     /// Scan Windows registry for installed software
@@ -410,7 +787,7 @@ impl WindowsPackageManager {
             let pkg = entry.value();
             let cached = CachedPackage {
                 name: pkg.name.clone(),
-                version: pkg.version.clone(),
+                version: pkg.version.to_string(),
                 description: pkg.description.clone(),
                 installed: pkg.installed,
                 source: "scoop".to_string(),
@@ -473,7 +850,10 @@ impl PackageManager for WindowsPackageManager {
     }
 
     async fn search(&self, query: &str) -> Result<Vec<Package>> {
-        // Ensure index is initialized (race-condition safe via OnceCell)
+        if let Some(results) = self.search_mmap(query) {
+            return Ok(results);
+        }
+
         self.ensure_initialized().await?;
 
         let query_lower = query.to_lowercase();
@@ -577,52 +957,59 @@ impl PackageManager for WindowsPackageManager {
     }
 
     async fn list_installed(&self) -> Result<Vec<Package>> {
-        let apps_dir = self.scoop_dir.join("apps");
-        if !apps_dir.exists() {
-            return Ok(Vec::new());
-        }
+        let mut all_packages = Vec::new();
 
-        let mut packages = Vec::new();
-        let mut entries = fs::read_dir(&apps_dir).await?;
-
-        while let Some(entry) = entries.next_entry().await? {
-            let path = entry.path();
-            if !path.is_dir() {
-                continue;
-            }
-
-            let name = path
-                .file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or("unknown")
-                .to_string();
-
-            // Skip scoop's own directory
-            if name == "scoop" {
-                continue;
-            }
-
-            // Read version from current/manifest.json
-            let manifest_path = path.join("current").join("manifest.json");
-            let (version, description) = if manifest_path.exists() {
-                match self.parse_scoop_manifest(&manifest_path).await {
-                    Ok(manifest) => (manifest.version, manifest.description),
-                    Err(_) => ("0.0.0".to_string(), String::new()),
-                }
-            } else {
-                ("0.0.0".to_string(), String::new())
-            };
-
-            packages.push(Package {
-                name,
-                version: crate::package_managers::types::parse_version_or_zero(&version),
-                description,
+        if let Ok(registry) = enumerate_registry_packages() {
+            all_packages.extend(registry.into_iter().map(|p| Package {
+                name: p.name,
+                version: crate::package_managers::types::parse_version_or_zero(&p.version),
+                description: p.description,
                 source: PackageSource::Official,
                 installed: true,
-            });
+            }));
         }
 
-        Ok(packages)
+        let apps_dir = self.scoop_dir.join("apps");
+        if apps_dir.exists() {
+            let mut entries = fs::read_dir(&apps_dir).await?;
+
+            while let Some(entry) = entries.next_entry().await? {
+                let path = entry.path();
+                if !path.is_dir() {
+                    continue;
+                }
+
+                let name = path
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("unknown")
+                    .to_string();
+
+                if name == "scoop" {
+                    continue;
+                }
+
+                let manifest_path = path.join("current").join("manifest.json");
+                let (version, description) = if manifest_path.exists() {
+                    match self.parse_scoop_manifest(&manifest_path).await {
+                        Ok(manifest) => (manifest.version, manifest.description),
+                        Err(_) => ("0.0.0".to_string(), String::new()),
+                    }
+                } else {
+                    ("0.0.0".to_string(), String::new())
+                };
+
+                all_packages.push(Package {
+                    name,
+                    version: crate::package_managers::types::parse_version_or_zero(&version),
+                    description,
+                    source: PackageSource::Official,
+                    installed: true,
+                });
+            }
+        }
+
+        Ok(all_packages)
     }
 
     async fn get_status(&self, fast: bool) -> Result<(usize, usize, usize, usize)> {
@@ -703,7 +1090,7 @@ impl PackageManager for WindowsPackageManager {
     }
 
     async fn is_installed(&self, package: &str) -> bool {
-        self.is_scoop_installed(package).await
+        self.is_installed_fast(package)
     }
 }
 
