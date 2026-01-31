@@ -161,23 +161,9 @@ fn show_package_tree(package: &str) -> Result<Cmd<()>> {
 #[cfg(all(feature = "debian", not(feature = "arch")))]
 fn show_top_packages(limit: usize) -> Result<Cmd<()>> {
     use crate::cli::components::Components;
-    use std::process::Command;
+    use crate::package_managers::debian_db;
 
-    let output = Command::new("dpkg-query")
-        .args(["-W", "-f=${Installed-Size}\t${Package}\n"])
-        .output()?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut packages: Vec<(String, i64)> = stdout
-        .lines()
-        .filter_map(|line| {
-            let parts: Vec<_> = line.split('\t').collect();
-            (parts.len() == 2).then(|| {
-                let size: i64 = parts[0].parse().unwrap_or(0) * 1024; // KB to bytes
-                (parts[1].to_string(), size)
-            })
-        })
-        .collect();
+    let mut packages = debian_db::get_all_packages_with_sizes()?;
 
     packages.sort_by(|a, b| b.1.cmp(&a.1));
 
@@ -208,56 +194,23 @@ fn show_top_packages(limit: usize) -> Result<Cmd<()>> {
 #[cfg(all(feature = "debian", not(feature = "arch")))]
 fn show_package_tree(package: &str) -> Result<Cmd<()>> {
     use crate::cli::components::Components;
-    use std::process::Command;
+    use crate::package_managers::debian_db;
 
-    // Get package size
-    let output = Command::new("dpkg-query")
-        .args(["-W", "-f=${Installed-Size}", "--", package])
-        .output()?;
-
-    if !output.status.success() {
-        return Ok(Components::error_with_suggestion(
-            format!("Package '{package}' not installed"),
-            "Try 'omg search' to find available packages",
-        ));
-    }
-
-    let size: i64 = String::from_utf8_lossy(&output.stdout)
-        .trim()
-        .parse()
-        .unwrap_or(0)
-        * 1024;
-
-    // Get dependencies
-    let deps_output = Command::new("apt-cache")
-        .args(["depends", "--installed", "--", package])
-        .output()?;
-
-    let deps_str = String::from_utf8_lossy(&deps_output.stdout);
-    let mut dep_sizes: Vec<(String, i64)> = Vec::new();
-
-    for line in deps_str.lines() {
-        if !line.trim().starts_with("Depends:") {
-            continue;
+    let size = match debian_db::get_package_size(package) {
+        Ok(s) => s,
+        Err(_) => {
+            return Ok(Components::error_with_suggestion(
+                format!("Package '{package}' not installed"),
+                "Try 'omg search' to find available packages",
+            ));
         }
-        let dep_name = match line.trim().strip_prefix("Depends:") {
-            Some(suffix) => suffix.trim(),
-            None => continue,
-        };
+    };
 
-        let Ok(dep_out) = Command::new("dpkg-query")
-            .args(["-W", "-f=${Installed-Size}", "--", dep_name])
-            .output()
-        else {
-            continue;
-        };
-
-        if dep_out.status.success() {
-            let dep_size: i64 = String::from_utf8_lossy(&dep_out.stdout)
-                .trim()
-                .parse()
-                .unwrap_or(0)
-                * 1024;
+    let (dependencies, _) = debian_db::get_package_dependencies(package)?;
+    
+    let mut dep_sizes: Vec<(String, i64)> = Vec::new();
+    for dep_name in dependencies {
+        if let Ok(dep_size) = debian_db::get_package_size(&dep_name) {
             dep_sizes.push((dep_name.to_string(), dep_size));
         }
     }

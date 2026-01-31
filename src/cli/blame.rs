@@ -142,24 +142,12 @@ fn get_package_info(package: &str) -> Result<(bool, Option<String>, String)> {
 
 #[cfg(all(feature = "debian", not(feature = "arch")))]
 fn get_package_info(package: &str) -> Result<(bool, Option<String>, String)> {
-    use crate::cli::style;
-    use std::process::Command;
+    use crate::cli::components::style;
+    use crate::package_managers::debian_db;
 
-    let output = Command::new("dpkg-query")
-        .args(["-W", "-f=${Version}\t${Status}", "--", package])
-        .output()?;
-
-    if output.status.success() {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let parts: Vec<_> = stdout.split('\t').collect();
-        if parts.len() >= 2 && parts[1].contains("installed") {
-            // Check if auto-installed
-            let auto_check = Command::new("apt-mark")
-                .args(["showauto", "--", package])
-                .output()?;
-            let is_auto = String::from_utf8_lossy(&auto_check.stdout)
-                .trim()
-                .contains(package);
+    match debian_db::get_package_version(package)? {
+        Some(version) => {
+            let is_auto = debian_db::is_package_auto_installed(package)?;
 
             let reason = if is_auto {
                 style::path("dependency (auto-installed)")
@@ -167,11 +155,10 @@ fn get_package_info(package: &str) -> Result<(bool, Option<String>, String)> {
                 style::version("explicit (user installed)")
             };
 
-            return Ok((true, Some(parts[0].to_string()), reason));
+            Ok((true, Some(version), reason))
         }
+        None => Ok((false, None, "not installed".to_string())),
     }
-
-    Ok((false, None, "not installed".to_string()))
 }
 
 #[cfg(not(any(feature = "arch", feature = "debian")))]
@@ -211,18 +198,14 @@ fn show_required_by(package: &str) -> Result<Cmd<()>> {
 
 #[cfg(all(feature = "debian", not(feature = "arch")))]
 fn show_required_by(package: &str) -> Result<Cmd<()>> {
-    use std::process::Command;
+    use crate::package_managers::debian_db;
 
-    let output = Command::new("apt-cache")
-        .args(["rdepends", "--installed", "--", package])
-        .output()?;
+    let (_, reverse_deps) = debian_db::get_package_dependencies(package)?;
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let deps: Vec<_> = stdout
-        .lines()
-        .skip(2) // Skip header
-        .filter(|l| !l.trim().is_empty())
-        .map(|l| l.trim().to_string())
+    let deps: Vec<_> = reverse_deps
+        .into_iter()
+        .filter(|d| !d.is_empty())
+        .map(|d| d.to_string())
         .collect();
 
     if deps.is_empty() {

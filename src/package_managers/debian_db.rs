@@ -593,7 +593,7 @@ fn parse_paragraph_str(paragraph: &str) -> Result<DebianPackage> {
     }
 
     if name.is_empty() {
-        anyhow::bail!("Invalid");
+        anyhow::bail!("Invalid package entry: missing 'Package' field in Packages file");
     }
     Ok(DebianPackage {
         name,
@@ -632,7 +632,9 @@ pub fn get_detailed_packages() -> Result<Vec<DebianPackage>> {
     }
     ensure_index_loaded()?;
     let guard = DEBIAN_INDEX_CACHE.read();
-    let index = guard.index.as_ref().context("Index not loaded")?;
+    let index = guard.index.as_ref().context(
+        "Debian package index not loaded. Run 'omg sync' to refresh the package database"
+    )?;
     Ok(index.packages.clone())
 }
 
@@ -648,7 +650,9 @@ pub fn search_fast(query: &str) -> Result<Vec<Package>> {
     }
     ensure_index_loaded()?;
     let guard = DEBIAN_INDEX_CACHE.read();
-    let index = guard.index.as_ref().context("Index not loaded")?;
+    let index = guard.index.as_ref().context(
+        "Debian package index not loaded. Run 'omg sync' to refresh the package database"
+    )?;
 
     if query.is_empty() {
         return Ok(index
@@ -731,7 +735,9 @@ pub fn get_info_fast(name: &str) -> Result<Option<Package>> {
     }
     ensure_index_loaded()?;
     let guard = DEBIAN_INDEX_CACHE.read();
-    let index = guard.index.as_ref().context("Index not loaded")?;
+    let index = guard.index.as_ref().context(
+        "Debian package index not loaded. Run 'omg sync' to refresh the package database"
+    )?;
     if let Some(pkg) = index.get(name) {
         let mut p = pkg.to_package();
         p.installed = guard.installed_set.contains(name);
@@ -989,6 +995,202 @@ pub fn cleanup_expired_mmaps() {
         );
         *mmap_guard = None;
     }
+}
+
+/// Get package dependencies from /var/lib/dpkg/status
+/// Returns (dependencies, reverse_dependencies) for the specified package
+pub fn get_package_dependencies(package_name: &str) -> Result<(Vec<String>, Vec<String>)> {
+    if crate::core::paths::test_mode() {
+        return Ok((vec!["libc6".to_string()], vec![]));
+    }
+
+    let status_path = Path::new("/var/lib/dpkg/status");
+    if !status_path.exists() {
+        anyhow::bail!("dpkg status file not found: {}", status_path.display());
+    }
+
+    let content = fs::read_to_string(status_path)?;
+    
+    let mut dependencies = Vec::new();
+    let mut reverse_deps = Vec::new();
+    let mut current_pkg = String::new();
+    let mut current_deps = Vec::new();
+    let mut in_target = false;
+
+    for line in content.lines() {
+        if line.is_empty() {
+            if in_target {
+                dependencies = current_deps.clone();
+            } else if !current_pkg.is_empty() && current_deps.iter().any(|d| d == package_name) {
+                reverse_deps.push(current_pkg.clone());
+            }
+            current_pkg.clear();
+            current_deps.clear();
+            in_target = false;
+        } else if let Some(pkg) = line.strip_prefix("Package: ") {
+            current_pkg = pkg.trim().to_string();
+            in_target = current_pkg == package_name;
+        } else if line.starts_with("Depends: ") {
+            let deps_str = line.strip_prefix("Depends: ").unwrap();
+            for dep in deps_str.split(',') {
+                let dep_name = dep
+                    .trim()
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("")
+                    .trim();
+                if !dep_name.is_empty() {
+                    current_deps.push(dep_name.to_string());
+                }
+            }
+        }
+    }
+
+    Ok((dependencies, reverse_deps))
+}
+
+/// Get package size from /var/lib/dpkg/status
+/// Returns installed size in bytes (dpkg stores in KB)
+pub fn get_package_size(package_name: &str) -> Result<i64> {
+    if crate::core::paths::test_mode() {
+        return Ok(1024 * 1024);
+    }
+
+    let status_path = Path::new("/var/lib/dpkg/status");
+    if !status_path.exists() {
+        anyhow::bail!("dpkg status file not found: {}", status_path.display());
+    }
+
+    let content = fs::read_to_string(status_path)?;
+    
+    let mut in_package = false;
+    for line in content.lines() {
+        if line.is_empty() {
+            in_package = false;
+        } else if let Some(pkg) = line.strip_prefix("Package: ") {
+            in_package = pkg.trim() == package_name;
+        } else if in_package && line.starts_with("Installed-Size: ") {
+            let size_kb: i64 = line
+                .strip_prefix("Installed-Size: ")
+                .unwrap()
+                .trim()
+                .parse()
+                .unwrap_or(0);
+            return Ok(size_kb * 1024);
+        }
+    }
+
+    anyhow::bail!("Package '{}' not found in dpkg status", package_name);
+}
+
+/// Get all packages with their sizes from /var/lib/dpkg/status
+/// Returns Vec<(package_name, size_in_bytes)>
+pub fn get_all_packages_with_sizes() -> Result<Vec<(String, i64)>> {
+    if crate::core::paths::test_mode() {
+        return Ok(vec![
+            ("apt".to_string(), 4 * 1024 * 1024),
+            ("vim".to_string(), 3 * 1024 * 1024),
+        ]);
+    }
+
+    let status_path = Path::new("/var/lib/dpkg/status");
+    if !status_path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let content = fs::read_to_string(status_path)?;
+    
+    let mut results = Vec::new();
+    let mut current_pkg = String::new();
+    let mut current_size: i64 = 0;
+
+    for line in content.lines() {
+        if line.is_empty() {
+            if !current_pkg.is_empty() && current_size > 0 {
+                results.push((current_pkg.clone(), current_size));
+            }
+            current_pkg.clear();
+            current_size = 0;
+        } else if let Some(pkg) = line.strip_prefix("Package: ") {
+            current_pkg = pkg.trim().to_string();
+        } else if line.starts_with("Installed-Size: ") {
+            current_size = line
+                .strip_prefix("Installed-Size: ")
+                .unwrap()
+                .trim()
+                .parse::<i64>()
+                .unwrap_or(0)
+                * 1024;
+        }
+    }
+
+    Ok(results)
+}
+
+/// Get package version from /var/lib/dpkg/status
+/// Returns None if package is not installed
+pub fn get_package_version(package_name: &str) -> Result<Option<String>> {
+    if crate::core::paths::test_mode() {
+        return Ok(Some("1.0.0".to_string()));
+    }
+
+    let status_path = Path::new("/var/lib/dpkg/status");
+    if !status_path.exists() {
+        return Ok(None);
+    }
+
+    let content = fs::read_to_string(status_path)?;
+    
+    let mut in_package = false;
+    let mut is_installed = false;
+    let mut version = None;
+
+    for line in content.lines() {
+        if line.is_empty() {
+            if in_package && is_installed {
+                return Ok(version);
+            }
+            in_package = false;
+            is_installed = false;
+            version = None;
+        } else if let Some(pkg) = line.strip_prefix("Package: ") {
+            in_package = pkg.trim() == package_name;
+        } else if in_package {
+            if line.starts_with("Version: ") {
+                version = Some(line.strip_prefix("Version: ").unwrap().trim().to_string());
+            } else if line.starts_with("Status: ") && line.contains("installed") {
+                is_installed = true;
+            }
+        }
+    }
+
+    Ok(None)
+}
+
+/// Check if package is auto-installed (dependency) from /var/lib/apt/extended_states
+/// Returns true if auto-installed, false if explicitly installed
+pub fn is_package_auto_installed(package_name: &str) -> Result<bool> {
+    if crate::core::paths::test_mode() {
+        return Ok(false);
+    }
+
+    let extended_states_path = Path::new("/var/lib/apt/extended_states");
+    if !extended_states_path.exists() {
+        return Ok(false);
+    }
+
+    let content = fs::read_to_string(extended_states_path)?;
+    
+    let mut current_pkg = String::new();
+    for line in content.lines() {
+        if let Some(name) = line.strip_prefix("Package: ") {
+            current_pkg = name.trim().to_string();
+        } else if current_pkg == package_name && line.starts_with("Auto-Installed: 1") {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
 }
 
 #[cfg(test)]
