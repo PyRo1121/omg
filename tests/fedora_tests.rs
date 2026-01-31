@@ -70,7 +70,7 @@ mod dnf_integration {
     async fn test_list_updates() -> Result<()> {
         let pm = DnfPackageManager::new();
 
-        let updates = pm.list_updates().await?;
+        let _updates = pm.list_updates().await?;
 
         Ok(())
     }
@@ -97,10 +97,10 @@ mod dnf_rpm_database {
     async fn test_rpm_database_exists() {
         let rpm_db_path = Path::new("/var/lib/rpm/rpmdb.sqlite");
 
-        if !rpm_db_path.exists() {
-            eprintln!("WARNING: RPM database not found at /var/lib/rpm/rpmdb.sqlite");
-        } else {
+        if rpm_db_path.exists() {
             assert!(rpm_db_path.is_file(), "RPM database should be a file");
+        } else {
+            eprintln!("WARNING: RPM database not found at /var/lib/rpm/rpmdb.sqlite");
         }
     }
 
@@ -126,7 +126,7 @@ mod dnf_operations {
     use super::*;
 
     #[tokio::test]
-    #[ignore]
+    #[ignore = "requires root privileges and modifies system"]
     async fn test_install_and_remove_package() -> Result<()> {
         if !omg_lib::core::is_root() {
             eprintln!("Skipping: requires root");
@@ -158,7 +158,7 @@ mod dnf_operations {
     }
 
     #[tokio::test]
-    #[ignore]
+    #[ignore = "requires root privileges and modifies system"]
     async fn test_update_all_packages() -> Result<()> {
         if !omg_lib::core::is_root() {
             eprintln!("Skipping: requires root");
@@ -173,7 +173,7 @@ mod dnf_operations {
     }
 
     #[tokio::test]
-    #[ignore]
+    #[ignore = "requires root privileges and modifies system"]
     async fn test_sync_repository_metadata() -> Result<()> {
         if !omg_lib::core::is_root() {
             eprintln!("Skipping: requires root");
@@ -217,7 +217,7 @@ mod dnf_error_handling {
 
         let pm = DnfPackageManager::new();
 
-        let result = pm.remove(&["not-installed-package-xyz".to_string()]).await;
+        let _result = pm.remove(&["not-installed-package-xyz".to_string()]).await;
     }
 
     #[tokio::test]
@@ -228,7 +228,7 @@ mod dnf_error_handling {
 
         let pm = DnfPackageManager::new();
 
-        let result = pm.install(&[]).await;
+        let _result = pm.install(&[]).await;
     }
 }
 
@@ -294,7 +294,7 @@ mod dnf_copr {
     async fn test_copr_search() -> Result<()> {
         let pm = DnfPackageManager::new();
 
-        let results = pm.search("rust").await?;
+        let _results = pm.search("rust").await?;
 
         Ok(())
     }

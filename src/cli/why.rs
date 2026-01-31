@@ -28,7 +28,7 @@ pub fn run(package: &str, reverse: bool) -> Result<()> {
         let cmd = if reverse {
             show_reverse_deps_debian(package)?
         } else {
-            show_dependency_chain_debian(package)?
+            show_deps_debian(package)?
         };
         crate::cli::packages::execute_cmd(cmd);
         Ok(())
