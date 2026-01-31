@@ -201,6 +201,10 @@ Updated CLI commands to use pure Rust:
 
 ### 🐛 Bug Fixes
 
+- Use rustup in Arch/Fedora containers to respect rust-toolchain.toml
+
+CRITICAL FIX for Rust version consistency:
+
 - Pin Rust version and fix macOS test assertion
 
 1. Add rust-toolchain.toml to pin Rust 1.92.0 across all platforms
