@@ -219,8 +219,7 @@ pub fn search_sync(query: &str) -> Result<Vec<SyncPackage>> {
 
             let download_size = candidate
                 .as_ref()
-                .map(|v| i64::try_from(v.size()).unwrap_or(i64::MAX))
-                .unwrap_or(0);
+                .map_or(0, |v| i64::try_from(v.size()).unwrap_or(i64::MAX));
 
             let description = candidate.and_then(|c| c.summary()).unwrap_or_default();
 

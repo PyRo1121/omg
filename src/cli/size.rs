@@ -211,7 +211,7 @@ fn show_package_tree(package: &str) -> Result<Cmd<()>> {
     let mut dep_sizes: Vec<(String, i64)> = Vec::new();
     for dep_name in dependencies {
         if let Ok(dep_size) = debian_db::get_package_size(&dep_name) {
-            dep_sizes.push((dep_name.to_string(), dep_size));
+            dep_sizes.push((dep_name, dep_size));
         }
     }
 

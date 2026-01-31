@@ -202,11 +202,7 @@ fn show_required_by(package: &str) -> Result<Cmd<()>> {
 
     let (_, reverse_deps) = debian_db::get_package_dependencies(package)?;
 
-    let deps: Vec<_> = reverse_deps
-        .into_iter()
-        .filter(|d| !d.is_empty())
-        .map(|d| d.to_string())
-        .collect();
+    let deps: Vec<_> = reverse_deps.into_iter().filter(|d| !d.is_empty()).collect();
 
     if deps.is_empty() {
         Ok(Cmd::info("Nothing depends on this package"))
