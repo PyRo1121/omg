@@ -185,17 +185,13 @@ mod install_remove_operations {
         pm.install(&packages).await?;
 
         for pkg in &packages {
-            assert!(pm.is_installed(pkg).await, "{} should be installed", pkg);
+            assert!(pm.is_installed(pkg).await, "{pkg} should be installed");
         }
 
         pm.remove(&packages).await?;
 
         for pkg in &packages {
-            assert!(
-                !pm.is_installed(pkg).await,
-                "{} should not be installed",
-                pkg
-            );
+            assert!(!pm.is_installed(pkg).await, "{pkg} should not be installed");
         }
 
         Ok(())
@@ -217,8 +213,7 @@ mod update_scenarios {
 
         assert!(
             !updates.is_empty(),
-            "Should have updates for firefox: {:?}",
-            updates
+            "Should have updates for firefox: {updates:?}"
         );
         assert!(
             updates.iter().any(|u| u.name == "firefox"),
@@ -238,7 +233,7 @@ mod update_scenarios {
 
         let updates = pm.list_updates().await?;
 
-        assert!(!updates.is_empty(), "Should have updates: {:?}", updates);
+        assert!(!updates.is_empty(), "Should have updates: {updates:?}");
 
         Ok(())
     }
@@ -253,7 +248,7 @@ mod update_scenarios {
 
         let updates = pm.list_updates().await?;
 
-        assert!(!updates.is_empty(), "Should have updates: {:?}", updates);
+        assert!(!updates.is_empty(), "Should have updates: {updates:?}");
 
         Ok(())
     }
