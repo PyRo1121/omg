@@ -70,14 +70,15 @@ pub fn get_update_list() -> Result<Vec<UpdateInfo>> {
             let local_ver_str = pkg.version().as_str();
 
             if let Some(&(sync_ver_str, repo)) = sync_map.get(name)
-                && alpm::vercmp(sync_ver_str, local_ver_str) == std::cmp::Ordering::Greater {
-                    updates.push(UpdateInfo {
-                        name: name.to_string(),
-                        old_version: local_ver_str.to_string(),
-                        new_version: sync_ver_str.to_string(),
-                        repo: repo.to_string(),
-                    });
-                }
+                && alpm::vercmp(sync_ver_str, local_ver_str) == std::cmp::Ordering::Greater
+            {
+                updates.push(UpdateInfo {
+                    name: name.to_string(),
+                    old_version: local_ver_str.to_string(),
+                    new_version: sync_ver_str.to_string(),
+                    repo: repo.to_string(),
+                });
+            }
         }
 
         Ok(updates)

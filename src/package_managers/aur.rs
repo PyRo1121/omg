@@ -1752,7 +1752,8 @@ impl AurClient {
             return;
         }
 
-        let gnupg_home = dirs::home_dir().map_or_else(|| PathBuf::from("/tmp/.gnupg"), |h| h.join(".gnupg"));
+        let gnupg_home =
+            dirs::home_dir().map_or_else(|| PathBuf::from("/tmp/.gnupg"), |h| h.join(".gnupg"));
         let keyring_path = gnupg_home.join("pubring.kbx");
 
         let mut missing_keys = Vec::with_capacity(pkgbuild.validpgpkeys.len());
