@@ -201,6 +201,14 @@ Updated CLI commands to use pure Rust:
 
 ### 🐛 Bug Fixes
 
+- Resolve Clippy warnings in property_tests_v2
+
+  - Remove unused 'flags' vector in prop_flag_combinations test
+
+  - Replace needless collect() with count() in prop_string_join_no_data_loss
+
+  - Fixes clippy::collection_is_never_read and clippy::needless_collect warnings
+
 - Add redundant_clone allow to test_package_fixture_builder
 - Resolve all Clippy errors for CI compliance
 
