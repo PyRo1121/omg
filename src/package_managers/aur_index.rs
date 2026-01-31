@@ -54,6 +54,7 @@ impl AurIndex {
         // - No concurrent mutations possible (read-only file descriptor)
         // Alternative considered: Read entire file into memory would be slower
         // and use more RAM for large AUR archives (>100MB)
+        #[allow(unsafe_code)]
         let mmap = unsafe { Mmap::map(&file)? };
 
         Ok(Self { mmap })
