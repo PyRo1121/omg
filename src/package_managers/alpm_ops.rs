@@ -59,7 +59,7 @@ pub fn get_update_list() -> Result<Vec<UpdateInfo>> {
                 // First repo wins (core > extra > multilib priority)
                 sync_map
                     .entry(pkg.name())
-                    .or_insert((pkg.version().as_str(), repo_name));
+                    .or_insert_with(|| (pkg.version().as_str(), repo_name));
             }
         }
 

@@ -263,3 +263,39 @@ proptest = [] # Enable property-based tests
 docker_tests = [] # Enable tests that require running as root (e.g. in Docker)
 sequoia-openpgp = ["dep:sequoia-openpgp"]
 sequoia-net = ["dep:sequoia-net"]
+
+# ============================================================================
+# Rust 1.92 / Edition 2024 Lint Configuration
+# ============================================================================
+[lints.rust]
+# Warn on unsafe code blocks to encourage review
+unsafe_code = "warn"
+# Prepare for Edition 2024 migration
+rust_2024_compatibility = { level = "warn", priority = -1 }
+
+[lints.clippy]
+# Enable pedantic lints as warnings (production-ready baseline)
+pedantic = { level = "warn", priority = -1 }
+# Enable nursery lints that are stable and useful
+nursery = { level = "warn", priority = -1 }
+# Deny critical correctness issues - these indicate real bugs
+correctness = { level = "deny", priority = -1 }
+
+# Production safety lints
+dbg_macro = "deny"             # Never ship debug macros to production
+todo = "warn"                  # Track incomplete code
+unimplemented = "warn"         # Track unimplemented code paths
+# Note: unwrap/expect warnings disabled - too noisy for CLI with 48+ legitimate uses
+# Note: print_stdout/stderr disabled - CLI tool intentionally uses println!
+
+# Project-specific allowances (with justification)
+module_name_repetitions = "allow"      # e.g., PackageManager in package_managers module
+too_many_arguments = "allow"           # CLI functions legitimately need many args
+missing_errors_doc = "allow"           # Error docs not always needed for internal fns
+missing_panics_doc = "allow"           # Panic docs not always needed for internal fns
+must_use_candidate = "allow"           # Too noisy - we handle this case-by-case
+similar_names = "allow"                # e.g., pkg vs pkgs is intentional and clear
+doc_markdown = "allow"                 # Too strict on technical terms like CLI flags
+struct_excessive_bools = "allow"       # Config structs legitimately have bool fields
+fn_params_excessive_bools = "allow"    # CLI functions need bool flags for options
+significant_drop_tightening = "allow"  # False positives with lock guards in closures

@@ -99,24 +99,14 @@ pub async fn sync_aur_metadata(
     }
 
     // Load ETags/Last-Modified
-    let meta_cache = if meta_path.exists() {
-        if let Ok(bytes) = tokio_fs::read(&meta_path).await {
-            serde_json::from_slice::<AurMetaCache>(&bytes).unwrap_or(AurMetaCache {
-                etag: None,
-                last_modified: None,
-            })
-        } else {
-            AurMetaCache {
-                etag: None,
-                last_modified: None,
-            }
-        }
-    } else {
-        AurMetaCache {
+    let meta_cache = tokio_fs::read(&meta_path)
+        .await
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<AurMetaCache>(&bytes).ok())
+        .unwrap_or(AurMetaCache {
             etag: None,
             last_modified: None,
-        }
-    };
+        });
 
     if let Some(parent) = cache_path.parent() {
         tokio_fs::create_dir_all(parent).await?;

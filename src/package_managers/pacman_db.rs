@@ -99,29 +99,57 @@ pub struct RkyvSyncIndex {
     pub mtime_secs: u64,
 }
 
-/// Memory-mapped zero-copy sync database index
+/// Memory-mapped zero-copy sync database index.
+///
+/// # Safety Invariants
+///
+/// This struct maintains the following invariants that make `archived()` safe:
+/// 1. The mmap data is validated via `rkyv::access` in `load()` before construction
+/// 2. The mmap is immutable after creation (Mmap provides no mutation API)
+/// 3. The struct is only constructed if validation succeeds (enforced by `?` in load)
+///
+/// External invariant: The underlying file must not be modified while this struct exists.
+/// This is standard for mmap usage and is the caller's responsibility.
 pub struct PacmanMmapIndex {
+    /// Validated mmap - only stored after successful rkyv validation in `load()`
     mmap: Mmap,
     mtime: u64,
+    /// Zero-sized marker proving this index was validated at construction
+    _validated: std::marker::PhantomData<rkyv::Archived<RkyvSyncIndex>>,
 }
 
 impl PacmanMmapIndex {
     pub fn load(path: &Path) -> Result<Self> {
         let file = File::open(path)?;
+        // SAFETY: Standard mmap usage - file handle kept open by the Mmap
         let mmap = unsafe { Mmap::map(&file)? };
 
+        // Validate the archive structure before storing - this is the key safety check
         let mtime: u64 = {
             let archived =
                 rkyv::access::<rkyv::Archived<RkyvSyncIndex>, rkyv::rancor::Error>(&mmap)
-                    .map_err(|e| anyhow::anyhow!("rkyv access failed: {e}"))?;
+                    .map_err(|e| anyhow::anyhow!("rkyv validation failed: {e}"))?;
             archived.mtime_secs.into()
         };
 
-        Ok(Self { mmap, mtime })
+        Ok(Self {
+            mmap,
+            mtime,
+            _validated: std::marker::PhantomData,
+        })
     }
 
+    /// Access the validated archived data.
+    ///
+    /// SAFETY: The mmap was validated in `load()` via `rkyv::access`. Since:
+    /// - Validation succeeded (or we wouldn't have constructed Self)
+    /// - The mmap is immutable after creation
+    /// - The `PhantomData` marker proves validation occurred
+    ///
+    /// The unchecked access is safe for performance-critical repeated access.
     #[inline]
     fn archived(&self) -> &rkyv::Archived<RkyvSyncIndex> {
+        // SAFETY: See method documentation above
         unsafe { rkyv::access_unchecked::<rkyv::Archived<RkyvSyncIndex>>(&self.mmap) }
     }
 
