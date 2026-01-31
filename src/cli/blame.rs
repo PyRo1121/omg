@@ -142,7 +142,7 @@ fn get_package_info(package: &str) -> Result<(bool, Option<String>, String)> {
 
 #[cfg(all(feature = "debian", not(feature = "arch")))]
 fn get_package_info(package: &str) -> Result<(bool, Option<String>, String)> {
-    use crate::cli::components::style;
+    use crate::cli::style;
     use crate::package_managers::debian_db;
 
     match debian_db::get_package_version(package)? {

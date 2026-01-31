@@ -183,7 +183,7 @@ impl DnfPackageManager {
         Ok(packages)
     }
 
-    /// Read RPM database, trying SQLite first then falling back to subprocess
+    /// Read RPM database, trying `SQLite` first then falling back to subprocess
     #[cfg(feature = "fedora")]
     fn read_rpm_database(db_path: &Path) -> Result<Vec<InstalledPackage>> {
         // Try SQLite first (Fedora 33+, RHEL 9+) - 50-100x faster
@@ -208,7 +208,7 @@ impl DnfPackageManager {
 
     /// Parse installed packages using `rpm -qa` subprocess
     ///
-    /// Fallback for systems without SQLite RPM database (BerkeleyDB, NDB).
+    /// Fallback for systems without `SQLite` RPM database (`BerkeleyDB`, `NDB`).
     fn read_rpm_via_query() -> Result<Vec<InstalledPackage>> {
         let output = Command::new("rpm")
             .args([
@@ -395,7 +395,7 @@ impl DnfPackageManager {
         })
     }
 
-    /// Read RPM database directly from SQLite (Fedora 33+, RHEL 9+)
+    /// Read RPM database directly from `SQLite` (Fedora 33+, RHEL 9+)
     ///
     /// Opens `/var/lib/rpm/rpmdb.sqlite` in read-only mode and parses
     /// RPM header blobs from the `Packages` table. This is 50-100x faster
@@ -534,10 +534,8 @@ impl DnfPackageManager {
             }
 
             if line.starts_with('[') && line.ends_with(']') {
-                if let Some(repo) = current_repo.take() {
-                    if repo.enabled {
-                        repos.push(repo);
-                    }
+                if let Some(repo) = current_repo.take().filter(|r| r.enabled) {
+                    repos.push(repo);
                 }
 
                 let name = line[1..line.len() - 1].to_string();

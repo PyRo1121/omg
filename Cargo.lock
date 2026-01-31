@@ -6031,6 +6031,7 @@ dependencies = [
  "moka",
  "notify",
  "nucleo-matcher",
+ "openssl-sys",
  "owo-colors",
  "parking_lot",
  "pprof",

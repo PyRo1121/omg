@@ -329,16 +329,6 @@ fn show_deps_debian(package: &str) -> Result<Cmd<()>> {
         }
     };
 
-    let deps_str = String::from_utf8_lossy(&output.stdout);
-    let mut deps = Vec::new();
-
-    for line in deps_str.lines() {
-        let line = line.trim();
-        if let Some(dep) = line.strip_prefix("Depends:") {
-            deps.push(dep.trim().to_string());
-        }
-    }
-
     if deps.is_empty() {
         Ok(Cmd::batch(vec![
             Cmd::header("Package Analysis", package),
