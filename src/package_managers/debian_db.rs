@@ -1020,7 +1020,7 @@ pub fn get_package_dependencies(package_name: &str) -> Result<(Vec<String>, Vec<
     for line in content.lines() {
         if line.is_empty() {
             if in_target {
-                dependencies = current_deps.clone();
+                dependencies = std::mem::take(&mut current_deps);
             } else if !current_pkg.is_empty() && current_deps.iter().any(|d| d == package_name) {
                 reverse_deps.push(current_pkg.clone());
             }
@@ -1033,7 +1033,7 @@ pub fn get_package_dependencies(package_name: &str) -> Result<(Vec<String>, Vec<
         } else if line.starts_with("Depends: ") {
             let deps_str = line.strip_prefix("Depends: ").unwrap();
             for dep in deps_str.split(',') {
-                let dep_name = dep.trim().split_whitespace().next().unwrap_or("").trim();
+                let dep_name = dep.split_whitespace().next().unwrap_or("");
                 if !dep_name.is_empty() {
                     current_deps.push(dep_name.to_string());
                 }
@@ -1075,11 +1075,11 @@ pub fn get_package_size(package_name: &str) -> Result<i64> {
         }
     }
 
-    anyhow::bail!("Package '{}' not found in dpkg status", package_name);
+    anyhow::bail!("Package '{package_name}' not found in dpkg status");
 }
 
-/// Get all packages with their sizes from /var/lib/dpkg/status
-/// Returns Vec<(package_name, size_in_bytes)>
+/// Get all packages with their sizes from `/var/lib/dpkg/status`
+/// Returns `Vec<(package_name, size_in_bytes)>`
 pub fn get_all_packages_with_sizes() -> Result<Vec<(String, i64)>> {
     if crate::core::paths::test_mode() {
         return Ok(vec![
@@ -1162,8 +1162,8 @@ pub fn get_package_version(package_name: &str) -> Result<Option<String>> {
     Ok(None)
 }
 
-/// Check if package is auto-installed (dependency) from /var/lib/apt/extended_states
-/// Returns true if auto-installed, false if explicitly installed
+/// Check if package is auto-installed (dependency) from `/var/lib/apt/extended_states`
+/// Returns `true` if auto-installed, `false` if explicitly installed
 pub fn is_package_auto_installed(package_name: &str) -> Result<bool> {
     if crate::core::paths::test_mode() {
         return Ok(false);

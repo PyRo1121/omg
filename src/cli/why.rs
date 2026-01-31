@@ -26,9 +26,9 @@ pub fn run(package: &str, reverse: bool) -> Result<()> {
     #[cfg(all(feature = "debian", not(feature = "arch")))]
     {
         let cmd = if reverse {
-            show_reverse_deps_debian(package)?
+            show_reverse_deps_debian(package)
         } else {
-            show_deps_debian(package)?
+            show_deps_debian(package)
         };
         crate::cli::packages::execute_cmd(cmd);
         Ok(())
@@ -315,51 +315,51 @@ fn show_reverse_deps(package: &str) -> Result<Cmd<()>> {
 }
 
 #[cfg(all(feature = "debian", not(feature = "arch")))]
-fn show_deps_debian(package: &str) -> Result<Cmd<()>> {
+fn show_deps_debian(package: &str) -> Cmd<()> {
     use crate::cli::components::Components;
     use crate::package_managers::debian_db;
 
     let (deps, _) = match debian_db::get_package_dependencies(package) {
         Ok(result) => result,
         Err(_) => {
-            return Ok(Components::error_with_suggestion(
+            return Components::error_with_suggestion(
                 format!("Package '{package}' not found"),
                 "Try 'omg search' to find available packages",
-            ));
+            );
         }
     };
 
     if deps.is_empty() {
-        Ok(Cmd::batch(vec![
+        Cmd::batch(vec![
             Cmd::header("Package Analysis", package),
             Cmd::spacer(),
             Cmd::info("No dependencies found"),
-        ]))
+        ])
     } else {
-        Ok(Cmd::batch(vec![
+        Cmd::batch(vec![
             Cmd::header("Package Analysis", package),
             Cmd::spacer(),
             Cmd::card(format!("Dependencies ({})", deps.len()), deps),
-        ]))
+        ])
     }
 }
 
 #[cfg(all(feature = "debian", not(feature = "arch")))]
-fn show_reverse_deps_debian(package: &str) -> Result<Cmd<()>> {
+fn show_reverse_deps_debian(package: &str) -> Cmd<()> {
     use crate::cli::components::Components;
     use crate::package_managers::debian_db;
 
     let (_, deps) = match debian_db::get_package_dependencies(package) {
         Ok(result) => result,
         Err(_) => {
-            return Ok(Components::error_with_suggestion(
+            return Components::error_with_suggestion(
                 format!("Package '{package}' not found"),
                 "Try 'omg search' to find available packages",
-            ));
+            );
         }
     };
 
-    Ok(Cmd::batch(vec![
+    Cmd::batch(vec![
         Cmd::header(
             "Reverse Dependencies",
             format!("packages that depend on {package}"),
@@ -367,9 +367,7 @@ fn show_reverse_deps_debian(package: &str) -> Result<Cmd<()>> {
         Cmd::spacer(),
         Components::kv_list(
             Some(format!("Dependents ({})", deps.len())),
-            deps.into_iter()
-                .map(|d| (d.clone(), String::new()))
-                .collect(),
+            deps.into_iter().map(|d| (d, String::new())).collect(),
         ),
-    ]))
+    ])
 }
