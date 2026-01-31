@@ -201,6 +201,36 @@ Updated CLI commands to use pure Rust:
 
 ### 🐛 Bug Fixes
 
+- Resolve Windows libscoop thread safety issues
+
+Critical fixes for Windows platform:
+
+1. Moved Session::new() INSIDE spawn_blocking closures
+
+  - Session contains RefCell and is NOT Send/Sync
+
+  - Cannot be moved across thread boundaries
+
+  - Must be created in the blocking thread context
+
+2. Removed scoop_session field from WindowsPackageManager struct
+
+  - Storing Session in struct violated Send + Sync requirements
+
+  - Sessions now created locally where needed
+
+3. Fixed operation::bucket_update() call signature
+
+  - Updated from 2 args to 1 arg (API change in libscoop v0.1.0-beta.7)
+
+  - Removed unused None parameter
+
+Fixes compilation errors:
+
+  - E0277: RefCell/UnsafeCell cannot be shared between threads
+
+  - E0061: function argument count mismatch
+
 - Resolve Fedora tests clippy warnings
 
   - Use inline format args in assert! macros (clippy::uninlined_format_args)
