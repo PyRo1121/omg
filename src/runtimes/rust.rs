@@ -42,7 +42,7 @@ fn manifest_component_version(manifest: &toml::Value, component: &str) -> Result
         .and_then(|pkg| pkg.get("version"))
         .and_then(toml::Value::as_str)
         .ok_or_else(|| anyhow::anyhow!("Missing version for component '{component}'"))?;
-    Ok(value.split_whitespace().next().unwrap_or(value).to_string())
+    Ok(value.split_whitespace().next().unwrap_or(value).to_owned())
 }
 
 fn is_date_parts(year: &str, month: &str, day: &str) -> bool {
@@ -105,11 +105,11 @@ pub struct RustManager {
 impl RustManager {
     pub fn new() -> Self {
         let data_dir = &*super::DATA_DIR;
-        let rust_versions = data_dir.join("versions").join("rust");
+        let versions_dir = data_dir.join("versions").join("rust");
 
         Self {
-            versions_dir: rust_versions.clone(),
-            current_link: rust_versions.join("current"),
+            current_link: versions_dir.join("current"),
+            versions_dir,
             client: download_client().clone(),
         }
     }
@@ -169,11 +169,9 @@ impl RustManager {
             return self.use_version(version);
         }
 
-        tracing::info!(
-            "{} Installing Rust {}...\n",
-            "OMG".cyan().bold(),
-            toolchain.name().yellow()
-        );
+        let prefix = format!("{}", "OMG".cyan().bold());
+        let toolchain_name = format!("{}", toolchain.name().yellow());
+        tracing::info!("{prefix} Installing Rust {toolchain_name}...\n");
 
         self.install_with_profile(&toolchain, "default", &[], &[])
             .await?;

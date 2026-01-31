@@ -31,5 +31,5 @@ pub fn probe_version(runtime: &str) -> Option<String> {
 
     std::fs::read_link(&current_link)
         .ok()
-        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
 }

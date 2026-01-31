@@ -15,6 +15,10 @@
 // Allow pedantic lints that are too strict for this minimal binary
 #![allow(clippy::cast_possible_truncation)] // IPC message lengths are bounded
 
+/// Maximum daemon response size to prevent memory exhaustion (10 MB)
+#[cfg(unix)]
+const MAX_RESPONSE_SIZE: usize = 10 * 1024 * 1024;
+
 // Use mimalloc for even faster startup and allocations
 #[cfg(unix)]
 #[global_allocator]
@@ -178,6 +182,9 @@ fn send_search_request(stream: &mut UnixStream, query: &str) -> Result<()> {
     let mut len_buf = [0u8; 4];
     stream.read_exact(&mut len_buf)?;
     let resp_len = u32::from_be_bytes(len_buf) as usize;
+    if resp_len > MAX_RESPONSE_SIZE {
+        anyhow::bail!("Response too large: {resp_len} bytes exceeds {MAX_RESPONSE_SIZE}");
+    }
 
     let mut resp_bytes = vec![0u8; resp_len];
     stream.read_exact(&mut resp_bytes)?;
@@ -229,6 +236,9 @@ fn send_info_request(stream: &mut UnixStream, package: &str) -> Result<()> {
     let mut len_buf = [0u8; 4];
     stream.read_exact(&mut len_buf)?;
     let resp_len = u32::from_be_bytes(len_buf) as usize;
+    if resp_len > MAX_RESPONSE_SIZE {
+        anyhow::bail!("Response too large: {resp_len} bytes exceeds {MAX_RESPONSE_SIZE}");
+    }
 
     let mut resp_bytes = vec![0u8; resp_len];
     stream.read_exact(&mut resp_bytes)?;
@@ -255,12 +265,22 @@ fn send_info_request(stream: &mut UnixStream, package: &str) -> Result<()> {
     Ok(())
 }
 
+/// Truncate a string to a maximum length, respecting UTF-8 char boundaries.
+/// Appends "..." if truncated.
 fn truncate(s: &str, max: usize) -> String {
     if s.len() <= max {
-        s.to_string()
-    } else {
-        format!("{}...", &s[..max.saturating_sub(3)])
+        return s.to_string();
     }
+
+    let target_len = max.saturating_sub(3);
+    // Find the last valid UTF-8 char boundary at or before target_len
+    let truncate_at = s
+        .char_indices()
+        .take_while(|(i, _)| *i <= target_len)
+        .last()
+        .map_or(0, |(i, c)| i + c.len_utf8());
+
+    format!("{}...", &s[..truncate_at])
 }
 
 // Windows stub - fast queries not supported (no daemon)

@@ -49,11 +49,11 @@ pub struct PythonManager {
 impl PythonManager {
     pub fn new() -> Self {
         let data_dir = &*super::DATA_DIR;
-        let python_versions = data_dir.join("versions").join("python");
+        let versions_dir = data_dir.join("versions").join("python");
 
         Self {
-            versions_dir: python_versions.clone(),
-            current_link: python_versions.join("current"),
+            current_link: versions_dir.join("current"),
+            versions_dir,
             client: download_client().clone(),
         }
     }

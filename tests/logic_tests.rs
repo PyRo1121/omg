@@ -23,6 +23,8 @@ fn test_distro_override_arch() {
     // ===== ARRANGE =====
     init_test_env();
     let _guard = ENV_LOCK.lock().unwrap();
+    // SAFETY: Test setup - modifying environment variable for isolated test execution.
+    // Protected by mutex guard to prevent concurrent access.
     unsafe {
         std::env::set_var("OMG_TEST_DISTRO", "arch");
     }

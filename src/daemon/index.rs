@@ -52,13 +52,22 @@ impl StringPool {
     /// valid `&str` (guaranteed UTF-8 by Rust's type system).  No data is
     /// ever mutated after insertion, so the byte range `[offset, offset+len)`
     /// is always valid UTF-8.
+    ///
+    /// Bounds are verified in both debug and release builds to prevent UB
+    /// from corrupted handles.
     #[inline]
     fn get(&self, handle: u64) -> &str {
         let (offset, len) = unpack(handle);
         let start = offset as usize;
         let end = start + len as usize;
-        debug_assert!(end <= self.pool.len(), "StringPool handle out of bounds");
-        // SAFETY: see doc comment above
+        // Bounds check runs in release builds too - defense in depth
+        assert!(
+            end <= self.pool.len(),
+            "StringPool handle out of bounds: end={end} > pool_len={}",
+            self.pool.len()
+        );
+        // SAFETY: Bounds verified above. The pool is append-only and all data
+        // originates from valid UTF-8 strings via `intern()`.
         unsafe { std::str::from_utf8_unchecked(&self.pool[start..end]) }
     }
 }
@@ -128,20 +137,10 @@ impl PartialOrd for RelevanceScore {
 
 impl Ord for RelevanceScore {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        // Compare by rank first (higher is better)
-        match self.rank.cmp(&other.rank) {
-            std::cmp::Ordering::Equal => {
-                // Then by name_len_rev (higher = shorter name = better)
-                match self.name_len_rev.cmp(&other.name_len_rev) {
-                    std::cmp::Ordering::Equal => {
-                        // Finally by idx_rev (higher = earlier index = better)
-                        self.idx_rev.cmp(&other.idx_rev)
-                    }
-                    other => other,
-                }
-            }
-            other => other,
-        }
+        // Compare by (rank, name_len_rev, idx_rev) - all in descending order
+        // Higher values are better for all three fields
+        (self.rank, self.name_len_rev, self.idx_rev)
+            .cmp(&(other.rank, other.name_len_rev, other.idx_rev))
     }
 }
 
@@ -192,11 +191,12 @@ impl PackageIndex {
         use crate::package_managers::debian_db;
         debian_db::ensure_index_loaded()?;
 
-        let mut pool = StringPool::default();
-        let mut items = Vec::new();
-        let mut name_to_idx = AHashMap::default();
-
         let db_packages = debian_db::get_detailed_packages()?;
+        let pkg_count = db_packages.len();
+
+        let mut pool = StringPool::default();
+        let mut items = Vec::with_capacity(pkg_count);
+        let mut name_to_idx = AHashMap::with_capacity(pkg_count);
         for pkg in db_packages {
             let name_offset = pool.intern(&pkg.name);
             let name_lower_offset = pool.intern(&pkg.name.to_ascii_lowercase());
@@ -230,11 +230,12 @@ impl PackageIndex {
     #[cfg(feature = "arch")]
     fn new_alpm() -> Result<Self> {
         use crate::package_managers::pacman_db;
-        let mut pool = StringPool::default();
-        let mut items = Vec::new();
-        let mut name_to_idx = AHashMap::default();
-
         let db_packages = pacman_db::get_detailed_packages()?;
+        let pkg_count = db_packages.len();
+
+        let mut pool = StringPool::default();
+        let mut items = Vec::with_capacity(pkg_count);
+        let mut name_to_idx = AHashMap::with_capacity(pkg_count);
         for pkg in db_packages {
             let name_offset = pool.intern(&pkg.name);
             let name_lower_offset = pool.intern(&pkg.name.to_ascii_lowercase());
@@ -364,15 +365,9 @@ impl PackageIndex {
             found_substring = true;
         }
 
-        if found_substring {
-            Some(RelevanceScore::new(
-                RelevanceScore::SUBSTRING_MATCH,
-                name_lower.len(),
-                idx,
-            ))
-        } else {
-            None
-        }
+        found_substring.then(|| {
+            RelevanceScore::new(RelevanceScore::SUBSTRING_MATCH, name_lower.len(), idx)
+        })
     }
 
     pub fn get(&self, name: &str) -> Option<DetailedPackageInfo> {

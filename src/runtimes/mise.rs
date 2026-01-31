@@ -84,9 +84,9 @@ impl MiseManager {
 
     /// Install mise binary
     pub async fn install(&self) -> Result<()> {
+        let prefix = format!("{}", "OMG".cyan().bold());
         tracing::info!(
-            "{} Installing mise (runtime version manager)...\n",
-            "OMG".cyan().bold()
+            "{prefix} Installing mise (runtime version manager)...\n"
         );
 
         fs::create_dir_all(&self.bin_dir)?;
@@ -346,12 +346,7 @@ impl MiseManager {
         // mise installs to ~/.local/share/mise/installs/<runtime>/<version>/bin
         let mise_data = dirs::data_dir()?.join("mise").join("installs");
         let bin_path = mise_data.join(runtime).join(version).join("bin");
-
-        if bin_path.exists() {
-            Some(bin_path)
-        } else {
-            None
-        }
+        bin_path.exists().then_some(bin_path)
     }
 }
 

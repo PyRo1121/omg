@@ -16,6 +16,8 @@ use tempfile::TempDir;
 async fn test_metrics_collection() {
     // Setup
     let temp_dir = TempDir::new().unwrap();
+    // SAFETY: Test setup - modifying environment variables for isolated test execution.
+    // These are single-threaded test functions marked with #[serial] to prevent concurrent access.
     unsafe {
         std::env::set_var("OMG_DAEMON_DATA_DIR", temp_dir.path());
         std::env::set_var("OMG_DATA_DIR", temp_dir.path());
@@ -92,6 +94,8 @@ async fn test_metrics_collection() {
 #[serial]
 async fn test_security_audit_metrics() {
     let temp_dir = TempDir::new().unwrap();
+    // SAFETY: Test setup - modifying environment variables for isolated test execution.
+    // This test is marked with #[serial] to prevent concurrent access.
     unsafe {
         std::env::set_var("OMG_DAEMON_DATA_DIR", temp_dir.path());
     }

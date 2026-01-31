@@ -49,11 +49,11 @@ pub struct JavaManager {
 
 impl JavaManager {
     pub fn new() -> Self {
-        let java_dir = super::DATA_DIR.join("versions/java");
+        let versions_dir = super::DATA_DIR.join("versions/java");
 
         Self {
-            versions_dir: java_dir.clone(),
-            current_link: java_dir.join("current"),
+            current_link: versions_dir.join("current"),
+            versions_dir,
             client: download_client().clone(),
         }
     }
