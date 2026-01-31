@@ -106,11 +106,7 @@ fn read_package_json_versions(dir: &Path) -> Option<HashMap<String, String>> {
         }
     }
 
-    if versions.is_empty() {
-        None
-    } else {
-        Some(versions)
-    }
+    (!versions.is_empty()).then_some(versions)
 }
 
 fn read_mise_versions(path: &Path) -> Option<HashMap<String, String>> {
@@ -126,11 +122,7 @@ fn read_mise_versions(path: &Path) -> Option<HashMap<String, String>> {
         }
     }
 
-    if versions.is_empty() {
-        None
-    } else {
-        Some(versions)
-    }
+    (!versions.is_empty()).then_some(versions)
 }
 
 fn mise_tool_version(value: &Value) -> Option<String> {
@@ -308,18 +300,22 @@ pub fn build_path_additions<S: std::hash::BuildHasher>(
 
     for (runtime, version) in versions {
         let bin_path = match runtime.as_str() {
-            "node" => match resolve_node_bin_path(&data_dir, version) {
-                Some(path) => path,
-                None => continue,
-            },
+            "node" => {
+                let Some(path) = resolve_node_bin_path(&data_dir, version) else {
+                    continue;
+                };
+                path
+            }
             "python" => data_dir.join("versions/python").join(version).join("bin"),
             "go" => data_dir.join("versions/go").join(version).join("bin"),
             "ruby" => data_dir.join("versions/ruby").join(version).join("bin"),
             "java" => data_dir.join("versions/java").join(version).join("bin"),
-            "bun" => match resolve_bun_bin_path(&data_dir, version) {
-                Some(path) => path,
-                None => continue,
-            },
+            "bun" => {
+                let Some(path) = resolve_bun_bin_path(&data_dir, version) else {
+                    continue;
+                };
+                path
+            }
             "rust" => {
                 // Skip if rustup is installed - let rustup manage Rust
                 // Check for both rustc and cargo to be thorough
@@ -403,12 +399,12 @@ fn resolve_bun_bin_path(data_dir: &Path, version: &str) -> Option<PathBuf> {
 
 fn node_version_bin_path(versions_dir: &Path, version: &str) -> Option<PathBuf> {
     let path = versions_dir.join(version).join("bin");
-    if path.exists() { Some(path) } else { None }
+    path.exists().then_some(path)
 }
 
 fn bun_version_bin_path(versions_dir: &Path, version: &str) -> Option<PathBuf> {
     let path = versions_dir.join(version);
-    if path.exists() { Some(path) } else { None }
+    path.exists().then_some(path)
 }
 
 fn resolve_installed_version_req(versions_dir: &Path, req: &str) -> Option<String> {
@@ -479,11 +475,7 @@ fn nvm_node_bin(version: &str) -> Option<PathBuf> {
         .join(format!("v{normalized}"))
         .join("bin");
 
-    if bin_path.exists() {
-        Some(bin_path)
-    } else {
-        None
-    }
+    bin_path.exists().then_some(bin_path)
 }
 
 fn resolve_nvm_alias(nvm_dir: &Path, alias: &str) -> Option<String> {
@@ -493,11 +485,7 @@ fn resolve_nvm_alias(nvm_dir: &Path, alias: &str) -> Option<String> {
     }
     let content = std::fs::read_to_string(alias_path).ok()?;
     let resolved = content.trim();
-    if resolved.is_empty() {
-        None
-    } else {
-        Some(resolved.to_string())
-    }
+    (!resolved.is_empty()).then(|| resolved.to_string())
 }
 
 fn add_mise_path_fallbacks<S: std::hash::BuildHasher>(
@@ -542,11 +530,7 @@ fn native_runtime_bin_path(runtime: &str, version: &str) -> Option<PathBuf> {
         _ => return None,
     };
 
-    if bin_path.exists() {
-        Some(bin_path)
-    } else {
-        None
-    }
+    bin_path.exists().then_some(bin_path)
 }
 
 // Runtime resolution functions (find_in_path, mise_available, mise_runtime_bin_path)

@@ -94,6 +94,8 @@ async fn test_env_check_fails_on_drift() -> Result<()> {
 #[serial]
 async fn test_tool_list_empty() -> Result<()> {
     let temp = tempdir()?;
+    // SAFETY: Test setup - modifying environment variable for isolated test execution.
+    // This test is marked with #[serial] to prevent concurrent access.
     unsafe {
         std::env::set_var("HOME", temp.path());
     }
@@ -234,6 +236,8 @@ async fn test_run_detect_and_execute_mock_task() -> Result<()> {
 #[tokio::test]
 #[serial]
 async fn test_tool_install_not_in_registry_fails() -> Result<()> {
+    // SAFETY: Test setup - modifying environment variable for isolated test execution.
+    // This test is marked with #[serial] to prevent concurrent access.
     unsafe {
         std::env::set_var("OMG_TEST_MODE", "1");
     }
@@ -245,6 +249,8 @@ async fn test_tool_install_not_in_registry_fails() -> Result<()> {
     };
 
     let result = install_cmd.execute(&ctx).await;
+    // SAFETY: Test cleanup - removing environment variable after test execution.
+    // This test is marked with #[serial] to prevent concurrent access.
     unsafe {
         std::env::remove_var("OMG_TEST_MODE");
     }
@@ -262,6 +268,8 @@ async fn test_env_share_missing_token_fails() -> Result<()> {
     std::env::set_current_dir(temp.path())?;
     fs::write(temp.path().join("omg.lock"), "{}")?;
 
+    // SAFETY: Test setup - removing environment variable to test failure case.
+    // This test is marked with #[serial] to prevent concurrent access.
     unsafe {
         std::env::remove_var("GITHUB_TOKEN");
     }

@@ -22,6 +22,8 @@ async fn test_global_rate_limiting() {
 
     // Setup temporary environment
     let temp_dir = TempDir::new().unwrap();
+    // SAFETY: Test setup - modifying environment variables for isolated test execution.
+    // This test is marked with #[serial] to prevent concurrent access.
     unsafe {
         std::env::set_var("OMG_DAEMON_DATA_DIR", temp_dir.path());
         std::env::set_var("OMG_DATA_DIR", temp_dir.path());
@@ -70,6 +72,8 @@ async fn test_input_validation_audit() {
 
     // Setup temporary environment
     let temp_dir = TempDir::new().unwrap();
+    // SAFETY: Test setup - modifying environment variables for isolated test execution.
+    // This test is marked with #[serial] to prevent concurrent access.
     unsafe {
         std::env::set_var("OMG_DAEMON_DATA_DIR", temp_dir.path());
         std::env::set_var("OMG_DATA_DIR", temp_dir.path());
@@ -137,6 +141,8 @@ async fn test_batch_size_limit_audit() {
 
     // Setup temporary environment
     let temp_dir = TempDir::new().unwrap();
+    // SAFETY: Test setup - modifying environment variables for isolated test execution.
+    // This test is marked with #[serial] to prevent concurrent access.
     unsafe {
         std::env::set_var("OMG_DAEMON_DATA_DIR", temp_dir.path());
         std::env::set_var("OMG_DATA_DIR", temp_dir.path());

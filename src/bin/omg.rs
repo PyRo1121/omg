@@ -59,6 +59,15 @@ fn print_fast_success(packages: &[String], action: &str) {
     println!();
 }
 
+/// Print system update success message
+#[cfg(feature = "arch")]
+fn print_system_updated(suffix: &str) {
+    use owo_colors::OwoColorize;
+    println!();
+    println!("  {} System updated successfully{suffix}", "✓".green().bold());
+    println!();
+}
+
 /// ULTRA-FAST elevated path - when we're re-exec'd with sudo, skip ALL initialization
 /// and go straight to the transaction. This eliminates ~150ms of startup overhead.
 #[cfg(feature = "arch")]
@@ -109,15 +118,9 @@ fn try_fast_elevated(args: &[String]) -> Option<Result<()>> {
             Some(result)
         }
         "update" | "upgrade" => {
-            // Sysupgrade mode (no packages needed)
             let result =
                 omg_lib::package_managers::execute_transaction(Vec::new(), false, true, None);
-            if result.is_ok() {
-                use owo_colors::OwoColorize;
-                println!();
-                println!("  {} System updated successfully", "✓".green().bold());
-                println!();
-            }
+            if result.is_ok() { print_system_updated(""); }
             Some(result)
         }
         "fullupdate" => {
@@ -140,32 +143,15 @@ fn try_fast_elevated(args: &[String]) -> Option<Result<()>> {
 
             let result =
                 omg_lib::package_managers::execute_transaction(Vec::new(), false, true, None);
-            if result.is_ok() {
-                println!();
-                println!("  {} System updated successfully", "✓".green().bold());
-                println!();
-            }
+            if result.is_ok() { print_system_updated(""); }
             Some(result)
         }
         "turboupdate" => {
             use owo_colors::OwoColorize;
-            println!();
-            println!(
-                "  {} Turbo upgrade (skipping sync)...",
-                "🚀".bright_magenta().bold()
-            );
-            println!();
-
+            println!("\n  {} Turbo upgrade (skipping sync)...\n", "🚀".bright_magenta().bold());
             let result =
                 omg_lib::package_managers::execute_transaction(Vec::new(), false, true, None);
-            if result.is_ok() {
-                println!();
-                println!(
-                    "  {} System updated successfully (turbo)",
-                    "✓".green().bold()
-                );
-                println!();
-            }
+            if result.is_ok() { print_system_updated(" (turbo)"); }
             Some(result)
         }
         "sync" => {

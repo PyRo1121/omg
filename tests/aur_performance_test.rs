@@ -17,7 +17,7 @@ use std::time::Instant;
 
 /// Test AUR package installation with all optimizations enabled
 #[tokio::test]
-#[ignore] // Manual execution only - requires sudo and real installations
+#[ignore = "Manual execution only - requires sudo and real installations"]
 async fn test_aur_install_speed() {
     // Test packages chosen for different characteristics:
     // - yay-bin: Binary package (no build time)
@@ -67,7 +67,7 @@ async fn test_aur_install_speed() {
 
 /// Test parallel download performance
 #[tokio::test]
-#[ignore] // Manual execution only - requires network and sudo
+#[ignore = "Manual execution only - requires network and sudo"]
 async fn test_parallel_downloads() {
     println!("\n=== Testing parallel source downloads ===");
 
@@ -112,7 +112,7 @@ async fn test_parallel_downloads() {
 
 /// Test smart dependency resolution avoids unnecessary work
 #[tokio::test]
-#[ignore] // Manual execution only - requires sudo
+#[ignore = "Manual execution only - requires sudo"]
 async fn test_smart_dependency_resolution() {
     println!("\n=== Testing smart dependency resolution ===");
 

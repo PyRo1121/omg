@@ -186,7 +186,7 @@ impl PackageCache {
     #[inline]
     #[must_use]
     pub fn is_info_miss(&self, name: &str) -> bool {
-        self.info_miss_cache.get(name).unwrap_or(false)
+        self.info_miss_cache.get(name).is_some()
     }
 
     /// Store detailed info in cache (optimized to clone name once)

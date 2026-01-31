@@ -40,11 +40,11 @@ pub struct NodeManager {
 impl NodeManager {
     pub fn new() -> Self {
         let data_dir = &*super::DATA_DIR;
-        let node_versions = data_dir.join("versions").join("node");
+        let versions_dir = data_dir.join("versions").join("node");
 
         Self {
-            versions_dir: node_versions.clone(),
-            current_link: node_versions.join("current"),
+            current_link: versions_dir.join("current"),
+            versions_dir,
             client: download_client().clone(),
         }
     }
@@ -169,10 +169,7 @@ impl Default for NodeManager {
 /// Get LTS version name if applicable
 #[must_use]
 pub fn get_lts_name(version: &NodeVersion) -> Option<String> {
-    match &version.lts {
-        serde_json::Value::String(s) => Some(s.clone()),
-        _ => None,
-    }
+    version.lts.as_str().map(String::from)
 }
 
 #[cfg(test)]
