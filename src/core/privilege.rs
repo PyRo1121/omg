@@ -4,7 +4,6 @@
 //! similar to how paru/yay handle this seamlessly.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
 
 #[cfg(not(test))]
 use std::sync::LazyLock;
@@ -12,7 +11,6 @@ use std::sync::LazyLock;
 use anyhow::Context;
 #[cfg(not(test))]
 use parking_lot::Mutex;
-use wait_timeout::ChildExt;
 
 /// Global mutex to serialize privilege elevation attempts
 /// Prevents deadlocks when multiple threads try to elevate simultaneously
@@ -240,9 +238,11 @@ pub async fn run_self_sudo(args: &[&str]) -> anyhow::Result<()> {
     // Otherwise, try -n first and fall back to interactive mode
 
     // Try non-interactive sudo first (both modes start with this)
+    // Note: We pass OMG_ELEVATED=1 as an argument to sudo, not as env var,
+    // because sudo doesn't pass through env vars from its parent by default.
     let status = tokio::process::Command::new("sudo")
-        .env("OMG_ELEVATED", "1")
         .arg("-n")
+        .arg("OMG_ELEVATED=1")
         .arg("--")
         .arg(&exe)
         .args(args)
@@ -252,7 +252,10 @@ pub async fn run_self_sudo(args: &[&str]) -> anyhow::Result<()> {
     if yes_flag {
         // Non-interactive mode: fail if password required
         match status {
-            Ok(s) if s.success() => Ok(()),
+            Ok(s) if s.success() => {
+                // Child handled everything - exit immediately to avoid duplicate output
+                std::process::exit(0);
+            }
             Ok(s) => {
                 // If sudo -n fails with exit code 1, it often means password is required
                 if s.code() == Some(1) {
@@ -295,101 +298,54 @@ pub async fn run_self_sudo(args: &[&str]) -> anyhow::Result<()> {
     } else {
         // Interactive mode: fall back to interactive sudo if password needed
         match status {
-            Ok(s) if s.success() => Ok(()),
-            // If sudo -n fails with exit code 1, it means a password is required
-            Ok(s) if s.code() == Some(1) => {
-                // Two-phase timeout strategy:
-                // 1. Password entry: 30s timeout (user interaction)
-                // 2. Operation execution: No timeout (let package manager handle it)
-                // This prevents timeout failures on slow networks while still catching
-                // unattended password prompts quickly.
+            Ok(s) if s.success() => {
+                // Child handled everything - exit immediately to avoid duplicate output
+                std::process::exit(0);
+            }
+            // sudo -n failed - need password. Run interactive sudo WITHOUT timeout.
+            // The user is at the terminal and can Ctrl+C if needed.
+            // Previous timeout logic was broken: couldn't distinguish "waiting for password"
+            // from "operation in progress".
+            Ok(_) | Err(_) => {
+                tracing::debug!("Password required, running interactive sudo");
 
-                tracing::info!("Trying interactive sudo (30s password timeout)...");
-                let mut child = std::process::Command::new("sudo")
-                    .env("OMG_ELEVATED", "1")
+                // Use tokio async command for consistency
+                // Pass OMG_ELEVATED=1 as argument so sudo sets it for the child
+                let interactive_status = tokio::process::Command::new("sudo")
+                    .arg("OMG_ELEVATED=1")
                     .arg("--")
                     .arg(&exe)
                     .args(args)
-                    .spawn()
-                    .context("Failed to spawn interactive sudo")?;
+                    .status()
+                    .await;
 
-                // Wait up to 30s for password entry + operation START
-                // But once started, let it run indefinitely
-                if let Some(status) = child.wait_timeout(Duration::from_secs(30))? {
-                    if status.success() {
-                        tracing::debug!("Interactive sudo succeeded");
+                match interactive_status {
+                    Ok(s) if s.success() => {
+                        // The elevated process handled everything, we're done
                         std::process::exit(0);
-                    } else {
-                        std::process::exit(status.code().unwrap_or(1));
                     }
-                } else {
-                    // After 30s, check if process is still running
-                    // If running, it means password was accepted and operation started
-                    // Switch to indefinite wait
-                    tracing::info!("Operation in progress, waiting for completion...");
-                    if let Some(status) = child.try_wait()? {
-                        // Process finished during timeout
-                        if status.success() {
-                            std::process::exit(0);
-                        } else {
-                            std::process::exit(status.code().unwrap_or(1));
-                        }
-                    } else {
-                        // Process still running - password accepted, wait indefinitely
-                        let status = child.wait()?;
-                        if status.success() {
-                            std::process::exit(0);
-                        } else {
-                            std::process::exit(status.code().unwrap_or(1));
-                        }
+                    Ok(s) => {
+                        std::process::exit(s.code().unwrap_or(1));
+                    }
+                    Err(e) => {
+                        anyhow::bail!(
+                            "Failed to run with sudo privileges.\n\
+                             \n\
+                             Error: {e}\n\
+                             \n\
+                             For automation/CI, configure sudo with NOPASSWD:\n\
+                             sudo visudo\n\
+                             \n\
+                             And add line (replace username):\n\
+                             username ALL=(ALL) NOPASSWD: {}\n\
+                             \n\
+                             For zero-overhead operations, enable capabilities:\n\
+                             sudo setcap 'cap_dac_override,cap_fowner,cap_chown+ep' {}",
+                            exe.display(),
+                            exe.display()
+                        )
                     }
                 }
-            }
-            Ok(s) => {
-                // Command ran but failed with other non-zero exit code
-                anyhow::bail!("Elevated command failed with exit code: {s}")
-            }
-            Err(e) => {
-                // Check if this is a permission denied error from sudo -n
-                // (which happens when password is required)
-                if e.kind() == std::io::ErrorKind::PermissionDenied
-                    || e.to_string().contains("permission denied")
-                    || e.to_string().contains("no tty present")
-                {
-                    // Fall back to interactive sudo (allows password prompt)
-                    let interactive_status = tokio::process::Command::new("sudo")
-                        .env("OMG_ELEVATED", "1")
-                        .arg("--")
-                        .arg(&exe)
-                        .args(args)
-                        .status()
-                        .await;
-
-                    return match interactive_status {
-                        Ok(s) if s.success() => Ok(()),
-                        Ok(s) => anyhow::bail!("Elevated command failed with exit code: {s}"),
-                        Err(e2) => {
-                            anyhow::bail!(
-                                "Failed to run with sudo privileges.\n\
-                                 \n\
-                                 Error: {e2}\n\
-                                 \n\
-                                 For automation/CI, configure sudo with NOPASSWD:\n\
-                                 sudo visudo\n\
-                                 \n\
-                                 And add line (replace username):\n\
-                                 username ALL=(ALL) NOPASSWD: ALL\n\
-                                 \n\
-                                 Or specify this command specifically:\n\
-                                 username ALL=(ALL) NOPASSWD: {}\n\
-                                 \n\
-                                 For interactive use, ensure you have sudo privileges.",
-                                exe.display()
-                            )
-                        }
-                    };
-                }
-                anyhow::bail!("Failed to elevate privileges: {e}")
             }
         }
     }

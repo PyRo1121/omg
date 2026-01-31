@@ -682,9 +682,9 @@ pub fn search_fast(query: &str) -> Result<Vec<Package>> {
 
     // Slow path: fuzzy search using SIMD memchr
     let finder = memmem::Finder::new(query_lower.as_bytes());
-    let mut exact_matches = Vec::new();
-    let mut prefix_matches = Vec::new();
-    let mut substring_matches = Vec::new();
+    let mut exact_matches = Vec::with_capacity(4);
+    let mut prefix_matches = Vec::with_capacity(32);
+    let mut substring_matches = Vec::with_capacity(128);
     let mut seen_indices = AHashSet::new();
 
     for match_idx in finder.find_iter(&guard.search_buffer) {

@@ -375,3 +375,106 @@ const fn check_shell_hook() -> bool {
     // Let's rely on PATH check mostly.
     true
 }
+
+/// Enable turbo mode - sets Linux capabilities on the omg binary for zero-sudo operations
+#[cfg(target_os = "linux")]
+pub fn enable_turbo_mode() -> Result<()> {
+    use owo_colors::OwoColorize;
+
+    let exe = std::env::current_exe()?;
+    let exe_path = exe.display();
+
+    println!();
+    println!("  {}", "╭─────────────────────────────────────────╮".cyan());
+    println!(
+        "  {} {} {}",
+        "│".cyan(),
+        "  TURBO MODE - Zero-Sudo Operations  ".bold(),
+        "│".cyan()
+    );
+    println!("  {}", "╰─────────────────────────────────────────╯".cyan());
+    println!();
+
+    // Check if already enabled
+    if crate::core::caps::has_package_caps() {
+        println!("  {} Turbo mode is already enabled!", "✓".green().bold());
+        println!();
+        println!("  Package operations run without sudo prompts.");
+        println!();
+        return Ok(());
+    }
+
+    println!("  {} Turbo mode enables:", "→".cyan());
+    println!(
+        "    {} Zero sudo prompts for package operations",
+        "•".dimmed()
+    );
+    println!(
+        "    {} Instant privilege elevation (~5ms vs ~200ms)",
+        "•".dimmed()
+    );
+    println!(
+        "    {} Direct ALPM access without process spawning",
+        "•".dimmed()
+    );
+    println!();
+    println!("  {} To enable, run:", "→".cyan().bold());
+    println!();
+    println!(
+        "    {}",
+        format!("sudo setcap 'cap_dac_override,cap_fowner,cap_chown+ep' {exe_path}").bold()
+    );
+    println!();
+    println!("  {} This grants omg permission to:", "ℹ".blue());
+    println!(
+        "    {} Write to /var/lib/pacman (package database)",
+        "•".dimmed()
+    );
+    println!("    {} Install files owned by root", "•".dimmed());
+    println!(
+        "    {} Change file ownership during installation",
+        "•".dimmed()
+    );
+    println!();
+
+    // Ask if user wants to enable now
+    if console::user_attended() {
+        use dialoguer::Confirm;
+        let enable = Confirm::new()
+            .with_prompt("Enable turbo mode now? (requires sudo)")
+            .default(true)
+            .interact()?;
+
+        if enable {
+            println!();
+            let status = std::process::Command::new("sudo")
+                .arg("setcap")
+                .arg("cap_dac_override,cap_fowner,cap_chown+ep")
+                .arg(&exe)
+                .status()?;
+
+            if status.success() {
+                println!("  {} Turbo mode enabled successfully!", "✓".green().bold());
+                println!();
+                println!("  Package operations now run without sudo prompts.");
+                println!();
+            } else {
+                println!("  {} Failed to enable turbo mode", "✗".red().bold());
+                anyhow::bail!("setcap command failed");
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn enable_turbo_mode() -> Result<()> {
+    use owo_colors::OwoColorize;
+    println!();
+    println!("  {} Turbo mode is only available on Linux", "ℹ".blue());
+    println!();
+    println!("  Linux capabilities (setcap) are required for zero-sudo operations.");
+    println!();
+    Ok(())
+}

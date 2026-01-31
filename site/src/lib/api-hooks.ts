@@ -267,6 +267,30 @@ export function useAdminAdvancedMetrics() {
   return createQuery(() => ({
     queryKey: ['admin-advanced-metrics'],
     queryFn: () => api.getAdminAdvancedMetrics(),
-    staleTime: 5 * 60 * 1000, // 5 minutes - expensive query
+    staleTime: 5 * 60 * 1000,
+  }));
+}
+
+export function useSiteGeoAnalytics(days = 30) {
+  return createQuery(() => ({
+    queryKey: ['site-geo-analytics', days],
+    queryFn: () => api.getSiteGeoAnalytics(days),
+    staleTime: 60 * 1000,
+  }));
+}
+
+export function useSiteRealtimeAnalytics() {
+  return createQuery(() => ({
+    queryKey: ['site-realtime-analytics'],
+    queryFn: () => api.getSiteRealtimeAnalytics(),
+    refetchInterval: 10000,
+  }));
+}
+
+export function useSiteAnalyticsOverview(days = 30) {
+  return createQuery(() => ({
+    queryKey: ['site-analytics-overview', days],
+    queryFn: () => api.getSiteAnalyticsOverview(days),
+    staleTime: 60 * 1000,
   }));
 }

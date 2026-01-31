@@ -55,7 +55,7 @@ import {
 } from './handlers/admin';
 import { handleGetSmartInsights } from './handlers/insights';
 import { handleGetFirehose } from './handlers/firehose';
-import { handleCreateCheckout, handleBillingPortal, handleStripeWebhook } from './handlers/billing';
+import { handleCreateCheckout, handleBillingPortal, handleStripeWebhook, handleAdminStripeSync, handleAdminStripeMetrics } from './handlers/billing';
 import {
   handleDocsAnalytics,
   handleDocsAnalyticsDashboard,
@@ -65,6 +65,14 @@ import { handleGitHubProxy } from './handlers/github-proxy';
 import { handleBinaryDownload } from './handlers/downloads';
 import { handleImageOptimization } from './handlers/images';
 import { handleProvisionUser } from './handlers/provision';
+import { handleCreateAdminSession } from './handlers/admin-session';
+import {
+  handleTrackEvent,
+  handleGetGeoAnalytics,
+  handleGetRealtimeAnalytics,
+  handleGetAnalyticsOverview,
+  cleanupOldAnalytics,
+} from './handlers/site-analytics';
 
 export default Sentry.withSentry(
   (env: Env) => ({
@@ -164,6 +172,26 @@ export default Sentry.withSentry(
         return handleDocsAnalyticsDashboard(request, env);
       }
 
+      // Site analytics tracking (from main site)
+      if (path === '/api/site/analytics/track' && request.method === 'POST') {
+        return handleTrackEvent(request, env);
+      }
+
+      // Site analytics geo distribution
+      if (path === '/api/site/analytics/geo' && request.method === 'GET') {
+        return handleGetGeoAnalytics(request, env);
+      }
+
+      // Site analytics realtime visitors
+      if (path === '/api/site/analytics/realtime' && request.method === 'GET') {
+        return handleGetRealtimeAnalytics(request, env);
+      }
+
+      // Site analytics overview
+      if (path === '/api/site/analytics/overview' && request.method === 'GET') {
+        return handleGetAnalyticsOverview(request, env);
+      }
+
       // GitHub commit activity proxy (caching layer)
       if (path === '/api/github-stats' && request.method === 'GET') {
         return handleGitHubProxy(request, env, ctx);
@@ -182,6 +210,11 @@ export default Sentry.withSentry(
       // Provision user (create customer + license for Better Auth users)
       if (path === '/api/provision-user' && request.method === 'POST') {
         return handleProvisionUser(request, env);
+      }
+
+      // Create admin session (for Better Auth bridge)
+      if (path === '/api/admin/create-session' && request.method === 'POST') {
+        return handleCreateAdminSession(request, env);
       }
 
       // ============================================
@@ -396,6 +429,16 @@ export default Sentry.withSentry(
       // Create checkout
       if (path === '/api/billing/checkout' && request.method === 'POST') {
         return handleCreateCheckout(request, env);
+      }
+
+      // Admin: Sync all Stripe data
+      if (path === '/api/admin/stripe/sync' && request.method === 'POST') {
+        return handleAdminStripeSync(request, env);
+      }
+
+      // Admin: Get real-time Stripe metrics
+      if (path === '/api/admin/stripe/metrics' && request.method === 'GET') {
+        return handleAdminStripeMetrics(request, env);
       }
 
       // ============================================

@@ -206,7 +206,7 @@ impl crate::package_managers::PackageManager for AptPackageManager {
 }
 pub fn search_sync(query: &str) -> Result<Vec<SyncPackage>> {
     let cache = open_cache(&[])?;
-    let mut results = Vec::new();
+    let mut results = Vec::with_capacity(64);
     let query_lower = query.to_lowercase();
 
     for pkg in cache.packages(&PackageSort::default()) {
@@ -289,7 +289,7 @@ pub fn get_sync_pkg_info(name: &str) -> Result<Option<PackageInfo>> {
 
 pub fn list_installed_fast() -> Result<Vec<LocalPackage>> {
     let cache = open_cache(&[])?;
-    let mut packages = Vec::new();
+    let mut packages = Vec::with_capacity(512);
 
     for pkg in cache.packages(&PackageSort::default()) {
         if pkg.is_installed() {
@@ -302,7 +302,7 @@ pub fn list_installed_fast() -> Result<Vec<LocalPackage>> {
 
 pub fn list_explicit() -> Result<Vec<String>> {
     let cache = open_cache(&[])?;
-    let mut explicit = Vec::new();
+    let mut explicit = Vec::with_capacity(256);
 
     for pkg in cache.packages(&PackageSort::default()) {
         if pkg.is_installed() && !pkg.is_auto_installed() {
@@ -317,7 +317,7 @@ pub fn list_explicit() -> Result<Vec<String>> {
 /// List all available package names
 pub fn list_all_package_names() -> Result<Vec<String>> {
     let cache = open_cache(&[])?;
-    let mut names = Vec::new();
+    let mut names = Vec::with_capacity(4096);
 
     for pkg in cache.packages(&PackageSort::default()) {
         names.push(pkg.name().to_string());
@@ -331,7 +331,7 @@ pub fn list_all_package_names() -> Result<Vec<String>> {
 /// List orphaned packages
 pub fn list_orphans() -> Result<Vec<String>> {
     let cache = open_cache(&[])?;
-    let mut orphans = Vec::new();
+    let mut orphans = Vec::with_capacity(32);
     for pkg in cache.packages(&PackageSort::default()) {
         if pkg.is_auto_removable() {
             orphans.push(pkg.name().to_string());
@@ -351,7 +351,7 @@ pub fn remove_orphans() -> Result<()> {
 /// List packages with available updates
 pub fn list_updates() -> Result<Vec<(String, String, String)>> {
     let cache = open_cache(&[])?;
-    let mut updates = Vec::new();
+    let mut updates = Vec::with_capacity(64);
 
     for pkg in cache.packages(&PackageSort::default()) {
         if pkg.is_upgradable() {

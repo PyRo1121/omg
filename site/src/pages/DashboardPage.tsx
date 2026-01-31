@@ -50,6 +50,8 @@ import {
   Users,
 } from 'lucide-solid';
 import { signOut } from '~/lib/auth-client';
+import AdminDashboard from '~/components/dashboard/AdminDashboard';
+import BackgroundMesh from '~/components/3d/BackgroundMesh';
 
 interface BetterAuthSession {
   user: {
@@ -96,6 +98,7 @@ interface TelemetryData {
   user: {
     id: string;
     email: string;
+    role?: string;
   };
   license: {
     id: string;
@@ -150,7 +153,7 @@ interface TelemetryData {
   };
 }
 
-type TabType = 'overview' | 'analytics' | 'achievements' | 'machines' | 'settings';
+type TabType = 'overview' | 'analytics' | 'achievements' | 'machines' | 'settings' | 'admin';
 
 const DashboardPage: Component<DashboardPageProps> = (props) => {
   const [dashboardData, setDashboardData] = createSignal<DashboardData | null>(null);
@@ -188,11 +191,29 @@ const DashboardPage: Component<DashboardPageProps> = (props) => {
       setTelemetryLoading(true);
       setTelemetryError('');
       
-      const response = await fetch('/api/telemetry/dashboard');
+      // Sync license tier from external API to D1 database
+      const syncResponse = await fetch('/api/telemetry/sync-license', {
+        method: 'POST',
+      });
+      
+      if (!syncResponse.ok) {
+        console.error('[Dashboard] License sync failed:', await syncResponse.text());
+      } else {
+        const syncResult = await syncResponse.json();
+        console.log('[Dashboard] License synced:', syncResult);
+      }
+      
+      // Add cache-busting parameter to bypass Cloudflare edge cache
+      const response = await fetch(`/api/telemetry/dashboard?_=${Date.now()}`);
       const result = await response.json();
 
       if (response.ok) {
+        console.log('[Dashboard] Telemetry data loaded. License tier:', result.license?.tier, 'User role:', result.user?.role);
         setTelemetryData(result);
+        
+        if (result.user?.role === 'admin') {
+          syncAdminAuth();
+        }
       } else {
         setTelemetryError(result.message || 'Failed to load telemetry data');
       }
@@ -201,6 +222,29 @@ const DashboardPage: Component<DashboardPageProps> = (props) => {
       setTelemetryError('Failed to load telemetry data');
     } finally {
       setTelemetryLoading(false);
+    }
+  };
+
+  const syncAdminAuth = async () => {
+    try {
+      const existingToken = localStorage.getItem('omg_session_token');
+      if (existingToken) {
+        console.log('[Dashboard] Admin token already exists in localStorage');
+        return;
+      }
+
+      console.log('[Dashboard] Fetching admin workers API token...');
+      const response = await fetch('/api/admin/auth-bridge');
+      
+      if (response.ok) {
+        const data = await response.json();
+        localStorage.setItem('omg_session_token', data.token);
+        console.log('[Dashboard] Admin workers API token stored');
+      } else {
+        console.error('[Dashboard] Failed to get admin token:', await response.text());
+      }
+    } catch (e) {
+      console.error('[Dashboard] Admin auth sync error:', e);
     }
   };
 
@@ -355,6 +399,27 @@ const DashboardPage: Component<DashboardPageProps> = (props) => {
 
   const glassPanel = 'bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl hover:border-indigo-500/30 transition-all duration-300';
 
+  const tabs = createMemo(() => {
+    const role = telemetryData()?.user?.role;
+    console.log('[Tabs Memo] Computing tabs. User role:', role);
+    
+    const baseTabs: Array<{id: TabType; label: string; icon: typeof LayoutDashboard}> = [
+      { id: 'overview', label: 'Overview', icon: LayoutDashboard },
+      { id: 'analytics', label: 'Analytics', icon: BarChart3 },
+      { id: 'achievements', label: 'Achievements', icon: Award },
+      { id: 'machines', label: 'Machines', icon: Monitor },
+      { id: 'settings', label: 'Settings', icon: Settings },
+    ];
+    
+    if (role === 'admin') {
+      console.log('[Tabs Memo] Adding admin tab');
+      baseTabs.push({ id: 'admin', label: 'Admin', icon: Shield });
+    }
+    
+    console.log('[Tabs Memo] Final tabs count:', baseTabs.length);
+    return baseTabs;
+  });
+
   const StatCard = (props: {
     title: string;
     value: string;
@@ -397,6 +462,7 @@ const DashboardPage: Component<DashboardPageProps> = (props) => {
 
   return (
     <div class={pageBg}>
+      <BackgroundMesh />
       {bgEffects}
 
       <div class="relative z-10 min-h-screen">
@@ -433,13 +499,7 @@ const DashboardPage: Component<DashboardPageProps> = (props) => {
           <div class="sticky top-0 z-20 bg-[#0a0a0a]/95 backdrop-blur-xl border-b border-white/10">
             <div class="px-6">
               <nav class="flex gap-1 overflow-x-auto no-scrollbar" role="tablist">
-                <For each={[
-                  { id: 'overview' as TabType, label: 'Overview', icon: LayoutDashboard },
-                  { id: 'analytics' as TabType, label: 'Analytics', icon: BarChart3 },
-                  { id: 'achievements' as TabType, label: 'Achievements', icon: Award },
-                  { id: 'machines' as TabType, label: 'Machines', icon: Monitor },
-                  { id: 'settings' as TabType, label: 'Settings', icon: Settings }
-                ]}>
+                <For each={tabs()}>
                   {(tab) => (
                     <button
                       onClick={() => setActiveTab(tab.id)}
@@ -528,22 +588,6 @@ const DashboardPage: Component<DashboardPageProps> = (props) => {
                       <div class="flex-1">
                         <h2 class="text-xl font-bold text-white">{props.session.user.name}</h2>
                         <p class="text-sm text-slate-400">{props.session.user.email}</p>
-                        <div class="mt-2 flex items-center gap-2">
-                          <Show
-                            when={props.session.user.emailVerified}
-                            fallback={
-                              <span class="flex items-center gap-1 text-xs text-slate-500">
-                                <Clock class="h-3 w-3" />
-                                Email not verified
-                              </span>
-                            }
-                          >
-                            <span class="flex items-center gap-1 text-xs text-green-400">
-                              <CheckCircle class="h-3 w-3" />
-                              Email verified
-                            </span>
-                          </Show>
-                        </div>
                       </div>
                     </div>
 
@@ -1026,6 +1070,12 @@ const DashboardPage: Component<DashboardPageProps> = (props) => {
                     </div>
                   </Show>
                 </Show>
+              </div>
+            </Show>
+
+            <Show when={!loading() && activeTab() === 'admin' && telemetryData()?.user.role === 'admin'}>
+              <div class="animate-fade-in-up">
+                <AdminDashboard />
               </div>
             </Show>
 

@@ -13,9 +13,11 @@ import {
   Minus,
   BarChart3,
   ChevronDown,
+  HelpCircle,
 } from 'lucide-solid';
 import type { ExecutiveKPI, AdvancedMetrics } from './types';
 import { Sparkline } from '../../../design-system/components/Charts';
+import { Tooltip } from '../../ui/Tooltip';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -138,6 +140,7 @@ interface KPICardProps {
   previousValue?: number;
   target?: number;
   forecast?: number;
+  tooltip?: string;
 }
 
 const accentClasses = {
@@ -219,6 +222,11 @@ const KPICard: Component<KPICardProps> = (props) => {
               <span class="text-2xs font-black uppercase tracking-widest text-nebula-500">
                 {props.title}
               </span>
+              <Show when={props.tooltip}>
+                <Tooltip content={props.tooltip!} position="top">
+                  <HelpCircle size={12} class="text-nebula-600 hover:text-nebula-400 transition-colors cursor-help" />
+                </Tooltip>
+              </Show>
               <Show when={props.change !== undefined}>
                 <TrendBadge value={props.change!} inverted={props.changeInverted} />
               </Show>
@@ -679,6 +687,7 @@ export const ExecutiveKPIDashboard: Component<ExecutiveKPIDashboardProps> = (pro
             target={props.mrrTarget}
             forecast={mrrForecast()}
             onClick={() => props.onDrillDown?.('mrr')}
+            tooltip="Monthly Recurring Revenue (MRR) represents the predictable revenue generated each month from active subscriptions. ARR = MRR × 12."
           />
 
           <KPICard
@@ -695,6 +704,7 @@ export const ExecutiveKPIDashboard: Component<ExecutiveKPIDashboardProps> = (pro
             target={props.dauTarget}
             forecast={dauForecast()}
             onClick={() => props.onDrillDown?.('dau')}
+            tooltip="Daily Active Users (DAU) measures the number of unique users who engage with OMG each day. Higher DAU/MAU ratio indicates stronger engagement."
           />
 
           <KPICard
@@ -710,6 +720,7 @@ export const ExecutiveKPIDashboard: Component<ExecutiveKPIDashboardProps> = (pro
             expandable
             previousValue={props.compareMode ? props.previousKpi?.churn_rate : undefined}
             onClick={() => props.onDrillDown?.('churn')}
+            tooltip="Churn Rate measures the percentage of customers who stop using OMG. Lower is better. At-risk customers show declining engagement patterns."
           />
 
           <KPICard
@@ -724,6 +735,7 @@ export const ExecutiveKPIDashboard: Component<ExecutiveKPIDashboardProps> = (pro
             expandable
             previousValue={props.compareMode ? props.previousKpi?.expansion_pipeline : undefined}
             onClick={() => props.onDrillDown?.('expansion')}
+            tooltip="Expansion Pipeline represents potential revenue from upselling existing customers to higher tiers or team plans based on usage patterns."
           />
         </div>
       </Show>

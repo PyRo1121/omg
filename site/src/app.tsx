@@ -1,12 +1,17 @@
 import { Router } from "@solidjs/router";
 import { FileRoutes } from "@solidjs/start/router";
-import { Suspense } from "solid-js";
+import { Suspense, onMount } from "solid-js";
 import { MetaProvider } from "@solidjs/meta";
 import { QueryClientProvider } from "@tanstack/solid-query";
 import { queryClient } from "./lib/query";
+import { initAnalytics } from "./lib/analytics-tracker";
 import "./app.css";
 
 export default function App() {
+  onMount(() => {
+    initAnalytics();
+  });
+
   return (
     <Router
       root={(props) => (

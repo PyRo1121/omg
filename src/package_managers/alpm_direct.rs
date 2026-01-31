@@ -6,13 +6,16 @@ use alpm::{Alpm, PackageReason, SigLevel};
 use anyhow::{Context, Result};
 
 use std::cell::RefCell;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::core::paths;
 use crate::package_managers::pacman_db;
 use crate::package_managers::types::{LocalPackage, PackageInfo, SyncPackage};
 
+static CACHE_EPOCH: AtomicU64 = AtomicU64::new(0);
+
 thread_local! {
-    static ALPM_HANDLE: RefCell<Option<Alpm>> = const { RefCell::new(None) };
+    static ALPM_HANDLE: RefCell<Option<(Alpm, u64)>> = const { RefCell::new(None) };
 }
 
 fn create_alpm_handle() -> Result<Alpm> {
@@ -85,14 +88,20 @@ where
     F: FnOnce(&Alpm) -> Result<R>,
 {
     ALPM_HANDLE.with(|cell| {
-        // Borrow and initialize if needed
+        let current_epoch = CACHE_EPOCH.load(Ordering::Acquire);
         let mut maybe_handle = cell.borrow_mut();
-        if maybe_handle.is_none() {
-            *maybe_handle = Some(create_alpm_handle()?);
+
+        let needs_refresh = match &*maybe_handle {
+            Some((_, epoch)) => *epoch != current_epoch,
+            None => true,
+        };
+
+        if needs_refresh {
+            *maybe_handle = Some((create_alpm_handle()?, current_epoch));
         }
 
         // Get reference to handle
-        let handle_ref = maybe_handle
+        let (handle_ref, _) = maybe_handle
             .as_ref()
             .expect("ALPM handle initialized above");
 
@@ -126,48 +135,40 @@ where
     F: FnOnce(&mut Alpm) -> Result<R>,
 {
     ALPM_HANDLE.with(|cell| {
-        // Borrow and initialize if needed
+        let current_epoch = CACHE_EPOCH.load(Ordering::Acquire);
         let mut maybe_handle = cell.borrow_mut();
-        if maybe_handle.is_none() {
-            *maybe_handle = Some(create_alpm_handle()?);
+
+        let needs_refresh = match &*maybe_handle {
+            Some((_, epoch)) => *epoch != current_epoch,
+            None => true,
+        };
+
+        if needs_refresh {
+            *maybe_handle = Some((create_alpm_handle()?, current_epoch));
         }
 
-        // Get mutable reference to handle
-        let handle_ref = maybe_handle
+        let (handle_ref, _) = maybe_handle
             .as_mut()
             .expect("ALPM handle initialized above");
 
-        // Execute user function with panic safety
-        // SAFETY: We wrap in catch_unwind to ensure RefCell is properly released
-        // even if f panics. This prevents the thread-local from becoming poisoned.
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(handle_ref)));
 
-        // Drop the borrow before handling panic
         drop(maybe_handle);
 
         match result {
             Ok(r) => r,
-            Err(panic_payload) => {
-                // Re-throw the panic after RefCell is released
-                std::panic::resume_unwind(panic_payload)
-            }
+            Err(panic_payload) => std::panic::resume_unwind(panic_payload),
         }
     })
 }
 
-/// Clear the thread-local ALPM handle cache.
+/// Invalidate ALPM handles across all threads.
 ///
-/// This should be called when paths change (e.g., in tests that set different
-/// `OMG_DATA_DIR` or `OMG_PACMAN_DB_DIR` environment variables) to avoid
-/// memory corruption from using handles that reference deleted directories.
-///
-/// # Safety
-/// This function is safe but must be called before any other ALPM operations
-/// when environment paths have changed.
+/// Increments the global cache epoch, causing all threads to create fresh
+/// ALPM handles on their next operation. This is necessary after sync
+/// operations that run in a different process (via sudo).
 pub fn clear_alpm_cache() {
-    ALPM_HANDLE.with(|cell| {
-        let _ = cell.borrow_mut().take();
-    });
+    CACHE_EPOCH.fetch_add(1, Ordering::Release);
 }
 
 /// Search local database (installed packages) - INSTANT
@@ -205,7 +206,7 @@ pub fn search_local(query: &str) -> Result<Vec<LocalPackage>> {
 pub fn search_sync(query: &str) -> Result<Vec<SyncPackage>> {
     with_handle(|handle| {
         let query_lower = query.to_lowercase();
-        let mut results = Vec::new();
+        let mut results = Vec::with_capacity(64);
 
         for db in handle.syncdbs() {
             for pkg in db.pkgs() {

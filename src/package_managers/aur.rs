@@ -145,7 +145,11 @@ async fn remove_dir_as_user(path: &Path) -> Result<()> {
             .with_context(|| format!("Failed to remove directory as user '{user}': {path_str}"))?;
 
         if !status.success() {
-            anyhow::bail!("Failed to remove directory as user '{}': {}", user, path.display());
+            anyhow::bail!(
+                "Failed to remove directory as user '{}': {}",
+                user,
+                path.display()
+            );
         }
         Ok(())
     } else {
@@ -164,7 +168,11 @@ fn create_dir_as_user_sync(path: &Path) -> Result<()> {
             .with_context(|| format!("Failed to create directory as user '{user}': {path_str}"))?;
 
         if !status.success() {
-            anyhow::bail!("Failed to create directory as user '{}': {}", user, path.display());
+            anyhow::bail!(
+                "Failed to create directory as user '{}': {}",
+                user,
+                path.display()
+            );
         }
         Ok(())
     } else {
@@ -1120,9 +1128,10 @@ impl AurClient {
 
             cmd.args(["git", "clone", "--depth=1", "--", &url, &dest_str]);
 
-            let status = cmd.status().await.with_context(|| {
-                format!("Failed to run git clone as user '{user}'")
-            })?;
+            let status = cmd
+                .status()
+                .await
+                .with_context(|| format!("Failed to run git clone as user '{user}'"))?;
 
             spinner.finish_and_clear();
 
@@ -1162,8 +1171,14 @@ impl AurClient {
                  → Fix: sudo chown -R $USER:$USER ~/.cache/omg/aur/\n  \
                  → Or clean and reinstall: omg aur clean {} && omg install {}",
                 pkg_dir.display(),
-                pkg_dir.file_name().and_then(|n| n.to_str()).unwrap_or("package"),
-                pkg_dir.file_name().and_then(|n| n.to_str()).unwrap_or("package")
+                pkg_dir
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("package"),
+                pkg_dir
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("package")
             );
         }
 
@@ -1181,9 +1196,10 @@ impl AurClient {
 
             cmd.args(["git", "-C", &pkg_dir_str, "pull", "--ff-only"]);
 
-            let status = cmd.status().await.with_context(|| {
-                format!("Failed to run git pull as user '{user}'")
-            })?;
+            let status = cmd
+                .status()
+                .await
+                .with_context(|| format!("Failed to run git pull as user '{user}'"))?;
 
             spinner.finish_and_clear();
 
@@ -1191,16 +1207,22 @@ impl AurClient {
                 anyhow::bail!(
                     "git pull failed in {}\n  → Try: omg aur clean {} && omg install {}",
                     pkg_dir.display(),
-                    pkg_dir.file_name().and_then(|n| n.to_str()).unwrap_or("package"),
-                    pkg_dir.file_name().and_then(|n| n.to_str()).unwrap_or("package")
+                    pkg_dir
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("package"),
+                    pkg_dir
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("package")
                 );
             }
             Ok(())
         } else {
             let pkg_dir_clone = pkg_dir.to_path_buf();
             let result = tokio::task::spawn_blocking(move || -> Result<()> {
-                let repo =
-                    git2::Repository::open(&pkg_dir_clone).context("Failed to open git repository")?;
+                let repo = git2::Repository::open(&pkg_dir_clone)
+                    .context("Failed to open git repository")?;
 
                 let mut remote = repo
                     .find_remote("origin")
@@ -1424,12 +1446,24 @@ impl AurClient {
             let mut cmd = Command::new("bwrap");
             cmd.args([
                 "--share-net",
-                "--ro-bind", "/usr", "/usr",
-                "--ro-bind", "/etc", "/etc",
-                "--ro-bind", "/lib", "/lib",
-                "--ro-bind", "/lib64", "/lib64",
-                "--symlink", "/usr/bin", "/bin",
-                "--symlink", "/usr/sbin", "/sbin",
+                "--ro-bind",
+                "/usr",
+                "/usr",
+                "--ro-bind",
+                "/etc",
+                "/etc",
+                "--ro-bind",
+                "/lib",
+                "/lib",
+                "--ro-bind",
+                "/lib64",
+                "/lib64",
+                "--symlink",
+                "/usr/bin",
+                "/bin",
+                "--symlink",
+                "/usr/sbin",
+                "/sbin",
                 "--tmpfs",
             ]);
             cmd.arg(&*home_str);
@@ -1453,9 +1487,12 @@ impl AurClient {
             cmd.arg(&*builddir_str);
             cmd.arg(&*builddir_str);
             cmd.args([
-                "--tmpfs", "/tmp",
-                "--dev", "/dev",
-                "--proc", "/proc",
+                "--tmpfs",
+                "/tmp",
+                "--dev",
+                "/dev",
+                "--proc",
+                "/proc",
                 "--ro-bind",
             ]);
             cmd.arg(&*pacman_db_dir_str);
@@ -1463,14 +1500,9 @@ impl AurClient {
             cmd.args(["--ro-bind"]);
             cmd.arg(&*pacman_cache_root_str);
             cmd.arg(&*pacman_cache_root_str);
-            cmd.args([
-                "--die-with-parent",
-                "--chdir",
-            ]);
+            cmd.args(["--die-with-parent", "--chdir"]);
             cmd.arg(&*pkg_dir_str);
-            cmd.args([
-                "--setenv", "MAKEFLAGS",
-            ]);
+            cmd.args(["--setenv", "MAKEFLAGS"]);
             cmd.arg(&env.makeflags);
             cmd.args(["--setenv", "PKGDEST"]);
             cmd.arg(&*pkgdest_str);
@@ -1720,9 +1752,7 @@ impl AurClient {
             return;
         }
 
-        let gnupg_home = dirs::home_dir()
-            .map(|h| h.join(".gnupg"))
-            .unwrap_or_else(|| PathBuf::from("/tmp/.gnupg"));
+        let gnupg_home = dirs::home_dir().map_or_else(|| PathBuf::from("/tmp/.gnupg"), |h| h.join(".gnupg"));
         let keyring_path = gnupg_home.join("pubring.kbx");
 
         let mut missing_keys = Vec::with_capacity(pkgbuild.validpgpkeys.len());
@@ -1733,9 +1763,8 @@ impl AurClient {
             }
 
             match keyserver::is_key_in_keyring(key_id, &keyring_path) {
-                Ok(true) => continue,
-                Ok(false) => missing_keys.push(key_id.clone()),
-                Err(_) => missing_keys.push(key_id.clone()),
+                Ok(true) => {}
+                Ok(false) | Err(_) => missing_keys.push(key_id.clone()),
             }
         }
 

@@ -12,16 +12,16 @@
       "on_member_join": false
     }
   },
-  "lock_hash": "",
+  "lock_hash": "d9c6b0ea3d7c99060db4d0f591d9449abe1ca0c33bc13786e25c67ad8e8e505c",
   "members": [
     {
       "id": "pyro1121",
       "name": "Unknown",
-      "env_hash": "",
-      "last_sync": 1769699122,
-      "in_sync": true,
-      "drift_summary": null
+      "env_hash": "bd96bdfc5cb89dd66ab209b2ac531022a17ae7afe178898c9da01048ecc2b20f",
+      "last_sync": 1769749317,
+      "in_sync": false,
+      "drift_summary": "Environment differs from team lock"
     }
   ],
-  "updated_at": 1769699122
+  "updated_at": 1769749317
 }

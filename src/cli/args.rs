@@ -99,6 +99,12 @@ pub enum Commands {
         /// Show what would be updated without making changes
         #[arg(long)]
         dry_run: bool,
+        /// Fast mode: sync + upgrade in single operation (no preview)
+        #[arg(short, long)]
+        fast: bool,
+        /// Turbo mode: skip sync, use cached data, parallel extraction (fastest)
+        #[arg(short = 'T', long)]
+        turbo: bool,
     },
 
     /// Show package information
@@ -335,6 +341,9 @@ pub enum Commands {
         /// Check for end-of-life runtime versions
         #[arg(long)]
         eol: bool,
+        /// Enable turbo mode (zero-sudo package operations via Linux capabilities)
+        #[arg(long)]
+        turbo: bool,
     },
 
     /// Security audit and compliance tools
