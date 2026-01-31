@@ -582,10 +582,10 @@ sync_and_deploy_site() {
   log_info "Building website..."
   (
     cd "$site_dir"
-    if command -v bunx >/dev/null 2>&1; then
-      bunx --bun vite build
+    if command -v bun >/dev/null 2>&1; then
+      bun run build:site
     else
-      npx vite build
+      npm run build:site
     fi
   ) || {
     log_error "Site build failed"
