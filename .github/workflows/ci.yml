@@ -86,7 +86,7 @@ jobs:
               - '.github/workflows/**'
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
         with:
           components: rustfmt, clippy
 
@@ -131,7 +131,10 @@ jobs:
             features: arch,pgp,license
             setup: |
               pacman -Syu --noconfirm
-              pacman -S --noconfirm --needed base-devel git rust cargo pkgconf openssl libarchive clang cmake
+              pacman -S --noconfirm --needed base-devel git pkgconf openssl libarchive clang cmake curl
+              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+              echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+              "$HOME/.cargo/bin/rustup" component add clippy rustfmt
 
           - platform: debian
             image: debian:bookworm
@@ -150,7 +153,10 @@ jobs:
             features: fedora,pgp,license
             setup: |
               dnf install -y --setopt=install_weak_deps=False \
-                git rust cargo clippy clang cmake openssl-devel pkgconfig findutils
+                git clang cmake openssl-devel pkgconfig findutils curl
+              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+              echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+              "$HOME/.cargo/bin/rustup" component add clippy rustfmt
 
     container:
       image: ${{ matrix.image }}
