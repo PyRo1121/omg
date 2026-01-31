@@ -315,21 +315,19 @@ fn show_reverse_deps(package: &str) -> Result<Cmd<()>> {
 }
 
 #[cfg(all(feature = "debian", not(feature = "arch")))]
-fn show_dependency_chain_debian(package: &str) -> Result<Cmd<()>> {
+fn show_deps_debian(package: &str) -> Result<Cmd<()>> {
     use crate::cli::components::Components;
-    use std::process::Command;
+    use crate::package_managers::debian_db;
 
-    // Use apt-cache to get dependency info
-    let output = Command::new("apt-cache")
-        .args(["depends", "--", package])
-        .output()?;
-
-    if !output.status.success() {
-        return Ok(Components::error_with_suggestion(
-            format!("Package '{package}' not found"),
-            "Try 'omg search' to find available packages",
-        ));
-    }
+    let (deps, _) = match debian_db::get_package_dependencies(package) {
+        Ok(result) => result,
+        Err(_) => {
+            return Ok(Components::error_with_suggestion(
+                format!("Package '{package}' not found"),
+                "Try 'omg search' to find available packages",
+            ));
+        }
+    };
 
     let deps_str = String::from_utf8_lossy(&output.stdout);
     let mut deps = Vec::new();
@@ -359,29 +357,17 @@ fn show_dependency_chain_debian(package: &str) -> Result<Cmd<()>> {
 #[cfg(all(feature = "debian", not(feature = "arch")))]
 fn show_reverse_deps_debian(package: &str) -> Result<Cmd<()>> {
     use crate::cli::components::Components;
-    use std::process::Command;
+    use crate::package_managers::debian_db;
 
-    let output = Command::new("apt-cache")
-        .args(["rdepends", "--", package])
-        .output()?;
-
-    if !output.status.success() {
-        return Ok(Components::error_with_suggestion(
-            format!("Package '{package}' not found"),
-            "Try 'omg search' to find available packages",
-        ));
-    }
-
-    let rdeps_str = String::from_utf8_lossy(&output.stdout);
-    let mut deps = Vec::new();
-
-    for line in rdeps_str.lines().skip(2) {
-        // Skip header lines
-        let dep = line.trim();
-        if !dep.is_empty() && !dep.starts_with("Reverse") {
-            deps.push(dep.to_string());
+    let (_, deps) = match debian_db::get_package_dependencies(package) {
+        Ok(result) => result,
+        Err(_) => {
+            return Ok(Components::error_with_suggestion(
+                format!("Package '{package}' not found"),
+                "Try 'omg search' to find available packages",
+            ));
         }
-    }
+    };
 
     Ok(Cmd::batch(vec![
         Cmd::header(

@@ -242,27 +242,9 @@ fn get_package_version(name: &str) -> Result<Option<String>> {
 
 #[cfg(all(feature = "debian", not(feature = "arch")))]
 fn get_package_version(name: &str) -> Result<Option<String>> {
-    use std::process::Command;
+    use crate::package_managers::debian_db;
 
-    let output = Command::new("dpkg-query")
-        .args(["-W", "-f=${Version}", "--", name])
-        .output()?;
-
-    if output.status.success() {
-        let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        Ok(Some(version))
-    } else {
-        // Check if package exists
-        let check = Command::new("apt-cache")
-            .args(["show", "--", name])
-            .output()?;
-
-        if check.status.success() {
-            Ok(None) // Exists but not installed
-        } else {
-            anyhow::bail!("Package '{name}' not found")
-        }
-    }
+    debian_db::get_package_version(name)
 }
 
 #[cfg(not(any(feature = "arch", feature = "debian")))]
