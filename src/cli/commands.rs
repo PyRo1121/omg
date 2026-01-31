@@ -708,10 +708,11 @@ pub fn history(
     let to_date = to.and_then(|d| jiff::civil::Date::strptime("%Y-%m-%d", d).ok());
 
     // Build header
-    let mut header = format!("Transaction History (last {limit})");
-    if search.is_some() || transaction_type.is_some() || from.is_some() || to.is_some() {
-        header = "Transaction History (filtered)".to_string();
-    }
+    let header = if search.is_some() || transaction_type.is_some() || from.is_some() || to.is_some() {
+        "Transaction History (filtered)".to_string()
+    } else {
+        format!("Transaction History (last {limit})")
+    };
 
     println!("{} {}\n", style::header("OMG"), header);
 

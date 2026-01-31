@@ -60,11 +60,7 @@ fn parse_env_vars(env: &[String]) -> Vec<(String, String)> {
     env.iter()
         .filter_map(|e| {
             let parts: Vec<&str> = e.splitn(2, '=').collect();
-            if parts.len() == 2 {
-                Some((parts[0].to_string(), parts[1].to_string()))
-            } else {
-                None
-            }
+            (parts.len() == 2).then(|| (parts[0].to_string(), parts[1].to_string()))
         })
         .collect()
 }
@@ -75,11 +71,7 @@ fn parse_volumes(volumes: &[String]) -> Vec<(String, String)> {
         .iter()
         .filter_map(|v| {
             let parts: Vec<&str> = v.splitn(2, ':').collect();
-            if parts.len() == 2 {
-                Some((parts[0].to_string(), parts[1].to_string()))
-            } else {
-                None
-            }
+            (parts.len() == 2).then(|| (parts[0].to_string(), parts[1].to_string()))
         })
         .collect()
 }

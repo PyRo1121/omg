@@ -25,9 +25,9 @@ pub fn get(key: &str) -> Result<()> {
         "aur.enable_ccache" => settings.aur.enable_ccache.to_string(),
         "aur.enable_sccache" => settings.aur.enable_sccache.to_string(),
         "aur.secure_makepkg" => settings.aur.secure_makepkg.to_string(),
-        "aur.makeflags" => settings.aur.makeflags.clone().unwrap_or_default(),
+        "aur.makeflags" => settings.aur.makeflags.unwrap_or_default(),
         "runtime_backend" => format!("{:?}", settings.runtime_backend).to_lowercase(),
-        "default_shell" => settings.default_shell.clone(),
+        "default_shell" => settings.default_shell,
         _ => {
             println!("{} Unknown key: {}", style::error("✗"), key);
             return Ok(());

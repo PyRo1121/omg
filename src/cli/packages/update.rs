@@ -97,7 +97,7 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
     print_update_header("Syncing Package Databases");
     pm.sync().await?;
 
-    let mut all_updates: Vec<UpdateInfo> = Vec::new();
+    let mut all_updates: Vec<UpdateInfo> = Vec::with_capacity(32); // Typical update count
 
     let pb = style::spinner("Checking official repositories...");
     let official_updates: Vec<UpdateInfo> = pm.list_updates().await?;
