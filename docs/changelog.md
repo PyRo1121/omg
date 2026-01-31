@@ -11,48 +11,6 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ---
 
 ## [Unreleased]
-### 🔒 Security
-
-- **PGP**: Pure Rust keyserver client for fetching PGP keys
-
-  - Replace shell-out to `gpg --recv-keys` with pure Rust `sequoia-net`
-
-  - Fetch keys from keyserver.ubuntu.com using HKP protocol
-
-  - Display key fingerprint and UID before import
-
-  - No more dependency on external gpg command
-
-- **PGP**: Refuse to auto-import PGP keys during ALPM transactions
-
-  - Never auto-answer "yes" to ImportKey questions (MITM vector)
-
-  - Attempt to fetch key from keyserver using pure Rust
-
-  - Log key fingerprint and UID for user visibility
-
-  - Suggest `omg key import <fingerprint>` if fetch fails
-
-- **PGP**: Refuse to auto-remove corrupted packages
-
-  - Log error when corruption detected (may indicate tampering)
-
-  - Abort transaction instead of silently removing
-
-- **AUR**: Add URL encoding to all AUR RPC queries
-
-  - Prevents injection attacks via malformed search queries
-
-  - Fixes search for packages with special characters
-
-### 🐛 Bug Fixes
-
-- **Arch**: Fix hardcoded x86_64 architecture in parallel sync
-
-  - Use `std::env::consts::ARCH` for dynamic architecture detection
-
-  - Enables support for ARM systems (aarch64)
-
 ### Debug
 
 - Add env check endpoint
@@ -92,6 +50,18 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
   - Improves error message when package doesn't exist
 
 ### ✨ New Features
+
+- Fast update modes, admin dashboard, clippy fixes
+
+CLI Features:
+
+  - Add 'omg update --fast' for sync+upgrade in single operation
+
+  - Add 'omg update --turbo' for cached zero-sync upgrades
+
+  - Improve update UI with summary tables and better formatting
+
+  - Fix all clippy::pedantic warnings (24 auto-fixed)
 
 - **Aur**: World-class AUR performance improvements ⚠️ **BREAKING CHANGE**
 - **Core**: Add sudoloop mechanism for long operations
@@ -995,6 +965,30 @@ is restored.
   - Deleted old docs-site/ directory completely
 
   - Rebuilt and copied docs to site/public/docs/
+
+### 🔒 Security
+
+- Pure Rust PGP key handling and multi-arch support
+
+SECURITY FIXES:
+
+  - Add pure Rust keyserver client using sequoia-net (no gpg shell-out)
+
+  - Refuse to auto-import PGP keys during ALPM transactions (MITM prevention)
+
+  - Refuse to auto-remove corrupted packages (tampering detection)
+
+  - Add URL encoding to all AUR RPC queries (injection prevention)
+
+BUG FIXES:
+
+  - Fix hardcoded x86_64 architecture in parallel sync
+
+  - Use std::env::consts::ARCH for ARM (aarch64) support
+
+NEW FILES:
+
+  - src/core/security/keyserver.rs: HKP keyserver client using sequoia-net
 
 ### 🔧 Maintenance
 
