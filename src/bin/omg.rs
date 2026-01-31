@@ -24,8 +24,170 @@ use omg_lib::cli::{
     SnapshotCommands, commands,
 };
 use omg_lib::cli::{blame, ci, diff, migrate, outdated, pin, size, snapshot, why};
-use omg_lib::core::{elevate_if_needed, is_root, set_yes_flag};
+use omg_lib::core::{elevate_if_needed, is_elevated, is_root, set_yes_flag};
 use omg_lib::hooks;
+
+/// Print minimal success message for fast elevated path
+#[cfg(feature = "arch")]
+fn print_fast_success(packages: &[String], action: &str) {
+    use owo_colors::OwoColorize;
+
+    let action_text = if packages.len() == 1 {
+        action.to_string()
+    } else {
+        format!("packages {action}")
+    };
+    let msg = format!("  ✓ {} {}!  ", packages.len(), action_text);
+
+    println!();
+    println!(
+        "  {}",
+        "╭─────────────────────────────────────────╮".green()
+    );
+    println!("  {} {} {}", "│".green(), msg.bold().green(), "│".green());
+    println!(
+        "  {}",
+        "╰─────────────────────────────────────────╯".green()
+    );
+
+    if packages.len() <= 5 {
+        println!();
+        for pkg in packages {
+            println!("    {} {}", "✓".green().bold(), pkg.bold());
+        }
+    }
+    println!();
+}
+
+/// ULTRA-FAST elevated path - when we're re-exec'd with sudo, skip ALL initialization
+/// and go straight to the transaction. This eliminates ~150ms of startup overhead.
+#[cfg(feature = "arch")]
+fn try_fast_elevated(args: &[String]) -> Option<Result<()>> {
+    // Only run this path when elevated via sudo
+    if !is_elevated() {
+        return None;
+    }
+
+    // Minimum args: ["omg", "command", "--"]
+    if args.len() < 3 {
+        return None;
+    }
+
+    let command = args.get(1)?;
+    let separator_pos = args.iter().position(|a| a == "--")?;
+    let packages: Vec<String> = args[separator_pos + 1..].to_vec();
+
+    // Handle commands that may have packages
+    match command.as_str() {
+        "install" if !packages.is_empty() => {
+            // Validate package names (security)
+            if let Err(e) = omg_lib::core::security::validate_package_names(&packages) {
+                return Some(Err(e));
+            }
+            // Direct transaction with minimal success output
+            let result = omg_lib::package_managers::execute_transaction(
+                packages.clone(),
+                false,
+                false,
+                None,
+            );
+            if result.is_ok() {
+                print_fast_success(&packages, "installed");
+            }
+            Some(result)
+        }
+        "remove" if !packages.is_empty() => {
+            // Validate package names (security)
+            if let Err(e) = omg_lib::core::security::validate_package_names(&packages) {
+                return Some(Err(e));
+            }
+            let result =
+                omg_lib::package_managers::execute_transaction(packages.clone(), true, false, None);
+            if result.is_ok() {
+                print_fast_success(&packages, "removed");
+            }
+            Some(result)
+        }
+        "update" | "upgrade" => {
+            // Sysupgrade mode (no packages needed)
+            let result =
+                omg_lib::package_managers::execute_transaction(Vec::new(), false, true, None);
+            if result.is_ok() {
+                use owo_colors::OwoColorize;
+                println!();
+                println!("  {} System updated successfully", "✓".green().bold());
+                println!();
+            }
+            Some(result)
+        }
+        "fullupdate" => {
+            use owo_colors::OwoColorize;
+            println!();
+            println!("  {} Syncing package databases...", "→".cyan().bold());
+
+            let sync_result = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(anyhow::Error::from)
+                .and_then(|rt| rt.block_on(omg_lib::package_managers::sync_databases_parallel()));
+
+            if let Err(e) = sync_result {
+                return Some(Err(e));
+            }
+
+            println!("  {} Upgrading system...", "→".cyan().bold());
+            println!();
+
+            let result =
+                omg_lib::package_managers::execute_transaction(Vec::new(), false, true, None);
+            if result.is_ok() {
+                println!();
+                println!("  {} System updated successfully", "✓".green().bold());
+                println!();
+            }
+            Some(result)
+        }
+        "turboupdate" => {
+            use owo_colors::OwoColorize;
+            println!();
+            println!(
+                "  {} Turbo upgrade (skipping sync)...",
+                "🚀".bright_magenta().bold()
+            );
+            println!();
+
+            let result =
+                omg_lib::package_managers::execute_transaction(Vec::new(), false, true, None);
+            if result.is_ok() {
+                println!();
+                println!(
+                    "  {} System updated successfully (turbo)",
+                    "✓".green().bold()
+                );
+                println!();
+            }
+            Some(result)
+        }
+        "sync" => {
+            // Database sync - run in blocking context
+            Some(
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .map_err(anyhow::Error::from)
+                    .and_then(|rt| {
+                        rt.block_on(omg_lib::package_managers::sync_databases_parallel())
+                    }),
+            )
+        }
+        _ => None,
+    }
+}
+
+#[cfg(not(feature = "arch"))]
+fn try_fast_elevated(_args: &[String]) -> Option<Result<()>> {
+    None
+}
 
 fn has_help_flag(args: &[String]) -> bool {
     args.iter().any(|a| a == "--help" || a == "-h")
@@ -232,6 +394,12 @@ fn try_fast_hooks(args: &[String]) -> bool {
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
 
+    // FASTEST PATH: Elevated re-exec - skip ALL initialization
+    // This runs when sudo omg re-execs us with OMG_ELEVATED=1
+    if let Some(result) = try_fast_elevated(&args) {
+        return result;
+    }
+
     if try_fast_explicit_count(&args) {
         return Ok(());
     }
@@ -375,8 +543,16 @@ async fn async_main(args: Vec<String>) -> Result<()> {
             check,
             yes,
             dry_run,
+            fast,
+            turbo,
         } => {
-            packages::update(*check, *yes, *dry_run).await?;
+            if *turbo {
+                packages::update_turbo().await?;
+            } else if *fast {
+                packages::update_fast().await?;
+            } else {
+                packages::update(*check, *yes, *dry_run).await?;
+            }
         }
         Commands::Info { package } => {
             if !packages::info_sync(package)? {
@@ -522,8 +698,16 @@ async fn async_main(args: Vec<String>) -> Result<()> {
         Commands::Status { fast } => {
             packages::status_with_json(*fast, cli.json).await?;
         }
-        Commands::Doctor { network, eol } => {
-            doctor::run(*network, *eol).await?;
+        Commands::Doctor {
+            network,
+            eol,
+            turbo,
+        } => {
+            if *turbo {
+                doctor::enable_turbo_mode()?;
+            } else {
+                doctor::run(*network, *eol).await?;
+            }
         }
         Commands::GenerateMan { output } => {
             omg_lib::cli::man::generate(output.clone())?;

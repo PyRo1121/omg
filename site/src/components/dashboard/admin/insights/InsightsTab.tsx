@@ -1,5 +1,5 @@
 import { Component, Show, For, createSignal } from 'solid-js';
-import { useAdminAdvancedMetrics } from '../../../../lib/api-hooks';
+import { useAdminAdvancedMetrics, useAdminCohorts, useAdminDashboard } from '../../../../lib/api-hooks';
 import { CardSkeleton } from '../../../ui/Skeleton';
 import { EngagementMetrics } from './EngagementMetrics';
 import { ChurnRiskSegments } from './ChurnRiskSegments';
@@ -8,6 +8,8 @@ import { TimeToValueMetrics } from './TimeToValueMetrics';
 import { FeatureAdoptionChart } from './FeatureAdoptionChart';
 import { CommandHeatmap } from './CommandHeatmap';
 import { RuntimeAdoptionChart } from './RuntimeAdoptionChart';
+import { CohortRetentionHeatmap } from '../analytics/CohortRetentionHeatmap';
+import { GeoDistribution } from '../analytics/GeoDistribution';
 import {
   Lightbulb,
   RefreshCw,
@@ -31,6 +33,8 @@ const INSIGHT_CATEGORIES: { id: InsightCategory; label: string; color: string }[
 
 export const InsightsTab: Component = () => {
   const metricsQuery = useAdminAdvancedMetrics();
+  const cohortsQuery = useAdminCohorts();
+  const dashboardQuery = useAdminDashboard();
   const [activeCategory, setActiveCategory] = createSignal<InsightCategory>('all');
   const [bookmarkedInsights, setBookmarkedInsights] = createSignal<string[]>([]);
   const [aiQuery, setAiQuery] = createSignal('');
@@ -235,6 +239,31 @@ export const InsightsTab: Component = () => {
           <Show when={activeCategory() === 'all' || activeCategory() === 'engagement'}>
             <Show when={metricsQuery.data!.runtime_adoption}>
               <RuntimeAdoptionChart data={metricsQuery.data!.runtime_adoption!} />
+            </Show>
+          </Show>
+
+          <Show when={activeCategory() === 'all' || activeCategory() === 'engagement'}>
+            <Show when={cohortsQuery.isSuccess && cohortsQuery.data?.cohorts}>
+              <CohortRetentionHeatmap 
+                data={cohortsQuery.data!.cohorts.map(c => ({
+                  cohort_month: c.cohort_week,
+                  month_index: c.weeks_since_signup,
+                  active_users: c.active_users,
+                }))} 
+                maxMonths={12}
+              />
+            </Show>
+          </Show>
+
+          <Show when={activeCategory() === 'all' || activeCategory() === 'growth'}>
+            <Show when={dashboardQuery.isSuccess && dashboardQuery.data?.geo_distribution}>
+              <GeoDistribution
+                data={dashboardQuery.data!.geo_distribution.map(g => ({
+                  country_code: g.dimension,
+                  user_count: g.count,
+                }))}
+                maxItems={10}
+              />
             </Show>
           </Show>
 

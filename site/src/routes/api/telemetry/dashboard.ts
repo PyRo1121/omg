@@ -50,6 +50,8 @@ export async function GET(event: APIEvent) {
     const db = drizzle(env.DB, { schema });
     const userId = session.user.id;
 
+    console.log('[Dashboard API] Querying license for userId:', userId);
+
     let license = await db
       .select()
       .from(schema.license)
@@ -57,7 +59,10 @@ export async function GET(event: APIEvent) {
       .limit(1)
       .get();
 
+    console.log('[Dashboard API] License found:', license ? `id=${license.id}, tier=${license.tier}` : 'null');
+
     if (!license) {
+      console.log('[Dashboard API] No license found, creating new "free" license');
       const licenseKey = crypto.randomUUID();
       const licenseId = crypto.randomUUID();
       
@@ -79,6 +84,8 @@ export async function GET(event: APIEvent) {
         .where(eq(schema.license.id, licenseId))
         .limit(1)
         .get();
+      
+      console.log('[Dashboard API] Created new license:', license ? `id=${license.id}, tier=${license.tier}` : 'failed');
     }
 
     if (!license) {
@@ -245,11 +252,23 @@ export async function GET(event: APIEvent) {
       ? Math.round((userRank.length / Number(totalUsers.count)) * 100)
       : 0;
 
+    console.log('[Dashboard API] Returning tier to frontend:', license.tier);
+
+    const userRecord = await db
+      .select({ role: schema.user.role })
+      .from(schema.user)
+      .where(eq(schema.user.id, userId))
+      .limit(1)
+      .get();
+
+    console.log('[Dashboard API] User role query - userId:', userId, 'userRecord:', userRecord, 'role:', userRecord?.role);
+
     const response: TelemetryDashboardResponse = {
       user: {
         id: session.user.id,
         email: session.user.email,
         name: session.user.name,
+        role: userRecord?.role || "user",
       },
       license: {
         id: license.id,
@@ -294,7 +313,7 @@ export async function GET(event: APIEvent) {
       status: 200,
       headers: {
         "Content-Type": "application/json",
-        "Cache-Control": "private, max-age=60",
+        "Cache-Control": "private, no-cache, no-store, must-revalidate",
       },
     });
   } catch (error) {

@@ -279,7 +279,333 @@ export async function handleStripeWebhook(request: Request, env: Env): Promise<R
       }
       break;
     }
+
+    case 'invoice.paid': {
+      const invoice = event.data.object;
+      const customerId = invoice.customer;
+
+      const customer = await env.DB.prepare('SELECT * FROM customers WHERE stripe_customer_id = ?')
+        .bind(customerId)
+        .first();
+
+      if (customer) {
+        // Store invoice in database for revenue tracking
+        await env.DB.prepare(
+          `INSERT OR REPLACE INTO invoices (id, customer_id, stripe_invoice_id, amount_cents, currency, status, invoice_url, invoice_pdf, period_start, period_end, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime(?, 'unixepoch'), datetime(?, 'unixepoch'), CURRENT_TIMESTAMP)`
+        )
+          .bind(
+            crypto.randomUUID(),
+            customer.id,
+            invoice.id,
+            invoice.amount_paid,
+            invoice.currency,
+            invoice.status,
+            invoice.hosted_invoice_url || null,
+            invoice.invoice_pdf || null,
+            invoice.period_start,
+            invoice.period_end
+          )
+          .run();
+      }
+      break;
+    }
+
+    case 'invoice.payment_failed': {
+      const invoice = event.data.object;
+      const customerId = invoice.customer;
+
+      const customer = await env.DB.prepare('SELECT * FROM customers WHERE stripe_customer_id = ?')
+        .bind(customerId)
+        .first();
+
+      if (customer) {
+        // Mark subscription as past_due
+        await env.DB.prepare(`UPDATE subscriptions SET status = 'past_due' WHERE customer_id = ?`)
+          .bind(customer.id)
+          .run();
+
+        // Log for admin visibility
+        await env.DB.prepare(
+          `INSERT INTO audit_log (id, customer_id, action, metadata, created_at)
+           VALUES (?, ?, 'billing.payment_failed', ?, CURRENT_TIMESTAMP)`
+        )
+          .bind(crypto.randomUUID(), customer.id, JSON.stringify({ invoice_id: invoice.id, amount: invoice.amount_due }))
+          .run();
+      }
+      break;
+    }
+
+    case 'customer.created': {
+      const stripeCustomer = event.data.object;
+      
+      // Check if customer already exists
+      const existing = await env.DB.prepare('SELECT * FROM customers WHERE stripe_customer_id = ? OR email = ?')
+        .bind(stripeCustomer.id, stripeCustomer.email)
+        .first();
+
+      if (!existing) {
+        await env.DB.prepare(
+          `INSERT INTO customers (id, stripe_customer_id, email, name, company, created_at)
+           VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`
+        )
+          .bind(
+            crypto.randomUUID(),
+            stripeCustomer.id,
+            stripeCustomer.email,
+            stripeCustomer.name || null,
+            stripeCustomer.metadata?.company || null
+          )
+          .run();
+      } else if (!existing.stripe_customer_id) {
+        // Link existing customer to Stripe
+        await env.DB.prepare(`UPDATE customers SET stripe_customer_id = ? WHERE email = ?`)
+          .bind(stripeCustomer.id, stripeCustomer.email)
+          .run();
+      }
+      break;
+    }
   }
 
   return new Response('OK');
+}
+
+/**
+ * Admin: Sync all Stripe data (customers, subscriptions, invoices)
+ * This is useful for initial setup or data recovery
+ */
+export async function handleAdminStripeSync(request: Request, env: Env): Promise<Response> {
+  const token = getAuthToken(request);
+  if (!token) return errorResponse('Unauthorized', 401);
+
+  const auth = await validateSession(env.DB, token);
+  if (!auth) return errorResponse('Invalid session', 401);
+
+  // Check admin status
+  const adminCheck = await env.DB.prepare(`SELECT admin FROM customers WHERE id = ?`)
+    .bind(auth.user.id)
+    .first();
+
+  if (adminCheck?.admin !== 1) {
+    return errorResponse('Unauthorized', 403);
+  }
+
+  const results = {
+    customers_synced: 0,
+    subscriptions_synced: 0,
+    invoices_synced: 0,
+    errors: [] as string[],
+  };
+
+  try {
+    // Sync customers
+    let hasMore = true;
+    let startingAfter: string | undefined;
+
+    while (hasMore) {
+      const url = new URL('https://api.stripe.com/v1/customers');
+      url.searchParams.set('limit', '100');
+      if (startingAfter) url.searchParams.set('starting_after', startingAfter);
+
+      const response = await fetch(url.toString(), {
+        headers: { Authorization: `Bearer ${env.STRIPE_SECRET_KEY}` },
+      });
+      const data = (await response.json()) as { data: any[]; has_more: boolean };
+
+      for (const customer of data.data) {
+        try {
+          await env.DB.prepare(
+            `INSERT OR REPLACE INTO customers (id, stripe_customer_id, email, name, company, created_at)
+             VALUES (COALESCE((SELECT id FROM customers WHERE stripe_customer_id = ? OR email = ?), ?), ?, ?, ?, ?, CURRENT_TIMESTAMP)`
+          )
+            .bind(
+              customer.id, customer.email, crypto.randomUUID(),
+              customer.id, customer.email, customer.name, customer.metadata?.company
+            )
+            .run();
+          results.customers_synced++;
+        } catch (e) {
+          results.errors.push(`Customer ${customer.email}: ${e}`);
+        }
+      }
+
+      hasMore = data.has_more;
+      if (data.data.length > 0) {
+        startingAfter = data.data[data.data.length - 1].id;
+      }
+    }
+
+    // Sync subscriptions
+    hasMore = true;
+    startingAfter = undefined;
+
+    while (hasMore) {
+      const url = new URL('https://api.stripe.com/v1/subscriptions');
+      url.searchParams.set('limit', '100');
+      url.searchParams.set('status', 'all');
+      if (startingAfter) url.searchParams.set('starting_after', startingAfter);
+
+      const response = await fetch(url.toString(), {
+        headers: { Authorization: `Bearer ${env.STRIPE_SECRET_KEY}` },
+      });
+      const data = (await response.json()) as { data: any[]; has_more: boolean };
+
+      for (const sub of data.data) {
+        try {
+          const customer = await env.DB.prepare('SELECT id FROM customers WHERE stripe_customer_id = ?')
+            .bind(sub.customer)
+            .first();
+
+          if (customer) {
+            await env.DB.prepare(
+              `INSERT OR REPLACE INTO subscriptions (id, customer_id, stripe_subscription_id, status, current_period_end, created_at)
+               VALUES (COALESCE((SELECT id FROM subscriptions WHERE stripe_subscription_id = ?), ?), ?, ?, ?, datetime(?, 'unixepoch'), CURRENT_TIMESTAMP)`
+            )
+              .bind(sub.id, crypto.randomUUID(), customer.id, sub.id, sub.status, sub.current_period_end)
+              .run();
+            results.subscriptions_synced++;
+          }
+        } catch (e) {
+          results.errors.push(`Subscription ${sub.id}: ${e}`);
+        }
+      }
+
+      hasMore = data.has_more;
+      if (data.data.length > 0) {
+        startingAfter = data.data[data.data.length - 1].id;
+      }
+    }
+
+    // Sync invoices (last 12 months)
+    hasMore = true;
+    startingAfter = undefined;
+    const twelveMonthsAgo = Math.floor(Date.now() / 1000) - (365 * 24 * 60 * 60);
+
+    while (hasMore) {
+      const url = new URL('https://api.stripe.com/v1/invoices');
+      url.searchParams.set('limit', '100');
+      url.searchParams.set('created[gte]', twelveMonthsAgo.toString());
+      if (startingAfter) url.searchParams.set('starting_after', startingAfter);
+
+      const response = await fetch(url.toString(), {
+        headers: { Authorization: `Bearer ${env.STRIPE_SECRET_KEY}` },
+      });
+      const data = (await response.json()) as { data: any[]; has_more: boolean };
+
+      for (const invoice of data.data) {
+        if (invoice.status !== 'paid') continue;
+
+        try {
+          const customer = await env.DB.prepare('SELECT id FROM customers WHERE stripe_customer_id = ?')
+            .bind(invoice.customer)
+            .first();
+
+          if (customer) {
+            await env.DB.prepare(
+              `INSERT OR REPLACE INTO invoices (id, customer_id, stripe_invoice_id, amount_cents, currency, status, invoice_url, invoice_pdf, period_start, period_end, created_at)
+               VALUES (COALESCE((SELECT id FROM invoices WHERE stripe_invoice_id = ?), ?), ?, ?, ?, ?, ?, ?, ?, datetime(?, 'unixepoch'), datetime(?, 'unixepoch'), datetime(?, 'unixepoch'))`
+            )
+              .bind(
+                invoice.id, crypto.randomUUID(),
+                customer.id, invoice.id, invoice.amount_paid, invoice.currency, invoice.status,
+                invoice.hosted_invoice_url, invoice.invoice_pdf, invoice.period_start, invoice.period_end, invoice.created
+              )
+              .run();
+            results.invoices_synced++;
+          }
+        } catch (e) {
+          results.errors.push(`Invoice ${invoice.id}: ${e}`);
+        }
+      }
+
+      hasMore = data.has_more;
+      if (data.data.length > 0) {
+        startingAfter = data.data[data.data.length - 1].id;
+      }
+    }
+
+  } catch (error) {
+    results.errors.push(`Sync error: ${error}`);
+  }
+
+  await logAudit(env.DB, auth.user.id, 'admin.stripe_sync', 'stripe', null, request, results);
+
+  return jsonResponse(results);
+}
+
+/**
+ * Admin: Get real-time Stripe metrics (MRR, subscriber counts, etc.)
+ */
+export async function handleAdminStripeMetrics(request: Request, env: Env): Promise<Response> {
+  const token = getAuthToken(request);
+  if (!token) return errorResponse('Unauthorized', 401);
+
+  const auth = await validateSession(env.DB, token);
+  if (!auth) return errorResponse('Invalid session', 401);
+
+  // Check admin status
+  const adminCheck = await env.DB.prepare(`SELECT admin FROM customers WHERE id = ?`)
+    .bind(auth.user.id)
+    .first();
+
+  if (adminCheck?.admin !== 1) {
+    return errorResponse('Unauthorized', 403);
+  }
+
+  // Fetch active subscriptions from Stripe for accurate MRR
+  const subsResponse = await fetch('https://api.stripe.com/v1/subscriptions?status=active&limit=100', {
+    headers: { Authorization: `Bearer ${env.STRIPE_SECRET_KEY}` },
+  });
+  const subsData = (await subsResponse.json()) as { data: any[] };
+
+  let mrr = 0;
+  const tierCounts: Record<string, number> = { pro: 0, team: 0, enterprise: 0 };
+
+  for (const sub of subsData.data) {
+    for (const item of sub.items.data) {
+      const amount = item.price.unit_amount || 0;
+      const interval = item.price.recurring?.interval;
+      const intervalCount = item.price.recurring?.interval_count || 1;
+
+      // Convert to monthly
+      let monthlyAmount = amount;
+      if (interval === 'year') {
+        monthlyAmount = amount / (12 * intervalCount);
+      } else if (interval === 'month') {
+        monthlyAmount = amount / intervalCount;
+      }
+
+      mrr += monthlyAmount;
+
+      // Categorize by tier based on price
+      if (monthlyAmount >= 50000) {
+        tierCounts.enterprise++;
+      } else if (monthlyAmount >= 20000) {
+        tierCounts.team++;
+      } else {
+        tierCounts.pro++;
+      }
+    }
+  }
+
+  // Fetch recent balance (available + pending)
+  const balanceResponse = await fetch('https://api.stripe.com/v1/balance', {
+    headers: { Authorization: `Bearer ${env.STRIPE_SECRET_KEY}` },
+  });
+  const balance = (await balanceResponse.json()) as { available: any[]; pending: any[] };
+
+  const availableBalance = balance.available.reduce((sum: number, b: any) => sum + b.amount, 0);
+  const pendingBalance = balance.pending.reduce((sum: number, b: any) => sum + b.amount, 0);
+
+  return jsonResponse({
+    mrr: Math.round(mrr),
+    arr: Math.round(mrr * 12),
+    active_subscriptions: subsData.data.length,
+    tier_breakdown: tierCounts,
+    balance: {
+      available: availableBalance,
+      pending: pendingBalance,
+      currency: 'usd',
+    },
+  });
 }

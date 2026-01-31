@@ -67,6 +67,7 @@ export interface TelemetryDashboardResponse {
     id: string;
     email: string;
     name: string;
+    role: string;
   };
   license: {
     id: string;

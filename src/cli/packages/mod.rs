@@ -31,7 +31,7 @@ pub use remove::remove;
 pub use search::{search, search_sync_cli, search_with_json};
 pub use status::{status, status_with_json};
 pub use sync_db::sync_databases as sync;
-pub use update::update;
+pub use update::{update, update_fast, update_turbo};
 
 /// Execute a `Cmd<()>` in fallback context (non-Elm mode)
 ///

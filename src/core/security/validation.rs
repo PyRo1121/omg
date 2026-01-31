@@ -3,6 +3,7 @@
 //! Prevents command injection, path traversal, and other input-based attacks.
 
 use anyhow::{Result, bail};
+use std::path::Path;
 
 /// Validates a package name for security
 ///
@@ -58,6 +59,60 @@ pub fn validate_package_name(name: &str) -> Result<()> {
 pub fn validate_package_names(names: &[String]) -> Result<()> {
     for name in names {
         validate_package_name(name)?;
+    }
+    Ok(())
+}
+
+/// Check if a string is a valid local package file path
+///
+/// Local package files are allowed to bypass normal package name validation
+/// because they are paths to actual .pkg.tar.* files on disk.
+#[must_use]
+pub fn is_local_package_file(name: &str) -> bool {
+    // Must be an absolute path
+    if !name.starts_with('/') {
+        return false;
+    }
+
+    // Must end with a valid package extension
+    let valid_extensions = [
+        ".pkg.tar.zst",
+        ".pkg.tar.xz",
+        ".pkg.tar.gz",
+        ".pkg.tar.bz2",
+        ".pkg.tar",
+    ];
+
+    if !valid_extensions.iter().any(|ext| name.ends_with(ext)) {
+        return false;
+    }
+
+    // Must not contain path traversal
+    if name.contains("..") {
+        return false;
+    }
+
+    // File must exist
+    Path::new(name).exists()
+}
+
+/// Validates a package name or local package file path
+///
+/// Accepts either a valid package name OR an existing local package file.
+pub fn validate_package_name_or_file(name: &str) -> Result<()> {
+    // Allow local package files
+    if is_local_package_file(name) {
+        return Ok(());
+    }
+
+    // Otherwise validate as package name
+    validate_package_name(name)
+}
+
+/// Validates multiple package names or local package file paths
+pub fn validate_package_names_or_files(names: &[String]) -> Result<()> {
+    for name in names {
+        validate_package_name_or_file(name)?;
     }
     Ok(())
 }

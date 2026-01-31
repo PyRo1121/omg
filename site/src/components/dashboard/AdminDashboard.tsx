@@ -2,7 +2,6 @@ import { Component, createSignal, createMemo, For, Show, Switch, Match } from 's
 import {
   Activity,
   Users,
-  Search,
   Download,
   BarChart3,
   CreditCard,
@@ -15,7 +14,6 @@ import {
   Save,
   Layers,
   Brain,
-  FileText,
 } from 'lucide-solid';
 import * as api from '../../lib/api';
 import {
@@ -23,17 +21,23 @@ import {
   useAdminFirehose,
   useAdminCRMUsers,
   useAdminAdvancedMetrics,
+  useSiteGeoAnalytics,
+  useSiteRealtimeAnalytics,
+  useSiteAnalyticsOverview,
 } from '../../lib/api-hooks';
 import { CardSkeleton } from '../ui/Skeleton';
-import { DocsAnalytics } from './admin/DocsAnalytics';
-import { CohortAnalysis } from './admin/CohortAnalysis';
 import { RevenueTab } from './admin/RevenueTab';
 import { AuditLogTab } from './admin/AuditLogTab';
 import { CustomerDetailDrawer } from './admin/CustomerDetailDrawer';
 import { InsightsTab } from './admin/insights/InsightsTab';
 import { SegmentAnalytics } from './admin/SegmentAnalytics';
 import { PredictiveInsights } from './admin/PredictiveInsights';
-import { CustomReportBuilder } from './admin/CustomReportBuilder';
+import { OverviewTab } from './admin/tabs/OverviewTab';
+import { CRMTab } from './admin/tabs/CRMTab';
+import { AnalyticsTab } from './admin/tabs/AnalyticsTab';
+import { TabErrorBoundary } from './admin/shared/TabErrorBoundary';
+import ErrorCard from './admin/shared/ErrorCard';
+import { createDashboardStore } from '../../lib/stores/dashboardStore';
 
 type DateRange = '7d' | '30d' | '90d' | 'custom';
 type SavedView = {
@@ -45,12 +49,7 @@ type SavedView = {
   compareEnabled: boolean;
 };
 
-import {
-  ExecutiveKPIDashboard,
-  RealTimeCommandCenter,
-  CRMProfileCard,
-  CRMProfileCardTableRow,
-} from './premium';
+
 import type {
   ExecutiveKPI,
   AdvancedMetrics,
@@ -61,7 +60,7 @@ import type {
   CustomerHealth,
 } from './premium/types';
 
-type AdminTab = 'overview' | 'crm' | 'analytics' | 'insights' | 'revenue' | 'audit' | 'segments' | 'predictions' | 'reports';
+type AdminTab = 'overview' | 'crm' | 'analytics' | 'insights' | 'revenue' | 'audit' | 'segments' | 'predictions';
 
 const SEGMENTS = [
   { id: 'all', name: 'All Customers' },
@@ -247,26 +246,15 @@ function transformToCRMCustomer(user: api.AdminUser): CRMCustomer {
 }
 
 export const AdminDashboard: Component = () => {
-  const [activeTab, setActiveTab] = createSignal<AdminTab>('overview');
-  const [crmPage, setCrmPage] = createSignal(1);
-  const [crmSearch, setCrmSearch] = createSignal('');
-  const [selectedUserId, setSelectedUserId] = createSignal<string | null>(null);
-  const [exportMenuOpen, setExportMenuOpen] = createSignal(false);
-  const [isExporting, setIsExporting] = createSignal(false);
-  const [crmViewMode, setCrmViewMode] = createSignal<'cards' | 'table'>('table');
-
-  const [dateRange, setDateRange] = createSignal<DateRange>('30d');
-  const [selectedSegment, setSelectedSegment] = createSignal('all');
-  const [compareEnabled, setCompareEnabled] = createSignal(false);
-  const [savedViews, setSavedViews] = createSignal<SavedView[]>([]);
-  const [showSaveViewModal, setShowSaveViewModal] = createSignal(false);
-  const [newViewName, setNewViewName] = createSignal('');
+  const [store, actions] = createDashboardStore();
   const dashboardQuery = useAdminDashboard();
   const firehoseQuery = useAdminFirehose(100);
-  const crmUsersQuery = useAdminCRMUsers(crmPage(), 25, crmSearch());
+  const crmUsersQuery = useAdminCRMUsers(store.crm.page, 25, store.crm.search);
   const advancedMetricsQuery = useAdminAdvancedMetrics();
+  const siteGeoQuery = useSiteGeoAnalytics(store.filters.dateRange === '7d' ? 7 : store.filters.dateRange === '90d' ? 90 : 30);
+  const realtimeQuery = useSiteRealtimeAnalytics();
+  const siteOverviewQuery = useSiteAnalyticsOverview(store.filters.dateRange === '7d' ? 7 : store.filters.dateRange === '90d' ? 90 : 30);
 
-  // Transformed data for premium components
   const executiveKPI = createMemo(() =>
     transformToExecutiveKPI(dashboardQuery.data, advancedMetricsQuery.data)
   );
@@ -279,9 +267,18 @@ export const AdminDashboard: Component = () => {
     transformFirehoseEvents(firehoseQuery.data?.events || [])
   );
 
-  const geoDistribution = createMemo(() =>
-    transformGeoDistribution(dashboardQuery.data?.geo_distribution || [])
-  );
+  const geoDistribution = createMemo(() => {
+    const geoData = siteGeoQuery.data?.geo_distribution || [];
+    if (geoData.length > 0) {
+      return geoData.map(g => ({
+        country: getCountryName(g.country_code),
+        country_code: g.country_code,
+        count: g.user_count,
+        percentage: g.percentage,
+      }));
+    }
+    return transformGeoDistribution(dashboardQuery.data?.geo_distribution || []);
+  });
 
   const commandHealth = createMemo((): CommandHealth => {
     const health = dashboardQuery.data?.overview?.command_health;
@@ -301,8 +298,8 @@ export const AdminDashboard: Component = () => {
 
   // Export handlers
   const handleExport = async (type: 'users' | 'usage' | 'audit') => {
-    setIsExporting(true);
-    setExportMenuOpen(false);
+    actions.setExporting(true);
+    actions.closeExportMenu();
     try {
       let data: string;
       let filename: string;
@@ -324,30 +321,16 @@ export const AdminDashboard: Component = () => {
     } catch (error) {
       console.error('Export failed:', error);
     } finally {
-      setIsExporting(false);
+      actions.setExporting(false);
     }
   };
 
   const saveCurrentView = () => {
-    if (!newViewName().trim()) return;
-    const view: SavedView = {
-      id: `view-${Date.now()}`,
-      name: newViewName(),
-      tab: activeTab(),
-      dateRange: dateRange(),
-      segment: selectedSegment(),
-      compareEnabled: compareEnabled(),
-    };
-    setSavedViews((prev) => [...prev, view]);
-    setNewViewName('');
-    setShowSaveViewModal(false);
+    actions.saveView();
   };
 
   const loadView = (view: SavedView) => {
-    setActiveTab(view.tab);
-    setDateRange(view.dateRange);
-    setSelectedSegment(view.segment);
-    setCompareEnabled(view.compareEnabled);
+    actions.loadView(view);
   };
 
   const tabCounts = createMemo(() => ({
@@ -359,28 +342,73 @@ export const AdminDashboard: Component = () => {
       ).length || 0) + (advancedMetricsQuery.data?.expansion_opportunities?.length || 0),
   }));
 
-  const TabButton = (props: { id: AdminTab; icon: Component<{ size?: number }>; label: string; count?: number }) => (
-    <button
-      onClick={() => setActiveTab(props.id)}
-      class={`flex items-center gap-2 rounded-xl px-4 py-2.5 font-bold transition-all ${
-        activeTab() === props.id
-          ? 'scale-[1.02] bg-white text-black shadow-lg'
-          : 'text-slate-400 hover:bg-white/5 hover:text-white'
-      }`}
-    >
-      <props.icon size={16} />
-      <span>{props.label}</span>
-      <Show when={props.count !== undefined && props.count > 0}>
-        <span
-          class={`rounded-full px-1.5 py-0.5 text-2xs font-black ${
-            activeTab() === props.id ? 'bg-black/10 text-black' : 'bg-white/10 text-white'
-          }`}
-        >
-          {props.count}
-        </span>
-      </Show>
-    </button>
-  );
+  const TABS_ORDER: AdminTab[] = ['overview', 'crm', 'analytics', 'insights', 'segments', 'predictions', 'revenue', 'audit'];
+
+  const handleTabKeyDown = (e: KeyboardEvent, tabId: AdminTab) => {
+    const currentIndex = TABS_ORDER.indexOf(tabId);
+    let nextIndex = currentIndex;
+
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+      e.preventDefault();
+      nextIndex = (currentIndex + 1) % TABS_ORDER.length;
+    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      nextIndex = (currentIndex - 1 + TABS_ORDER.length) % TABS_ORDER.length;
+    } else if (e.key === 'Home') {
+      e.preventDefault();
+      nextIndex = 0;
+    } else if (e.key === 'End') {
+      e.preventDefault();
+      nextIndex = TABS_ORDER.length - 1;
+    } else {
+      return;
+    }
+
+    const nextTab = TABS_ORDER[nextIndex];
+    actions.setTab(nextTab);
+    
+    setTimeout(() => {
+      const nextButton = document.querySelector(`[role="tab"][aria-controls="tabpanel-${nextTab}"]`) as HTMLElement;
+      nextButton?.focus();
+    }, 0);
+  };
+
+  const TabButton = (props: { id: AdminTab; icon: Component<{ size?: number }>; label: string; count?: number }) => {
+    const isActive = () => store.navigation.activeTab === props.id;
+
+    return (
+      <button
+        role="tab"
+        aria-selected={isActive()}
+        aria-controls={`tabpanel-${props.id}`}
+        tabindex={isActive() ? 0 : -1}
+        onClick={() => actions.setTab(props.id)}
+        onKeyDown={(e) => handleTabKeyDown(e, props.id)}
+        class={`relative flex items-center gap-2 rounded-xl px-4 py-2.5 font-bold transition-all duration-300 ${
+          isActive()
+            ? 'bg-gradient-to-r from-electric-500/20 to-photon-500/20 text-white shadow-lg shadow-electric-500/10 ring-1 ring-electric-500/30'
+            : 'text-nebula-400 hover:bg-white/5 hover:text-white'
+        }`}
+      >
+        <Show when={isActive()}>
+          <div class="absolute inset-0 rounded-xl bg-gradient-to-r from-electric-500/10 to-photon-500/10 blur-sm" />
+        </Show>
+        <span class="relative"><props.icon size={16} /></span>
+        <span class="relative">{props.label}</span>
+        <Show when={props.count !== undefined && props.count > 0}>
+          <span
+            class={`relative rounded-full px-1.5 py-0.5 text-2xs font-black ${
+              isActive()
+                ? 'bg-electric-500/20 text-electric-400' 
+                : 'bg-white/10 text-nebula-300'
+            }`}
+          >
+            {props.count}
+          </span>
+        </Show>
+      </button>
+    );
+  };
 
   return (
     <div class="space-y-6 pb-20">
@@ -396,8 +424,8 @@ export const AdminDashboard: Component = () => {
           <div class="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
             <Calendar size={14} class="text-nebula-500" />
             <select
-              value={dateRange()}
-              onChange={(e) => setDateRange(e.currentTarget.value as DateRange)}
+              value={store.filters.dateRange}
+              onChange={(e) => actions.setDateRange(e.currentTarget.value as DateRange)}
               class="bg-transparent text-sm font-bold text-white focus:outline-none"
             >
               <option value="7d">Last 7 days</option>
@@ -410,8 +438,8 @@ export const AdminDashboard: Component = () => {
           <div class="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
             <Filter size={14} class="text-nebula-500" />
             <select
-              value={selectedSegment()}
-              onChange={(e) => setSelectedSegment(e.currentTarget.value)}
+              value={store.filters.segment}
+              onChange={(e) => actions.setSegment(e.currentTarget.value)}
               class="bg-transparent text-sm font-bold text-white focus:outline-none"
             >
               <For each={SEGMENTS}>{(seg) => <option value={seg.id}>{seg.name}</option>}</For>
@@ -419,41 +447,41 @@ export const AdminDashboard: Component = () => {
           </div>
 
           <button
-            onClick={() => setCompareEnabled(!compareEnabled())}
-            class={`flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-bold transition-all ${
-              compareEnabled()
+            onClick={() => actions.toggleCompare()}
+            class={`flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-bold transition-all sm:text-sm ${
+              store.filters.compareEnabled
                 ? 'border-indigo-500/50 bg-indigo-500/10 text-indigo-400'
                 : 'border-white/10 bg-white/[0.03] text-white hover:bg-white/[0.06]'
             }`}
           >
             <GitCompare size={14} />
-            Compare
+            <span class="hidden sm:inline">Compare</span>
           </button>
 
           <button
-            onClick={() => setShowSaveViewModal(true)}
-            class="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-sm font-bold text-white transition-all hover:bg-white/[0.06]"
+            onClick={() => actions.showSaveViewModal()}
+            class="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-xs font-bold text-white transition-all hover:bg-white/[0.06] sm:text-sm"
           >
             <Save size={14} />
-            Save View
+            <span class="hidden sm:inline">Save View</span>
           </button>
 
           <div class="relative">
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                setExportMenuOpen(!exportMenuOpen());
+                actions.toggleExportMenu();
               }}
-              disabled={isExporting()}
-              class="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-sm font-bold text-white transition-all hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={store.ui.isExporting}
+              class="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-xs font-bold text-white transition-all hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-50 sm:text-sm"
             >
               <Download size={14} />
-              Export
-              <ChevronDown size={12} class={`transition-transform ${exportMenuOpen() ? 'rotate-180' : ''}`} />
+              <span class="hidden sm:inline">Export</span>
+              <ChevronDown size={12} class={`transition-transform ${store.ui.exportMenuOpen ? 'rotate-180' : ''}`} />
             </button>
 
-            <Show when={exportMenuOpen()}>
-              <div class="absolute right-0 top-full z-50 mt-2 w-56 origin-top-right rounded-xl border border-white/10 bg-[#0d0d0e] p-1 shadow-2xl">
+            <Show when={store.ui.exportMenuOpen}>
+              <div class="absolute right-0 top-full z-50 mt-2 w-56 origin-top-right rounded-xl border border-white/10 bg-[#0d0d0e] p-1 shadow-2xl sm:right-0 max-sm:right-0 max-sm:left-auto">
                 <button
                   onClick={() => handleExport('users')}
                   class="flex w-full items-center gap-3 rounded-lg px-4 py-2.5 text-left text-sm text-white transition-colors hover:bg-white/5"
@@ -470,7 +498,7 @@ export const AdminDashboard: Component = () => {
                 >
                   <BarChart3 size={16} class="text-cyan-400" />
                   <div>
-                    <div class="font-medium">Usage ({dateRange()})</div>
+                    <div class="font-medium">Usage ({store.filters.dateRange})</div>
                     <div class="text-xs text-slate-500">Export usage data as CSV</div>
                   </div>
                 </button>
@@ -480,7 +508,7 @@ export const AdminDashboard: Component = () => {
                 >
                   <History size={16} class="text-purple-400" />
                   <div>
-                    <div class="font-medium">Audit Log ({dateRange()})</div>
+                    <div class="font-medium">Audit Log ({store.filters.dateRange})</div>
                     <div class="text-xs text-slate-500">Export audit log as CSV</div>
                   </div>
                 </button>
@@ -490,14 +518,14 @@ export const AdminDashboard: Component = () => {
         </div>
       </div>
 
-      <Show when={compareEnabled()}>
+      <Show when={store.filters.compareEnabled}>
         <div class="flex items-center gap-3 rounded-xl border border-indigo-500/30 bg-indigo-500/10 px-4 py-3">
           <GitCompare size={18} class="text-indigo-400" />
           <span class="text-sm font-medium text-indigo-300">
-            Comparing current period with previous {dateRange() === '7d' ? '7 days' : dateRange() === '30d' ? '30 days' : '90 days'}
+            Comparing current period with previous {store.filters.dateRange === '7d' ? '7 days' : store.filters.dateRange === '30d' ? '30 days' : '90 days'}
           </span>
           <button
-            onClick={() => setCompareEnabled(false)}
+            onClick={() => actions.toggleCompare()}
             class="ml-auto rounded-lg bg-indigo-500/20 px-3 py-1 text-xs font-bold text-indigo-300 hover:bg-indigo-500/30"
           >
             Exit Comparison
@@ -505,10 +533,10 @@ export const AdminDashboard: Component = () => {
         </div>
       </Show>
 
-      <Show when={savedViews().length > 0}>
+      <Show when={store.views.saved.length > 0}>
         <div class="flex items-center gap-2 overflow-x-auto">
           <span class="text-xs font-bold text-nebula-500">Saved Views:</span>
-          <For each={savedViews()}>
+          <For each={store.views.saved}>
             {(view) => (
               <button
                 onClick={() => loadView(view)}
@@ -521,14 +549,17 @@ export const AdminDashboard: Component = () => {
         </div>
       </Show>
 
-      <div class="no-scrollbar flex items-center gap-1.5 overflow-x-auto rounded-2xl border border-white/5 bg-white/[0.02] p-1.5">
+      <div 
+        role="tablist" 
+        aria-label="Dashboard sections"
+        class="no-scrollbar flex items-center gap-1.5 overflow-x-auto rounded-2xl border border-white/5 bg-white/[0.02] p-1.5"
+      >
         <TabButton id="overview" icon={Activity} label="Overview" />
         <TabButton id="crm" icon={Users} label="CRM" count={tabCounts().crm} />
         <TabButton id="analytics" icon={BarChart3} label="Analytics" />
         <TabButton id="insights" icon={Lightbulb} label="Insights" count={tabCounts().insights} />
         <TabButton id="segments" icon={Layers} label="Segments" />
         <TabButton id="predictions" icon={Brain} label="Predictions" count={tabCounts().predictions} />
-        <TabButton id="reports" icon={FileText} label="Reports" />
         <TabButton id="revenue" icon={CreditCard} label="Revenue" />
         <TabButton id="audit" icon={History} label="Audit Log" />
       </div>
@@ -542,257 +573,157 @@ export const AdminDashboard: Component = () => {
         </div>
       </Show>
 
-      <Show when={dashboardQuery.isSuccess}>
-        <Switch>
-          {/* Overview Tab - Executive Dashboard */}
-          <Match when={activeTab() === 'overview'}>
-            <div class="space-y-8">
-              {/* Executive KPI Dashboard */}
-              <ExecutiveKPIDashboard
-                kpi={executiveKPI()}
-                metrics={advancedMetrics()}
-                isLoading={advancedMetricsQuery.isLoading}
-              />
-
-              {/* Real-Time Command Center */}
-              <RealTimeCommandCenter
-                events={firehoseEvents()}
+      <Show 
+        when={!dashboardQuery.isError} 
+        fallback={
+          <ErrorCard 
+            title="Failed to Load Dashboard"
+            message="Unable to fetch dashboard data. Please check your connection and try again."
+            onRetry={() => dashboardQuery.refetch()}
+          />
+        }
+      >
+        <Show when={dashboardQuery.isSuccess}>
+          <Switch>
+            <Match when={store.navigation.activeTab === 'overview'}>
+              <div role="tabpanel" id="tabpanel-overview" aria-labelledby="tab-overview">
+                <TabErrorBoundary tab="Overview">
+                  <OverviewTab
+                executiveKPI={executiveKPI()}
+                advancedMetrics={advancedMetrics()}
+                firehoseEvents={firehoseEvents()}
                 geoDistribution={geoDistribution()}
                 commandHealth={commandHealth()}
-                isLive={true}
+                isMetricsLoading={advancedMetricsQuery.isLoading}
                 onRefresh={() => firehoseQuery.refetch()}
               />
-            </div>
-          </Match>
-
-          {/* CRM Tab - Customer Management */}
-          <Match when={activeTab() === 'crm'}>
-            <div class="space-y-6">
-              {/* CRM Header */}
-              <div class="flex flex-col justify-between gap-6 md:flex-row md:items-center">
-                <div>
-                  <h3 class="text-2xl font-black tracking-tight text-white">Customer CRM</h3>
-                  <p class="text-sm font-medium text-slate-500">
-                    {crmPagination()?.total || 0} customers | Manage subscriptions and engagement
-                  </p>
-                </div>
-
-                <div class="flex items-center gap-4">
-                  {/* View Toggle */}
-                  <div class="flex rounded-xl border border-white/10 bg-white/[0.02] p-1">
-                    <button
-                      onClick={() => setCrmViewMode('table')}
-                      class={`rounded-lg px-4 py-2 text-xs font-bold transition-all ${
-                        crmViewMode() === 'table'
-                          ? 'bg-white text-black'
-                          : 'text-slate-400 hover:text-white'
-                      }`}
-                    >
-                      Table
-                    </button>
-                    <button
-                      onClick={() => setCrmViewMode('cards')}
-                      class={`rounded-lg px-4 py-2 text-xs font-bold transition-all ${
-                        crmViewMode() === 'cards'
-                          ? 'bg-white text-black'
-                          : 'text-slate-400 hover:text-white'
-                      }`}
-                    >
-                      Cards
-                    </button>
-                  </div>
-
-                  {/* Search */}
-                  <div class="relative w-full max-w-md">
-                    <Search class="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
-                    <input
-                      type="text"
-                      placeholder="Search by email, company or ID..."
-                      value={crmSearch()}
-                      onInput={(e) => {
-                        setCrmSearch(e.currentTarget.value);
-                        setCrmPage(1);
-                      }}
-                      class="w-full rounded-2xl border border-white/10 bg-white/5 py-3 pl-12 pr-4 text-white placeholder-slate-500 transition-all focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                    />
-                  </div>
-                </div>
+            </TabErrorBoundary>
               </div>
+          </Match>
 
-              <Show when={crmUsersQuery.isLoading}>
-                <div class="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
-                  <CardSkeleton />
-                  <CardSkeleton />
-                  <CardSkeleton />
-                </div>
-              </Show>
-
-              <Show when={crmUsersQuery.isSuccess}>
-                {/* Card View */}
-                <Show when={crmViewMode() === 'cards'}>
-                  <div class="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
-                    <For each={crmCustomers()}>
-                      {(customer) => (
-                        <CRMProfileCard
-                          customer={customer}
-                          onViewDetail={(customerId) => setSelectedUserId(customerId)}
-                          onQuickAction={(action, _customerId) => {
-                            if (action === 'email') {
-                              window.open(`mailto:${customer.email}`);
-                            }
-                          }}
-                        />
-                      )}
-                    </For>
-                  </div>
-                </Show>
-
-                {/* Table View */}
-                <Show when={crmViewMode() === 'table'}>
-                  <div class="overflow-hidden rounded-[2rem] border border-white/5 bg-[#0d0d0e] shadow-2xl">
-                    <div class="overflow-x-auto">
-                      <table class="w-full text-left">
-                        <thead>
-                          <tr class="border-b border-white/5 text-[10px] font-black uppercase tracking-widest text-slate-500">
-                            <th class="px-6 py-4">User</th>
-                            <th class="px-6 py-4">Tier</th>
-                            <th class="px-6 py-4">Status</th>
-                            <th class="px-6 py-4">Health</th>
-                            <th class="px-6 py-4">Machines</th>
-                            <th class="px-6 py-4">Commands</th>
-                            <th class="px-6 py-4">Joined</th>
-                            <th class="px-6 py-4">{/* Actions */}</th>
-                          </tr>
-                        </thead>
-                        <tbody class="divide-y divide-white/5">
-                          <For each={crmCustomers()}>
-                            {(customer) => (
-                              <CRMProfileCardTableRow
-                                customer={customer}
-                                onViewDetail={(customerId) => setSelectedUserId(customerId)}
-                                onQuickAction={(action, _customerId) => {
-                                  if (action === 'email') {
-                                    window.open(`mailto:${customer.email}`);
-                                  }
-                                }}
-                              />
-                            )}
-                          </For>
-                        </tbody>
-                      </table>
-                    </div>
-
-                    <Show when={crmCustomers().length === 0}>
-                      <div class="py-12 text-center">
-                        <Users size={48} class="mx-auto mb-4 text-slate-600" />
-                        <p class="font-medium text-slate-500">No customers found</p>
-                        <p class="mt-1 text-xs text-slate-600">
-                          {crmSearch() ? 'Try a different search term' : 'Customers will appear here'}
-                        </p>
-                      </div>
-                    </Show>
-
-                    <Show when={(crmPagination()?.pages || 1) > 1}>
-                      <div class="flex items-center justify-between border-t border-white/5 px-6 py-4">
-                        <p class="text-sm text-slate-500">
-                          Page {crmPage()} of {crmPagination()?.pages || 1}
-                        </p>
-                        <div class="flex items-center gap-2">
-                          <button
-                            onClick={() => setCrmPage(Math.max(1, crmPage() - 1))}
-                            disabled={crmPage() === 1}
-                            class="rounded-xl border border-white/10 bg-white/[0.02] px-4 py-2 text-sm font-bold text-white transition-all hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-30"
-                          >
-                            Previous
-                          </button>
-                          <button
-                            onClick={() => setCrmPage(Math.min(crmPagination()?.pages || 1, crmPage() + 1))}
-                            disabled={crmPage() === (crmPagination()?.pages || 1)}
-                            class="rounded-xl border border-white/10 bg-white/[0.02] px-4 py-2 text-sm font-bold text-white transition-all hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-30"
-                          >
-                            Next
-                          </button>
-                        </div>
-                      </div>
-                    </Show>
-                  </div>
-                </Show>
-              </Show>
+          <Match when={store.navigation.activeTab === 'crm'}>
+            <div role="tabpanel" id="tabpanel-crm" aria-labelledby="tab-crm">
+              <TabErrorBoundary tab="CRM">
+              <CRMTab
+                customers={crmCustomers()}
+                pagination={crmPagination()}
+                isLoading={crmUsersQuery.isLoading}
+                isSuccess={crmUsersQuery.isSuccess}
+                isError={crmUsersQuery.isError}
+                onSearchChange={(search) => {
+                  actions.setCRMSearch(search);
+                }}
+                onPageChange={actions.setCRMPage}
+                onViewDetail={actions.setSelectedUserId}
+                onRetry={() => crmUsersQuery.refetch()}
+              />
+            </TabErrorBoundary>
             </div>
           </Match>
 
-          <Match when={activeTab() === 'analytics'}>
-            <div class="space-y-8">
-              <DocsAnalytics />
-              <CohortAnalysis />
+          <Match when={store.navigation.activeTab === 'analytics'}>
+            <div role="tabpanel" id="tabpanel-analytics" aria-labelledby="tab-analytics">
+              <TabErrorBoundary tab="Analytics">
+              <AnalyticsTab
+                dateRange={store.filters.dateRange}
+                siteOverview={siteOverviewQuery.data}
+                siteGeo={siteGeoQuery.data}
+                realtimeData={realtimeQuery.data}
+                isOverviewLoading={siteOverviewQuery.isLoading}
+                isRealtimeLoading={realtimeQuery.isLoading}
+                isOverviewSuccess={siteOverviewQuery.isSuccess}
+                isRealtimeSuccess={realtimeQuery.isSuccess}
+                isOverviewError={siteOverviewQuery.isError}
+                isRealtimeError={realtimeQuery.isError}
+                onRetryOverview={() => siteOverviewQuery.refetch()}
+                onRetryRealtime={() => realtimeQuery.refetch()}
+              />
+            </TabErrorBoundary>
             </div>
           </Match>
 
-          <Match when={activeTab() === 'insights'}>
-            <InsightsTab />
+          <Match when={store.navigation.activeTab === 'insights'}>
+            <div role="tabpanel" id="tabpanel-insights" aria-labelledby="tab-insights">
+              <TabErrorBoundary tab="Insights">
+                <InsightsTab />
+              </TabErrorBoundary>
+            </div>
           </Match>
 
-          <Match when={activeTab() === 'segments'}>
-            <SegmentAnalytics />
+          <Match when={store.navigation.activeTab === 'segments'}>
+            <div role="tabpanel" id="tabpanel-segments" aria-labelledby="tab-segments">
+              <TabErrorBoundary tab="Segments">
+                <SegmentAnalytics />
+              </TabErrorBoundary>
+            </div>
           </Match>
 
-          <Match when={activeTab() === 'predictions'}>
-            <PredictiveInsights />
+          <Match when={store.navigation.activeTab === 'predictions'}>
+            <div role="tabpanel" id="tabpanel-predictions" aria-labelledby="tab-predictions">
+              <TabErrorBoundary tab="Predictions">
+                <PredictiveInsights />
+              </TabErrorBoundary>
+            </div>
           </Match>
 
-          <Match when={activeTab() === 'reports'}>
-            <CustomReportBuilder />
+          <Match when={store.navigation.activeTab === 'revenue'}>
+            <div role="tabpanel" id="tabpanel-revenue" aria-labelledby="tab-revenue">
+              <TabErrorBoundary tab="Revenue">
+                <RevenueTab />
+              </TabErrorBoundary>
+            </div>
           </Match>
 
-          <Match when={activeTab() === 'revenue'}>
-            <RevenueTab />
+          <Match when={store.navigation.activeTab === 'audit'}>
+            <div role="tabpanel" id="tabpanel-audit" aria-labelledby="tab-audit">
+              <TabErrorBoundary tab="Audit">
+                <AuditLogTab />
+              </TabErrorBoundary>
+            </div>
           </Match>
-
-          <Match when={activeTab() === 'audit'}>
-            <AuditLogTab />
-          </Match>
-        </Switch>
+          </Switch>
+        </Show>
       </Show>
 
-      <Show when={showSaveViewModal()}>
+      <Show when={store.views.showSaveModal}>
         <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
           <div class="w-full max-w-md rounded-2xl border border-white/10 bg-void-900 p-6 shadow-2xl">
             <h3 class="mb-4 text-lg font-black text-white">Save Current View</h3>
             <input
               type="text"
-              value={newViewName()}
-              onInput={(e) => setNewViewName(e.currentTarget.value)}
+              value={store.views.newViewName}
+              onInput={(e) => actions.setNewViewName(e.currentTarget.value)}
               placeholder="View name..."
               class="mb-4 w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-white placeholder-nebula-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
             />
             <div class="mb-4 space-y-2 rounded-xl border border-white/5 bg-void-850 p-3 text-xs text-nebula-400">
               <div class="flex justify-between">
                 <span>Tab:</span>
-                <span class="font-bold text-white">{activeTab()}</span>
+                <span class="font-bold text-white">{store.navigation.activeTab}</span>
               </div>
               <div class="flex justify-between">
                 <span>Date Range:</span>
-                <span class="font-bold text-white">{dateRange()}</span>
+                <span class="font-bold text-white">{store.filters.dateRange}</span>
               </div>
               <div class="flex justify-between">
                 <span>Segment:</span>
-                <span class="font-bold text-white">{SEGMENTS.find((s) => s.id === selectedSegment())?.name}</span>
+                <span class="font-bold text-white">{SEGMENTS.find((s) => s.id === store.filters.segment)?.name}</span>
               </div>
               <div class="flex justify-between">
                 <span>Compare Mode:</span>
-                <span class="font-bold text-white">{compareEnabled() ? 'On' : 'Off'}</span>
+                <span class="font-bold text-white">{store.filters.compareEnabled ? 'On' : 'Off'}</span>
               </div>
             </div>
             <div class="flex justify-end gap-3">
               <button
-                onClick={() => setShowSaveViewModal(false)}
+                onClick={() => actions.hideSaveViewModal()}
                 class="rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-bold text-white transition-all hover:bg-white/10"
               >
                 Cancel
               </button>
               <button
                 onClick={saveCurrentView}
-                disabled={!newViewName().trim()}
+                disabled={!store.views.newViewName.trim()}
                 class="rounded-xl bg-indigo-500 px-4 py-2 text-sm font-bold text-white transition-all hover:bg-indigo-600 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Save View
@@ -802,7 +733,7 @@ export const AdminDashboard: Component = () => {
         </div>
       </Show>
 
-      <CustomerDetailDrawer userId={selectedUserId()} onClose={() => setSelectedUserId(null)} />
+      <CustomerDetailDrawer userId={store.crm.selectedUserId} onClose={() => actions.setSelectedUserId(null)} />
     </div>
   );
 };

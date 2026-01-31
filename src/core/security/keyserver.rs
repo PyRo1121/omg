@@ -63,7 +63,10 @@ pub fn is_key_in_keyring(key_id: &str, keyring_path: &Path) -> Result<bool> {
         .context("Failed to parse keyring")?;
 
     for cert in certs.flatten() {
-        if cert.keys().any(|k| k.key().key_handle().aliases(&key_handle)) {
+        if cert
+            .keys()
+            .any(|k| k.key().key_handle().aliases(&key_handle))
+        {
             return Ok(true);
         }
     }
@@ -128,10 +131,7 @@ mod tests {
             fingerprint: "ABCD1234".to_string(),
             user_ids: vec!["Test User <test@example.com>".to_string()],
         };
-        assert_eq!(
-            format!("{info}"),
-            "ABCD1234 (Test User <test@example.com>)"
-        );
+        assert_eq!(format!("{info}"), "ABCD1234 (Test User <test@example.com>)");
     }
 
     #[test]

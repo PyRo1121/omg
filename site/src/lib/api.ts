@@ -1147,6 +1147,78 @@ export async function getSmartInsights(
 }
 
 // ============================================
+// Site Analytics API
+// ============================================
+
+export interface SiteGeoData {
+  country_code: string;
+  user_count: number;
+  percentage: number;
+  breakdown: {
+    site_visitors: number;
+    docs_sessions: number;
+    cli_installs: number;
+  };
+}
+
+export interface SiteGeoAnalytics {
+  period_days: number;
+  total_countries: number;
+  total_engagement: number;
+  geo_distribution: SiteGeoData[];
+  by_source: {
+    site: number;
+    docs: number;
+    cli: number;
+  };
+}
+
+export interface SiteRealtimeAnalytics {
+  active_visitors: number;
+  by_country: Array<{ country_code: string; count: number }>;
+  top_pages: Array<{ page_path: string; count: number }>;
+  timestamp: number;
+}
+
+export interface SiteAnalyticsOverview {
+  period_days: number;
+  summary: {
+    total_pageviews: number;
+    total_visitors: number;
+    total_sessions: number;
+  };
+  daily_trend: Array<{ date: string; pageviews: number; visitors: number }>;
+  top_pages: Array<{ path: string; views: number; visitors: number }>;
+  top_referrers: Array<{ referrer_domain: string; visitors: number; pageviews: number }>;
+  device_breakdown: Array<{ device_type: string; visitors: number }>;
+}
+
+export async function getSiteGeoAnalytics(days = 30): Promise<SiteGeoAnalytics> {
+  return apiRequest(`/api/site/analytics/geo?days=${days}`);
+}
+
+export async function getSiteRealtimeAnalytics(): Promise<SiteRealtimeAnalytics> {
+  return apiRequest('/api/site/analytics/realtime');
+}
+
+export async function getSiteAnalyticsOverview(days = 30): Promise<SiteAnalyticsOverview> {
+  return apiRequest(`/api/site/analytics/overview?days=${days}`);
+}
+
+export async function trackSiteEvent(events: Array<{
+  event_type: 'pageview' | 'click' | 'form' | 'error' | 'performance';
+  event_name: string;
+  properties: Record<string, unknown>;
+  session_id: string;
+  duration_ms?: number;
+}>): Promise<{ success: boolean; processed: number }> {
+  return apiRequest('/api/site/analytics/track', {
+    method: 'POST',
+    body: JSON.stringify({ events }),
+  });
+}
+
+// ============================================
 // Helpers
 // ============================================
 
@@ -1206,4 +1278,35 @@ export function getTierBadgeColor(tier: string): string {
     default:
       return 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30';
   }
+}
+
+export interface AdminStripeMetrics {
+  mrr: number;
+  arr: number;
+  active_subscriptions: number;
+  tier_breakdown: { pro: number; team: number; enterprise: number };
+  balance: { available: number; pending: number; currency: string };
+}
+
+export interface AdminStripeSyncResult {
+  customers_synced: number;
+  subscriptions_synced: number;
+  invoices_synced: number;
+  errors: string[];
+}
+
+export async function getAdminStripeMetrics(): Promise<AdminStripeMetrics> {
+  return get('/api/admin/stripe/metrics');
+}
+
+export async function syncAdminStripeData(): Promise<AdminStripeSyncResult> {
+  return post('/api/admin/stripe/sync');
+}
+
+export async function openAdminBillingPortal(email: string): Promise<{ success: boolean; url: string }> {
+  return post('/api/billing/portal', { email });
+}
+
+export function getStripeCustomerUrl(stripeCustomerId: string): string {
+  return `https://dashboard.stripe.com/customers/${stripeCustomerId}`;
 }

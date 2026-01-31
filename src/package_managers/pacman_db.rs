@@ -5,6 +5,7 @@
 //!
 //! First load: ~100ms (parse all DBs)
 //! Cached: <1ms (instant lookup)
+//! rkyv mmap: <100µs (zero-copy access)
 
 #[cfg(feature = "arch")]
 use alpm_db;
@@ -15,6 +16,7 @@ use alpm_types::Version;
 use anyhow::{Context, Result};
 use flate2::read::GzDecoder;
 use futures::stream::StreamExt;
+use memmap2::Mmap;
 use parking_lot::RwLock;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -23,8 +25,25 @@ use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+
 use std::time::SystemTime;
 use tracing::instrument;
+
+/// Case-insensitive substring check without allocation.
+/// Returns true if `needle` (already lowercase) is found in `haystack` case-insensitively.
+#[inline]
+fn contains_ignore_case(haystack: &str, needle_lower: &str) -> bool {
+    if needle_lower.is_empty() {
+        return true;
+    }
+    if haystack.len() < needle_lower.len() {
+        return false;
+    }
+    haystack
+        .as_bytes()
+        .windows(needle_lower.len())
+        .any(|window| window.eq_ignore_ascii_case(needle_lower.as_bytes()))
+}
 
 use crate::core::paths;
 
@@ -39,13 +58,105 @@ static SYNC_DB_CACHE: std::sync::LazyLock<RwLock<DbCache>> =
 static LOCAL_DB_CACHE: std::sync::LazyLock<RwLock<LocalDbCache>> =
     std::sync::LazyLock::new(|| RwLock::new(LocalDbCache::default()));
 
+/// Global mmap-based zero-copy sync database index
+static SYNC_MMAP_INDEX: std::sync::LazyLock<RwLock<Option<PacmanMmapIndex>>> =
+    std::sync::LazyLock::new(|| RwLock::new(None));
+
 #[derive(Default, Serialize, Deserialize)]
 struct DbCache {
     packages: HashMap<String, SyncDbPackage>,
     last_modified: Option<SystemTime>,
-    /// Last access time for TTL-based eviction (30-minute safety net)
     #[serde(skip)]
     last_accessed: Option<SystemTime>,
+}
+
+/// rkyv-compatible package struct for zero-copy mmap access
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug, Clone)]
+pub struct RkyvSyncPackage {
+    pub name: String,
+    pub version: String,
+    pub desc: String,
+    pub filename: String,
+    pub csize: u64,
+    pub isize: u64,
+    pub url: String,
+    pub arch: String,
+    pub repo: String,
+    pub licenses: Vec<String>,
+    pub depends: Vec<String>,
+    pub makedepends: Vec<String>,
+    pub optdepends: Vec<String>,
+    pub provides: Vec<String>,
+    pub conflicts: Vec<String>,
+    pub replaces: Vec<String>,
+}
+
+/// rkyv-compatible index for zero-copy mmap access
+#[derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize, Debug, Default, Clone)]
+pub struct RkyvSyncIndex {
+    pub packages: Vec<RkyvSyncPackage>,
+    pub name_to_idx: HashMap<String, usize>,
+    pub mtime_secs: u64,
+}
+
+/// Memory-mapped zero-copy sync database index
+pub struct PacmanMmapIndex {
+    mmap: Mmap,
+    mtime: u64,
+}
+
+impl PacmanMmapIndex {
+    pub fn load(path: &Path) -> Result<Self> {
+        let file = File::open(path)?;
+        let mmap = unsafe { Mmap::map(&file)? };
+
+        let mtime: u64 = {
+            let archived =
+                rkyv::access::<rkyv::Archived<RkyvSyncIndex>, rkyv::rancor::Error>(&mmap)
+                    .map_err(|e| anyhow::anyhow!("rkyv access failed: {e}"))?;
+            archived.mtime_secs.into()
+        };
+
+        Ok(Self { mmap, mtime })
+    }
+
+    #[inline]
+    fn archived(&self) -> &rkyv::Archived<RkyvSyncIndex> {
+        unsafe { rkyv::access_unchecked::<rkyv::Archived<RkyvSyncIndex>>(&self.mmap) }
+    }
+
+    pub fn get(&self, name: &str) -> Option<&rkyv::Archived<RkyvSyncPackage>> {
+        let archived = self.archived();
+        archived
+            .name_to_idx
+            .get(name)
+            .and_then(|idx| archived.packages.get(u32::from(*idx) as usize))
+    }
+
+    pub fn search(&self, query: &str) -> Vec<&rkyv::Archived<RkyvSyncPackage>> {
+        let query_lower = query.to_lowercase();
+        let archived = self.archived();
+        archived
+            .packages
+            .iter()
+            .filter(|p| {
+                contains_ignore_case(p.name.as_str(), &query_lower)
+                    || contains_ignore_case(p.desc.as_str(), &query_lower)
+            })
+            .collect()
+    }
+
+    pub fn len(&self) -> usize {
+        self.archived().packages.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn mtime(&self) -> u64 {
+        self.mtime
+    }
 }
 
 fn load_sync_packages(sync_dir: &Path) -> Result<HashMap<String, SyncDbPackage>> {
@@ -66,7 +177,8 @@ fn load_sync_packages(sync_dir: &Path) -> Result<HashMap<String, SyncDbPackage>>
 }
 
 fn collect_sync_db_paths(sync_dir: &Path) -> Vec<(PathBuf, String)> {
-    let mut dbs = Vec::new();
+    // Pre-allocate for standard repos (core, extra, multilib) plus potential custom repos
+    let mut dbs = Vec::with_capacity(8);
 
     for db_name in &["core", "extra", "multilib"] {
         let db_path = sync_dir.join(format!("{db_name}.db"));
@@ -203,22 +315,20 @@ pub fn parse_sync_db(path: &Path, repo_name: &str) -> Result<HashMap<String, Syn
 
             let file = File::open(path)?;
             if magic[0..2] == [0x1f, 0x8b] {
-                // gzip
                 Box::new(GzDecoder::new(file))
             } else if magic[0..4] == [0x28, 0xb5, 0x2f, 0xfd] {
-                // zstd - use pure Rust ruzstd
-                Box::new(
-                    ruzstd::decoding::StreamingDecoder::new(file)
-                        .map_err(|e| anyhow::anyhow!("zstd: {e}"))?,
-                )
+                let mut decoder = ruzstd::decoding::StreamingDecoder::new(file)
+                    .map_err(|e| anyhow::anyhow!("zstd init: {e}"))?;
+                let mut decompressed = Vec::new();
+                std::io::copy(&mut decoder, &mut decompressed)?;
+                Box::new(std::io::Cursor::new(decompressed))
             } else {
-                // Assume gzip
                 Box::new(GzDecoder::new(file))
             }
         } else if path_str.ends_with(".zst") {
             Box::new(
                 ruzstd::decoding::StreamingDecoder::new(file)
-                    .map_err(|e| anyhow::anyhow!("zstd: {e}"))?,
+                    .map_err(|e| anyhow::anyhow!("zstd init: {e}"))?,
             )
         } else {
             Box::new(GzDecoder::new(file))
@@ -236,21 +346,14 @@ pub fn parse_sync_db(path: &Path, repo_name: &str) -> Result<HashMap<String, Syn
         )
     })? {
         let mut entry = entry?;
-        let path = entry.path()?.to_path_buf();
-        let path_str = path.to_string_lossy();
+        let entry_path = entry.path()?.to_path_buf();
+        let path_str = entry_path.to_string_lossy();
 
-        // We only care about desc files
         if path_str.ends_with("/desc") {
-            let pkg_name = path_str.split('/').next().unwrap_or("");
-            // Extract just the package name (before the version)
-            let _base_name = pkg_name
-                .rsplit_once('-')
-                .map(|(n, _)| n)
-                .and_then(|n| n.rsplit_once('-').map(|(n, _)| n))
-                .unwrap_or(pkg_name);
-
             let mut content = String::new();
-            entry.read_to_string(&mut content)?;
+            if entry.read_to_string(&mut content).is_err() {
+                continue;
+            }
 
             let pkg = parse_desc_content(&content, repo_name);
             if !pkg.name.is_empty() {
@@ -334,7 +437,7 @@ fn parse_desc_content(content: &str, repo: &str) -> SyncDbPackage {
 
     match v2_result {
         Ok(Ok(desc)) => return sync_pkg_from_desc!(desc, repo),
-        Ok(Err(_)) => {} // V2 parsing failed normally, try V1 below
+        Ok(Err(_)) => {}
         Err(panic_info) => {
             tracing::warn!(
                 repo = repo,
@@ -351,21 +454,62 @@ fn parse_desc_content(content: &str, repo: &str) -> SyncDbPackage {
 
     match v1_result {
         Ok(Ok(desc)) => return sync_pkg_from_desc!(desc, repo),
-        Ok(Err(_)) => {} // V1 parsing also failed
+        Ok(Err(_)) => {}
         Err(panic_info) => {
             tracing::warn!(
                 repo = repo,
                 error = panic_message(&*panic_info),
-                "Corrupted package desc in repo (V1 parse panic), skipping package"
+                "Corrupted package desc in repo (V1 parse panic), trying manual fallback"
             );
         }
     }
 
-    // Both V2 and V1 failed - return empty package (will be filtered out by caller)
-    SyncDbPackage {
+    // Both V2 and V1 failed - use manual lenient parser as final fallback
+    // This handles cases like "Unknown Packager" without email (common in custom repos)
+    parse_desc_manual(content, repo)
+}
+
+fn parse_desc_manual(content: &str, repo: &str) -> SyncDbPackage {
+    let mut pkg = SyncDbPackage {
         repo: repo.to_string(),
         ..SyncDbPackage::default()
+    };
+
+    let mut current_section = "";
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        if line.starts_with('%') && line.ends_with('%') {
+            current_section = line;
+            continue;
+        }
+
+        match current_section {
+            "%NAME%" => pkg.name = line.to_string(),
+            "%VERSION%" => {
+                pkg.version = crate::package_managers::parse_version_or_zero(line);
+            }
+            "%DESC%" => pkg.desc = line.to_string(),
+            "%URL%" => pkg.url = line.to_string(),
+            "%ARCH%" => pkg.arch = line.to_string(),
+            "%CSIZE%" => pkg.csize = line.parse().unwrap_or(0),
+            "%ISIZE%" => pkg.isize = line.parse().unwrap_or(0),
+            "%FILENAME%" => pkg.filename = line.to_string(),
+            "%DEPENDS%" => pkg.depends.push(line.to_string()),
+            "%PROVIDES%" => pkg.provides.push(line.to_string()),
+            "%CONFLICTS%" => pkg.conflicts.push(line.to_string()),
+            "%REPLACES%" => pkg.replaces.push(line.to_string()),
+            "%OPTDEPENDS%" => pkg.optdepends.push(line.to_string()),
+            "%MAKEDEPENDS%" => pkg.makedepends.push(line.to_string()),
+            "%LICENSE%" => pkg.licenses.push(line.to_string()),
+            _ => {}
+        }
     }
+
+    pkg
 }
 
 /// Parse the local package database (/var/lib/pacman/local/)
@@ -560,6 +704,72 @@ fn load_cache_from_disk<T: for<'de> Deserialize<'de>>(name: &str) -> Result<T> {
     Ok(cache)
 }
 
+fn get_mmap_index_path() -> PathBuf {
+    get_cache_dir().join("sync_db_v2.rkyv")
+}
+
+fn build_rkyv_index(packages: &HashMap<String, SyncDbPackage>, mtime: u64) -> RkyvSyncIndex {
+    let mut index = RkyvSyncIndex {
+        packages: Vec::with_capacity(packages.len()),
+        name_to_idx: HashMap::with_capacity(packages.len()),
+        mtime_secs: mtime,
+    };
+
+    for (name, pkg) in packages {
+        let idx = index.packages.len();
+        index.name_to_idx.insert(name.clone(), idx);
+        index.packages.push(RkyvSyncPackage {
+            name: pkg.name.clone(),
+            version: pkg.version.to_string(),
+            desc: pkg.desc.clone(),
+            filename: pkg.filename.clone(),
+            csize: pkg.csize,
+            isize: pkg.isize,
+            url: pkg.url.clone(),
+            arch: pkg.arch.clone(),
+            repo: pkg.repo.clone(),
+            licenses: pkg.licenses.clone(),
+            depends: pkg.depends.clone(),
+            makedepends: pkg.makedepends.clone(),
+            optdepends: pkg.optdepends.clone(),
+            provides: pkg.provides.clone(),
+            conflicts: pkg.conflicts.clone(),
+            replaces: pkg.replaces.clone(),
+        });
+    }
+
+    index
+}
+
+fn save_mmap_index(index: &RkyvSyncIndex) -> Result<()> {
+    let cache_dir = get_cache_dir();
+    fs::create_dir_all(&cache_dir).ok();
+    let path = get_mmap_index_path();
+    let tmp_path = path.with_extension("tmp");
+
+    let bytes =
+        rkyv::to_bytes::<rkyv::rancor::Error>(index).map_err(|e| anyhow::anyhow!("rkyv: {e}"))?;
+    fs::write(&tmp_path, &bytes)?;
+    fs::rename(tmp_path, path)?;
+    Ok(())
+}
+
+fn try_load_mmap_index(expected_mtime: u64) -> Option<PacmanMmapIndex> {
+    let path = get_mmap_index_path();
+    if !path.exists() {
+        return None;
+    }
+
+    match PacmanMmapIndex::load(&path) {
+        Ok(idx) if idx.mtime() == expected_mtime => Some(idx),
+        Ok(_) => None,
+        Err(e) => {
+            tracing::debug!("mmap index load failed: {e}");
+            None
+        }
+    }
+}
+
 /// Check if cache is expired based on TTL (30-minute safety net)
 fn is_cache_expired(last_accessed: Option<SystemTime>) -> bool {
     if let Some(last_access) = last_accessed
@@ -626,8 +836,18 @@ fn ensure_sync_cache_loaded(sync_dir: &Path) -> Result<()> {
     cache.last_modified = Some(current_mtime);
     cache.last_accessed = Some(SystemTime::now());
 
-    // Save to disk for next time
+    // Save to disk for next time (bitcode for backward compat)
     let _ = save_cache_to_disk(&*cache, "sync_db");
+
+    // Also save rkyv mmap index for zero-copy access
+    let mtime_secs = current_mtime
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let rkyv_index = build_rkyv_index(&cache.packages, mtime_secs);
+    if let Err(e) = save_mmap_index(&rkyv_index) {
+        tracing::debug!("Failed to save rkyv mmap index: {e}");
+    }
 
     Ok(())
 }
@@ -720,7 +940,6 @@ fn get_local_db_mtime(local_dir: &Path) -> Result<SystemTime> {
 
 /// Force refresh of all caches (call after sync/install)
 pub fn invalidate_caches() {
-    // Clear in-memory caches
     {
         let mut cache = SYNC_DB_CACHE.write();
         cache.packages.clear();
@@ -731,17 +950,17 @@ pub fn invalidate_caches() {
         cache.packages.clear();
         cache.last_modified = None;
     }
+    {
+        let mut mmap_cache = SYNC_MMAP_INDEX.write();
+        *mmap_cache = None;
+    }
 
-    // Clear thread-local ALPM handle to avoid stale references after sync
-    // CRITICAL: The ALPM handle holds references to database files that may have
-    // been modified by a subprocess (e.g., `omg sync`). Failing to clear this
-    // causes segfaults when the parent process tries to read stale/corrupted data.
     super::alpm_direct::clear_alpm_cache();
 
-    // Delete disk caches to force fresh parse on next access
     let cache_dir = get_cache_dir();
     let _ = fs::remove_file(cache_dir.join("sync_db.bin"));
     let _ = fs::remove_file(cache_dir.join("local_db.bin"));
+    let _ = fs::remove_file(get_mmap_index_path());
 }
 
 /// Pre-load caches in background (call on daemon startup)
@@ -799,8 +1018,8 @@ fn list_local_cached_filtered(query: Option<&str>) -> Result<Vec<LocalDbPackage>
                 .packages
                 .values()
                 .filter(|pkg| {
-                    pkg.name.to_lowercase().contains(&query_lower)
-                        || pkg.desc.to_lowercase().contains(&query_lower)
+                    contains_ignore_case(&pkg.name, &query_lower)
+                        || contains_ignore_case(&pkg.desc, &query_lower)
                 })
                 .cloned()
                 .collect()
@@ -875,8 +1094,8 @@ pub fn search_sync_fast(query: &str) -> Result<Vec<SyncDbPackage>> {
         .values()
         .filter(|pkg| {
             query_lower.is_empty()
-                || pkg.name.to_lowercase().contains(&query_lower)
-                || pkg.desc.to_lowercase().contains(&query_lower)
+                || contains_ignore_case(&pkg.name, &query_lower)
+                || contains_ignore_case(&pkg.desc, &query_lower)
         })
         .cloned()
         .collect();
@@ -884,26 +1103,61 @@ pub fn search_sync_fast(query: &str) -> Result<Vec<SyncDbPackage>> {
     Ok(results)
 }
 
-/// Official Arch Linux repositories - packages in these are NOT AUR candidates
-/// Source: <https://wiki.archlinux.org/title/Official_repositories>
-const OFFICIAL_REPOS: &[&str] = &[
-    // Stable
-    "core",
-    "extra",
-    "multilib",
-    // Testing
-    "core-testing",
-    "extra-testing",
-    "multilib-testing",
-    "gnome-unstable",
-    "kde-unstable",
-];
+/// Zero-copy search using memory-mapped rkyv index (~100µs vs ~1ms for regular search)
+pub fn search_sync_mmap(query: &str) -> Result<Vec<SyncDbPackage>> {
+    let sync_dir = paths::pacman_sync_dir();
+    let current_mtime = get_newest_db_mtime(&sync_dir);
+    let mtime_secs = current_mtime
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
 
-/// Identify potential AUR packages (installed but not in official repos).
+    {
+        let mmap_guard = SYNC_MMAP_INDEX.read();
+        if let Some(ref idx) = *mmap_guard
+            && idx.mtime() == mtime_secs {
+                return Ok(convert_mmap_results(idx.search(query)));
+            }
+    }
+
+    if let Some(idx) = try_load_mmap_index(mtime_secs) {
+        let results = convert_mmap_results(idx.search(query));
+        let mut mmap_guard = SYNC_MMAP_INDEX.write();
+        *mmap_guard = Some(idx);
+        return Ok(results);
+    }
+
+    ensure_sync_cache_loaded(&sync_dir)?;
+    search_sync_fast(query)
+}
+
+fn convert_mmap_results(archived: Vec<&rkyv::Archived<RkyvSyncPackage>>) -> Vec<SyncDbPackage> {
+    archived
+        .into_iter()
+        .map(|p| SyncDbPackage {
+            name: p.name.to_string(),
+            version: super::types::parse_version_or_zero(&p.version),
+            desc: p.desc.to_string(),
+            filename: p.filename.to_string(),
+            csize: p.csize.into(),
+            isize: p.isize.into(),
+            url: p.url.to_string(),
+            arch: p.arch.to_string(),
+            repo: p.repo.to_string(),
+            licenses: p.licenses.iter().map(std::string::ToString::to_string).collect(),
+            depends: p.depends.iter().map(std::string::ToString::to_string).collect(),
+            makedepends: p.makedepends.iter().map(std::string::ToString::to_string).collect(),
+            optdepends: p.optdepends.iter().map(std::string::ToString::to_string).collect(),
+            provides: p.provides.iter().map(std::string::ToString::to_string).collect(),
+            conflicts: p.conflicts.iter().map(std::string::ToString::to_string).collect(),
+            replaces: p.replaces.iter().map(std::string::ToString::to_string).collect(),
+        })
+        .collect()
+}
+/// Identify potential AUR packages (installed but not in any sync database).
 ///
 /// Uses pure Rust cache for extreme speed (<1ms).
-/// Note: Packages in custom repos (e.g., chaotic-aur) ARE included since they
-/// may have AUR updates available. Use `verify_aur_packages()` to filter.
+/// Excludes packages from ALL sync databases (official + custom repos).
 pub fn get_potential_aur_packages() -> Result<Vec<String>> {
     let sync_dir = paths::pacman_sync_dir();
     let local_dir = paths::pacman_local_dir();
@@ -914,15 +1168,9 @@ pub fn get_potential_aur_packages() -> Result<Vec<String>> {
     let sync_cache = SYNC_DB_CACHE.read();
     let local_cache = LOCAL_DB_CACHE.read();
 
-    let mut potential = Vec::new();
+    let mut potential = Vec::with_capacity(local_cache.packages.len() / 10);
     for name in local_cache.packages.keys() {
-        // Only exclude packages from OFFICIAL repos (not custom repos)
-        let in_official_repo = sync_cache
-            .packages
-            .get(name)
-            .is_some_and(|pkg| OFFICIAL_REPOS.contains(&pkg.repo.as_str()));
-
-        if !in_official_repo {
+        if !sync_cache.packages.contains_key(name) {
             potential.push(name.clone());
         }
     }

@@ -306,7 +306,8 @@ pub async fn sync_databases_parallel() -> Result<()> {
 
     // Collect all repos to sync from pacman.conf
     let configured_repos = get_configured_repos();
-    let mut repos_to_sync: Vec<(String, Vec<String>, PathBuf)> = Vec::with_capacity(configured_repos.len());
+    let mut repos_to_sync: Vec<(String, Vec<String>, PathBuf)> =
+        Vec::with_capacity(configured_repos.len());
 
     // Standard repos (use mirrorlist)
     let standard_repos: std::collections::HashSet<&str> = [

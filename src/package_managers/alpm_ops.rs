@@ -69,8 +69,8 @@ pub fn get_update_list() -> Result<Vec<UpdateInfo>> {
             let name = pkg.name();
             let local_ver_str = pkg.version().as_str();
 
-            if let Some(&(sync_ver_str, repo)) = sync_map.get(name) {
-                if alpm::vercmp(sync_ver_str, local_ver_str) == std::cmp::Ordering::Greater {
+            if let Some(&(sync_ver_str, repo)) = sync_map.get(name)
+                && alpm::vercmp(sync_ver_str, local_ver_str) == std::cmp::Ordering::Greater {
                     updates.push(UpdateInfo {
                         name: name.to_string(),
                         old_version: local_ver_str.to_string(),
@@ -78,7 +78,6 @@ pub fn get_update_list() -> Result<Vec<UpdateInfo>> {
                         repo: repo.to_string(),
                     });
                 }
-            }
         }
 
         Ok(updates)
@@ -359,51 +358,49 @@ fn setup_alpm_callbacks(
     );
     main_pb.set_prefix("");
 
-    alpm.set_question_cb((), |question, ()| {
-        match question.question() {
-            alpm::Question::InstallIgnorepkg(mut q) => q.set_install(true),
-            alpm::Question::Replace(q) => q.set_replace(true),
-            alpm::Question::Conflict(mut q) => q.set_remove(true),
-            alpm::Question::RemovePkgs(mut q) => q.set_skip(false),
-            alpm::Question::SelectProvider(mut q) => q.set_index(0),
-            alpm::Question::ImportKey(mut q) => {
-                let fingerprint = q.fingerprint();
-                let uid = q.uid();
-                tracing::info!("PGP key required: {fingerprint} ({uid})");
+    alpm.set_question_cb((), |question, ()| match question.question() {
+        alpm::Question::InstallIgnorepkg(mut q) => q.set_install(true),
+        alpm::Question::Replace(q) => q.set_replace(true),
+        alpm::Question::Conflict(mut q) => q.set_remove(true),
+        alpm::Question::RemovePkgs(mut q) => q.set_skip(false),
+        alpm::Question::SelectProvider(mut q) => q.set_index(0),
+        alpm::Question::ImportKey(mut q) => {
+            let fingerprint = q.fingerprint();
+            let uid = q.uid();
+            tracing::info!("PGP key required: {fingerprint} ({uid})");
 
-                #[cfg(feature = "pgp")]
-                {
-                    use crate::core::security::keyserver;
-                    if let Ok(handle) = tokio::runtime::Handle::try_current() {
-                        match handle.block_on(keyserver::fetch_key(fingerprint)) {
-                            Ok(cert) => {
-                                let info = keyserver::get_key_info(&cert);
-                                tracing::info!("Fetched and verified key: {info}");
-                                q.set_import(true);
-                            }
-                            Err(e) => {
-                                tracing::warn!("Failed to fetch key {fingerprint}: {e}");
-                                tracing::info!("Run: omg key import {fingerprint}");
-                                q.set_import(false);
-                            }
+            #[cfg(feature = "pgp")]
+            {
+                use crate::core::security::keyserver;
+                if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                    match handle.block_on(keyserver::fetch_key(fingerprint)) {
+                        Ok(cert) => {
+                            let info = keyserver::get_key_info(&cert);
+                            tracing::info!("Fetched and verified key: {info}");
+                            q.set_import(true);
                         }
-                    } else {
-                        tracing::warn!("Cannot fetch key (no async runtime)");
-                        tracing::info!("Run: omg key import {fingerprint}");
-                        q.set_import(false);
+                        Err(e) => {
+                            tracing::warn!("Failed to fetch key {fingerprint}: {e}");
+                            tracing::info!("Run: omg key import {fingerprint}");
+                            q.set_import(false);
+                        }
                     }
-                }
-
-                #[cfg(not(feature = "pgp"))]
-                {
-                    tracing::warn!("PGP feature disabled, cannot fetch key");
+                } else {
+                    tracing::warn!("Cannot fetch key (no async runtime)");
+                    tracing::info!("Run: omg key import {fingerprint}");
                     q.set_import(false);
                 }
             }
-            alpm::Question::Corrupted(mut q) => {
-                tracing::error!("Corrupted package detected! This may indicate tampering.");
-                q.set_remove(false);
+
+            #[cfg(not(feature = "pgp"))]
+            {
+                tracing::warn!("PGP feature disabled, cannot fetch key");
+                q.set_import(false);
             }
+        }
+        alpm::Question::Corrupted(mut q) => {
+            tracing::error!("Corrupted package detected! This may indicate tampering.");
+            q.set_remove(false);
         }
     });
 
@@ -613,7 +610,7 @@ fn commit_alpm_transaction(alpm: &mut alpm::Alpm, main_pb: &indicatif::ProgressB
 fn configure_mirrors(alpm: &mut alpm::Alpm) -> Result<()> {
     let conf_path = paths::pacman_conf_path();
     let arch = std::env::consts::ARCH;
-    
+
     if let Ok(config) = crate::core::pacman_conf::PacmanConfig::parse(&conf_path) {
         for repo in &config.repos {
             if let Ok(servers) = config.resolve_servers(repo, arch) {
@@ -648,9 +645,7 @@ fn configure_mirrors(alpm: &mut alpm::Alpm) -> Result<()> {
     for db in alpm.syncdbs_mut() {
         let db_name = db.name().to_string();
         for server in &servers {
-            let url = server
-                .replace("$repo", &db_name)
-                .replace("$arch", arch);
+            let url = server.replace("$repo", &db_name).replace("$arch", arch);
             let _ = db.add_server(url);
         }
     }

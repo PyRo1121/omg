@@ -48,7 +48,9 @@ pub fn check_dependencies(pkg_dir: &Path) -> Result<DependencyInfo> {
     let srcinfo = SourceInfoV1::from_string(&content).context("Failed to parse .SRCINFO")?;
 
     let base = &srcinfo.base;
-    let mut all_deps = Vec::new();
+    let estimated_deps =
+        base.dependencies.len() + base.make_dependencies.len() + base.check_dependencies.len();
+    let mut all_deps = Vec::with_capacity(estimated_deps + 16);
 
     // Collect runtime dependencies from base
     for dep in &base.dependencies {
@@ -93,8 +95,8 @@ pub fn check_dependencies(pkg_dir: &Path) -> Result<DependencyInfo> {
     // Check which ones are installed using alpm
     let (satisfied, missing) = crate::package_managers::alpm_direct::with_handle(|alpm| {
         let localdb = alpm.localdb();
-        let mut satisfied = Vec::new();
-        let mut missing = Vec::new();
+        let mut satisfied = Vec::with_capacity(total);
+        let mut missing = Vec::with_capacity(total / 4 + 1);
 
         for dep in all_deps {
             // Extract package name (strip version constraints like >=, <=, =, >, <)

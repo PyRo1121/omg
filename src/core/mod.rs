@@ -2,6 +2,7 @@
 
 pub mod analytics;
 pub mod archive;
+pub mod caps;
 #[cfg(unix)]
 pub mod client;
 pub mod completion;
@@ -35,6 +36,7 @@ pub use archive::{
     extract_auto, extract_auto_strip, extract_tar_gz, extract_tar_gz_strip, extract_zip,
     extract_zip_strip,
 };
+pub use caps::{can_write_pacman_db, has_package_caps, is_elevated};
 pub use database::Database;
 pub use error::{OmgError, Result};
 pub use privilege::{elevate_if_needed, get_yes_flag, is_root, set_yes_flag};

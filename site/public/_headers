@@ -22,3 +22,11 @@
 
 /dashboard
   Cache-Control: public, max-age=0, must-revalidate
+
+/api/*
+  Cache-Control: private, no-cache, no-store, must-revalidate
+  Vary: Cookie, Accept-Encoding
+
+/api/telemetry/*
+  Cache-Control: private, no-cache, no-store, must-revalidate
+  Vary: Cookie, Accept-Encoding

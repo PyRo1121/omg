@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use futures::future::Future;
 use owo_colors::OwoColorize;
 
-use crate::core::{Package, PackageSource, is_root, privilege};
+use crate::core::{Package, PackageSource, can_write_pacman_db, privilege};
 use crate::package_managers::{get_system_status, invalidate_caches, traits::PackageManager};
 
 /// Arch Linux package manager (ALPM) implementation
@@ -23,7 +23,12 @@ impl Default for ArchPackageManager {
 }
 
 /// Helper to run a privileged operation, either directly or via sudo.
-async fn run_privileged_operation<F, Fut>(
+///
+/// Priority:
+/// 1. If we have Linux capabilities (`CAP_DAC_OVERRIDE`) -> run directly (FASTEST)
+/// 2. If already root -> run directly
+/// 3. Otherwise -> elevate via sudo (with ultra-fast elevated path)
+pub async fn run_privileged_operation<F, Fut>(
     command: &str,
     packages: &[String],
     operation: F,
@@ -32,19 +37,20 @@ where
     F: FnOnce() -> Fut,
     Fut: Future<Output = AnyhowResult<()>>,
 {
-    if !is_root() {
-        // Silent elevation - no need to spam logs for this common operation
-        // Only log at debug level for troubleshooting
-        tracing::debug!("Elevating privileges for {command}");
-        let mut args = vec![command, "--"];
-        let pkg_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
-        args.extend_from_slice(&pkg_refs);
-        privilege::run_self_sudo(&args).await?;
+    // FAST PATH: Check capabilities first (zero-overhead if set)
+    if can_write_pacman_db() {
+        tracing::debug!("Using direct ALPM access (capabilities or root)");
+        operation().await?;
         invalidate_caches();
         return Ok(());
     }
 
-    operation().await?;
+    // FALLBACK: Elevate via sudo (uses ultra-fast elevated path)
+    tracing::debug!("Elevating privileges for {command}");
+    let mut args = vec![command, "--"];
+    let pkg_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
+    args.extend_from_slice(&pkg_refs);
+    privilege::run_self_sudo(&args).await?;
     invalidate_caches();
     Ok(())
 }
@@ -76,7 +82,7 @@ impl PackageManager for ArchPackageManager {
     }
 
     async fn install(&self, packages: &[String]) -> AnyhowResult<()> {
-        crate::core::security::validate_package_names(packages)?;
+        crate::core::security::validate_package_names_or_files(packages)?;
         if packages.is_empty() {
             return Ok(());
         }
