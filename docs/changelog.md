@@ -201,6 +201,44 @@ Updated CLI commands to use pure Rust:
 
 ### 🐛 Bug Fixes
 
+- Resolve platform compilation errors (libscoop API + macOS tests)
+
+## Windows   - libscoop v0.1.0-beta.7 API Breakage
+
+  - Package.name field is now PRIVATE → use pkg.name() method
+
+  - Package.version() method (not field) → use pkg.version()
+
+  - operation::package_query now requires 4 args (added boolean parameter)
+
+  - Fixed all libscoop::Package usages to use accessor methods
+
+## macOS Tests
+
+  - Fixed tokio fs API misuse: ReadDir.blocking_recv() doesn't exist
+
+  - Changed to proper async iterator: next_entry().await
+
+  - Fixed nested Option<Option<_>> type issues
+
+## Arch   - Unsafe Code Warnings
+
+  - Added #[allow(unsafe_code)] to justified mmap operations:
+
+  - aur_index.rs: mmap for zero-copy AUR index
+
+  - pacman_db.rs: mmap for zero-copy pacman database (2 locations)
+
+  - All unsafe blocks have safety documentation
+
+Platform-specific fixes verified with:
+
+  - cargo check --features windows,pgp,license (Windows)
+
+  - cargo check --features arch,pgp,license (Arch)
+
+  - Test compilation confirmed for macOS tests
+
 - Resolve remaining platform CI errors
 
 Fedora tests:
