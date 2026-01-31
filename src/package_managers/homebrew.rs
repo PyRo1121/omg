@@ -328,8 +328,8 @@ impl HomebrewPackageManager {
         tracing::info!("Loading from Homebrew's local cache: {:?}", cache_dir);
 
         let content = fs::read_to_string(&formula_path).await?;
-        let formulas: Vec<FormulaInfo> = serde_json::from_str(&content)
-            .context("Failed to parse Homebrew formula.json")?;
+        let formulas: Vec<FormulaInfo> =
+            serde_json::from_str(&content).context("Failed to parse Homebrew formula.json")?;
 
         let cask_path = cache_dir.join("cask.json");
         let casks: Vec<CaskInfo> = if cask_path.exists() {

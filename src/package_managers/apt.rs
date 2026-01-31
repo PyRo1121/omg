@@ -204,7 +204,8 @@ pub fn search_sync(query: &str) -> Result<Vec<SyncPackage>> {
     for pkg in cache.packages(&PackageSort::default()) {
         let name = pkg.name();
         let matched = name.contains(&query_lower)
-            || pkg.candidate()
+            || pkg
+                .candidate()
                 .and_then(|c| c.summary())
                 .is_some_and(|s| s.to_lowercase().contains(&query_lower));
 
@@ -220,9 +221,7 @@ pub fn search_sync(query: &str) -> Result<Vec<SyncPackage>> {
                 .map(|v| i64::try_from(v.size()).unwrap_or(i64::MAX))
                 .unwrap_or(0);
 
-            let description = candidate
-                .and_then(|c| c.summary())
-                .unwrap_or_default();
+            let description = candidate.and_then(|c| c.summary()).unwrap_or_default();
 
             results.push(SyncPackage {
                 name: name.to_string(),

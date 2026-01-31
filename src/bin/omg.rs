@@ -64,7 +64,10 @@ fn print_fast_success(packages: &[String], action: &str) {
 fn print_system_updated(suffix: &str) {
     use owo_colors::OwoColorize;
     println!();
-    println!("  {} System updated successfully{suffix}", "✓".green().bold());
+    println!(
+        "  {} System updated successfully{suffix}",
+        "✓".green().bold()
+    );
     println!();
 }
 
@@ -120,7 +123,9 @@ fn try_fast_elevated(args: &[String]) -> Option<Result<()>> {
         "update" | "upgrade" => {
             let result =
                 omg_lib::package_managers::execute_transaction(Vec::new(), false, true, None);
-            if result.is_ok() { print_system_updated(""); }
+            if result.is_ok() {
+                print_system_updated("");
+            }
             Some(result)
         }
         "fullupdate" => {
@@ -143,15 +148,22 @@ fn try_fast_elevated(args: &[String]) -> Option<Result<()>> {
 
             let result =
                 omg_lib::package_managers::execute_transaction(Vec::new(), false, true, None);
-            if result.is_ok() { print_system_updated(""); }
+            if result.is_ok() {
+                print_system_updated("");
+            }
             Some(result)
         }
         "turboupdate" => {
             use owo_colors::OwoColorize;
-            println!("\n  {} Turbo upgrade (skipping sync)...\n", "🚀".bright_magenta().bold());
+            println!(
+                "\n  {} Turbo upgrade (skipping sync)...\n",
+                "🚀".bright_magenta().bold()
+            );
             let result =
                 omg_lib::package_managers::execute_transaction(Vec::new(), false, true, None);
-            if result.is_ok() { print_system_updated(" (turbo)"); }
+            if result.is_ok() {
+                print_system_updated(" (turbo)");
+            }
             Some(result)
         }
         "sync" => {

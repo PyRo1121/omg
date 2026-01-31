@@ -708,7 +708,8 @@ pub fn history(
     let to_date = to.and_then(|d| jiff::civil::Date::strptime("%Y-%m-%d", d).ok());
 
     // Build header
-    let header = if search.is_some() || transaction_type.is_some() || from.is_some() || to.is_some() {
+    let header = if search.is_some() || transaction_type.is_some() || from.is_some() || to.is_some()
+    {
         "Transaction History (filtered)".to_string()
     } else {
         format!("Transaction History (last {limit})")

@@ -633,7 +633,7 @@ pub fn get_detailed_packages() -> Result<Vec<DebianPackage>> {
     ensure_index_loaded()?;
     let guard = DEBIAN_INDEX_CACHE.read();
     let index = guard.index.as_ref().context(
-        "Debian package index not loaded. Run 'omg sync' to refresh the package database"
+        "Debian package index not loaded. Run 'omg sync' to refresh the package database",
     )?;
     Ok(index.packages.clone())
 }
@@ -651,7 +651,7 @@ pub fn search_fast(query: &str) -> Result<Vec<Package>> {
     ensure_index_loaded()?;
     let guard = DEBIAN_INDEX_CACHE.read();
     let index = guard.index.as_ref().context(
-        "Debian package index not loaded. Run 'omg sync' to refresh the package database"
+        "Debian package index not loaded. Run 'omg sync' to refresh the package database",
     )?;
 
     if query.is_empty() {
@@ -736,7 +736,7 @@ pub fn get_info_fast(name: &str) -> Result<Option<Package>> {
     ensure_index_loaded()?;
     let guard = DEBIAN_INDEX_CACHE.read();
     let index = guard.index.as_ref().context(
-        "Debian package index not loaded. Run 'omg sync' to refresh the package database"
+        "Debian package index not loaded. Run 'omg sync' to refresh the package database",
     )?;
     if let Some(pkg) = index.get(name) {
         let mut p = pkg.to_package();
@@ -1010,7 +1010,7 @@ pub fn get_package_dependencies(package_name: &str) -> Result<(Vec<String>, Vec<
     }
 
     let content = fs::read_to_string(status_path)?;
-    
+
     let mut dependencies = Vec::new();
     let mut reverse_deps = Vec::new();
     let mut current_pkg = String::new();
@@ -1033,12 +1033,7 @@ pub fn get_package_dependencies(package_name: &str) -> Result<(Vec<String>, Vec<
         } else if line.starts_with("Depends: ") {
             let deps_str = line.strip_prefix("Depends: ").unwrap();
             for dep in deps_str.split(',') {
-                let dep_name = dep
-                    .trim()
-                    .split_whitespace()
-                    .next()
-                    .unwrap_or("")
-                    .trim();
+                let dep_name = dep.trim().split_whitespace().next().unwrap_or("").trim();
                 if !dep_name.is_empty() {
                     current_deps.push(dep_name.to_string());
                 }
@@ -1062,7 +1057,7 @@ pub fn get_package_size(package_name: &str) -> Result<i64> {
     }
 
     let content = fs::read_to_string(status_path)?;
-    
+
     let mut in_package = false;
     for line in content.lines() {
         if line.is_empty() {
@@ -1099,7 +1094,7 @@ pub fn get_all_packages_with_sizes() -> Result<Vec<(String, i64)>> {
     }
 
     let content = fs::read_to_string(status_path)?;
-    
+
     let mut results = Vec::new();
     let mut current_pkg = String::new();
     let mut current_size: i64 = 0;
@@ -1140,7 +1135,7 @@ pub fn get_package_version(package_name: &str) -> Result<Option<String>> {
     }
 
     let content = fs::read_to_string(status_path)?;
-    
+
     let mut in_package = false;
     let mut is_installed = false;
     let mut version = None;
@@ -1180,7 +1175,7 @@ pub fn is_package_auto_installed(package_name: &str) -> Result<bool> {
     }
 
     let content = fs::read_to_string(extended_states_path)?;
-    
+
     let mut current_pkg = String::new();
     for line in content.lines() {
         if let Some(name) = line.strip_prefix("Package: ") {
