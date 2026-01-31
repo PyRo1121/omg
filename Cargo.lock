@@ -1803,6 +1803,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "curl"
+version = "0.4.49"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "79fc3b6dd0b87ba36e565715bf9a2ced221311db47bd18011676f24a6066edbc"
+dependencies = [
+ "curl-sys",
+ "libc",
+ "openssl-probe 0.1.6",
+ "openssl-sys",
+ "schannel",
+ "socket2 0.6.2",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "curl-sys"
+version = "0.4.85+curl-8.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c0efa6142b5ecc05f6d3eaa39e6af4888b9d3939273fb592c92b7088a8cf3fdb"
+dependencies = [
+ "cc",
+ "libc",
+ "libz-sys",
+ "openssl-sys",
+ "pkg-config",
+ "vcpkg",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
 name = "curve25519-dalek"
 version = "4.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2245,11 +2275,20 @@ dependencies = [
 
 [[package]]
 name = "dirs"
+version = "5.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "44c45a9d03d6676652bcb5e724c7e988de1acad23a711b5217ab9cbecbec2225"
+dependencies = [
+ "dirs-sys 0.4.1",
+]
+
+[[package]]
+name = "dirs"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3e8aa94d75141228480295a7d0e7feb620b1a5ad9f12bc40be62411e38cce4e"
 dependencies = [
- "dirs-sys",
+ "dirs-sys 0.5.0",
 ]
 
 [[package]]
@@ -2260,6 +2299,18 @@ checksum = "b98cf8ebf19c3d1b223e151f99a4f9f0690dca41414773390fc824184ac833e1"
 dependencies = [
  "cfg-if",
  "dirs-sys-next",
+]
+
+[[package]]
+name = "dirs-sys"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "520f05a5cbd335fae5a99ff7a6ab8627577660ee5cfd6a94a6a929b52ff0321c"
+dependencies = [
+ "libc",
+ "option-ext",
+ "redox_users 0.4.6",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
@@ -2780,7 +2831,7 @@ version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9af64f01dd293b28c19df8be230979c32c944d4b6e737a31f2ead91f8d0d46b9"
 dependencies = [
- "flume",
+ "flume 0.11.1",
  "ignore",
  "proc-macro2",
  "quote",
@@ -2798,12 +2849,25 @@ dependencies = [
  "fluent-langneg",
  "fluent-syntax",
  "fluent-template-macros",
- "flume",
+ "flume 0.11.1",
  "ignore",
  "intl-memoizer",
  "log",
  "thiserror 2.0.18",
  "unic-langid",
+]
+
+[[package]]
+name = "flume"
+version = "0.10.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1657b4441c3403d9f7b3409e47575237dac27b1b5726df654a6ecbf92f0f7577"
+dependencies = [
+ "futures-core",
+ "futures-sink",
+ "nanorand",
+ "pin-project",
+ "spin 0.9.8",
 ]
 
 [[package]]
@@ -2933,6 +2997,7 @@ dependencies = [
  "futures-core",
  "futures-task",
  "futures-util",
+ "num_cpus",
 ]
 
 [[package]]
@@ -3930,7 +3995,7 @@ dependencies = [
  "bytes",
  "core_affinity",
  "flate2",
- "flume",
+ "flume 0.11.1",
  "libdeflater",
  "libz-ng-sys",
  "log",
@@ -4865,6 +4930,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "junction"
+version = "1.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "642883fdc81cf2da15ee8183fa1d2c7da452414dd41541a0f3e1428069345447"
+dependencies = [
+ "scopeguard",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "k256"
 version = "0.13.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5074,6 +5149,33 @@ dependencies = [
  "bitflags 2.10.0",
  "libc",
  "redox_syscall 0.7.0",
+]
+
+[[package]]
+name = "libscoop"
+version = "0.1.0-beta.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e2d141febe8665165309932622664437545bdaba1a0b38d4ed77aaa6d2ddd7b6"
+dependencies = [
+ "chrono",
+ "curl",
+ "dirs 5.0.1",
+ "flume 0.10.14",
+ "futures",
+ "git2",
+ "junction",
+ "once_cell",
+ "openssl",
+ "rayon",
+ "regex",
+ "remove_dir_all",
+ "scoop-hash",
+ "serde",
+ "serde_json",
+ "sysinfo",
+ "thiserror 1.0.69",
+ "tracing",
+ "winreg 0.52.0",
 ]
 
 [[package]]
@@ -5557,6 +5659,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ntapi"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c70f219e21142367c70c0b30c6a9e3a14d55b4d12a204d897fbec83a0363f081"
+dependencies = [
+ "winapi",
+]
+
+[[package]]
 name = "nu-ansi-term"
 version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5899,7 +6010,7 @@ dependencies = [
  "dashmap",
  "debian-packaging",
  "dialoguer",
- "dirs",
+ "dirs 6.0.0",
  "flate2",
  "futures",
  "git2",
@@ -5911,6 +6022,7 @@ dependencies = [
  "indicatif",
  "jiff",
  "jsonwebtoken",
+ "libscoop",
  "lz4_flex",
  "lzma-rs",
  "memchr",
@@ -6031,6 +6143,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c87def4c32ab89d880effc9e097653c8da5d6ef28e6b539d313baaacfbafcbe"
 
 [[package]]
+name = "openssl-src"
+version = "300.5.5+3.5.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f1787d533e03597a7934fd0a765f0d28e94ecc5fb7789f8053b1e699a56f709"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "openssl-sys"
 version = "0.9.111"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6038,6 +6159,7 @@ checksum = "82cab2d520aa75e3c58898289429321eb788c3106963d0dc886ec7a5f4adc321"
 dependencies = [
  "cc",
  "libc",
+ "openssl-src",
  "pkg-config",
  "vcpkg",
 ]
@@ -7149,6 +7271,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a2d987857b319362043e95f5353c0535c1f58eec5336fdfcf626430af7def58"
 
 [[package]]
+name = "remove_dir_all"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "882f368737489ea543bc5c340e6f3d34a28c39980bd9a979e47322b26f60ac40"
+dependencies = [
+ "libc",
+ "log",
+ "num_cpus",
+ "rayon",
+ "winapi",
+]
+
+[[package]]
 name = "rend"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7738,6 +7873,12 @@ dependencies = [
  "serde",
  "serde_json",
 ]
+
+[[package]]
+name = "scoop-hash"
+version = "0.1.0-beta.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f684cfedbf1abc83db7d8e6955002e47303be14220c1f5ad76f3efa215a2f81b"
 
 [[package]]
 name = "scopeguard"
@@ -8625,6 +8766,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8eab9a99a024a169fe8a903cf9d4a3b3601109bcc13bd9e3c6fff259138626c4"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "sysinfo"
+version = "0.29.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cd727fc423c2060f6c92d9534cef765c65a6ed3f428a03d7def74a8c4348e666"
+dependencies = [
+ "cfg-if",
+ "core-foundation-sys",
+ "libc",
+ "ntapi",
+ "once_cell",
+ "rayon",
+ "winapi",
 ]
 
 [[package]]
@@ -10269,6 +10425,16 @@ name = "winreg"
 version = "0.50.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "524e57b2c537c0f9b1e69f1965311ec12182b4122e45035b1508cd24d2adadb1"
+dependencies = [
+ "cfg-if",
+ "windows-sys 0.48.0",
+]
+
+[[package]]
+name = "winreg"
+version = "0.52.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a277a57398d4bfa075df44f501a17cfdf8542d224f0d36095a2adc7aee4ef0a5"
 dependencies = [
  "cfg-if",
  "windows-sys 0.48.0",

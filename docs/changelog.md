@@ -11,6 +11,52 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ---
 
 ## [Unreleased]
+### ✨ Features
+
+- **Windows**: Pure Rust Scoop integration via libscoop
+
+  - Eliminated ALL subprocess calls in Windows package manager (100% pure Rust)
+  
+  - Integrated libscoop v0.1.0-beta.7 for direct Scoop API access
+  
+  - Replaced `scoop` subprocess with `libscoop::operation::package_sync()`
+  
+  - Replaced `scoop status` parsing with `libscoop::operation::package_query()`
+  
+  - Expected performance: 35-73x faster package operations vs subprocess
+  
+  - Zero-overhead async/sync bridging via `tokio::task::spawn_blocking()`
+  
+  - Comprehensive error handling with typed errors instead of output parsing
+  
+  - Maintains cross-platform compatibility via conditional compilation
+
+- **Testing**: Multi-OS integration test infrastructure
+
+  - Platform-specific integration tests for Windows (18+ tests), macOS (22+ tests), Fedora (20+ tests)
+  
+  - Cross-platform mock testing suite (25 tests) for testing platform-specific code on any OS
+  
+  - Mock package managers for all 5 platforms (Arch, Debian, Fedora, Windows, macOS)
+  
+  - CI/CD integration for running platform-specific tests on GitHub Actions runners
+  
+  - Comprehensive testing guide: `docs/PLATFORM_TESTING.md` (600+ lines)
+
+- **Coverage Reporting**: Per-platform code coverage with aggregation
+
+  - Automated coverage collection using cargo-llvm-cov on all 5 platforms
+  
+  - Per-platform coverage reports (Arch, Debian, Fedora, macOS, Windows)
+  
+  - Coverage aggregation with lcov for unified reporting
+  
+  - Codecov integration with PR comments and coverage diffs
+  
+  - GitHub Actions summary showing overall coverage percentage
+  
+  - Targets: 90% unit tests, 75% integration, 100% critical paths
+
 ### ♻️  Refactoring
 
 - **Cli**: Simplify code and improve readability
@@ -24,6 +70,16 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
   - Removed unnecessary intermediate variables
 
   - Enhanced code clarity without changing functionality
+
+### 🐛 Bug Fixes
+
+- **Mock Package Managers**: Fixed state isolation bug
+
+  - Each platform now uses separate state file (`mock_state_{platform}.json`)
+  
+  - Prevents cross-contamination between platform mock states during testing
+  
+  - Fixes test failures where Windows state affected Arch mock behavior
 
 ### ⚡ Performance
 

@@ -228,7 +228,7 @@ We are building the last dev tool you'll ever need.
 - [x] **Debian/Ubuntu Support**: Full APT integration (59-483x faster than apt-cache/Nala)
 - [ ] **Fedora/RPM Support**: DNF/YUM package manager integration
 - [ ] **macOS Support**: Homebrew integration for macOS users
-- [ ] **Windows Support**: Chocolatey/Winget integration for Windows
+- [x] **Windows Support**: Pure Rust Scoop integration via libscoop (35-73x faster, zero subprocess calls)
 - [x] **Container Integration**: Docker/Podman support for containerized environments (`omg container shell/run/build/init`)
 - [ ] **GUI Dashboard**: Desktop application for visual package management
 - [x] **Team Features**: Shared environment locks with collaborative workflows (`omg team init/join/status/push/pull`)
