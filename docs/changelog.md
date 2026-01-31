@@ -115,6 +115,36 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 
   - Maintains backward compatibility with non-Fedora systems
 
+### ✨ New Features
+
+- **Debian**: Eliminate subprocess calls in CLI utilities
+
+Replaced all dpkg-query, apt-cache, and apt-mark subprocess calls with
+
+pure Rust file parsing in debian_db.rs:
+
+Added functions:
+
+  - get_package_dependencies(): Parse /var/lib/dpkg/status for deps
+
+  - get_package_size(): Parse package sizes from dpkg status
+
+  - get_all_packages_with_sizes(): List all packages with disk usage
+
+  - get_package_version(): Get installed version from dpkg status
+
+  - is_package_auto_installed(): Check /var/lib/apt/extended_states
+
+Updated CLI commands to use pure Rust:
+
+  - omg why: Uses get_package_dependencies() instead of apt-cache
+
+  - omg size: Uses get_all_packages_with_sizes() instead of dpkg-query
+
+  - omg pin: Uses get_package_version() instead of dpkg-query
+
+  - omg blame: Uses debian_db functions instead of dpkg-query/apt-mark
+
 ### 🐛 Bug Fixes
 
 - Use vinxi build for SolidStart site in release script
