@@ -362,7 +362,7 @@ pub fn track_command(
         return;
     }
 
-    let mut props = HashMap::new();
+    let mut props = HashMap::with_capacity(5);
     props.insert("command".to_string(), serde_json::json!(command));
     if let Some(sub) = subcommand {
         props.insert("subcommand".to_string(), serde_json::json!(sub));
@@ -409,7 +409,7 @@ pub fn track_error(error_type: &str, message: &str, context: Option<&str>) {
         return;
     }
 
-    let mut props = HashMap::new();
+    let mut props = HashMap::with_capacity(3);
     props.insert("error_type".to_string(), serde_json::json!(error_type));
     props.insert("message".to_string(), serde_json::json!(message));
     if let Some(ctx) = context {

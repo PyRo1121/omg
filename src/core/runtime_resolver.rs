@@ -30,11 +30,7 @@ pub fn native_runtime_bin_path(runtime: &str, version: &str) -> Option<PathBuf> 
         _ => return None,
     };
 
-    if bin_path.exists() {
-        Some(bin_path)
-    } else {
-        None
-    }
+    bin_path.exists().then_some(bin_path)
 }
 
 /// Check if mise is available on the system

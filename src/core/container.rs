@@ -254,16 +254,12 @@ impl ContainerManager {
             .lines()
             .filter_map(|line| {
                 let parts: Vec<&str> = line.split('\t').collect();
-                if parts.len() >= 4 {
-                    Some(ContainerInfo {
-                        id: parts[0].to_string(),
-                        name: parts[1].to_string(),
-                        image: parts[2].to_string(),
-                        status: parts[3].to_string(),
-                    })
-                } else {
-                    None
-                }
+                (parts.len() >= 4).then(|| ContainerInfo {
+                    id: parts[0].to_string(),
+                    name: parts[1].to_string(),
+                    image: parts[2].to_string(),
+                    status: parts[3].to_string(),
+                })
             })
             .collect();
 
@@ -337,16 +333,12 @@ impl ContainerManager {
             .lines()
             .filter_map(|line| {
                 let parts: Vec<&str> = line.split('\t').collect();
-                if parts.len() >= 4 {
-                    Some(ImageInfo {
-                        repository: parts[0].to_string(),
-                        tag: parts[1].to_string(),
-                        id: parts[2].to_string(),
-                        size: parts[3].to_string(),
-                    })
-                } else {
-                    None
-                }
+                (parts.len() >= 4).then(|| ImageInfo {
+                    repository: parts[0].to_string(),
+                    tag: parts[1].to_string(),
+                    id: parts[2].to_string(),
+                    size: parts[3].to_string(),
+                })
             })
             .collect();
 

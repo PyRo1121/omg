@@ -850,11 +850,7 @@ fn nvm_resolve_version(version: &str) -> Option<String> {
         .join("versions/node")
         .join(format!("v{normalized}"))
         .join("bin");
-    if bin_path.exists() {
-        Some(normalized.to_string())
-    } else {
-        None
-    }
+    bin_path.exists().then(|| normalized.to_string())
 }
 
 fn resolve_nvm_alias(nvm_dir: &std::path::Path, alias: &str) -> Option<String> {
