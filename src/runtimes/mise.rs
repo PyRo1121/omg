@@ -85,9 +85,7 @@ impl MiseManager {
     /// Install mise binary
     pub async fn install(&self) -> Result<()> {
         let prefix = format!("{}", "OMG".cyan().bold());
-        tracing::info!(
-            "{prefix} Installing mise (runtime version manager)...\n"
-        );
+        tracing::info!("{prefix} Installing mise (runtime version manager)...\n");
 
         fs::create_dir_all(&self.bin_dir)?;
 

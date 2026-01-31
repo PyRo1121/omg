@@ -172,8 +172,8 @@ impl DnfPackageManager {
 
         // Fallback to reading from SQLite database
         let db_path = self.rpm_db_path.clone();
-        let packages = tokio::task::spawn_blocking(move || Self::read_rpm_database(&db_path))
-            .await??;
+        let packages =
+            tokio::task::spawn_blocking(move || Self::read_rpm_database(&db_path)).await??;
 
         // Populate cache
         for pkg in &packages {

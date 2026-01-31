@@ -139,8 +139,11 @@ impl Ord for RelevanceScore {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         // Compare by (rank, name_len_rev, idx_rev) - all in descending order
         // Higher values are better for all three fields
-        (self.rank, self.name_len_rev, self.idx_rev)
-            .cmp(&(other.rank, other.name_len_rev, other.idx_rev))
+        (self.rank, self.name_len_rev, self.idx_rev).cmp(&(
+            other.rank,
+            other.name_len_rev,
+            other.idx_rev,
+        ))
     }
 }
 
@@ -365,9 +368,8 @@ impl PackageIndex {
             found_substring = true;
         }
 
-        found_substring.then(|| {
-            RelevanceScore::new(RelevanceScore::SUBSTRING_MATCH, name_lower.len(), idx)
-        })
+        found_substring
+            .then(|| RelevanceScore::new(RelevanceScore::SUBSTRING_MATCH, name_lower.len(), idx))
     }
 
     pub fn get(&self, name: &str) -> Option<DetailedPackageInfo> {

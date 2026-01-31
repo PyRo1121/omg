@@ -141,15 +141,24 @@ struct InstalledPackage {
 
 #[cfg(target_os = "windows")]
 fn enumerate_registry_packages() -> Result<Vec<InstalledPackage>> {
-    use winreg::enums::*;
     use winreg::RegKey;
+    use winreg::enums::*;
 
     let mut packages = Vec::with_capacity(200);
 
     let registry_paths = [
-        (HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
-        (HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
-        (HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Uninstall"),
+        (
+            HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+        ),
+        (
+            HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
+        ),
+        (
+            HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Uninstall",
+        ),
     ];
 
     for (root, path) in registry_paths {
@@ -429,8 +438,8 @@ impl WindowsPackageManager {
             .map_err(|e| anyhow::anyhow!("rkyv serialization: {e}"))?;
 
         let parent = path.parent().unwrap_or_else(|| Path::new("."));
-        let mut temp = NamedTempFile::new_in(parent)
-            .context("Failed to create temp file for mmap index")?;
+        let mut temp =
+            NamedTempFile::new_in(parent).context("Failed to create temp file for mmap index")?;
         temp.write_all(&bytes)?;
         temp.persist(&path)?;
 
@@ -467,7 +476,10 @@ impl WindowsPackageManager {
         drop(mmap_guard);
 
         if let Some(mmap) = Self::try_load_mmap_index() {
-            let result = mmap.search(query).ok().map(|results| self.convert_rkyv_packages(results));
+            let result = mmap
+                .search(query)
+                .ok()
+                .map(|results| self.convert_rkyv_packages(results));
             let mut mmap_guard = WINDOWS_MMAP_INDEX.write();
             *mmap_guard = Some(mmap);
             return result;
@@ -476,7 +488,10 @@ impl WindowsPackageManager {
         None
     }
 
-    fn convert_rkyv_packages(&self, results: Vec<&rkyv::Archived<RkyvWindowsPackage>>) -> Vec<Package> {
+    fn convert_rkyv_packages(
+        &self,
+        results: Vec<&rkyv::Archived<RkyvWindowsPackage>>,
+    ) -> Vec<Package> {
         results
             .into_iter()
             .map(|p| Package {
@@ -832,25 +847,32 @@ impl WindowsPackageManager {
         }
 
         let operation = args[0].to_string();
-        let packages: Vec<String> = args.get(1..).unwrap_or(&[]).iter().map(|s| s.to_string()).collect();
-        
+        let packages: Vec<String> = args
+            .get(1..)
+            .unwrap_or(&[])
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+
         let session = Session::new();
-        
+
         tokio::task::spawn_blocking(move || {
             let pkg_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
             match operation.as_str() {
-                "install" => {
-                    operation::package_sync(&session, pkg_refs, vec![])
-                        .map_err(|e| anyhow::anyhow!("libscoop install failed: {}", e))
-                }
+                "install" => operation::package_sync(&session, pkg_refs, vec![])
+                    .map_err(|e| anyhow::anyhow!("libscoop install failed: {}", e)),
                 "uninstall" => {
                     operation::package_sync(&session, pkg_refs, vec![SyncOption::Remove])
                         .map_err(|e| anyhow::anyhow!("libscoop uninstall failed: {}", e))
                 }
                 "update" => {
                     if packages.first().map(String::as_str) == Some("*") {
-                        operation::package_sync(&session, vec![], vec![SyncOption::OnlyUpgrade, SyncOption::AssumeYes])
-                            .map_err(|e| anyhow::anyhow!("libscoop update failed: {}", e))
+                        operation::package_sync(
+                            &session,
+                            vec![],
+                            vec![SyncOption::OnlyUpgrade, SyncOption::AssumeYes],
+                        )
+                        .map_err(|e| anyhow::anyhow!("libscoop update failed: {}", e))
                     } else {
                         operation::bucket_update(&session, None)
                             .map_err(|e| anyhow::anyhow!("libscoop bucket update failed: {}", e))
@@ -1083,29 +1105,31 @@ impl PackageManager for WindowsPackageManager {
         #[cfg(target_os = "windows")]
         {
             use libscoop::QueryOption;
-            
+
             let scoop_dir = self.scoop_dir.clone();
             let session = Session::new();
-            
+
             tokio::task::spawn_blocking(move || {
-                let packages = operation::package_query(&session, "", vec![QueryOption::Upgradable])
-                    .map_err(|e| anyhow::anyhow!("libscoop query failed: {}", e))?;
-                
+                let packages =
+                    operation::package_query(&session, "", vec![QueryOption::Upgradable])
+                        .map_err(|e| anyhow::anyhow!("libscoop query failed: {}", e))?;
+
                 let mut updates = Vec::new();
-                
+
                 for pkg in packages {
                     let app_dir = scoop_dir.join("apps").join(&pkg.name);
                     let current_manifest = app_dir.join("current").join("manifest.json");
-                    
-                    let old_version = if let Ok(content) = std::fs::read_to_string(&current_manifest) {
-                        serde_json::from_str::<serde_json::Value>(&content)
-                            .ok()
-                            .and_then(|v| v["version"].as_str().map(String::from))
-                            .unwrap_or_else(|| "unknown".to_string())
-                    } else {
-                        "unknown".to_string()
-                    };
-                    
+
+                    let old_version =
+                        if let Ok(content) = std::fs::read_to_string(&current_manifest) {
+                            serde_json::from_str::<serde_json::Value>(&content)
+                                .ok()
+                                .and_then(|v| v["version"].as_str().map(String::from))
+                                .unwrap_or_else(|| "unknown".to_string())
+                        } else {
+                            "unknown".to_string()
+                        };
+
                     updates.push(UpdateInfo {
                         name: pkg.name,
                         old_version,
@@ -1113,7 +1137,7 @@ impl PackageManager for WindowsPackageManager {
                         repo: "scoop".to_string(),
                     });
                 }
-                
+
                 Ok(updates)
             })
             .await?

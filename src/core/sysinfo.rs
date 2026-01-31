@@ -170,7 +170,9 @@ fn detect_ram_gb() -> f64 {
 fn is_tool_available(name: &str) -> bool {
     // Check PATH first
     if let Ok(path) = std::env::var("PATH")
-        && path.split(':').any(|dir| Path::new(dir).join(name).exists())
+        && path
+            .split(':')
+            .any(|dir| Path::new(dir).join(name).exists())
     {
         return true;
     }
