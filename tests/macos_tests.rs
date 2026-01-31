@@ -9,7 +9,7 @@ mod homebrew_integration {
     #[tokio::test]
     async fn test_homebrew_package_manager_creation() {
         let pm = HomebrewPackageManager::new();
-        assert_eq!(pm.name(), "homebrew");
+        assert_eq!(pm.name(), "brew");
     }
 
     #[tokio::test]
