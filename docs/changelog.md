@@ -10,6 +10,19 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 
 ---
 
+## [Unreleased]
+### 🐛 Bug Fixes
+
+- Use vinxi build for SolidStart site in release script
+
+The release script was incorrectly running 'vite build' directly, which
+
+fails because SolidStart uses Vinxi as its build system and doesn't have
+
+a traditional index.html entry point.
+
+Changed to use 'bun run build:site' which correctly invokes 'vinxi build'.
+
 ## [0.1.202] - 2026-01-31
 ### Debug
 
