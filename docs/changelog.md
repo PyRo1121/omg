@@ -27,6 +27,24 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 
 ### ⚡ Performance
 
+- Resolve clippy pedantic warnings in platform-specific code
+
+  - Remove unnecessary Result wrappers from Debian why.rs functions
+
+  - Remove redundant .clone() and .to_string() calls
+
+  - Replace .map().unwrap_or() with .map_or() for efficiency
+
+  - Remove redundant .trim() before .split_whitespace()
+
+  - Use std::mem::take instead of .clone() for better performance
+
+  - Add backticks to documentation for technical terms
+
+  - Use inline format args in error messages
+
+Fixes 18 clippy errors found in platform builds.
+
 - Simplify daemon, hooks, runtimes, and improve test coverage
 
   - Simplified daemon cache and index modules with cleaner patterns
