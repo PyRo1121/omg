@@ -110,7 +110,9 @@ async fn search_internal(
                 .unwrap_or_default()
         }
         #[cfg(not(feature = "arch"))]
-        Vec::new()
+        {
+            Vec::new()
+        }
     };
 
     let official_packages = official_search.await;

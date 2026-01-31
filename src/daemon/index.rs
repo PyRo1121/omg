@@ -56,6 +56,7 @@ impl StringPool {
     /// Bounds are verified in both debug and release builds to prevent UB
     /// from corrupted handles.
     #[inline]
+    #[allow(unsafe_code)] // Justified: Bounds checked, pool is append-only valid UTF-8
     fn get(&self, handle: u64) -> &str {
         let (offset, len) = unpack(handle);
         let start = offset as usize;
@@ -150,7 +151,7 @@ impl Ord for RelevanceScore {
 impl PackageIndex {
     pub fn new() -> Result<Self> {
         #[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
-        use crate::core::env::distro::{Distro, detect_distro};
+        use crate::core::env::distro::{detect_distro, Distro};
         #[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
         let distro = detect_distro();
 
