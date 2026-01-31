@@ -347,9 +347,6 @@ pub struct WindowsPackageManager {
     installed_cache: Arc<RwLock<Vec<String>>>,
     /// Initialization guard to prevent race conditions
     init_guard: OnceCell<()>,
-    /// libscoop session for pure Rust Scoop operations
-    #[cfg(target_os = "windows")]
-    scoop_session: Session,
 }
 
 impl WindowsPackageManager {
@@ -365,8 +362,6 @@ impl WindowsPackageManager {
             package_index: Arc::new(DashMap::new()),
             installed_cache: Arc::new(RwLock::new(Vec::new())),
             init_guard: OnceCell::new(),
-            #[cfg(target_os = "windows")]
-            scoop_session: Session::new(),
         }
     }
 
@@ -854,9 +849,8 @@ impl WindowsPackageManager {
             .map(|s| s.to_string())
             .collect();
 
-        let session = Session::new();
-
         tokio::task::spawn_blocking(move || {
+            let session = Session::new();
             let pkg_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
             match operation.as_str() {
                 "install" => operation::package_sync(&session, pkg_refs, vec![])
@@ -874,7 +868,7 @@ impl WindowsPackageManager {
                         )
                         .map_err(|e| anyhow::anyhow!("libscoop update failed: {}", e))
                     } else {
-                        operation::bucket_update(&session, None)
+                        operation::bucket_update(&session)
                             .map_err(|e| anyhow::anyhow!("libscoop bucket update failed: {}", e))
                     }
                 }
@@ -1107,9 +1101,9 @@ impl PackageManager for WindowsPackageManager {
             use libscoop::QueryOption;
 
             let scoop_dir = self.scoop_dir.clone();
-            let session = Session::new();
 
             tokio::task::spawn_blocking(move || {
+                let session = Session::new();
                 let packages = operation::package_query(
                     &session,
                     vec![""],
