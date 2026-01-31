@@ -190,6 +190,7 @@ quick-xml = { version = "0.37", features = ["serialize"], optional = true }  # F
 # Windows-specific (conditional) - only compiled on Windows
 [target.'cfg(target_os = "windows")'.dependencies]
 winreg = { version = "0.55" }  # Windows registry access
+libscoop = { version = "0.1.0-beta.7" }  # Pure Rust Scoop implementation
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }

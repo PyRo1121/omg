@@ -68,6 +68,36 @@ impl MockPackageDb {
         db.add_package("git", "2.39.2", "Version control", "main");
         db
     }
+
+    pub fn fedora_defaults() -> Self {
+        let db = Self::new();
+        db.add_package("dnf", "4.18.0", "Fedora package manager", "fedora");
+        db.add_package("firefox", "122.0", "Web browser", "fedora");
+        db.add_package("git", "2.43.0", "Version control", "fedora");
+        db.add_package("vim-enhanced", "9.0.2103", "Text editor", "fedora");
+        db.add_package("rust", "1.75.0", "Rust programming language", "fedora");
+        db
+    }
+
+    pub fn windows_defaults() -> Self {
+        let db = Self::new();
+        db.add_package("scoop", "0.3.1", "Scoop package manager", "main");
+        db.add_package("git", "2.43.0.windows.1", "Version control", "main");
+        db.add_package("7zip", "23.01", "File archiver", "main");
+        db.add_package("wget", "1.21.4", "Network downloader", "main");
+        db.add_package("ripgrep", "14.0.3", "Fast search tool", "main");
+        db
+    }
+
+    pub fn macos_defaults() -> Self {
+        let db = Self::new();
+        db.add_package("homebrew", "4.2.0", "Homebrew package manager", "homebrew");
+        db.add_package("wget", "1.21.4", "Network downloader", "homebrew");
+        db.add_package("git", "2.43.0", "Version control", "homebrew");
+        db.add_package("node", "20.11.0", "JavaScript runtime", "homebrew");
+        db.add_package("python@3.12", "3.12.1", "Python interpreter", "homebrew");
+        db
+    }
 }
 
 pub struct MockPackageManager {
@@ -80,12 +110,35 @@ impl MockPackageManager {
         let (db, name) = match distro {
             "arch" => (MockPackageDb::arch_defaults(), "pacman"),
             "debian" | "ubuntu" => (MockPackageDb::debian_defaults(), "apt"),
+            "fedora" | "rhel" => (MockPackageDb::fedora_defaults(), "dnf"),
+            "windows" => (MockPackageDb::windows_defaults(), "scoop"),
+            "macos" | "darwin" => (MockPackageDb::macos_defaults(), "homebrew"),
             _ => (MockPackageDb::new(), "mock"),
         };
         Self {
             db,
             distro_name: name,
         }
+    }
+
+    pub fn arch() -> Self {
+        Self::new("arch")
+    }
+
+    pub fn debian() -> Self {
+        Self::new("debian")
+    }
+
+    pub fn fedora() -> Self {
+        Self::new("fedora")
+    }
+
+    pub fn windows() -> Self {
+        Self::new("windows")
+    }
+
+    pub fn macos() -> Self {
+        Self::new("macos")
     }
 
     pub fn set_installed_version(&self, name: &str, version: &str) -> Result<()> {
@@ -96,7 +149,7 @@ impl MockPackageManager {
         state
             .available
             .insert(name.to_string(), version.to_string());
-        Self::save_state(&state);
+        Self::save_state(self.distro_name, &state);
         Ok(())
     }
 
@@ -105,7 +158,7 @@ impl MockPackageManager {
         state
             .available
             .insert(name.to_string(), version.to_string());
-        Self::save_state(&state);
+        Self::save_state(self.distro_name, &state);
         Ok(())
     }
 
@@ -121,7 +174,7 @@ impl MockPackageManager {
     }
 
     fn load_state(distro_name: &str) -> MockState {
-        let path = paths::data_dir().join("mock_state.json");
+        let path = paths::data_dir().join(format!("mock_state_{}.json", distro_name));
         if let Ok(data) = fs::read_to_string(&path) {
             // Handle migration from old format (HashSet) to new format (HashMap)
             // This is a bit tricky with serde.
@@ -159,8 +212,8 @@ impl MockPackageManager {
         }
     }
 
-    fn save_state(state: &MockState) {
-        let path = paths::data_dir().join("mock_state.json");
+    fn save_state(distro_name: &str, state: &MockState) {
+        let path = paths::data_dir().join(format!("mock_state_{}.json", distro_name));
         tracing::debug!("Mock saving state to {}", path.display());
         let _ = fs::create_dir_all(path.parent().unwrap());
         if let Ok(data) = serde_json::to_string(state) {
@@ -201,9 +254,8 @@ impl PackageManager for MockPackageManager {
 
     async fn install(&self, packages: &[String]) -> Result<()> {
         let distro_name = self.distro_name;
-        let db = self.db.clone();
         let mut state = Self::load_state(distro_name);
-        let pkgs = db.packages.lock().unwrap();
+        let pkgs = self.db.packages.lock().unwrap();
         for pkg in packages {
             // Use available version if present, otherwise db version, otherwise "0"
             let version = state
@@ -214,7 +266,7 @@ impl PackageManager for MockPackageManager {
                 .unwrap_or_else(|| "0".to_string());
             state.installed.insert(pkg.clone(), version);
         }
-        Self::save_state(&state);
+        Self::save_state(distro_name, &state);
         Ok(())
     }
 
@@ -224,7 +276,7 @@ impl PackageManager for MockPackageManager {
         for pkg in packages {
             state.installed.remove(pkg);
         }
-        Self::save_state(&state);
+        Self::save_state(distro_name, &state);
         Ok(())
     }
 
