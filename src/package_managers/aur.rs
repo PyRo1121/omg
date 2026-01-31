@@ -109,9 +109,9 @@ fn get_original_user_home() -> Option<PathBuf> {
 
 async fn create_dir_as_user(path: &Path) -> Result<()> {
     if let Some(user) = get_original_user() {
-        let path_str = path.to_string_lossy().to_string();
+        let path_str = path.to_string_lossy();
         let status = Command::new("sudo")
-            .args(["-u", &user, "mkdir", "-p", "--", &path_str])
+            .args(["-u", &user, "mkdir", "-p", "--", path_str.as_ref()])
             .status()
             .await
             .with_context(|| format!("Failed to create directory as user '{user}': {path_str}"))?;
@@ -132,14 +132,14 @@ async fn create_dir_as_user(path: &Path) -> Result<()> {
 }
 
 fn is_root_owned(path: &Path) -> bool {
-    path.metadata().map(|m| m.uid() == 0).unwrap_or(false)
+    path.metadata().is_ok_and(|m| m.uid() == 0)
 }
 
 async fn remove_dir_as_user(path: &Path) -> Result<()> {
     if let Some(user) = get_original_user() {
-        let path_str = path.to_string_lossy().to_string();
+        let path_str = path.to_string_lossy();
         let status = Command::new("sudo")
-            .args(["-u", &user, "rm", "-rf", "--", &path_str])
+            .args(["-u", &user, "rm", "-rf", "--", path_str.as_ref()])
             .status()
             .await
             .with_context(|| format!("Failed to remove directory as user '{user}': {path_str}"))?;
@@ -908,8 +908,7 @@ impl AurClient {
         for entry in archive.entries()? {
             let mut entry = entry?;
             let entry_path = entry.path()?;
-            let components: Vec<_> = entry_path.components().collect();
-            if components.len() <= 2
+            if entry_path.components().count() <= 2
                 && let Some(file_name) = entry_path.file_name().and_then(|n| n.to_str())
                 && (file_name == ".PKGINFO" || file_name == "PKGINFO")
             {
@@ -1138,7 +1137,6 @@ impl AurClient {
             if !status.success() {
                 anyhow::bail!("git clone failed for {url}");
             }
-            Ok(())
         } else {
             let url_clone = url.clone();
             let dest_clone = dest.clone();
@@ -1156,8 +1154,8 @@ impl AurClient {
             spinner.finish_and_clear();
 
             result.with_context(|| format!("Failed to clone {url}"))?;
-            Ok(())
         }
+        Ok(())
     }
 
     async fn git_pull(&self, pkg_dir: &Path) -> Result<()> {
