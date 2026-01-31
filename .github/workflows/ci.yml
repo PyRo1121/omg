@@ -82,7 +82,6 @@ jobs:
               - 'Cargo.toml'
               - 'Cargo.lock'
               - 'build.rs'
-            ci:
               - '.github/workflows/**'
 
       - name: Install Rust
