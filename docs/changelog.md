@@ -11,6 +11,48 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ---
 
 ## [Unreleased]
+### 🔒 Security
+
+- **PGP**: Pure Rust keyserver client for fetching PGP keys
+
+  - Replace shell-out to `gpg --recv-keys` with pure Rust `sequoia-net`
+
+  - Fetch keys from keyserver.ubuntu.com using HKP protocol
+
+  - Display key fingerprint and UID before import
+
+  - No more dependency on external gpg command
+
+- **PGP**: Refuse to auto-import PGP keys during ALPM transactions
+
+  - Never auto-answer "yes" to ImportKey questions (MITM vector)
+
+  - Attempt to fetch key from keyserver using pure Rust
+
+  - Log key fingerprint and UID for user visibility
+
+  - Suggest `omg key import <fingerprint>` if fetch fails
+
+- **PGP**: Refuse to auto-remove corrupted packages
+
+  - Log error when corruption detected (may indicate tampering)
+
+  - Abort transaction instead of silently removing
+
+- **AUR**: Add URL encoding to all AUR RPC queries
+
+  - Prevents injection attacks via malformed search queries
+
+  - Fixes search for packages with special characters
+
+### 🐛 Bug Fixes
+
+- **Arch**: Fix hardcoded x86_64 architecture in parallel sync
+
+  - Use `std::env::consts::ARCH` for dynamic architecture detection
+
+  - Enables support for ARM systems (aarch64)
+
 ### Debug
 
 - Add env check endpoint
