@@ -87,14 +87,16 @@ impl PackageManager for ArchPackageManager {
             return Ok(());
         }
 
-        let pkgs_clone = packages.to_vec();
         let packages = packages.to_vec();
-        run_privileged_operation("install", &packages, || async move {
-            tokio::task::spawn_blocking(move || {
-                crate::package_managers::execute_transaction(pkgs_clone, false, false, None)
-            })
-            .await??;
-            Ok(())
+        run_privileged_operation("install", &packages, || {
+            let pkgs = packages.clone();
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    crate::package_managers::execute_transaction(pkgs, false, false, None)
+                })
+                .await??;
+                Ok(())
+            }
         })
         .await
     }
@@ -105,21 +107,24 @@ impl PackageManager for ArchPackageManager {
             return Ok(());
         }
 
-        let pkgs_clone = packages.to_vec();
         let packages = packages.to_vec();
-        run_privileged_operation("remove", &packages, || async move {
-            tokio::task::spawn_blocking(move || {
-                crate::package_managers::execute_transaction(pkgs_clone, true, false, None)
-            })
-            .await??;
-            Ok(())
+        run_privileged_operation("remove", &packages, || {
+            let pkgs = packages.clone();
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    crate::package_managers::execute_transaction(pkgs, true, false, None)
+                })
+                .await??;
+                Ok(())
+            }
         })
         .await
     }
 
     async fn update(&self) -> AnyhowResult<()> {
         run_privileged_operation("update", &[], || async {
-            tracing::info!("{} Starting full system upgrade...", "OMG".cyan().bold());
+            let prefix = format!("{}", "OMG".cyan().bold());
+            tracing::info!("{prefix} Starting full system upgrade...");
             tokio::task::spawn_blocking(move || {
                 crate::package_managers::execute_transaction(Vec::new(), false, true, None)
             })
@@ -201,11 +206,9 @@ pub async fn remove_orphans() -> AnyhowResult<()> {
         return Ok(());
     }
 
-    tracing::info!(
-        "{} Found {} orphan package(s):",
-        "OMG".cyan().bold(),
-        orphans.len()
-    );
+    let prefix = format!("{}", "OMG".cyan().bold());
+    let count = orphans.len();
+    tracing::info!("{prefix} Found {count} orphan package(s):");
     for pkg in &orphans {
         tracing::info!("  {} {}", "→".dimmed(), pkg);
     }
