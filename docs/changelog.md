@@ -219,6 +219,20 @@ Updated CLI commands to use pure Rust:
 
 ### 🐛 Bug Fixes
 
+- Complete CI pipeline fixes for all platforms
+
+  - Fix clippy errors in platform-specific code (let...else, map_or_else)
+
+  - Fix coverage jobs to use rustup with llvm-tools-preview (Arch/Fedora)
+
+  - Increase Windows timeout to 60 minutes
+
+  - Mark all network-dependent macOS tests as ignored
+
+  - Fix unused variable warnings in tests
+
+  - Add #[allow(unsafe_code)] for documented mmap usage in debian_db
+
 - Validate CI infrastructure changes in platform builds
 
 The path filter was detecting CI changes but never using them.
