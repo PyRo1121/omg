@@ -201,6 +201,18 @@ Updated CLI commands to use pure Rust:
 
 ### 🐛 Bug Fixes
 
+- Apply cargo fmt formatting
+
+  - Fixed unsafe block formatting in pacman_db.rs
+
+  - All Quick Gate checks now pass locally:
+
+✓ cargo fmt --check (clean)
+
+✓ cargo clippy (no errors)
+
+✓ cargo build --lib (success)
+
 - Resolve platform compilation errors (libscoop API + macOS tests)
 
 ## Windows   - libscoop v0.1.0-beta.7 API Breakage
