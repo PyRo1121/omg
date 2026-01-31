@@ -152,7 +152,9 @@ impl PacmanMmapIndex {
     fn archived(&self) -> &rkyv::Archived<RkyvSyncIndex> {
         // SAFETY: See method documentation above
         #[allow(unsafe_code)]
-        unsafe { rkyv::access_unchecked::<rkyv::Archived<RkyvSyncIndex>>(&self.mmap) }
+        unsafe {
+            rkyv::access_unchecked::<rkyv::Archived<RkyvSyncIndex>>(&self.mmap)
+        }
     }
 
     pub fn get(&self, name: &str) -> Option<&rkyv::Archived<RkyvSyncPackage>> {
