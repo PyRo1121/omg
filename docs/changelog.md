@@ -201,6 +201,24 @@ Updated CLI commands to use pure Rust:
 
 ### 🐛 Bug Fixes
 
+- Pin Rust version and fix macOS test assertion
+
+1. Add rust-toolchain.toml to pin Rust 1.92.0 across all platforms
+
+  - Fixes Rust 1.93.0 clippy lint mismatches on Debian/other platforms
+
+  - Ensures consistent clippy behavior across local and CI
+
+  - Industry standard approach (used by tokio, ripgrep, Bevy)
+
+  - CI dtolnay/rust-toolchain action auto-respects this file
+
+2. Fix macOS test assertion: "homebrew" → "brew"
+
+  - HomebrewPackageManager::name() returns "brew" not "homebrew"
+
+  - Test was checking wrong value causing all macOS tests to fail
+
 - Resolve Windows libscoop thread safety issues
 
 Critical fixes for Windows platform:
