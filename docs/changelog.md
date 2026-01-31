@@ -201,6 +201,7 @@ Updated CLI commands to use pure Rust:
 
 ### 🐛 Bug Fixes
 
+- Specify Rust toolchain version explicitly in Quick Gate
 - Use rustup in Arch/Fedora containers to respect rust-toolchain.toml
 
 CRITICAL FIX for Rust version consistency:
