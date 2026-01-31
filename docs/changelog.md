@@ -219,6 +219,14 @@ Updated CLI commands to use pure Rust:
 
 ### 🐛 Bug Fixes
 
+- Pin Rust 1.92.0 in coverage job rustup installations
+
+Rust 1.93.0 introduced new clippy lints (missing_const_for_fn) that
+
+break the build. Explicitly specify --default-toolchain 1.92.0 in
+
+rustup installation to match rust-toolchain.toml.
+
 - Complete CI pipeline fixes for all platforms
 
   - Fix clippy errors in platform-specific code (let...else, map_or_else)
