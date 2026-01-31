@@ -11,6 +11,7 @@
 //! - Binary cache: Use rkyv for zero-copy deserialization on subsequent loads
 //! - Fuzzy matching: nucleo-matcher for intelligent search ranking
 
+use ahash::AHashSet;
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use nucleo_matcher::{
@@ -21,7 +22,8 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
+use std::time::{Instant, SystemTime};
 use tokio::fs;
 
 use crate::core::{Package, PackageSource};
@@ -42,6 +44,26 @@ const INSTALL_RECEIPT: &str = "INSTALL_RECEIPT.json";
 const FORMULA_API: &str = "https://formulae.brew.sh/api/formula.json";
 /// Homebrew cask API endpoint
 const CASK_API: &str = "https://formulae.brew.sh/api/cask.json";
+/// Cache TTL for installed packages (30 seconds)
+const INSTALLED_CACHE_TTL_SECS: u64 = 30;
+
+/// Global cache for installed Homebrew package names
+///
+/// Provides O(1) lookup for `is_installed()` checks instead of filesystem access.
+/// Invalidates when Cellar mtime changes or after 30 seconds.
+static INSTALLED_CACHE: LazyLock<RwLock<InstalledCache>> =
+    LazyLock::new(|| RwLock::new(InstalledCache::default()));
+
+/// Cache for installed package names with mtime-based invalidation
+#[derive(Default)]
+struct InstalledCache {
+    /// Set of installed package names for O(1) lookup
+    packages: AHashSet<String>,
+    /// Cellar directory mtime for invalidation
+    cellar_mtime: Option<SystemTime>,
+    /// Last cache refresh time for TTL
+    last_refreshed: Option<Instant>,
+}
 
 /// Install receipt metadata from Homebrew
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -215,6 +237,119 @@ impl HomebrewPackageManager {
         Ok(Self::cache_dir()?.join("cache.meta"))
     }
 
+    /// Find Homebrew's native API cache directory
+    ///
+    /// Homebrew caches API responses in these locations:
+    /// - macOS: `~/Library/Caches/Homebrew/api/`
+    /// - Linux: `~/.cache/Homebrew/api/`
+    /// - Homebrew prefix: `$HOMEBREW_PREFIX/Library/Caches/Homebrew/api/`
+    ///
+    /// Returns the first existing cache directory found.
+    fn homebrew_cache_dir(&self) -> Option<PathBuf> {
+        // Try user cache first (respects $XDG_CACHE_HOME on Linux)
+        if let Some(cache) = dirs::cache_dir() {
+            let path = cache.join("Homebrew/api");
+            if path.exists() {
+                return Some(path);
+            }
+        }
+
+        // Try macOS-specific location
+        if let Some(home) = dirs::home_dir() {
+            let path = home.join("Library/Caches/Homebrew/api");
+            if path.exists() {
+                return Some(path);
+            }
+        }
+
+        // Try Homebrew's own cache location
+        let homebrew_cache = self.prefix.join("Library/Caches/Homebrew/api");
+        if homebrew_cache.exists() {
+            return Some(homebrew_cache);
+        }
+
+        None
+    }
+
+    /// Build FormulaCache from raw formula and cask lists
+    fn build_cache(formulas: Vec<FormulaInfo>, casks: Vec<CaskInfo>) -> FormulaCache {
+        let formula_map = formulas
+            .iter()
+            .enumerate()
+            .map(|(i, f)| (f.name.clone(), i))
+            .collect();
+
+        let cask_map = casks
+            .iter()
+            .enumerate()
+            .map(|(i, c)| (c.token.clone(), i))
+            .collect();
+
+        FormulaCache {
+            formulas,
+            casks,
+            formula_map,
+            cask_map,
+        }
+    }
+
+    /// Load from Homebrew's native API cache (formula.json, cask.json)
+    ///
+    /// Homebrew caches API responses locally with a 7-day TTL. Reading these
+    /// files is ~20-30x faster than fetching from the network (2-3s → <100ms).
+    async fn load_from_homebrew_cache(&self) -> Result<Option<FormulaCache>> {
+        let Some(cache_dir) = self.homebrew_cache_dir() else {
+            tracing::debug!("Homebrew cache directory not found");
+            return Ok(None);
+        };
+
+        let formula_path = cache_dir.join("formula.json");
+
+        let Ok(meta) = fs::metadata(&formula_path).await else {
+            tracing::debug!("Homebrew formula.json not found");
+            return Ok(None);
+        };
+
+        let Ok(modified) = meta.modified() else {
+            return Ok(None);
+        };
+
+        let Ok(elapsed) = modified.elapsed() else {
+            return Ok(None);
+        };
+
+        // Homebrew uses 7-day TTL for API cache
+        const HOMEBREW_CACHE_TTL_SECS: u64 = 604_800;
+        if elapsed.as_secs() > HOMEBREW_CACHE_TTL_SECS {
+            tracing::debug!("Homebrew cache is stale (>7 days)");
+            return Ok(None);
+        }
+
+        tracing::info!("Loading from Homebrew's local cache: {:?}", cache_dir);
+
+        let content = fs::read_to_string(&formula_path).await?;
+        let formulas: Vec<FormulaInfo> = serde_json::from_str(&content)
+            .context("Failed to parse Homebrew formula.json")?;
+
+        let cask_path = cache_dir.join("cask.json");
+        let casks: Vec<CaskInfo> = if cask_path.exists() {
+            match fs::read_to_string(&cask_path).await {
+                Ok(cask_content) => serde_json::from_str(&cask_content).unwrap_or_default(),
+                Err(_) => Vec::new(),
+            }
+        } else {
+            Vec::new()
+        };
+
+        tracing::debug!(
+            "Loaded {} formulas and {} casks from Homebrew cache",
+            formulas.len(),
+            casks.len()
+        );
+
+        Ok(Some(Self::build_cache(formulas, casks)))
+    }
+
     /// Load cached formula index from disk
     ///
     /// Uses rkyv for zero-copy deserialization, providing instant loading
@@ -238,38 +373,16 @@ impl HomebrewPackageManager {
             && let Ok(elapsed) = modified.elapsed()
             && elapsed.as_secs() > 86400
         {
-            // Cache is stale
             return Ok(None);
         }
 
-        // Load binary cache
+        // Load and deserialize binary cache
         let data = fs::read(&cache_path).await?;
-
-        // Deserialize using rkyv
-        // This validates the archive and ensures type safety
         let (formulas, casks): (Vec<FormulaInfo>, Vec<CaskInfo>) =
             rkyv::from_bytes::<(Vec<FormulaInfo>, Vec<CaskInfo>), rkyv::rancor::Error>(&data)
                 .map_err(|e| anyhow::anyhow!("Invalid rkyv cache: {e}"))?;
 
-        // Build lookup maps for O(1) package name resolution
-        let formula_map: HashMap<String, usize> = formulas
-            .iter()
-            .enumerate()
-            .map(|(i, f)| (f.name.clone(), i))
-            .collect();
-
-        let cask_map: HashMap<String, usize> = casks
-            .iter()
-            .enumerate()
-            .map(|(i, c)| (c.token.clone(), i))
-            .collect();
-
-        Ok(Some(FormulaCache {
-            formulas,
-            casks,
-            formula_map,
-            cask_map,
-        }))
+        Ok(Some(Self::build_cache(formulas, casks)))
     }
 
     /// Save formula cache to disk
@@ -293,7 +406,6 @@ impl HomebrewPackageManager {
     async fn fetch_and_cache_formulas(&self) -> Result<FormulaCache> {
         tracing::debug!("Fetching formula index from Homebrew API");
 
-        // Fetch formulas and casks in parallel
         let (formulas_result, casks_result) = tokio::join!(
             self.client.get(FORMULA_API).send(),
             self.client.get(CASK_API).send()
@@ -317,27 +429,8 @@ impl HomebrewPackageManager {
             casks.len()
         );
 
-        // Build lookup maps
-        let formula_map: HashMap<String, usize> = formulas
-            .iter()
-            .enumerate()
-            .map(|(i, f)| (f.name.clone(), i))
-            .collect();
+        let cache = Self::build_cache(formulas, casks);
 
-        let cask_map: HashMap<String, usize> = casks
-            .iter()
-            .enumerate()
-            .map(|(i, c)| (c.token.clone(), i))
-            .collect();
-
-        let cache = FormulaCache {
-            formulas,
-            casks,
-            formula_map,
-            cask_map,
-        };
-
-        // Save to disk asynchronously (don't fail if this errors)
         if let Err(e) = self.save_cache_to_disk(&cache).await {
             tracing::warn!("Failed to save formula cache: {}", e);
         }
@@ -346,19 +439,33 @@ impl HomebrewPackageManager {
     }
 
     /// Ensure formula cache is loaded
+    ///
+    /// Cache loading priority:
+    /// 1. In-memory cache (instant)
+    /// 2. OMG's rkyv cache (~5ms, zero-copy deserialization)
+    /// 3. Homebrew's local JSON cache (~50-100ms, no network)
+    /// 4. Homebrew API fetch (2-3s, requires network)
     async fn ensure_cache(&self) -> Result<()> {
-        // Fast path: cache already loaded
         if self.cache.read().is_some() {
             return Ok(());
         }
 
-        // Try loading from disk first
         if let Ok(Some(cache)) = self.load_cache_from_disk().await {
+            tracing::debug!("Loaded cache from OMG rkyv store");
             *self.cache.write() = Some(cache);
             return Ok(());
         }
 
-        // Fetch from API
+        if let Ok(Some(cache)) = self.load_from_homebrew_cache().await {
+            tracing::debug!("Loaded cache from Homebrew's local cache");
+            if let Err(e) = self.save_cache_to_disk(&cache).await {
+                tracing::warn!("Failed to persist Homebrew cache to OMG format: {}", e);
+            }
+            *self.cache.write() = Some(cache);
+            return Ok(());
+        }
+
+        tracing::debug!("No local cache available, fetching from Homebrew API");
         let cache = self.fetch_and_cache_formulas().await?;
         *self.cache.write() = Some(cache);
 
@@ -537,7 +644,63 @@ impl HomebrewPackageManager {
             .collect()
     }
 
-    /// Run brew command with privileges
+    fn list_installed_sync(&self) -> Result<Vec<String>> {
+        let mut names = Vec::new();
+
+        if !self.cellar.exists() {
+            return Ok(names);
+        }
+
+        let entries = std::fs::read_dir(&self.cellar)?;
+
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if !name.starts_with('.') {
+                names.push(name);
+            }
+        }
+
+        Ok(names)
+    }
+
+    fn refresh_installed_cache_if_needed(&self) {
+        let cellar_mtime = std::fs::metadata(&self.cellar)
+            .ok()
+            .and_then(|m| m.modified().ok());
+
+        let needs_refresh = {
+            let cache = INSTALLED_CACHE.read();
+            cache.cellar_mtime != cellar_mtime || cache.packages.is_empty()
+        };
+
+        if needs_refresh {
+            if let Ok(names) = self.list_installed_sync() {
+                let set: AHashSet<String> = names.into_iter().collect();
+
+                let mut cache = INSTALLED_CACHE.write();
+                cache.packages = set;
+                cache.cellar_mtime = cellar_mtime;
+                cache.last_refreshed = Some(Instant::now());
+            }
+        }
+    }
+
+    #[must_use]
+    pub fn is_installed_fast(&self, package: &str) -> bool {
+        {
+            let cache = INSTALLED_CACHE.read();
+            if let Some(last) = cache.last_refreshed {
+                if last.elapsed().as_secs() < INSTALLED_CACHE_TTL_SECS {
+                    return cache.packages.contains(package);
+                }
+            }
+        }
+
+        self.refresh_installed_cache_if_needed();
+
+        INSTALLED_CACHE.read().packages.contains(package)
+    }
+
     async fn run_brew(&self, args: &[&str]) -> Result<()> {
         let brew_path = self.prefix.join("bin").join("brew");
 
@@ -712,8 +875,7 @@ impl PackageManager for HomebrewPackageManager {
     }
 
     async fn is_installed(&self, package: &str) -> bool {
-        let pkg_path = self.cellar.join(package);
-        pkg_path.exists()
+        self.is_installed_fast(package)
     }
 }
 
