@@ -122,6 +122,7 @@ impl PacmanMmapIndex {
     pub fn load(path: &Path) -> Result<Self> {
         let file = File::open(path)?;
         // SAFETY: Standard mmap usage - file handle kept open by the Mmap
+        #[allow(unsafe_code)]
         let mmap = unsafe { Mmap::map(&file)? };
 
         // Validate the archive structure before storing - this is the key safety check
@@ -150,6 +151,7 @@ impl PacmanMmapIndex {
     #[inline]
     fn archived(&self) -> &rkyv::Archived<RkyvSyncIndex> {
         // SAFETY: See method documentation above
+        #[allow(unsafe_code)]
         unsafe { rkyv::access_unchecked::<rkyv::Archived<RkyvSyncIndex>>(&self.mmap) }
     }
 

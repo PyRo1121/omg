@@ -1110,14 +1110,18 @@ impl PackageManager for WindowsPackageManager {
             let session = Session::new();
 
             tokio::task::spawn_blocking(move || {
-                let packages =
-                    operation::package_query(&session, "", vec![QueryOption::Upgradable])
-                        .map_err(|e| anyhow::anyhow!("libscoop query failed: {}", e))?;
+                let packages = operation::package_query(
+                    &session,
+                    vec![""],
+                    vec![QueryOption::Upgradable],
+                    true,
+                )
+                .map_err(|e| anyhow::anyhow!("libscoop query failed: {}", e))?;
 
                 let mut updates = Vec::new();
 
                 for pkg in packages {
-                    let app_dir = scoop_dir.join("apps").join(&pkg.name);
+                    let app_dir = scoop_dir.join("apps").join(pkg.name());
                     let current_manifest = app_dir.join("current").join("manifest.json");
 
                     let old_version =
@@ -1131,9 +1135,9 @@ impl PackageManager for WindowsPackageManager {
                         };
 
                     updates.push(UpdateInfo {
-                        name: pkg.name,
+                        name: pkg.name().to_string(),
                         old_version,
-                        new_version: pkg.version,
+                        new_version: pkg.version().to_string(),
                         repo: "scoop".to_string(),
                     });
                 }

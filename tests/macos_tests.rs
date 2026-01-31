@@ -282,20 +282,19 @@ mod homebrew_cellar_detection {
             if let Some(entry) = entries.next_entry().await? {
                 let formula_path = entry.path();
 
-                if let Some(version_dir) = fs::read_dir(&formula_path)
-                    .await
-                    .ok()
-                    .and_then(|mut dirs| dirs.blocking_recv())
-                {
-                    if let Some(version_entry) = version_dir {
-                        let receipt_path = version_entry.path().join("INSTALL_RECEIPT.json");
+                let mut version_dirs = match fs::read_dir(&formula_path).await {
+                    Ok(dirs) => dirs,
+                    Err(_) => continue,
+                };
 
-                        if receipt_path.exists() {
-                            let content = fs::read_to_string(&receipt_path).await?;
-                            let _receipt: serde_json::Value = serde_json::from_str(&content)?;
+                if let Ok(Some(version_entry)) = version_dirs.next_entry().await {
+                    let receipt_path = version_entry.path().join("INSTALL_RECEIPT.json");
 
-                            break;
-                        }
+                    if receipt_path.exists() {
+                        let content = fs::read_to_string(&receipt_path).await?;
+                        let _receipt: serde_json::Value = serde_json::from_str(&content)?;
+
+                        break;
                     }
                 }
             }
