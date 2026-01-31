@@ -193,15 +193,7 @@ impl crate::package_managers::PackageManager for AptPackageManager {
     }
 
     async fn is_installed(&self, package: &str) -> bool {
-        let package = package.to_string();
-        if let Ok(installed) = super::debian_db::list_installed_fast() {
-            return installed.iter().any(|p| p.name == package);
-        }
-        if let Ok(installed) = list_installed_fast() {
-            installed.iter().any(|p| p.name == package)
-        } else {
-            false
-        }
+        super::debian_db::is_installed_fast(package)
     }
 }
 pub fn search_sync(query: &str) -> Result<Vec<SyncPackage>> {
@@ -211,45 +203,31 @@ pub fn search_sync(query: &str) -> Result<Vec<SyncPackage>> {
 
     for pkg in cache.packages(&PackageSort::default()) {
         let name = pkg.name();
+        let matched = name.contains(&query_lower)
+            || pkg.candidate()
+                .and_then(|c| c.summary())
+                .is_some_and(|s| s.to_lowercase().contains(&query_lower));
 
-        // Match name first (fast)
-        let mut matched = name.contains(&query_lower);
-
-        #[allow(clippy::collapsible_if)]
-        // let-chain condition with multiple guards cannot be further collapsed
-        // If name doesn't match, check summary (slower as it might load more data)
-        let mut summary = None;
-        if !matched
-            && let Some(s) = pkg.candidate().and_then(|c| c.summary())
-            && s.to_lowercase().contains(&query_lower)
-        {
-            matched = true;
-            summary = Some(s);
-        }
-
-        #[allow(clippy::redundant_closure_for_method_calls)] // rust-apt API requires closure; method ref would conflict with pkg borrow
-        #[allow(clippy::unnecessary_map_or)]
-        // Readability: map_or is clearer than if-let for this size fallback
         if matched {
             let candidate = pkg.candidate();
-            let version: String = if let Some(ref c) = candidate {
-                c.version().to_string()
-            } else if let Some(ref i) = pkg.installed() {
-                i.version().to_string()
-            } else {
-                "unknown".to_string()
-            };
+            let version = candidate
+                .as_ref()
+                .map(|c| c.version().to_string())
+                .or_else(|| pkg.installed().map(|i| i.version().to_string()))
+                .unwrap_or_else(|| "unknown".to_string());
 
-            let download_size: i64 = pkg
-                .candidate()
-                .map_or(0i64, |v| i64::try_from(v.size()).unwrap_or(i64::MAX));
+            let download_size = candidate
+                .map(|v| i64::try_from(v.size()).unwrap_or(i64::MAX))
+                .unwrap_or(0);
+
+            let description = candidate
+                .and_then(|c| c.summary())
+                .unwrap_or_default();
 
             results.push(SyncPackage {
                 name: name.to_string(),
                 version,
-                description: summary
-                    .or_else(|| candidate.and_then(|c| c.summary()))
-                    .unwrap_or_default(),
+                description,
                 repo: "apt".to_string(),
                 download_size,
                 installed: pkg.is_installed(),
@@ -266,25 +244,27 @@ pub fn search_sync(query: &str) -> Result<Vec<SyncPackage>> {
 
 pub fn get_sync_pkg_info(name: &str) -> Result<Option<PackageInfo>> {
     let cache = open_cache(&[])?;
-    if let Some(pkg) = cache.get(name) {
-        let version_to_use = pkg.candidate().or_else(|| pkg.installed());
-        if let Some(version) = version_to_use {
-            return Ok(Some(PackageInfo {
-                name: pkg.name().to_string(),
-                version: version.version().to_string(),
-                description: version.summary().unwrap_or_default(),
-                url: None,
-                size: version.size(),
-                install_size: Some(i64::try_from(version.installed_size()).unwrap_or(i64::MAX)),
-                download_size: Some(version.size()),
-                repo: "apt".to_string(),
-                depends: collect_depends(&version),
-                licenses: Vec::new(),
-                installed: pkg.is_installed(),
-            }));
-        }
-    }
-    Ok(None)
+    let Some(pkg) = cache.get(name) else {
+        return Ok(None);
+    };
+
+    let Some(version) = pkg.candidate().or_else(|| pkg.installed()) else {
+        return Ok(None);
+    };
+
+    Ok(Some(PackageInfo {
+        name: pkg.name().to_string(),
+        version: version.version().to_string(),
+        description: version.summary().unwrap_or_default(),
+        url: None,
+        size: version.size(),
+        install_size: Some(i64::try_from(version.installed_size()).unwrap_or(i64::MAX)),
+        download_size: Some(version.size()),
+        repo: "apt".to_string(),
+        depends: collect_depends(&version),
+        licenses: Vec::new(),
+        installed: pkg.is_installed(),
+    }))
 }
 
 pub fn list_installed_fast() -> Result<Vec<LocalPackage>> {
@@ -548,9 +528,9 @@ fn local_to_packages(local_pkgs: Vec<LocalPackage>) -> Vec<Package> {
     local_pkgs
         .into_iter()
         .map(|pkg| Package {
-            name: pkg.name.clone(),
-            version: pkg.version.clone(),
-            description: pkg.description.clone(),
+            name: pkg.name,
+            version: pkg.version,
+            description: pkg.description,
             source: PackageSource::Official,
             installed: true,
         })
