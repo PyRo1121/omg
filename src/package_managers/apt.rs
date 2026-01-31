@@ -218,6 +218,7 @@ pub fn search_sync(query: &str) -> Result<Vec<SyncPackage>> {
                 .unwrap_or_else(|| "unknown".to_string());
 
             let download_size = candidate
+                .as_ref()
                 .map(|v| i64::try_from(v.size()).unwrap_or(i64::MAX))
                 .unwrap_or(0);
 
