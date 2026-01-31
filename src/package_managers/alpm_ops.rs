@@ -3,11 +3,19 @@
 //! Pure libalpm transactions - no pacman subprocess.
 //! Install/remove/update operations at native C library speed.
 
+use std::sync::LazyLock;
+
 use alpm_types::Version;
 use anyhow::{Context, Result};
 use owo_colors::OwoColorize;
+use regex::Regex;
 
 use crate::core::paths;
+
+/// Regex for parsing mirror server lines from /etc/pacman.d/mirrorlist
+/// Compiled once at first use, then reused for all subsequent calls.
+static MIRRORLIST_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^Server\s*=\s*([^#]+)").expect("valid regex pattern"));
 #[cfg(feature = "pgp")]
 use crate::core::security::pgp::PgpVerifier;
 use crate::package_managers::pacman_db;
@@ -36,26 +44,39 @@ pub fn get_update_list() -> Result<Vec<UpdateInfo>> {
     }
 
     crate::package_managers::alpm_direct::with_handle(|alpm| {
-        let mut updates = Vec::new();
         let localdb = alpm.localdb();
         let syncdbs = alpm.syncdbs();
+        let local_pkg_count = localdb.pkgs().len();
+
+        // Build HashMap of sync packages: name -> (version_str, repo_name)
+        // This converts O(n×m) lookups to O(n+m) with single HashMap lookup per package
+        let mut sync_map: std::collections::HashMap<&str, (&str, &str)> =
+            std::collections::HashMap::with_capacity(local_pkg_count);
+
+        for db in syncdbs {
+            let repo_name = db.name();
+            for pkg in db.pkgs() {
+                // First repo wins (core > extra > multilib priority)
+                sync_map
+                    .entry(pkg.name())
+                    .or_insert((pkg.version().as_str(), repo_name));
+            }
+        }
+
+        let mut updates = Vec::with_capacity(local_pkg_count / 20); // ~5% typically have updates
 
         for pkg in localdb.pkgs() {
             let name = pkg.name();
             let local_ver_str = pkg.version().as_str();
 
-            for db in syncdbs {
-                if let Ok(sync_pkg) = db.pkg(name) {
-                    let sync_ver_str = sync_pkg.version().as_str();
-                    if alpm::vercmp(sync_ver_str, local_ver_str) == std::cmp::Ordering::Greater {
-                        updates.push(UpdateInfo {
-                            name: name.to_string(),
-                            old_version: local_ver_str.to_string(),
-                            new_version: sync_ver_str.to_string(),
-                            repo: db.name().to_string(),
-                        });
-                        break;
-                    }
+            if let Some(&(sync_ver_str, repo)) = sync_map.get(name) {
+                if alpm::vercmp(sync_ver_str, local_ver_str) == std::cmp::Ordering::Greater {
+                    updates.push(UpdateInfo {
+                        name: name.to_string(),
+                        old_version: local_ver_str.to_string(),
+                        new_version: sync_ver_str.to_string(),
+                        repo: repo.to_string(),
+                    });
                 }
             }
         }
@@ -77,9 +98,10 @@ pub struct DownloadInfo {
 /// Get download information for all available updates - for parallel downloads
 pub fn get_update_download_list() -> Result<Vec<DownloadInfo>> {
     crate::package_managers::alpm_direct::with_handle(|alpm| {
-        let mut downloads = Vec::new();
         let localdb = alpm.localdb();
         let syncdbs = alpm.syncdbs();
+        let local_pkg_count = localdb.pkgs().len();
+        let mut downloads = Vec::with_capacity(local_pkg_count / 20);
 
         for pkg in localdb.pkgs() {
             let name = pkg.name();
@@ -206,7 +228,7 @@ pub fn clean_cache(keep_versions: usize) -> Result<(usize, u64)> {
 /// List orphaned packages - INSTANT
 pub fn list_orphans_direct() -> Result<Vec<String>> {
     crate::package_managers::alpm_direct::with_handle(|alpm| {
-        let mut orphans = Vec::new();
+        let mut orphans = Vec::with_capacity(32);
 
         for pkg in alpm.localdb().pkgs() {
             if pkg.reason() != alpm::PackageReason::Explicit
@@ -223,7 +245,7 @@ pub fn list_orphans_direct() -> Result<Vec<String>> {
 
 /// Synchronize package databases from mirrors - FAST
 pub fn sync_dbs() -> Result<()> {
-    crate::package_managers::alpm_direct::with_handle_mut(|alpm| {
+    let result = crate::package_managers::alpm_direct::with_handle_mut(|alpm| {
         alpm.syncdbs_mut()
             .update(false)
             .map_err(|e| {
@@ -233,7 +255,12 @@ pub fn sync_dbs() -> Result<()> {
             })?;
 
         Ok(())
-    })
+    });
+
+    if result.is_ok() {
+        crate::package_managers::alpm_direct::clear_alpm_cache();
+    }
+    result
 }
 
 /// Display package info beautifully
@@ -331,6 +358,59 @@ fn setup_alpm_callbacks(
             .progress_chars("█▓▒░ "),
     );
     main_pb.set_prefix("");
+
+    alpm.set_question_cb((), |question, ()| {
+        match question.question() {
+            alpm::Question::InstallIgnorepkg(mut q) => q.set_install(true),
+            alpm::Question::Replace(q) => q.set_replace(true),
+            alpm::Question::Conflict(mut q) => q.set_remove(true),
+            alpm::Question::RemovePkgs(mut q) => q.set_skip(false),
+            alpm::Question::SelectProvider(mut q) => q.set_index(0),
+            alpm::Question::ImportKey(mut q) => {
+                let fingerprint = q.fingerprint();
+                let uid = q.uid();
+                tracing::info!("PGP key required: {fingerprint} ({uid})");
+
+                #[cfg(feature = "pgp")]
+                {
+                    use crate::core::security::keyserver;
+                    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                        match handle.block_on(keyserver::fetch_key(fingerprint)) {
+                            Ok(cert) => {
+                                let info = keyserver::get_key_info(&cert);
+                                tracing::info!("Fetched and verified key: {info}");
+                                q.set_import(true);
+                            }
+                            Err(e) => {
+                                tracing::warn!("Failed to fetch key {fingerprint}: {e}");
+                                tracing::info!("Run: omg key import {fingerprint}");
+                                q.set_import(false);
+                            }
+                        }
+                    } else {
+                        tracing::warn!("Cannot fetch key (no async runtime)");
+                        tracing::info!("Run: omg key import {fingerprint}");
+                        q.set_import(false);
+                    }
+                }
+
+                #[cfg(not(feature = "pgp"))]
+                {
+                    tracing::warn!("PGP feature disabled, cannot fetch key");
+                    q.set_import(false);
+                }
+            }
+            alpm::Question::Corrupted(mut q) => {
+                tracing::error!("Corrupted package detected! This may indicate tampering.");
+                q.set_remove(false);
+            }
+        }
+    });
+
+    // Suppress ALPM log messages (we show our own progress)
+    alpm.set_log_cb((), |_level, _msg, ()| {
+        // Intentionally empty - suppress all log output
+    });
 
     let main_pb_clone = main_pb.clone();
     alpm.set_progress_cb((), move |op, name, percent, _n, _max, ()| {
@@ -528,21 +608,39 @@ fn commit_alpm_transaction(alpm: &mut alpm::Alpm, main_pb: &indicatif::ProgressB
     Ok(())
 }
 
-/// Parse /etc/pacman.d/mirrorlist and configure ALPM servers
-#[allow(clippy::expect_used)] // ALPM database operations; failure indicates corrupted pacman database
+/// Configure ALPM servers for all repos (official + custom)
+#[allow(clippy::expect_used)]
 fn configure_mirrors(alpm: &mut alpm::Alpm) -> Result<()> {
+    let conf_path = paths::pacman_conf_path();
+    let arch = std::env::consts::ARCH;
+    
+    if let Ok(config) = crate::core::pacman_conf::PacmanConfig::parse(&conf_path) {
+        for repo in &config.repos {
+            if let Ok(servers) = config.resolve_servers(repo, arch) {
+                for db in alpm.syncdbs_mut() {
+                    if db.name() == repo.name {
+                        for server in &servers {
+                            let _ = db.add_server(server.clone());
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        return Ok(());
+    }
+
     let mirrorlist = paths::pacman_mirrorlist_path();
     if !mirrorlist.exists() {
         return Ok(());
     }
 
     let content = std::fs::read_to_string(mirrorlist)?;
-    let re = regex::Regex::new(r"^Server\s*=\s*([^#]+)").expect("valid regex");
-    let mut servers = Vec::new();
+    let mut servers = Vec::with_capacity(16);
 
     for line in content.lines() {
         let line = line.trim();
-        if let Some(url) = re.captures(line).and_then(|caps| caps.get(1)) {
+        if let Some(url) = MIRRORLIST_REGEX.captures(line).and_then(|caps| caps.get(1)) {
             servers.push(url.as_str().trim().to_string());
         }
     }
@@ -552,7 +650,7 @@ fn configure_mirrors(alpm: &mut alpm::Alpm) -> Result<()> {
         for server in &servers {
             let url = server
                 .replace("$repo", &db_name)
-                .replace("$arch", std::env::consts::ARCH);
+                .replace("$arch", arch);
             let _ = db.add_server(url);
         }
     }

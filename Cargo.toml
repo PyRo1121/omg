@@ -161,6 +161,7 @@ rayon = "1.11.0"
 
 # Security (Phase 4.2) - PURE RUST crypto backend (for package verification, not secrets)
 sequoia-openpgp = { version = "2.2.0-pqc.1", default-features = false, features = ["crypto-rust", "allow-experimental-crypto", "allow-variable-time-crypto"], optional = true }
+sequoia-net = { version = "0.31.0-pqc.1", optional = true }
 nucleo-matcher = "0.3.1"
 dirs = "6.0.0"
 ahash = "0.8.12"
@@ -168,7 +169,7 @@ uuid = { version = "1.19", features = ["v4"] }
 ratatui = "0.30"
 crossterm = "0.29"
 rust-apt = { version = "0.9.0", optional = true }
-rustix = { version = "1.1", features = ["fs", "process"] }
+rustix = { version = "1.1", features = ["fs", "process", "thread"] }
 
 # Debian/Ubuntu 2026 Performance Stack
 debian-packaging = { version = "0.18", optional = true } # Pure Rust apt reimplementation
@@ -239,7 +240,7 @@ arch = [
     "alpm-repo-db",
     "alpm-pkginfo"
 ]
-pgp = ["sequoia-openpgp"] # Optional PGP verification (requires Rust 1.80+)
+pgp = ["sequoia-openpgp", "sequoia-net"] # Optional PGP verification (requires Rust 1.80+)
 
 # Windows support - pure Rust implementation (winreg auto-enabled on Windows via target cfg)
 windows = []
@@ -261,3 +262,4 @@ license = [] # Enable license/subscription features (Pro, Team, Enterprise tiers
 proptest = [] # Enable property-based tests
 docker_tests = [] # Enable tests that require running as root (e.g. in Docker)
 sequoia-openpgp = ["dep:sequoia-openpgp"]
+sequoia-net = ["dep:sequoia-net"]

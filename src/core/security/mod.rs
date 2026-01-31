@@ -1,5 +1,7 @@
 pub mod audit;
 #[cfg(feature = "pgp")]
+pub mod keyserver;
+#[cfg(feature = "pgp")]
 pub mod pgp;
 pub mod policy;
 pub mod sbom;
@@ -14,6 +16,8 @@ pub use sbom::{Sbom, SbomGenerator};
 pub use secrets::{SecretScanResult, SecretScanner};
 pub use slsa::{SlsaLevel, SlsaVerifier};
 pub use validation::{
-    validate_package_name, validate_package_names, validate_relative_path, validate_version,
+    is_local_package_file, validate_package_name, validate_package_name_or_file,
+    validate_package_names, validate_package_names_or_files, validate_relative_path,
+    validate_version,
 };
 pub use vulnerability::VulnerabilityScanner;

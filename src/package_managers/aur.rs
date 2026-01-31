@@ -1,6 +1,7 @@
 //! AUR (Arch User Repository) client with build support
 
 use std::collections::HashSet;
+use std::os::unix::fs::MetadataExt;
 
 /// Check if a needle matches at a word boundary in the haystack.
 /// Word boundaries are: start of string, whitespace, `-`, `_`, `.`
@@ -90,6 +91,88 @@ const AUR_RPC_URL: &str = "https://aur.archlinux.org/rpc";
 const AUR_GIT_URL: &str = "https://aur.archlinux.org";
 const AUR_RPC_MAX_URI: usize = 4400;
 
+fn get_original_user() -> Option<String> {
+    if !crate::core::is_root() {
+        return None;
+    }
+    std::env::var("SUDO_USER")
+        .ok()
+        .or_else(|| std::env::var("DOAS_USER").ok())
+}
+
+fn get_original_user_home() -> Option<PathBuf> {
+    get_original_user().map(|user| {
+        std::env::var("SUDO_HOME")
+            .map_or_else(|_| PathBuf::from(format!("/home/{user}")), PathBuf::from)
+    })
+}
+
+async fn create_dir_as_user(path: &Path) -> Result<()> {
+    if let Some(user) = get_original_user() {
+        let path_str = path.to_string_lossy().to_string();
+        let status = Command::new("sudo")
+            .args(["-u", &user, "mkdir", "-p", "--", &path_str])
+            .status()
+            .await
+            .with_context(|| format!("Failed to create directory as user '{user}': {path_str}"))?;
+
+        if !status.success() {
+            anyhow::bail!(
+                "Failed to create directory as user '{}': {}",
+                user,
+                path.display()
+            );
+        }
+        Ok(())
+    } else {
+        tokio::fs::create_dir_all(path)
+            .await
+            .with_context(|| format!("Failed to create directory: {}", path.display()))
+    }
+}
+
+fn is_root_owned(path: &Path) -> bool {
+    path.metadata().map(|m| m.uid() == 0).unwrap_or(false)
+}
+
+async fn remove_dir_as_user(path: &Path) -> Result<()> {
+    if let Some(user) = get_original_user() {
+        let path_str = path.to_string_lossy().to_string();
+        let status = Command::new("sudo")
+            .args(["-u", &user, "rm", "-rf", "--", &path_str])
+            .status()
+            .await
+            .with_context(|| format!("Failed to remove directory as user '{user}': {path_str}"))?;
+
+        if !status.success() {
+            anyhow::bail!("Failed to remove directory as user '{}': {}", user, path.display());
+        }
+        Ok(())
+    } else {
+        tokio::fs::remove_dir_all(path)
+            .await
+            .with_context(|| format!("Failed to remove directory: {}", path.display()))
+    }
+}
+
+fn create_dir_as_user_sync(path: &Path) -> Result<()> {
+    if let Some(user) = get_original_user() {
+        let path_str = path.to_string_lossy().to_string();
+        let status = std::process::Command::new("sudo")
+            .args(["-u", &user, "mkdir", "-p", "--", &path_str])
+            .status()
+            .with_context(|| format!("Failed to create directory as user '{user}': {path_str}"))?;
+
+        if !status.success() {
+            anyhow::bail!("Failed to create directory as user '{}': {}", user, path.display());
+        }
+        Ok(())
+    } else {
+        std::fs::create_dir_all(path)
+            .with_context(|| format!("Failed to create directory: {}", path.display()))
+    }
+}
+
 /// AUR API client with build support
 #[derive(Clone)]
 pub struct AurClient {
@@ -176,7 +259,10 @@ impl AurClient {
             }
         }
 
-        let url = format!("{AUR_RPC_URL}?v=5&type=search&arg={query}");
+        let url = format!(
+            "{AUR_RPC_URL}?v=5&type=search&arg={}",
+            urlencoding::encode(query)
+        );
 
         let response: AurResponse = self
             .client
@@ -294,7 +380,10 @@ impl AurClient {
             }
         }
 
-        let url = format!("{AUR_RPC_URL}?v=5&type=info&arg={package}");
+        let url = format!(
+            "{AUR_RPC_URL}?v=5&type=info&arg={}",
+            urlencoding::encode(package)
+        );
 
         let response: AurResponse = self
             .client
@@ -329,7 +418,7 @@ impl AurClient {
             return Ok(Vec::new());
         }
 
-        let mut local_pkgs = Vec::new();
+        let mut local_pkgs = Vec::with_capacity(foreign_packages.len());
         for name in &foreign_packages {
             if let Some(pkg) = pacman_db::get_local_package(name)? {
                 local_pkgs.push((name.clone(), pkg.version));
@@ -404,7 +493,7 @@ impl AurClient {
         &self,
         packages: &[String],
     ) -> Result<Vec<(String, Version, Version)>> {
-        let mut updates = Vec::new();
+        let mut updates = Vec::with_capacity(packages.len() / 10 + 1);
         let chunked_names = Self::chunk_aur_names(packages);
         // Network I/O bound - use higher concurrency
         let concurrency = self.settings.aur.build_concurrency.clamp(4, 16);
@@ -501,15 +590,15 @@ impl AurClient {
 
     fn chunk_aur_names(names: &[String]) -> Vec<Vec<String>> {
         let base_len = format!("{AUR_RPC_URL}?v=5&type=info").len();
-        let mut chunks: Vec<Vec<String>> = Vec::new();
-        let mut current: Vec<String> = Vec::new();
+        let mut chunks: Vec<Vec<String>> = Vec::with_capacity((names.len() / 100) + 1);
+        let mut current: Vec<String> = Vec::with_capacity(100);
         let mut current_len = base_len;
 
         for name in names {
             let arg_len = "&arg[]=".len() + name.len();
             if !current.is_empty() && current_len + arg_len > AUR_RPC_MAX_URI {
                 chunks.push(current);
-                current = Vec::new();
+                current = Vec::with_capacity(100);
                 current_len = base_len;
             }
             current_len += arg_len;
@@ -554,14 +643,7 @@ impl AurClient {
         );
         println!();
 
-        tokio::fs::create_dir_all(&self.build_dir)
-            .await
-            .with_context(|| {
-                format!(
-                    "Failed to create build directory: {}",
-                    self.build_dir.display()
-                )
-            })?;
+        create_dir_as_user(&self.build_dir).await?;
 
         let pkg_dir = self.build_dir.join(package);
 
@@ -647,14 +729,7 @@ impl AurClient {
     pub async fn build_only(&self, package: &str) -> Result<PathBuf> {
         crate::core::security::validate_package_name(package)?;
 
-        tokio::fs::create_dir_all(&self.build_dir)
-            .await
-            .with_context(|| {
-                format!(
-                    "Failed to create build directory: {}",
-                    self.build_dir.display()
-                )
-            })?;
+        create_dir_as_user(&self.build_dir).await?;
 
         let pkg_dir = self.build_dir.join(package);
         let pkgbuild_path = pkg_dir.join("PKGBUILD");
@@ -666,7 +741,7 @@ impl AurClient {
             })?;
         } else {
             if pkg_dir.exists() {
-                std::fs::remove_dir_all(&pkg_dir).ok();
+                remove_dir_as_user(&pkg_dir).await.ok();
             }
             self.git_clone(package).await.map_err(|e| {
                 tracing::warn!("Git clone failed for {}: {}", package, e);
@@ -825,7 +900,9 @@ impl AurClient {
         for entry in archive.entries()? {
             let mut entry = entry?;
             let entry_path = entry.path()?;
-            if let Some(file_name) = entry_path.file_name().and_then(|n| n.to_str())
+            let components: Vec<_> = entry_path.components().collect();
+            if components.len() <= 2
+                && let Some(file_name) = entry_path.file_name().and_then(|n| n.to_str())
                 && (file_name == ".PKGINFO" || file_name == "PKGINFO")
             {
                 let mut content = String::new();
@@ -856,14 +933,7 @@ impl AurClient {
 
     #[instrument(skip(self))]
     pub async fn build_package_interactive(&self, package: &str) -> Result<PathBuf> {
-        tokio::fs::create_dir_all(&self.build_dir)
-            .await
-            .with_context(|| {
-                format!(
-                    "Failed to create build directory: {}",
-                    self.build_dir.display()
-                )
-            })?;
+        create_dir_as_user(&self.build_dir).await?;
 
         let pkg_dir = self.build_dir.join(package);
         let pkgbuild_path = pkg_dir.join("PKGBUILD");
@@ -875,7 +945,7 @@ impl AurClient {
             })?;
         } else {
             if pkg_dir.exists() {
-                std::fs::remove_dir_all(&pkg_dir).ok();
+                remove_dir_as_user(&pkg_dir).await.ok();
             }
             self.git_clone(package).await.map_err(|e| {
                 tracing::warn!("Git clone failed for {}: {}", package, e);
@@ -982,7 +1052,7 @@ impl AurClient {
             .and_then(|name| name.to_str())
             .unwrap_or("package");
         let log_dir = self.build_dir.join("_logs");
-        tokio::fs::create_dir_all(&log_dir).await?;
+        create_dir_as_user(&log_dir).await?;
         let log_path = log_dir.join(format!("{package_name}.log"));
         let log_path_clone = log_path.clone();
         let (log_file, log_file_err) = tokio::task::spawn_blocking(move || {
@@ -994,8 +1064,6 @@ impl AurClient {
         let spinner = create_spinner(&format!("Building {package_name}..."));
 
         let mut cmd = Command::new("makepkg");
-        // Use --nodeps since dependencies are pre-installed
-        // Don't use --cleanbuild for parallel builds as it can cause race conditions
         cmd.args(["--noconfirm", "-f", "--nodeps"])
             .env("MAKEFLAGS", &env.makeflags)
             .env("PKGDEST", &env.pkgdest)
@@ -1032,90 +1100,158 @@ impl AurClient {
         Ok(status)
     }
 
-    /// Clone package from AUR
     async fn git_clone(&self, package: &str) -> Result<()> {
         let url = format!("{AUR_GIT_URL}/{package}.git");
         let dest = self.build_dir.join(package);
 
         let spinner = create_spinner("Cloning repository...");
 
-        let url_clone = url.clone();
-        let dest_clone = dest.clone();
-        let result = tokio::task::spawn_blocking(move || {
-            let mut builder = git2::build::RepoBuilder::new();
-            builder.fetch_options({
-                let mut fetch_opts = git2::FetchOptions::new();
-                fetch_opts.depth(1);
-                fetch_opts
-            });
-            builder.clone(&url_clone, &dest_clone)
-        })
-        .await?;
+        if let Some(user) = get_original_user() {
+            let home = get_original_user_home();
+            let dest_str = dest.to_string_lossy().to_string();
 
-        spinner.finish_and_clear();
+            let mut cmd = Command::new("sudo");
+            cmd.args(["-u", &user]);
 
-        result.with_context(|| format!("Failed to clone {url}"))?;
-        Ok(())
+            if let Some(ref home_path) = home {
+                cmd.arg("-H");
+                cmd.env("HOME", home_path);
+            }
+
+            cmd.args(["git", "clone", "--depth=1", "--", &url, &dest_str]);
+
+            let status = cmd.status().await.with_context(|| {
+                format!("Failed to run git clone as user '{user}'")
+            })?;
+
+            spinner.finish_and_clear();
+
+            if !status.success() {
+                anyhow::bail!("git clone failed for {url}");
+            }
+            Ok(())
+        } else {
+            let url_clone = url.clone();
+            let dest_clone = dest.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                let mut builder = git2::build::RepoBuilder::new();
+                builder.fetch_options({
+                    let mut fetch_opts = git2::FetchOptions::new();
+                    fetch_opts.depth(1);
+                    fetch_opts
+                });
+                builder.clone(&url_clone, &dest_clone)
+            })
+            .await?;
+
+            spinner.finish_and_clear();
+
+            result.with_context(|| format!("Failed to clone {url}"))?;
+            Ok(())
+        }
     }
 
-    /// Update existing clone
     async fn git_pull(&self, pkg_dir: &Path) -> Result<()> {
         let spinner = create_spinner("Pulling latest changes...");
 
-        let pkg_dir_clone = pkg_dir.to_path_buf();
-        let result = tokio::task::spawn_blocking(move || -> Result<()> {
-            let repo =
-                git2::Repository::open(&pkg_dir_clone).context("Failed to open git repository")?;
-
-            let mut remote = repo
-                .find_remote("origin")
-                .context("Failed to find origin remote")?;
-
-            remote
-                .fetch(&["main", "master"], None, None)
-                .context("Failed to fetch from remote")?;
-
-            let fetch_head = repo
-                .find_reference("FETCH_HEAD")
-                .context("Failed to find FETCH_HEAD")?;
-            let fetch_commit = repo
-                .reference_to_annotated_commit(&fetch_head)
-                .context("Failed to get fetch commit")?;
-
-            let (analysis, _) = repo
-                .merge_analysis(&[&fetch_commit])
-                .context("Failed to analyze merge")?;
-
-            if analysis.is_up_to_date() {
-                return Ok(());
-            }
-
-            if analysis.is_fast_forward() {
-                let refname = "refs/heads/master";
-                let mut reference = repo
-                    .find_reference(refname)
-                    .or_else(|_| repo.find_reference("refs/heads/main"))
-                    .context("Failed to find branch reference")?;
-                reference
-                    .set_target(fetch_commit.id(), "Fast-forward")
-                    .context("Failed to fast-forward")?;
-                repo.set_head(refname)
-                    .or_else(|_| repo.set_head("refs/heads/main"))
-                    .context("Failed to set HEAD")?;
-                repo.checkout_head(Some(git2::build::CheckoutBuilder::default().force()))
-                    .context("Failed to checkout HEAD")?;
-                return Ok(());
-            }
-
+        if !crate::core::is_root() && is_root_owned(pkg_dir) {
+            spinner.finish_and_clear();
             anyhow::bail!(
-                "Cannot fast-forward, manual merge required in {}",
-                pkg_dir_clone.display()
-            )
-        })
-        .await?;
+                "Build directory '{}' is owned by root.\n  \
+                 → This was likely created by a previous 'sudo omg install'.\n  \
+                 → Fix: sudo chown -R $USER:$USER ~/.cache/omg/aur/\n  \
+                 → Or clean and reinstall: omg aur clean {} && omg install {}",
+                pkg_dir.display(),
+                pkg_dir.file_name().and_then(|n| n.to_str()).unwrap_or("package"),
+                pkg_dir.file_name().and_then(|n| n.to_str()).unwrap_or("package")
+            );
+        }
 
-        spinner.finish_and_clear();
-        result
+        if let Some(user) = get_original_user() {
+            let home = get_original_user_home();
+            let pkg_dir_str = pkg_dir.to_string_lossy().to_string();
+
+            let mut cmd = Command::new("sudo");
+            cmd.args(["-u", &user]);
+
+            if let Some(ref home_path) = home {
+                cmd.arg("-H");
+                cmd.env("HOME", home_path);
+            }
+
+            cmd.args(["git", "-C", &pkg_dir_str, "pull", "--ff-only"]);
+
+            let status = cmd.status().await.with_context(|| {
+                format!("Failed to run git pull as user '{user}'")
+            })?;
+
+            spinner.finish_and_clear();
+
+            if !status.success() {
+                anyhow::bail!(
+                    "git pull failed in {}\n  → Try: omg aur clean {} && omg install {}",
+                    pkg_dir.display(),
+                    pkg_dir.file_name().and_then(|n| n.to_str()).unwrap_or("package"),
+                    pkg_dir.file_name().and_then(|n| n.to_str()).unwrap_or("package")
+                );
+            }
+            Ok(())
+        } else {
+            let pkg_dir_clone = pkg_dir.to_path_buf();
+            let result = tokio::task::spawn_blocking(move || -> Result<()> {
+                let repo =
+                    git2::Repository::open(&pkg_dir_clone).context("Failed to open git repository")?;
+
+                let mut remote = repo
+                    .find_remote("origin")
+                    .context("Failed to find origin remote")?;
+
+                remote
+                    .fetch(&["main", "master"], None, None)
+                    .context("Failed to fetch from remote")?;
+
+                let fetch_head = repo
+                    .find_reference("FETCH_HEAD")
+                    .context("Failed to find FETCH_HEAD")?;
+                let fetch_commit = repo
+                    .reference_to_annotated_commit(&fetch_head)
+                    .context("Failed to get fetch commit")?;
+
+                let (analysis, _) = repo
+                    .merge_analysis(&[&fetch_commit])
+                    .context("Failed to analyze merge")?;
+
+                if analysis.is_up_to_date() {
+                    return Ok(());
+                }
+
+                if analysis.is_fast_forward() {
+                    let refname = "refs/heads/master";
+                    let mut reference = repo
+                        .find_reference(refname)
+                        .or_else(|_| repo.find_reference("refs/heads/main"))
+                        .context("Failed to find branch reference")?;
+                    reference
+                        .set_target(fetch_commit.id(), "Fast-forward")
+                        .context("Failed to fast-forward")?;
+                    repo.set_head(refname)
+                        .or_else(|_| repo.set_head("refs/heads/main"))
+                        .context("Failed to set HEAD")?;
+                    repo.checkout_head(Some(git2::build::CheckoutBuilder::default().force()))
+                        .context("Failed to checkout HEAD")?;
+                    return Ok(());
+                }
+
+                anyhow::bail!(
+                    "Cannot fast-forward, manual merge required in {}",
+                    pkg_dir_clone.display()
+                )
+            })
+            .await?;
+
+            spinner.finish_and_clear();
+            result
+        }
     }
 
     async fn run_build(
@@ -1149,7 +1285,7 @@ impl AurClient {
             .and_then(|name| name.to_str())
             .unwrap_or("package");
         let log_dir = self.build_dir.join("_logs");
-        tokio::fs::create_dir_all(&log_dir).await?;
+        create_dir_as_user(&log_dir).await?;
         let log_path = log_dir.join(format!("{package_name}.log"));
         let log_path_clone = log_path.clone();
         let (log_file, log_file_err) = tokio::task::spawn_blocking(move || {
@@ -1160,7 +1296,6 @@ impl AurClient {
         .await??;
         let spinner = create_spinner(&format!("Building {package_name}..."));
 
-        // Check if bubblewrap is available
         let bwrap_available = which("bwrap").is_ok();
 
         if bwrap_available {
@@ -1276,100 +1411,84 @@ impl AurClient {
             let home = home::home_dir().unwrap_or_else(|| PathBuf::from("/root"));
             let gnupg_dir = home.join(".gnupg");
 
-            let pkgdest_str = env.pkgdest.to_string_lossy().to_string();
-            let srcdest_str = env.srcdest.to_string_lossy().to_string();
-            let builddir_str = env.builddir.to_string_lossy().to_string();
-            let pacman_db_dir = paths::pacman_db_dir().to_string_lossy().to_string();
-            let pacman_cache_root = paths::pacman_cache_root_dir().to_string_lossy().to_string();
+            let pkgdest_str = env.pkgdest.to_string_lossy();
+            let srcdest_str = env.srcdest.to_string_lossy();
+            let builddir_str = env.builddir.to_string_lossy();
+            let pacman_db_dir = paths::pacman_db_dir();
+            let pacman_db_dir_str = pacman_db_dir.to_string_lossy();
+            let pacman_cache_root = paths::pacman_cache_root_dir();
+            let pacman_cache_root_str = pacman_cache_root.to_string_lossy();
+            let home_str = home.to_string_lossy();
+            let gnupg_str = gnupg_dir.to_string_lossy();
 
-            let mut args = vec![
-                // Share network namespace to allow downloading sources
-                "--share-net".to_string(),
-                "--ro-bind".to_string(),
-                "/usr".to_string(),
-                "/usr".to_string(),
-                "--ro-bind".to_string(),
-                "/etc".to_string(),
-                "/etc".to_string(),
-                "--ro-bind".to_string(),
-                "/lib".to_string(),
-                "/lib".to_string(),
-                "--ro-bind".to_string(),
-                "/lib64".to_string(),
-                "/lib64".to_string(),
-                "--symlink".to_string(),
-                "/usr/bin".to_string(),
-                "/bin".to_string(),
-                "--symlink".to_string(),
-                "/usr/sbin".to_string(),
-                "/sbin".to_string(),
-                // Don't bind entire HOME, only .gnupg if it exists for PGP checks
-                // and a tmpfs for HOME to avoid makepkg complaining
-                "--tmpfs".to_string(),
-                home.to_string_lossy().into_owned(),
-            ];
+            let mut cmd = Command::new("bwrap");
+            cmd.args([
+                "--share-net",
+                "--ro-bind", "/usr", "/usr",
+                "--ro-bind", "/etc", "/etc",
+                "--ro-bind", "/lib", "/lib",
+                "--ro-bind", "/lib64", "/lib64",
+                "--symlink", "/usr/bin", "/bin",
+                "--symlink", "/usr/sbin", "/sbin",
+                "--tmpfs",
+            ]);
+            cmd.arg(&*home_str);
 
             if gnupg_dir.exists() {
-                args.push("--ro-bind".to_string());
-                args.push(gnupg_dir.to_string_lossy().into_owned());
-                args.push(gnupg_dir.to_string_lossy().into_owned());
+                cmd.args(["--ro-bind"]);
+                cmd.arg(&*gnupg_str);
+                cmd.arg(&*gnupg_str);
             }
 
-            args.extend(vec![
-                "--bind".to_string(),
-                pkg_dir_str.to_string(),
-                pkg_dir_str.to_string(),
-                "--bind".to_string(),
-                pkgdest_str.clone(),
-                pkgdest_str.clone(),
-                "--bind".to_string(),
-                srcdest_str.clone(),
-                srcdest_str.clone(),
-                "--bind".to_string(),
-                builddir_str.clone(),
-                builddir_str.clone(),
-                "--tmpfs".to_string(),
-                "/tmp".to_string(),
-                "--dev".to_string(),
-                "/dev".to_string(),
-                "--proc".to_string(),
-                "/proc".to_string(),
-                "--ro-bind".to_string(),
-                pacman_db_dir.clone(),
-                pacman_db_dir,
-                "--ro-bind".to_string(),
-                pacman_cache_root.clone(),
-                pacman_cache_root,
-                "--die-with-parent".to_string(),
-                "--chdir".to_string(),
-                pkg_dir_str.to_string(),
-                "--setenv".to_string(),
-                "MAKEFLAGS".to_string(),
-                env.makeflags.clone(),
-                "--setenv".to_string(),
-                "PKGDEST".to_string(),
-                pkgdest_str,
-                "--setenv".to_string(),
-                "SRCDEST".to_string(),
-                srcdest_str,
-                "--setenv".to_string(),
-                "BUILDDIR".to_string(),
-                builddir_str,
+            cmd.args(["--bind"]);
+            cmd.arg(&*pkg_dir_str);
+            cmd.arg(&*pkg_dir_str);
+            cmd.args(["--bind"]);
+            cmd.arg(&*pkgdest_str);
+            cmd.arg(&*pkgdest_str);
+            cmd.args(["--bind"]);
+            cmd.arg(&*srcdest_str);
+            cmd.arg(&*srcdest_str);
+            cmd.args(["--bind"]);
+            cmd.arg(&*builddir_str);
+            cmd.arg(&*builddir_str);
+            cmd.args([
+                "--tmpfs", "/tmp",
+                "--dev", "/dev",
+                "--proc", "/proc",
+                "--ro-bind",
             ]);
+            cmd.arg(&*pacman_db_dir_str);
+            cmd.arg(&*pacman_db_dir_str);
+            cmd.args(["--ro-bind"]);
+            cmd.arg(&*pacman_cache_root_str);
+            cmd.arg(&*pacman_cache_root_str);
+            cmd.args([
+                "--die-with-parent",
+                "--chdir",
+            ]);
+            cmd.arg(&*pkg_dir_str);
+            cmd.args([
+                "--setenv", "MAKEFLAGS",
+            ]);
+            cmd.arg(&env.makeflags);
+            cmd.args(["--setenv", "PKGDEST"]);
+            cmd.arg(&*pkgdest_str);
+            cmd.args(["--setenv", "SRCDEST"]);
+            cmd.arg(&*srcdest_str);
+            cmd.args(["--setenv", "BUILDDIR"]);
+            cmd.arg(&*builddir_str);
 
             for (key, value) in &env.extra_env {
-                args.push("--setenv".to_string());
-                args.push(key.clone());
-                args.push(value.clone());
+                cmd.args(["--setenv", key, value]);
             }
 
             // Use sandbox-safe args (no -s since deps installed above)
             let makepkg_args = self.makepkg_args_sandbox();
-            args.extend(["--".to_string(), "makepkg".to_string()]);
-            args.extend(makepkg_args);
+            cmd.args(["--", "makepkg"]);
+            cmd.args(makepkg_args);
 
-            let status = Command::new("bwrap")
-                .args(args)
+            let status = cmd
                 .stdout(Stdio::from(log_file))
                 .stderr(Stdio::from(log_file_err))
                 .status()
@@ -1407,7 +1526,7 @@ impl AurClient {
             .and_then(|name| name.to_str())
             .unwrap_or("package");
         let log_dir = self.build_dir.join("_logs");
-        tokio::fs::create_dir_all(&log_dir).await?;
+        create_dir_as_user(&log_dir).await?;
         let log_path = log_dir.join(format!("{package_name}.log"));
         let log_path_clone = log_path.clone();
         let (log_file, log_file_err) = tokio::task::spawn_blocking(move || {
@@ -1506,7 +1625,7 @@ impl AurClient {
             .and_then(|name| name.to_str())
             .unwrap_or("package");
         let log_dir = self.build_dir.join("_logs");
-        tokio::fs::create_dir_all(&log_dir).await?;
+        create_dir_as_user(&log_dir).await?;
         let log_path = log_dir.join(format!("{package_name}.log"));
         let log_path_clone = log_path.clone();
         let (log_file, log_file_err) = tokio::task::spawn_blocking(move || {
@@ -1589,10 +1708,10 @@ impl AurClient {
         Ok(())
     }
 
-    /// Auto-fetch missing PGP keys from PKGBUILD validpgpkeys array
-    /// This prevents "unknown public key" errors during makepkg
-    /// Fetches keys in parallel for speed
+    #[cfg(feature = "pgp")]
     async fn fetch_missing_pgp_keys(pkgbuild_path: &Path) {
+        use crate::core::security::keyserver;
+
         let Ok(pkgbuild) = PkgBuild::parse(pkgbuild_path) else {
             return;
         };
@@ -1601,24 +1720,22 @@ impl AurClient {
             return;
         }
 
-        // Filter to only missing keys first (parallel check)
-        let mut missing_keys = Vec::new();
+        let gnupg_home = dirs::home_dir()
+            .map(|h| h.join(".gnupg"))
+            .unwrap_or_else(|| PathBuf::from("/tmp/.gnupg"));
+        let keyring_path = gnupg_home.join("pubring.kbx");
+
+        let mut missing_keys = Vec::with_capacity(pkgbuild.validpgpkeys.len());
         for key_id in &pkgbuild.validpgpkeys {
-            // SECURITY: Validate key_id to prevent injection (hex only, max 64 chars)
             if key_id.chars().any(|c| !c.is_ascii_hexdigit()) || key_id.len() > 64 {
-                tracing::warn!("Skipping invalid PGP key ID: {}", key_id);
+                tracing::warn!("Skipping invalid PGP key ID: {key_id}");
                 continue;
             }
 
-            let check = Command::new("gpg")
-                .args(["--list-keys", "--", key_id])
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status()
-                .await;
-
-            if !check.map(|s| s.success()).unwrap_or(false) {
-                missing_keys.push(key_id.clone());
+            match keyserver::is_key_in_keyring(key_id, &keyring_path) {
+                Ok(true) => continue,
+                Ok(false) => missing_keys.push(key_id.clone()),
+                Err(_) => missing_keys.push(key_id.clone()),
             }
         }
 
@@ -1626,36 +1743,28 @@ impl AurClient {
             return;
         }
 
-        // Fetch all missing keys in parallel from Ubuntu keyserver (most reliable)
-        let mut handles = Vec::new();
-        for key_id in missing_keys {
-            let handle = tokio::spawn(async move {
-                let result = Command::new("gpg")
-                    .args([
-                        "--keyserver",
-                        "hkps://keyserver.ubuntu.com",
-                        "--recv-keys",
-                        "--",
-                        &key_id,
-                    ])
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .status()
-                    .await;
+        tracing::info!("Fetching {} missing PGP key(s)...", missing_keys.len());
 
-                if result.map(|s| s.success()).unwrap_or(false) {
-                    tracing::debug!("Fetched PGP key {key_id}");
+        let results = keyserver::fetch_keys(&missing_keys).await;
+        for (key_id, result) in results {
+            match result {
+                Ok(cert) => {
+                    let info = keyserver::get_key_info(&cert);
+                    tracing::debug!("Fetched PGP key: {info}");
+                    if let Err(e) = keyserver::append_to_keyring(&cert, &keyring_path) {
+                        tracing::warn!("Failed to save key {key_id} to keyring: {e}");
+                    }
                 }
-            });
-            handles.push(handle);
+                Err(e) => {
+                    tracing::warn!("Failed to fetch PGP key {key_id}: {e}");
+                }
+            }
         }
+    }
 
-        // Wait for all key fetches (with timeout)
-        let _ = tokio::time::timeout(
-            std::time::Duration::from_secs(10),
-            futures::future::join_all(handles),
-        )
-        .await;
+    #[cfg(not(feature = "pgp"))]
+    async fn fetch_missing_pgp_keys(_pkgbuild_path: &Path) {
+        tracing::debug!("PGP feature disabled, skipping key fetch");
     }
 
     fn makepkg_env(&self, pkg_dir: &Path) -> Result<MakepkgEnv> {
@@ -1696,17 +1805,15 @@ impl AurClient {
                 .unwrap_or("pkg"),
         );
 
-        std::fs::create_dir_all(&pkgdest)?;
-        std::fs::create_dir_all(&srcdest)?;
+        create_dir_as_user_sync(&pkgdest)?;
+        create_dir_as_user_sync(&srcdest)?;
         std::fs::create_dir_all(&builddir)?;
 
-        // Fix permissions when running as root - makepkg needs write access as the build user
         if crate::core::is_root()
             && let Some(build_user) = std::env::var("SUDO_USER")
                 .ok()
                 .or_else(|| std::env::var("DOAS_USER").ok())
         {
-            // Change ownership of builddir to the original user so makepkg can write to it
             let _ = std::process::Command::new("chown")
                 .args(["-R", &build_user, builddir.to_str().unwrap_or("")])
                 .output();
@@ -1721,7 +1828,7 @@ impl AurClient {
                 .ccache_dir
                 .clone()
                 .unwrap_or_else(|| self.build_dir.join("_ccache"));
-            std::fs::create_dir_all(&ccache_dir)?;
+            create_dir_as_user_sync(&ccache_dir)?;
             extra_env.push((
                 "CCACHE_DIR".to_string(),
                 ccache_dir.to_string_lossy().to_string(),
@@ -1739,7 +1846,7 @@ impl AurClient {
                 .sccache_dir
                 .clone()
                 .unwrap_or_else(|| self.build_dir.join("_sccache"));
-            std::fs::create_dir_all(&sccache_dir)?;
+            create_dir_as_user_sync(&sccache_dir)?;
             extra_env.push(("RUSTC_WRAPPER".to_string(), "sccache".to_string()));
             extra_env.push((
                 "SCCACHE_DIR".to_string(),
@@ -1813,28 +1920,43 @@ impl AurClient {
             return Ok(());
         }
 
-        let package = package.to_string();
-        let cache_key = cache_key.to_string();
-        let cache_path = self.cache_path(&package);
+        let cache_path = self.cache_path(package);
 
-        tokio::task::spawn_blocking(move || {
-            if let Some(parent) = cache_path.parent() {
-                std::fs::create_dir_all(parent)?;
+        if let Some(parent) = cache_path.parent() {
+            create_dir_as_user(parent).await?;
+        }
+
+        if let Some(user) = get_original_user() {
+            let cache_path_str = cache_path.to_string_lossy().to_string();
+            let cache_key = cache_key.to_string();
+            let status = Command::new("sudo")
+                .args(["-u", &user, "sh", "-c"])
+                .arg(format!("echo '{cache_key}' > '{cache_path_str}'"))
+                .status()
+                .await?;
+
+            if !status.success() {
+                anyhow::bail!("Failed to write cache key as user '{user}'");
             }
-            std::fs::write(cache_path, cache_key)?;
-            Ok::<(), anyhow::Error>(())
-        })
-        .await??;
+        } else {
+            let cache_key = cache_key.to_string();
+            tokio::task::spawn_blocking(move || {
+                std::fs::write(cache_path, cache_key)?;
+                Ok::<(), anyhow::Error>(())
+            })
+            .await??;
+        }
         Ok(())
     }
 
-    /// Install the built package via sudo omg install <path>
+    /// Install the built package via direct ALPM or sudo omg install <path>
     async fn install_built_package(pkg_path: &Path) -> Result<()> {
         println!("{} Installing built package...", "→".blue());
 
         let pkg_path_str = pkg_path.to_string_lossy().to_string();
 
-        if crate::core::is_root() {
+        // Use direct ALPM if we have capabilities (turbo mode) or running as root
+        if crate::core::caps::can_write_pacman_db() {
             crate::package_managers::execute_transaction(vec![pkg_path_str], false, false, None)?;
         } else {
             crate::core::privilege::run_self_sudo(&["install", "--", &pkg_path_str]).await?;
@@ -1843,21 +1965,45 @@ impl AurClient {
         Ok(())
     }
 
-    /// Clean build directory for a package
     pub fn clean(&self, package: &str) -> Result<()> {
         let pkg_dir = self.build_dir.join(package);
         if pkg_dir.exists() {
-            std::fs::remove_dir_all(&pkg_dir)?;
+            if let Some(user) = get_original_user() {
+                let pkg_dir_str = pkg_dir.to_string_lossy().to_string();
+                let status = std::process::Command::new("sudo")
+                    .args(["-u", &user, "rm", "-rf", "--", &pkg_dir_str])
+                    .status()?;
+                if !status.success() {
+                    anyhow::bail!("Failed to clean directory as user '{user}'");
+                }
+            } else {
+                std::fs::remove_dir_all(&pkg_dir)?;
+            }
             println!("{} Cleaned build directory for {}", "✓".green(), package);
         }
         Ok(())
     }
 
-    /// Clean all build directories
     pub fn clean_all(&self) -> Result<()> {
         if self.build_dir.exists() {
-            std::fs::remove_dir_all(&self.build_dir)?;
-            std::fs::create_dir_all(&self.build_dir)?;
+            if let Some(user) = get_original_user() {
+                let build_dir_str = self.build_dir.to_string_lossy().to_string();
+                let status = std::process::Command::new("sudo")
+                    .args(["-u", &user, "rm", "-rf", "--", &build_dir_str])
+                    .status()?;
+                if !status.success() {
+                    anyhow::bail!("Failed to clean directory as user '{user}'");
+                }
+                let status = std::process::Command::new("sudo")
+                    .args(["-u", &user, "mkdir", "-p", "--", &build_dir_str])
+                    .status()?;
+                if !status.success() {
+                    anyhow::bail!("Failed to recreate directory as user '{user}'");
+                }
+            } else {
+                std::fs::remove_dir_all(&self.build_dir)?;
+                std::fs::create_dir_all(&self.build_dir)?;
+            }
             println!("{} Cleaned all AUR build directories", "✓".green());
         }
         Ok(())
@@ -1892,7 +2038,10 @@ pub async fn search_detailed(query: &str) -> Result<Vec<AurPackageDetail>> {
     }
 
     let client = shared_client().clone();
-    let url = format!("{AUR_RPC_URL}?v=5&type=search&arg={query}");
+    let url = format!(
+        "{AUR_RPC_URL}?v=5&type=search&arg={}",
+        urlencoding::encode(query)
+    );
 
     let response: AurDetailedResponse = client
         .get(&url)

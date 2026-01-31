@@ -48,7 +48,7 @@ fn get_mirrors() -> Result<Vec<String>> {
     let mirrorlist = fs::read_to_string(&mirrorlist_path)
         .with_context(|| format!("Failed to read {}", mirrorlist_path.display()))?;
 
-    let mut mirrors = Vec::new();
+    let mut mirrors = Vec::with_capacity(16);
     for line in mirrorlist.lines() {
         let line = line.trim();
         // Skip comments and empty lines
@@ -117,7 +117,7 @@ fn save_cached_mirrors(mirrors: &[String]) {
 fn build_db_url(mirror_template: &str, repo: &str) -> String {
     mirror_template
         .replace("$repo", repo)
-        .replace("$arch", "x86_64")
+        .replace("$arch", std::env::consts::ARCH)
         + "/"
         + repo
         + ".db"
@@ -305,8 +305,8 @@ pub async fn sync_databases_parallel() -> Result<()> {
     };
 
     // Collect all repos to sync from pacman.conf
-    let mut repos_to_sync: Vec<(String, Vec<String>, PathBuf)> = Vec::new();
     let configured_repos = get_configured_repos();
+    let mut repos_to_sync: Vec<(String, Vec<String>, PathBuf)> = Vec::with_capacity(configured_repos.len());
 
     // Standard repos (use mirrorlist)
     let standard_repos: std::collections::HashSet<&str> = [
@@ -358,7 +358,8 @@ pub async fn sync_databases_parallel() -> Result<()> {
         .collect();
 
     // Run all downloads in parallel using tokio::spawn
-    let mut handles = Vec::new();
+    let repos_count = repos_to_sync.len();
+    let mut handles = Vec::with_capacity(repos_count);
 
     for (i, (_, urls, dest)) in repos_to_sync.into_iter().enumerate() {
         let client = client.clone();
@@ -372,7 +373,7 @@ pub async fn sync_databases_parallel() -> Result<()> {
     }
 
     // Wait for all downloads
-    let mut errors = Vec::new();
+    let mut errors = Vec::with_capacity(repos_count);
     for handle in handles {
         match handle.await {
             Ok(Ok(())) => {}
@@ -389,6 +390,7 @@ pub async fn sync_databases_parallel() -> Result<()> {
     println!();
 
     if errors.is_empty() {
+        crate::package_managers::alpm_direct::clear_alpm_cache();
         println!("{} Databases synchronized successfully!\n", "✓".green());
         Ok(())
     } else {
@@ -402,7 +404,7 @@ pub async fn sync_databases_parallel() -> Result<()> {
 /// Parse custom repositories from pacman.conf
 fn get_custom_repos() -> Result<Vec<(String, String)>> {
     let pacman_conf = fs::read_to_string("/etc/pacman.conf")?;
-    let mut repos = Vec::new();
+    let mut repos = Vec::with_capacity(4);
     let mut current_repo: Option<String> = None;
 
     for line in pacman_conf.lines() {
@@ -416,15 +418,15 @@ fn get_custom_repos() -> Result<Vec<(String, String)>> {
         // Check for repo section
         if line.starts_with('[') && line.ends_with(']') {
             let name = &line[1..line.len() - 1];
-            // Skip standard repos
+            // Skip standard repos (use mirrorlist) and options section
             if [
                 "options",
                 "core",
                 "extra",
                 "multilib",
-                "community",
-                "testing",
-                "omarchy",
+                "core-testing",
+                "extra-testing",
+                "multilib-testing",
             ]
             .contains(&name)
             {
@@ -523,7 +525,7 @@ pub async fn select_fastest_mirrors(count: usize) -> Result<Vec<String>> {
         })
         .collect();
 
-    let mut results: Vec<(String, Duration)> = Vec::new();
+    let mut results: Vec<(String, Duration)> = Vec::with_capacity(handles.len());
     for handle in handles {
         if let Ok(Some(result)) = handle.await {
             results.push(result);
@@ -713,8 +715,9 @@ pub async fn download_packages_parallel(
     main_pb.finish_and_clear();
 
     // Collect results
-    let mut paths = Vec::new();
-    let mut errors = Vec::new();
+    let results_len = results.len();
+    let mut paths = Vec::with_capacity(results_len);
+    let mut errors = Vec::with_capacity(results_len / 10 + 1);
 
     for result in results {
         match result {
