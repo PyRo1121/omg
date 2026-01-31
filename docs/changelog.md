@@ -201,6 +201,18 @@ Updated CLI commands to use pure Rust:
 
 ### 🐛 Bug Fixes
 
+- Resolve all Clippy warnings for CI
+
+  - Add inline format args to mock.rs state file paths
+
+  - Fix branches_sharing_code in search.rs
+
+  - Allow redundant_clone in test fixtures (Version type constraint)
+
+  - Allow unsafe_code in daemon StringPool (justified with safety comment)
+
+  - Fix .installed() method call signature in test
+
 - Apply cargo fmt formatting
 - Use vinxi build for SolidStart site in release script
 
