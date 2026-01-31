@@ -174,7 +174,7 @@ impl MockPackageManager {
     }
 
     fn load_state(distro_name: &str) -> MockState {
-        let path = paths::data_dir().join(format!("mock_state_{}.json", distro_name));
+        let path = paths::data_dir().join(format!("mock_state_{distro_name}.json"));
         if let Ok(data) = fs::read_to_string(&path) {
             // Handle migration from old format (HashSet) to new format (HashMap)
             // This is a bit tricky with serde.
@@ -213,7 +213,7 @@ impl MockPackageManager {
     }
 
     fn save_state(distro_name: &str, state: &MockState) {
-        let path = paths::data_dir().join(format!("mock_state_{}.json", distro_name));
+        let path = paths::data_dir().join(format!("mock_state_{distro_name}.json"));
         tracing::debug!("Mock saving state to {}", path.display());
         let _ = fs::create_dir_all(path.parent().unwrap());
         if let Ok(data) = serde_json::to_string(state) {

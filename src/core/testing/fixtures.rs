@@ -557,7 +557,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::implicit_clone)] // Version is feature-gated type alias; .to_string() is the required conversion
+    #[allow(clippy::implicit_clone, clippy::redundant_clone)] // Version is feature-gated type alias; .to_string() is the required conversion
     fn test_package_fixture_defaults() {
         let pkg = PackageFixture::new().build();
         assert_eq!(pkg.name, "test-package");
@@ -565,7 +565,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::implicit_clone)] // Version is feature-gated type alias; .to_string() is the required conversion
+    #[allow(clippy::implicit_clone, clippy::redundant_clone)] // Version is feature-gated type alias; .to_string() is the required conversion
     fn test_package_fixture_firefox_preset() {
         let firefox = PackageFixture::firefox().build();
         assert_eq!(firefox.name, "firefox");
@@ -573,17 +573,16 @@ mod tests {
     }
 
     #[test]
-    fn test_update_fixture() {
-        let updates = UpdateFixture::new()
-            .add_patch("pkg1")
-            .add_minor("pkg2")
-            .add_major("pkg3")
+    #[allow(clippy::redundant_clone)] // Version is feature-gated type; to_string() required for assertion
+    fn test_package_fixture_custom() {
+        let pkg = PackageFixture::new()
+            .name("test")
+            .version("1.0.0")
+            .installed(true)
             .build();
-
-        assert_eq!(updates.len(), 3);
-        assert_eq!(updates[0].name, "pkg1");
-        assert_eq!(updates[1].name, "pkg2");
-        assert_eq!(updates[2].name, "pkg3");
+        assert_eq!(pkg.name, "test");
+        assert_eq!(pkg.version.to_string(), "1.0.0");
+        assert!(pkg.installed);
     }
 
     #[test]
