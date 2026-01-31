@@ -19,6 +19,7 @@ use std::sync::Mutex;
 static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
+#[allow(unsafe_code)] // Test requires env var modification
 fn test_distro_override_arch() {
     // ===== ARRANGE =====
     init_test_env();
@@ -38,6 +39,7 @@ fn test_distro_override_arch() {
 
 #[test]
 #[cfg(feature = "debian")]
+#[allow(unsafe_code)] // Test requires env var modification
 fn test_distro_override_debian() {
     // ===== ARRANGE =====
     init_test_env();
@@ -55,6 +57,7 @@ fn test_distro_override_debian() {
 
 #[test]
 #[cfg(feature = "debian")]
+#[allow(unsafe_code)] // Test requires env var modification
 fn test_distro_override_ubuntu() {
     // ===== ARRANGE =====
     init_test_env();
@@ -71,6 +74,7 @@ fn test_distro_override_ubuntu() {
 }
 
 #[tokio::test]
+#[allow(unsafe_code)] // Test setup requires env var modification
 async fn test_mock_package_manager_search() {
     use crate::common::fixtures::{PackageFixture, PackageFixtureExt};
     use crate::common::mocks::{MockPackageDb, MockPackageManager};
@@ -95,6 +99,7 @@ async fn test_mock_package_manager_search() {
 }
 
 #[tokio::test]
+#[allow(unsafe_code)] // Test setup requires env var modification
 async fn test_mock_package_manager_install() {
     use crate::common::fixtures::{PackageFixture, PackageFixtureExt};
     use crate::common::mocks::{MockPackageDb, MockPackageManager};
@@ -121,6 +126,7 @@ async fn test_mock_package_manager_install() {
 }
 
 #[tokio::test]
+#[allow(unsafe_code)] // Test setup requires env var modification
 async fn test_mock_package_manager_info() {
     use crate::common::fixtures::{PackageFixture, PackageFixtureExt};
     use crate::common::mocks::{MockPackageDb, MockPackageManager};

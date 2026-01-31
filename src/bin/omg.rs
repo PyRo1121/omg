@@ -24,7 +24,9 @@ use omg_lib::cli::{
     SnapshotCommands, commands,
 };
 use omg_lib::cli::{blame, ci, diff, migrate, outdated, pin, size, snapshot, why};
-use omg_lib::core::{elevate_if_needed, is_elevated, is_root, set_yes_flag};
+#[cfg(feature = "arch")]
+use omg_lib::core::is_elevated;
+use omg_lib::core::{elevate_if_needed, is_root, set_yes_flag};
 use omg_lib::hooks;
 
 /// Print minimal success message for fast elevated path
@@ -183,7 +185,7 @@ fn try_fast_elevated(args: &[String]) -> Option<Result<()>> {
 }
 
 #[cfg(not(feature = "arch"))]
-fn try_fast_elevated(_args: &[String]) -> Option<Result<()>> {
+const fn try_fast_elevated(_args: &[String]) -> Option<Result<()>> {
     None
 }
 

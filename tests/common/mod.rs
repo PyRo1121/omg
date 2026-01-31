@@ -35,6 +35,7 @@ static INIT: Once = Once::new();
 /// Note: Environment variables are set once at initialization. Tests that need
 /// to modify environment variables should use the `#[serial]` attribute from
 /// the `serial_test` crate to prevent data races.
+#[allow(unsafe_code)] // Test initialization requires env var setup
 pub fn init_test_env() {
     INIT.call_once(|| {
         // SAFETY: We are in a single-threaded context during Once::call_once initialization.

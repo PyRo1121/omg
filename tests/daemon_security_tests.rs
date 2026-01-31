@@ -12,6 +12,7 @@ use tempfile::TempDir;
 
 #[tokio::test]
 #[serial]
+#[allow(unsafe_code)] // Test setup requires env var modification
 async fn test_global_rate_limiting() {
     // Clear all caches before changing environment
     #[cfg(feature = "arch")]
@@ -62,6 +63,7 @@ async fn test_global_rate_limiting() {
 
 #[tokio::test]
 #[serial]
+#[allow(unsafe_code)] // Test setup requires env var modification
 async fn test_input_validation_audit() {
     // Clear all caches before changing environment
     #[cfg(feature = "arch")]
@@ -131,6 +133,7 @@ async fn test_input_validation_audit() {
 
 #[tokio::test]
 #[serial]
+#[allow(unsafe_code)] // Test setup requires env var modification
 async fn test_batch_size_limit_audit() {
     // Clear all caches before changing environment
     #[cfg(feature = "arch")]

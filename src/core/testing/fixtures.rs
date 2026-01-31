@@ -573,7 +573,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::redundant_clone)] // Version is feature-gated type; to_string() required for assertion
+    #[allow(clippy::redundant_clone, clippy::implicit_clone)] // Version is feature-gated type; to_string() required for assertion
     fn test_package_fixture_custom() {
         let pkg = PackageFixture::new()
             .name("test")

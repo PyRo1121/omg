@@ -54,12 +54,13 @@ impl MockPackageDb {
 
     pub fn remove(&self, name: &str) -> Result<(), String> {
         let mut installed = self.installed.lock().unwrap();
-        if let Some(pos) = installed.iter().position(|n| n == name) {
-            installed.remove(pos);
-            Ok(())
-        } else {
-            Err(format!("Package {name} not installed"))
-        }
+        installed.iter().position(|n| n == name).map_or_else(
+            || Err(format!("Package {name} not installed")),
+            |pos| {
+                installed.remove(pos);
+                Ok(())
+            },
+        )
     }
 
     pub fn is_installed(&self, name: &str) -> bool {
@@ -355,7 +356,7 @@ pub struct MockPackageManager {
 }
 
 impl MockPackageManager {
-    pub fn new(db: MockPackageDb) -> Self {
+    pub const fn new(db: MockPackageDb) -> Self {
         Self { db }
     }
 }
