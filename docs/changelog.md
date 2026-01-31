@@ -201,6 +201,24 @@ Updated CLI commands to use pure Rust:
 
 ### 🐛 Bug Fixes
 
+- Resolve remaining platform CI errors
+
+Fedora tests:
+
+  - Add reasons to #[ignore] attributes (clippy::ignore_without_reason)
+
+  - Prefix unused test variables with underscore
+
+  - Flip if-else to remove boolean not (clippy::if_not_else)
+
+Debian code:
+
+  - Fix missing function: show_dependency_chain_debian -> show_deps_debian
+
+  - Fix moved value: add as_ref() to candidate.map() to avoid move
+
+All fixes maintain existing test logic while satisfying Clippy pedantic mode.
+
 - Resolve platform-specific build errors
 
   - Windows: Add openssl-sys with vendored feature for Windows builds
