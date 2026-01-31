@@ -201,6 +201,26 @@ Updated CLI commands to use pure Rust:
 
 ### 🐛 Bug Fixes
 
+- Resolve platform-specific build errors
+
+  - Windows: Add openssl-sys with vendored feature for Windows builds
+
+  - Fedora: Add backticks to technical terms in docs (clippy::doc_markdown)
+
+  - Fedora: Collapse nested if statement (clippy::collapsible_if)
+
+  - Debian: Fix incorrect import path (cli::components::style -> cli::style)
+
+  - Debian: Remove dead code parsing output.stdout that doesn't exist
+
+Platform CI errors resolved:
+
+  - Windows build now compiles OpenSSL from source
+
+  - Fedora clippy warnings fixed
+
+  - Debian compilation errors fixed
+
 - Resolve Clippy warnings in property_tests_v2
 
   - Remove unused 'flags' vector in prop_flag_combinations test
