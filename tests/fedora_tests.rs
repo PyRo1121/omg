@@ -246,8 +246,7 @@ mod dnf_performance {
 
         assert!(
             duration.as_millis() < 500,
-            "Search should complete in <500ms with SQLite cache, got {:?}",
-            duration
+            "Search should complete in <500ms with SQLite cache, got {duration:?}"
         );
 
         Ok(())
@@ -263,8 +262,7 @@ mod dnf_performance {
 
         assert!(
             duration.as_millis() < 100,
-            "List installed should complete in <100ms (SQLite query), got {:?}",
-            duration
+            "List installed should complete in <100ms (SQLite query), got {duration:?}"
         );
 
         Ok(())
@@ -330,11 +328,11 @@ mod dnf_repository_metadata {
 
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().map_or(false, |ext| ext == "repo") {
+            if path.extension().is_some_and(|ext| ext == "repo") {
                 let content = fs::read_to_string(&path)?;
 
                 assert!(
-                    content.contains("[") && content.contains("]"),
+                    content.contains('[') && content.contains(']'),
                     "Repo file should contain sections"
                 );
 
