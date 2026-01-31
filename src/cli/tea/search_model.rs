@@ -316,11 +316,8 @@ impl Model for SearchModel {
 
 /// Helper function to truncate text
 fn truncate(text: &str, max_len: usize) -> String {
-    if text.len() <= max_len {
-        text.to_string()
-    } else {
-        format!("{}...", &text[..max_len])
-    }
+    // Delegate to shared implementation
+    crate::cli::packages::common::truncate(text, max_len)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -414,8 +411,11 @@ mod tests {
 
     #[test]
     fn test_truncate() {
-        assert_eq!(truncate("hello world", 5), "hello...");
+        // With max=5, we get 2 chars + "..." (3 chars) = 5 total
+        assert_eq!(truncate("hello world", 5), "he...");
         assert_eq!(truncate("hi", 10), "hi");
+        // With max=8, we get 5 chars + "..." = 8 total
+        assert_eq!(truncate("hello world", 8), "hello...");
     }
 
     #[test]

@@ -172,12 +172,10 @@ fn show_top_packages(limit: usize) -> Result<Cmd<()>> {
         .lines()
         .filter_map(|line| {
             let parts: Vec<_> = line.split('\t').collect();
-            if parts.len() == 2 {
+            (parts.len() == 2).then(|| {
                 let size: i64 = parts[0].parse().unwrap_or(0) * 1024; // KB to bytes
-                Some((parts[1].to_string(), size))
-            } else {
-                None
-            }
+                (parts[1].to_string(), size)
+            })
         })
         .collect();
 

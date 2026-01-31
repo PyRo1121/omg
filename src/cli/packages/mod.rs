@@ -11,7 +11,7 @@
 //! - Sync: Synchronize package databases
 
 mod clean;
-mod common;
+pub mod common;
 mod explicit;
 mod info;
 mod install;

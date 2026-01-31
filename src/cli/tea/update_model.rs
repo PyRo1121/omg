@@ -253,7 +253,7 @@ impl Model for UpdateModel {
                 Cmd::info("Executing system upgrade...")
             }
             UpdateMsg::DownloadProgress { percent } => {
-                self.download_percent = percent.clamp(0, 100);
+                self.download_percent = percent.min(100);
                 if self.download_percent >= 100 {
                     self.state = UpdateState::Installing;
                 }

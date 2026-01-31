@@ -291,15 +291,10 @@ pub async fn run(
     let sorted = workspace.sorted_projects()?;
 
     // Filter projects if requested
-    let projects: Vec<_> = sorted
+    let projects: Vec<&str> = sorted
         .iter()
-        .filter(|name| {
-            if let Some(f) = filter {
-                name.contains(f)
-            } else {
-                true
-            }
-        })
+        .filter(|name| filter.is_none_or(|f| name.contains(f)))
+        .map(String::as_str)
         .collect();
 
     if projects.is_empty() {
@@ -318,7 +313,7 @@ pub async fn run(
     Ok(())
 }
 
-fn run_sequential(workspace: &Workspace, projects: &[&String], command: &str, args: &[String]) {
+fn run_sequential(workspace: &Workspace, projects: &[&str], command: &str, args: &[String]) {
     let mut success = 0;
     let mut failed = 0;
 
@@ -354,7 +349,7 @@ fn run_sequential(workspace: &Workspace, projects: &[&String], command: &str, ar
 
 async fn run_parallel(
     workspace: &Workspace,
-    projects: &[&String],
+    projects: &[&str],
     command: &str,
     args: &[String],
 ) -> Result<()> {
@@ -368,7 +363,7 @@ async fn run_parallel(
             let proj = project.clone();
             let cmd = command.to_string();
             let cmd_args = args.to_vec();
-            let proj_name = (*name).clone();
+            let proj_name = (*name).to_string();
 
             let handle = task::spawn_blocking(move || {
                 let result = run_project_command(&path, &proj, &cmd, &cmd_args);

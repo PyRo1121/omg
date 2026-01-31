@@ -70,7 +70,7 @@ async fn search_internal(
     }
 
     let official_search = async {
-        let mut results = Vec::new();
+        let mut results = Vec::with_capacity(50); // Pre-allocate for typical search results
         #[cfg(unix)]
         if let Ok(mut client) = DaemonClient::connect().await
             && let Ok(res) = client.search(query, Some(50)).await
@@ -104,13 +104,10 @@ async fn search_internal(
         #[cfg(feature = "arch")]
         {
             let aur = AurClient::new();
-            if let Ok(pkgs) = aur.search(query).await {
-                pkgs.into_iter()
-                    .map(DisplayPackage::from_package)
-                    .collect::<Vec<_>>()
-            } else {
-                Vec::new()
-            }
+            aur.search(query)
+                .await
+                .map(|pkgs| pkgs.into_iter().map(DisplayPackage::from_package).collect())
+                .unwrap_or_default()
         }
         #[cfg(not(feature = "arch"))]
         Vec::new()
@@ -254,10 +251,9 @@ fn search_sync_official_only(query: &str) -> Result<bool> {
 }
 
 fn format_package(pkg: &DisplayPackage) -> String {
-    let source_style = if pkg.source == "AUR" {
-        style::warning(&pkg.source)
-    } else {
-        style::info(&pkg.source)
+    let source_style = match pkg.source.as_str() {
+        "AUR" => style::warning(&pkg.source),
+        _ => style::info(&pkg.source),
     };
 
     format!(

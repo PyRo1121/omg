@@ -95,13 +95,12 @@ fn print_install_success(packages: &[String]) {
         "╰─────────────────────────────────────────╯".green()
     );
 
+    println!();
     if packages.len() <= 5 {
-        println!();
         for pkg in packages {
             println!("    {} {}", "✓".green().bold(), pkg.bold());
         }
     } else {
-        println!();
         println!(
             "    {} {} packages installed successfully",
             "✓".green().bold(),

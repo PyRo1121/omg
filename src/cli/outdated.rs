@@ -74,7 +74,7 @@ pub async fn run(security_only: bool, json: bool) -> Result<()> {
         })
         .collect();
 
-    outdated.sort_by_key(|p| p.name.clone());
+    outdated.sort_by(|a, b| a.name.cmp(&b.name));
 
     let filtered: Vec<_> = if security_only {
         outdated.into_iter().filter(|p| p.is_security).collect()
