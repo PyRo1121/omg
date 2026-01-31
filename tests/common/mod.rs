@@ -574,11 +574,10 @@ pub fn mock_install(package: &str, version: &str) -> Result<()> {
         return Ok(());
     }
 
-    let path = env::var("OMG_DATA_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            PathBuf::from(env::var("HOME").unwrap_or_default()).join(".local/share/omg")
-        });
+    let path = env::var("OMG_DATA_DIR").map_or_else(
+        |_| PathBuf::from(env::var("HOME").unwrap_or_default()).join(".local/share/omg"),
+        PathBuf::from,
+    );
 
     update_mock_state(&path, package, version, true)
 }
@@ -591,11 +590,10 @@ pub fn mock_available(package: &str, version: &str) -> Result<()> {
         return Ok(());
     }
 
-    let path = env::var("OMG_DATA_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            PathBuf::from(env::var("HOME").unwrap_or_default()).join(".local/share/omg")
-        });
+    let path = env::var("OMG_DATA_DIR").map_or_else(
+        |_| PathBuf::from(env::var("HOME").unwrap_or_default()).join(".local/share/omg"),
+        PathBuf::from,
+    );
 
     update_mock_state(&path, package, version, false)
 }
