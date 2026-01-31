@@ -152,7 +152,10 @@ jobs:
             features: fedora,pgp,license
             setup: |
               dnf install -y --setopt=install_weak_deps=False \
-                git clang cmake openssl-devel pkgconfig findutils curl
+                git clang cmake openssl-devel pkgconfig findutils curl \
+                rpm dnf sqlite yum-utils fedora-release
+              rpm --initdb
+              dnf makecache --refresh
               curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
               echo "$HOME/.cargo/bin" >> $GITHUB_PATH
               "$HOME/.cargo/bin/rustup" component add clippy rustfmt
@@ -372,7 +375,10 @@ jobs:
             features: fedora,pgp,license
             setup: |
               dnf install -y --setopt=install_weak_deps=False \
-                git clang cmake openssl-devel pkgconfig findutils curl
+                git clang cmake openssl-devel pkgconfig findutils curl \
+                rpm dnf sqlite yum-utils fedora-release
+              rpm --initdb
+              dnf makecache --refresh
               curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.92.0 --component llvm-tools-preview
               echo "$HOME/.cargo/bin" >> $GITHUB_PATH
             test_args: "--lib --test fedora_tests --test cross_platform_mock_tests"
