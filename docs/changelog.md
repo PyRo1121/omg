@@ -201,6 +201,24 @@ Updated CLI commands to use pure Rust:
 
 ### 🐛 Bug Fixes
 
+- Resolve all Clippy errors for CI compliance
+
+  - Make is_elevated import conditional on arch feature
+
+  - Make try_fast_elevated const fn when arch feature disabled
+
+  - Add #[allow(unsafe_code)] to all test functions with env var modifications
+
+  - Make test helper functions const where possible
+
+  - Replace if-let-else with Option::map_or_else in mocks
+
+  - Add clippy::implicit_clone allow to Version fixture tests
+
+  - Remove duplicate allow attribute
+
+All library and bin code now passes clippy with pedantic lints
+
 - Use inline format args in cross_platform_mock_tests
 - Apply cargo fmt import ordering
 - Resolve all Clippy warnings for CI
