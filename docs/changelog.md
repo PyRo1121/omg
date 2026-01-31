@@ -201,6 +201,7 @@ Updated CLI commands to use pure Rust:
 
 ### 🐛 Bug Fixes
 
+- Add redundant_clone allow to test_package_fixture_builder
 - Resolve all Clippy errors for CI compliance
 
   - Make is_elevated import conditional on arch feature
