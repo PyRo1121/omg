@@ -86,7 +86,7 @@ jobs:
               - '.github/workflows/**'
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@1.92.0
         with:
           components: rustfmt, clippy
 
