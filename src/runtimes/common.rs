@@ -75,11 +75,7 @@ pub async fn download_with_progress(
 
     let mut stream = response.bytes_stream();
     let mut downloaded: u64 = 0;
-    let mut hasher = if expected_sha256.is_some() {
-        Some(Sha256::new())
-    } else {
-        None
-    };
+    let mut hasher = expected_sha256.is_some().then(Sha256::new);
 
     while let Some(item) = stream.next().await {
         let chunk = item.context("Error downloading chunk")?;
@@ -150,6 +146,15 @@ pub async fn extract_tar_gz(
                 continue;
             }
 
+            // Security: Reject paths with parent directory traversal (zip-slip protection)
+            if stripped
+                .components()
+                .any(|c| c == std::path::Component::ParentDir)
+            {
+                tracing::warn!("Skipping path with directory traversal: {}", path.display());
+                continue;
+            }
+
             let dest_path = dest_dir.join(&stripped);
             pb.set_message(format!("Extracting: {}", stripped.display()));
 
@@ -187,10 +192,19 @@ pub async fn extract_tar_xz(
         pb.set_style(extract_progress_style());
         pb.set_message("Decompressing XZ...");
 
-        // Pure Rust XZ decompression
+        // Pure Rust XZ decompression with size limit to prevent zip bombs
+        const MAX_DECOMPRESSED_SIZE: usize = 2 * 1024 * 1024 * 1024; // 2 GB limit for runtimes
         let mut decompressed = Vec::new();
         lzma_rs::xz_decompress(&mut BufReader::new(file), &mut decompressed)
             .context("Failed to decompress XZ archive")?;
+
+        if decompressed.len() > MAX_DECOMPRESSED_SIZE {
+            anyhow::bail!(
+                "Decompressed archive too large: {} bytes exceeds {} byte limit",
+                decompressed.len(),
+                MAX_DECOMPRESSED_SIZE
+            );
+        }
 
         pb.set_message("Extracting...");
 
@@ -204,6 +218,15 @@ pub async fn extract_tar_xz(
             // Strip leading components
             let stripped: PathBuf = path.components().skip(strip_components).collect();
             if stripped.as_os_str().is_empty() {
+                continue;
+            }
+
+            // Security: Reject paths with parent directory traversal (zip-slip protection)
+            if stripped
+                .components()
+                .any(|c| c == std::path::Component::ParentDir)
+            {
+                tracing::warn!("Skipping path with directory traversal: {}", path.display());
                 continue;
             }
 
@@ -254,6 +277,15 @@ pub async fn extract_zip(
             // Strip leading components
             let stripped: PathBuf = path.components().skip(strip_components).collect();
             if stripped.as_os_str().is_empty() {
+                continue;
+            }
+
+            // Security: Reject paths with parent directory traversal (zip-slip protection)
+            if stripped
+                .components()
+                .any(|c| c == std::path::Component::ParentDir)
+            {
+                tracing::warn!("Skipping path with directory traversal: {}", path.display());
                 continue;
             }
 
@@ -312,7 +344,7 @@ pub fn get_current_version(versions_dir: &Path) -> Option<String> {
     let current_link = versions_dir.join("current");
     fs::read_link(&current_link)
         .ok()
-        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
 }
 
 /// List installed versions in a directory
@@ -324,7 +356,7 @@ pub fn list_installed_versions(versions_dir: &Path) -> Result<Vec<String>> {
     let mut versions = Vec::new();
     for entry in fs::read_dir(versions_dir)? {
         let entry = entry?;
-        let name = entry.file_name().to_string_lossy().to_string();
+        let name = entry.file_name().to_string_lossy().into_owned();
         if name != "current" && entry.file_type()?.is_dir() {
             versions.push(name);
         }
@@ -336,29 +368,29 @@ pub fn list_installed_versions(versions_dir: &Path) -> Result<Vec<String>> {
 
 /// Compare semantic version strings (descending order)
 pub fn version_cmp(a: &str, b: &str) -> Ordering {
-    let a_parts: Vec<u32> = a
-        .split(|c: char| !c.is_ascii_digit())
-        .filter_map(|p| p.parse().ok())
-        .collect();
-    let b_parts: Vec<u32> = b
-        .split(|c: char| !c.is_ascii_digit())
-        .filter_map(|p| p.parse().ok())
-        .collect();
+    let parse_parts = |s: &str| -> Vec<u32> {
+        s.split(|c: char| !c.is_ascii_digit())
+            .filter_map(|p| p.parse().ok())
+            .collect()
+    };
 
-    for i in 0..a_parts.len().max(b_parts.len()) {
-        let a_part = a_parts.get(i).unwrap_or(&0);
-        let b_part = b_parts.get(i).unwrap_or(&0);
-        if a_part != b_part {
-            return a_part.cmp(b_part);
-        }
-    }
+    let a_parts = parse_parts(a);
+    let b_parts = parse_parts(b);
+    let max_len = a_parts.len().max(b_parts.len());
 
-    Ordering::Equal
+    (0..max_len)
+        .map(|i| {
+            let a_part = a_parts.get(i).copied().unwrap_or(0);
+            let b_part = b_parts.get(i).copied().unwrap_or(0);
+            a_part.cmp(&b_part)
+        })
+        .find(|&ord| ord != Ordering::Equal)
+        .unwrap_or(Ordering::Equal)
 }
 
 /// Normalize version string (remove leading 'v' if present)
 pub fn normalize_version(version: &str) -> String {
-    version.trim_start_matches('v').to_string()
+    version.trim_start_matches('v').to_owned()
 }
 
 /// Extract domain from URL for error messages
@@ -371,27 +403,24 @@ fn extract_domain(url: &str) -> &str {
 
 /// Print installation success message
 pub fn print_installed(runtime: &str, version: &str) {
-    tracing::info!(
-        "\n{} {} {} installed successfully!",
-        "✓".green().bold(),
-        runtime.cyan(),
-        version.yellow()
-    );
+    let check_green = "✓".green();
+    let check = check_green.bold();
+    let rt = runtime.cyan();
+    let ver = version.yellow();
+    tracing::info!("\n{check} {rt} {ver} installed successfully!");
 }
 
 /// Print version switch message
 pub fn print_using(runtime: &str, version: &str, bin_path: &Path) {
-    tracing::info!(
-        "{} Now using {} {}",
-        "✓".green(),
-        runtime.cyan(),
-        version.yellow()
-    );
-    tracing::info!(
-        "  {} {}",
-        "PATH:".dimmed(),
-        bin_path.display().to_string().dimmed()
-    );
+    // Bind styled temporaries to avoid Rust 2024 drop order issues
+    let check = "✓".green();
+    let rt = runtime.cyan();
+    let ver = version.yellow();
+    tracing::info!("{check} Now using {rt} {ver}");
+
+    let path_label = "PATH:".dimmed();
+    let path_display = bin_path.display();
+    tracing::info!("  {path_label} {path_display}");
 }
 
 /// Print already installed message
