@@ -80,15 +80,15 @@ impl EnvironmentState {
             .await
             .unwrap_or_default()
             .into_iter()
-            .map(|pkg: String| pkg.trim().to_string())
-            .filter(|pkg: &String| !pkg.is_empty())
+            .map(|pkg| pkg.trim().to_string())
+            .filter(|pkg| !pkg.is_empty())
             .collect();
         #[cfg(all(feature = "debian", not(feature = "arch")))]
         let mut packages: Vec<String> = list_explicit()
             .unwrap_or_default()
             .into_iter()
-            .map(|pkg: String| pkg.trim().to_string())
-            .filter(|pkg: &String| !pkg.is_empty())
+            .map(|pkg| pkg.trim().to_string())
+            .filter(|pkg| !pkg.is_empty())
             .collect();
         #[cfg(not(any(feature = "arch", feature = "debian")))]
         let mut packages: Vec<String> = Vec::new();
@@ -163,7 +163,7 @@ impl EnvironmentState {
             .iter()
             .map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
             .collect();
-        runtimes.sort_by(|(lhs, _), (rhs, _)| lhs.cmp(rhs));
+        runtimes.sort_by(|a, b| a.0.cmp(&b.0));
 
         let mut packages: Vec<String> = self
             .packages

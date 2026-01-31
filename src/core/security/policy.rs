@@ -71,11 +71,7 @@ impl SecurityPolicy {
     #[must_use]
     pub fn load_default() -> Option<Self> {
         let policy_path = paths::config_dir().join("policy.toml");
-        if policy_path.exists() {
-            Self::load(policy_path).ok()
-        } else {
-            None
-        }
+        Self::load(policy_path).ok()
     }
 
     /// Assign a security grade to a package based on metadata

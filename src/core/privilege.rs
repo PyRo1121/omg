@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(not(test))]
 use std::sync::LazyLock;
 
+#[cfg(not(test))]
 use anyhow::Context;
 #[cfg(not(test))]
 use parking_lot::Mutex;

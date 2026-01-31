@@ -169,20 +169,17 @@ fn detect_ram_gb() -> f64 {
 /// Check if a tool is available in PATH
 fn is_tool_available(name: &str) -> bool {
     // Check PATH first
-    if let Ok(path) = std::env::var("PATH") {
-        for dir in path.split(':') {
-            if Path::new(dir).join(name).exists() {
-                return true;
-            }
-        }
+    if let Ok(path) = std::env::var("PATH")
+        && path.split(':').any(|dir| Path::new(dir).join(name).exists())
+    {
+        return true;
     }
 
     // Fallback to which command
     Command::new("which")
         .args(["--", name])
         .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+        .is_ok_and(|o| o.status.success())
 }
 
 #[cfg(test)]

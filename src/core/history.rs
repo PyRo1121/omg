@@ -99,8 +99,9 @@ impl HistoryManager {
         history.push(transaction);
 
         // Keep only last 1000 transactions to prevent file bloat
-        if history.len() > 1000 {
-            history.drain(0..history.len() - 1000);
+        let excess = history.len().saturating_sub(1000);
+        if excess > 0 {
+            history.drain(0..excess);
         }
 
         self.save(&history)
