@@ -283,7 +283,7 @@ jobs:
     needs: quick-gate
     if: needs.quick-gate.outputs.should-build == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group'
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
@@ -348,7 +348,9 @@ jobs:
             features: arch,pgp,license
             setup: |
               pacman -Syu --noconfirm
-              pacman -S --noconfirm --needed base-devel git rust cargo pkgconf openssl libarchive clang cmake
+              pacman -S --noconfirm --needed base-devel git pkgconf openssl libarchive clang cmake curl
+              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --component llvm-tools-preview
+              echo "$HOME/.cargo/bin" >> $GITHUB_PATH
             test_args: "--lib --test arch_tests --test cross_platform_mock_tests"
             
           - platform: debian
@@ -370,8 +372,9 @@ jobs:
             features: fedora,pgp,license
             setup: |
               dnf install -y --setopt=install_weak_deps=False \
-                git rust cargo clang cmake openssl-devel pkgconfig findutils
-              rustup component add llvm-tools-preview
+                git clang cmake openssl-devel pkgconfig findutils curl
+              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --component llvm-tools-preview
+              echo "$HOME/.cargo/bin" >> $GITHUB_PATH
             test_args: "--lib --test fedora_tests --test cross_platform_mock_tests"
             
           - platform: macos

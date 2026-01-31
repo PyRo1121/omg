@@ -319,14 +319,11 @@ fn show_deps_debian(package: &str) -> Cmd<()> {
     use crate::cli::components::Components;
     use crate::package_managers::debian_db;
 
-    let (deps, _) = match debian_db::get_package_dependencies(package) {
-        Ok(result) => result,
-        Err(_) => {
-            return Components::error_with_suggestion(
-                format!("Package '{package}' not found"),
-                "Try 'omg search' to find available packages",
-            );
-        }
+    let Ok((deps, _)) = debian_db::get_package_dependencies(package) else {
+        return Components::error_with_suggestion(
+            format!("Package '{package}' not found"),
+            "Try 'omg search' to find available packages",
+        );
     };
 
     if deps.is_empty() {
@@ -349,14 +346,11 @@ fn show_reverse_deps_debian(package: &str) -> Cmd<()> {
     use crate::cli::components::Components;
     use crate::package_managers::debian_db;
 
-    let (_, deps) = match debian_db::get_package_dependencies(package) {
-        Ok(result) => result,
-        Err(_) => {
-            return Components::error_with_suggestion(
-                format!("Package '{package}' not found"),
-                "Try 'omg search' to find available packages",
-            );
-        }
+    let Ok((_, deps)) = debian_db::get_package_dependencies(package) else {
+        return Components::error_with_suggestion(
+            format!("Package '{package}' not found"),
+            "Try 'omg search' to find available packages",
+        );
     };
 
     Cmd::batch(vec![

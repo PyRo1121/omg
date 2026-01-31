@@ -13,6 +13,7 @@ mod homebrew_integration {
     }
 
     #[tokio::test]
+    #[ignore = "requires network access to Homebrew API"]
     async fn test_search_common_formula() -> Result<()> {
         let pm = HomebrewPackageManager::new();
 
@@ -28,6 +29,7 @@ mod homebrew_integration {
     }
 
     #[tokio::test]
+    #[ignore = "requires network access to Homebrew API"]
     async fn test_search_nonexistent_formula() -> Result<()> {
         let pm = HomebrewPackageManager::new();
 
@@ -42,12 +44,13 @@ mod homebrew_integration {
     async fn test_list_installed_formulae() -> Result<()> {
         let pm = HomebrewPackageManager::new();
 
-        let installed = pm.list_installed().await?;
+        let _installed = pm.list_installed().await?;
 
         Ok(())
     }
 
     #[tokio::test]
+    #[ignore = "requires network access to Homebrew API"]
     async fn test_formula_info() -> Result<()> {
         let pm = HomebrewPackageManager::new();
 
@@ -65,10 +68,11 @@ mod homebrew_integration {
     }
 
     #[tokio::test]
+    #[ignore = "requires network access to Homebrew API"]
     async fn test_list_updates() -> Result<()> {
         let pm = HomebrewPackageManager::new();
 
-        let updates = pm.list_updates().await?;
+        let _updates = pm.list_updates().await?;
 
         Ok(())
     }
@@ -155,14 +159,14 @@ mod homebrew_error_handling {
     async fn test_remove_not_installed_formula() {
         let pm = HomebrewPackageManager::new();
 
-        let result = pm.remove(&["not-installed-formula-xyz".to_string()]).await;
+        let _result = pm.remove(&["not-installed-formula-xyz".to_string()]).await;
     }
 
     #[tokio::test]
     async fn test_empty_formula_list_install() {
         let pm = HomebrewPackageManager::new();
 
-        let result = pm.install(&[]).await;
+        let _result = pm.install(&[]).await;
     }
 }
 
@@ -171,6 +175,7 @@ mod homebrew_performance {
     use std::time::Instant;
 
     #[tokio::test]
+    #[ignore = "requires network access to Homebrew API"]
     async fn test_search_performance() -> Result<()> {
         let pm = HomebrewPackageManager::new();
 
@@ -205,6 +210,7 @@ mod homebrew_performance {
     }
 
     #[tokio::test]
+    #[ignore = "requires network access to Homebrew API"]
     async fn test_multiple_searches_consistency() -> Result<()> {
         let pm = HomebrewPackageManager::new();
 
@@ -225,6 +231,7 @@ mod homebrew_api {
     use super::*;
 
     #[tokio::test]
+    #[ignore = "requires network access to Homebrew API"]
     async fn test_formula_api_fetch() -> Result<()> {
         let pm = HomebrewPackageManager::new();
 
@@ -237,10 +244,11 @@ mod homebrew_api {
     }
 
     #[tokio::test]
+    #[ignore = "requires network access to Homebrew API"]
     async fn test_cask_search() -> Result<()> {
         let pm = HomebrewPackageManager::new();
 
-        let results = pm.search("visual-studio-code").await?;
+        let _results = pm.search("visual-studio-code").await?;
 
         Ok(())
     }

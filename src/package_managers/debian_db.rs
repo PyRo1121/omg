@@ -107,6 +107,7 @@ impl DebianMmapIndex {
         // - No concurrent mutations possible (read-only file descriptor)
         // Alternative considered: Read entire file into memory would be slower
         // and use more RAM for large Debian package databases (>500MB)
+        #[allow(unsafe_code)]
         let mmap = unsafe { Mmap::map(&file)? };
 
         // Initialize last_accessed to current time
@@ -997,8 +998,8 @@ pub fn cleanup_expired_mmaps() {
     }
 }
 
-/// Get package dependencies from /var/lib/dpkg/status
-/// Returns (dependencies, reverse_dependencies) for the specified package
+/// Get package dependencies from `/var/lib/dpkg/status`
+/// Returns `(dependencies, reverse_dependencies)` for the specified package
 pub fn get_package_dependencies(package_name: &str) -> Result<(Vec<String>, Vec<String>)> {
     if crate::core::paths::test_mode() {
         return Ok((vec!["libc6".to_string()], vec![]));
