@@ -201,6 +201,7 @@ Updated CLI commands to use pure Rust:
 
 ### 🐛 Bug Fixes
 
+- Apply cargo fmt formatting
 - Use vinxi build for SolidStart site in release script
 
 The release script was incorrectly running 'vite build' directly, which
