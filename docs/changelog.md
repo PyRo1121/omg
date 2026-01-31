@@ -201,6 +201,7 @@ Updated CLI commands to use pure Rust:
 
 ### 🐛 Bug Fixes
 
+- Apply cargo fmt import ordering
 - Resolve all Clippy warnings for CI
 
   - Add inline format args to mock.rs state file paths
