@@ -219,6 +219,22 @@ Updated CLI commands to use pure Rust:
 
 ### 🐛 Bug Fixes
 
+- Add RPM/DNF system dependencies to Fedora CI containers
+
+Fedora coverage and integration tests were failing due to missing
+
+system package manager dependencies. This adds:
+
+  - rpm, dnf, sqlite: Core package manager tools
+
+  - yum-utils: Repository utilities
+
+  - fedora-release: Fedora metadata
+
+Also initializes RPM database and syncs DNF metadata cache to enable
+
+integration tests to query package state.
+
 - Pin Rust 1.92.0 in coverage job rustup installations
 
 Rust 1.93.0 introduced new clippy lints (missing_const_for_fn) that
