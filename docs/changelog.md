@@ -201,6 +201,16 @@ Updated CLI commands to use pure Rust:
 
 ### 🐛 Bug Fixes
 
+- Validate CI infrastructure changes in platform builds
+
+The path filter was detecting CI changes but never using them.
+
+All platform builds were skipped when only CI config changed.
+
+Added .github/workflows/** to rust filter to ensure CI changes
+
+trigger full platform validation.
+
 - Specify Rust toolchain version explicitly in Quick Gate
 - Use rustup in Arch/Fedora containers to respect rust-toolchain.toml
 
