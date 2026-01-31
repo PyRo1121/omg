@@ -191,6 +191,7 @@ quick-xml = { version = "0.37", features = ["serialize"], optional = true }  # F
 [target.'cfg(target_os = "windows")'.dependencies]
 winreg = { version = "0.55" }  # Windows registry access
 libscoop = { version = "0.1.0-beta.7" }  # Pure Rust Scoop implementation
+openssl-sys = { version = "0.9", features = ["vendored"] }  # Build OpenSSL from source on Windows
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
