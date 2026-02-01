@@ -1,0 +1,537 @@
+# Contributing to OMG
+
+Thank you for your interest in contributing to OMG! This guide will help you get started with development, testing, and submitting changes.
+
+---
+
+## 🚀 Quick Start
+
+### Prerequisites
+
+- **Rust:** 1.92 or later (uses Rust Edition 2024)
+- **Platform-specific dependencies:**
+  - **Arch Linux:** `base-devel`, `libalpm` (installed by default)
+  - **Debian/Ubuntu:** `build-essential`, `libapt-pkg-dev`
+  - **macOS:** Xcode Command Line Tools
+  - **Windows:** MSVC or MinGW-w64
+
+### Setup Development Environment
+
+```bash
+# Clone the repository
+git clone https://github.com/PyRo1121/omg.git
+cd omg
+
+# Build the project
+cargo build --features arch  # or 'debian', 'fedora', etc.
+
+# Run tests
+cargo test --features arch --lib
+
+# Run clippy (linter)
+cargo clippy --features arch -- -D warnings -W clippy::pedantic
+
+# Format code
+cargo fmt
+```
+
+### Running OMG Locally
+
+```bash
+# Run the CLI (debug build)
+cargo run --features arch -- search firefox
+
+# Run the daemon
+cargo run --features arch --bin omgd
+
+# Run with release optimizations
+cargo build --release --features arch
+./target/release/omg search firefox
+```
+
+---
+
+## 🏗️ Project Structure
+
+```
+omg/
+├── src/
+│   ├── bin/
+│   │   ├── omg.rs          # CLI entry point
+│   │   ├── omgd.rs         # Daemon entry point
+│   │   └── omg-fast.rs     # Fast CLI (direct mode)
+│   ├── cli/
+│   │   ├── args.rs         # Argument parsing (clap)
+│   │   └── commands.rs     # Command implementations
+│   ├── core/
+│   │   ├── types.rs        # Shared types
+│   │   ├── error.rs        # Error handling
+│   │   ├── database.rs     # redb wrapper
+│   │   ├── client.rs       # Daemon IPC client
+│   │   ├── http.rs         # HTTP client utilities
+│   │   └── paths.rs        # Path helpers
+│   ├── daemon/
+│   │   ├── server.rs       # Unix socket server
+│   │   └── cache.rs        # LRU cache
+│   ├── package_managers/
+│   │   ├── traits.rs       # PackageManager trait
+│   │   ├── arch.rs         # pacman/libalpm
+│   │   ├── alpm_ops.rs     # Direct ALPM operations
+│   │   ├── aur.rs          # AUR client
+│   │   ├── debian.rs       # APT integration
+│   │   └── types.rs        # Package types
+│   ├── runtimes/
+│   │   ├── node.rs         # Node.js/npm
+│   │   ├── python.rs       # Python/pip
+│   │   ├── go.rs           # Go modules
+│   │   ├── rust.rs         # Cargo
+│   │   ├── ruby.rs         # Gems
+│   │   ├── java.rs         # Maven/Gradle
+│   │   └── bun.rs          # Bun runtime
+│   └── config/
+│       └── settings.rs     # Configuration
+├── tests/                  # Integration tests
+├── docs/                   # Documentation
+└── scripts/                # Build/benchmark scripts
+```
+
+---
+
+## 📝 Code Style Guidelines
+
+### Rust Edition & Version
+
+- **Edition:** `2024` (latest stable Rust edition)
+- **MSRV:** `1.92+`
+- **Target:** Follow Rust 2024 idioms and zero-cost abstractions
+
+### Formatting
+
+We use `rustfmt` with default settings:
+
+```bash
+# Format all code
+cargo fmt
+
+# Check formatting without modifying
+cargo fmt -- --check
+```
+
+### Linting
+
+We enforce strict linting with `clippy`:
+
+```bash
+# Run clippy (enforces -D warnings)
+cargo clippy --features arch -- -D warnings -W clippy::pedantic
+
+# Fix auto-fixable warnings
+cargo clippy --features arch --fix
+```
+
+**Key clippy rules we follow:**
+- `-W clippy::pedantic` - Pedantic lints enabled
+- No `as any`, `@ts-ignore`, or type error suppression
+- No `.unwrap()` in production code (use `.expect()` with context)
+- Prefer `Arc` over `Clone` for large types in async contexts
+- Use `Cow<str>` for conditional ownership
+
+### Code Conventions
+
+#### Imports
+
+Order imports: `std::` → external crates → `crate::`/`super::`
+
+```rust
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
+use tokio::sync::RwLock;
+
+use crate::core::{Package, PackageSource};
+use super::types::PackageManager;
+```
+
+#### Error Handling
+
+- **Application code:** Use `anyhow::Result`
+- **Library APIs:** Use `thiserror` for custom error types
+- **Context:** Always add `.context()` or `.with_context()` for errors
+
+```rust
+use anyhow::{Context, Result};
+
+fn load_config(path: &Path) -> Result<Config> {
+    let content = std::fs::read_to_string(path)
+        .with_context(|| format!("Failed to read config from {}", path.display()))?;
+    
+    toml::from_str(&content)
+        .context("Invalid TOML syntax in config file")
+}
+```
+
+#### Async Patterns
+
+- Use `tokio` async runtime
+- Use `async_trait` for async trait methods
+- Prefer `tokio::join!` for parallel operations
+
+```rust
+use async_trait::async_trait;
+
+#[async_trait]
+pub trait PackageManager: Send + Sync {
+    async fn search(&self, query: &str) -> Result<Vec<Package>>;
+    async fn install(&self, package: &str) -> Result<()>;
+}
+```
+
+#### Performance Patterns
+
+**Arc over Clone in async contexts:**
+```rust
+// ✅ Good: Arc for cheap refcounts
+let path = Arc::new(PathBuf::from("/usr/bin"));
+tokio::task::spawn_blocking(move || {
+    process_path(&path)
+});
+
+// ❌ Bad: Expensive heap allocation
+let path = PathBuf::from("/usr/bin");
+tokio::task::spawn_blocking(move || {
+    process_path(&path) // Clones PathBuf
+});
+```
+
+**Cow for conditional ownership:**
+```rust
+// ✅ Good: Zero-copy when possible
+fn display_path(path: &Path) -> Cow<str> {
+    path.to_string_lossy()
+}
+
+// ❌ Bad: Always allocates
+fn display_path(path: &Path) -> String {
+    path.to_string_lossy().to_string()
+}
+```
+
+**Inline hot-path functions:**
+```rust
+#[inline]
+pub fn shared_client() -> &'static Client {
+    &HTTP_CLIENT
+}
+```
+
+---
+
+## 🧪 Testing
+
+### Running Tests
+
+```bash
+# Run all tests
+cargo test --features arch
+
+# Run specific test
+cargo test --features arch test_database_open
+
+# Run tests in a module
+cargo test --features arch core::database::tests
+
+# Show test output
+cargo test --features arch -- --nocapture
+
+# Run only unit tests (skip integration)
+cargo test --features arch --lib
+```
+
+### Writing Tests
+
+**Unit tests** (within module):
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_database_open() {
+        let temp_dir = TempDir::new().unwrap();
+        let db = Database::open(temp_dir.path().join("test.db"));
+        assert!(db.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_async_search() {
+        let manager = ArchPackageManager::new().await.unwrap();
+        let results = manager.search("firefox").await.unwrap();
+        assert!(!results.is_empty());
+    }
+}
+```
+
+**Integration tests** (`tests/` directory):
+```rust
+// tests/cli_integration.rs
+use assert_cmd::Command;
+
+#[test]
+fn test_cli_search() {
+    let mut cmd = Command::cargo_bin("omg").unwrap();
+    cmd.arg("search")
+       .arg("firefox")
+       .assert()
+       .success();
+}
+```
+
+### Test Coverage
+
+We aim for high test coverage on critical paths:
+
+```bash
+# Generate coverage report (requires cargo-tarpaulin)
+cargo tarpaulin --features arch --out Html
+```
+
+---
+
+## 🔍 Benchmarking
+
+### Running Benchmarks
+
+```bash
+# Quick benchmark (10 runs)
+./benchmark-hyperfine.sh --fast
+
+# Full benchmark (400+ iterations)
+./benchmark-hyperfine.sh
+
+# Check for performance regressions
+python3 scripts/check-perf-regression.py
+```
+
+### Performance Targets
+
+- **Search:** < 10ms (median)
+- **Info:** < 10ms (median)
+- **Status:** < 10ms
+- **Daemon startup:** < 100ms
+- **Memory usage:** < 50MB (resident)
+
+**Before optimizing:**
+1. Profile first (`cargo flamegraph`)
+2. Benchmark baseline
+3. Apply optimization
+4. Measure improvement
+5. Document in commit message
+
+---
+
+## 🎯 Pull Request Process
+
+### Before Submitting
+
+1. **Run all checks:**
+   ```bash
+   cargo fmt -- --check
+   cargo clippy --features arch -- -D warnings -W clippy::pedantic
+   cargo test --features arch --lib
+   cargo build --release --features arch
+   ```
+
+2. **Update documentation** if you:
+   - Add/change CLI commands
+   - Modify configuration options
+   - Change public APIs
+
+3. **Add tests** for:
+   - New features
+   - Bug fixes
+   - Edge cases
+
+### Commit Message Format
+
+We follow [Conventional Commits](https://www.conventionalcommits.org/):
+
+```
+<type>(<scope>): <description>
+
+[optional body]
+
+[optional footer]
+```
+
+**Types:**
+- `feat`: New feature
+- `fix`: Bug fix
+- `perf`: Performance improvement
+- `refactor`: Code refactoring (no behavior change)
+- `docs`: Documentation only
+- `test`: Adding/updating tests
+- `chore`: Build scripts, dependencies, etc.
+
+**Examples:**
+```
+feat(aur): add parallel download support
+
+Implements parallel AUR package downloads using tokio::spawn.
+Reduces install time by 50% for multi-package operations.
+
+Closes #123
+```
+
+```
+perf(core): replace PathBuf with Arc in spawn_blocking
+
+Eliminates expensive heap allocations in async contexts.
+Measured 7-15% performance gain in search operations.
+```
+
+```
+fix(daemon): handle SIGTERM gracefully
+
+Ensures in-memory cache flushes to disk before shutdown.
+Prevents data loss during system restarts.
+```
+
+### PR Description Template
+
+```markdown
+## Description
+Brief description of what this PR does.
+
+## Motivation
+Why is this change needed? What problem does it solve?
+
+## Changes
+- List of changes
+- Another change
+
+## Testing
+How did you test this? What scenarios are covered?
+
+## Performance Impact
+Any performance improvements/regressions? Include benchmark results if applicable.
+
+## Breaking Changes
+List any breaking changes and migration guide.
+
+## Checklist
+- [ ] Tests pass (`cargo test --features arch --lib`)
+- [ ] Linting passes (`cargo clippy --features arch -- -D warnings`)
+- [ ] Formatting checked (`cargo fmt -- --check`)
+- [ ] Documentation updated (if needed)
+- [ ] Benchmarks run (if performance-related)
+```
+
+### Review Process
+
+1. **Automated checks** run on PR submission (CI)
+2. **Code review** by maintainers (usually within 2-3 days)
+3. **Address feedback** with follow-up commits
+4. **Squash & merge** once approved
+
+---
+
+## 🐛 Reporting Bugs
+
+### Bug Report Template
+
+```markdown
+**Describe the bug**
+Clear description of what went wrong.
+
+**To Reproduce**
+Steps to reproduce:
+1. Run command '...'
+2. See error
+
+**Expected behavior**
+What you expected to happen.
+
+**Actual behavior**
+What actually happened.
+
+**Environment:**
+- OS: [e.g., Arch Linux]
+- OMG version: [e.g., 0.1.204]
+- Rust version: [e.g., 1.92]
+
+**Logs**
+```
+Paste relevant logs here (use --verbose flag)
+```
+
+**Additional context**
+Any other relevant information.
+```
+
+### Feature Requests
+
+Use the GitHub Issues "Feature Request" template. Include:
+- **Use case:** Why do you need this?
+- **Proposed solution:** How should it work?
+- **Alternatives:** What other approaches did you consider?
+
+---
+
+## 🔐 Security Policy
+
+If you discover a **security vulnerability**, please:
+
+1. **Do NOT** open a public issue
+2. Email: **olen@latham.cloud** with:
+   - Description of the vulnerability
+   - Steps to reproduce
+   - Potential impact
+   - Suggested fix (if any)
+
+We aim to respond within **48 hours** and will credit you in release notes (unless you prefer to remain anonymous).
+
+---
+
+## 📚 Documentation
+
+Documentation lives in `docs/`:
+
+- **User guides:** `docs/*.md`
+- **API docs:** Inline `///` rustdoc comments
+- **Architecture:** `AGENTS.md` (for AI agents working on codebase)
+
+**Updating docs:**
+```bash
+# Generate API documentation
+cargo doc --no-deps --features arch --open
+
+# Check for broken links (requires lychee)
+lychee docs/**/*.md
+```
+
+---
+
+## 🤝 Getting Help
+
+- **GitHub Discussions:** For questions and community support
+- **GitHub Issues:** For bug reports and feature requests
+- **Discord:** (Coming soon)
+
+---
+
+## 📜 License
+
+By contributing, you agree that your contributions will be licensed under the **AGPL-3.0-or-later** license.
+
+See [LICENSE](LICENSE) for details.
+
+---
+
+## 🙏 Thank You!
+
+Every contribution makes OMG better. Whether it's code, documentation, bug reports, or feature ideas—we appreciate your help in building the last dev tool developers will ever need.
+
+**Happy coding!** 🚀

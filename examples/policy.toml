@@ -1,0 +1,160 @@
+# OMG Security Policy Example
+# Default location: ~/.config/omg/policy.toml
+#
+# This file defines security policies for package installations.
+# OMG will enforce these policies before allowing installations.
+
+# ============================================================================
+# SECURITY GRADING
+# ============================================================================
+
+# Minimum security grade required for installations (default: "Community")
+# Options (from most to least restrictive):
+# - "Locked": SLSA provenance + PGP signatures (enterprise-grade)
+# - "Verified": PGP signatures or checksums (recommended)
+# - "Community": AUR/unsigned packages allowed (default)
+# - "Risk": Allow packages with known vulnerabilities (NOT recommended)
+#
+# Example: Enforce PGP verification for all packages
+#minimum_grade = "Verified"
+
+# Example: Block installations with known vulnerabilities
+minimum_grade = "Community"
+
+# ============================================================================
+# AUR PACKAGES
+# ============================================================================
+
+# Allow installing AUR packages (default: true)
+# Set to false to restrict installations to official repositories only
+#allow_aur = true
+
+# Require PGP signatures on all packages (default: false)
+# When true, blocks unsigned packages (including AUR)
+#require_pgp = false
+
+# ============================================================================
+# LICENSE RESTRICTIONS
+# ============================================================================
+
+# Allowed licenses (default: empty = all licenses allowed)
+# Uncomment to restrict installations to specific licenses
+#
+# Example: Only allow open-source licenses
+#allowed_licenses = [
+#    "MIT",
+#    "Apache-2.0",
+#    "GPL-2.0",
+#    "GPL-3.0",
+#    "BSD-2-Clause",
+#    "BSD-3-Clause",
+#    "LGPL-2.1",
+#    "LGPL-3.0",
+#    "MPL-2.0",
+#    "ISC",
+#]
+
+# Example: Corporate-approved licenses only
+#allowed_licenses = ["MIT", "Apache-2.0", "BSD-3-Clause"]
+
+# ============================================================================
+# PACKAGE BANS
+# ============================================================================
+
+# Banned packages (default: empty)
+# Prevents installation of specific packages by name
+#
+# Example: Block packages known to have security issues
+#banned_packages = [
+#    "vulnerable-package",
+#    "deprecated-tool",
+#    "untrusted-binary",
+#]
+
+# Example: Block cryptocurrency miners
+#banned_packages = ["cpuminer", "ethminer", "xmrig"]
+
+# ============================================================================
+# EXAMPLE POLICIES
+# ============================================================================
+
+# --- Enterprise Security Policy ---
+# Uncomment for strict enterprise environments:
+#
+# minimum_grade = "Locked"
+# allow_aur = false
+# require_pgp = true
+# allowed_licenses = ["MIT", "Apache-2.0", "BSD-3-Clause"]
+# banned_packages = []
+
+# --- Developer Workstation (Balanced) ---
+# Uncomment for reasonable security with flexibility:
+#
+# minimum_grade = "Verified"
+# allow_aur = true
+# require_pgp = false
+# allowed_licenses = []  # Allow all licenses
+# banned_packages = ["cpuminer", "xmrig"]  # Block miners
+
+# --- Open Source Project (Permissive) ---
+# Uncomment for maximum flexibility:
+#
+# minimum_grade = "Community"
+# allow_aur = true
+# require_pgp = false
+# allowed_licenses = []
+# banned_packages = []
+
+# --- CI/CD Pipeline (Security-First) ---
+# Uncomment for reproducible, auditable builds:
+#
+# minimum_grade = "Locked"
+# allow_aur = false
+# require_pgp = true
+# allowed_licenses = [
+#     "MIT",
+#     "Apache-2.0",
+#     "GPL-3.0",
+#     "BSD-2-Clause",
+#     "BSD-3-Clause",
+#     "LGPL-3.0",
+# ]
+# banned_packages = []
+
+# ============================================================================
+# NOTES
+# ============================================================================
+
+# Security Grading Explained:
+#
+# 1. LOCKED (SLSA + PGP):
+#    - Supply chain security with build provenance
+#    - PGP signature verification
+#    - Recommended for: Production systems, CI/CD
+#
+# 2. VERIFIED (PGP/Checksum):
+#    - PGP signatures or SHA checksums verified
+#    - Recommended for: Developer workstations
+#
+# 3. COMMUNITY (AUR/Unsigned):
+#    - Allows community packages (AUR)
+#    - Basic checksum verification only
+#    - Recommended for: Personal machines, testing
+#
+# 4. RISK (Vulnerabilities):
+#    - Allows packages with known CVEs
+#    - NOT recommended for any production use
+#    - Use only for testing/debugging
+
+# How OMG Enforces Policies:
+#
+# 1. Before installation, OMG assigns a security grade to each package
+# 2. If grade < minimum_grade, installation is blocked
+# 3. If package is in banned_packages, installation is blocked
+# 4. If license not in allowed_licenses (and list is non-empty), blocked
+# 5. If AUR package and allow_aur=false, installation is blocked
+# 6. If unsigned package and require_pgp=true, installation is blocked
+#
+# Override policies:
+# - Use `omg install --force` to bypass policy (not recommended)
+# - Use `omg policy check <package>` to preview without installing
