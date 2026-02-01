@@ -12,6 +12,7 @@ struct PathOverrides {
 
 static OVERRIDES: OnceLock<RwLock<PathOverrides>> = OnceLock::new();
 
+#[inline]
 fn get_overrides() -> &'static RwLock<PathOverrides> {
     OVERRIDES.get_or_init(|| RwLock::new(PathOverrides::default()))
 }
@@ -29,10 +30,12 @@ pub fn reset_test_overrides() {
     *guard = PathOverrides::default();
 }
 
+#[inline]
 fn env_path(var: &str) -> Option<PathBuf> {
     std::env::var_os(var).map(PathBuf::from)
 }
 
+#[inline]
 fn fallback_home_dir() -> PathBuf {
     home::home_dir().unwrap_or_else(|| PathBuf::from("."))
 }
@@ -64,6 +67,7 @@ pub fn config_dir() -> PathBuf {
     })
 }
 
+#[inline]
 fn is_valid_username(name: &str) -> bool {
     !name.is_empty()
         && !name.contains('/')

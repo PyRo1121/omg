@@ -45,12 +45,14 @@ fn build_client(timeout: Duration, connect_timeout: Duration) -> Client {
 
 /// Shared default HTTP client.
 #[must_use]
+#[inline]
 pub fn shared_client() -> &'static Client {
     &SHARED_CLIENT
 }
 
 /// Shared HTTP client with extended timeouts for large downloads.
 #[must_use]
+#[inline]
 pub fn download_client() -> &'static Client {
     &DOWNLOAD_CLIENT
 }
