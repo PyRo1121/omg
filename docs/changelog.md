@@ -333,6 +333,14 @@ NEW FEATURES:
 
 • Shell integration examples for all shells
 
+### 🐛 Bug Fixes
+
+- Remove explicit auto-deref for Arc paths (clippy)
+
+Clippy detected unnecessary explicit dereferences (&*) on Arc`<PathBuf>` and
+
+Arc`<String>` that would be handled automatically by auto-deref.
+
 ### 📚 Documentation
 
 - Add missing commercial license documentation
