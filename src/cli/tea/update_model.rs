@@ -157,7 +157,9 @@ impl Model for UpdateModel {
                 .join()
                 {
                     Ok(result) => result,
-                    Err(_) => Err(anyhow::anyhow!("Background thread panicked while checking for updates")),
+                    Err(_) => Err(anyhow::anyhow!(
+                        "Background thread panicked while checking for updates"
+                    )),
                 }
             } else {
                 // No runtime: create one (production case)

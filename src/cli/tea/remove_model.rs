@@ -138,14 +138,19 @@ impl Model for RemoveModel {
                             let pm = get_package_manager();
                             let service = PackageService::new(pm);
                             match tokio::runtime::Runtime::new() {
-                                Ok(rt) => rt.block_on(async { service.remove(&packages, recursive).await }),
-                                Err(e) => Err(anyhow::anyhow!("Failed to create async runtime: {}", e)),
+                                Ok(rt) => rt
+                                    .block_on(async { service.remove(&packages, recursive).await }),
+                                Err(e) => {
+                                    Err(anyhow::anyhow!("Failed to create async runtime: {}", e))
+                                }
                             }
                         })
                         .join()
                         {
                             Ok(result) => result,
-                            Err(_) => Err(anyhow::anyhow!("Background thread panicked during package removal")),
+                            Err(_) => Err(anyhow::anyhow!(
+                                "Background thread panicked during package removal"
+                            )),
                         }
                     } else {
                         match tokio::runtime::Runtime::new() {

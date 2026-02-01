@@ -257,7 +257,8 @@ async fn download_to_file(
 
     pb.finish_with_message(format!(
         "{} (done)",
-        dest_path.file_name()
+        dest_path
+            .file_name()
             .map(|f| f.to_string_lossy().into_owned())
             .unwrap_or_else(|| dest_path.display().to_string())
     ));
