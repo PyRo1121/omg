@@ -298,6 +298,9 @@ OMG achieves ~6ms performance on all core operations through a persistent daemon
 
 > 💡 **Note:** yay benchmarked with `--repo` flag (no AUR network calls) for fair comparison.
 
+![OMG vs pacman/yay Performance](./docs/assets/benchmark-comparison.png)
+*Visual comparison: OMG's persistent daemon architecture delivers 12-22x faster package operations*
+
 ### Debian/Ubuntu (apt)
 
 **Benchmark Environment:**
@@ -311,6 +314,9 @@ OMG achieves ~6ms performance on all core operations through a persistent daemon
 | **explicit** | **2ms** ✨ | 601ms | 966ms | **300x** | **483x** |
 
 OMG parses `/var/lib/dpkg/status` and APT's Packages files directly, bypassing slow Python/apt-cache overhead. The daemon maintains an in-memory index for instant cached searches.
+
+![OMG vs APT Tools Performance](./docs/assets/benchmark-comparison-apt.png)
+*Visual comparison: OMG achieves 59-483x speedup over traditional APT tools through direct parsing and in-memory caching*
 
 ### Why These Numbers Matter
 

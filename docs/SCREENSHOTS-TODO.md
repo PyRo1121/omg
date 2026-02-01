@@ -180,7 +180,7 @@ docs/
 ### Priority 1 (README.md) - Do First
 - [ ] omg-dash.png
 - [ ] security-grade.png
-- [ ] benchmark-comparison.png
+- [x] benchmark-comparison.png ✅ (Generated + Added to README)
 
 ### Priority 2 (TUI Documentation)
 - [ ] tui-search.png
