@@ -50,12 +50,126 @@ omg use ruby 3.2.0
 
 ---
 
-## Quick Start
+## 📦 Installation
+
+### Universal Installer (Linux/macOS)
+
+**One-line install** (detects your OS automatically):
 
 ```bash
-# Install (one line)
 curl -fsSL https://pyro1121.com/install.sh | bash
+```
 
+<details>
+<summary>Installation options</summary>
+
+```bash
+# Disable telemetry
+OMG_NO_TELEMETRY=1 curl -fsSL https://pyro1121.com/install.sh | bash
+
+# Skip shell integration
+OMG_SKIP_SHELL=1 curl -fsSL https://pyro1121.com/install.sh | bash
+
+# Install specific version
+OMG_VERSION=v0.1.204 curl -fsSL https://pyro1121.com/install.sh | bash
+```
+</details>
+
+### Platform-Specific Methods
+
+<table>
+<tr>
+<td width="50%">
+
+**🐧 Arch Linux**
+
+```bash
+# AUR (prebuilt binary)
+yay -S omg-bin
+
+# AUR (build from source)
+yay -S omg
+```
+
+</td>
+<td width="50%">
+
+**🍎 macOS**
+
+```bash
+# Homebrew (coming soon)
+brew tap pyro1121/omg
+brew install omg
+
+# Universal installer
+curl -fsSL https://pyro1121.com/install.sh | bash
+```
+
+</td>
+</tr>
+<tr>
+<td width="50%">
+
+**🪟 Windows**
+
+```powershell
+# PowerShell installer
+irm https://pyro1121.com/install.ps1 | iex
+
+# Scoop
+scoop bucket add omg https://github.com/PyRo1121/scoop-omg
+scoop install omg
+
+# WSL (Windows Subsystem for Linux)
+wsl -- curl -fsSL https://pyro1121.com/install.sh | bash
+```
+
+</td>
+<td width="50%">
+
+**🐧 Debian/Ubuntu**
+
+```bash
+# Universal installer (auto-detects)
+curl -fsSL https://pyro1121.com/install.sh | bash
+```
+
+**Note**: Native APT packages coming soon
+
+</td>
+</tr>
+<tr>
+<td width="50%">
+
+**🎩 Fedora/RHEL**
+
+```bash
+# Universal installer (uses Fedora build)
+curl -fsSL https://pyro1121.com/install.sh | bash
+```
+
+**Note**: Native DNF/RPM packages coming soon
+
+</td>
+<td width="50%">
+
+**🦀 From Source (Any Platform)**
+
+```bash
+cargo install omg-cli
+```
+
+Requires: Rust 1.92+, platform build tools
+
+</td>
+</tr>
+</table>
+
+---
+
+## ⚡ Quick Start
+
+```bash
 # Search packages (22x faster than pacman)
 omg search vim
 
@@ -74,7 +188,20 @@ omg env capture
 omg env share
 ```
 
-> **Supports**: Arch Linux, Debian, Ubuntu, Fedora, macOS (ARM64), Windows. Universal installer works on all platforms.
+### Shell Integration
+
+Add instant version switching to your shell:
+
+```bash
+# Bash/Zsh
+echo 'eval "$(omg hook bash)"' >> ~/.bashrc  # or ~/.zshrc
+
+# Fish
+echo 'omg hook fish | source' >> ~/.config/fish/config.fish
+
+# PowerShell (Windows)
+echo 'Invoke-Expression (& omg hook powershell)' >> $PROFILE
+```
 
 ---
 

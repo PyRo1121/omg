@@ -187,7 +187,7 @@ Fixes 18 clippy errors found in platform builds.
 
   - Expected speedup: 20-30x cold start, 10x is_installed checks
 
-  - Maintains thread-safe access via LazyLock`<RwLock>`
+  - Maintains thread-safe access via LazyLock<RwLock>
 
 - **Dnf**: Add direct SQLite access for 50-100x faster package queries
 
@@ -2302,7 +2302,7 @@ ARCHITECTURAL CHANGE   - Remove over-engineering from Components module
 
 ## Problem (HIGH PRIORITY from audit)
 
-Components had 23 functions with unnecessary `<M>` generics. Most were
+Components had 23 functions with unnecessary <M> generics. Most were
 
 simple delegators to Cmd:: methods with zero added value.
 
@@ -2573,7 +2573,7 @@ let search_str = buf.to_ascii_lowercase();
 
 ### 3. Const Slices for Static Strings
 
-  - Convert Vec`<String>` allocations to const &[&str] slices in commands.rs
+  - Convert Vec<String> allocations to const &[&str] slices in commands.rs
 
   - Eliminates heap allocations for static completion data
 
@@ -2601,7 +2601,7 @@ let search_str = buf.to_ascii_lowercase();
 
 ### 2. Optimize Arc Usage in Daemon Cache
 
-  - Refactor cache.update_status() to accept Arc`<StatusResult>` parameter
+  - Refactor cache.update_status() to accept Arc<StatusResult> parameter
 
   - Eliminates 50% of heap allocations by avoiding double Arc wrapping
 
@@ -2746,15 +2746,15 @@ Updated core filesystem operations dependency to latest major version.
 
 Convert expensive Vec/String clones to Arc patterns:
 
-  - Cache keys: LazyLock`<String>` optimized (no repeated .clone() calls)
+  - Cache keys: LazyLock<String> optimized (no repeated .clone() calls)
 
-  - Cache values: Vec`<PackageInfo>` → Arc<Vec`<PackageInfo>`>
+  - Cache values: Vec<PackageInfo> → Arc<Vec<PackageInfo>>
 
-  - Cache values: DetailedPackageInfo → Arc`<DetailedPackageInfo>`>
+  - Cache values: DetailedPackageInfo → Arc<DetailedPackageInfo>>
 
-  - Cache values: StatusResult → Arc`<StatusResult>`
+  - Cache values: StatusResult → Arc<StatusResult>
 
-  - Cache values: Vec`<String>` → Arc<Vec`<String>`>
+  - Cache values: Vec<String> → Arc<Vec<String>>
 
 Performance improvements:
 
@@ -2844,7 +2844,7 @@ Key findings:
 
   - RuntimeManager trait has ZERO implementations (pure dead code)
 
-  - Components module has 23 functions with unnecessary `<M>` generics
+  - Components module has 23 functions with unnecessary <M> generics
 
   - 5 other traits are legitimate (PrivilegeChecker, PackageManager, etc.)
 
@@ -2912,7 +2912,7 @@ Part of Phase 3: Architecture & Consistency.
 
 - Document generic parameter rationale in Components module
 
-Analyzed the `<M>` generic parameters in src/cli/components/mod.rs (Task 3).
+Analyzed the <M> generic parameters in src/cli/components/mod.rs (Task 3).
 
 After thorough investigation, determined these generics are NECESSARY and
 
@@ -2920,11 +2920,11 @@ framework-required, not a code smell.
 
 Key findings:
 
-  - Generic `<M>` is required for Bubble Tea/Elm Architecture correctness
+  - Generic <M> is required for Bubble Tea/Elm Architecture correctness
 
   - Enables batching of output commands with message-producing commands
 
-  - Supports dual usage: Cmd<()> standalone and Cmd`<ModelMsg>` in Models
+  - Supports dual usage: Cmd<()> standalone and Cmd<ModelMsg> in Models
 
   - Zero runtime cost (phantom type resolved at compile time)
 
@@ -3121,7 +3121,7 @@ lowercase keys before sort (decorate-sort-undecorate pattern)
 
 searchability and debugging
 
-  - Wrap mirrors in Arc to avoid Vec`<String>` clone for each download job
+  - Wrap mirrors in Arc to avoid Vec<String> clone for each download job
 
   - Enable typo suggestions for mistyped commands via clap
 
@@ -3370,7 +3370,7 @@ web analytics vs OMG CLI product telemetry.
 
   - Add Docusaurus frontmatter to changelog
 
-  - Escape HTML-like tags in MDX (Vec`<PackageInfo>`, `<A>` component)
+  - Escape HTML-like tags in MDX (Vec<PackageInfo>, <A> component)
 
   - Silence analytics errors in production (only log in dev mode)
 
@@ -3735,7 +3735,7 @@ Implemented staggered fade-in-up entrance animations for the Hero section elemen
 - Remove `display_daemon_results` function from search module
 - Update Header navigation for SPA compatibility
 
-Updated Header to use Solid Router's `<A>` component for the documentation
+Updated Header to use Solid Router's <A> component for the documentation
 
 and home links to ensure smooth client-side transitions.
 
@@ -4044,7 +4044,7 @@ Add comprehensive task detection across 10+ ecosystems (Node, Rust, Python, Go, 
 - **Enterprise**: Implement remaining stubs for mirror, fleet, and golden path
 - **Debian**: Enrich daemon search with full package info
 
-  - Update IPC protocol to return Vec`<PackageInfo>` for Debian searches
+  - Update IPC protocol to return Vec<PackageInfo> for Debian searches
 
   - Update daemon handlers and cache to support enriched package data
 

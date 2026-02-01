@@ -95,9 +95,7 @@ fn try_fast_elevated(args: &[String]) -> Option<Result<()>> {
     match command.as_str() {
         "install" if !packages.is_empty() => {
             // Validate package names (security)
-            if let Err(e) = omg_lib::core::security::validate_package_names(&packages) {
-                return Some(Err(e));
-            }
+            omg_lib::core::security::validate_package_names(&packages).ok()?;
             // Direct transaction with minimal success output
             let result = omg_lib::package_managers::execute_transaction(
                 packages.clone(),
@@ -112,9 +110,7 @@ fn try_fast_elevated(args: &[String]) -> Option<Result<()>> {
         }
         "remove" if !packages.is_empty() => {
             // Validate package names (security)
-            if let Err(e) = omg_lib::core::security::validate_package_names(&packages) {
-                return Some(Err(e));
-            }
+            omg_lib::core::security::validate_package_names(&packages).ok()?;
             let result =
                 omg_lib::package_managers::execute_transaction(packages.clone(), true, false, None);
             if result.is_ok() {
@@ -431,10 +427,9 @@ fn main() -> Result<()> {
         .block_on(async_main(args));
 
     if let Err(ref err) = result
-        && let Some(suggestion) = omg_lib::core::error::suggest_for_anyhow(err)
-    {
-        tracing::info!("Suggestion: {}", suggestion);
-    }
+        && let Some(suggestion) = omg_lib::core::error::suggest_for_anyhow(err) {
+            tracing::info!("Suggestion: {}", suggestion);
+        }
 
     result
 }

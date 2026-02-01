@@ -2,12 +2,13 @@ import { Component, createSignal } from 'solid-js';
 
 const Installation: Component = () => {
   const [copied, setCopied] = createSignal(false);
-  const [activeTab, setActiveTab] = createSignal<'curl' | 'arch' | 'cargo'>('curl');
+  const [activeTab, setActiveTab] = createSignal<'curl' | 'windows' | 'arch' | 'scoop'>('curl');
 
   const commands = {
     curl: 'curl -fsSL https://pyro1121.com/install.sh | bash',
+    windows: 'irm https://pyro1121.com/install.ps1 | iex',
     arch: 'yay -S omg-bin',
-    cargo: 'cargo install omg-cli',
+    scoop: 'scoop install omg',
   };
 
   const copyToClipboard = () => {
@@ -39,14 +40,13 @@ const Installation: Component = () => {
             Up and Running in <span class="text-green-400">10 Seconds</span>
           </h2>
           <p class="mx-auto max-w-2xl text-xl text-slate-400">
-            One command installs OMG with zero dependencies. Works on Arch, Debian, Ubuntu, and any
-            Linux distro.
+            One command installs OMG with zero dependencies. Works on Linux, macOS, and Windows.
           </p>
         </div>
 
         {/* Install tabs */}
         <div class="mx-auto max-w-3xl">
-          <div class="mb-6 flex justify-center gap-2">
+          <div class="mb-6 flex flex-wrap justify-center gap-2">
             <button
               onClick={() => setActiveTab('curl')}
               class={`rounded-lg px-4 py-2 text-sm font-medium transition-all ${
@@ -55,7 +55,17 @@ const Installation: Component = () => {
                   : 'bg-slate-800 text-slate-400 hover:text-white'
               }`}
             >
-              Quick Install
+              Linux/macOS
+            </button>
+            <button
+              onClick={() => setActiveTab('windows')}
+              class={`rounded-lg px-4 py-2 text-sm font-medium transition-all ${
+                activeTab() === 'windows'
+                  ? 'bg-indigo-500 text-white'
+                  : 'bg-slate-800 text-slate-400 hover:text-white'
+              }`}
+            >
+              Windows
             </button>
             <button
               onClick={() => setActiveTab('arch')}
@@ -65,17 +75,17 @@ const Installation: Component = () => {
                   : 'bg-slate-800 text-slate-400 hover:text-white'
               }`}
             >
-              Arch Linux
+              Arch (AUR)
             </button>
             <button
-              onClick={() => setActiveTab('cargo')}
+              onClick={() => setActiveTab('scoop')}
               class={`rounded-lg px-4 py-2 text-sm font-medium transition-all ${
-                activeTab() === 'cargo'
+                activeTab() === 'scoop'
                   ? 'bg-indigo-500 text-white'
                   : 'bg-slate-800 text-slate-400 hover:text-white'
               }`}
             >
-              Cargo
+              Scoop
             </button>
           </div>
 
@@ -190,27 +200,17 @@ const Installation: Component = () => {
             <code class="font-mono text-xs text-orange-400">curl ... | bash</code>
           </div>
 
-          <div class="rounded-2xl border border-purple-500/20 bg-gradient-to-br from-purple-500/10 to-pink-500/10 p-6 transition-colors hover:border-purple-500/40">
-            <div class="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-purple-500/20">
-              <svg
-                class="h-6 w-6 text-purple-400"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                  d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"
-                />
+          <div class="rounded-2xl border border-blue-500/20 bg-gradient-to-br from-blue-500/10 to-indigo-500/10 p-6 transition-colors hover:border-blue-500/40">
+            <div class="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-blue-500/20">
+              <svg class="h-6 w-6 text-blue-400" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801" />
               </svg>
             </div>
-            <h3 class="mb-2 text-lg font-bold">Build from Source</h3>
+            <h3 class="mb-2 text-lg font-bold">Windows</h3>
             <p class="mb-3 text-sm text-slate-400">
-              100% Rust, compiles anywhere. Optimized with LTO for maximum speed.
+              PowerShell installer or Scoop package manager. Native Windows support.
             </p>
-            <code class="font-mono text-xs text-purple-400">cargo install omg-cli</code>
+            <code class="font-mono text-xs text-blue-400">irm pyro1121.com/install.ps1 | iex</code>
           </div>
         </div>
 
