@@ -10,6 +10,25 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 
 ---
 
+## [Unreleased]
+### ⚡ Performance
+
+- Resolve remaining clippy warnings for CI
+
+  - Fix map_unwrap_or in aur_sources.rs (line 260)
+
+Changed .map().unwrap_or_else() to .map_or_else() for clarity
+
+  - Fix doc_markdown in aur_performance_test.rs (line 11)
+
+Added backticks around cargo test command
+
+  - Fix doc_markdown in tests/common/mod.rs (lines 218, 219)
+
+Added backticks around dirs::data_dir() and OMG_DATA_DIR
+
+All clippy warnings resolved. CI should pass on all platforms.
+
 ## [0.1.204] - 2026-02-01
 ### 🐛 Bug Fixes
 
