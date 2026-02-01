@@ -313,13 +313,13 @@ fn test_pgp_verification_real_packages() {
             // We don't assert success (may fail due to keyring issues)
             // but we verify the function doesn't panic and returns sensible errors
             match result {
-                Ok(_) => {
+                Ok(()) => {
                     println!("✓ Successfully verified signature");
                     tested = true;
                     break;
                 }
                 Err(e) => {
-                    println!("  Verification failed (expected on some systems): {}", e);
+                    println!("  Verification failed (expected on some systems): {e}");
                     // This is OK - the function works, just may not have correct keyring
                 }
             }
