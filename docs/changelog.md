@@ -11,6 +11,17 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ---
 
 ## [Unreleased]
+### 🐛 Bug Fixes
+
+- Include Windows .zip files in release assets
+
+The release workflow was only collecting .tar.gz files, missing the
+
+Windows .zip binaries. Added second find command to collect .zip files.
+
+This fixes the missing Windows assets in GitHub releases.
+
+## [0.1.203] - 2026-02-01
 ### ♻️  Refactoring
 
 - **Cli**: Simplify code and improve readability
