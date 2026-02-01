@@ -215,8 +215,8 @@ impl CommandResult {
 }
 
 /// Remove the license file to test license-gated features without a license
-/// This is needed because the license loader uses dirs::data_dir() directly,
-/// not the OMG_DATA_DIR environment variable used for test isolation.
+/// This is needed because the license loader uses `dirs::data_dir()` directly,
+/// not the `OMG_DATA_DIR` environment variable used for test isolation.
 pub fn clear_license() {
     if let Some(data_dir) = dirs::data_dir() {
         let license_path = data_dir.join("omg").join("license.json");
