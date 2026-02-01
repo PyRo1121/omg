@@ -344,3 +344,6 @@ omg audit scan 2>&1 | grep -q "high_severity" && notify-send "OMG: Security Aler
 - [CLI Reference](./cli.md) — All commands
 - [History & Rollback](./history.md) — Transaction history
 - [Troubleshooting](./troubleshooting.md) — Common issues
+- [Security](./security.md) — Security features in TUI dashboard
+- [Fleet Management](./fleet.md) — Fleet dashboard for enterprises
+- [Packages](./packages.md) — Package management features

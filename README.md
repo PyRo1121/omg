@@ -259,6 +259,24 @@ Fuzzy matching via Nucleo. Type `omg i frfx` → `firefox`. 80k+ AUR packages ca
 
 ---
 
+## ⚠️ When NOT to Use OMG
+
+**Stick with traditional tools if:**
+- You're on a minimal system (<2GB RAM) - daemon overhead may be noticeable
+- You need POSIX strict compatibility - OMG uses modern Rust patterns
+- Your team is deeply invested in tool-specific workflows - migration takes time
+- You're managing 1000+ servers centrally - use Ansible/Puppet/Chef instead
+
+**OMG works best for:**
+- Active development machines (where search speed matters)
+- Teams wanting unified tooling (reduce context switching)
+- CI/CD pipelines (faster, reproducible builds)
+- Modern cloud-native workflows
+
+We believe in honesty. OMG isn't for everyone, and that's okay.
+
+---
+
 ## 📊 Benchmarks
 
 OMG achieves ~6ms performance on all core operations through a persistent daemon that maintains an in-memory index of packages.

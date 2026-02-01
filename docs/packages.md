@@ -462,3 +462,5 @@ ls -la $XDG_RUNTIME_DIR/omg.sock
 - [Security & Compliance](./security.md) — Security grading details
 - [Configuration](./configuration.md) — Policy configuration
 - [History & Rollback](./history.md) — Transaction management
+- [Integrations](./integrations.md) — Using OMG with fzf, ripgrep, and other tools
+- [Troubleshooting](./troubleshooting.md) — Common package management issues
