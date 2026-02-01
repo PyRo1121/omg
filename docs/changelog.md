@@ -55,6 +55,46 @@ Code quality verification:
 
 ### ⚡ Performance
 
+- Add inline attributes to hot-path functions (Rust 1.92)
+
+✅ [#5](https://github.com/PyRo1121/omg/issues/5): Inline Small Hot-Path Functions (1-3% improvement)
+
+Optimized frequently-called small functions with #[inline] attribute:
+
+HTTP Client (src/core/http.rs):
+
+  - shared_client()   - Returns &'static Client
+
+  - download_client()   - Returns &'static Client
+
+Path Utilities (src/core/paths.rs):
+
+  - env_path()   - Environment variable lookup helper
+
+  - fallback_home_dir()   - Home directory fallback
+
+  - get_overrides()   - Test path overrides accessor
+
+  - is_valid_username()   - Username validation
+
+Version Parsing (src/package_managers/types.rs):
+
+  - parse_version_or_zero()   - Called for every package (arch & non-arch)
+
+  - zero_version()   - Default version constructor (arch & non-arch)
+
+Performance impact:
+
+  - Eliminates function call overhead in hot paths
+
+  - parse_version_or_zero() called 1000s of times per search
+
+  - shared_client() called on every HTTP request
+
+  - Expected 1-3% improvement in search/info operations
+
+All 322 tests passing, 0 clippy warnings.
+
 - Optimize string conversions with Cow and add const fn (Rust 1.92)
 
 ✅ [#3](https://github.com/PyRo1121/omg/issues/3): Use Cow<str> for String Conversions (3-8% improvement)
