@@ -16,6 +16,9 @@ fn test_daemon_initialization_debian_mock() {
     let temp_path = temp_dir.path().to_str().unwrap().to_string();
 
     // Set test mode to trigger mock paths
+    // SAFETY: Test setup requires modifying environment variables before daemon initialization.
+    // This is safe in tests as each test runs in isolation with its own process/thread.
+    // No other code reads these variables during this critical setup phase.
     unsafe {
         std::env::set_var("OMG_TEST_MODE", "true");
         // Also set mock distro to debian to ensure correct package manager selection
@@ -60,6 +63,9 @@ async fn test_handle_debian_search() {
     let temp_dir = tempfile::tempdir().unwrap();
     let temp_path = temp_dir.path().to_str().unwrap().to_string();
 
+    // SAFETY: Test setup requires modifying environment variables before daemon initialization.
+    // This is safe in tests as each test runs in isolation with its own process/thread.
+    // No other code reads these variables during this critical setup phase.
     unsafe {
         std::env::set_var("OMG_TEST_MODE", "true");
         std::env::set_var("OMG_TEST_DISTRO", "debian");

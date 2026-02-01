@@ -31,7 +31,7 @@ fn test_search_performance() {
 
     // Test various search terms
     for term in &["rust", "python", "vim", "gcc", "kernel"] {
-        measure(&format!("search_sync_fast({})", term), || {
+        measure(&format!("search_sync_fast({term})"), || {
             package_managers::pacman_db::search_sync_fast(term).expect("Search failed")
         });
     }
@@ -48,7 +48,7 @@ fn test_search_local_performance() {
 
     // Test various search terms
     for term in &["rust", "python", "vim", "gcc", "kernel"] {
-        measure(&format!("search_local_cached({})", term), || {
+        measure(&format!("search_local_cached({term})"), || {
             package_managers::pacman_db::search_local_cached(term).expect("Local search failed")
         });
     }
@@ -65,7 +65,7 @@ fn test_explicit_list_performance() {
 
     // Run multiple iterations
     for i in 1..=5 {
-        measure(&format!("list_explicit_fast (iteration {})", i), || {
+        measure(&format!("list_explicit_fast (iteration {i})"), || {
             package_managers::list_explicit_fast().expect("List explicit failed")
         });
     }
@@ -82,7 +82,7 @@ fn test_unified_search_performance() {
 
     // Test various search terms
     for term in &["rust", "python", "vim"] {
-        measure(&format!("search_sync({})", term), || {
+        measure(&format!("search_sync({term})"), || {
             package_managers::search_sync(term).expect("Unified search failed")
         });
     }
@@ -99,7 +99,7 @@ fn test_get_package_info_performance() {
 
     // Test info retrieval for common packages
     for pkg in &["glibc", "systemd", "linux", "gcc", "rust"] {
-        measure(&format!("get_package_info({})", pkg), || {
+        measure(&format!("get_package_info({pkg})"), || {
             package_managers::get_package_info(pkg).expect("Get package info failed")
         });
     }
@@ -116,7 +116,7 @@ fn test_is_installed_performance() {
 
     // Test installation check for various packages
     for pkg in &["glibc", "rust", "python", "nonexistent-package-xyz"] {
-        measure(&format!("is_installed_fast({})", pkg), || {
+        measure(&format!("is_installed_fast({pkg})"), || {
             package_managers::is_installed_fast(pkg).expect("Is installed check failed")
         });
     }
