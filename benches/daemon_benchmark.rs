@@ -10,7 +10,7 @@ use std::hint::black_box;
 use std::sync::Arc;
 use std::time::Duration;
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 
 use omg_lib::core::runtime_resolver;
 use omg_lib::daemon::cache::PackageCache;
