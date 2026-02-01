@@ -27,6 +27,14 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 
 ### ⚡ Performance
 
+- Resolve all platform-specific clippy errors
+
+  - tests/performance_tests.rs: Update 6 format strings to inline syntax (Arch)
+
+  - tests/debian_daemon_tests.rs: Add SAFETY comments to unsafe blocks (Debian)
+
+  - tests/common/fixtures.rs: Change .to_string() to .clone() for implicit_clone (Fedora)
+
 - Update format strings to use inline variables (clippy::uninlined_format_args)
 
 Fixed 9 clippy warnings in aur_performance_test.rs by converting old-style
@@ -230,6 +238,18 @@ Updated CLI commands to use pure Rust:
   - omg blame: Uses debian_db functions instead of dpkg-query/apt-mark
 
 ### 🐛 Bug Fixes
+
+- Change gated Fedora tests to return () instead of Result<()>
+
+The require_system_tests!() macro returns early with (), which conflicts
+
+with function signatures returning Result<()>. Changed the 4 gated tests to:
+
+  - Return () instead of Result<()>
+
+  - Use .unwrap() instead of ? operator
+
+This matches the pattern used in arch_tests.rs and debian_tests.rs.
 
 - Enforce Rust 1.92.0 in linux-matrix and gate Fedora system tests
 
