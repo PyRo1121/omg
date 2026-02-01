@@ -247,6 +247,14 @@ Updated CLI commands to use pure Rust:
 
 ### 🐛 Bug Fixes
 
+- Resolve Fedora implicit_clone and Arch unsafe_code errors
+
+  - tests/common/fixtures.rs: Add #[allow(clippy::implicit_clone)] annotation
+
+(Version type is String on Fedora, AlpmVersion on Arch)
+
+  - tests/absolute_coverage.rs: Add unsafe_code to allow list
+
 - Resolve Debian unsafe-code and Arch missing-const-for-fn clippy errors
 
   - tests/bench_debian.rs: Add unsafe_code to allow list for test env setup
