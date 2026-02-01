@@ -11,6 +11,22 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ---
 
 ## [Unreleased]
+### Build
+
+- Add benchmark targets to Makefile
+
+Added convenient Makefile targets for all benchmark workflows:
+
+  - make bench: Full benchmark (10 iters, 2 warmup)
+
+  - make bench-fast: Fast benchmark (5 iters, 1 warmup)
+
+  - make bench-hyperfine: Hyperfine benchmark (industry standard)
+
+  - make bench-hyperfine-fast: Hyperfine fast mode
+
+  - make bench-charts: Generate visualization charts
+
 ### ♻️  Refactoring
 
 - Fix rustdoc warnings and code formatting
@@ -38,6 +54,30 @@ Code quality verification:
   - ✅ cargo fmt --check: passed
 
 ### ⚡ Performance
+
+- Upgrade benchmark workflow to use hyperfine
+
+✅ Enhanced CI/CD benchmark workflow:
+
+  - Added hyperfine and jq to dependencies
+
+  - Updated benchmark step to use benchmark-hyperfine.sh
+
+  - Extracts metrics from hyperfine JSON (more accurate)
+
+  - Falls back to markdown parsing if hyperfine unavailable
+
+  - Uses --fast mode for faster CI runs (5 iterations vs 10)
+
+✅ Enhanced performance regression checker:
+
+  - Supports hyperfine JSON format (preferred)
+
+  - Falls back to markdown report parsing
+
+  - Better error handling and reporting
+
+  - Extracts from hyperfine's statistical output
 
 - Optimize benchmark scripts with hyperfine support and fast mode
 
