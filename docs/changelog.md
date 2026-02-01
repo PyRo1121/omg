@@ -13,6 +13,76 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ## [Unreleased]
 ### ⚡ Performance
 
+- Enhance documentation with quick links, expanded runtimes guide, configuration patterns, and integrations
+
+Priority 1 improvements from documentation audit (DOCUMENTATION-AUDIT-2026-02-01.md):
+
+✅ README.md:
+
+  - Add Quick Links navigation (ripgrep/bat/fd pattern)
+
+  - Improve discoverability with categorized doc links
+
+✅ docs/runtimes.md (62 → 482 lines):
+
+  - Expand from minimal to comprehensive runtime guide
+
+  - Add quick examples for all 7 runtimes (Node, Python, Go, Rust, Ruby, Java, Bun)
+
+  - Document auto-detection priority and version file formats
+
+  - Add migration guides from nvm, pyenv, rustup
+
+  - Include performance comparison table
+
+  - Add comprehensive troubleshooting section
+
+✅ docs/configuration.md (+309 lines):
+
+  - Add "Common Configuration Patterns" section
+
+  - 6 real-world scenarios: Personal, Team, CI/CD, Low-Resource, Performance, Enterprise
+
+  - Configuration comparison table
+
+  - Best practices for each use case
+
+✅ docs/integrations.md (NEW   - 675 lines):
+
+  - Complete integration guide with 20+ examples
+
+  - Search tools: fzf, ripgrep, fd
+
+  - Shells: zsh, fish, bash
+
+  - IDEs: VS Code, JetBrains, Neovim
+
+  - CI/CD: GitHub Actions, GitLab CI, Jenkins, CircleCI
+
+  - Shell prompts: Starship, Oh My Zsh
+
+  - Containers: Docker, Docker Compose
+
+  - Workflow examples and best practices
+
+✅ docs/index.md:
+
+  - Move FAQ to "Help & Resources" section (more prominent)
+
+  - Add Integrations to navigation
+
+  - Improve documentation hierarchy
+
+Total changes: +769 lines, -30 lines
+
+Files modified: 4 modified, 2 new
+
+Documentation completeness: 80% → 90%
+
+Addresses strategic gaps identified by Explore, Librarian, and Oracle agents.
+
+Next: Priority 2 improvements ("Why NOT OMG?", screenshots, expanded fleet.md)
+
 - Resolve remaining clippy warnings for CI
 
   - Fix map_unwrap_or in aur_sources.rs (line 260)
@@ -28,6 +98,208 @@ Added backticks around cargo test command
 Added backticks around dirs::data_dir() and OMG_DATA_DIR
 
 All clippy warnings resolved. CI should pass on all platforms.
+
+### ✨ New Features
+
+- Add Windows installer, Scoop bucket, and improve release workflow
+
+NEW FEATURES:
+
+  - Windows PowerShell installer (install.ps1)
+
+• One-line install: irm pyro1121.com/install.ps1 | iex
+
+• Auto-downloads, verifies SHA256, adds to PATH
+
+• Telemetry opt-in/out support
+
+  - Scoop bucket infrastructure
+
+• Complete manifest (omg.json) with auto-update
+
+• Excavator workflow for automated releases
+
+• Ready to publish as PyRo1121/scoop-omg
+
+  - Comprehensive installation documentation
+
+• New docs/installation.md with all platforms
+
+• Platform-specific guides for 6+ operating systems
+
+• Shell integration examples for all shells
+
+### 🔒 Security
+
+- Complete Priority 3 improvements - cheat sheet, translation plan, and benchmark chart generator
+
+Priority 3 improvements (nice-to-have enhancements):
+
+✅ docs/cheatsheet.md (NEW   - 496 lines):
+
+  - Comprehensive 1-page quick reference for all OMG commands
+
+  - Installation & setup
+
+  - Package management (search, install, update, query)
+
+  - Runtime management (all 7 runtimes with examples)
+
+  - Environment management (lock, sync, share)
+
+  - Task runner, security, containers, team features
+
+  - Interactive TUI keyboard shortcuts
+
+  - Configuration examples
+
+  - Common workflows (new project, team onboarding, CI/CD, multi-runtime)
+
+  - Performance tips and troubleshooting
+
+  - Common aliases and learning path
+
+  - Comparison table with traditional tools
+
+  - Pro tips for power users
+
+  - Print-friendly format
+
+✅ docs/TRANSLATION-PLAN.md (NEW   - 481 lines):
+
+  - Complete i18n strategy for README and documentation
+
+  - Target languages in 3 tiers (9 languages prioritized)
+
+  - Translation scope (what to translate, what to keep in English)
+
+  - 3 implementation strategies (manual, machine + review, hybrid)
+
+  - File structure and synchronization strategy
+
+  - Community translation process and workflow
+
+  - Quality guidelines for translators and reviewers
+
+  - Technical implementation (scripts, link localization)
+
+  - Translation progress tracking (GitHub project board)
+
+  - Success metrics and rollout plan (4 phases)
+
+  - Translation glossary for consistent terminology
+
+  - Resources and acknowledgment system
+
+✅ scripts/generate-benchmark-chart.py (NEW   - 253 lines):
+
+  - Python script to generate 3 benchmark comparison charts
+
+  - Chart 1: Arch Linux (OMG vs pacman/yay) with speedup annotations
+
+  - Chart 2: Debian/Ubuntu (OMG vs apt-cache/Nala) with speedup annotations
+
+  - Chart 3: Combined speedup comparison across platforms
+
+  - High-quality PNG output (300 DPI)
+
+  - Benchmark environment metadata included
+
+  - Clear usage instructions and next steps
+
+  - Executable script with proper shebang
+
+✅ docs/index.md:
+
+  - Add Cheat Sheet to "Help & Resources" navigation
+
+  - Improve discoverability of quick reference
+
+Total new content: +1,230 lines across 3 new files
+
+Documentation completeness: 95% → 97%
+
+All Priority 3 items completed except videos (skipped per user request).
+
+Documentation project COMPLETE   - ready for production use!
+
+- Complete Priority 2 improvements - honesty section, fleet expansion, first-5-minutes guide, screenshots plan, and cross-references
+
+Priority 2 improvements from documentation audit:
+
+✅ README.md:
+
+  - Add "When NOT to Use OMG" section (honesty builds trust)
+
+  - Provides balanced view of when traditional tools are better
+
+  - Includes guidance on best use cases for OMG
+
+✅ docs/fleet.md (98 → 714 lines, +630%):
+
+  - Comprehensive enterprise fleet management guide
+
+  - Getting started with control plane setup (self-hosted + cloud)
+
+  - Real-world scenarios: Node.js enforcement, security patches, multi-region, air-gapped
+
+  - Policy enforcement: runtime, security, compliance, package policies
+
+  - Reporting & compliance: SOC2, ISO27001, custom audits
+
+  - Monitoring & alerts: Slack, email, PagerDuty integration
+
+  - Integration with Ansible, Terraform, Prometheus
+
+  - Troubleshooting and scaling best practices (10-1000+ machines)
+
+✅ docs/quickstart.md (+387 lines):
+
+  - Add comprehensive "Your First 5 Minutes with OMG" section
+
+  - Step-by-step walkthrough with expected outputs for every command
+
+  - Common mistakes to avoid with solutions
+
+  - Success checklist for new users
+
+  - Troubleshooting section for first-time issues
+
+✅ docs/SCREENSHOTS-TODO.md (NEW):
+
+  - Complete plan for visual assets (12 screenshots prioritized)
+
+  - Instructions for capturing screenshots with termshot/asciinema
+
+  - Benchmark chart generation script (matplotlib)
+
+  - Directory structure and optimization guidelines
+
+  - Checklist tracking for implementation
+
+✅ Cross-reference improvements across 6 files:
+
+  - docs/security.md: Added "See Also" section (NEW)
+
+  - docs/packages.md: Enhanced with integrations & troubleshooting links
+
+  - docs/team.md: Added fleet, security, integrations, runtimes links
+
+  - docs/containers.md: Enhanced with integrations, runtimes, security links
+
+  - docs/tui.md: Added security, fleet, packages links
+
+  - docs/troubleshooting.md: Enhanced with security, runtimes, integrations, fleet links
+
+Total changes: +1,053 lines
+
+Files modified: 9 modified, 1 new
+
+Documentation completeness: 90% → 95%
+
+Addresses all Priority 2 items from DOCUMENTATION-AUDIT-2026-02-01.md
+
+Next: Priority 3 (nice-to-have: cheat sheet, video tutorials, translations)
 
 ## [0.1.204] - 2026-02-01
 ### 🐛 Bug Fixes
@@ -187,7 +459,7 @@ Fixes 18 clippy errors found in platform builds.
 
   - Expected speedup: 20-30x cold start, 10x is_installed checks
 
-  - Maintains thread-safe access via LazyLock<RwLock>
+  - Maintains thread-safe access via LazyLock`<RwLock>`
 
 - **Dnf**: Add direct SQLite access for 50-100x faster package queries
 
@@ -2302,7 +2574,7 @@ ARCHITECTURAL CHANGE   - Remove over-engineering from Components module
 
 ## Problem (HIGH PRIORITY from audit)
 
-Components had 23 functions with unnecessary <M> generics. Most were
+Components had 23 functions with unnecessary `<M>` generics. Most were
 
 simple delegators to Cmd:: methods with zero added value.
 
@@ -2573,7 +2845,7 @@ let search_str = buf.to_ascii_lowercase();
 
 ### 3. Const Slices for Static Strings
 
-  - Convert Vec<String> allocations to const &[&str] slices in commands.rs
+  - Convert Vec`<String>` allocations to const &[&str] slices in commands.rs
 
   - Eliminates heap allocations for static completion data
 
@@ -2601,7 +2873,7 @@ let search_str = buf.to_ascii_lowercase();
 
 ### 2. Optimize Arc Usage in Daemon Cache
 
-  - Refactor cache.update_status() to accept Arc<StatusResult> parameter
+  - Refactor cache.update_status() to accept Arc`<StatusResult>` parameter
 
   - Eliminates 50% of heap allocations by avoiding double Arc wrapping
 
@@ -2746,15 +3018,15 @@ Updated core filesystem operations dependency to latest major version.
 
 Convert expensive Vec/String clones to Arc patterns:
 
-  - Cache keys: LazyLock<String> optimized (no repeated .clone() calls)
+  - Cache keys: LazyLock`<String>` optimized (no repeated .clone() calls)
 
-  - Cache values: Vec<PackageInfo> → Arc<Vec<PackageInfo>>
+  - Cache values: Vec`<PackageInfo>` → Arc<Vec`<PackageInfo>`>
 
-  - Cache values: DetailedPackageInfo → Arc<DetailedPackageInfo>>
+  - Cache values: DetailedPackageInfo → Arc`<DetailedPackageInfo>`>
 
-  - Cache values: StatusResult → Arc<StatusResult>
+  - Cache values: StatusResult → Arc`<StatusResult>`
 
-  - Cache values: Vec<String> → Arc<Vec<String>>
+  - Cache values: Vec`<String>` → Arc<Vec`<String>`>
 
 Performance improvements:
 
@@ -2844,7 +3116,7 @@ Key findings:
 
   - RuntimeManager trait has ZERO implementations (pure dead code)
 
-  - Components module has 23 functions with unnecessary <M> generics
+  - Components module has 23 functions with unnecessary `<M>` generics
 
   - 5 other traits are legitimate (PrivilegeChecker, PackageManager, etc.)
 
@@ -2912,7 +3184,7 @@ Part of Phase 3: Architecture & Consistency.
 
 - Document generic parameter rationale in Components module
 
-Analyzed the <M> generic parameters in src/cli/components/mod.rs (Task 3).
+Analyzed the `<M>` generic parameters in src/cli/components/mod.rs (Task 3).
 
 After thorough investigation, determined these generics are NECESSARY and
 
@@ -2920,11 +3192,11 @@ framework-required, not a code smell.
 
 Key findings:
 
-  - Generic <M> is required for Bubble Tea/Elm Architecture correctness
+  - Generic `<M>` is required for Bubble Tea/Elm Architecture correctness
 
   - Enables batching of output commands with message-producing commands
 
-  - Supports dual usage: Cmd<()> standalone and Cmd<ModelMsg> in Models
+  - Supports dual usage: Cmd<()> standalone and Cmd`<ModelMsg>` in Models
 
   - Zero runtime cost (phantom type resolved at compile time)
 
@@ -3121,7 +3393,7 @@ lowercase keys before sort (decorate-sort-undecorate pattern)
 
 searchability and debugging
 
-  - Wrap mirrors in Arc to avoid Vec<String> clone for each download job
+  - Wrap mirrors in Arc to avoid Vec`<String>` clone for each download job
 
   - Enable typo suggestions for mistyped commands via clap
 
@@ -3370,7 +3642,7 @@ web analytics vs OMG CLI product telemetry.
 
   - Add Docusaurus frontmatter to changelog
 
-  - Escape HTML-like tags in MDX (Vec<PackageInfo>, <A> component)
+  - Escape HTML-like tags in MDX (Vec`<PackageInfo>`, `<A>` component)
 
   - Silence analytics errors in production (only log in dev mode)
 
@@ -3735,7 +4007,7 @@ Implemented staggered fade-in-up entrance animations for the Hero section elemen
 - Remove `display_daemon_results` function from search module
 - Update Header navigation for SPA compatibility
 
-Updated Header to use Solid Router's <A> component for the documentation
+Updated Header to use Solid Router's `<A>` component for the documentation
 
 and home links to ensure smooth client-side transitions.
 
@@ -4044,7 +4316,7 @@ Add comprehensive task detection across 10+ ecosystems (Node, Rust, Python, Go, 
 - **Enterprise**: Implement remaining stubs for mirror, fleet, and golden path
 - **Debian**: Enrich daemon search with full package info
 
-  - Update IPC protocol to return Vec<PackageInfo> for Debian searches
+  - Update IPC protocol to return Vec`<PackageInfo>` for Debian searches
 
   - Update daemon handlers and cache to support enriched package data
 
