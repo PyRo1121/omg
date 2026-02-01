@@ -149,6 +149,102 @@ jobs:
           name: ubuntu-build
           path: omg-v*.tar.gz*
 
+  build-fedora:
+    name: "Build Fedora"
+    runs-on: ubuntu-latest
+    container:
+      image: fedora:latest
+    steps:
+      - name: Install Dependencies
+        run: |
+          dnf install -y --setopt=install_weak_deps=False \
+            git clang cmake openssl-devel pkgconfig findutils curl \
+            rpm dnf sqlite yum-utils fedora-release
+          rpm --initdb
+          dnf makecache --refresh
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.92.0
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      - uses: actions/checkout@v4
+
+      - name: Git safe directory
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Build
+        run: |
+          export PATH="$HOME/.cargo/bin:$PATH"
+          cargo build --release --no-default-features --features fedora,pgp,license --locked
+
+      - name: Package
+        run: |
+          export PATH="$HOME/.cargo/bin:$PATH"
+          VERSION=$(awk -F'"' '/^version =/ {print $2; exit}' Cargo.toml)
+          mkdir -p "omg-v${VERSION}-x86_64-linux-fedora"
+          cp target/release/omg "omg-v${VERSION}-x86_64-linux-fedora/"
+          cp README.md LICENSE "omg-v${VERSION}-x86_64-linux-fedora/"
+          tar -czvf "omg-v${VERSION}-x86_64-linux-fedora.tar.gz" "omg-v${VERSION}-x86_64-linux-fedora"
+          sha256sum "omg-v${VERSION}-x86_64-linux-fedora.tar.gz" > "omg-v${VERSION}-x86_64-linux-fedora.tar.gz.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fedora-build
+          path: omg-v*.tar.gz*
+
+  build-macos:
+    name: "Build macOS (ARM64)"
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build
+        run: cargo build --release --no-default-features --features macos,pgp,license --locked
+
+      - name: Package
+        run: |
+          VERSION=$(awk -F'"' '/^version =/ {print $2; exit}' Cargo.toml)
+          mkdir -p "omg-v${VERSION}-aarch64-darwin"
+          cp target/release/omg "omg-v${VERSION}-aarch64-darwin/"
+          cp README.md LICENSE "omg-v${VERSION}-aarch64-darwin/"
+          tar -czf "omg-v${VERSION}-aarch64-darwin.tar.gz" "omg-v${VERSION}-aarch64-darwin"
+          shasum -a 256 "omg-v${VERSION}-aarch64-darwin.tar.gz" > "omg-v${VERSION}-aarch64-darwin.tar.gz.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-build
+          path: omg-v*.tar.gz*
+
+  build-windows:
+    name: "Build Windows (x64)"
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build
+        run: cargo build --release --no-default-features --features windows,pgp,license --locked
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"').Matches.Groups[1].Value
+          $dirname = "omg-v$version-x86_64-windows"
+          New-Item -ItemType Directory -Force -Path $dirname
+          Copy-Item target/release/omg.exe "$dirname/"
+          Copy-Item README.md,LICENSE "$dirname/"
+          Compress-Archive -Path $dirname -DestinationPath "$dirname.zip"
+          $hash = (Get-FileHash -Algorithm SHA256 "$dirname.zip").Hash.ToLower()
+          "$hash  $dirname.zip" | Out-File -Encoding ascii "$dirname.zip.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-build
+          path: omg-v*.zip*
+
   # ════════════════════════════════════════════════════════════════════════════
   # PUBLISH RELEASE
   # ════════════════════════════════════════════════════════════════════════════
@@ -156,7 +252,7 @@ jobs:
   release:
     name: "Create Release"
     runs-on: ubuntu-latest
-    needs: [build-arch, build-debian, build-ubuntu]
+    needs: [build-arch, build-debian, build-ubuntu, build-fedora, build-macos, build-windows]
     permissions:
       contents: write
     steps:
@@ -177,21 +273,66 @@ jobs:
       - name: Generate Release Notes
         id: release_notes
         run: |
-          echo "## OMG v${{ github.ref_name }}" > release_notes.md
-          echo "" >> release_notes.md
-          echo "### Downloads" >> release_notes.md
-          echo "" >> release_notes.md
-          echo "- **Arch Linux**: \`omg-*-x86_64-linux-arch.tar.gz\`" >> release_notes.md
-          echo "- **Debian**: \`omg-*-x86_64-linux-debian.tar.gz\`" >> release_notes.md
-          echo "- **Ubuntu**: \`omg-*-x86_64-linux-ubuntu.tar.gz\`" >> release_notes.md
-          echo "" >> release_notes.md
-          echo "### Installation" >> release_notes.md
-          echo "" >> release_notes.md
-          echo "\`\`\`bash" >> release_notes.md
-          echo "tar -xzf omg-*-x86_64-linux-*.tar.gz" >> release_notes.md
-          echo "cd omg-*-x86_64-linux-*" >> release_notes.md
-          echo "sudo cp omg /usr/local/bin/" >> release_notes.md
-          echo "\`\`\`" >> release_notes.md
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          cat > release_notes.md << EOF
+          ## OMG v${VERSION}
+          
+          ### Installation
+          
+          **Quick Install (Linux/macOS):**
+          \`\`\`bash
+          curl -fsSL https://pyro1121.com/install.sh | bash
+          \`\`\`
+          
+          **Windows (PowerShell):**
+          \`\`\`powershell
+          irm https://pyro1121.com/install.ps1 | iex
+          \`\`\`
+          
+          ### Platform Support
+          
+          | Platform | Architecture | Binary |
+          |----------|--------------|--------|
+          | Arch Linux | x86_64 | \`omg-v${VERSION}-x86_64-linux-arch.tar.gz\` |
+          | Debian | x86_64 | \`omg-v${VERSION}-x86_64-linux-debian.tar.gz\` |
+          | Ubuntu | x86_64 | \`omg-v${VERSION}-x86_64-linux-ubuntu.tar.gz\` |
+          | Fedora/RHEL | x86_64 | \`omg-v${VERSION}-x86_64-linux-fedora.tar.gz\` |
+          | macOS | ARM64 | \`omg-v${VERSION}-aarch64-darwin.tar.gz\` |
+          | Windows | x64 | \`omg-v${VERSION}-x86_64-windows.zip\` |
+          
+          ### Manual Installation
+          
+          **Linux/macOS:**
+          \`\`\`bash
+          tar -xzf omg-v${VERSION}-*.tar.gz
+          cd omg-v${VERSION}-*
+          sudo cp omg /usr/local/bin/
+          \`\`\`
+          
+          **Windows:**
+          \`\`\`powershell
+          Expand-Archive omg-v${VERSION}-x86_64-windows.zip
+          Move-Item omg-v${VERSION}-x86_64-windows/omg.exe \$env:LOCALAPPDATA/Programs/
+          \`\`\`
+          
+          ### Verification
+          
+          All binaries include SHA256 checksums. Verify downloads:
+          
+          **Linux/macOS:**
+          \`\`\`bash
+          sha256sum -c omg-v${VERSION}-*.sha256
+          \`\`\`
+          
+          **Windows (PowerShell):**
+          \`\`\`powershell
+          (Get-FileHash omg.exe).Hash -eq (Get-Content omg-*.sha256).Split()[0]
+          \`\`\`
+          
+          ### What's New
+          
+          See [CHANGELOG.md](https://github.com/PyRo1121/omg/blob/main/docs/changelog.md) for details.
+          EOF
 
       - uses: softprops/action-gh-release@v2
         if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'false')
