@@ -48,20 +48,17 @@ async fn test_aur_install_speed() {
         // Verify installation succeeded
         assert!(
             output.status.success(),
-            "Installation of {} failed: {}",
-            package,
+            "Installation of {package} failed: {}",
             String::from_utf8_lossy(&output.stderr)
         );
 
         // Verify reasonable performance (< 60s for binary packages)
         assert!(
             duration.as_secs() < 60,
-            "Installation of {} took too long: {:?}",
-            package,
-            duration
+            "Installation of {package} took too long: {duration:?}"
         );
 
-        println!("✓ {} installed successfully in {:?}", package, duration);
+        println!("✓ {package} installed successfully in {duration:?}");
     }
 }
 
@@ -103,11 +100,10 @@ async fn test_parallel_downloads() {
     // This is a complex package but should complete reasonably quickly
     assert!(
         duration.as_secs() < 120,
-        "Installation with parallel downloads took too long: {:?}",
-        duration
+        "Installation with parallel downloads took too long: {duration:?}"
     );
 
-    println!("✓ Parallel downloads completed in {:?}", duration);
+    println!("✓ Parallel downloads completed in {duration:?}");
 }
 
 /// Test smart dependency resolution avoids unnecessary work
@@ -118,7 +114,7 @@ async fn test_smart_dependency_resolution() {
 
     // Install base package first
     let base_package = "yay-bin";
-    println!("Installing base package: {}", base_package);
+    println!("Installing base package: {base_package}");
 
     let output = std::process::Command::new("cargo")
         .args([
@@ -138,10 +134,7 @@ async fn test_smart_dependency_resolution() {
     // Now install a package that might share dependencies
     // Smart resolution should skip already-satisfied dependencies
     let test_package = "paru-bin";
-    println!(
-        "Installing package with potential shared deps: {}",
-        test_package
-    );
+    println!("Installing package with potential shared deps: {test_package}");
 
     let start = Instant::now();
 
@@ -169,9 +162,8 @@ async fn test_smart_dependency_resolution() {
     // Should be faster since shared dependencies are already installed
     assert!(
         duration.as_secs() < 45,
-        "Smart dependency resolution took too long: {:?}",
-        duration
+        "Smart dependency resolution took too long: {duration:?}"
     );
 
-    println!("✓ Smart dependency resolution completed in {:?}", duration);
+    println!("✓ Smart dependency resolution completed in {duration:?}");
 }
