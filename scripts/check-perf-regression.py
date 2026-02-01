@@ -44,7 +44,10 @@ def extract_search_time_from_markdown(md_path):
 
 def check_regression():
     latest_path = 'benchmarks/summary.json'
-    hyperfine_json_path = 'benchmark_results.json'
+    hyperfine_json_paths = [
+        'benchmark_results/search.json',
+        'benchmark_results.json',
+    ]
     markdown_report_path = 'benchmark_report.md'
     
     if not os.path.exists(latest_path):
@@ -58,8 +61,12 @@ def check_regression():
         print(f"Error loading baseline: {e}")
         return 0
 
-    # Try hyperfine JSON first (more accurate), fall back to markdown
-    current_search_ms = extract_search_time_from_hyperfine(hyperfine_json_path)
+    current_search_ms = None
+    for json_path in hyperfine_json_paths:
+        current_search_ms = extract_search_time_from_hyperfine(json_path)
+        if current_search_ms is not None:
+            break
+    
     if current_search_ms is None:
         current_search_ms = extract_search_time_from_markdown(markdown_report_path)
     
