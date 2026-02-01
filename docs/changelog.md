@@ -163,6 +163,46 @@ Fixes 18 clippy errors found in platform builds.
 
 ### ✨ New Features
 
+- Add multi-OS release builds and universal installer
+
+  - Add Fedora, macOS (ARM64), and Windows (x64) builds to release workflow
+
+  - Extend release.yml with 3 new build jobs (build-fedora, build-macos, build-windows)
+
+  - Implement universal install.sh with OS/distro/arch detection
+
+  - Add detect_os(), detect_distro(), detect_arch() functions
+
+  - Add select_artifact() for correct binary selection per platform
+
+  - Support naming convention: omg-v{VERSION}-{ARCH}-{OS}-{DISTRO}.tar.gz
+
+  - Fallback to Fedora binary for unknown Linux distros (pure Rust, portable)
+
+  - Add WSL detection and Windows .zip extraction support
+
+  - Replace Arch-only check_arch() with multi-platform check_platform()
+
+  - Add multi-distro dependency installation (pacman, apt, dnf, brew)
+
+  - Preserve telemetry opt-out, version selection, and shell integration
+
+Platform support matrix:
+
+  - Arch Linux (x86_64)   - with libalpm FFI
+
+  - Debian/Ubuntu (x86_64)   - with rust-apt FFI
+
+  - Fedora/RHEL (x86_64)   - pure Rust, statically linked
+
+  - macOS (ARM64)   - pure Rust, statically linked
+
+  - Windows (x64)   - pure Rust with vendored OpenSSL
+
+Release assets now include SHA256 checksums for verification.
+
+Updated release notes template with installation instructions for all platforms.
+
 - **Testing**: Add multi-OS testing infrastructure with coverage reporting
 
   - Windows: Pure Rust Scoop integration via libscoop v0.1.0-beta.7
