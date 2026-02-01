@@ -247,6 +247,12 @@ Updated CLI commands to use pure Rust:
 
 ### 🐛 Bug Fixes
 
+- Resolve Arch clippy errors in security_real_world.rs
+
+  - Line 316: Use () instead of _ for unit pattern (clippy::ignored_unit_patterns)
+
+  - Line 322: Fix format string to use inline variable (clippy::uninlined_format_args)
+
 - Resolve Fedora implicit_clone and Arch unsafe_code errors
 
   - tests/common/fixtures.rs: Add #[allow(clippy::implicit_clone)] annotation
