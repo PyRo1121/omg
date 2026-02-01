@@ -11,39 +11,6 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ---
 
 ## [Unreleased]
-
-### 🎉 Major Features
-
-- **Multi-OS Platform Support**: OMG now runs on 6+ operating systems
-
-  OMG has evolved from Arch-only to universal multi-OS package manager:
-
-  **Supported Platforms:**
-  - ✅ **Arch Linux** (x86_64) - Native libalpm integration
-  - ✅ **Debian** (x86_64) - Native rust-apt integration
-  - ✅ **Ubuntu** (x86_64) - Native rust-apt integration
-  - ✅ **Fedora/RHEL** (x86_64) - Pure Rust DNF/YUM implementation
-  - ✅ **macOS** (ARM64) - Homebrew integration for Apple Silicon
-  - ✅ **Windows** (x64) - Scoop integration (WSL or native)
-
-  **Universal Installer:**
-  ```bash
-  curl -fsSL https://pyro1121.com/install.sh | bash
-  ```
-
-  The installer automatically detects OS, distribution, and architecture, then downloads the correct pre-built binary. Unknown Linux distributions fall back to the Fedora build (pure Rust, highly portable).
-
-  **Release Workflow:**
-  - Automated CI builds for all 6 platforms via GitHub Actions
-  - SHA256 checksums for all binaries
-  - Asset naming convention: `omg-v{VERSION}-{ARCH}-{OS}-{DISTRO}.tar.gz`
-  - Platform-specific features: arch,pgp,license / debian / fedora,pgp,license / macos,pgp,license / windows,pgp,license
-
-  **Impact:**
-  - Addressable market: ~1-2% (Arch users) → 80%+ (all major platforms)
-  - Installation friction: ~10min manual build → 30sec one-command install
-  - Developer reach: From hundreds to millions
-
 ### ♻️  Refactoring
 
 - **Cli**: Simplify code and improve readability
@@ -634,6 +601,44 @@ Changed to use 'bun run build:site' which correctly invokes 'vinxi build'.
 
 - Trigger CI for daemon_benchmark clippy fix
 ### 📚 Documentation
+
+- Add multi-OS platform support to changelog
+
+Add comprehensive changelog entry documenting:
+
+  - Support for 6 operating systems (Arch, Debian, Ubuntu, Fedora, macOS, Windows)
+
+  - Universal installer with auto-detection
+
+  - Automated CI release workflow
+
+  - Platform-specific feature configurations
+
+  - Impact metrics (1-2% to 80%+ addressable market)
+
+- Update quickstart and index for multi-OS support
+
+  - Add platform-specific installation instructions to quickstart
+
+  - Expand one-line installer description with platform auto-detection
+
+  - Add AUR, Homebrew, APT, Scoop installation methods
+
+  - Update example to show all supported platforms
+
+  - Note Fedora fallback for unknown Linux distros
+
+- Update README for multi-OS platform support
+
+  - Update platform support statement to include Fedora, macOS, Windows
+
+  - Add comprehensive Platform Support section with support matrix table
+
+  - Mark Fedora/RPM and macOS as completed in roadmap
+
+  - Clarify installer works on all platforms with auto-detection
+
+  - Highlight fallback to Fedora build for unknown distros
 
 - Improve code documentation and test safety annotations
 
