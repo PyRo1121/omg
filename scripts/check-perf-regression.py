@@ -1,11 +1,51 @@
 #!/usr/bin/env python3
+"""
+Performance regression checker for OMG benchmarks.
+
+Supports both hyperfine JSON output and markdown report parsing.
+Checks for performance regressions against historical baseline.
+"""
 import json
 import sys
 import os
 
+def extract_search_time_from_hyperfine(json_path):
+    """Extract search time from hyperfine JSON output."""
+    try:
+        with open(json_path, 'r') as f:
+            data = json.load(f)
+        
+        # Find the "omg search" result
+        for result in data.get('results', []):
+            if 'omg search' in result.get('command', ''):
+                # Convert seconds to milliseconds
+                return result['mean'] * 1000
+        
+        return None
+    except Exception as e:
+        print(f"Note: Could not parse hyperfine JSON: {e}")
+        return None
+
+def extract_search_time_from_markdown(md_path):
+    """Extract search time from markdown benchmark report."""
+    try:
+        with open(md_path, 'r') as f:
+            for line in f:
+                if '| search |' in line:
+                    parts = line.split('|')
+                    # Format: | Command | OMG (Daemon) | pacman | yay | Speedup vs pacman |
+                    # index 2 is OMG (Daemon)
+                    val = parts[2].strip().replace('ms', '')
+                    return float(val)
+        return None
+    except Exception as e:
+        print(f"Error parsing markdown report: {e}")
+        return None
+
 def check_regression():
     latest_path = 'benchmarks/summary.json'
-    current_report_path = 'benchmark_report.md'
+    hyperfine_json_path = 'benchmark_results.json'
+    markdown_report_path = 'benchmark_report.md'
     
     if not os.path.exists(latest_path):
         print("No baseline found. Skipping regression check.")
@@ -18,20 +58,13 @@ def check_regression():
         print(f"Error loading baseline: {e}")
         return 0
 
-    # Extract current search time from report
-    current_search_ms = None
-    try:
-        with open(current_report_path, 'r') as f:
-            for line in f:
-                if '| search |' in line:
-                    parts = line.split('|')
-                    # Format: | Command | OMG (Daemon) | pacman | yay | Speedup vs pacman |
-                    # index 2 is OMG (Daemon)
-                    val = parts[2].strip().replace('ms', '')
-                    current_search_ms = float(val)
-                    break
-    except Exception as e:
-        print(f"Error parsing current report: {e}")
+    # Try hyperfine JSON first (more accurate), fall back to markdown
+    current_search_ms = extract_search_time_from_hyperfine(hyperfine_json_path)
+    if current_search_ms is None:
+        current_search_ms = extract_search_time_from_markdown(markdown_report_path)
+    
+    if current_search_ms is None:
+        print("❌ Could not extract current search time from any source.")
         return 1
 
     if current_search_ms is None:
