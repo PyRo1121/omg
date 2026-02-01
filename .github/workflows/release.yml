@@ -275,22 +275,38 @@ jobs:
         id: release_notes
         run: |
           VERSION="${GITHUB_REF#refs/tags/v}"
-          cat > release_notes.md << EOF
-          ## OMG v${VERSION}
           
-          ### Installation
+          cat > release_notes.md << 'EOF_HEADER'
+          ## Installation
           
           **Quick Install (Linux/macOS):**
-          \`\`\`bash
+          ```bash
           curl -fsSL https://pyro1121.com/install.sh | bash
-          \`\`\`
+          ```
           
           **Windows (PowerShell):**
-          \`\`\`powershell
+          ```powershell
           irm https://pyro1121.com/install.ps1 | iex
-          \`\`\`
+          ```
           
-          ### Platform Support
+          EOF_HEADER
+          
+          echo "" >> release_notes.md
+          echo "## What's New in v${VERSION}" >> release_notes.md
+          echo "" >> release_notes.md
+          
+          if ./scripts/extract-release-notes.sh "${VERSION}" >> release_notes.md 2>/dev/null; then
+            echo "✓ Extracted changelog for v${VERSION}"
+          else
+            echo "⚠ No changelog found, using generic message"
+            echo "See [full changelog](https://github.com/PyRo1121/omg/blob/main/docs/changelog.md) for details." >> release_notes.md
+          fi
+          
+          cat >> release_notes.md << EOF_FOOTER
+          
+          ---
+          
+          ## Platform Support
           
           | Platform | Architecture | Binary |
           |----------|--------------|--------|
@@ -301,7 +317,7 @@ jobs:
           | macOS | ARM64 | \`omg-v${VERSION}-aarch64-darwin.tar.gz\` |
           | Windows | x64 | \`omg-v${VERSION}-x86_64-windows.zip\` |
           
-          ### Manual Installation
+          ## Manual Installation
           
           **Linux/macOS:**
           \`\`\`bash
@@ -316,7 +332,7 @@ jobs:
           Move-Item omg-v${VERSION}-x86_64-windows/omg.exe \$env:LOCALAPPDATA/Programs/
           \`\`\`
           
-          ### Verification
+          ## Verification
           
           All binaries include SHA256 checksums. Verify downloads:
           
@@ -330,10 +346,17 @@ jobs:
           (Get-FileHash omg.exe).Hash -eq (Get-Content omg-*.sha256).Split()[0]
           \`\`\`
           
-          ### What's New
+          ---
           
-          See [CHANGELOG.md](https://github.com/PyRo1121/omg/blob/main/docs/changelog.md) for details.
-          EOF
+          **Full Changelog**: https://github.com/PyRo1121/omg/blob/main/docs/changelog.md
+          EOF_FOOTER
+          
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Generated Release Notes Preview:"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          cat release_notes.md
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
       - uses: softprops/action-gh-release@v2
         if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'false')

@@ -71,13 +71,13 @@ impl NodeManager {
     pub async fn resolve_alias(&self, alias: &str) -> Result<String> {
         let alias = normalize_version(alias);
 
-        match alias.as_str() {
+        let result = match alias.as_str() {
             "latest" => {
                 let versions = self.list_available().await?;
                 versions
                     .first()
                     .map(|v| v.version.trim_start_matches('v').to_string())
-                    .ok_or_else(|| anyhow::anyhow!("No Node.js versions found upstream"))
+                    .ok_or_else(|| anyhow::anyhow!("No Node.js versions found upstream"))?
             }
             "lts" => {
                 let versions = self.list_available().await?;
@@ -85,10 +85,12 @@ impl NodeManager {
                     .iter()
                     .find(|v| v.lts.is_string())
                     .map(|v| v.version.trim_start_matches('v').to_string())
-                    .ok_or_else(|| anyhow::anyhow!("No LTS version found"))
+                    .ok_or_else(|| anyhow::anyhow!("No LTS version found"))?
             }
-            _ => Ok(alias),
-        }
+            _ => alias,
+        };
+        
+        Ok(result)
     }
 
     /// Install Node.js - PURE RUST, NO SUBPROCESS

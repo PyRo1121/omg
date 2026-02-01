@@ -88,16 +88,15 @@ impl OmgError {
     pub fn suggestion(&self) -> Option<&'static str> {
         match self {
             Self::PackageNotFound(_) => Some("Try: omg search <query> to find available packages"),
-            Self::VersionNotFound { runtime, .. } => match runtime.as_str() {
-                "node" => Some("Try: omg list node --available to see available versions"),
-                "python" => Some("Try: omg list python --available to see available versions"),
-                "go" => Some("Try: omg list go --available to see available versions"),
-                "rust" => Some("Try: omg list rust --available to see available versions"),
-                "bun" => Some("Try: omg list bun --available to see available versions"),
-                "ruby" => Some("Try: omg list ruby --available to see available versions"),
-                "java" => Some("Try: omg list java --available to see available versions"),
-                _ => Some("Try: omg list <runtime> --available to see available versions"),
-            },
+            Self::VersionNotFound { runtime, .. } => {
+                const GENERIC_SUGGESTION: &str = "Try: omg list <runtime> --available to see available versions";
+                match runtime.as_str() {
+                    "node" | "python" | "go" | "rust" | "bun" | "ruby" | "java" => {
+                        Some(GENERIC_SUGGESTION)
+                    }
+                    _ => Some(GENERIC_SUGGESTION),
+                }
+            }
             Self::UnsupportedRuntime(_) => {
                 Some("Supported runtimes: node, python, go, rust, ruby, java, bun")
             }
