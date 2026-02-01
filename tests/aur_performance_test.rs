@@ -25,7 +25,7 @@ async fn test_aur_install_speed() {
     let test_packages = vec!["yay-bin", "paru-bin"];
 
     for package in test_packages {
-        println!("\n=== Testing AUR install: {} ===", package);
+        println!("\n=== Testing AUR install: {package} ===");
 
         let start = Instant::now();
 

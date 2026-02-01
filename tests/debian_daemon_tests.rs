@@ -2,7 +2,8 @@
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::pedantic,
-    clippy::nursery
+    clippy::nursery,
+    unsafe_code
 )]
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
 use omg_lib::daemon::handlers::DaemonState;
