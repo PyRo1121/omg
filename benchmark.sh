@@ -22,11 +22,66 @@ set -e
 
 export PATH="$HOME/.cargo/bin:$PATH"
 
-# Configuration
-ITERATIONS=10
-WARMUP=2
+# ============================================================================
+# COMMAND-LINE ARGUMENTS
+# ============================================================================
+
+FAST_MODE=false
+
+print_usage() {
+    cat << EOF
+Usage: $0 [OPTIONS]
+
+Options:
+  --fast, -f    Run in fast mode (5 iterations, 1 warmup)
+  --help, -h    Show this help message
+
+Environment Variables:
+  OMG_BENCH_ITERATIONS   Number of iterations (default: 10, fast: 5)
+  OMG_BENCH_WARMUP       Number of warmup runs (default: 2, fast: 1)
+
+Examples:
+  $0                                    # Full benchmark (10 iters, 2 warmup)
+  $0 --fast                             # Fast benchmark (5 iters, 1 warmup)
+  OMG_BENCH_ITERATIONS=3 $0             # Custom iterations
+  OMG_BENCH_ITERATIONS=5 WARMUP=1 $0    # Custom both
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --fast|-f)
+            FAST_MODE=true
+            shift
+            ;;
+        --help|-h)
+            print_usage
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1"
+            print_usage
+            exit 1
+            ;;
+    esac
+done
+
+# ============================================================================
+# CONFIGURATION
+# ============================================================================
+
+# Apply fast mode or environment variable overrides
+if [ "$FAST_MODE" = true ]; then
+    ITERATIONS=${OMG_BENCH_ITERATIONS:-5}
+    WARMUP=${OMG_BENCH_WARMUP:-1}
+else
+    ITERATIONS=${OMG_BENCH_ITERATIONS:-10}
+    WARMUP=${OMG_BENCH_WARMUP:-2}
+fi
+
 OMG="./target/release/omg"
 OMGD="./target/release/omgd"
+OMG_FAST="./target/release/omg-fast"
 BENCH_DIR="$(mktemp -d -t omg-bench-XXXX)"
 export OMG_DAEMON_DATA_DIR="$BENCH_DIR/data"
 export OMG_SOCKET_PATH="$BENCH_DIR/omg.sock"
@@ -53,6 +108,16 @@ echo "========================================================"
 echo -e "${GREEN}🚀 OMG World-Class Performance Benchmark${NC}"
 echo "========================================================"
 echo ""
+if [ "$FAST_MODE" = true ]; then
+    echo -e "${YELLOW}⚡ FAST MODE ENABLED${NC}"
+    echo -e "  Iterations: ${ITERATIONS} (reduced from 10)"
+    echo -e "  Warmup: ${WARMUP} (reduced from 2)"
+    echo ""
+fi
+echo -e "${YELLOW}CONFIGURATION:${NC}"
+echo "  Iterations: $ITERATIONS"
+echo "  Warmup: $WARMUP"
+echo ""
 echo -e "${YELLOW}FAIRNESS NOTES:${NC}"
 echo "  • OMG uses --no-aur flag (no AUR network calls, matching pacman scope)"
 echo "  • yay uses --repo flag (no AUR network calls)"
@@ -65,7 +130,16 @@ echo ""
 echo "Starting OMG Daemon..."
 $OMGD --foreground > "$DAEMON_LOG" 2>&1 &
 DAEMON_PID=$!
-sleep 2
+
+# Optimized daemon ready check (faster than sleep 2)
+echo -n "Waiting for daemon to be ready..."
+for i in {1..20}; do
+    if $OMG status > /dev/null 2>&1; then
+        echo " ready!"
+        break
+    fi
+    sleep 0.1
+done
 
 if ! $OMG status > /dev/null 2>&1; then
     echo -e "${RED}❌ OMG daemon failed to start${NC}" >&2
@@ -159,8 +233,9 @@ echo -e "\n📋 Benchmark: EXPLICIT"
 echo "-------------------------------"
 # Warm explicit cache once to hit daemon cache for measured runs
 $OMG explicit --count > /dev/null 2>&1 || true
-if [ -x "./target/release/omg-fast" ]; then
-    RESULTS["explicit,OMG (Daemon)"]=$(run_bench "OMG (Daemon)" "./target/release/omg-fast ec" $ITERATIONS $WARMUP)
+# Use omg-fast for best performance
+if [ -x "$OMG_FAST" ]; then
+    RESULTS["explicit,OMG (Daemon)"]=$(run_bench "OMG (omg-fast)" "$OMG_FAST ec" $ITERATIONS $WARMUP)
 else
     RESULTS["explicit,OMG (Daemon)"]=$(run_bench "OMG (Daemon)" "$OMG explicit --count" $ITERATIONS $WARMUP)
 fi
