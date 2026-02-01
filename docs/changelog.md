@@ -239,6 +239,12 @@ Updated CLI commands to use pure Rust:
 
 ### 🐛 Bug Fixes
 
+- Resolve Debian unsafe-code and Arch missing-const-for-fn clippy errors
+
+  - tests/bench_debian.rs: Add unsafe_code to allow list for test env setup
+
+  - tests/absolute_coverage.rs: Make get_ctx() const fn as suggested by clippy
+
 - Remove unused import in fedora_tests.rs
 
 The require_system_tests! macro is exported at crate root via #[macro_export],
