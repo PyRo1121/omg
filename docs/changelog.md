@@ -193,7 +193,79 @@ NEW FEATURES:
 
 • Shell integration examples for all shells
 
+### 📚 Documentation
+
+- Add benchmark visualization charts to README
+
+✅ Generated professional benchmark charts:
+
+  - benchmark-comparison.png (Arch Linux: OMG vs pacman/yay)
+
+  - benchmark-comparison-apt.png (Debian/Ubuntu: OMG vs apt-cache/Nala)
+
+  - benchmark-speedup.png (Combined speedup comparison)
+
+✅ Added visual charts to README.md:
+
+  - Arch Linux section: Shows 12-22x speedup with visual bars
+
+  - Debian/Ubuntu section: Shows 59-483x speedup with visual bars
+
+  - High-quality 300 DPI PNG images with proper labels and legends
+
+✅ Updated SCREENSHOTS-TODO.md:
+
+  - Marked benchmark-comparison.png as complete (Priority 1)
+
+Charts generated using scripts/generate-benchmark-chart.py with matplotlib.
+
+Data sourced from existing benchmark tables in README.md.
+
+File sizes: 183-235KB (optimized for web).
+
 ### 🔒 Security
+
+- Add comprehensive security policy and vulnerability documentation
+
+✅ Created SECURITY.md with full security policy:
+
+  - Vulnerability reporting procedure (email: olen@latham.cloud)
+
+  - Response timelines (24-48h critical, 7d high, 14d medium)
+
+  - Known platform-specific security considerations
+
+  - Security best practices for users and contributors
+
+  - Complete audit history and future plans
+
+✅ Documented GitHub Dependabot findings:
+
+  - 1 medium risk (Windows-only): RUSTSEC-2023-0018 in libscoop → remove_dir_all 0.7.0
+
+  - 4 low risk (Debian-only): Unmaintained deps in debian-packaging crate
+
+  - Linux/macOS default builds: ✅ Zero vulnerabilities
+
+✅ Platform-specific vulnerability analysis:
+
+  - Arch Linux (default): ✅ Clean
+
+  - Debian/Ubuntu (--features debian): ⚠️ 4 unmaintained (low risk)
+
+  - Windows (target_os = windows): ⚠️ 1 TOCTOU (medium risk, tracked upstream)
+
+✅ Security features documentation:
+
+  - SLSA provenance, PGP verification, SBOM generation
+
+  - Audit logging, policy enforcement, security grading
+
+  - Sandbox execution, secret scanning, rollback support
+
+Addresses GitHub security advisory notifications while providing full context
+
+that most builds are unaffected (platform-specific optional dependencies).
 
 - Complete Priority 3 improvements - cheat sheet, translation plan, and benchmark chart generator
 
