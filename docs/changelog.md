@@ -247,6 +247,10 @@ Updated CLI commands to use pure Rust:
 
 ### 🐛 Bug Fixes
 
+- Resolve Arch clippy single_match_else error in daemon_benchmark
+
+Use let-else pattern instead of match for single error case
+
 - Resolve Arch clippy errors in security_real_world.rs
 
   - Line 316: Use () instead of _ for unit pattern (clippy::ignored_unit_patterns)
