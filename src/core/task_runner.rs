@@ -48,7 +48,7 @@ impl std::fmt::Display for Ecosystem {
 }
 
 impl Ecosystem {
-    fn priority(&self) -> i32 {
+    const fn priority(&self) -> i32 {
         match self {
             Self::Rust => 100,
             Self::Node | Self::Bun | Self::Deno => 90,
