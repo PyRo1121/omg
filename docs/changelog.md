@@ -27,6 +27,18 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 
 ### ⚡ Performance
 
+- Update format strings to use inline variables (clippy::uninlined_format_args)
+
+Fixed 9 clippy warnings in aur_performance_test.rs by converting old-style
+
+format strings to inline variable syntax:
+
+  - println!("{}", var) → println!("{var}")
+
+  - println!("{:?}", var) → println!("{var:?}")
+
+This lint is enforced in Rust 1.92.0 on platform-specific builds.
+
 - Resolve clippy pedantic warnings in platform-specific code
 
   - Remove unnecessary Result wrappers from Debian why.rs functions
