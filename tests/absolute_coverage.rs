@@ -1,4 +1,5 @@
 #![cfg(feature = "arch")]
+#![allow(unsafe_code)]
 
 mod alpm_harness;
 use anyhow::Result;
