@@ -1,6 +1,6 @@
 # OMG Makefile - Development and Testing Targets
 
-.PHONY: build release test check fmt clippy clean docker-debian docker-ubuntu docker-test
+.PHONY: build release test check fmt clippy clean bench bench-fast bench-hyperfine bench-hyperfine-fast bench-charts docker-debian docker-ubuntu docker-test
 
 # Default target
 all: build
@@ -44,6 +44,30 @@ tdd:
 # Generate coverage report (requires cargo-tarpaulin)
 coverage:
 	cargo tarpaulin --ignore-config --ignore-tests --out html
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Benchmarking
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Run full benchmark suite (10 iterations, 2 warmup)
+bench:
+	./benchmark.sh
+
+# Run fast benchmark (5 iterations, 1 warmup)
+bench-fast:
+	./benchmark.sh --fast
+
+# Run hyperfine benchmark (requires hyperfine: pacman -S hyperfine)
+bench-hyperfine:
+	./benchmark-hyperfine.sh
+
+# Run hyperfine benchmark in fast mode
+bench-hyperfine-fast:
+	./benchmark-hyperfine.sh --fast
+
+# Generate benchmark visualization charts
+bench-charts:
+	python3 scripts/generate-benchmark-chart.py
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Docker Testing (for Debian/Ubuntu support development on Arch)
