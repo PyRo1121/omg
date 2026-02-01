@@ -176,7 +176,7 @@ jobs:
 
       - name: Cache cargo registry
         if: inputs.skip-cache != true
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry/index/
@@ -187,7 +187,7 @@ jobs:
 
       - name: Cache target
         if: inputs.skip-cache != true
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: target
           key: v1-${{ matrix.platform }}-target-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('src/**/*.rs') }}
@@ -437,7 +437,7 @@ jobs:
         
       - name: Cache cargo registry
         if: inputs.skip-cache != true
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry/index/
@@ -547,7 +547,7 @@ jobs:
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry/
