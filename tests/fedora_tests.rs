@@ -18,7 +18,7 @@ mod dnf_integration {
     #[tokio::test]
     async fn test_search_common_package() -> Result<()> {
         require_system_tests!();
-        
+
         let pm = DnfPackageManager::new();
 
         let results = pm.search("vim").await?;
@@ -46,7 +46,7 @@ mod dnf_integration {
     #[tokio::test]
     async fn test_list_installed_packages() -> Result<()> {
         require_system_tests!();
-        
+
         let pm = DnfPackageManager::new();
 
         let installed = pm.list_installed().await?;
@@ -85,7 +85,7 @@ mod dnf_integration {
     #[tokio::test]
     async fn test_is_installed_check() -> Result<()> {
         require_system_tests!();
-        
+
         let pm = DnfPackageManager::new();
 
         let is_bash_installed = pm.is_installed("bash").await;
@@ -116,7 +116,7 @@ mod dnf_rpm_database {
     #[tokio::test]
     async fn test_rpm_database_query() -> Result<()> {
         require_system_tests!();
-        
+
         let pm = DnfPackageManager::new();
 
         let installed = pm.list_installed().await?;
