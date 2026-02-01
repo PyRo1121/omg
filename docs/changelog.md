@@ -720,6 +720,20 @@ AUR Package Manager (2 fixes):
 
 ### 🔧 Maintenance
 
+- Bump version to 0.1.203 for multi-OS release
+
+This release includes:
+
+  - Multi-OS platform support (Arch, Debian, Ubuntu, Fedora, macOS, Windows)
+
+  - Universal installer with auto-detection
+
+  - Automated release builds for 6 platforms
+
+  - Enhanced documentation for all platforms
+
+  - Clippy warning fixes for production code quality
+
 - Run cargo fmt on fedora_tests.rs
 ## [0.1.202] - 2026-01-31
 ### Debug
