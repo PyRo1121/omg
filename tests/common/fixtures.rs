@@ -20,7 +20,7 @@ impl PackageFixtureExt for PackageFixture {
 
         MockPackage {
             name: pkg.name,
-            version: pkg.version.clone(),
+            version: pkg.version.to_string(),
             description: pkg.description,
             repo: "test".to_owned(),
             dependencies: vec![],
