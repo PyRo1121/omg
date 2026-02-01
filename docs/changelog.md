@@ -512,6 +512,9 @@ Changed to use 'bun run build:site' which correctly invokes 'vinxi build'.
 
   - Enhanced security posture for archive extraction operations
 
+### 🔧 Maintenance
+
+- Run cargo fmt on fedora_tests.rs
 ## [0.1.202] - 2026-01-31
 ### Debug
 
