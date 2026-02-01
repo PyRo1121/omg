@@ -131,7 +131,7 @@ jobs:
             setup: |
               pacman -Syu --noconfirm
               pacman -S --noconfirm --needed base-devel git pkgconf openssl libarchive clang cmake curl
-              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.92.0
               echo "$HOME/.cargo/bin" >> $GITHUB_PATH
               "$HOME/.cargo/bin/rustup" component add clippy rustfmt
 
@@ -143,7 +143,7 @@ jobs:
               DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
                 ca-certificates curl git build-essential pkg-config \
                 libssl-dev libapt-pkg-dev clang cmake zlib1g-dev liblzma-dev libbz2-dev
-              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.92.0
               echo "$HOME/.cargo/bin" >> $GITHUB_PATH
               "$HOME/.cargo/bin/rustup" component add clippy
 
@@ -156,7 +156,7 @@ jobs:
                 rpm dnf sqlite yum-utils fedora-release
               rpm --initdb
               dnf makecache --refresh
-              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.92.0
               echo "$HOME/.cargo/bin" >> $GITHUB_PATH
               "$HOME/.cargo/bin/rustup" component add clippy rustfmt
 
