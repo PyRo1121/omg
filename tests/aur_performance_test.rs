@@ -8,7 +8,7 @@
 //! - Progress reporting
 //! - Sudoloop for non-blocking operations
 //!
-//! Run manually with: cargo test --features arch --test aur_performance_test -- --ignored
+//! Run manually with: `cargo test --features arch --test aur_performance_test -- --ignored`
 //!
 //! WARNING: These tests perform real package installations and require sudo!
 //! Only run in disposable containers or development environments.
