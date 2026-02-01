@@ -20,6 +20,7 @@ impl PackageFixtureExt for PackageFixture {
 
         MockPackage {
             name: pkg.name,
+            #[allow(clippy::implicit_clone)]
             version: pkg.version.to_string(),
             description: pkg.description,
             repo: "test".to_owned(),
