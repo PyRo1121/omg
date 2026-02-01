@@ -3,6 +3,7 @@ cargo.lock
 omg.lock
 AGENTS.md
 benchmark_report.md
+benchmark_results/
 node_modules
 dist
 .wrangler
