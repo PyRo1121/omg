@@ -239,8 +239,8 @@ impl AurClient {
                     let index_path = Arc::clone(&index_path);
                     let query = Arc::clone(&query);
                     move || -> Result<Vec<Package>> {
-                        let index = AurIndex::open(&*index_path)?;
-                        let entries = index.search(&*query, 50)?;
+                        let index = AurIndex::open(&index_path)?;
+                        let entries = index.search(&query, 50)?;
                     Ok(entries
                         .into_iter()
                         .map(|e| Package {
@@ -366,8 +366,8 @@ impl AurClient {
                 let index_path = Arc::clone(&index_path);
                 let package = Arc::clone(&package);
                 move || -> Result<Option<Package>> {
-                    let index = AurIndex::open(&*index_path)?;
-                    if let Some(entry) = index.get(&*package)? {
+                    let index = AurIndex::open(&index_path)?;
+                    if let Some(entry) = index.get(&package)? {
                     return Ok(Some(Package {
                         name: entry.name.as_str().to_string(),
                         version: crate::package_managers::parse_version_or_zero(
@@ -442,7 +442,7 @@ impl AurClient {
             let result = tokio::task::spawn_blocking({
                 let index_path = Arc::clone(&index_path);
                 move || -> Result<Option<Vec<(String, Version, Version)>>> {
-                    let index = match AurIndex::open(&*index_path) {
+                    let index = match AurIndex::open(&index_path) {
                         Ok(idx) => idx,
                         Err(e) => {
                             warn!("Failed to open AUR index: {}. Will fallback to JSON.", e);
