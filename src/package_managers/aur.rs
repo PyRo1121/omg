@@ -2,6 +2,7 @@
 
 use std::collections::HashSet;
 use std::os::unix::fs::MetadataExt;
+use std::sync::Arc;
 
 /// Check if a needle matches at a word boundary in the haystack.
 /// Word boundaries are: start of string, whitespace, `-`, `_`, `.`
@@ -184,7 +185,6 @@ fn create_dir_as_user_sync(path: &Path) -> Result<()> {
 /// AUR API client with build support
 #[derive(Clone)]
 pub struct AurClient {
-    client: reqwest::Client,
     build_dir: PathBuf,
     settings: Settings,
 }
@@ -208,7 +208,6 @@ impl AurClient {
         let build_dir = paths::cache_dir().join("aur");
 
         Self {
-            client: shared_client().clone(),
             build_dir,
             settings,
         }
@@ -233,13 +232,15 @@ impl AurClient {
 
         // Try fast binary index first if enabled and available
         if self.settings.aur.use_metadata_archive {
-            let index_path = Self::metadata_index_path();
+            let index_path = Arc::new(Self::metadata_index_path());
             if index_path.exists() {
-                let index_path_clone = index_path.clone();
-                let query_clone = query.to_string();
-                let result = tokio::task::spawn_blocking(move || -> Result<Vec<Package>> {
-                    let index = AurIndex::open(&index_path_clone)?;
-                    let entries = index.search(&query_clone, 50)?;
+                let query = Arc::new(query.to_string());
+                let result = tokio::task::spawn_blocking({
+                    let index_path = Arc::clone(&index_path);
+                    let query = Arc::clone(&query);
+                    move || -> Result<Vec<Package>> {
+                        let index = AurIndex::open(&*index_path)?;
+                        let entries = index.search(&*query, 50)?;
                     Ok(entries
                         .into_iter()
                         .map(|e| Package {
@@ -256,6 +257,7 @@ impl AurClient {
                             installed: false,
                         })
                         .collect())
+                }
                 })
                 .await?;
 
@@ -272,8 +274,7 @@ impl AurClient {
             urlencoding::encode(query)
         );
 
-        let response: AurResponse = self
-            .client
+        let response: AurResponse = shared_client()
             .get(&url)
             .send()
             .await
@@ -358,13 +359,15 @@ impl AurClient {
         crate::core::security::validate_package_name(package)?;
 
         // Try fast binary index first
-        let index_path = Self::metadata_index_path();
+        let index_path = Arc::new(Self::metadata_index_path());
         if index_path.exists() {
-            let index_path_clone = index_path.clone();
-            let package_clone = package.to_string();
-            let result = tokio::task::spawn_blocking(move || -> Result<Option<Package>> {
-                let index = AurIndex::open(&index_path_clone)?;
-                if let Some(entry) = index.get(&package_clone)? {
+            let package = Arc::new(package.to_string());
+            let result = tokio::task::spawn_blocking({
+                let index_path = Arc::clone(&index_path);
+                let package = Arc::clone(&package);
+                move || -> Result<Option<Package>> {
+                    let index = AurIndex::open(&*index_path)?;
+                    if let Some(entry) = index.get(&*package)? {
                     return Ok(Some(Package {
                         name: entry.name.as_str().to_string(),
                         version: crate::package_managers::parse_version_or_zero(
@@ -380,6 +383,7 @@ impl AurClient {
                     }));
                 }
                 Ok(None)
+            }
             })
             .await?;
 
@@ -393,8 +397,7 @@ impl AurClient {
             urlencoding::encode(package)
         );
 
-        let response: AurResponse = self
-            .client
+        let response: AurResponse = shared_client()
             .get(&url)
             .send()
             .await
@@ -434,12 +437,12 @@ impl AurClient {
         }
 
         // 2. Try fast binary index first
-        let index_path = Self::metadata_index_path();
+        let index_path = Arc::new(Self::metadata_index_path());
         if index_path.exists() {
-            let index_path_clone = index_path.clone();
-            let result = tokio::task::spawn_blocking(
+            let result = tokio::task::spawn_blocking({
+                let index_path = Arc::clone(&index_path);
                 move || -> Result<Option<Vec<(String, Version, Version)>>> {
-                    let index = match AurIndex::open(&index_path_clone) {
+                    let index = match AurIndex::open(&*index_path) {
                         Ok(idx) => idx,
                         Err(e) => {
                             warn!("Failed to open AUR index: {}. Will fallback to JSON.", e);
@@ -448,8 +451,8 @@ impl AurClient {
                     };
 
                     Ok(Some(index.get_updates(&local_pkgs)?))
-                },
-            )
+                }
+            })
             .await?;
 
             if let Ok(Some(updates)) = result {
@@ -508,7 +511,6 @@ impl AurClient {
 
         let mut stream = futures::stream::iter(chunked_names)
             .map(|chunk| {
-                let client = &self.client;
                 async move {
                     let mut url = format!("{AUR_RPC_URL}?v=5&type=info");
                     for name in &chunk {
@@ -523,7 +525,7 @@ impl AurClient {
                                 .await;
                         }
 
-                        match client.get(&url).send().await {
+                        match shared_client().get(&url).send().await {
                             Ok(resp) => {
                                 if resp.status().is_server_error() {
                                     last_error = Some(anyhow::anyhow!(
@@ -580,7 +582,7 @@ impl AurClient {
         }
 
         // Sync metadata (this will be fast if already fresh)
-        sync_aur_metadata(&self.client, &self.settings, false).await?;
+        sync_aur_metadata(shared_client(), &self.settings, false).await?;
 
         let path = get_metadata_path();
         if path.exists() {
@@ -1060,12 +1062,14 @@ impl AurClient {
             .unwrap_or("package");
         let log_dir = self.build_dir.join("_logs");
         create_dir_as_user(&log_dir).await?;
-        let log_path = log_dir.join(format!("{package_name}.log"));
-        let log_path_clone = log_path.clone();
-        let (log_file, log_file_err) = tokio::task::spawn_blocking(move || {
-            let f = File::create(&log_path_clone)?;
-            let e = f.try_clone()?;
-            Ok::<_, anyhow::Error>((f, e))
+        let log_path = Arc::new(log_dir.join(format!("{package_name}.log")));
+        let (log_file, log_file_err) = tokio::task::spawn_blocking({
+            let log_path = Arc::clone(&log_path);
+            move || {
+                let f = File::create(&*log_path)?;
+                let e = f.try_clone()?;
+                Ok::<_, anyhow::Error>((f, e))
+            }
         })
         .await??;
         let spinner = create_spinner(&format!("Building {package_name}..."));
@@ -1306,12 +1310,14 @@ impl AurClient {
             .unwrap_or("package");
         let log_dir = self.build_dir.join("_logs");
         create_dir_as_user(&log_dir).await?;
-        let log_path = log_dir.join(format!("{package_name}.log"));
-        let log_path_clone = log_path.clone();
-        let (log_file, log_file_err) = tokio::task::spawn_blocking(move || {
-            let f = File::create(&log_path_clone)?;
-            let e = f.try_clone()?;
-            Ok::<_, anyhow::Error>((f, e))
+        let log_path = Arc::new(log_dir.join(format!("{package_name}.log")));
+        let (log_file, log_file_err) = tokio::task::spawn_blocking({
+            let log_path = Arc::clone(&log_path);
+            move || {
+                let f = File::create(&*log_path)?;
+                let e = f.try_clone()?;
+                Ok::<_, anyhow::Error>((f, e))
+            }
         })
         .await??;
         let spinner = create_spinner(&format!("Building {package_name}..."));
@@ -1558,12 +1564,14 @@ impl AurClient {
             .unwrap_or("package");
         let log_dir = self.build_dir.join("_logs");
         create_dir_as_user(&log_dir).await?;
-        let log_path = log_dir.join(format!("{package_name}.log"));
-        let log_path_clone = log_path.clone();
-        let (log_file, log_file_err) = tokio::task::spawn_blocking(move || {
-            let f = File::create(&log_path_clone)?;
-            let e = f.try_clone()?;
-            Ok::<_, anyhow::Error>((f, e))
+        let log_path = Arc::new(log_dir.join(format!("{package_name}.log")));
+        let (log_file, log_file_err) = tokio::task::spawn_blocking({
+            let log_path = Arc::clone(&log_path);
+            move || {
+                let f = File::create(&*log_path)?;
+                let e = f.try_clone()?;
+                Ok::<_, anyhow::Error>((f, e))
+            }
         })
         .await??;
         let spinner = create_spinner(&format!("Building {package_name}..."));
@@ -1657,12 +1665,14 @@ impl AurClient {
             .unwrap_or("package");
         let log_dir = self.build_dir.join("_logs");
         create_dir_as_user(&log_dir).await?;
-        let log_path = log_dir.join(format!("{package_name}.log"));
-        let log_path_clone = log_path.clone();
-        let (log_file, log_file_err) = tokio::task::spawn_blocking(move || {
-            let f = File::create(&log_path_clone)?;
-            let e = f.try_clone()?;
-            Ok::<_, anyhow::Error>((f, e))
+        let log_path = Arc::new(log_dir.join(format!("{package_name}.log")));
+        let (log_file, log_file_err) = tokio::task::spawn_blocking({
+            let log_path = Arc::clone(&log_path);
+            move || {
+                let f = File::create(&*log_path)?;
+                let e = f.try_clone()?;
+                Ok::<_, anyhow::Error>((f, e))
+            }
         })
         .await??;
         let spinner = create_spinner(&format!("Building {package_name} (chroot)..."));
