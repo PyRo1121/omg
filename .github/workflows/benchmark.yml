@@ -33,7 +33,7 @@ jobs:
       - name: Install Dependencies
         run: |
           pacman -Syu --noconfirm
-          pacman -S --noconfirm base-devel git rust cargo pkgconf openssl libarchive clang bc python python-pip sccache
+          pacman -S --noconfirm base-devel git rust cargo pkgconf openssl libarchive clang bc python python-pip sccache hyperfine jq
 
       - uses: actions/checkout@v4
 
@@ -79,19 +79,35 @@ jobs:
       - name: Show sccache stats
         run: sccache --show-stats
 
-      - name: Run Benchmarks
+      - name: Run Benchmarks (Hyperfine)
         id: bench
         run: |
-          chmod +x benchmark.sh
-          ./benchmark.sh 2>&1 | tee benchmark_output.txt
+          chmod +x benchmark-hyperfine.sh benchmark.sh
           
-          SEARCH_TIME=$(grep "| search |" benchmark_report.md | awk -F'|' '{print $3}' | tr -d ' ms')
-          echo "search_time=${SEARCH_TIME}" >> $GITHUB_OUTPUT
+          # Use hyperfine for statistical rigor and JSON export
+          ./benchmark-hyperfine.sh --fast 2>&1 | tee benchmark_output.txt
           
-          PACMAN_TIME=$(grep "| search |" benchmark_report.md | awk -F'|' '{print $4}' | tr -d ' ms')
-          if [ -n "$SEARCH_TIME" ] && [ -n "$PACMAN_TIME" ] && [ "$SEARCH_TIME" != "0" ]; then
-            SPEEDUP=$(echo "scale=1; $PACMAN_TIME / $SEARCH_TIME" | bc)
-            echo "speedup=${SPEEDUP}x" >> $GITHUB_OUTPUT
+          # Extract metrics from hyperfine JSON output (if available)
+          if [ -f "benchmark_results.json" ]; then
+            SEARCH_TIME=$(jq -r '.results[] | select(.command | contains("omg search")) | .mean' benchmark_results.json | awk '{printf "%.1f", $1 * 1000}')
+            echo "search_time=${SEARCH_TIME}" >> $GITHUB_OUTPUT
+            
+            PACMAN_TIME=$(jq -r '.results[] | select(.command | contains("pacman -Ss")) | .mean' benchmark_results.json | awk '{printf "%.1f", $1 * 1000}')
+            if [ -n "$SEARCH_TIME" ] && [ -n "$PACMAN_TIME" ] && [ "$SEARCH_TIME" != "0" ]; then
+              SPEEDUP=$(echo "scale=1; $PACMAN_TIME / $SEARCH_TIME" | bc)
+              echo "speedup=${SPEEDUP}x" >> $GITHUB_OUTPUT
+            fi
+          else
+            # Fallback to original benchmark.sh if hyperfine not available
+            ./benchmark.sh --fast 2>&1 | tee benchmark_output_fallback.txt
+            SEARCH_TIME=$(grep "| search |" benchmark_report.md | awk -F'|' '{print $3}' | tr -d ' ms')
+            echo "search_time=${SEARCH_TIME}" >> $GITHUB_OUTPUT
+            
+            PACMAN_TIME=$(grep "| search |" benchmark_report.md | awk -F'|' '{print $4}' | tr -d ' ms')
+            if [ -n "$SEARCH_TIME" ] && [ -n "$PACMAN_TIME" ] && [ "$SEARCH_TIME" != "0" ]; then
+              SPEEDUP=$(echo "scale=1; $PACMAN_TIME / $SEARCH_TIME" | bc)
+              echo "speedup=${SPEEDUP}x" >> $GITHUB_OUTPUT
+            fi
           fi
 
       - name: Performance Regression Gate
@@ -122,6 +138,8 @@ jobs:
           path: |
             benchmark_report.md
             benchmark-badge.json
+            benchmark_results.json
+            benchmark_output.txt
           retention-days: 90
 
       - name: Update Benchmark Results
