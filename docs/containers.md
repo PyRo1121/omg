@@ -403,3 +403,7 @@ omg container run -it <image> -- bash
 - [Workflows](./workflows.md) — CI/CD integration patterns
 - [Quick Start](./quickstart.md) — Initial setup
 - [Configuration](./configuration.md) — Container settings
+- [Integrations](./integrations.md) — Docker/Compose integration examples
+- [Runtimes](./runtimes.md) — Runtime version management in containers
+- [Team Sync](./team.md) — Sharing containerized environments with teams
+- [Security](./security.md) — Secure container builds and scanning
