@@ -157,7 +157,7 @@ pub fn pacman_conf_path() -> PathBuf {
     env_path("OMG_PACMAN_CONF").unwrap_or_else(|| PathBuf::from("/etc/pacman.conf"))
 }
 
-/// Daemon socket path (default: $`XDG_RUNTIME_DIR/omg.sock`, /run/user/<uid>/omg.sock, or /tmp/omg.sock).
+/// Daemon socket path (default: $`XDG_RUNTIME_DIR/omg.sock`, /run/user/`<uid>`/omg.sock, or /tmp/omg.sock).
 #[must_use]
 pub fn socket_path() -> PathBuf {
     env_path("OMG_SOCKET_PATH").unwrap_or_else(|| {

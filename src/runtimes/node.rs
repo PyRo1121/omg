@@ -89,7 +89,7 @@ impl NodeManager {
             }
             _ => alias,
         };
-        
+
         Ok(result)
     }
 

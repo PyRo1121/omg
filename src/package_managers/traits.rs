@@ -12,7 +12,7 @@ use crate::core::Package;
 ///
 /// Rust 2026 Note: We keep `async_trait` for object safety (required for dyn).
 /// trait-variant generates native async fn which returns impl Future, making
-/// the trait NOT object-safe. Since this codebase uses Arc<dyn PackageManager>
+/// the trait NOT object-safe. Since this codebase uses `Arc<dyn PackageManager>`
 /// extensively, we must keep `async_trait` for compatibility.
 #[async_trait]
 pub trait PackageManager: Send + Sync {

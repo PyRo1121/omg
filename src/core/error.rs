@@ -89,7 +89,8 @@ impl OmgError {
         match self {
             Self::PackageNotFound(_) => Some("Try: omg search <query> to find available packages"),
             Self::VersionNotFound { runtime, .. } => {
-                const GENERIC_SUGGESTION: &str = "Try: omg list <runtime> --available to see available versions";
+                const GENERIC_SUGGESTION: &str =
+                    "Try: omg list <runtime> --available to see available versions";
                 match runtime.as_str() {
                     "node" | "python" | "go" | "rust" | "bun" | "ruby" | "java" => {
                         Some(GENERIC_SUGGESTION)
