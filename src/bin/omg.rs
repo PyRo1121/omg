@@ -427,9 +427,10 @@ fn main() -> Result<()> {
         .block_on(async_main(args));
 
     if let Err(ref err) = result
-        && let Some(suggestion) = omg_lib::core::error::suggest_for_anyhow(err) {
-            tracing::info!("Suggestion: {}", suggestion);
-        }
+        && let Some(suggestion) = omg_lib::core::error::suggest_for_anyhow(err)
+    {
+        tracing::info!("Suggestion: {}", suggestion);
+    }
 
     result
 }
