@@ -162,9 +162,9 @@ async fn remove_dir_as_user(path: &Path) -> Result<()> {
 
 fn create_dir_as_user_sync(path: &Path) -> Result<()> {
     if let Some(user) = get_original_user() {
-        let path_str = path.to_string_lossy().to_string();
+        let path_str = path.to_string_lossy();
         let status = std::process::Command::new("sudo")
-            .args(["-u", &user, "mkdir", "-p", "--", &path_str])
+            .args(["-u", &user, "mkdir", "-p", "--", path_str.as_ref()])
             .status()
             .with_context(|| format!("Failed to create directory as user '{user}': {path_str}"))?;
 
@@ -855,7 +855,7 @@ impl AurClient {
         let mut best_mtime = std::time::SystemTime::UNIX_EPOCH;
 
         for entry in entries.flatten() {
-            let filename = entry.file_name().to_string_lossy().to_string();
+            let filename = entry.file_name().to_string_lossy().into_owned();
             if (filename.ends_with(".pkg.tar.zst") || filename.ends_with(".pkg.tar.xz"))
                 && expected_names.iter().any(|name| {
                     filename.starts_with(name) && filename.chars().nth(name.len()) == Some('-')
@@ -1119,7 +1119,7 @@ impl AurClient {
 
         if let Some(user) = get_original_user() {
             let home = get_original_user_home();
-            let dest_str = dest.to_string_lossy().to_string();
+            let dest_str = dest.to_string_lossy();
 
             let mut cmd = Command::new("sudo");
             cmd.args(["-u", &user]);
@@ -1129,7 +1129,7 @@ impl AurClient {
                 cmd.env("HOME", home_path);
             }
 
-            cmd.args(["git", "clone", "--depth=1", "--", &url, &dest_str]);
+            cmd.args(["git", "clone", "--depth=1", "--", &url, dest_str.as_ref()]);
 
             let status = cmd
                 .status()
@@ -1186,7 +1186,7 @@ impl AurClient {
 
         if let Some(user) = get_original_user() {
             let home = get_original_user_home();
-            let pkg_dir_str = pkg_dir.to_string_lossy().to_string();
+            let pkg_dir_str = pkg_dir.to_string_lossy();
 
             let mut cmd = Command::new("sudo");
             cmd.args(["-u", &user]);
@@ -1196,7 +1196,7 @@ impl AurClient {
                 cmd.env("HOME", home_path);
             }
 
-            cmd.args(["git", "-C", &pkg_dir_str, "pull", "--ff-only"]);
+            cmd.args(["git", "-C", pkg_dir_str.as_ref(), "pull", "--ff-only"]);
 
             let status = cmd
                 .status()
@@ -1870,11 +1870,11 @@ impl AurClient {
             create_dir_as_user_sync(&ccache_dir)?;
             extra_env.push((
                 "CCACHE_DIR".to_string(),
-                ccache_dir.to_string_lossy().to_string(),
+                ccache_dir.to_string_lossy().into_owned(),
             ));
             extra_env.push((
                 "CCACHE_BASEDIR".to_string(),
-                pkg_dir.to_string_lossy().to_string(),
+                pkg_dir.to_string_lossy().into_owned(),
             ));
         }
 
@@ -1889,7 +1889,7 @@ impl AurClient {
             extra_env.push(("RUSTC_WRAPPER".to_string(), "sccache".to_string()));
             extra_env.push((
                 "SCCACHE_DIR".to_string(),
-                sccache_dir.to_string_lossy().to_string(),
+                sccache_dir.to_string_lossy().into_owned(),
             ));
         }
 
@@ -1966,7 +1966,7 @@ impl AurClient {
         }
 
         if let Some(user) = get_original_user() {
-            let cache_path_str = cache_path.to_string_lossy().to_string();
+            let cache_path_str = cache_path.to_string_lossy();
             let cache_key = cache_key.to_string();
             let status = Command::new("sudo")
                 .args(["-u", &user, "sh", "-c"])
@@ -1992,13 +1992,13 @@ impl AurClient {
     async fn install_built_package(pkg_path: &Path) -> Result<()> {
         println!("{} Installing built package...", "→".blue());
 
-        let pkg_path_str = pkg_path.to_string_lossy().to_string();
+        let pkg_path_str = pkg_path.to_string_lossy();
 
         // Use direct ALPM if we have capabilities (turbo mode) or running as root
         if crate::core::caps::can_write_pacman_db() {
-            crate::package_managers::execute_transaction(vec![pkg_path_str], false, false, None)?;
+            crate::package_managers::execute_transaction(vec![pkg_path_str.into_owned()], false, false, None)?;
         } else {
-            crate::core::privilege::run_self_sudo(&["install", "--", &pkg_path_str]).await?;
+            crate::core::privilege::run_self_sudo(&["install", "--", pkg_path_str.as_ref()]).await?;
         }
 
         Ok(())
@@ -2008,9 +2008,9 @@ impl AurClient {
         let pkg_dir = self.build_dir.join(package);
         if pkg_dir.exists() {
             if let Some(user) = get_original_user() {
-                let pkg_dir_str = pkg_dir.to_string_lossy().to_string();
+                let pkg_dir_str = pkg_dir.to_string_lossy();
                 let status = std::process::Command::new("sudo")
-                    .args(["-u", &user, "rm", "-rf", "--", &pkg_dir_str])
+                    .args(["-u", &user, "rm", "-rf", "--", pkg_dir_str.as_ref()])
                     .status()?;
                 if !status.success() {
                     anyhow::bail!("Failed to clean directory as user '{user}'");
@@ -2026,15 +2026,15 @@ impl AurClient {
     pub fn clean_all(&self) -> Result<()> {
         if self.build_dir.exists() {
             if let Some(user) = get_original_user() {
-                let build_dir_str = self.build_dir.to_string_lossy().to_string();
+                let build_dir_str = self.build_dir.to_string_lossy();
                 let status = std::process::Command::new("sudo")
-                    .args(["-u", &user, "rm", "-rf", "--", &build_dir_str])
+                    .args(["-u", &user, "rm", "-rf", "--", build_dir_str.as_ref()])
                     .status()?;
                 if !status.success() {
                     anyhow::bail!("Failed to clean directory as user '{user}'");
                 }
                 let status = std::process::Command::new("sudo")
-                    .args(["-u", &user, "mkdir", "-p", "--", &build_dir_str])
+                    .args(["-u", &user, "mkdir", "-p", "--", build_dir_str.as_ref()])
                     .status()?;
                 if !status.success() {
                     anyhow::bail!("Failed to recreate directory as user '{user}'");
