@@ -30,7 +30,7 @@ Seven different tools. Seven different syntaxes. Seven different config files. S
 
 ```bash
 omg install some-aur-package   # System + AUR packages
-omg install ripgrep            # Arch (ALPM) or Debian (APT)
+omg install ripgrep            # Works on: Arch, Debian, Ubuntu, Fedora, macOS, Windows
 omg use node 20                # Node.js
 omg use python 3.12            # Python
 omg use rust stable            # Rust

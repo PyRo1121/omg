@@ -18,7 +18,40 @@ Get up and running with OMG in under 5 minutes.
 curl -fsSL https://pyro1121.com/install.sh | bash
 ```
 
-This installs the `omg`, `omgd`, and `omg-fast` binaries to `~/.local/bin/`.
+**Works on all platforms**: Arch Linux, Debian, Ubuntu, Fedora, macOS (ARM64), Windows (WSL).
+
+The installer automatically detects your OS and architecture, downloads the correct pre-built binary, and installs to `~/.local/bin/`. Unknown Linux distributions fall back to the Fedora build (pure Rust, highly portable).
+
+### Platform-Specific Packages
+
+#### Arch Linux (AUR)
+
+```bash
+yay -S omg-bin          # Pre-built binary
+# or
+yay -S omg              # Build from source
+```
+
+#### macOS (Homebrew)
+
+```bash
+brew tap pyro1121/omg
+brew install omg
+```
+
+#### Debian/Ubuntu (APT)
+
+```bash
+# Coming soon - use one-line installer for now
+curl -fsSL https://pyro1121.com/install.sh | bash
+```
+
+#### Windows (Scoop)
+
+```powershell
+# Coming soon - use WSL installer for now
+wsl -- curl -fsSL https://pyro1121.com/install.sh | bash
+```
 
 ### Build from Source
 
@@ -27,12 +60,6 @@ git clone https://github.com/PyRo1121/omg.git
 cd omg
 cargo build --release
 cp target/release/{omg,omgd,omg-fast} ~/.local/bin/
-```
-
-### From AUR (Arch Linux)
-
-```bash
-yay -S omg-bin
 ```
 
 ---
