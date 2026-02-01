@@ -27,6 +27,14 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 
 ### ⚡ Performance
 
+- Resolve remaining Arch and Debian clippy errors
+
+  - tests/aur_performance_test.rs: Fix format string on line 28
+
+  - tests/debian_daemon_tests.rs: Add unsafe_code to allow list
+
+  - tests/common/fixtures.rs: Revert to .to_string() (MockPackage.version is String type)
+
 - Resolve all platform-specific clippy errors
 
   - tests/performance_tests.rs: Update 6 format strings to inline syntax (Arch)
