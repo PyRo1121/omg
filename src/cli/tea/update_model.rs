@@ -151,7 +151,7 @@ impl Model for UpdateModel {
                     let service = PackageService::new(pm);
                     match tokio::runtime::Runtime::new() {
                         Ok(rt) => rt.block_on(async { service.list_updates().await }),
-                        Err(e) => Err(anyhow::anyhow!("Failed to create async runtime: {}", e)),
+                        Err(e) => Err(anyhow::anyhow!("Failed to create async runtime: {e}")),
                     }
                 })
                 .join()
@@ -169,7 +169,7 @@ impl Model for UpdateModel {
                         let service = PackageService::new(pm);
                         service.list_updates().await
                     }),
-                    Err(e) => Err(anyhow::anyhow!("Failed to create async runtime: {}", e)),
+                    Err(e) => Err(anyhow::anyhow!("Failed to create async runtime: {e}")),
                 }
             };
 

@@ -141,7 +141,7 @@ impl Model for RemoveModel {
                                 Ok(rt) => rt
                                     .block_on(async { service.remove(&packages, recursive).await }),
                                 Err(e) => {
-                                    Err(anyhow::anyhow!("Failed to create async runtime: {}", e))
+                                    Err(anyhow::anyhow!("Failed to create async runtime: {e}"))
                                 }
                             }
                         })
@@ -159,7 +159,7 @@ impl Model for RemoveModel {
                                 let service = PackageService::new(pm);
                                 service.remove(&packages, recursive).await
                             }),
-                            Err(e) => Err(anyhow::anyhow!("Failed to create async runtime: {}", e)),
+                            Err(e) => Err(anyhow::anyhow!("Failed to create async runtime: {e}")),
                         }
                     };
 

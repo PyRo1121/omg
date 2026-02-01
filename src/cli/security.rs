@@ -1172,24 +1172,24 @@ pub fn check_eol(_ctx: &CliContext) -> Result<()> {
             for (rt, ver_prefix, eol_date, _lts) in eol_data {
                 if *rt == *runtime && version.starts_with(ver_prefix) {
                     eol_date_str = eol_date;
-                    if let Ok(eol_ts) = jiff::civil::Date::strptime("%Y-%m-%d", eol_date) {
-                        if let Ok(zoned) = eol_ts.at(0, 0, 0, 0).to_zoned(jiff::tz::TimeZone::UTC) {
-                            let eol_timestamp = zoned.timestamp();
+                    if let Ok(eol_ts) = jiff::civil::Date::strptime("%Y-%m-%d", eol_date)
+                        && let Ok(zoned) = eol_ts.at(0, 0, 0, 0).to_zoned(jiff::tz::TimeZone::UTC)
+                    {
+                        let eol_timestamp = zoned.timestamp();
 
-                            if now > eol_timestamp {
-                                status = "EOL";
-                                is_eol = true;
+                        if now > eol_timestamp {
+                            status = "EOL";
+                            is_eol = true;
+                            issues += 1;
+                        } else {
+                            // Check if within 6 months of EOL
+                            let six_months = jiff::Span::new().months(6);
+                            if let Ok(warning_ts) = now.checked_add(six_months)
+                                && warning_ts > eol_timestamp
+                            {
+                                status = "Ending Soon";
+                                is_warning = true;
                                 issues += 1;
-                            } else {
-                                // Check if within 6 months of EOL
-                                let six_months = jiff::Span::new().months(6);
-                                if let Ok(warning_ts) = now.checked_add(six_months)
-                                    && warning_ts > eol_timestamp
-                                {
-                                    status = "Ending Soon";
-                                    is_warning = true;
-                                    issues += 1;
-                                }
                             }
                         }
                     }
