@@ -9,7 +9,7 @@ use serial_test::serial;
 use std::fs;
 use tempfile::tempdir;
 
-fn get_ctx() -> CliContext {
+const fn get_ctx() -> CliContext {
     CliContext {
         verbose: 0,
         json: false,
