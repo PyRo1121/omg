@@ -7,7 +7,6 @@ mod common;
 
 mod dnf_integration {
     use super::*;
-    use common::*;
 
     #[tokio::test]
     async fn test_dnf_package_manager_creation() {
