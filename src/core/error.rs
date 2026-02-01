@@ -189,7 +189,8 @@ mod tests {
             version: "99.0.0".to_string(),
         };
         assert!(err.suggestion().is_some());
-        assert!(err.suggestion().unwrap().contains("node"));
+        assert!(err.suggestion().unwrap().contains("<runtime>"));
+        assert!(err.suggestion().unwrap().contains("--available"));
     }
 
     #[test]
