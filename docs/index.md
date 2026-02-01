@@ -196,11 +196,14 @@ omg run dev                 # Run your project
 - **[Container Support](./containers.md)** — Docker/Podman integration
 - **[TUI Dashboard](./tui.md)** — Interactive terminal dashboard
 
+### Help & Resources
+- **[FAQ](./faq.md)** — Frequently asked questions (start here!)
+- **[Troubleshooting](./troubleshooting.md)** — Common issues and fixes
+- **[Integrations](./integrations.md)** — Use OMG with fzf, ripgrep, VS Code, CI/CD, and more
+
 ### Deep Dives
 - **[Architecture](./architecture.md)** — How OMG works under the hood
 - **[Daemon Internals](./daemon.md)** — The secret to OMG's speed
-- **[Troubleshooting](./troubleshooting.md)** — Common issues and fixes
-- **[FAQ](./faq.md)** — Frequently asked questions
 
 ---
 

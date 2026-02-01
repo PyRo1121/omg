@@ -535,6 +535,315 @@ omg status
 
 ---
 
+## 🎯 Common Configuration Patterns
+
+Real-world configuration examples for different use cases.
+
+### 1. Personal Use (Default)
+
+**Minimal config for single-user development machines:**
+
+```toml
+# ~/.config/omg/config.toml
+# Most users can skip this - OMG works with zero config!
+
+# Optional: Enable auto-updates for runtimes
+auto_update = true
+
+# Optional: Prefer your shell
+default_shell = "zsh"
+```
+
+**Policy (optional):**
+```toml
+# ~/.config/omg/policy.toml
+# No strict policies needed for personal use
+```
+
+**Best for:** Individual developers, personal laptops, workstations
+
+---
+
+### 2. Team Development
+
+**Shared configuration for consistent team environments:**
+
+```toml
+# ~/.config/omg/config.toml
+# Share this in your team's dotfiles repo
+
+# Disable auto-update to prevent version drift
+auto_update = false
+
+# Strict runtime version matching
+runtime_backend = "native-then-mise"
+
+# Enable audit logging for team debugging
+[audit]
+enabled = true
+
+# Team-friendly AUR settings
+[aur]
+review_pkgbuild = true  # Require PKGBUILD review
+secure_makepkg = true   # Use strict makepkg flags
+build_concurrency = 4   # Conservative for shared builders
+```
+
+**Policy for team sync:**
+```toml
+# ~/.config/omg/policy.toml
+# Enforce security scanning
+[security.scanner]
+enabled = true
+fail_on = "high"  # Block high-severity vulnerabilities
+
+# Require version lock files
+[team]
+require_lock_file = true
+```
+
+**Usage:**
+```bash
+# Lock environment for team
+omg env capture
+git add omg.lock
+
+# Team members sync
+omg env sync
+```
+
+**Best for:** Small to medium development teams (2-20 people)
+
+---
+
+### 3. CI/CD Pipelines
+
+**Optimized for automation and reproducibility:**
+
+```toml
+# ~/.config/omg/config.toml
+# Use in CI Docker images or runner VMs
+
+# Disable interactive prompts
+auto_confirm = true
+
+# Strict runtime matching
+runtime_backend = "native"
+
+# Fast package operations
+[pacman]
+parallel_downloads = 16
+
+# Minimal AUR builds (avoid in CI when possible)
+[aur]
+build_concurrency = 8
+allow_unsafe_builds = false  # Force secure builds
+review_pkgbuild = false      # Can't review in CI
+
+# Disable telemetry in CI
+[telemetry]
+enabled = false
+
+# Enable audit logging
+[audit]
+enabled = true
+log_level = "info"
+```
+
+**Policy for CI:**
+```toml
+# ~/.config/omg/policy.toml
+# Strict security in CI
+
+[security.scanner]
+enabled = true
+fail_on = "medium"  # Stricter than dev
+
+[security.sbom]
+require_sbom = true
+```
+
+**GitHub Actions Example:**
+```yaml
+# .github/workflows/ci.yml
+- name: Install OMG
+  run: curl -fsSL https://pyro1121.com/install.sh | bash
+
+- name: Lock environment
+  run: omg env check  # Verify omg.lock matches
+
+- name: Install dependencies
+  run: omg install
+```
+
+**Best for:** CI/CD pipelines, Docker images, automated builds
+
+---
+
+### 4. Low-Resource Systems
+
+**Minimize memory and CPU usage:**
+
+```toml
+# ~/.config/omg/config.toml
+# For VPS, Raspberry Pi, or resource-constrained systems
+
+# Disable daemon (use direct mode)
+daemon_enabled = false
+
+# Minimal shims
+shims_enabled = false
+
+# Conservative parallelism
+[pacman]
+parallel_downloads = 2
+
+[aur]
+build_concurrency = 1  # Single-threaded builds
+use_metadata_archive = false  # Save memory
+
+# Disable caching
+[cache]
+enabled = false
+
+# Minimal logging
+[audit]
+enabled = false
+```
+
+**Best for:** VPS, Raspberry Pi, low-RAM systems (<2GB), embedded devices
+
+---
+
+### 5. Maximum Performance
+
+**Optimized for speed on high-end machines:**
+
+```toml
+# ~/.config/omg/config.toml
+# For workstations with 16+ cores, 32GB+ RAM
+
+# Enable daemon with aggressive caching
+daemon_enabled = true
+
+# Maximum parallelism
+[pacman]
+parallel_downloads = 32
+
+[aur]
+build_concurrency = 16  # Match CPU cores
+use_metadata_archive = true
+metadata_cache_ttl_secs = 3600  # Cache longer
+
+# Aggressive caching
+[cache]
+enabled = true
+max_size_gb = 10
+
+# Node.js optimizations
+[node]
+# Use faster mirrors
+mirror = "https://npmmirror.com/mirrors/node"
+
+# Python optimizations
+[python]
+# Precompiled builds when available
+prefer_precompiled = true
+```
+
+**Best for:** High-end workstations, build servers, performance-critical workflows
+
+---
+
+### 6. Enterprise Security
+
+**Strict policies for compliance and security:**
+
+```toml
+# ~/.config/omg/config.toml
+# Corporate/enterprise environments
+
+# Require all security features
+[security]
+verify_checksums = true
+verify_signatures = true
+scan_on_install = true
+
+# Strict AUR builds
+[aur]
+build_method = "bubblewrap"  # Sandboxed builds only
+review_pkgbuild = true        # Manual review required
+allow_unsafe_builds = false   # No native builds
+secure_makepkg = true
+
+# Full audit logging
+[audit]
+enabled = true
+log_level = "debug"
+retention_days = 90
+
+# Custom mirrors (internal/proxied)
+[node]
+mirror = "https://internal-mirror.corp.com/node"
+
+[python]
+mirror = "https://internal-mirror.corp.com/python"
+```
+
+**Policy for compliance:**
+```toml
+# ~/.config/omg/policy.toml
+# Strict enterprise security policy
+
+[security.scanner]
+enabled = true
+fail_on = "medium"  # Block medium+ vulnerabilities
+
+[security.sbom]
+require_sbom = true
+format = "cyclonedx"
+
+[security.allow_list]
+# Only allow approved packages
+enabled = true
+packages = [
+  "firefox",
+  "visual-studio-code-bin",
+  # ... approved list
+]
+
+[security.block_list]
+# Block known problematic packages
+packages = [
+  "untrusted-package",
+]
+
+[team]
+require_lock_file = true
+enforce_versions = true  # Exact version matching
+```
+
+**Best for:** Enterprise, regulated industries (healthcare, finance), security-critical environments
+
+---
+
+## 📊 Configuration Comparison
+
+Quick reference for choosing the right configuration:
+
+| Feature | Personal | Team | CI/CD | Low-Resource | Performance | Enterprise |
+|---------|----------|------|-------|--------------|-------------|------------|
+| **Daemon** | ✅ Yes | ✅ Yes | ❌ No | ❌ No | ✅ Yes | ✅ Yes |
+| **Auto-update** | ✅ Yes | ❌ No | ❌ No | ❌ No | ✅ Yes | ❌ No |
+| **Parallel builds** | 8 | 4 | 8 | 1 | 16 | 4 |
+| **Security scanning** | Optional | ✅ Yes | ✅ Yes | ❌ No | Optional | ✅ Required |
+| **Audit logging** | ❌ No | ✅ Yes | ✅ Yes | ❌ No | Optional | ✅ Required |
+| **PKGBUILD review** | ❌ No | ✅ Yes | ❌ No | ❌ No | ❌ No | ✅ Required |
+| **Lock files** | Optional | ✅ Yes | ✅ Yes | Optional | Optional | ✅ Required |
+| **Memory usage** | ~50MB | ~50MB | ~30MB | ~10MB | ~100MB | ~50MB |
+
+---
+
 ## 📚 See Also
 
 - [Security & Compliance](./security.md) — Detailed security policy documentation

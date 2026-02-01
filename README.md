@@ -10,6 +10,13 @@
 
 OMG is the unified dev tool you've been waiting for. **One command** replaces `pacman`, `yay`, `nvm`, `pyenv`, `rustup`, `rbenv`, and `jenv`.
 
+## 📚 Documentation Quick Links
+
+**Getting Started:** [Install](docs/installation.md) • [Quick Start](docs/quickstart.md) • [FAQ](docs/faq.md)  
+**Reference:** [CLI](docs/cli.md) • [Config](docs/configuration.md) • [Runtimes](docs/runtimes.md)  
+**Advanced:** [Security](docs/security.md) • [Team](docs/team.md) • [CI/CD](docs/ci-cd-best-practices-2025.md)  
+**Help:** [Troubleshooting](docs/troubleshooting.md) • [Changelog](docs/changelog.md)
+
 ## The Numbers That Matter
 
 | Metric | Value |
