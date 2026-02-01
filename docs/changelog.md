@@ -239,6 +239,12 @@ Updated CLI commands to use pure Rust:
 
 ### 🐛 Bug Fixes
 
+- Remove unused import in fedora_tests.rs
+
+The require_system_tests! macro is exported at crate root via #[macro_export],
+
+so the 'use common::*' import inside the dnf_integration module is unnecessary.
+
 - Change gated Fedora tests to return () instead of Result<()>
 
 The require_system_tests!() macro returns early with (), which conflicts
