@@ -5983,7 +5983,7 @@ dependencies = [
 
 [[package]]
 name = "omg"
-version = "0.1.203"
+version = "0.1.204"
 dependencies = [
  "ahash",
  "alpm",
