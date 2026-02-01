@@ -27,6 +27,7 @@ static ZERO_VERSION: LazyLock<AlpmVersion> = LazyLock::new(|| {
 /// This is infallible and avoids `expect()/unwrap()` in hot paths.
 #[cfg(feature = "arch")]
 #[must_use]
+#[inline]
 pub fn parse_version_or_zero(s: &str) -> Version {
     AlpmVersion::from_str(s).unwrap_or_else(|_| ZERO_VERSION.clone())
 }
@@ -34,6 +35,7 @@ pub fn parse_version_or_zero(s: &str) -> Version {
 /// Parse a version string - on non-Arch just returns the string.
 #[cfg(not(feature = "arch"))]
 #[must_use]
+#[inline]
 pub fn parse_version_or_zero(s: &str) -> Version {
     s.to_string()
 }
@@ -42,6 +44,7 @@ pub fn parse_version_or_zero(s: &str) -> Version {
 /// This is infallible and avoids `expect()/unwrap()` in hot paths.
 #[cfg(feature = "arch")]
 #[must_use]
+#[inline]
 pub fn zero_version() -> Version {
     ZERO_VERSION.clone()
 }
@@ -49,6 +52,7 @@ pub fn zero_version() -> Version {
 /// Returns a default zero version - on non-Arch returns "0".
 #[cfg(not(feature = "arch"))]
 #[must_use]
+#[inline]
 pub fn zero_version() -> Version {
     "0".to_string()
 }
