@@ -198,6 +198,7 @@ omg run dev                 # Run your project
 
 ### Help & Resources
 - **[FAQ](./faq.md)** — Frequently asked questions (start here!)
+- **[Cheat Sheet](./cheatsheet.md)** — Quick reference for all commands (print this!)
 - **[Troubleshooting](./troubleshooting.md)** — Common issues and fixes
 - **[Integrations](./integrations.md)** — Use OMG with fzf, ripgrep, VS Code, CI/CD, and more
 
