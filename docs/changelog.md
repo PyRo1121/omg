@@ -576,6 +576,30 @@ Changed to use 'bun run build:site' which correctly invokes 'vinxi build'.
 
 ### 🔒 Security
 
+- Eliminate all production unwrap() calls for robustness
+
+Remove 10 unwrap() calls from production code and replace with proper error handling:
+
+Runtime Creation (6 fixes):
+
+  - tea/remove_model.rs: Handle Runtime::new() failure with descriptive errors
+
+  - tea/update_model.rs: Handle Runtime::new() failure with descriptive errors
+
+  - Both files: Handle thread::spawn().join() panics gracefully
+
+Timezone Conversions (2 fixes):
+
+  - cli/doctor.rs: Use if-let chain instead of unwrap for to_zoned()
+
+  - cli/security.rs: Use nested if-let for safer timezone conversion
+
+AUR Package Manager (2 fixes):
+
+  - aur.rs: Convert if-let/else+unwrap pattern to proper match expression
+
+  - aur_sources.rs: Handle missing file_name() with fallback to full path display
+
 - **Core**: Simplify container, security, and utility modules
 
   - Simplified container module with cleaner async patterns
