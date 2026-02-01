@@ -219,6 +219,22 @@ Updated CLI commands to use pure Rust:
 
 ### 🐛 Bug Fixes
 
+- Enforce Rust 1.92.0 in linux-matrix and gate Fedora system tests
+
+Linux Matrix:
+
+  - Added --default-toolchain 1.92.0 to rustup installation for Arch, Debian, Fedora
+
+  - Fixes issue where setup runs before checkout, causing rustup to install latest stable (1.93.0)
+
+Fedora Tests:
+
+  - Added require_system_tests!() gates to 4 integration tests expecting real packages
+
+  - Matches pattern used in arch_tests.rs and debian_tests.rs
+
+  - Tests now skip gracefully in minimal CI containers without OMG_RUN_SYSTEM_TESTS=1
+
 - Add RPM/DNF system dependencies to Fedora CI containers
 
 Fedora coverage and integration tests were failing due to missing
