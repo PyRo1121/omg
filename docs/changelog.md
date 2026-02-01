@@ -560,6 +560,20 @@ Changed to use 'bun run build:site' which correctly invokes 'vinxi build'.
 ### 👷 CI/CD
 
 - Trigger CI for daemon_benchmark clippy fix
+### 📚 Documentation
+
+- Improve code documentation and test safety annotations
+
+  - Add comprehensive cross-platform explanation for implicit_clone lint exception in fixtures.rs
+
+  - Document why Version type differs between Arch (AlpmVersion) and Debian/Fedora (String)
+
+  - Add missing SAFETY comments for unsafe set_var calls in test setup
+
+  - Add unsafe_code to allow list in debian_pure_integration.rs for consistency
+
+  - All 322 tests passing, zero clippy warnings
+
 ### 🔒 Security
 
 - **Core**: Simplify container, security, and utility modules
