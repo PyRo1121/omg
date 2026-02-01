@@ -200,12 +200,9 @@ fn check_eol_runtimes() -> usize {
                 if *rt == *runtime
                     && version.starts_with(ver_prefix)
                     && let Ok(eol_ts) = jiff::civil::Date::strptime("%Y-%m-%d", eol_date)
+                    && let Ok(zoned) = eol_ts.at(0, 0, 0, 0).to_zoned(jiff::tz::TimeZone::UTC)
                 {
-                    let eol_timestamp = eol_ts
-                        .at(0, 0, 0, 0)
-                        .to_zoned(jiff::tz::TimeZone::UTC)
-                        .unwrap()
-                        .timestamp();
+                    let eol_timestamp = zoned.timestamp();
 
                     if now > eol_timestamp {
                         eol_warning = Some(format!("EOL since {eol_date}"));

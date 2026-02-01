@@ -134,21 +134,28 @@ impl Model for RemoveModel {
 
                 Cmd::Exec(Box::new(move || {
                     let result = if tokio::runtime::Handle::try_current().is_ok() {
-                        std::thread::spawn(move || {
+                        match std::thread::spawn(move || {
                             let pm = get_package_manager();
                             let service = PackageService::new(pm);
-                            let rt = tokio::runtime::Runtime::new().unwrap();
-                            rt.block_on(async { service.remove(&packages, recursive).await })
+                            match tokio::runtime::Runtime::new() {
+                                Ok(rt) => rt.block_on(async { service.remove(&packages, recursive).await }),
+                                Err(e) => Err(anyhow::anyhow!("Failed to create async runtime: {}", e)),
+                            }
                         })
                         .join()
-                        .unwrap()
+                        {
+                            Ok(result) => result,
+                            Err(_) => Err(anyhow::anyhow!("Background thread panicked during package removal")),
+                        }
                     } else {
-                        let rt = tokio::runtime::Runtime::new().unwrap();
-                        rt.block_on(async {
-                            let pm = get_package_manager();
-                            let service = PackageService::new(pm);
-                            service.remove(&packages, recursive).await
-                        })
+                        match tokio::runtime::Runtime::new() {
+                            Ok(rt) => rt.block_on(async {
+                                let pm = get_package_manager();
+                                let service = PackageService::new(pm);
+                                service.remove(&packages, recursive).await
+                            }),
+                            Err(e) => Err(anyhow::anyhow!("Failed to create async runtime: {}", e)),
+                        }
                     };
 
                     match result {

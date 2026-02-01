@@ -1402,24 +1402,25 @@ impl AurClient {
                     .status()
                     .await;
 
-                if let Err(e) = dep_status {
-                    tracing::warn!("Failed to install dependencies: {e}");
-                    println!("{} Dependency installation failed: {}", "⚠".yellow(), e);
-                    println!(
-                        "{} Continuing with build - may fail if deps are missing",
-                        "→".dimmed()
-                    );
-                } else {
-                    // Safe unwrap: we know it's Ok since it's not Err
-                    let status = dep_status.unwrap();
-                    if status.success() {
-                        println!("{} Dependencies ready", "✓".green());
-                    } else {
+                match dep_status {
+                    Err(e) => {
+                        tracing::warn!("Failed to install dependencies: {e}");
+                        println!("{} Dependency installation failed: {}", "⚠".yellow(), e);
                         println!(
-                            "{} Some dependencies may have failed to install",
-                            "⚠".yellow()
+                            "{} Continuing with build - may fail if deps are missing",
+                            "→".dimmed()
                         );
-                        println!("{} Continuing with build...", "→".dimmed());
+                    }
+                    Ok(status) => {
+                        if status.success() {
+                            println!("{} Dependencies ready", "✓".green());
+                        } else {
+                            println!(
+                                "{} Some dependencies may have failed to install",
+                                "⚠".yellow()
+                            );
+                            println!("{} Continuing with build...", "→".dimmed());
+                        }
                     }
                 }
             }
