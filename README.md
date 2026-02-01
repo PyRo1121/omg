@@ -74,7 +74,29 @@ omg env capture
 omg env share
 ```
 
-> **Supports**: Arch Linux, Debian/Ubuntu. RPM-based distros coming soon.
+> **Supports**: Arch Linux, Debian, Ubuntu, Fedora, macOS (ARM64), Windows. Universal installer works on all platforms.
+
+---
+
+## 🌍 Platform Support
+
+OMG works seamlessly across all major operating systems with a single universal installer.
+
+| Platform | Architecture | Status | Package Manager Integration |
+|----------|--------------|--------|----------------------------|
+| **Arch Linux** | x86_64 | ✅ Fully Supported | Native `libalpm` (pacman/AUR) |
+| **Debian** | x86_64 | ✅ Fully Supported | Native `rust-apt` (APT) |
+| **Ubuntu** | x86_64 | ✅ Fully Supported | Native `rust-apt` (APT) |
+| **Fedora/RHEL** | x86_64 | ✅ Fully Supported | Pure Rust DNF/YUM |
+| **macOS** | ARM64 (Apple Silicon) | ✅ Fully Supported | Homebrew integration |
+| **Windows** | x64 | ✅ Fully Supported | Scoop integration (via WSL or native) |
+
+**Installation** (works on all platforms):
+```bash
+curl -fsSL https://pyro1121.com/install.sh | bash
+```
+
+The installer automatically detects your OS and architecture, then downloads the correct pre-built binary. Unknown Linux distributions fall back to the Fedora build (pure Rust, highly portable).
 
 ---
 
@@ -226,8 +248,8 @@ We are building the last dev tool you'll ever need.
 
 ### Planned Features 🚧
 - [x] **Debian/Ubuntu Support**: Full APT integration (59-483x faster than apt-cache/Nala)
-- [ ] **Fedora/RPM Support**: DNF/YUM package manager integration
-- [ ] **macOS Support**: Homebrew integration for macOS users
+- [x] **Fedora/RPM Support**: Native DNF/YUM package manager integration with pure Rust implementation
+- [x] **macOS Support**: Homebrew integration for macOS ARM64 (Apple Silicon)
 - [x] **Windows Support**: Pure Rust Scoop integration via libscoop (35-73x faster, zero subprocess calls)
 - [x] **Container Integration**: Docker/Podman support for containerized environments (`omg container shell/run/build/init`)
 - [ ] **GUI Dashboard**: Desktop application for visual package management
