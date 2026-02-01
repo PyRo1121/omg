@@ -55,6 +55,22 @@ Code quality verification:
 
 ### ⚡ Performance
 
+- Polish project for production readiness
+
+  - Update README benchmark numbers to reflect accurate ranges (5-11ms, 12-24x faster)
+
+  - Create comprehensive CONTRIBUTING.md with development guidelines
+
+  - Add example configuration files:
+
+  - examples/config.toml (all OMG settings documented)
+
+  - examples/policy.toml (security policy examples)
+
+  - examples/.tool-versions (runtime version locking template)
+
+  - Run cargo fmt (auto-formatting cleanup)
+
 - Update performance regression checker for hyperfine directory structure
 
 Updated check-perf-regression.py to look for hyperfine JSON files in the
