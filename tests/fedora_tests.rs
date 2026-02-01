@@ -16,20 +16,18 @@ mod dnf_integration {
     }
 
     #[tokio::test]
-    async fn test_search_common_package() -> Result<()> {
+    async fn test_search_common_package() {
         require_system_tests!();
 
         let pm = DnfPackageManager::new();
 
-        let results = pm.search("vim").await?;
+        let results = pm.search("vim").await.unwrap();
 
         assert!(!results.is_empty(), "Should find vim package");
         assert!(
             results.iter().any(|p| p.name.contains("vim")),
             "Results should contain vim"
         );
-
-        Ok(())
     }
 
     #[tokio::test]
@@ -44,19 +42,17 @@ mod dnf_integration {
     }
 
     #[tokio::test]
-    async fn test_list_installed_packages() -> Result<()> {
+    async fn test_list_installed_packages() {
         require_system_tests!();
 
         let pm = DnfPackageManager::new();
 
-        let installed = pm.list_installed().await?;
+        let installed = pm.list_installed().await.unwrap();
 
         assert!(
             !installed.is_empty(),
             "Should have installed packages on Fedora system"
         );
-
-        Ok(())
     }
 
     #[tokio::test]
@@ -83,7 +79,7 @@ mod dnf_integration {
     }
 
     #[tokio::test]
-    async fn test_is_installed_check() -> Result<()> {
+    async fn test_is_installed_check() {
         require_system_tests!();
 
         let pm = DnfPackageManager::new();
@@ -93,8 +89,6 @@ mod dnf_integration {
             is_bash_installed,
             "bash should be installed on Fedora system"
         );
-
-        Ok(())
     }
 }
 
@@ -114,12 +108,12 @@ mod dnf_rpm_database {
     }
 
     #[tokio::test]
-    async fn test_rpm_database_query() -> Result<()> {
+    async fn test_rpm_database_query() {
         require_system_tests!();
 
         let pm = DnfPackageManager::new();
 
-        let installed = pm.list_installed().await?;
+        let installed = pm.list_installed().await.unwrap();
 
         assert!(
             !installed.is_empty(),
@@ -128,8 +122,6 @@ mod dnf_rpm_database {
 
         let has_rpm = installed.iter().any(|p| p.name.contains("rpm"));
         assert!(has_rpm, "Should find rpm package itself in database");
-
-        Ok(())
     }
 }
 
