@@ -145,7 +145,6 @@ alpm-pkginfo = { git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", p
 
 # Process execution
 which = "8.0"
-wait-timeout = "0.2"
 
 # Semver handling
 semver = "1.0.27"
