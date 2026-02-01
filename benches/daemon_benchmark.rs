@@ -10,7 +10,7 @@ use std::hint::black_box;
 use std::sync::Arc;
 use std::time::Duration;
 
-use criterion::{Criterion, criterion_group, criterion_main};
+use criterion::{criterion_group, criterion_main, Criterion};
 
 use omg_lib::core::runtime_resolver;
 use omg_lib::daemon::cache::PackageCache;
@@ -93,12 +93,9 @@ fn bench_index_search(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(5));
 
     // Build real index from system packages
-    let index = match omg_lib::daemon::index::PackageIndex::new() {
-        Ok(idx) => idx,
-        Err(_) => {
-            eprintln!("Skipping index benchmarks - failed to build index");
-            return;
-        }
+    let Ok(index) = omg_lib::daemon::index::PackageIndex::new() else {
+        eprintln!("Skipping index benchmarks - failed to build index");
+        return;
     };
 
     let search_terms = vec!["rust", "python", "vim", "gcc", "linux"];
