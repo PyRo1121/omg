@@ -247,6 +247,7 @@ Updated CLI commands to use pure Rust:
 
 ### 🐛 Bug Fixes
 
+- Trigger CI for benches/daemon_benchmark.rs clippy fix
 - Resolve Arch clippy single_match_else error in daemon_benchmark
 
 Use let-else pattern instead of match for single error case
@@ -556,6 +557,9 @@ a traditional index.html entry point.
 
 Changed to use 'bun run build:site' which correctly invokes 'vinxi build'.
 
+### 👷 CI/CD
+
+- Trigger CI for daemon_benchmark clippy fix
 ### 🔒 Security
 
 - **Core**: Simplify container, security, and utility modules
