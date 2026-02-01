@@ -241,23 +241,23 @@ impl AurClient {
                     move || -> Result<Vec<Package>> {
                         let index = AurIndex::open(&index_path)?;
                         let entries = index.search(&query, 50)?;
-                    Ok(entries
-                        .into_iter()
-                        .map(|e| Package {
-                            name: e.name.as_str().to_string(),
-                            version: crate::package_managers::parse_version_or_zero(
-                                e.version.as_str(),
-                            ),
-                            description: e
-                                .description
-                                .as_ref()
-                                .map(|s| s.as_str().to_string())
-                                .unwrap_or_default(),
-                            source: PackageSource::Aur,
-                            installed: false,
-                        })
-                        .collect())
-                }
+                        Ok(entries
+                            .into_iter()
+                            .map(|e| Package {
+                                name: e.name.as_str().to_string(),
+                                version: crate::package_managers::parse_version_or_zero(
+                                    e.version.as_str(),
+                                ),
+                                description: e
+                                    .description
+                                    .as_ref()
+                                    .map(|s| s.as_str().to_string())
+                                    .unwrap_or_default(),
+                                source: PackageSource::Aur,
+                                installed: false,
+                            })
+                            .collect())
+                    }
                 })
                 .await?;
 
@@ -368,22 +368,22 @@ impl AurClient {
                 move || -> Result<Option<Package>> {
                     let index = AurIndex::open(&index_path)?;
                     if let Some(entry) = index.get(&package)? {
-                    return Ok(Some(Package {
-                        name: entry.name.as_str().to_string(),
-                        version: crate::package_managers::parse_version_or_zero(
-                            entry.version.as_str(),
-                        ),
-                        description: entry
-                            .description
-                            .as_ref()
-                            .map(|s| s.as_str().to_string())
-                            .unwrap_or_default(),
-                        source: PackageSource::Aur,
-                        installed: false,
-                    }));
+                        return Ok(Some(Package {
+                            name: entry.name.as_str().to_string(),
+                            version: crate::package_managers::parse_version_or_zero(
+                                entry.version.as_str(),
+                            ),
+                            description: entry
+                                .description
+                                .as_ref()
+                                .map(|s| s.as_str().to_string())
+                                .unwrap_or_default(),
+                            source: PackageSource::Aur,
+                            installed: false,
+                        }));
+                    }
+                    Ok(None)
                 }
-                Ok(None)
-            }
             })
             .await?;
 
@@ -510,41 +510,36 @@ impl AurClient {
         let concurrency = self.settings.aur.build_concurrency.clamp(4, 16);
 
         let mut stream = futures::stream::iter(chunked_names)
-            .map(|chunk| {
-                async move {
-                    let mut url = format!("{AUR_RPC_URL}?v=5&type=info");
-                    for name in &chunk {
-                        url.push_str("&arg[]=");
-                        url.push_str(name);
-                    }
-
-                    let mut last_error = None;
-                    for retry in 0..3u32 {
-                        if retry > 0 {
-                            tokio::time::sleep(Duration::from_millis(100 * 2u64.pow(retry - 1)))
-                                .await;
-                        }
-
-                        match shared_client().get(&url).send().await {
-                            Ok(resp) => {
-                                if resp.status().is_server_error() {
-                                    last_error = Some(anyhow::anyhow!(
-                                        "AUR server error: {}",
-                                        resp.status()
-                                    ));
-                                    continue;
-                                }
-                                return resp.json::<AurResponse>().await.map_err(Into::into);
-                            }
-                            Err(e) if e.is_timeout() || e.is_connect() => {
-                                last_error = Some(anyhow::anyhow!("Network error: {e}"));
-                            }
-                            Err(e) => return Err(e.into()),
-                        }
-                    }
-                    Err(last_error
-                        .unwrap_or_else(|| anyhow::anyhow!("AUR request failed after retries")))
+            .map(|chunk| async move {
+                let mut url = format!("{AUR_RPC_URL}?v=5&type=info");
+                for name in &chunk {
+                    url.push_str("&arg[]=");
+                    url.push_str(name);
                 }
+
+                let mut last_error = None;
+                for retry in 0..3u32 {
+                    if retry > 0 {
+                        tokio::time::sleep(Duration::from_millis(100 * 2u64.pow(retry - 1))).await;
+                    }
+
+                    match shared_client().get(&url).send().await {
+                        Ok(resp) => {
+                            if resp.status().is_server_error() {
+                                last_error =
+                                    Some(anyhow::anyhow!("AUR server error: {}", resp.status()));
+                                continue;
+                            }
+                            return resp.json::<AurResponse>().await.map_err(Into::into);
+                        }
+                        Err(e) if e.is_timeout() || e.is_connect() => {
+                            last_error = Some(anyhow::anyhow!("Network error: {e}"));
+                        }
+                        Err(e) => return Err(e.into()),
+                    }
+                }
+                Err(last_error
+                    .unwrap_or_else(|| anyhow::anyhow!("AUR request failed after retries")))
             })
             .buffer_unordered(concurrency);
 
@@ -1996,9 +1991,15 @@ impl AurClient {
 
         // Use direct ALPM if we have capabilities (turbo mode) or running as root
         if crate::core::caps::can_write_pacman_db() {
-            crate::package_managers::execute_transaction(vec![pkg_path_str.into_owned()], false, false, None)?;
+            crate::package_managers::execute_transaction(
+                vec![pkg_path_str.into_owned()],
+                false,
+                false,
+                None,
+            )?;
         } else {
-            crate::core::privilege::run_self_sudo(&["install", "--", pkg_path_str.as_ref()]).await?;
+            crate::core::privilege::run_self_sudo(&["install", "--", pkg_path_str.as_ref()])
+                .await?;
         }
 
         Ok(())

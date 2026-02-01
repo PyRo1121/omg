@@ -3,7 +3,7 @@
 **Stop switching between 7 package managers.**
 
 ![Installs](https://img.shields.io/endpoint?url=https://api.pyro1121.com/api/badge/installs&style=flat-square&cacheSeconds=60)
-[![Benchmark](https://img.shields.io/badge/search-6ms%20(22x%20faster)-brightgreen?style=flat-square)](benchmark.sh)
+[![Benchmark](https://img.shields.io/badge/search-5--11ms%20(12--24x%20faster)-brightgreen?style=flat-square)](benchmark.sh)
 [![codecov](https://codecov.io/gh/pyro1121/omg/branch/main/graph/badge.svg?style=flat-square)](https://codecov.io/gh/pyro1121/omg)
 [![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue?style=flat-square)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.92%2B-orange?style=flat-square)](https://www.rust-lang.org)
@@ -22,7 +22,7 @@ OMG is the unified dev tool you've been waiting for. **One command** replaces `p
 
 | Metric | Value |
 |--------|-------|
-| **22x faster** | than pacman/yay (6ms vs 133ms searches) |
+| **12-24x faster** | than pacman/yay (5-11ms vs 133ms searches) |
 | **59-483x faster** | than apt-cache/Nala on Debian/Ubuntu |
 | **Zero context switching** | system packages + 8 language runtimes in one CLI |
 | **Enterprise-secure** | SLSA, PGP, SBOM, audit logs built-in (not bolted on) |
@@ -178,7 +178,7 @@ Requires: Rust 1.92+, platform build tools
 ## ⚡ Quick Start
 
 ```bash
-# Search packages (22x faster than pacman)
+# Search packages (12-24x faster than pacman)
 omg search vim
 
 # Install anything (system packages or AUR)
@@ -292,10 +292,10 @@ OMG achieves ~6ms performance on all core operations through a persistent daemon
 
 | Command | OMG (Daemon) | pacman | yay | Speedup |
 |---------|--------------|--------|-----|---------:|
-| **search** | **6ms** ✨ | 133ms | 150ms | **22x faster** |
-| **info** | **6.5ms** ✨ | 138ms | 300ms | **21x faster** |
-| **status** | **7ms** ✨ | N/A | N/A | — |
-| **explicit** | **1.2ms** ✨ | 14ms | 27ms | **12x faster** |
+| **search** | **5.4-11.1ms** ✨ | 133ms | 150ms | **12-24x faster** |
+| **info** | **3.4-6.1ms** ✨ | 138ms | 300ms | **21-38x faster** |
+| **status** | **< 10ms** ✨ | N/A | N/A | — |
+| **explicit** | **< 2ms** ✨ | 14ms | 27ms | **7-14x faster** |
 
 > 💡 **Note:** yay benchmarked with `--repo` flag (no AUR network calls) for fair comparison.
 
@@ -386,7 +386,7 @@ eval "$(omg hook zsh)"
 ### Key Commands
 
 ```bash
-omg search <query>          # Search packages (22x faster)
+omg search <query>          # Search packages (12-24x faster)
 omg install <pkg>           # Install with security grading
 omg use node 20             # Switch runtime version
 omg run build               # Run project tasks
