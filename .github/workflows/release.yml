@@ -53,7 +53,7 @@ jobs:
           tar -czvf "omg-v${VERSION}-x86_64-linux-arch.tar.gz" "omg-v${VERSION}-x86_64-linux-arch"
           sha256sum "omg-v${VERSION}-x86_64-linux-arch.tar.gz" > "omg-v${VERSION}-x86_64-linux-arch.tar.gz.sha256"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: arch-build
           path: omg-v*.tar.gz*
@@ -108,7 +108,7 @@ jobs:
           tar -czvf "omg-v${VERSION}-x86_64-linux-debian.tar.gz" "omg-v${VERSION}-x86_64-linux-debian"
           sha256sum "omg-v${VERSION}-x86_64-linux-debian.tar.gz" > "omg-v${VERSION}-x86_64-linux-debian.tar.gz.sha256"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: debian-build
           path: omg-v*.tar.gz*
@@ -144,7 +144,7 @@ jobs:
           tar -czvf "omg-v${VERSION}-x86_64-linux-ubuntu.tar.gz" "omg-v${VERSION}-x86_64-linux-ubuntu"
           sha256sum "omg-v${VERSION}-x86_64-linux-ubuntu.tar.gz" > "omg-v${VERSION}-x86_64-linux-ubuntu.tar.gz.sha256"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: ubuntu-build
           path: omg-v*.tar.gz*
@@ -185,7 +185,7 @@ jobs:
           tar -czvf "omg-v${VERSION}-x86_64-linux-fedora.tar.gz" "omg-v${VERSION}-x86_64-linux-fedora"
           sha256sum "omg-v${VERSION}-x86_64-linux-fedora.tar.gz" > "omg-v${VERSION}-x86_64-linux-fedora.tar.gz.sha256"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: fedora-build
           path: omg-v*.tar.gz*
@@ -211,7 +211,7 @@ jobs:
           tar -czf "omg-v${VERSION}-aarch64-darwin.tar.gz" "omg-v${VERSION}-aarch64-darwin"
           shasum -a 256 "omg-v${VERSION}-aarch64-darwin.tar.gz" > "omg-v${VERSION}-aarch64-darwin.tar.gz.sha256"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: macos-build
           path: omg-v*.tar.gz*
@@ -240,7 +240,7 @@ jobs:
           $hash = (Get-FileHash -Algorithm SHA256 "$dirname.zip").Hash.ToLower()
           "$hash  $dirname.zip" | Out-File -Encoding ascii "$dirname.zip.sha256"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: windows-build
           path: omg-v*.zip*

@@ -224,7 +224,7 @@ jobs:
           ./target/release/omg --help | head -20
 
       - name: Upload binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: omg-${{ matrix.platform }}
           path: target/release/omg
@@ -275,7 +275,7 @@ jobs:
           file ./target/release/omg
 
       - name: Upload binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: omg-macos-arm64
           path: target/release/omg
@@ -326,7 +326,7 @@ jobs:
           .\target\release\omg.exe --help | Select-Object -First 20
 
       - name: Upload binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: omg-windows-x64
           path: target/release/omg.exe
@@ -455,7 +455,7 @@ jobs:
           cargo llvm-cov report --lcov --output-path lcov-${{ matrix.platform }}.info
           
       - name: Upload coverage artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: coverage-${{ matrix.platform }}
           path: lcov-${{ matrix.platform }}.info
@@ -516,7 +516,7 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           
       - name: Upload merged coverage
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: coverage-merged
           path: |

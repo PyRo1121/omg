@@ -132,7 +132,7 @@ jobs:
           cat benchmark-badge.json
 
       - name: Upload Benchmark Report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: benchmark-report
           path: |
