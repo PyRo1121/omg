@@ -20,7 +20,7 @@ async fn bench_debian_search_performance() {
     let temp_dir = tempfile::tempdir().unwrap();
     let temp_path = temp_dir.path().to_str().unwrap().to_string();
 
-    // Setup test environment
+    // SAFETY: Test setup - modifying env vars in isolated test context before any threads spawn
     unsafe {
         std::env::set_var("OMG_TEST_MODE", "true");
         std::env::set_var("OMG_TEST_DISTRO", "debian");
