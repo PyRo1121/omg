@@ -287,6 +287,22 @@ Updated CLI commands to use pure Rust:
 
 ### 🐛 Bug Fixes
 
+- Resolve clippy warnings for CI
+
+  - Fix collapsible_if in security.rs (lines 1175-1176)
+
+Collapsed nested if-let statements using && operator
+
+  - Fix uninlined_format_args in tea/remove_model.rs (lines 144, 162)
+
+Changed format!("{}", e) to format!("{e}")
+
+  - Fix uninlined_format_args in tea/update_model.rs (lines 154, 172)
+
+Changed format!("{}", e) to format!("{e}")
+
+All clippy warnings resolved. CI should now pass.
+
 - Trigger CI for benches/daemon_benchmark.rs clippy fix
 - Resolve Arch clippy single_match_else error in daemon_benchmark
 
