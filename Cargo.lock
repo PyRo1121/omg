@@ -6072,7 +6072,6 @@ dependencies = [
  "trait-variant",
  "urlencoding",
  "uuid",
- "wait-timeout",
  "which",
  "whoami",
  "winnow",
