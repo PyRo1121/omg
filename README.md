@@ -15,6 +15,7 @@ OMG is the unified dev tool you've been waiting for. **One command** replaces `p
 **Getting Started:** [Install](docs/installation.md) • [Quick Start](docs/quickstart.md) • [FAQ](docs/faq.md)  
 **Reference:** [CLI](docs/cli.md) • [Config](docs/configuration.md) • [Runtimes](docs/runtimes.md)  
 **Advanced:** [Security](docs/security.md) • [Team](docs/team.md) • [CI/CD](docs/ci-cd-best-practices-2025.md)  
+**Performance:** [Benchmark Results](BENCHMARK-RESULTS.md) • [Optimization Guide](SESSION-SUMMARY.md)  
 **Help:** [Troubleshooting](docs/troubleshooting.md) • [Changelog](docs/changelog.md)
 
 ## The Numbers That Matter
@@ -343,6 +344,9 @@ Want to reproduce these numbers?
 ```bash
 curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/benchmark.sh | bash
 ```
+
+**📊 Detailed Analysis**  
+For comprehensive benchmark methodology, statistical analysis, and optimization breakdown, see **[BENCHMARK-RESULTS.md](BENCHMARK-RESULTS.md)** (latest hyperfine benchmarks with 400+ iterations).
 
 ---
 
