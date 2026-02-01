@@ -2,7 +2,8 @@
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::pedantic,
-    clippy::nursery
+    clippy::nursery,
+    unsafe_code
 )]
 //! Integration tests for Pure Rust Debian implementation
 //!
@@ -26,7 +27,7 @@ fn test_pure_debian_manager_name() {
 #[test]
 fn test_pure_debian_detection() {
     init_test_env();
-    // Simulate Debian environment
+    // SAFETY: Test setup - modifying env vars in isolated test context before any threads spawn
     unsafe {
         std::env::set_var("OMG_TEST_MODE", "1");
         std::env::set_var("OMG_TEST_DISTRO", "debian");
