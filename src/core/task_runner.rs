@@ -114,10 +114,7 @@ impl TaskDetector {
         toml::from_str(&content).ok()
     }
 
-    pub fn detect(&self) -> Result<Vec<Task>> {
-        let mut tasks = Vec::new();
-
-        // 1. Node.js / Bun (package.json)
+    fn detect_js_tasks(&self, tasks: &mut Vec<Task>) {
         if let Some(package_manager) = detect_js_package_manager(&self.current_dir) {
             let js_ecosystem = if package_manager == "bun" {
                 Ecosystem::Bun
@@ -148,8 +145,9 @@ impl TaskDetector {
                 ecosystem: js_ecosystem,
             });
         }
+    }
 
-        // 2. Deno (deno.json)
+    fn detect_deno_tasks(&self, tasks: &mut Vec<Task>) {
         if let Ok(file) = std::fs::File::open(self.current_dir.join("deno.json"))
             && let Ok(pkg) = serde_json::from_reader::<_, DenoJson>(file)
             && let Some(dtasks) = pkg.tasks
@@ -164,8 +162,9 @@ impl TaskDetector {
                 });
             }
         }
+    }
 
-        // 3. PHP (composer.json)
+    fn detect_php_tasks(&self, tasks: &mut Vec<Task>) {
         if let Ok(file) = std::fs::File::open(self.current_dir.join("composer.json"))
             && let Ok(pkg) = serde_json::from_reader::<_, ComposerJson>(file)
             && let Some(scripts) = pkg.scripts
@@ -180,8 +179,9 @@ impl TaskDetector {
                 });
             }
         }
+    }
 
-        // 4. Rust (Cargo.toml)
+    fn detect_rust_tasks(&self, tasks: &mut Vec<Task>) {
         if self.current_dir.join("Cargo.toml").exists() {
             let standard_tasks = vec!["build", "test", "check", "run", "clippy", "fmt"];
             for t in standard_tasks {
@@ -194,8 +194,9 @@ impl TaskDetector {
                 });
             }
         }
+    }
 
-        // 5. Makefile
+    fn detect_makefile_tasks(&self, tasks: &mut Vec<Task>) {
         if self.current_dir.join("Makefile").exists()
             && let Ok(content) = std::fs::read_to_string(self.current_dir.join("Makefile"))
         {
@@ -219,32 +220,9 @@ impl TaskDetector {
                 }
             }
         }
+    }
 
-        // 6. Go (Taskfile)
-        if self.current_dir.join("Taskfile.yml").exists()
-            || self.current_dir.join("Taskfile.yaml").exists()
-        {
-            tasks.push(Task {
-                name: "list".to_string(),
-                command: "task".to_string(),
-                args: vec!["--list".to_string()],
-                source: "Taskfile.yml".to_string(),
-                ecosystem: Ecosystem::Go,
-            });
-        }
-
-        // 7. Ruby (Rakefile)
-        if self.current_dir.join("Rakefile").exists() {
-            tasks.push(Task {
-                name: "tasks".to_string(),
-                command: "rake".to_string(),
-                args: vec!["-T".to_string()],
-                source: "Rakefile".to_string(),
-                ecosystem: Ecosystem::Ruby,
-            });
-        }
-
-        // 8. Python (Poetry)
+    fn detect_python_tasks(&self, tasks: &mut Vec<Task>) {
         if let Ok(content) = std::fs::read_to_string(self.current_dir.join("pyproject.toml"))
             && let Ok(proj) = toml::from_str::<PyProject>(&content)
             && let Some(tool) = proj.tool
@@ -262,7 +240,6 @@ impl TaskDetector {
             }
         }
 
-        // 9. Python (Pipenv)
         if let Ok(content) = std::fs::read_to_string(self.current_dir.join("Pipfile")) {
             let mut in_scripts = false;
             for line in content.lines() {
@@ -290,8 +267,9 @@ impl TaskDetector {
                 }
             }
         }
+    }
 
-        // 10. Java (Maven/Gradle)
+    fn detect_java_tasks(&self, tasks: &mut Vec<Task>) {
         if self.current_dir.join("pom.xml").exists() {
             for t in ["clean", "compile", "test", "package", "install"] {
                 tasks.push(Task {
@@ -315,6 +293,40 @@ impl TaskDetector {
                     ecosystem: Ecosystem::Java,
                 });
             }
+        }
+    }
+
+    pub fn detect(&self) -> Result<Vec<Task>> {
+        let mut tasks = Vec::new();
+
+        self.detect_js_tasks(&mut tasks);
+        self.detect_deno_tasks(&mut tasks);
+        self.detect_php_tasks(&mut tasks);
+        self.detect_rust_tasks(&mut tasks);
+        self.detect_makefile_tasks(&mut tasks);
+        self.detect_python_tasks(&mut tasks);
+        self.detect_java_tasks(&mut tasks);
+
+        if self.current_dir.join("Taskfile.yml").exists()
+            || self.current_dir.join("Taskfile.yaml").exists()
+        {
+            tasks.push(Task {
+                name: "list".to_string(),
+                command: "task".to_string(),
+                args: vec!["--list".to_string()],
+                source: "Taskfile.yml".to_string(),
+                ecosystem: Ecosystem::Go,
+            });
+        }
+
+        if self.current_dir.join("Rakefile").exists() {
+            tasks.push(Task {
+                name: "tasks".to_string(),
+                command: "rake".to_string(),
+                args: vec!["-T".to_string()],
+                source: "Rakefile".to_string(),
+                ecosystem: Ecosystem::Ruby,
+            });
         }
 
         Ok(tasks)
