@@ -455,42 +455,15 @@ async fn async_main(args: Vec<String>) -> Result<()> {
     set_yes_flag(yes_flag);
 
     // SECURITY: Validate package names
-    match &cli.command {
-        Commands::Install { packages, .. } | Commands::Remove { packages, .. } => {
-            omg_lib::core::security::validate_package_names(packages)?;
-        }
-        Commands::Info { package }
-        | Commands::Why { package, .. }
-        | Commands::Blame { package } => {
-            omg_lib::core::security::validate_package_name(package)?;
-        }
-        _ => {}
-    }
+    validate_package_security(&cli.command)?;
 
-    // Only show tracing logs in verbose mode or when RUST_LOG is set
-    // This prevents tracing::info! from bleeding into normal CLI output
-    let default_level = if cli.verbose > 0 || std::env::var("RUST_LOG").is_ok() {
-        tracing::Level::INFO
-    } else {
-        tracing::Level::WARN // Only show warnings/errors by default
-    };
+    // Initialize logging
+    init_logging(cli.verbose)?;
 
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env().add_directive(default_level.into()),
-        )
-        .with_target(false)
-        .with_ansi(console::colors_enabled())
-        .without_time() // Remove timestamps from output
-        .init();
+    // Telemetry ping on first run
+    spawn_telemetry_ping();
 
-    if omg_lib::core::telemetry::is_first_run() && !omg_lib::core::telemetry::is_telemetry_opt_out()
-    {
-        tokio::spawn(async {
-            let _ = omg_lib::core::telemetry::ping_install().await;
-        });
-    }
-
+    // Privilege elevation if needed
     let needs_root = matches!(&cli.command, Commands::Sync | Commands::Clean { .. });
     if needs_root && !is_root() {
         elevate_if_needed(&args)?;
@@ -503,14 +476,88 @@ async fn async_main(args: Vec<String>) -> Result<()> {
         no_color: !console::colors_enabled(),
     };
 
-    match &cli.command {
+    // Dispatch to command handlers
+    dispatch_command(&cli.command, &ctx, cli.json).await?;
+
+    // Track analytics
+    track_command_analytics(cmd_start).await;
+
+    Ok(())
+}
+
+/// Validate package names for security
+fn validate_package_security(command: &Commands) -> Result<()> {
+    match command {
+        Commands::Install { packages, .. } | Commands::Remove { packages, .. } => {
+            omg_lib::core::security::validate_package_names(packages)?;
+        }
+        Commands::Info { package }
+        | Commands::Why { package, .. }
+        | Commands::Blame { package } => {
+            omg_lib::core::security::validate_package_name(package)?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Initialize tracing/logging subsystem
+fn init_logging(verbose: u8) -> Result<()> {
+    let default_level = if verbose > 0 || std::env::var("RUST_LOG").is_ok() {
+        tracing::Level::INFO
+    } else {
+        tracing::Level::WARN
+    };
+
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::from_default_env().add_directive(default_level.into()),
+        )
+        .with_target(false)
+        .with_ansi(console::colors_enabled())
+        .without_time()
+        .init();
+
+    Ok(())
+}
+
+/// Spawn telemetry ping on first run
+fn spawn_telemetry_ping() {
+    if omg_lib::core::telemetry::is_first_run() && !omg_lib::core::telemetry::is_telemetry_opt_out()
+    {
+        tokio::spawn(async {
+            let _ = omg_lib::core::telemetry::ping_install().await;
+        });
+    }
+}
+
+/// Track command analytics and flush
+async fn track_command_analytics(cmd_start: std::time::Instant) {
+    let cmd_duration = omg_lib::core::analytics::end_timer(cmd_start);
+    let cmd_name = std::env::args().nth(1).unwrap_or_default();
+    let subcmd = std::env::args().nth(2);
+    omg_lib::core::analytics::track_command(
+        &cmd_name,
+        subcmd.as_deref(),
+        cmd_duration,
+        true,
+        Some(&omg_lib::core::telemetry::get_backend()),
+    );
+    omg_lib::core::analytics::maybe_heartbeat();
+    omg_lib::core::analytics::maybe_flush().await;
+    omg_lib::core::usage::maybe_sync_background();
+}
+
+/// Main command dispatcher - routes commands to appropriate handlers
+async fn dispatch_command(command: &Commands, ctx: &omg_lib::cli::CliContext, json_flag: bool) -> Result<()> {
+    match command {
         Commands::Run { .. }
         | Commands::Tool { .. }
         | Commands::Env { .. }
         | Commands::Fleet { .. }
         | Commands::Team { .. }
         | Commands::Enterprise { .. } => {
-            cli.command.execute(&ctx).await?;
+            command.execute(ctx).await?;
         }
         Commands::Search {
             query,
@@ -518,7 +565,7 @@ async fn async_main(args: Vec<String>) -> Result<()> {
             interactive,
             no_aur,
         } => {
-            packages::search_with_json(query, *detailed, *interactive, cli.json, *no_aur).await?;
+            packages::search_with_json(query, *detailed, *interactive, json_flag, *no_aur).await?;
         }
         Commands::Install {
             packages,
@@ -564,7 +611,7 @@ async fn async_main(args: Vec<String>) -> Result<()> {
             packages::clean(*orphans, *cache, *aur, *all).await?;
         }
         Commands::Explicit { count } => {
-            packages::explicit_sync_with_json(*count, cli.json)?;
+            packages::explicit_sync_with_json(*count, json_flag)?;
         }
         Commands::Sync => {
             packages::sync().await?;
@@ -692,7 +739,7 @@ async fn async_main(args: Vec<String>) -> Result<()> {
             commands::complete(shell, current, last, full.as_deref()).await?;
         }
         Commands::Status { fast } => {
-            packages::status_with_json(*fast, cli.json).await?;
+            packages::status_with_json(*fast, json_flag).await?;
         }
         Commands::Doctor {
             network,
@@ -850,7 +897,7 @@ async fn async_main(args: Vec<String>) -> Result<()> {
             why::run(package, *reverse)?;
         }
         Commands::Outdated { security } => {
-            outdated::run(*security, cli.json).await?;
+            outdated::run(*security, json_flag).await?;
         }
         Commands::Pin {
             target,
@@ -902,20 +949,6 @@ async fn async_main(args: Vec<String>) -> Result<()> {
             }
         },
     }
-
-    let cmd_duration = omg_lib::core::analytics::end_timer(cmd_start);
-    let cmd_name = std::env::args().nth(1).unwrap_or_default();
-    let subcmd = std::env::args().nth(2);
-    omg_lib::core::analytics::track_command(
-        &cmd_name,
-        subcmd.as_deref(),
-        cmd_duration,
-        true,
-        Some(&omg_lib::core::telemetry::get_backend()),
-    );
-    omg_lib::core::analytics::maybe_heartbeat();
-    omg_lib::core::analytics::maybe_flush().await;
-    omg_lib::core::usage::maybe_sync_background();
 
     Ok(())
 }
