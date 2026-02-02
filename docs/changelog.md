@@ -29,6 +29,8 @@ Added convenient Makefile targets for all benchmark workflows:
 
 ### ♻️  Refactoring
 
+- **Core**: Add #[must_use] to sudoloop query functions
+- **Core**: Add #[must_use] to distro query functions
 - Fix rustdoc warnings and code formatting
 
 ✅ Fixed rustdoc HTML tag warnings:
@@ -54,6 +56,38 @@ Code quality verification:
   - ✅ cargo fmt --check: passed
 
 ### ⚡ Performance
+
+- Update all benchmark numbers across documentation for consistency
+
+  - Updated 12 documentation files with accurate benchmark ranges
+
+  - Search: 6ms → 5-11ms (12-24x faster vs 22x)
+
+  - Info: 6.5ms → 3-6ms (21-38x faster vs 21x)
+
+  - List/explicit: 1.2ms → <2ms (7-14x faster vs 12x)
+
+  - Added links to new performance-tips.md and CONTRIBUTING.md in index
+
+  - Ensures consistency across: FAQ, quickstart, CLI ref, cheatsheet, migration guides
+
+Files updated:
+
+  - docs/index.md (main landing + new doc links)
+
+  - docs/faq.md (user-facing Q&A)
+
+  - docs/quickstart.md (first user experience)
+
+  - docs/cli.md, packages.md, cheatsheet.md (references)
+
+  - docs/migration/from-yay.md (comparison guide)
+
+  - docs/installation.md, integrations.md, troubleshooting.md
+
+  - docs/shell-integration.md, fast-status-deep-dive.md
+
+All benchmark claims now match verified results from BENCHMARK-RESULTS.md.
 
 - Add comprehensive performance optimization guide
 
