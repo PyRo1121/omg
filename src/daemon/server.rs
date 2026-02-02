@@ -25,7 +25,7 @@ use crate::package_managers::apt_get_system_status;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Status refresh interval (5 minutes)
-const STATUS_REFRESH_INTERVAL: Duration = Duration::from_secs(300);
+const STATUS_REFRESH_INTERVAL: Duration = Duration::from_mins(5);
 
 /// Per-connection rate limit (requests per second)
 const CLIENT_RATE_LIMIT_HZ: u32 = 50;

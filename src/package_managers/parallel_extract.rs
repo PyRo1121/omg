@@ -57,8 +57,7 @@ fn validate_symlink_target(root: &Path, link_path: &Path, target: &Path) -> bool
 
 fn get_cpu_count() -> usize {
     std::thread::available_parallelism()
-        .map(std::num::NonZero::get)
-        .unwrap_or(4)
+        .map_or(4, std::num::NonZero::get)
 }
 
 /// Progress tracking for parallel extraction

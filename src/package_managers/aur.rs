@@ -1803,8 +1803,7 @@ impl AurClient {
 
     fn makepkg_env(&self, pkg_dir: &Path) -> Result<MakepkgEnv> {
         let jobs = std::thread::available_parallelism()
-            .map(std::num::NonZero::get)
-            .unwrap_or(1);
+            .map_or(1, std::num::NonZero::get);
         let makeflags = self
             .settings
             .aur

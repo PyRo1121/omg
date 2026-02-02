@@ -874,8 +874,7 @@ fn ensure_sync_cache_loaded(sync_dir: &Path) -> Result<()> {
     // Also save rkyv mmap index for zero-copy access
     let mtime_secs = current_mtime
         .duration_since(SystemTime::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+        .map_or(0, |d| d.as_secs());
     let rkyv_index = build_rkyv_index(&cache.packages, mtime_secs);
     if let Err(e) = save_mmap_index(&rkyv_index) {
         tracing::debug!("Failed to save rkyv mmap index: {e}");
@@ -1141,8 +1140,7 @@ pub fn search_sync_mmap(query: &str) -> Result<Vec<SyncDbPackage>> {
     let current_mtime = get_newest_db_mtime(&sync_dir);
     let mtime_secs = current_mtime
         .duration_since(SystemTime::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+        .map_or(0, |d| d.as_secs());
 
     {
         let mmap_guard = SYNC_MMAP_INDEX.read();
