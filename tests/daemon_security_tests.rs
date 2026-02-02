@@ -191,3 +191,205 @@ async fn test_batch_size_limit_audit() {
         "Log should record batch size violation"
     );
 }
+
+#[tokio::test]
+#[serial]
+#[allow(unsafe_code)]
+async fn test_health_endpoint_returns_status() {
+    #[cfg(feature = "arch")]
+    {
+        omg_lib::package_managers::clear_alpm_cache();
+        omg_lib::package_managers::invalidate_caches();
+    }
+
+    let temp_dir = TempDir::new().unwrap();
+    unsafe {
+        std::env::set_var("OMG_DAEMON_DATA_DIR", temp_dir.path());
+        std::env::set_var("OMG_DATA_DIR", temp_dir.path());
+    }
+
+    omg_lib::core::security::init_audit_logger().expect("Failed to init audit logger");
+
+    let state = match DaemonState::new() {
+        Ok(s) => Arc::new(s),
+        Err(_) => return,
+    };
+
+    let req = Request::Health { id: 42 };
+    let response = handle_request(Arc::clone(&state), req).await;
+
+    match response {
+        Response::Success { id, result } => {
+            assert_eq!(id, 42, "Response ID should match request");
+            if let omg_lib::daemon::protocol::ResponseResult::Health(health) = result {
+                assert!(
+                    health.status == "healthy" || health.status == "degraded" || health.status == "unhealthy",
+                    "Status should be one of the valid states, got: {}",
+                    health.status
+                );
+                assert!(health.uptime_seconds < 60, "Uptime should be reasonable for test");
+                assert!(health.cache_size < 1_000_000, "Cache size should be reasonable");
+            } else {
+                panic!("Expected Health response result");
+            }
+        }
+        Response::Error { message, .. } => panic!("Health endpoint failed: {}", message),
+    }
+}
+
+#[tokio::test]
+#[serial]
+#[allow(unsafe_code)]
+async fn test_ping_returns_pong() {
+    #[cfg(feature = "arch")]
+    {
+        omg_lib::package_managers::clear_alpm_cache();
+        omg_lib::package_managers::invalidate_caches();
+    }
+
+    let temp_dir = TempDir::new().unwrap();
+    unsafe {
+        std::env::set_var("OMG_DAEMON_DATA_DIR", temp_dir.path());
+        std::env::set_var("OMG_DATA_DIR", temp_dir.path());
+    }
+
+    omg_lib::core::security::init_audit_logger().expect("Failed to init audit logger");
+
+    let state = match DaemonState::new() {
+        Ok(s) => Arc::new(s),
+        Err(_) => return,
+    };
+
+    let req = Request::Ping { id: 123 };
+    let response = handle_request(Arc::clone(&state), req).await;
+
+    match response {
+        Response::Success { id, result } => {
+            assert_eq!(id, 123);
+            if let omg_lib::daemon::protocol::ResponseResult::Ping(msg) = result {
+                assert_eq!(msg, "pong");
+            } else {
+                panic!("Expected Ping response");
+            }
+        }
+        Response::Error { message, .. } => panic!("Ping failed: {}", message),
+    }
+}
+
+#[tokio::test]
+#[serial]
+#[allow(unsafe_code)]
+async fn test_cache_stats_handler() {
+    #[cfg(feature = "arch")]
+    {
+        omg_lib::package_managers::clear_alpm_cache();
+        omg_lib::package_managers::invalidate_caches();
+    }
+
+    let temp_dir = TempDir::new().unwrap();
+    unsafe {
+        std::env::set_var("OMG_DAEMON_DATA_DIR", temp_dir.path());
+        std::env::set_var("OMG_DATA_DIR", temp_dir.path());
+    }
+
+    omg_lib::core::security::init_audit_logger().expect("Failed to init audit logger");
+
+    let state = match DaemonState::new() {
+        Ok(s) => Arc::new(s),
+        Err(_) => return,
+    };
+
+    let req = Request::CacheStats { id: 999 };
+    let response = handle_request(Arc::clone(&state), req).await;
+
+    match response {
+        Response::Success { id, result } => {
+            assert_eq!(id, 999);
+            if let omg_lib::daemon::protocol::ResponseResult::CacheStats { size, max_size } = result {
+                assert!(size <= max_size, "Cache size should not exceed max");
+                assert!(max_size > 0, "Max cache size should be positive");
+            } else {
+                panic!("Expected CacheStats response");
+            }
+        }
+        Response::Error { message, .. } => panic!("CacheStats failed: {}", message),
+    }
+}
+
+#[tokio::test]
+#[serial]
+#[allow(unsafe_code)]
+async fn test_cache_clear_handler() {
+    #[cfg(feature = "arch")]
+    {
+        omg_lib::package_managers::clear_alpm_cache();
+        omg_lib::package_managers::invalidate_caches();
+    }
+
+    let temp_dir = TempDir::new().unwrap();
+    unsafe {
+        std::env::set_var("OMG_DAEMON_DATA_DIR", temp_dir.path());
+        std::env::set_var("OMG_DATA_DIR", temp_dir.path());
+    }
+
+    omg_lib::core::security::init_audit_logger().expect("Failed to init audit logger");
+
+    let state = match DaemonState::new() {
+        Ok(s) => Arc::new(s),
+        Err(_) => return,
+    };
+
+    let req = Request::CacheClear { id: 555 };
+    let response = handle_request(Arc::clone(&state), req).await;
+
+    match response {
+        Response::Success { id, result } => {
+            assert_eq!(id, 555);
+            if let omg_lib::daemon::protocol::ResponseResult::Message(msg) = result {
+                assert_eq!(msg, "cleared");
+            } else {
+                panic!("Expected Message response");
+            }
+        }
+        Response::Error { message, .. } => panic!("CacheClear failed: {}", message),
+    }
+}
+
+#[tokio::test]
+#[serial]
+#[allow(unsafe_code)]
+async fn test_explicit_count_handler() {
+    #[cfg(feature = "arch")]
+    {
+        omg_lib::package_managers::clear_alpm_cache();
+        omg_lib::package_managers::invalidate_caches();
+    }
+
+    let temp_dir = TempDir::new().unwrap();
+    unsafe {
+        std::env::set_var("OMG_DAEMON_DATA_DIR", temp_dir.path());
+        std::env::set_var("OMG_DATA_DIR", temp_dir.path());
+    }
+
+    omg_lib::core::security::init_audit_logger().expect("Failed to init audit logger");
+
+    let state = match DaemonState::new() {
+        Ok(s) => Arc::new(s),
+        Err(_) => return,
+    };
+
+    let req = Request::ExplicitCount { id: 777 };
+    let response = handle_request(Arc::clone(&state), req).await;
+
+    match response {
+        Response::Success { id, result } => {
+            assert_eq!(id, 777);
+            if let omg_lib::daemon::protocol::ResponseResult::ExplicitCount(count) = result {
+                assert!(count < 100_000, "Explicit count should be reasonable");
+            } else {
+                panic!("Expected ExplicitCount response");
+            }
+        }
+        Response::Error { message, .. } => panic!("ExplicitCount failed: {}", message),
+    }
+}
