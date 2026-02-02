@@ -29,6 +29,46 @@ Added convenient Makefile targets for all benchmark workflows:
 
 ### ♻️  Refactoring
 
+- Eliminate cognitive complexity in hooks/mod.rs (26→<25)
+
+Extract version file parsing into focused helper functions:
+
+  - parse_tool_versions_file(): Handle .tool-versions format
+
+  - parse_rust_toolchain_file(): Parse rust-toolchain.toml
+
+  - parse_go_mod_file(): Extract Go version from go.mod
+
+  - parse_simple_version_file(): Generic version file reader
+
+  - try_parse_version_file(): Dispatch to appropriate parser
+
+- Eliminate cognitive complexity in task_runner.rs (28→<25)
+
+Extract ecosystem-specific detection into focused helper methods:
+
+  - detect_js_tasks(): Node.js/Bun package.json scripts
+
+  - detect_deno_tasks(): Deno task detection
+
+  - detect_php_tasks(): Composer scripts
+
+  - detect_rust_tasks(): Cargo standard tasks
+
+  - detect_makefile_tasks(): Makefile target parsing
+
+  - detect_python_tasks(): Poetry/Pipenv scripts
+
+  - detect_java_tasks(): Maven/Gradle tasks
+
+- Eliminate cognitive complexity in parallel_sync.rs (28→<25)
+
+Extract file I/O operations into focused helper functions:
+
+  - download_response_to_file(): Stream HTTP response chunks to temp file
+
+  - finalize_downloaded_file(): Flush and atomically rename to final destination
+
 - **Core**: Add #[must_use] to sudoloop query functions
 - **Core**: Add #[must_use] to distro query functions
 - Fix rustdoc warnings and code formatting
@@ -672,6 +712,42 @@ Data sourced from existing benchmark tables in README.md.
 File sizes: 183-235KB (optimized for web).
 
 ### 🔒 Security
+
+- Add unit tests for search command validation and formatting
+
+Add comprehensive unit tests for search.rs covering:
+
+  - DisplayPackage conversion from Package
+
+  - Package formatting (AUR vs official)
+
+  - Input validation (query length, control chars, path traversal)
+
+  - Shell metacharacter detection
+
+  - Sync CLI validation
+
+Test coverage:
+
+  - 8 new tests added (322 → 330 total)
+
+  - Covers critical security validation paths
+
+  - Tests both async and sync code paths
+
+  - Validates error messages
+
+Security tests verify rejection of:
+
+  - Queries >100 characters
+
+  - Control characters
+
+  - Path traversal attempts (../)
+
+  - Shell metacharacters (;|&><$)
+
+All 330 tests pass.
 
 - Reduce cognitive complexity in omg.rs main dispatcher (57→50)
 
