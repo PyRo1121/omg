@@ -126,6 +126,35 @@ fn build_db_url(mirror_template: &str, repo: &str) -> String {
 const MAX_RETRIES: u32 = 3;
 const INITIAL_BACKOFF_MS: u64 = 100;
 
+async fn download_response_to_file(
+    mut response: reqwest::Response,
+    temp_path: &Path,
+) -> Result<()> {
+    let mut file = File::create(temp_path)
+        .await
+        .with_context(|| format!("Failed to create {}", temp_path.display()))?;
+
+    while let Some(chunk) = response.chunk().await? {
+        file.write_all(&chunk)
+            .await
+            .context("Write error during download")?;
+    }
+
+    Ok(())
+}
+
+async fn finalize_downloaded_file(temp_path: &Path, dest: &Path) -> Result<()> {
+    let mut file = File::open(temp_path).await?;
+    file.flush().await.context("Failed to flush file")?;
+    drop(file);
+    
+    tokio::fs::rename(temp_path, dest)
+        .await
+        .context("Failed to rename temp file to destination")?;
+    
+    Ok(())
+}
+
 #[allow(clippy::literal_string_with_formatting_args, clippy::expect_used)] // Static indicatif templates are always valid; braces are template syntax
 async fn download_db(
     client: &Client,
@@ -212,50 +241,16 @@ async fn download_db(
             }
 
             let temp_path = dest.with_extension("db.part");
-            let file_result = File::create(&temp_path).await;
-            let mut file = match file_result {
-                Ok(f) => f,
-                Err(e) => {
-                    last_error = Some(anyhow::anyhow!(
-                        "Failed to create {}: {e}",
-                        temp_path.display()
-                    ));
-                    break;
-                }
-            };
 
-            let mut response = response;
-            let mut download_failed = false;
-            while let Some(chunk_result) = response.chunk().await.transpose() {
-                match chunk_result {
-                    Ok(chunk) => {
-                        if let Err(e) = file.write_all(&chunk).await {
-                            last_error = Some(anyhow::anyhow!("Write error: {e}"));
-                            download_failed = true;
-                            break;
-                        }
-                    }
-                    Err(e) => {
-                        last_error = Some(anyhow::anyhow!("Download interrupted: {e}"));
-                        download_failed = true;
-                        break;
-                    }
-                }
-            }
-
-            if download_failed {
+            if let Err(e) = download_response_to_file(response, &temp_path).await {
+                last_error = Some(e);
                 let _ = tokio::fs::remove_file(&temp_path).await;
                 continue;
             }
 
-            if let Err(e) = file.flush().await {
-                last_error = Some(anyhow::anyhow!("Flush error: {e}"));
+            if let Err(e) = finalize_downloaded_file(&temp_path, dest).await {
+                last_error = Some(e);
                 let _ = tokio::fs::remove_file(&temp_path).await;
-                continue;
-            }
-
-            if let Err(e) = tokio::fs::rename(&temp_path, dest).await {
-                last_error = Some(anyhow::anyhow!("Rename error: {e}"));
                 continue;
             }
 
