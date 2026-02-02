@@ -269,3 +269,107 @@ fn format_package(pkg: &DisplayPackage) -> String {
         ))
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_display_package_from_package() {
+        let pkg = Package {
+            name: "firefox".to_string(),
+            version: alpm_types::Version::from("123.0-1".parse::<alpm_types::FullVersion>().unwrap()),
+            description: "Fast web browser".to_string(),
+            source: crate::core::PackageSource::Official,
+            installed: false,
+        };
+
+        let display = DisplayPackage::from_package(pkg);
+        assert_eq!(display.name, "firefox");
+        assert_eq!(display.version, "123.0-1");
+        assert_eq!(display.description, "Fast web browser");
+        assert_eq!(display.source, "Official");
+    }
+
+    #[test]
+    fn test_format_package_aur() {
+        let pkg = DisplayPackage {
+            name: "yay".to_string(),
+            version: "12.0.0".to_string(),
+            description: "AUR helper".to_string(),
+            source: "AUR".to_string(),
+        };
+
+        let formatted = format_package(&pkg);
+        assert!(formatted.contains("yay"));
+        assert!(formatted.contains("12.0.0"));
+        assert!(formatted.contains("AUR"));
+    }
+
+    #[test]
+    fn test_format_package_official() {
+        let pkg = DisplayPackage {
+            name: "pacman".to_string(),
+            version: "6.0.0".to_string(),
+            description: "Package manager".to_string(),
+            source: "core".to_string(),
+        };
+
+        let formatted = format_package(&pkg);
+        assert!(formatted.contains("pacman"));
+        assert!(formatted.contains("6.0.0"));
+        assert!(formatted.contains("core"));
+    }
+
+    #[tokio::test]
+    async fn test_search_query_too_long() {
+        let long_query = "a".repeat(101);
+        let result = search_internal(&long_query, false, false, false, false).await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Search query too long"));
+    }
+
+    #[tokio::test]
+    async fn test_search_query_control_chars() {
+        let result = search_internal("test\x00query", false, false, false, false).await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("invalid characters"));
+    }
+
+    #[tokio::test]
+    async fn test_search_query_path_traversal() {
+        let result = search_internal("../etc/passwd", false, false, false, false).await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("path traversal"));
+    }
+
+    #[tokio::test]
+    async fn test_search_query_shell_metacharacters() {
+        let result = search_internal("test;rm -rf", false, false, false, false).await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("shell metacharacters"));
+    }
+
+    #[test]
+    fn test_search_sync_cli_validation() {
+        assert!(!search_sync_cli("a".repeat(101).as_str(), false, false, true).unwrap());
+
+        assert!(!search_sync_cli("test\x00query", false, false, true).unwrap());
+
+        assert!(!search_sync_cli("../passwd", false, false, true).unwrap());
+
+        assert!(!search_sync_cli("test;ls", false, false, true).unwrap());
+    }
+}
