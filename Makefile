@@ -1,33 +1,114 @@
 # OMG Makefile - Development and Testing Targets
 
-.PHONY: build release test check fmt clippy clean bench bench-fast bench-hyperfine bench-hyperfine-fast bench-charts docker-debian docker-ubuntu docker-test
+.PHONY: help build release test check fmt clippy clean bench bench-fast bench-hyperfine bench-hyperfine-fast bench-charts docker-debian docker-ubuntu docker-test install audit dev
 
-# Default target
+# Default target - show help
+.DEFAULT_GOAL := help
+
+# Display help information
+help:
+	@echo "OMG Development Makefile"
+	@echo "========================"
+	@echo ""
+	@echo "Building:"
+	@echo "  make build           - Development build"
+	@echo "  make release         - Optimized release build"
+	@echo "  make install         - Install to ~/.local/bin"
+	@echo ""
+	@echo "Testing:"
+	@echo "  make test            - Run all tests"
+	@echo "  make test-lib        - Run library tests only"
+	@echo "  make tdd             - Watch mode (requires cargo-watch)"
+	@echo "  make coverage        - Generate coverage report"
+	@echo ""
+	@echo "Quality:"
+	@echo "  make check           - Fast check without building"
+	@echo "  make fmt             - Format code"
+	@echo "  make fmt-check       - Check formatting"
+	@echo "  make clippy          - Run clippy linter"
+	@echo "  make clippy-strict   - Clippy with pedantic+nursery"
+	@echo "  make audit           - Security audit dependencies"
+	@echo "  make qa              - Run all quality checks"
+	@echo ""
+	@echo "Benchmarking:"
+	@echo "  make bench           - Full benchmark suite"
+	@echo "  make bench-fast      - Quick benchmark"
+	@echo "  make bench-hyperfine - Hyperfine benchmark"
+	@echo ""
+	@echo "Docker:"
+	@echo "  make docker-test     - Test on Debian+Ubuntu"
+	@echo "  make docker-debian   - Test on Debian"
+	@echo "  make docker-ubuntu   - Test on Ubuntu"
+	@echo ""
+	@echo "Development:"
+	@echo "  make dev             - Run development build with daemon"
+	@echo "  make clean           - Clean build artifacts"
+
+# Quick development target
 all: build
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Building
+# ═══════════════════════════════════════════════════════════════════════════════
 
 # Development build
 build:
-	cargo build
+	cargo build --features arch
 
-# Release build
+# Release build with optimizations
 release:
-	cargo build --release
+	cargo build --release --features arch
 
-# Run tests
+# Install to ~/.local/bin
+install: release
+	mkdir -p ~/.local/bin
+	cp target/release/omg ~/.local/bin/
+	cp target/release/omgd ~/.local/bin/
+	@echo "✓ Installed omg and omgd to ~/.local/bin"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Testing
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Run all tests
 test:
-	cargo test
+	cargo test --features arch
 
-# Check without building
+# Run library tests only (fast)
+test-lib:
+	cargo test --lib --features arch
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Quality Checks
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Check without building (fast)
 check:
-	cargo check
+	cargo check --features arch
 
 # Format code
 fmt:
 	cargo fmt
 
-# Run clippy
+# Check formatting without modifying
+fmt-check:
+	cargo fmt -- --check
+
+# Run clippy with warnings as errors
 clippy:
-	cargo clippy
+	cargo clippy --features arch -- -D warnings
+
+# Run clippy with pedantic and nursery lints
+clippy-strict:
+	cargo clippy --features arch --all-targets -- -D warnings -W clippy::pedantic -W clippy::nursery
+
+# Security audit dependencies
+audit:
+	cargo audit
+
+# Run all quality checks
+qa: fmt-check clippy-strict test-lib
+	@echo "✓ All quality checks passed!"
 
 # Clean build artifacts
 clean:
@@ -103,3 +184,22 @@ docker-debian-shell:
 docker-ubuntu-shell:
 	docker build -f Dockerfile.ubuntu -t omg-ubuntu .
 	docker run --rm -it omg-ubuntu /bin/bash
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Development Workflow
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Run development environment (build + daemon)
+dev: build
+	@echo "Starting OMG daemon..."
+	@pkill omgd 2>/dev/null || true
+	./target/debug/omgd &
+	@echo "Daemon started. Run 'make dev-stop' to stop."
+
+# Stop development daemon
+dev-stop:
+	@pkill omgd || echo "No daemon running"
+
+# Full development cycle: format, check, test
+dev-check: fmt check test-lib
+	@echo "✓ Development checks passed!"
