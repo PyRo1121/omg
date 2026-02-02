@@ -55,6 +55,7 @@ impl Distro {
 }
 
 /// Detect the current operating system/distribution
+#[must_use]
 pub fn detect_distro() -> Distro {
     static DISTRO: OnceLock<Distro> = OnceLock::new();
     *DISTRO.get_or_init(|| {
@@ -132,31 +133,37 @@ pub fn detect_distro() -> Distro {
 }
 
 /// Returns true if running on Arch Linux or derivatives
+#[must_use]
 pub fn is_arch_like() -> bool {
     matches!(detect_distro(), Distro::Arch)
 }
 
 /// Returns true if running on Debian or Ubuntu
+#[must_use]
 pub fn is_debian_like() -> bool {
     matches!(detect_distro(), Distro::Debian | Distro::Ubuntu)
 }
 
 /// Returns true if running on Fedora or RHEL-family (`CentOS`, Rocky, Alma)
+#[must_use]
 pub fn is_fedora_like() -> bool {
     matches!(detect_distro(), Distro::Fedora)
 }
 
 /// Returns true if running on macOS
+#[must_use]
 pub fn is_macos() -> bool {
     matches!(detect_distro(), Distro::MacOS)
 }
 
 /// Returns true if running on Windows
+#[must_use]
 pub fn is_windows() -> bool {
     matches!(detect_distro(), Distro::Windows)
 }
 
 /// Check if we should use Debian backend based on current distro and features
+#[must_use]
 pub fn use_debian_backend() -> bool {
     #[cfg(feature = "debian")]
     {
@@ -170,6 +177,7 @@ pub fn use_debian_backend() -> bool {
 }
 
 /// Check if we should use Fedora/DNF backend
+#[must_use]
 pub fn use_fedora_backend() -> bool {
     #[cfg(feature = "fedora")]
     {
@@ -183,6 +191,7 @@ pub fn use_fedora_backend() -> bool {
 }
 
 /// Check if we should use Homebrew backend
+#[must_use]
 pub fn use_homebrew_backend() -> bool {
     #[cfg(feature = "macos")]
     {
@@ -196,6 +205,7 @@ pub fn use_homebrew_backend() -> bool {
 }
 
 /// Check if we should use Windows backend
+#[must_use]
 pub fn use_windows_backend() -> bool {
     #[cfg(feature = "windows")]
     {
