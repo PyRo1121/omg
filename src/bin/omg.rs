@@ -548,6 +548,127 @@ async fn track_command_analytics(cmd_start: std::time::Instant) {
     omg_lib::core::usage::maybe_sync_background();
 }
 
+fn handle_hooks_command(command: &omg_lib::cli::HooksCommands) -> Result<()> {
+    use omg_lib::cli::HooksCommands;
+    match command {
+        HooksCommands::Install { force } => omg_lib::cli::git_hooks::install(*force),
+        HooksCommands::Uninstall => omg_lib::cli::git_hooks::uninstall(),
+        HooksCommands::Status => omg_lib::cli::git_hooks::status(),
+        HooksCommands::Run { hook } => omg_lib::cli::git_hooks::run_hook(hook),
+    }
+}
+
+async fn handle_workspace_command(command: &omg_lib::cli::WorkspaceCommands) -> Result<()> {
+    use omg_lib::cli::WorkspaceCommands;
+    match command {
+        WorkspaceCommands::Init { name } => omg_lib::cli::workspace::init(name),
+        WorkspaceCommands::Add { path, name } => omg_lib::cli::workspace::add(path, name.as_deref()),
+        WorkspaceCommands::Remove { project } => omg_lib::cli::workspace::remove(project),
+        WorkspaceCommands::List => omg_lib::cli::workspace::list(),
+        WorkspaceCommands::Run { command: cmd, args, parallel, filter } => {
+            omg_lib::cli::workspace::run(cmd, args, *parallel, filter.as_deref()).await
+        }
+        WorkspaceCommands::Diff { branch } => omg_lib::cli::workspace::diff(branch),
+        WorkspaceCommands::Sync { yes } => omg_lib::cli::workspace::sync(*yes),
+        WorkspaceCommands::Status => omg_lib::cli::workspace::status(),
+    }
+}
+
+fn handle_config_command(command: &Option<omg_lib::cli::ConfigCommands>) -> Result<()> {
+    use omg_lib::cli::ConfigCommands;
+    match command {
+        Some(ConfigCommands::Get { key }) => omg_lib::cli::config::get(key),
+        Some(ConfigCommands::Set { key, value }) => omg_lib::cli::config::set(key, value),
+        Some(ConfigCommands::List) => omg_lib::cli::config::list(),
+        Some(ConfigCommands::Validate) => omg_lib::cli::config::validate(),
+        Some(ConfigCommands::Reset { yes }) => omg_lib::cli::config::reset(*yes),
+        Some(ConfigCommands::Path) => omg_lib::cli::config::path(),
+        None => omg_lib::cli::config::list(),
+    }
+}
+
+fn handle_container_command(command: &ContainerCommands) -> Result<()> {
+    use omg_lib::cli::container;
+    match command {
+        ContainerCommands::Status => container::status(),
+        ContainerCommands::Run { image, command: cmd, name, detach, interactive, env, volume, workdir } => {
+            container::run(image, cmd, name.clone(), *detach, *interactive, env, volume, workdir.clone())
+        }
+        ContainerCommands::Shell { image, workdir, env, volume } => {
+            container::shell(image.clone(), workdir.clone(), env, volume)
+        }
+        ContainerCommands::Build { dockerfile, tag, no_cache, build_arg, target } => {
+            container::build(dockerfile.clone(), tag, *no_cache, build_arg, target)
+        }
+        ContainerCommands::List => container::list(),
+        ContainerCommands::Images => container::images(),
+        ContainerCommands::Pull { image } => container::pull(image),
+        ContainerCommands::Stop { container: c } => container::stop(c),
+        ContainerCommands::Exec { container: c, command: cmd } => container::exec(c, cmd),
+        ContainerCommands::Init { base } => container::init(base.clone()),
+    }
+}
+
+#[cfg(feature = "license")]
+async fn handle_license_command(command: &LicenseCommands) -> Result<()> {
+    use omg_lib::cli::license;
+    match command {
+        LicenseCommands::Activate { key } => license::activate(key).await,
+        LicenseCommands::Status => license::status(),
+        LicenseCommands::Deactivate => license::deactivate(),
+        LicenseCommands::Check { feature } => license::check_feature(feature),
+    }
+}
+
+async fn handle_update_command(check: bool, yes: bool, dry_run: bool, fast: bool, turbo: bool) -> Result<()> {
+    if turbo {
+        packages::update_turbo().await
+    } else if fast {
+        packages::update_fast().await
+    } else {
+        packages::update(check, yes, dry_run).await
+    }
+}
+
+async fn handle_init_command(defaults: bool, skip_shell: bool, skip_daemon: bool) -> Result<()> {
+    if defaults {
+        omg_lib::cli::init::run_defaults().await
+    } else {
+        omg_lib::cli::init::run_interactive(skip_shell, skip_daemon).await
+    }
+}
+
+async fn handle_doctor_command(network: bool, eol: bool, turbo: bool) -> Result<()> {
+    if turbo {
+        doctor::enable_turbo_mode()
+    } else {
+        doctor::run(network, eol).await
+    }
+}
+
+fn handle_which_command(runtime: &str) {
+    if let Some(version) = runtimes::resolve_active_version(runtime) {
+        println!(
+            "{} {}",
+            omg_lib::cli::style::runtime(runtime),
+            omg_lib::cli::style::version(&version)
+        );
+    } else {
+        println!(
+            "{}: no version set (check .tool-versions, .nvmrc, etc.)",
+            omg_lib::cli::style::runtime(runtime)
+        );
+    }
+}
+
+async fn handle_audit_command(command: &Option<omg_lib::cli::AuditCommands>, ctx: &omg_lib::cli::CliContext) -> Result<()> {
+    if let Some(cmd) = command {
+        cmd.execute(ctx).await
+    } else {
+        security::scan(ctx).await
+    }
+}
+
 /// Main command dispatcher - routes commands to appropriate handlers
 async fn dispatch_command(command: &Commands, ctx: &omg_lib::cli::CliContext, json_flag: bool) -> Result<()> {
     match command {
@@ -582,20 +703,8 @@ async fn dispatch_command(command: &Commands, ctx: &omg_lib::cli::CliContext, js
         } => {
             packages::remove(pkgs, *recursive, *yes, *dry_run).await?;
         }
-        Commands::Update {
-            check,
-            yes,
-            dry_run,
-            fast,
-            turbo,
-        } => {
-            if *turbo {
-                packages::update_turbo().await?;
-            } else if *fast {
-                packages::update_fast().await?;
-            } else {
-                packages::update(*check, *yes, *dry_run).await?;
-            }
+        Commands::Update { check, yes, dry_run, fast, turbo } => {
+            handle_update_command(*check, *yes, *dry_run, *fast, *turbo).await?;
         }
         Commands::Info { package } => {
             if !packages::info_sync(package)? {
@@ -625,57 +734,8 @@ async fn dispatch_command(command: &Commands, ctx: &omg_lib::cli::CliContext, js
         Commands::Hook { shell } => {
             hooks::print_hook(shell)?;
         }
-        Commands::Hooks { command } => {
-            use omg_lib::cli::HooksCommands;
-            match command {
-                HooksCommands::Install { force } => {
-                    omg_lib::cli::git_hooks::install(*force)?;
-                }
-                HooksCommands::Uninstall => {
-                    omg_lib::cli::git_hooks::uninstall()?;
-                }
-                HooksCommands::Status => {
-                    omg_lib::cli::git_hooks::status()?;
-                }
-                HooksCommands::Run { hook } => {
-                    omg_lib::cli::git_hooks::run_hook(hook)?;
-                }
-            }
-        }
-        Commands::Workspace { command } => {
-            use omg_lib::cli::WorkspaceCommands;
-            match command {
-                WorkspaceCommands::Init { name } => {
-                    omg_lib::cli::workspace::init(name)?;
-                }
-                WorkspaceCommands::Add { path, name } => {
-                    omg_lib::cli::workspace::add(path, name.as_deref())?;
-                }
-                WorkspaceCommands::Remove { project } => {
-                    omg_lib::cli::workspace::remove(project)?;
-                }
-                WorkspaceCommands::List => {
-                    omg_lib::cli::workspace::list()?;
-                }
-                WorkspaceCommands::Run {
-                    command: cmd,
-                    args,
-                    parallel,
-                    filter,
-                } => {
-                    omg_lib::cli::workspace::run(cmd, args, *parallel, filter.as_deref()).await?;
-                }
-                WorkspaceCommands::Diff { branch } => {
-                    omg_lib::cli::workspace::diff(branch)?;
-                }
-                WorkspaceCommands::Sync { yes } => {
-                    omg_lib::cli::workspace::sync(*yes)?;
-                }
-                WorkspaceCommands::Status => {
-                    omg_lib::cli::workspace::status()?;
-                }
-            }
-        }
+        Commands::Hooks { command } => handle_hooks_command(command)?,
+        Commands::Workspace { command } => handle_workspace_command(command).await?,
         Commands::HookEnv { shell } => {
             hooks::hook_env(shell)?;
         }
@@ -683,53 +743,14 @@ async fn dispatch_command(command: &Commands, ctx: &omg_lib::cli::CliContext, js
         Commands::Daemon { foreground } => {
             commands::daemon(*foreground)?;
         }
-        Commands::Config { command } => {
-            use omg_lib::cli::ConfigCommands;
-            match command {
-                Some(ConfigCommands::Get { key }) => {
-                    omg_lib::cli::config::get(key)?;
-                }
-                Some(ConfigCommands::Set { key, value }) => {
-                    omg_lib::cli::config::set(key, value)?;
-                }
-                Some(ConfigCommands::List) => {
-                    omg_lib::cli::config::list()?;
-                }
-                Some(ConfigCommands::Validate) => {
-                    omg_lib::cli::config::validate()?;
-                }
-                Some(ConfigCommands::Reset { yes }) => {
-                    omg_lib::cli::config::reset(*yes)?;
-                }
-                Some(ConfigCommands::Path) => {
-                    omg_lib::cli::config::path()?;
-                }
-                None => {
-                    // Default: list all config
-                    omg_lib::cli::config::list()?;
-                }
-            }
-        }
+        Commands::Config { command } => handle_config_command(command)?,
         Commands::SelfUpdate { force, version } => {
             omg_lib::cli::self_update::run(*force, version.clone()).await?;
         }
         Commands::Completions { shell, stdout } => {
             hooks::completions::generate_completions(shell, *stdout)?;
         }
-        Commands::Which { runtime } => {
-            if let Some(version) = runtimes::resolve_active_version(runtime) {
-                println!(
-                    "{} {}",
-                    omg_lib::cli::style::runtime(runtime),
-                    omg_lib::cli::style::version(&version)
-                );
-            } else {
-                println!(
-                    "{}: no version set (check .tool-versions, .nvmrc, etc.)",
-                    omg_lib::cli::style::runtime(runtime)
-                );
-            }
-        }
+        Commands::Which { runtime } => handle_which_command(runtime),
         Commands::Complete {
             shell,
             current,
@@ -741,16 +762,8 @@ async fn dispatch_command(command: &Commands, ctx: &omg_lib::cli::CliContext, js
         Commands::Status { fast } => {
             packages::status_with_json(*fast, json_flag).await?;
         }
-        Commands::Doctor {
-            network,
-            eol,
-            turbo,
-        } => {
-            if *turbo {
-                doctor::enable_turbo_mode()?;
-            } else {
-                doctor::run(*network, *eol).await?;
-            }
+        Commands::Doctor { network, eol, turbo } => {
+            handle_doctor_command(*network, *eol, *turbo).await?;
         }
         Commands::GenerateMan { output } => {
             omg_lib::cli::man::generate(output.clone())?;
@@ -759,101 +772,13 @@ async fn dispatch_command(command: &Commands, ctx: &omg_lib::cli::CliContext, js
         Commands::DaemonStatus => {
             omg_lib::cli::daemon_status::run().await?;
         }
-        Commands::Audit { command } => {
-            if let Some(cmd) = command {
-                cmd.execute(&ctx).await?;
-            } else {
-                security::scan(&ctx).await?;
-            }
-        }
+        Commands::Audit { command } => handle_audit_command(command, ctx).await?,
         Commands::New { stack, name } => {
             new::run(stack, name)?;
         }
-        Commands::Container { command } => {
-            use omg_lib::cli::container;
-            match command {
-                ContainerCommands::Status => {
-                    container::status()?;
-                }
-                ContainerCommands::Run {
-                    image,
-                    command: cmd,
-                    name,
-                    detach,
-                    interactive,
-                    env,
-                    volume,
-                    workdir,
-                } => {
-                    container::run(
-                        image,
-                        cmd,
-                        name.clone(),
-                        *detach,
-                        *interactive,
-                        env,
-                        volume,
-                        workdir.clone(),
-                    )?;
-                }
-                ContainerCommands::Shell {
-                    image,
-                    workdir,
-                    env,
-                    volume,
-                } => {
-                    container::shell(image.clone(), workdir.clone(), env, volume)?;
-                }
-                ContainerCommands::Build {
-                    dockerfile,
-                    tag,
-                    no_cache,
-                    build_arg,
-                    target,
-                } => {
-                    container::build(dockerfile.clone(), tag, *no_cache, build_arg, target)?;
-                }
-                ContainerCommands::List => {
-                    container::list()?;
-                }
-                ContainerCommands::Images => {
-                    container::images()?;
-                }
-                ContainerCommands::Pull { image } => {
-                    container::pull(image)?;
-                }
-                ContainerCommands::Stop { container: c } => {
-                    container::stop(c)?;
-                }
-                ContainerCommands::Exec {
-                    container: c,
-                    command: cmd,
-                } => {
-                    container::exec(c, cmd)?;
-                }
-                ContainerCommands::Init { base } => {
-                    container::init(base.clone())?;
-                }
-            }
-        }
+        Commands::Container { command } => handle_container_command(command)?,
         #[cfg(feature = "license")]
-        Commands::License { command } => {
-            use omg_lib::cli::license;
-            match command {
-                LicenseCommands::Activate { key } => {
-                    license::activate(key).await?;
-                }
-                LicenseCommands::Status => {
-                    license::status()?;
-                }
-                LicenseCommands::Deactivate => {
-                    license::deactivate()?;
-                }
-                LicenseCommands::Check { feature } => {
-                    license::check_feature(feature)?;
-                }
-            }
-        }
+        Commands::License { command } => handle_license_command(command).await?,
         Commands::History {
             limit,
             search,
@@ -882,16 +807,8 @@ async fn dispatch_command(command: &Commands, ctx: &omg_lib::cli::CliContext, js
         Commands::Metrics => {
             commands::metrics().await?;
         }
-        Commands::Init {
-            defaults,
-            skip_shell,
-            skip_daemon,
-        } => {
-            if *defaults {
-                omg_lib::cli::init::run_defaults().await?;
-            } else {
-                omg_lib::cli::init::run_interactive(*skip_shell, *skip_daemon).await?;
-            }
+        Commands::Init { defaults, skip_shell, skip_daemon } => {
+            handle_init_command(*defaults, *skip_shell, *skip_daemon).await?;
         }
         Commands::Why { package, reverse } => {
             why::run(package, *reverse)?;
