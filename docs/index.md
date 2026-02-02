@@ -38,7 +38,7 @@ omg use ruby 3.2               # Ruby
 omg use java 21                # Java
 ```
 
-Same syntax. Same tool. Same config. **And it's 22x faster than pacman.**
+Same syntax. Same tool. Same config. **And it's 12-24x faster than pacman.**
 
 ---
 
@@ -48,9 +48,9 @@ Same syntax. Same tool. Same config. **And it's 22x faster than pacman.**
 
 | Operation | OMG | pacman/yay | How much faster |
 |-----------|-----|------------|-----------------|
-| Package search | 6ms | 133ms | **22x** |
-| Package info | 6.5ms | 138ms | **21x** |
-| List installed | 1.2ms | 14ms | **12x** |
+| Package search | 5-11ms | 133ms | **12-24x** |
+| Package info | 3-6ms | 138ms | **21-38x** |
+| List installed | <2ms | 14ms | **7-14x** |
 
 **Zero C Dependencies:** OMG uses a pure Rust stack for maximum performance and portability, including `redb` for metadata storage and `zlib-rs`/`ruzstd` for lightning-fast decompression.
 
@@ -200,11 +200,15 @@ omg run dev                 # Run your project
 - **[FAQ](./faq.md)** — Frequently asked questions (start here!)
 - **[Cheat Sheet](./cheatsheet.md)** — Quick reference for all commands (print this!)
 - **[Troubleshooting](./troubleshooting.md)** — Common issues and fixes
+- **[Performance Tips](./performance-tips.md)** — Optimization guide for maximum speed
 - **[Integrations](./integrations.md)** — Use OMG with fzf, ripgrep, VS Code, CI/CD, and more
 
 ### Deep Dives
 - **[Architecture](./architecture.md)** — How OMG works under the hood
 - **[Daemon Internals](./daemon.md)** — The secret to OMG's speed
+
+### Contributing
+- **[Contributing Guide](../CONTRIBUTING.md)** — How to contribute to OMG development
 
 ---
 

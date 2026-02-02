@@ -277,7 +277,7 @@ end
 |--------|---------|----------|
 | `omg-ec` (cached) | &lt;1μs | Prompts |
 | `omg-explicit-count` (fresh) | ~1ms | Scripts |
-| `omg explicit --count` | ~1.2ms | Commands |
+| `omg explicit --count` | ~<2ms | Commands |
 | `pacman -Qq \| wc -l` | ~14ms | Fallback |
 
 ---

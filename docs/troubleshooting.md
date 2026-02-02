@@ -34,7 +34,7 @@ omg-fast status
 ### Daemon Not Running
 
 **Symptoms:**
-- Slow searches (>50ms instead of ~6ms)
+- Slow searches (>50ms instead of ~5-11ms)
 - `omg status` shows "Daemon: Not running"
 - Commands work but feel sluggish
 

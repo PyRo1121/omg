@@ -62,7 +62,7 @@ omg search spotify -d
 ```
 
 **Performance:**
-- With daemon: ~6ms
+- With daemon: ~5-11ms
 - Without daemon: ~50-200ms
 
 ---
@@ -185,7 +185,7 @@ omg info visual-studio-code-bin
 - Security grade
 
 **Performance:**
-- With daemon: ~6.5ms (cached)
+- With daemon: ~3-6ms (cached)
 - Without daemon: ~50-200ms
 
 ---
@@ -246,7 +246,7 @@ omg explicit --count
 ```
 
 **Performance:**
-- With daemon: 1.2ms
+- With daemon: <2ms
 - Without daemon: ~14ms
 
 ---

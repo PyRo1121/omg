@@ -16,7 +16,7 @@ OMG provides unified package management for official repositories and AUR on Arc
 
 OMG's package management features:
 
-- **22x faster searches** than pacman (6ms vs 133ms)
+- **12-24x faster searches** than pacman (5-11ms vs 133ms)
 - **Unified AUR integration** — no separate AUR helper needed
 - **Security grading** — packages rated before installation
 - **Policy enforcement** — organization-wide installation rules
@@ -59,7 +59,7 @@ Interactive mode provides:
 
 | Mode | Latency | Notes |
 |------|---------|-------|
-| With daemon (cached) | ~6ms | Instant feel |
+| With daemon (cached) | ~5-11ms | Instant feel |
 | With daemon (fresh) | ~200ms | Still fast |
 | Without daemon | ~500ms | Direct libalpm |
 
@@ -203,7 +203,7 @@ omg info firefox
 
 | Mode | Latency |
 |------|---------|
-| With daemon (cached) | ~6.5ms |
+| With daemon (cached) | ~3-6ms |
 | Without daemon | ~150ms |
 
 ---

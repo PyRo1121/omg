@@ -133,7 +133,7 @@ This achieves ~1ms latency by:
 |--------|---------|----------|
 | **Shell variable** (`omg-ec`) | \u003c1μs | Prompts (cached) |
 | **Direct file read** (`omg-fast ec`) | ~1ms | Scripts |
-| **IPC query** (`omg explicit --count`) | ~1.2ms | Commands |
+| **IPC query** (`omg explicit --count`) | ~<2ms | Commands |
 | **System query** (`pacman -Qq \| wc -l`) | ~14ms | Fallback |
 
 ### Why So Fast?

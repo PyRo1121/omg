@@ -154,9 +154,9 @@ Runtimes: node@20.10.0, python@3.12.0
 omg search neovim
 ```
 
-**Expected Output (appears in ~6ms):**
+**Expected Output (appears in ~5-11ms):**
 ```
-Searching packages... (6ms)
+Searching packages... (5-11ms)
 
 extra/neovim 0.9.5-1 [Installed]
   Vim-fork focused on extensibility and agility
@@ -495,7 +495,7 @@ node 20.10.0
 omg search neovim
 ```
 
-Notice how fast that was? With the daemon running, searches return in ~6ms.
+Notice how fast that was? With the daemon running, searches return in ~5-11ms.
 
 ### Install Something
 
@@ -601,7 +601,7 @@ omg audit secrets         # Scan for leaked credentials
 
 ## Enable the Daemon (Recommended)
 
-The daemon keeps a package index in memory, making searches 22x faster. Start it with:
+The daemon keeps a package index in memory, making searches 12-24x faster. Start it with:
 
 ```bash
 omg daemon
