@@ -57,6 +57,34 @@ Code quality verification:
 
 ### ⚡ Performance
 
+- Add comprehensive documentation for examples and scripts
+
+  - Created examples/README.md (380 lines):
+
+  - Quick start guide for configuration
+
+  - Detailed explanation of each template (config.toml, policy.toml, .tool-versions)
+
+  - Common configuration presets (performance, security, team/CI)
+
+  - Validation and troubleshooting guides
+
+  - Tips for individuals, teams, and CI/CD
+
+  - Created scripts/README.md (420 lines):
+
+  - Complete reference for all 14 development scripts
+
+  - Usage examples and common workflows
+
+  - Requirements and dependencies
+
+  - Exit codes and conventions
+
+  - Troubleshooting guide
+
+  - Contribution guidelines
+
 - Update all benchmark numbers across documentation for consistency
 
   - Updated 12 documentation files with accurate benchmark ranges
