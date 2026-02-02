@@ -55,6 +55,28 @@ Code quality verification:
 
 ### ⚡ Performance
 
+- Add comprehensive performance optimization guide
+
+  - Create docs/performance-tips.md with practical optimization strategies
+
+  - Covers: daemon optimization, AUR builds, caching, network, CI/CD
+
+  - Includes real-world benchmarks and troubleshooting tips
+
+  - Documents expected performance baselines across different environments
+
+  - Provides top 5 quick wins for maximum impact
+
+This completes the polishing phase documentation improvements.
+
+- Update CLI help text to reflect accurate benchmark ranges
+
+  - Change 'search' command description from '22x faster' to '12-24x faster'
+
+  - Ensures consistency with README and BENCHMARK-RESULTS.md
+
+  - Affects both main help and 'omg search --help' output
+
 - Polish project for production readiness
 
   - Update README benchmark numbers to reflect accurate ranges (5-11ms, 12-24x faster)
