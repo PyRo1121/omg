@@ -30,8 +30,22 @@ proptest! {
     #[test]
     fn prop_search_never_crashes(query in "[^\x00]*") {
         let result = run_omg(&["search", &query]);
-        // Should never panic - may fail gracefully
         prop_assert!(!result.stderr.contains("panicked at"));
+        
+        if result.success && !result.stdout.is_empty() {
+            let has_valid_output = result.stdout.contains("Search Results") ||
+                                  result.stdout.contains("Package") || 
+                                  result.stdout.contains("No results") ||
+                                  result.stdout.contains("git") ||
+                                  result.stdout.contains("pacman");
+            prop_assert!(
+                has_valid_output,
+                "Search output should contain results, got: {}",
+                result.stdout.chars().take(100).collect::<String>()
+            );
+            prop_assert!(!result.stdout.contains("root:"), "Should not leak /etc/passwd");
+            prop_assert!(!result.stdout.contains("PRIVATE_KEY"), "Should not leak secrets");
+        }
     }
 
     /// Any string input to info should not crash
@@ -70,8 +84,21 @@ proptest! {
         let input = format!("{word}{meta}{word}");
         let result = run_omg(&["search", &input]);
         prop_assert!(!result.stderr.contains("panicked at"));
-        // Should not execute injected commands
-        prop_assert!(!result.stdout.contains("root:"));
+        
+        prop_assert!(!result.stdout.contains("root:"), "Should not leak /etc/passwd");
+        prop_assert!(!result.stdout.contains("/etc/shadow"), "Should not access shadow file");
+        prop_assert!(!result.stdout.contains("uid="), "Should not execute `id` command");
+        prop_assert!(!result.stderr.contains("sh:"), "Should not spawn shell");
+        
+        if result.success {
+            let has_results = result.stdout.contains("Search Results") ||
+                            result.stdout.contains("No results") || 
+                            result.stdout.contains("Package");
+            prop_assert!(
+                has_results,
+                "Valid search should return package results or no results"
+            );
+        }
     }
 
     /// Runtime names should be normalized consistently
@@ -106,6 +133,20 @@ proptest! {
     fn prop_unicode_safe(s in "\\PC{1,50}") {
         let result = run_omg(&["search", &s]);
         prop_assert!(!result.stderr.contains("panicked at"));
+        
+        if result.success {
+            let is_valid_utf8 = std::str::from_utf8(result.stdout.as_bytes()).is_ok();
+            prop_assert!(is_valid_utf8, "Output should be valid UTF-8");
+            
+            let has_structured_output = result.stdout.is_empty() || 
+                                       result.stdout.contains("Search Results") ||
+                                       result.stdout.contains("Package") || 
+                                       result.stdout.contains("No results");
+            prop_assert!(has_structured_output, "Valid output should be structured");
+        } else if !result.stderr.is_empty() {
+            let error_valid_utf8 = std::str::from_utf8(result.stderr.as_bytes()).is_ok();
+            prop_assert!(error_valid_utf8, "Error messages should be valid UTF-8");
+        }
     }
 
     /// Very long inputs should be handled gracefully
@@ -114,6 +155,22 @@ proptest! {
         let long_input: String = "a".repeat(len);
         let result = run_omg(&["search", &long_input]);
         prop_assert!(!result.stderr.contains("panicked at"));
+        
+        let output_reasonable_size = result.stdout.len() < len * 100;
+        prop_assert!(
+            output_reasonable_size,
+            "Output should not be exponentially larger than input (input: {}, output: {})",
+            len,
+            result.stdout.len()
+        );
+        
+        if result.success || !result.stderr.is_empty() {
+            let total_output = result.stdout.len() + result.stderr.len();
+            prop_assert!(
+                total_output > 0,
+                "Should produce some output (success or error message)"
+            );
+        }
     }
 
     // Note: Null byte tests removed - std::process::Command rejects null bytes in args
@@ -137,6 +194,23 @@ proptest! {
         let version = format!("{major}.{minor}.{patch}");
         let result = run_omg(&["use", "node", &version]);
         prop_assert!(!result.stderr.contains("panicked at"));
+        
+        if !result.success {
+            let has_helpful_error = result.stderr.contains("not available") || 
+                                   result.stderr.contains("not found") ||
+                                   result.stderr.contains("version") ||
+                                   result.stderr.contains("error");
+            prop_assert!(
+                has_helpful_error, 
+                "Error should be helpful, got: {}", 
+                result.stderr.chars().take(200).collect::<String>()
+            );
+        } else {
+            prop_assert!(
+                result.stdout.contains(&version) || result.stderr.is_empty(),
+                "Success should mention version or have no errors"
+            );
+        }
     }
 
     /// Partial versions should be handled
