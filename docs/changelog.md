@@ -605,6 +605,34 @@ File sizes: 183-235KB (optimized for web).
 
 ### 🔒 Security
 
+- Add comprehensive security policy and PR template
+
+  - Create SECURITY.md (130 lines) with:
+
+  - Vulnerability reporting process
+
+  - Security features documentation
+
+  - Known security considerations (libscoop, debian-packaging)
+
+  - Best practices for users and developers
+
+  - Compliance support (SOC2, ISO27001)
+
+  - Create .github/pull_request_template.md with:
+
+  - Comprehensive PR checklist
+
+  - Testing requirements
+
+  - Performance impact documentation
+
+  - Breaking change migration guide
+
+  - Security review checklist
+
+This improves project security posture and contributor experience.
+
 - Add comprehensive security policy and vulnerability documentation
 
 ✅ Created SECURITY.md with full security policy:
