@@ -40,7 +40,7 @@ pub enum Commands {
     // ═══════════════════════════════════════════════════════════════════════
     // PACKAGE MANAGEMENT (Arch + AUR)
     // ═══════════════════════════════════════════════════════════════════════
-    /// Search for packages across system repositories and AUR (22x faster)
+    /// Search for packages across system repositories and AUR (12-24x faster)
     #[command(visible_alias = "s", next_help_heading = "Package Management")]
     Search {
         /// Package name or keyword to search for (e.g., firefox)
