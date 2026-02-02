@@ -1247,4 +1247,74 @@ mod tests {
 
         assert_eq!(pkg.depends[1], "libreadline8");
     }
+
+    #[test]
+    fn test_mmap_index_open_nonexistent_file() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let test_file = temp_dir.path().join("does_not_exist.rkyv");
+
+        let result = DebianMmapIndex::open(&test_file);
+        assert!(result.is_err(), "Should fail to open nonexistent file");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("Failed to open mmap index"),
+            "Error should indicate failed to open"
+        );
+    }
+
+    #[test]
+    fn test_mmap_index_get_corrupted_archive() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let test_file = temp_dir.path().join("corrupted.rkyv");
+        std::fs::write(&test_file, b"corrupted data").unwrap();
+
+        let index = DebianMmapIndex::open(&test_file).unwrap();
+        let result = index.get("vim");
+        
+        assert!(result.is_err(), "Should fail to access corrupted archive");
+        assert!(
+            result.unwrap_err().to_string().contains("Corrupted Debian package index"),
+            "Error should mention corruption"
+        );
+    }
+
+    #[test]
+    fn test_mmap_index_search_corrupted_archive() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let test_file = temp_dir.path().join("corrupted.rkyv");
+        std::fs::write(&test_file, b"invalid rkyv").unwrap();
+
+        let index = DebianMmapIndex::open(&test_file).unwrap();
+        let result = index.search("vim", 10);
+        
+        assert!(result.is_err(), "Should fail to search corrupted archive");
+        assert!(
+            result.unwrap_err().to_string().contains("Corrupted"),
+            "Error should indicate corruption"
+        );
+    }
+
+    #[test]
+    fn test_mmap_index_open_empty_file() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let test_file = temp_dir.path().join("empty.rkyv");
+        std::fs::write(&test_file, b"").unwrap();
+
+        let index = DebianMmapIndex::open(&test_file).unwrap();
+        let result = index.get("vim");
+        
+        assert!(result.is_err(), "Should fail to access empty file");
+    }
+
+    #[test]
+    fn test_mmap_index_list_all_corrupted() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let test_file = temp_dir.path().join("corrupted.rkyv");
+        std::fs::write(&test_file, vec![0xFF; 100]).unwrap();
+
+        let index = DebianMmapIndex::open(&test_file).unwrap();
+        let result = index.list_all();
+        
+        assert!(result.is_err(), "Should fail to list from corrupted file");
+    }
 }
