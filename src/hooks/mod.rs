@@ -200,86 +200,98 @@ pub fn hook_env(shell: &str) -> Result<()> {
     Ok(())
 }
 
+fn parse_tool_versions_file(file_path: &Path, versions: &mut HashMap<String, String>) {
+    if let Ok(content) = std::fs::read_to_string(file_path) {
+        for line in content.lines() {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if let (Some(rt_part), Some(ver_part)) = (parts.first(), parts.get(1)) {
+                let rt = normalize_runtime_name(rt_part);
+                let ver = (*ver_part).to_string();
+                versions.entry(rt).or_insert(ver);
+            }
+        }
+    }
+}
+
+fn parse_rust_toolchain_file(file_path: &Path, runtime: &str, versions: &mut HashMap<String, String>) {
+    if let Ok(content) = std::fs::read_to_string(file_path) {
+        for line in content.lines() {
+            if line.contains("channel") && let Some(version) = line.split('=').nth(1) {
+                let v = version.trim().trim_matches('"').trim_matches('\'');
+                versions.insert(runtime.to_string(), v.to_string());
+            }
+        }
+    }
+}
+
+fn parse_go_mod_file(file_path: &Path, runtime: &str, versions: &mut HashMap<String, String>) {
+    if let Ok(content) = std::fs::read_to_string(file_path) {
+        for line in content.lines() {
+            let line = line.trim();
+            if let Some(version) = line.strip_prefix("go ") {
+                let version = version.trim();
+                if !version.is_empty() {
+                    versions.insert(runtime.to_string(), version.to_string());
+                    break;
+                }
+            }
+        }
+    }
+}
+
+fn parse_simple_version_file(file_path: &Path, runtime: &str, versions: &mut HashMap<String, String>) {
+    if let Ok(content) = std::fs::read_to_string(file_path) {
+        let version = content.trim().trim_start_matches('v').to_string();
+        if !version.is_empty() {
+            versions.insert(runtime.to_string(), version);
+        }
+    }
+}
+
+fn try_parse_version_file(
+    filename: &str,
+    file_path: &Path,
+    runtime: &str,
+    dir: &Path,
+    versions: &mut HashMap<String, String>,
+) {
+    match filename {
+        ".tool-versions" => parse_tool_versions_file(file_path, versions),
+        "rust-toolchain.toml" => parse_rust_toolchain_file(file_path, runtime, versions),
+        "package.json" => {
+            if let Some(extra) = read_package_json_versions(dir) {
+                for (runtime, version) in extra {
+                    versions.entry(runtime).or_insert_with(|| version.trim().to_string());
+                }
+            }
+        }
+        "go.mod" => parse_go_mod_file(file_path, runtime, versions),
+        ".mise.toml" | ".mise.local.toml" | "mise.toml" => {
+            if let Some(extra) = read_mise_versions(file_path) {
+                for (runtime, version) in extra {
+                    versions.entry(runtime).or_insert_with(|| version.trim().to_string());
+                }
+            }
+        }
+        _ => parse_simple_version_file(file_path, runtime, versions),
+    }
+}
+
 /// Detect version files in directory and parents
 #[must_use]
 pub fn detect_versions(start: &Path) -> HashMap<String, String> {
     let mut versions = HashMap::new();
     let mut current = Some(start.to_path_buf());
 
-    // Walk up directory tree
     while let Some(dir) = current {
         for (filename, runtime) in VERSION_FILES {
             if versions.contains_key(*runtime) {
-                continue; // Already found closer version
+                continue;
             }
 
             let file_path = dir.join(filename);
             if file_path.exists() {
-                if *filename == ".tool-versions" {
-                    // Parse asdf-style .tool-versions
-                    if let Ok(content) = std::fs::read_to_string(&file_path) {
-                        for line in content.lines() {
-                            let parts: Vec<&str> = line.split_whitespace().collect();
-                            if let (Some(rt_part), Some(ver_part)) = (parts.first(), parts.get(1)) {
-                                let rt = normalize_runtime_name(rt_part);
-                                let ver = (*ver_part).to_string();
-                                versions.entry(rt).or_insert(ver);
-                            }
-                        }
-                    }
-                } else if *filename == "rust-toolchain.toml" {
-                    // Parse TOML format
-                    if let Ok(content) = std::fs::read_to_string(&file_path) {
-                        for line in content.lines() {
-                            if line.contains("channel")
-                                && let Some(version) = line.split('=').nth(1)
-                            {
-                                let v = version.trim().trim_matches('"').trim_matches('\'');
-                                versions.insert((*runtime).to_string(), v.to_string());
-                            }
-                        }
-                    }
-                } else if *filename == "package.json" {
-                    if let Some(extra) = read_package_json_versions(&dir) {
-                        for (runtime, version) in extra {
-                            versions
-                                .entry(runtime)
-                                .or_insert_with(|| version.trim().to_string());
-                        }
-                    }
-                } else if *filename == "go.mod" {
-                    if let Ok(content) = std::fs::read_to_string(&file_path) {
-                        for line in content.lines() {
-                            let line = line.trim();
-                            if let Some(version) = line.strip_prefix("go ") {
-                                let version = version.trim();
-                                if !version.is_empty() {
-                                    versions.insert((*runtime).to_string(), version.to_string());
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                } else if *filename == ".mise.toml"
-                    || *filename == ".mise.local.toml"
-                    || *filename == "mise.toml"
-                {
-                    if let Some(extra) = read_mise_versions(&file_path) {
-                        for (runtime, version) in extra {
-                            versions
-                                .entry(runtime)
-                                .or_insert_with(|| version.trim().to_string());
-                        }
-                    }
-                } else {
-                    // Simple version file
-                    if let Ok(content) = std::fs::read_to_string(&file_path) {
-                        let version = content.trim().trim_start_matches('v').to_string();
-                        if !version.is_empty() {
-                            versions.insert((*runtime).to_string(), version);
-                        }
-                    }
-                }
+                try_parse_version_file(filename, &file_path, runtime, &dir, &mut versions);
             }
         }
 
