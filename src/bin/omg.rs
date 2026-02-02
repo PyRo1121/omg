@@ -458,7 +458,7 @@ async fn async_main(args: Vec<String>) -> Result<()> {
     validate_package_security(&cli.command)?;
 
     // Initialize logging
-    init_logging(cli.verbose)?;
+    init_logging(cli.verbose);
 
     // Telemetry ping on first run
     spawn_telemetry_ping();
@@ -502,7 +502,7 @@ fn validate_package_security(command: &Commands) -> Result<()> {
 }
 
 /// Initialize tracing/logging subsystem
-fn init_logging(verbose: u8) -> Result<()> {
+fn init_logging(verbose: u8) {
     let default_level = if verbose > 0 || std::env::var("RUST_LOG").is_ok() {
         tracing::Level::INFO
     } else {
@@ -517,8 +517,6 @@ fn init_logging(verbose: u8) -> Result<()> {
         .with_ansi(console::colors_enabled())
         .without_time()
         .init();
-
-    Ok(())
 }
 
 /// Spawn telemetry ping on first run
@@ -574,16 +572,15 @@ async fn handle_workspace_command(command: &omg_lib::cli::WorkspaceCommands) -> 
     }
 }
 
-fn handle_config_command(command: &Option<omg_lib::cli::ConfigCommands>) -> Result<()> {
+fn handle_config_command(command: Option<&omg_lib::cli::ConfigCommands>) -> Result<()> {
     use omg_lib::cli::ConfigCommands;
     match command {
         Some(ConfigCommands::Get { key }) => omg_lib::cli::config::get(key),
         Some(ConfigCommands::Set { key, value }) => omg_lib::cli::config::set(key, value),
-        Some(ConfigCommands::List) => omg_lib::cli::config::list(),
+        Some(ConfigCommands::List) | None => omg_lib::cli::config::list(),
         Some(ConfigCommands::Validate) => omg_lib::cli::config::validate(),
         Some(ConfigCommands::Reset { yes }) => omg_lib::cli::config::reset(*yes),
         Some(ConfigCommands::Path) => omg_lib::cli::config::path(),
-        None => omg_lib::cli::config::list(),
     }
 }
 
@@ -661,12 +658,67 @@ fn handle_which_command(runtime: &str) {
     }
 }
 
-async fn handle_audit_command(command: &Option<omg_lib::cli::AuditCommands>, ctx: &omg_lib::cli::CliContext) -> Result<()> {
+async fn handle_audit_command(command: Option<&omg_lib::cli::AuditCommands>, ctx: &omg_lib::cli::CliContext) -> Result<()> {
     if let Some(cmd) = command {
         cmd.execute(ctx).await
     } else {
         security::scan(ctx).await
     }
+}
+
+async fn handle_snapshot_command(command: &SnapshotCommands) -> Result<()> {
+    match command {
+        SnapshotCommands::Create { message } => snapshot::create(message.clone()).await,
+        SnapshotCommands::List => snapshot::list(),
+        SnapshotCommands::Restore { id, dry_run, yes } => snapshot::restore(id, *dry_run, *yes).await,
+        SnapshotCommands::Delete { id } => snapshot::delete(id),
+    }
+}
+
+async fn handle_ci_command(command: &CiCommands) -> Result<()> {
+    match command {
+        CiCommands::Init { provider, advanced } => ci::init(provider, *advanced),
+        CiCommands::Validate => ci::validate().await,
+        CiCommands::Cache => ci::cache(),
+    }
+}
+
+async fn handle_migrate_command(command: &MigrateCommands) -> Result<()> {
+    match command {
+        MigrateCommands::Export { output } => migrate::export(output).await,
+        MigrateCommands::Import { manifest, dry_run } => migrate::import(manifest, *dry_run).await,
+    }
+}
+
+async fn handle_info_command(package: &str) -> Result<()> {
+    if !packages::info_sync(package)? {
+        packages::info_aur(package).await?;
+    }
+    Ok(())
+}
+
+async fn handle_search_command(query: &str, detailed: bool, interactive: bool, json_flag: bool, no_aur: bool) -> Result<()> {
+    packages::search_with_json(query, detailed, interactive, json_flag, no_aur).await
+}
+
+async fn handle_install_command(packages: &[String], yes: bool, dry_run: bool) -> Result<()> {
+    packages::install(packages, yes, dry_run).await
+}
+
+async fn handle_remove_command(packages: &[String], recursive: bool, yes: bool, dry_run: bool) -> Result<()> {
+    packages::remove(packages, recursive, yes, dry_run).await
+}
+
+async fn handle_clean_command(orphans: bool, cache: bool, aur: bool, all: bool) -> Result<()> {
+    packages::clean(orphans, cache, aur, all).await
+}
+
+async fn handle_complete_command(shell: &str, current: &str, last: &str, full: Option<&str>) -> Result<()> {
+    commands::complete(shell, current, last, full).await
+}
+
+fn handle_history_command(limit: usize, search: Option<&str>, transaction_type: Option<&str>, from: Option<&str>, to: Option<&str>) -> Result<()> {
+    commands::history(limit, search, transaction_type, from, to)
 }
 
 /// Main command dispatcher - routes commands to appropriate handlers
@@ -680,44 +732,21 @@ async fn dispatch_command(command: &Commands, ctx: &omg_lib::cli::CliContext, js
         | Commands::Enterprise { .. } => {
             command.execute(ctx).await?;
         }
-        Commands::Search {
-            query,
-            detailed,
-            interactive,
-            no_aur,
-        } => {
-            packages::search_with_json(query, *detailed, *interactive, json_flag, *no_aur).await?;
+        Commands::Search { query, detailed, interactive, no_aur } => {
+            handle_search_command(query, *detailed, *interactive, json_flag, *no_aur).await?;
         }
-        Commands::Install {
-            packages,
-            yes,
-            dry_run,
-        } => {
-            packages::install(packages, *yes, *dry_run).await?;
+        Commands::Install { packages, yes, dry_run } => {
+            handle_install_command(packages, *yes, *dry_run).await?;
         }
-        Commands::Remove {
-            packages: pkgs,
-            recursive,
-            yes,
-            dry_run,
-        } => {
-            packages::remove(pkgs, *recursive, *yes, *dry_run).await?;
+        Commands::Remove { packages: pkgs, recursive, yes, dry_run } => {
+            handle_remove_command(pkgs, *recursive, *yes, *dry_run).await?;
         }
         Commands::Update { check, yes, dry_run, fast, turbo } => {
             handle_update_command(*check, *yes, *dry_run, *fast, *turbo).await?;
         }
-        Commands::Info { package } => {
-            if !packages::info_sync(package)? {
-                packages::info_aur(package).await?;
-            }
-        }
-        Commands::Clean {
-            orphans,
-            cache,
-            aur,
-            all,
-        } => {
-            packages::clean(*orphans, *cache, *aur, *all).await?;
+        Commands::Info { package } => handle_info_command(package).await?,
+        Commands::Clean { orphans, cache, aur, all } => {
+            handle_clean_command(*orphans, *cache, *aur, *all).await?;
         }
         Commands::Explicit { count } => {
             packages::explicit_sync_with_json(*count, json_flag)?;
@@ -743,7 +772,7 @@ async fn dispatch_command(command: &Commands, ctx: &omg_lib::cli::CliContext, js
         Commands::Daemon { foreground } => {
             commands::daemon(*foreground)?;
         }
-        Commands::Config { command } => handle_config_command(command)?,
+        Commands::Config { command } => handle_config_command(command.as_ref())?,
         Commands::SelfUpdate { force, version } => {
             omg_lib::cli::self_update::run(*force, version.clone()).await?;
         }
@@ -751,13 +780,8 @@ async fn dispatch_command(command: &Commands, ctx: &omg_lib::cli::CliContext, js
             hooks::completions::generate_completions(shell, *stdout)?;
         }
         Commands::Which { runtime } => handle_which_command(runtime),
-        Commands::Complete {
-            shell,
-            current,
-            last,
-            full,
-        } => {
-            commands::complete(shell, current, last, full.as_deref()).await?;
+        Commands::Complete { shell, current, last, full } => {
+            handle_complete_command(shell, current, last, full.as_deref()).await?;
         }
         Commands::Status { fast } => {
             packages::status_with_json(*fast, json_flag).await?;
@@ -772,27 +796,15 @@ async fn dispatch_command(command: &Commands, ctx: &omg_lib::cli::CliContext, js
         Commands::DaemonStatus => {
             omg_lib::cli::daemon_status::run().await?;
         }
-        Commands::Audit { command } => handle_audit_command(command, ctx).await?,
+        Commands::Audit { command } => handle_audit_command(command.as_ref(), ctx).await?,
         Commands::New { stack, name } => {
             new::run(stack, name)?;
         }
         Commands::Container { command } => handle_container_command(command)?,
         #[cfg(feature = "license")]
         Commands::License { command } => handle_license_command(command).await?,
-        Commands::History {
-            limit,
-            search,
-            transaction_type,
-            from,
-            to,
-        } => {
-            commands::history(
-                *limit,
-                search.as_deref(),
-                transaction_type.as_deref(),
-                from.as_deref(),
-                to.as_deref(),
-            )?;
+        Commands::History { limit, search, transaction_type, from, to } => {
+            handle_history_command(*limit, search.as_deref(), transaction_type.as_deref(), from.as_deref(), to.as_deref())?;
         }
         Commands::Rollback { id, yes } => {
             commands::rollback(id.clone(), *yes).await?;
@@ -832,39 +844,9 @@ async fn dispatch_command(command: &Commands, ctx: &omg_lib::cli::CliContext, js
         Commands::Diff { from, to } => {
             diff::run(from.as_deref(), to).await?;
         }
-        Commands::Snapshot { command } => match command {
-            SnapshotCommands::Create { message } => {
-                snapshot::create(message.clone()).await?;
-            }
-            SnapshotCommands::List => {
-                snapshot::list()?;
-            }
-            SnapshotCommands::Restore { id, dry_run, yes } => {
-                snapshot::restore(id, *dry_run, *yes).await?;
-            }
-            SnapshotCommands::Delete { id } => {
-                snapshot::delete(id)?;
-            }
-        },
-        Commands::Ci { command } => match command {
-            CiCommands::Init { provider, advanced } => {
-                ci::init(provider, *advanced)?;
-            }
-            CiCommands::Validate => {
-                ci::validate().await?;
-            }
-            CiCommands::Cache => {
-                ci::cache()?;
-            }
-        },
-        Commands::Migrate { command } => match command {
-            MigrateCommands::Export { output } => {
-                migrate::export(output).await?;
-            }
-            MigrateCommands::Import { manifest, dry_run } => {
-                migrate::import(manifest, *dry_run).await?;
-            }
-        },
+        Commands::Snapshot { command } => handle_snapshot_command(command).await?,
+        Commands::Ci { command } => handle_ci_command(command).await?,
+        Commands::Migrate { command } => handle_migrate_command(command).await?,
     }
 
     Ok(())

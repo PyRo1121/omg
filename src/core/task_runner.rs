@@ -374,7 +374,7 @@ impl TaskDetector {
         // 4. If multiple matches, resolve ambiguity
         if matches.len() > 1 {
             // Sort by priority
-            matches.sort_by(|a, b| b.ecosystem.priority().cmp(&a.ecosystem.priority()));
+            matches.sort_by_key(|m| std::cmp::Reverse(m.ecosystem.priority()));
 
             // If priorities are different, and the first one is higher than second, prefer it
             if matches[0].ecosystem.priority() > matches[1].ecosystem.priority() {

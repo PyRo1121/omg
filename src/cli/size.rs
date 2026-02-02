@@ -32,7 +32,7 @@ fn show_top_packages(limit: usize) -> Result<Cmd<()>> {
         .map(|p: &alpm::Package| (p.name().to_string(), p.isize()))
         .collect();
 
-    packages.sort_by(|a, b| b.1.cmp(&a.1));
+    packages.sort_by_key(|&(_, size)| std::cmp::Reverse(size));
 
     let total: i64 = packages.iter().map(|(_, s)| s).sum();
 
@@ -107,7 +107,7 @@ fn show_package_tree(package: &str) -> Result<Cmd<()>> {
         }
     }
 
-    dep_sizes.sort_by(|a, b| b.1.cmp(&a.1));
+    dep_sizes.sort_by_key(|&(_, size)| std::cmp::Reverse(size));
 
     let mut commands = vec![Cmd::header("Package Size Tree", package), Cmd::spacer()];
 
