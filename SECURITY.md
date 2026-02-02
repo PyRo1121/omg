@@ -1,216 +1,206 @@
 # Security Policy
 
-## 🛡️ Security Commitment
+## Supported Versions
 
-OMG is designed with **enterprise-grade security** as a core principle. We implement SLSA provenance, PGP verification, SBOM generation, and tamper-proof audit logging to ensure supply chain security and package integrity.
-
-This document outlines our security practices, known vulnerabilities, and reporting procedures.
-
----
-
-## 📋 Supported Versions
-
-We provide security updates for the following versions:
+We provide security updates for the following versions of OMG:
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.1.x   | ✅ Active development |
-| < 0.1.0 | ❌ Not supported    |
+| 0.1.x   | :white_check_mark: |
+| < 0.1   | :x:                |
 
----
+## Reporting a Vulnerability
 
-## 🚨 Reporting a Vulnerability
+We take security seriously. If you discover a security vulnerability in OMG, please report it privately.
 
-**DO NOT** open a public GitHub issue for security vulnerabilities.
+### How to Report
 
-### Reporting Procedure
+**Do NOT open a public issue for security vulnerabilities.**
 
-1. **Email:** Send vulnerability details to **olen@latham.cloud**
-2. **Subject:** `[SECURITY] Brief description`
-3. **Include:**
-   - Vulnerability description
-   - Steps to reproduce
-   - Potential impact
-   - Suggested fix (if available)
+Instead, please email: **olen@latham.cloud**
 
-### Response Timeline
+Include:
+- Description of the vulnerability
+- Steps to reproduce
+- Potential impact
+- Suggested fix (if you have one)
+
+### What to Expect
 
 - **Initial Response:** Within 48 hours
 - **Status Update:** Within 7 days
-- **Fix Timeline:** Varies by severity
-  - **Critical:** 24-48 hours
-  - **High:** 7 days
-  - **Medium:** 14 days
-  - **Low:** Next release cycle
+- **Fix Timeline:** Depends on severity
+  - Critical: 1-3 days
+  - High: 1-2 weeks
+  - Medium: 2-4 weeks
+  - Low: Next release cycle
 
----
+### Disclosure Policy
 
-## 🔍 Known Security Considerations
+- We follow responsible disclosure
+- We will credit you in the security advisory (unless you prefer to remain anonymous)
+- We will notify you when the fix is released
+- Public disclosure happens after the fix is available
 
-### Platform-Specific Dependency Issues
+## Security Features
 
-OMG uses optional dependencies for platform-specific package manager integrations. Some third-party dependencies have known advisories that affect specific platforms only.
+OMG includes built-in security features:
 
-#### **1. Windows Builds (RUSTSEC-2023-0018) - Medium Risk**
+### Package Security
 
-**Status:** ⚠️ **Tracked, Low Impact**
+- **PGP Verification:** Automatic package signature verification
+- **Vulnerability Scanning:** CVE detection for installed packages
+- **SBOM Generation:** Software Bill of Materials in CycloneDX format
+- **Security Grading:** Risk assessment for every package install
+- **Audit Logging:** Tamper-proof logs of all package operations
 
-- **Affected Component:** `libscoop` → `remove_dir_all 0.7.0`
-- **Vulnerability:** Race condition enabling TOCTOU (Time-of-check Time-of-use)
-- **RUSTSEC ID:** [RUSTSEC-2023-0018](https://rustsec.org/advisories/RUSTSEC-2023-0018)
-- **Platforms Affected:** ❌ Windows only
-- **Platforms NOT Affected:** ✅ Linux, macOS, BSD
+### System Security
 
-**Context:**
-- `libscoop` is only compiled on Windows builds (`target_os = "windows"`)
-- Linux and macOS builds do NOT include this dependency
-- The vulnerability requires specific race condition timing that is difficult to exploit in OMG's use case
+- **Privilege Separation:** Minimal sudo usage with sudoloop
+- **Sandbox Support:** AUR builds can use bubblewrap/chroot
+- **Secret Scanning:** Detects leaked credentials before commit
+- **Policy Enforcement:** Configurable security policies via `policy.toml`
+
+### Supply Chain Security
+
+- **Dependency Pinning:** Lockfiles for reproducible builds
+- **SLSA Provenance:** Build attestations (where available)
+- **Signature Verification:** PGP signatures on official packages
+- **Mirror Verification:** Checksum validation on downloads
+
+## Known Security Considerations
+
+### Third-Party Dependencies
+
+OMG relies on several third-party crates. We regularly audit dependencies for security issues using `cargo audit`.
+
+**Current Known Issues:**
+
+1. **libscoop (Windows feature only):**
+   - Dependency: `remove_dir_all 0.7.0`
+   - Issue: Race condition (RUSTSEC-2023-0018)
+   - Impact: Only affects Windows builds with `--features windows`
+   - Mitigation: Waiting for upstream libscoop update
+   - Workaround: Use Linux/macOS, or avoid Windows feature
+
+2. **debian-packaging (Debian feature only):**
+   - Dependency: `async-std 1.13.2`
+   - Issue: Unmaintained (RUSTSEC-2025-0052)
+   - Impact: Only affects Debian/Ubuntu builds
+   - Mitigation: Monitoring for replacement or upstream fix
+
+### Privilege Escalation
+
+OMG requires sudo access for:
+- Installing/removing system packages
+- Modifying system files
+- Running AUR builds (when not in user-space)
 
 **Mitigation:**
-- Tracked upstream: Waiting for `libscoop` to update to `remove_dir_all >= 0.8.0`
-- Not exploitable on Linux/macOS (90%+ of OMG users)
-- Windows users: Use WSL for enhanced security posture
+- Sudoloop limits password prompts
+- Dry-run mode (`--dry-run`) shows what would happen
+- Policy enforcement prevents unauthorized operations
+- Audit logs track all privileged operations
 
-**Fix Timeline:** Blocked on upstream `libscoop` release
+### AUR Package Security
 
----
+AUR packages are community-maintained and not officially verified.
 
-#### **2. Debian/Ubuntu Builds (Unmaintained Dependencies) - Low Risk**
+**Built-in Protections:**
+- Security grading (COMMUNITY level)
+- Optional PKGBUILD review before build
+- Sandboxed builds (bubblewrap/chroot)
+- PGP verification where available
 
-**Status:** ⚠️ **Tracked, Low Impact**
+**Best Practices:**
+- Review PKGBUILDs before installation
+- Use `--dry-run` to preview changes
+- Enable `review_pkgbuild = true` in config
+- Check package popularity and votes
 
-**Affected when building with `--features debian`:**
-- `async-std 1.13.2` - Discontinued (RUSTSEC-2025-0052)
-- `ring 0.16.20` - Unmaintained, need 0.17+ (RUSTSEC-2025-0010)
-- `rusoto_*` - Rusoto ecosystem unmaintained (RUSTSEC-2022-0071)
-- `rustls-pemfile 1.0.4` - Unmaintained (RUSTSEC-2025-0134)
+## Security Best Practices
 
-**Context:**
-- All come from `debian-packaging` crate (Pure Rust APT implementation)
-- Only affect Debian/Ubuntu builds with `--features debian`
-- Default Arch Linux builds do NOT include these dependencies
-- No known exploitable vulnerabilities, just maintenance status warnings
+### For Users
 
-**Mitigation:**
-- Tracked upstream: Monitoring `debian-packaging` for dependency updates
-- Consider migrating to `rust-apt` FFI bindings (faster, maintained)
-- Default Arch build unaffected
-
-**Fix Timeline:** Monitoring upstream; considering migration in Q2 2026
-
----
-
-## ✅ Security Best Practices
-
-### For OMG Users
-
-1. **Verify Installation:**
+1. **Keep OMG Updated:**
    ```bash
-   # Verify PGP signature on download
-   curl -fsSL https://pyro1121.com/install.sh.sig -o install.sh.sig
-   gpg --verify install.sh.sig install.sh
+   omg self-update
    ```
 
-2. **Enable Audit Logging:**
+2. **Enable Security Features:**
    ```toml
-   # ~/.config/omg/config.toml
-   [security]
-   audit_log_enabled = true
-   audit_log_path = "~/.local/share/omg/audit.log"
+   # ~/.config/omg/policy.toml
+   minimum_grade = "Verified"  # Require PGP signatures
+   require_pgp = true
+   allow_aur = false  # Disable AUR if not needed
    ```
 
-3. **Use Policy Files:**
-   ```toml
-   # policy.toml - Restrict installations
-   [security.policy]
-   allowed_sources = ["official", "aur"]
-   require_pgp_verification = true
-   block_unverified = true
-   ```
-
-4. **Regular Security Scans:**
+3. **Review Audit Logs:**
    ```bash
-   # Scan installed packages for vulnerabilities
+   omg audit log
+   omg audit verify  # Check for tampering
+   ```
+
+4. **Scan for Vulnerabilities:**
+   ```bash
    omg audit scan
-   
-   # Generate SBOM for supply chain tracking
-   omg sbom generate --format cyclonedx
+   omg audit fix  # Auto-upgrade vulnerable packages
    ```
 
-### For OMG Contributors
+### For Developers
 
-1. **Dependency Hygiene:**
-   - Run `cargo audit` before every PR
-   - Run `cargo deny check` for license/security compliance
-   - Minimize new dependencies
-
-2. **Security Testing:**
+1. **Run Security Audits:**
    ```bash
-   # Run security-focused tests
-   cargo test --features proptest
-   
-   # Check for common vulnerabilities
+   cargo audit
    cargo clippy -- -D warnings
    ```
 
-3. **Code Review Focus Areas:**
-   - Authentication/authorization logic
-   - File system operations (`std::fs`, path handling)
-   - Network requests (HTTPS only, certificate validation)
-   - Subprocess execution (avoid shell injection)
+2. **Review Dependencies:**
+   ```bash
+   cargo tree
+   cargo machete  # Find unused dependencies
+   ```
+
+3. **Test Security Features:**
+   ```bash
+   cargo test --features arch security
+   ```
+
+4. **Follow Secure Coding Practices:**
+   - Avoid `unsafe` blocks unless absolutely necessary
+   - Use `#[must_use]` on query functions
+   - Add context to all errors
+   - Validate all user input
+
+## Security Updates
+
+Security updates are announced via:
+- GitHub Security Advisories
+- Release notes (CHANGELOG.md)
+- Email to security@pyro1121.com subscribers
+
+## Compliance
+
+OMG supports compliance requirements for:
+- SOC2
+- ISO27001
+- FedRAMP (future)
+
+Features:
+- Audit log export (`omg enterprise export-evidence`)
+- SBOM generation (`omg audit sbom`)
+- Vulnerability reporting (`omg audit scan --format json`)
+- Policy enforcement (`policy.toml`)
+
+## Contact
+
+Security Team: **olen@latham.cloud**  
+General Support: **GitHub Issues**
+
+## Acknowledgments
+
+We thank security researchers who responsibly disclose vulnerabilities. Credits will be listed here upon disclosure.
 
 ---
 
-## 🔐 Security Features
-
-OMG implements the following security features:
-
-### ✅ Supply Chain Security
-
-- **SLSA Provenance:** Build attestations for verifiable supply chain
-- **PGP Verification:** GPG signature verification on all packages
-- **SBOM Generation:** CycloneDX SBOM for dependency tracking
-- **Vulnerability Scanning:** Built-in CVE database scanning
-
-### ✅ Runtime Security
-
-- **Sandbox Execution:** Optional sandboxing for untrusted packages
-- **Audit Logging:** Tamper-proof cryptographic audit logs
-- **Secret Scanning:** Prevent accidental credential commits
-- **Policy Enforcement:** Mandatory security policies via `policy.toml`
-
-### ✅ Package Security
-
-- **Security Grading:** A-F grade on every package install
-- **Dependency Graph:** Full transitive dependency analysis
-- **Reproducible Builds:** Lock files for deterministic builds
-- **Rollback Support:** Atomic transactions with rollback
-
----
-
-## 📊 Security Audit History
-
-| Date | Auditor | Scope | Findings | Status |
-|------|---------|-------|----------|--------|
-| 2026-02-01 | Internal | Dependency audit | 1 medium (Windows), 4 low (Debian) | ✅ Documented |
-| TBD | External | Full security audit | Pending | Planned Q2 2026 |
-
----
-
-## 🔗 Resources
-
-- **Security Docs:** [docs/security.md](docs/security.md)
-- **RustSec Advisory DB:** https://rustsec.org
-- **SBOM Format:** [CycloneDX](https://cyclonedx.org)
-- **SLSA Framework:** https://slsa.dev
-
----
-
-## 📜 License
-
-This security policy is licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
-
----
-
-**Last Updated:** 2026-02-01  
-**Next Review:** 2026-03-01
+**Last Updated:** 2026-02-01
