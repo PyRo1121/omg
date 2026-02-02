@@ -280,7 +280,7 @@ fn show_reverse_deps(package: &str) -> Result<Cmd<()>> {
         commands.push(Cmd::success("Nothing depends on this package"));
         commands.push(Cmd::info("Safe to remove: YES (if not needed)"));
     } else {
-        dependents.sort_by(|a, b| b.1.cmp(&a.1)); // Explicit first
+        dependents.sort_by_key(|&(_, is_explicit)| std::cmp::Reverse(is_explicit)); // Explicit first
 
         let explicit_count = dependents.iter().filter(|(_, e)| *e).count();
         let dep_count = dependents.len() - explicit_count;

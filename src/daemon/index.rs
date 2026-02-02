@@ -151,7 +151,7 @@ impl Ord for RelevanceScore {
 impl PackageIndex {
     pub fn new() -> Result<Self> {
         #[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
-        use crate::core::env::distro::{Distro, detect_distro};
+        use crate::core::env::distro::{detect_distro, Distro};
         #[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
         let distro = detect_distro();
 
@@ -317,7 +317,7 @@ impl PackageIndex {
             scored_matches.select_nth_unstable_by(limit - 1, |a, b| b.0.cmp(&a.0));
             scored_matches.truncate(limit);
         }
-        scored_matches.sort_unstable_by(|a, b| b.0.cmp(&a.0));
+        scored_matches.sort_unstable_by_key(|&(score, _)| std::cmp::Reverse(score));
 
         scored_matches
             .into_iter()

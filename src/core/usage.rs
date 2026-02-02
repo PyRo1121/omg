@@ -346,7 +346,7 @@ impl UsageStats {
     #[must_use]
     pub fn top_commands(&self) -> Vec<(String, u64)> {
         let mut sorted: Vec<_> = self.commands.iter().map(|(k, v)| (k.clone(), *v)).collect();
-        sorted.sort_by(|a, b| b.1.cmp(&a.1));
+        sorted.sort_by_key(|&(_, count)| std::cmp::Reverse(count));
         sorted.truncate(5);
         sorted
     }
