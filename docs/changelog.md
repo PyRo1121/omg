@@ -29,6 +29,30 @@ Added convenient Makefile targets for all benchmark workflows:
 
 ### ♻️  Refactoring
 
+- Extract command handlers to reduce dispatch complexity (50→35)
+
+Extract nested match statements and conditional logic to dedicated handler functions:
+
+  - handle_hooks_command(): Git hooks subcommands
+
+  - handle_workspace_command(): Workspace operations
+
+  - handle_config_command(): Configuration management
+
+  - handle_container_command(): Container operations
+
+  - handle_license_command(): License management
+
+  - handle_update_command(): Update with turbo/fast/normal modes
+
+  - handle_init_command(): Init with defaults/interactive
+
+  - handle_doctor_command(): Doctor with turbo/normal modes
+
+  - handle_which_command(): Runtime version display
+
+  - handle_audit_command(): Audit with optional subcommand
+
 - Eliminate cognitive complexity in hooks/mod.rs (26→<25)
 
 Extract version file parsing into focused helper functions:
