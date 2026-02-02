@@ -103,6 +103,7 @@ impl SudoLoop {
     }
 
     /// Check if the sudoloop is still running
+    #[must_use]
     pub fn is_running(&self) -> bool {
         self.running.load(Ordering::SeqCst)
     }
@@ -119,6 +120,7 @@ impl Drop for SudoLoop {
 /// Returns `false` if:
 /// - Already running as root (no need for sudo)
 /// - sudo is not installed
+#[must_use]
 pub fn can_use_sudoloop() -> bool {
     !crate::core::is_root() && which::which("sudo").is_ok()
 }
