@@ -110,6 +110,7 @@ pub struct RkyvSyncIndex {
 ///
 /// External invariant: The underlying file must not be modified while this struct exists.
 /// This is standard for mmap usage and is the caller's responsibility.
+#[derive(Debug)]
 pub struct PacmanMmapIndex {
     /// Validated mmap - only stored after successful rkyv validation in `load()`
     mmap: Mmap,
@@ -1425,9 +1426,77 @@ mod tests {
                 Err(e) => panic!("Failed to get counts: {e}"),
             };
             assert!(total > 0);
-            // On some test systems, explicit might be 0 if only deps are present
-            // but usually at least some are explicit. We change to total >= explicit + deps
             assert_eq!(total, explicit + deps);
         }
+    }
+
+    #[test]
+    fn test_mmap_index_load_empty_file() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let test_file = temp_dir.path().join("empty.rkyv");
+        std::fs::write(&test_file, b"").unwrap();
+
+        let result = PacmanMmapIndex::load(&test_file);
+        assert!(result.is_err(), "Should fail to load empty file");
+        assert!(
+            result.unwrap_err().to_string().contains("rkyv validation"),
+            "Error should mention rkyv validation failure"
+        );
+    }
+
+    #[test]
+    fn test_mmap_index_load_corrupted_file() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let test_file = temp_dir.path().join("corrupted.rkyv");
+        std::fs::write(&test_file, b"not valid rkyv data at all").unwrap();
+
+        let result = PacmanMmapIndex::load(&test_file);
+        assert!(result.is_err(), "Should fail to load corrupted file");
+        assert!(
+            result.unwrap_err().to_string().contains("rkyv validation"),
+            "Error should indicate validation failure"
+        );
+    }
+
+    #[test]
+    fn test_mmap_index_load_truncated_file() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let test_file = temp_dir.path().join("truncated.rkyv");
+        
+        let partial_data = vec![0x52, 0x4B, 0x59, 0x56];
+        std::fs::write(&test_file, &partial_data).unwrap();
+
+        let result = PacmanMmapIndex::load(&test_file);
+        assert!(result.is_err(), "Should fail to load truncated rkyv file");
+    }
+
+    #[test]
+    fn test_mmap_index_load_nonexistent_file() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let test_file = temp_dir.path().join("does_not_exist.rkyv");
+
+        let result = PacmanMmapIndex::load(&test_file);
+        assert!(result.is_err(), "Should fail to load nonexistent file");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("No such file") || err_msg.contains("not found"),
+            "Error should indicate file not found"
+        );
+    }
+
+    #[test]
+    fn test_mmap_index_load_wrong_format() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let test_file = temp_dir.path().join("wrong_format.rkyv");
+        
+        let json_data = br#"{"not": "rkyv", "format": "json"}"#;
+        std::fs::write(&test_file, json_data).unwrap();
+
+        let result = PacmanMmapIndex::load(&test_file);
+        assert!(result.is_err(), "Should fail to load JSON as rkyv");
+        assert!(
+            result.unwrap_err().to_string().contains("rkyv validation"),
+            "Should fail validation"
+        );
     }
 }
