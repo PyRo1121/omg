@@ -524,7 +524,7 @@ omg env check  # Auto-installs all versions
 
 ```bash
 # Fast search with OMG
-omg search firefox  # 22x faster
+omg search firefox  # 12-24x faster
 
 # Install with yay (if you prefer)
 yay -S firefox

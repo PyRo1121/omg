@@ -33,7 +33,7 @@ omg doctor
 
 ### Search & Info
 ```bash
-omg search <query>          # Search packages (6ms!)
+omg search <query>          # Search packages (5-11ms!)
 omg search <query> -i       # Interactive selection
 omg info <package>          # Package details
 ```
@@ -331,11 +331,11 @@ omg env capture
 
 ### Speed Up Searches
 ```bash
-# Ensure daemon is running (6ms searches!)
+# Ensure daemon is running (5-11ms searches!)
 omgd &
 
 # Without daemon: ~100-150ms
-# With daemon: ~6ms (22x faster!)
+# With daemon: ~5-11ms (12-24x faster!)
 ```
 
 ### Parallel Operations
@@ -467,20 +467,20 @@ alias od='omg dash'
 
 | Task | Traditional | OMG |
 |------|-------------|-----|
-| **Search** | `pacman -Ss firefox` (133ms) | `omg search firefox` (6ms) |
+| **Search** | `pacman -Ss firefox` (133ms) | `omg search firefox` (5-11ms) |
 | **Install** | `pacman -S firefox` | `omg install firefox` |
 | **Use Node 20** | `nvm install 20 && nvm use 20` | `omg use node 20` |
 | **Use Python 3.12** | `pyenv install 3.12 && pyenv global 3.12` | `omg use python 3.12` |
 | **Lock env** | Manual docs, multiple files | `omg env capture` |
 | **Sync env** | Manual setup (hours) | `omg env sync` (minutes) |
 
-**Speed improvement:** 22x faster package searches, 10x faster runtime switching
+**Speed improvement:** 12-24x faster package searches, 10x faster runtime switching
 
 ---
 
 ## 💡 Pro Tips
 
-1. **Use daemon for speed** - Start `omgd` in background for 6ms searches
+1. **Use daemon for speed** - Start `omgd` in background for 5-11ms searches
 2. **Version files = auto-switch** - Create `.nvmrc`, `.python-version` for automatic version switching
 3. **Lock early, lock often** - Capture environment after every major change
 4. **Parallel installs** - Install multiple packages at once: `omg install pkg1 pkg2 pkg3`

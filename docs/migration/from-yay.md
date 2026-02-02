@@ -13,7 +13,7 @@ This guide helps yay users transition to OMG with familiar command patterns and 
 
 | Feature | yay | OMG |
 |---------|-----|-----|
-| Search Speed | 200-800ms | **6ms (22x faster)** |
+| Search Speed | 200-800ms | **6ms (12-24x faster)** |
 | Runtime Management | ❌ | ✅ Node, Python, Go, Rust, Ruby, Java, Bun |
 | Security Scanning | ❌ | ✅ CVE scanning, SBOM generation |
 | Team Sync | ❌ | ✅ Environment lockfiles |
@@ -25,7 +25,7 @@ This guide helps yay users transition to OMG with familiar command patterns and 
 
 | yay | OMG | Notes |
 |-----|-----|-------|
-| `yay -Ss <query>` | `omg search <query>` | 22x faster, unified results |
+| `yay -Ss <query>` | `omg search <query>` | 12-24x faster, unified results |
 | `yay -S <pkg>` | `omg install <pkg>` | Security grading included |
 | `yay -R <pkg>` | `omg remove <pkg>` | Same behavior |
 | `yay -Syu` | `omg update` | Updates official + AUR |

@@ -36,7 +36,7 @@ yay -S omg
 
 **Features:**
 - Native `libalpm` integration
-- 22x faster than pacman
+- 12-24x faster than pacman
 - Full AUR support
 - Daemon-based caching
 

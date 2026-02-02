@@ -24,7 +24,7 @@ All in a single, blazing-fast Rust binary.
 
 ### Why is it called OMG?
 
-Because of the reaction we want you to have when you see how fast it is. 22x faster than pacman for searches. Your jaw will drop.
+Because of the reaction we want you to have when you see how fast it is. 12-24x faster than pacman for searches. Your jaw will drop.
 
 ### What platforms are supported?
 
@@ -98,15 +98,14 @@ Data is sent to `api.pyro1121.com`. The telemetry endpoint only accepts:
 
 | Operation | OMG | pacman | Speedup |
 |-----------|-----|--------|---------|
-| Search | 6ms | 133ms | **22x** |
-| Info | 6.5ms | 138ms | **21x** |
-| Status | 7ms | N/A | — |
-| Explicit list | 1.2ms | 14ms | **12x** |
+| Search | 5-11ms | 133ms | **12-24x** |
+| Info | 3-6ms | 138ms | **21-38x** |
+| Explicit list | <2ms | 14ms | **7-14x** |
 
 ### Does OMG need the daemon to be fast?
 
 The daemon provides maximum speed, but OMG works without it:
-- **With daemon**: 6ms searches (cached)
+- **With daemon**: 5-11ms searches (cached)
 - **Without daemon**: 50-200ms searches (direct libalpm)
 
 ---
