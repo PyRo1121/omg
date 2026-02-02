@@ -673,6 +673,20 @@ File sizes: 183-235KB (optimized for web).
 
 ### 🔒 Security
 
+- Reduce cognitive complexity in omg.rs main dispatcher (57→50)
+
+Extract initialization logic into focused helper functions:
+
+  - validate_package_security(): Package name validation
+
+  - init_logging(): Tracing/logging initialization
+
+  - spawn_telemetry_ping(): First-run telemetry
+
+  - track_command_analytics(): Command tracking and flush
+
+  - dispatch_command(): Main command routing
+
 - Add comprehensive security policy and PR template
 
   - Create SECURITY.md (130 lines) with:
