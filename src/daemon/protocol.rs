@@ -63,6 +63,10 @@ pub enum Request {
         query: String,
         limit: Option<usize>,
     },
+    /// Get daemon health status
+    Health {
+        id: RequestId,
+    },
 }
 
 impl Request {
@@ -81,7 +85,8 @@ impl Request {
             | Self::Metrics { id }
             | Self::Suggest { id, .. }
             | Self::Batch { id, .. }
-            | Self::DebianSearch { id, .. } => *id,
+            | Self::DebianSearch { id, .. }
+            | Self::Health { id } => *id,
         }
     }
 }
@@ -120,6 +125,7 @@ pub enum ResponseResult {
     Batch(Box<Vec<Response>>),
     /// Debian search results (list of package info)
     DebianSearch(Vec<PackageInfo>),
+    Health(HealthStatus),
 }
 
 // Error codes
@@ -212,4 +218,13 @@ pub struct MetricsSnapshot {
     pub search_requests: u64,
     pub info_requests: u64,
     pub status_requests: u64,
+}
+
+#[derive(Archive, RkyvSerialize, RkyvDeserialize, Debug, Clone, Serialize, Deserialize)]
+pub struct HealthStatus {
+    pub status: String,
+    pub uptime_seconds: u64,
+    pub memory_usage_mb: u64,
+    pub cache_size: usize,
+    pub active_connections: i64,
 }

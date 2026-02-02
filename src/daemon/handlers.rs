@@ -10,8 +10,8 @@ use governor::{Quota, RateLimiter};
 use super::cache::PackageCache;
 use super::index::PackageIndex;
 use super::protocol::{
-    DetailedPackageInfo, ExplicitResult, PackageInfo, Request, RequestId, Response, ResponseResult,
-    SearchResult, SecurityAuditResult, StatusResult, Vulnerability, error_codes,
+    DetailedPackageInfo, ExplicitResult, HealthStatus, PackageInfo, Request, RequestId, Response,
+    ResponseResult, SearchResult, SecurityAuditResult, StatusResult, Vulnerability, error_codes,
 };
 use crate::core::metrics::GLOBAL_METRICS;
 use crate::core::security::{AuditEventType, AuditSeverity, audit_log};
@@ -34,6 +34,7 @@ pub struct DaemonState {
     pub index: Arc<PackageIndex>,
     pub runtime_versions: Arc<RwLock<Vec<(String, String)>>>,
     pub rate_limiter: Arc<RateLimiter<NotKeyed, InMemoryState, DefaultClock>>,
+    pub start_time: std::time::Instant,
 }
 
 impl DaemonState {
@@ -85,6 +86,7 @@ impl DaemonState {
             index: Arc::new(index),
             runtime_versions: Arc::new(RwLock::new(Vec::new())),
             rate_limiter,
+            start_time: std::time::Instant::now(),
         })
     }
 }
@@ -149,6 +151,7 @@ pub async fn handle_request(state: Arc<DaemonState>, request: Request) -> Respon
         Request::DebianSearch { id, query, limit } => {
             handle_debian_search(state, id, query, limit).await
         }
+        Request::Health { id } => handle_health(state, id),
     }
 }
 
@@ -836,6 +839,34 @@ fn validation_error(id: RequestId, message: impl Into<String>) -> Response {
         id,
         code: error_codes::INVALID_PARAMS,
         message: msg,
+    }
+}
+
+fn handle_health(state: Arc<DaemonState>, id: RequestId) -> Response {
+    let uptime_seconds = state.start_time.elapsed().as_secs();
+    let cache_size = state.cache.stats().size;
+    let metrics = GLOBAL_METRICS.snapshot();
+    let active_connections = metrics.active_connections;
+    
+    let memory_usage_mb = 0u64;
+    
+    let status = if cache_size > 50_000 {
+        "degraded".to_string()
+    } else if cache_size > 100_000 || metrics.requests_failed > 1000 {
+        "unhealthy".to_string()
+    } else {
+        "healthy".to_string()
+    };
+    
+    Response::Success {
+        id,
+        result: ResponseResult::Health(HealthStatus {
+            status,
+            uptime_seconds,
+            memory_usage_mb,
+            cache_size,
+            active_connections,
+        }),
     }
 }
 
