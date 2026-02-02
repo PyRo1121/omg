@@ -521,6 +521,46 @@ All clippy warnings resolved. CI should pass on all platforms.
 
 ### ✨ New Features
 
+- Enhance developer experience with improved tooling
+
+  - Improved Makefile with 25+ targets:
+
+  - Added help target (now default) with categorized commands
+
+  - New targets: install, test-lib, fmt-check, clippy-strict, audit, qa
+
+  - Development workflow: dev, dev-check, dev-stop
+
+  - Better organization with sections (Building, Testing, Quality, etc.)
+
+  - Added .editorconfig for consistent coding styles:
+
+  - Configures indentation for Rust, TOML, YAML, Markdown, JSON
+
+  - Ensures LF line endings and UTF-8 encoding
+
+  - Max line length for Rust (100 chars)
+
+  - Added .gitattributes for Git behavior:
+
+  - Auto-detect text files and normalize to LF
+
+  - Configure diff for Rust and Markdown
+
+  - Mark binary files properly
+
+  - Exclude vendor/generated files from stats
+
+  - Export-ignore for dev-only files
+
+  - Added VS Code configuration (.vscode/):
+
+  - extensions.json   - Recommended Rust extensions
+
+  - settings.json   - Rust-analyzer config, formatters, rulers
+
+  - launch.json   - Debug configurations for omg, omgd, tests
+
 - Add Windows installer, Scoop bucket, and improve release workflow
 
 NEW FEATURES:
