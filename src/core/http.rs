@@ -10,7 +10,7 @@ use reqwest::Client;
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(15);
 const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
-const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(300);
+const DOWNLOAD_TIMEOUT: Duration = Duration::from_mins(5);
 const DOWNLOAD_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 static SHARED_CLIENT: LazyLock<Client> =

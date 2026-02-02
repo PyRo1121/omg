@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-use crate::core::{RuntimeBackend, paths};
+use crate::core::{paths, RuntimeBackend};
 
 /// OMG configuration settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -103,9 +103,7 @@ impl Default for Settings {
 
 impl Default for AurBuildSettings {
     fn default() -> Self {
-        let jobs = std::thread::available_parallelism()
-            .map(std::num::NonZero::get)
-            .unwrap_or(1);
+        let jobs = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
         Self {
             build_method: AurBuildMethod::Native,
             build_concurrency: jobs.max(1),

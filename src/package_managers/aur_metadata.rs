@@ -78,8 +78,7 @@ pub async fn sync_aur_metadata(
         let is_fresh = tokio::task::spawn_blocking(move || {
             std::fs::metadata(&cache_path_clone)
                 .and_then(|m| m.modified())
-                .map(|m| m.elapsed().unwrap_or_default() < Duration::from_secs(ttl))
-                .unwrap_or(false)
+                .is_ok_and(|m| m.elapsed().unwrap_or_default() < Duration::from_secs(ttl))
         })
         .await?;
 

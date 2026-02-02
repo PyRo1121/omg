@@ -364,7 +364,7 @@ impl App {
         }
 
         // Update metrics more frequently
-        if self.last_update.elapsed() >= std::time::Duration::from_millis(1000) {
+        if self.last_update.elapsed() >= std::time::Duration::from_secs(1) {
             self.update_system_metrics();
             self.last_update = Instant::now();
         }
