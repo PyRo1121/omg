@@ -191,7 +191,7 @@ async fn handle_debian_search(
 
     #[cfg(any(feature = "debian", feature = "debian-pure"))]
     let query_clone = query.clone();
-    
+
     // Run search in blocking task
     let results = tokio::task::spawn_blocking(move || {
         #[cfg(any(feature = "debian", feature = "debian-pure"))]
