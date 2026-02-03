@@ -127,7 +127,7 @@ jobs:
         include:
           - platform: arch
             image: archlinux:latest
-            features: arch,pgp,license
+            features: arch,license
             setup: |
               pacman -Syu --noconfirm
               pacman -S --noconfirm --needed base-devel git pkgconf openssl libarchive clang cmake curl
@@ -149,7 +149,7 @@ jobs:
 
           - platform: fedora
             image: fedora:latest
-            features: fedora,pgp,license
+            features: fedora,license
             setup: |
               dnf install -y --setopt=install_weak_deps=False \
                 git clang cmake openssl-devel pkgconfig findutils curl \
@@ -256,10 +256,10 @@ jobs:
       # sccache temporarily disabled due to service outage
 
       - name: Build
-        run: cargo build --release --no-default-features --features macos,pgp,license --locked
+        run: cargo build --release --no-default-features --features macos,license --locked
 
       - name: Run unit tests
-        run: cargo test --lib --no-default-features --features macos,pgp,license --locked
+        run: cargo test --lib --no-default-features --features macos,license --locked
 
       - name: Install Homebrew test packages
         run: |
@@ -267,7 +267,7 @@ jobs:
 
       - name: Run macOS platform integration tests
         run: |
-          cargo test --test macos_tests --no-default-features --features macos,pgp,license --locked -- --test-threads=1
+          cargo test --test macos_tests --no-default-features --features macos,license --locked -- --test-threads=1
 
       - name: Verify binary
         run: |
@@ -302,10 +302,10 @@ jobs:
       # sccache temporarily disabled due to service outage
 
       - name: Build
-        run: cargo build --release --no-default-features --features windows,pgp,license --locked
+        run: cargo build --release --no-default-features --features windows,license --locked
 
       - name: Run unit tests
-        run: cargo test --lib --no-default-features --features windows,pgp,license --locked
+        run: cargo test --lib --no-default-features --features windows,license --locked
 
       - name: Install Scoop
         shell: pwsh
@@ -318,7 +318,7 @@ jobs:
       - name: Run Windows platform integration tests
         shell: pwsh
         run: |
-          cargo test --test windows_tests --no-default-features --features windows,pgp,license --locked -- --test-threads=1
+          cargo test --test windows_tests --no-default-features --features windows,license --locked -- --test-threads=1
 
       - name: Verify binary
         run: |
@@ -348,7 +348,7 @@ jobs:
           - platform: arch
             os: ubuntu-latest
             container: archlinux:latest
-            features: arch,pgp,license
+            features: arch,license
             setup: |
               pacman -Syu --noconfirm
               pacman -S --noconfirm --needed base-devel git pkgconf openssl libarchive clang cmake curl
@@ -359,7 +359,7 @@ jobs:
           - platform: debian
             os: ubuntu-latest
             container: debian:bookworm
-            features: debian,pgp,license
+            features: debian,license
             setup: |
               apt-get update
               DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
@@ -372,7 +372,7 @@ jobs:
           - platform: fedora
             os: ubuntu-latest
             container: fedora:latest
-            features: fedora,pgp,license
+            features: fedora,license
             setup: |
               dnf install -y --setopt=install_weak_deps=False \
                 git clang cmake openssl-devel pkgconfig findutils curl \
@@ -386,7 +386,7 @@ jobs:
           - platform: macos
             os: macos-14
             container: null
-            features: macos,pgp,license
+            features: macos,license
             setup: |
               rustup component add llvm-tools-preview
               brew list wget &>/dev/null || brew install wget
@@ -395,7 +395,7 @@ jobs:
           - platform: windows
             os: windows-latest
             container: null
-            features: windows,pgp,license
+            features: windows,license
             setup: |
               rustup component add llvm-tools-preview
             test_args: "--lib --test windows_tests --test cross_platform_mock_tests"
@@ -561,7 +561,7 @@ jobs:
 
       - name: Run integration tests
         run: |
-          cargo nextest run --test '*' --features arch,pgp,license --locked --profile ci \
+          cargo nextest run --test '*' --features arch,license --locked --profile ci \
             2>&1 || echo "::warning::Some integration tests failed"
 
   #############################################################################
