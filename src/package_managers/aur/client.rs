@@ -1022,26 +1022,44 @@ impl AurClient {
     }
 
     async fn git_pull(&self, pkg_dir: &Path) -> Result<()> {
-        let spinner = create_spinner("Pulling latest changes...");
-
         if !crate::core::is_root() && is_root_owned(pkg_dir) {
-            spinner.finish_and_clear();
-            anyhow::bail!(
-                "Build directory '{}' is owned by root.\n  \
-                 → This was likely created by a previous 'sudo omg install'.\n  \
-                 → Fix: sudo chown -R $USER:$USER ~/.cache/omg/aur/\n  \
-                 → Or clean and reinstall: omg aur clean {} && omg install {}",
-                pkg_dir.display(),
-                pkg_dir
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("package"),
-                pkg_dir
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("package")
-            );
+            let current_user = std::env::var("USER")
+                .or_else(|_| whoami::username())
+                .unwrap_or_else(|_| "nobody".to_string());
+            let fix_spinner = create_spinner("Fixing directory ownership...");
+            let fix_result = Command::new("sudo")
+                .args(["chown", "-R", &format!("{current_user}:{current_user}")])
+                .arg(pkg_dir)
+                .status()
+                .await;
+
+            match fix_result {
+                Ok(status) if status.success() => {
+                    fix_spinner.finish_and_clear();
+                    tracing::info!("Fixed ownership of {}", pkg_dir.display());
+                }
+                _ => {
+                    fix_spinner.finish_and_clear();
+                    anyhow::bail!(
+                        "Build directory '{}' is owned by root.\n  \
+                         → This was likely created by a previous 'sudo omg install'.\n  \
+                         → Fix: sudo chown -R $USER:$USER ~/.cache/omg/aur/\n  \
+                         → Or clean and reinstall: rm -rf ~/.cache/omg/aur/{} && omg install {}",
+                        pkg_dir.display(),
+                        pkg_dir
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("package"),
+                        pkg_dir
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("package")
+                    );
+                }
+            }
         }
+
+        let spinner = create_spinner("Pulling latest changes...");
 
         if let Some(user) = get_original_user() {
             let home = get_original_user_home();
@@ -1066,7 +1084,7 @@ impl AurClient {
 
             if !status.success() {
                 anyhow::bail!(
-                    "git pull failed in {}\n  → Try: omg aur clean {} && omg install {}",
+                    "git pull failed in {}\n  → Try: rm -rf ~/.cache/omg/aur/{} && omg install {}",
                     pkg_dir.display(),
                     pkg_dir
                         .file_name()

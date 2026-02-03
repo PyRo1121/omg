@@ -216,9 +216,17 @@ install_from_release() {
         return 1
     fi
 
+    # Extract actual version tag from release JSON
+    local actual_version
+    actual_version=$(printf "%s" "$release_json" | grep -Eo '"tag_name"\s*:\s*"[^"]+"' | head -n1 | cut -d'"' -f4)
+    if [[ -z "$actual_version" ]]; then
+        warn "Unable to parse version from release metadata"
+        return 1
+    fi
+
     # Select correct artifact name
     local artifact_name
-    artifact_name=$(select_artifact "$OMG_VERSION" "$detected_os" "$detected_distro" "$detected_arch")
+    artifact_name=$(select_artifact "$actual_version" "$detected_os" "$detected_distro" "$detected_arch")
     
     if [[ -z "$artifact_name" ]]; then
         warn "Unable to determine artifact name for ${detected_os}/${detected_distro}/${detected_arch}"
