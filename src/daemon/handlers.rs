@@ -189,11 +189,14 @@ async fn handle_debian_search(
     // METRICS: Cache miss - will perform search
     GLOBAL_METRICS.inc_cache_misses();
 
+    #[cfg(any(feature = "debian", feature = "debian-pure"))]
+    let query_clone = query.clone();
+    
     // Run search in blocking task
     let results = tokio::task::spawn_blocking(move || {
         #[cfg(any(feature = "debian", feature = "debian-pure"))]
         {
-            crate::package_managers::apt_search_fast(&query).map(|pkgs| {
+            crate::package_managers::apt_search_fast(&query_clone).map(|pkgs| {
                 pkgs.into_iter()
                     .map(|p| PackageInfo {
                         name: p.name,
