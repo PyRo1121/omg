@@ -897,6 +897,14 @@ NEW FEATURES:
 
 ### 🐛 Bug Fixes
 
+- Clippy format string, test API, and bytes security update
+
+  - Use inline format string for current_user in chown command
+
+  - Fix get_package_manager() calls in tests to unwrap Result
+
+  - Update bytes crate 1.11.0 -> 1.11.1 (RUSTSEC-2026-0007)
+
 - **Aur**: Auto-fix root-owned build directories and improve error messages
 
   - Auto-fix root-owned build directories with sudo chown before git pull
