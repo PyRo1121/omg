@@ -885,6 +885,12 @@ NEW FEATURES:
 
 ### 🐛 Bug Fixes
 
+- **Ci**: Remove pgp from platform builds to avoid compiler crash
+
+The sequoia-openpgp crate causes GCC internal compiler errors when
+
+combined with platform-specific features (arch, debian, fedora, etc).
+
 - **Ci**: Fix remaining clippy warnings in integration tests
 
   - Add #[allow(unsafe_code)] to test env var setup (required for TempDir isolation)
