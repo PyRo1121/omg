@@ -885,6 +885,30 @@ NEW FEATURES:
 
 ### 🐛 Bug Fixes
 
+- **Ci**: Ignore platform-specific and transitive unmaintained dependencies in security audit
+
+Ignored advisories (all platform-specific or transitive):
+
+  - RUSTSEC-2023-0018: remove_dir_all TOCTOU (Windows-only, from libscoop)
+
+  - RUSTSEC-2025-0052: async-std unmaintained (Debian-only, from debian-packaging)
+
+  - RUSTSEC-2025-0010: ring 0.16 unmaintained (Debian-only, from debian-packaging)
+
+  - RUSTSEC-2022-0071: rusoto unmaintained (Debian-only, from debian-packaging)
+
+  - RUSTSEC-2025-0134: rustls-pemfile unmaintained (Debian-only, from debian-packaging)
+
+All ignored advisories are:
+
+1. Platform-specific (Windows/Debian)   - not affecting Arch Linux builds
+
+2. Transitive dependencies from debian-packaging crate
+
+3. Unmaintained warnings, not active vulnerabilities
+
+4. Documented per security compliance requirements
+
 - Remove explicit auto-deref for Arc paths (clippy)
 
 Clippy detected unnecessary explicit dereferences (&*) on Arc`<PathBuf>` and
