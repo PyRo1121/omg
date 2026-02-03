@@ -995,6 +995,50 @@ File sizes: 183-235KB (optimized for web).
 
 ### 📦 Dependencies
 
+- **Deps**: Bump release-drafter/release-drafter from 5 to 6 ([#18](https://github.com/PyRo1121/omg/issues/18))
+
+Bumps [release-drafter/release-drafter](https://github.com/release-drafter/release-drafter) from 5 to 6.
+
+  - [Release notes](https://github.com/release-drafter/release-drafter/releases)
+
+  - [Commits](https://github.com/release-drafter/release-drafter/compare/v5...v6)
+
+---
+
+updated-dependencies:
+
+  - dependency-name: release-drafter/release-drafter
+
+dependency-version: '6'
+
+dependency-type: direct:production
+
+update-type: version-update:semver-major
+
+...
+
+- **Deps**: Bump mozilla-actions/sccache-action from 0.0.7 to 0.0.9 ([#20](https://github.com/PyRo1121/omg/issues/20))
+
+Bumps [mozilla-actions/sccache-action](https://github.com/mozilla-actions/sccache-action) from 0.0.7 to 0.0.9.
+
+  - [Release notes](https://github.com/mozilla-actions/sccache-action/releases)
+
+  - [Commits](https://github.com/mozilla-actions/sccache-action/compare/v0.0.7...v0.0.9)
+
+---
+
+updated-dependencies:
+
+  - dependency-name: mozilla-actions/sccache-action
+
+dependency-version: 0.0.9
+
+dependency-type: direct:production
+
+update-type: version-update:semver-patch
+
+...
+
 - **Deps**: Bump actions/cache from 4 to 5 ([#21](https://github.com/PyRo1121/omg/issues/21))
 
 Bumps [actions/cache](https://github.com/actions/cache) from 4 to 5.
