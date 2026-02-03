@@ -33,7 +33,7 @@ path = "src/bin/omg-fast.rs"
 [dependencies]
 
 # CLI Framework
-clap = { version = "4.5.54", features = ["derive", "env", "wrap_help"] }
+clap = { version = "4.5.56", features = ["derive", "env", "wrap_help"] }
 clap_complete = "4.5"
 clap_mangen = "0.2"  # Man page generation
 
@@ -176,15 +176,15 @@ winnow = { version = "0.7", optional = true }            # Zero-copy parser comb
 gzp = { version = "2.0", optional = true }               # Parallel gzip/zstd decompression
 ar = { version = "0.9", optional = true }                # Pure Rust .ar archive parsing
 rkyv = { version = "0.8", features = ["bytecheck"] }              # Zero-copy deserialization
-whoami = "2.0.2"
+whoami = "2.1.0"
 governor = "0.10.4"
-jsonwebtoken = { version = "10.2.0", default-features = false, features = ["rust_crypto"] }
+jsonwebtoken = { version = "10.3.0", default-features = false, features = ["rust_crypto"] }
 sentry = { version = "0.46.1", features = ["anyhow", "tracing"] }
 sentry-tracing = "0.46.1"
 
 # Cross-platform package manager support
-rusqlite = { version = "0.33", features = ["bundled"], optional = true }  # SQLite for RPM db
-quick-xml = { version = "0.37", features = ["serialize"], optional = true }  # Fast XML parsing
+rusqlite = { version = "0.38", features = ["bundled"], optional = true }  # SQLite for RPM db
+quick-xml = { version = "0.39", features = ["serialize"], optional = true }  # Fast XML parsing
 
 # Windows-specific (conditional) - only compiled on Windows
 [target.'cfg(target_os = "windows")'.dependencies]
