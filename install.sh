@@ -686,6 +686,43 @@ setup_shell() {
     "$INSTALL_DIR/omg" completions "$shell_type" >/dev/null 2>&1 || true
 }
 
+setup_turbo() {
+    local detected_os
+    detected_os=$(detect_os)
+    
+    if [[ "$detected_os" != "linux" ]]; then
+        return
+    fi
+
+    header "Turbo Mode (Recommended)"
+    
+    printf "\\n${BOLD}What is Turbo Mode?${RESET}\\n"
+    printf "  Turbo mode enables instant package operations without sudo prompts.\\n"
+    printf "  It uses Linux capabilities to grant omg permission to manage packages.\\n"
+    printf "\\n"
+    printf "  ${DIM}Benefits:${RESET}\\n"
+    printf "  • No sudo password prompts for install/update/remove\\n"
+    printf "  • 40x faster privilege elevation (5ms vs 200ms)\\n"
+    printf "  • Works in scripts and automation without NOPASSWD\\n"
+    printf "\\n"
+
+    read -p "$(printf "${BOLD}Enable turbo mode now?${RESET} [Y/n] ")" -n 1 -r
+    echo
+    
+    if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+        start_spinner "Enabling turbo mode"
+        if sudo setcap 'cap_dac_override,cap_fowner,cap_chown+ep' "$INSTALL_DIR/omg" >/dev/null 2>&1; then
+            stop_spinner "Turbo mode enabled"
+            success "Package operations now work without sudo!"
+        else
+            fail_spinner "Failed to enable turbo mode"
+            warn "You can enable it later with: omg doctor --turbo"
+        fi
+    else
+        info "Skipped. Enable later with: omg doctor --turbo"
+    fi
+}
+
 finish() {
     printf "\n"
     printf "${GREEN}${BOLD}Installation Complete! 🚀${RESET}\n"
@@ -708,6 +745,7 @@ main() {
     setup_config
     setup_telemetry
     setup_shell
+    setup_turbo
     finish
 }
 
