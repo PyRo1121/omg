@@ -35,6 +35,7 @@ use super::super::aur_metadata::{
     AurJsonPackage, get_metadata_path, read_metadata_archive, sync_aur_metadata,
 };
 use super::super::aur_sources::{download_sources, parse_sources};
+#[cfg(feature = "pgp")]
 use super::super::pkgbuild::PkgBuild;
 use crate::config::{AurBuildMethod, Settings};
 use crate::core::http::shared_client;
