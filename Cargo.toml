@@ -178,7 +178,7 @@ ar = { version = "0.9", optional = true }                # Pure Rust .ar archive
 rkyv = { version = "0.8", features = ["bytecheck"] }              # Zero-copy deserialization
 whoami = "2.0.2"
 governor = "0.10.4"
-jsonwebtoken = { version = "10.2.0", default-features = false, features = ["rust_crypto"] }
+jsonwebtoken = { version = "10.3.0", default-features = false, features = ["rust_crypto"] }
 sentry = { version = "0.46.1", features = ["anyhow", "tracing"] }
 sentry-tracing = "0.46.1"
 
