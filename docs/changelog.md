@@ -897,6 +897,18 @@ NEW FEATURES:
 
 ### 🐛 Bug Fixes
 
+- **Aur**: Auto-fix root-owned build directories and improve error messages
+
+  - Auto-fix root-owned build directories with sudo chown before git pull
+
+  - Track failed package count in update command
+
+  - Add partial success message when some packages fail to upgrade
+
+  - Replace 'omg aur clean' references with direct 'rm -rf' commands in error messages
+
+  - Extract actual version tag from GitHub release JSON in install script
+
 - **Build**: Fix moved value error in debian search and unused import
 
   - Fix E0382: Clone query before moving into closure in debian_search()
