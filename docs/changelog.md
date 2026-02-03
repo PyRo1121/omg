@@ -779,6 +779,18 @@ All clippy warnings resolved. CI should pass on all platforms.
 
 ### ✨ New Features
 
+- **Ux**: Improve turbo mode discoverability
+
+  - Improve error messages to suggest 'omg doctor --turbo' when sudo fails
+
+  - Add one-time hint for privileged commands when turbo mode not enabled
+
+  - Add turbo mode setup to install script with explanation and prompt
+
+Turbo mode uses Linux capabilities to enable instant package operations
+
+without sudo prompts, making it practically required for smooth UX.
+
 - Add daemon health check endpoint
 
 Address Oracle-identified gap: daemon has no health metrics endpoint
@@ -1509,6 +1521,7 @@ Next: Priority 3 (nice-to-have: cheat sheet, video tutorials, translations)
 
 ### 🔧 Maintenance
 
+- Sync site install script with main install.sh
 - Ignore benchmark_results directory
 
 Add benchmark_results/ to .gitignore since it contains generated
