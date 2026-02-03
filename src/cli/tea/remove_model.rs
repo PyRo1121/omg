@@ -135,15 +135,12 @@ impl Model for RemoveModel {
                 Cmd::Exec(Box::new(move || {
                     let result = if tokio::runtime::Handle::try_current().is_ok() {
                         match std::thread::spawn(move || {
-                            let pm = get_package_manager();
+                            let Ok(rt) = tokio::runtime::Runtime::new() else {
+                                return Err(anyhow::anyhow!("Failed to create async runtime"));
+                            };
+                            let pm = get_package_manager()?;
                             let service = PackageService::new(pm);
-                            match tokio::runtime::Runtime::new() {
-                                Ok(rt) => rt
-                                    .block_on(async { service.remove(&packages, recursive).await }),
-                                Err(e) => {
-                                    Err(anyhow::anyhow!("Failed to create async runtime: {e}"))
-                                }
-                            }
+                            rt.block_on(async { service.remove(&packages, recursive).await })
                         })
                         .join()
                         {
@@ -153,14 +150,14 @@ impl Model for RemoveModel {
                             )),
                         }
                     } else {
-                        match tokio::runtime::Runtime::new() {
-                            Ok(rt) => rt.block_on(async {
-                                let pm = get_package_manager();
-                                let service = PackageService::new(pm);
-                                service.remove(&packages, recursive).await
-                            }),
-                            Err(e) => Err(anyhow::anyhow!("Failed to create async runtime: {e}")),
-                        }
+                        (|| {
+                            let Ok(rt) = tokio::runtime::Runtime::new() else {
+                                return Err(anyhow::anyhow!("Failed to create async runtime"));
+                            };
+                            let pm = get_package_manager()?;
+                            let service = PackageService::new(pm);
+                            rt.block_on(async { service.remove(&packages, recursive).await })
+                        })()
                     };
 
                     match result {

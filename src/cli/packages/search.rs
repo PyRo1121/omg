@@ -85,12 +85,15 @@ async fn search_internal(
             }
         }
         #[cfg(not(unix))]
-        if let Ok(packages) = get_package_manager().search(query).await {
-            results.extend(packages.into_iter().map(DisplayPackage::from_package));
+        if let Ok(pm) = get_package_manager() {
+            if let Ok(packages) = pm.search(query).await {
+                results.extend(packages.into_iter().map(DisplayPackage::from_package));
+            }
         }
         #[cfg(unix)]
         if results.is_empty()
-            && let Ok(packages) = get_package_manager().search(query).await
+            && let Ok(pm) = get_package_manager()
+            && let Ok(packages) = pm.search(query).await
         {
             results.extend(packages.into_iter().map(DisplayPackage::from_package));
         }

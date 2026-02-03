@@ -1,3 +1,8 @@
+//! PGP keyserver integration for automatic key fetching
+//!
+//! Fetches PGP keys from keyservers (Ubuntu keyserver by default)
+//! with timeout handling for signature verification workflows.
+
 use anyhow::{Context, Result};
 use sequoia_net::KeyServer;
 use sequoia_openpgp::{Cert, KeyHandle, parse::Parse};

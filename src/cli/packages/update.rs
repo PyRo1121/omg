@@ -92,7 +92,7 @@ pub async fn update_turbo() -> Result<()> {
 pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
     use owo_colors::OwoColorize;
 
-    let pm = get_package_manager();
+    let pm = get_package_manager()?;
 
     print_update_header("Syncing Package Databases");
     pm.sync().await?;

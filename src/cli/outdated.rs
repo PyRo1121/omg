@@ -45,7 +45,7 @@ pub async fn run(security_only: bool, json: bool) -> Result<()> {
         crate::cli::packages::execute_cmd(Components::loading("Checking for updates"));
     }
 
-    let pm = get_package_manager();
+    let pm = get_package_manager()?;
     let service = PackageService::new(pm);
     let updates = service.list_updates().await?;
 

@@ -1,3 +1,8 @@
+//! Security audit command implementations
+//!
+//! Provides CLI handlers for vulnerability scanning, SBOM generation, secret detection,
+//! license compliance, SLSA verification, and audit log management.
+
 use anyhow::Result;
 use owo_colors::OwoColorize;
 

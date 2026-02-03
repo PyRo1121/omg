@@ -404,6 +404,7 @@ pub fn track_feature(feature: &str, properties: HashMap<String, serde_json::Valu
 }
 
 /// Track an error
+#[cold]
 pub fn track_error(error_type: &str, message: &str, context: Option<&str>) {
     if !is_enabled() {
         return;

@@ -1,3 +1,8 @@
+//! Security policy enforcement and package security grading
+//!
+//! Defines security policies for package approval/rejection based on
+//! vulnerabilities, licenses, and trust levels with A-F grading.
+
 use crate::package_managers::types::Version;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};

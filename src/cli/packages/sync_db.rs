@@ -5,6 +5,6 @@ use anyhow::Result;
 
 /// Sync package databases from mirrors (parallel, fast)
 pub async fn sync_databases() -> Result<()> {
-    let pm = get_package_manager();
+    let pm = get_package_manager()?;
     pm.sync().await
 }

@@ -6,7 +6,8 @@ use crate::package_managers::{PackageManager, types::UpdateInfo};
 use anyhow::Result;
 use async_trait::async_trait;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use parking_lot::Mutex;
 
 /// Mock package manager with configurable behavior
 pub struct TestPackageManager {
@@ -31,7 +32,7 @@ impl TestPackageManager {
 
     /// Add a package to the mock database
     pub fn add_package(&self, name: &str, version: &str, description: &str) {
-        let mut packages = self.packages.lock().unwrap();
+        let mut packages = self.packages.lock();
         packages.insert(
             name.to_string(),
             Package {
@@ -39,36 +40,36 @@ impl TestPackageManager {
                 version: parse_version_or_zero(version),
                 description: description.to_string(),
                 source: PackageSource::Official,
-                installed: self.installed.lock().unwrap().contains(&name.to_string()),
+                installed: self.installed.lock().contains(&name.to_string()),
             },
         );
     }
 
     /// Mark a package as installed
     pub fn install_package(&self, name: &str) {
-        self.installed.lock().unwrap().insert(name.to_string());
+        self.installed.lock().insert(name.to_string());
         // Update the package in the database
-        if let Some(pkg) = self.packages.lock().unwrap().get_mut(name) {
+        if let Some(pkg) = self.packages.lock().get_mut(name) {
             pkg.installed = true;
         }
     }
 
     /// Remove a package (mark as not installed)
     pub fn remove_package(&self, name: &str) {
-        self.installed.lock().unwrap().remove(&name.to_string());
-        if let Some(pkg) = self.packages.lock().unwrap().get_mut(name) {
+        self.installed.lock().remove(&name.to_string());
+        if let Some(pkg) = self.packages.lock().get_mut(name) {
             pkg.installed = false;
         }
     }
 
     /// Set available updates
     pub fn set_updates(&self, updates: Vec<UpdateInfo>) {
-        *self.updates.lock().unwrap() = updates;
+        *self.updates.lock() = updates;
     }
 
     /// Configure whether operations should fail
     pub fn set_fail_operations(&self, fail: bool) {
-        *self.fail_operations.lock().unwrap() = fail;
+        *self.fail_operations.lock() = fail;
     }
 
     /// Set artificial delay for operations (useful for testing async behavior)
@@ -110,12 +111,12 @@ impl TestPackageManager {
 
     /// Helper to check if a package is in the database
     pub fn has_package(&self, name: &str) -> bool {
-        self.packages.lock().unwrap().contains_key(name)
+        self.packages.lock().contains_key(name)
     }
 
     /// Helper to get the number of packages in the database
     pub fn package_count(&self) -> usize {
-        self.packages.lock().unwrap().len()
+        self.packages.lock().len()
     }
 }
 
@@ -134,7 +135,7 @@ impl PackageManager for TestPackageManager {
     async fn search(&self, query: &str) -> Result<Vec<Package>> {
         let query = query.to_lowercase();
         let packages = self.packages.clone();
-        let fail = *self.fail_operations.lock().unwrap();
+        let fail = *self.fail_operations.lock();
         let delay = self.search_delay_ms;
 
         if delay > 0 {
@@ -145,7 +146,7 @@ impl PackageManager for TestPackageManager {
             anyhow::bail!("Search operation failed (test failure mode)");
         }
 
-        let pkgs = packages.lock().unwrap();
+        let pkgs = packages.lock();
         Ok(pkgs
             .values()
             .filter(|p| {
@@ -159,14 +160,14 @@ impl PackageManager for TestPackageManager {
     async fn install(&self, packages: &[String]) -> Result<()> {
         let packages: Vec<String> = packages.to_vec();
         let installed = self.installed.clone();
-        let fail = *self.fail_operations.lock().unwrap();
+        let fail = *self.fail_operations.lock();
 
         if fail {
             anyhow::bail!("Install operation failed (test failure mode)");
         }
 
         for pkg in packages {
-            installed.lock().unwrap().insert(pkg);
+            installed.lock().insert(pkg);
         }
         Ok(())
     }
@@ -174,20 +175,20 @@ impl PackageManager for TestPackageManager {
     async fn remove(&self, packages: &[String]) -> Result<()> {
         let packages: Vec<String> = packages.to_vec();
         let installed = self.installed.clone();
-        let fail = *self.fail_operations.lock().unwrap();
+        let fail = *self.fail_operations.lock();
 
         if fail {
             anyhow::bail!("Remove operation failed (test failure mode)");
         }
 
         for pkg in packages {
-            installed.lock().unwrap().remove(&pkg);
+            installed.lock().remove(&pkg);
         }
         Ok(())
     }
 
     async fn update(&self) -> Result<()> {
-        let fail = *self.fail_operations.lock().unwrap();
+        let fail = *self.fail_operations.lock();
 
         if fail {
             anyhow::bail!("Update operation failed (test failure mode)");
@@ -196,7 +197,7 @@ impl PackageManager for TestPackageManager {
     }
 
     async fn sync(&self) -> Result<()> {
-        let fail = *self.fail_operations.lock().unwrap();
+        let fail = *self.fail_operations.lock();
 
         if fail {
             anyhow::bail!("Sync operation failed (test failure mode)");
@@ -207,26 +208,26 @@ impl PackageManager for TestPackageManager {
     async fn info(&self, package: &str) -> Result<Option<Package>> {
         let package = package.to_string();
         let packages = self.packages.clone();
-        let fail = *self.fail_operations.lock().unwrap();
+        let fail = *self.fail_operations.lock();
 
         if fail {
             anyhow::bail!("Info operation failed (test failure mode)");
         }
 
-        Ok(packages.lock().unwrap().get(&package).cloned())
+        Ok(packages.lock().get(&package).cloned())
     }
 
     async fn list_installed(&self) -> Result<Vec<Package>> {
         let packages = self.packages.clone();
         let installed = self.installed.clone();
-        let fail = *self.fail_operations.lock().unwrap();
+        let fail = *self.fail_operations.lock();
 
         if fail {
             anyhow::bail!("List installed operation failed (test failure mode)");
         }
 
-        let installed_set = installed.lock().unwrap();
-        let pkgs = packages.lock().unwrap();
+        let installed_set = installed.lock();
+        let pkgs = packages.lock();
         Ok(pkgs
             .values()
             .filter(|p| installed_set.contains(&p.name))
@@ -238,45 +239,45 @@ impl PackageManager for TestPackageManager {
         let packages = self.packages.clone();
         let installed = self.installed.clone();
         let updates = self.updates.clone();
-        let fail = *self.fail_operations.lock().unwrap();
+        let fail = *self.fail_operations.lock();
 
         if fail {
             anyhow::bail!("Get status operation failed (test failure mode)");
         }
 
-        let total = packages.lock().unwrap().len();
-        let explicit = installed.lock().unwrap().len();
-        let updates_count = updates.lock().unwrap().len();
+        let total = packages.lock().len();
+        let explicit = installed.lock().len();
+        let updates_count = updates.lock().len();
         Ok((total, explicit, 0, updates_count))
     }
 
     async fn list_explicit(&self) -> Result<Vec<String>> {
         let installed = self.installed.clone();
-        let fail = *self.fail_operations.lock().unwrap();
+        let fail = *self.fail_operations.lock();
 
         if fail {
             anyhow::bail!("List explicit operation failed (test failure mode)");
         }
 
-        Ok(installed.lock().unwrap().iter().cloned().collect())
+        Ok(installed.lock().iter().cloned().collect())
     }
 
     async fn list_updates(&self) -> Result<Vec<UpdateInfo>> {
         let updates = self.updates.clone();
-        let fail = *self.fail_operations.lock().unwrap();
+        let fail = *self.fail_operations.lock();
 
         if fail {
             anyhow::bail!("List updates operation failed (test failure mode)");
         }
 
-        Ok(updates.lock().unwrap().clone())
+        Ok(updates.lock().clone())
     }
 
     async fn is_installed(&self, package: &str) -> bool {
         let package = package.to_string();
         let installed = self.installed.clone();
 
-        installed.lock().unwrap().contains(&package)
+        installed.lock().contains(&package)
     }
 }
 

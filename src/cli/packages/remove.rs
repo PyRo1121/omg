@@ -108,7 +108,7 @@ fn remove_dry_run(packages: &[String], recursive: bool) -> Result<()> {
 }
 
 async fn remove_fallback(packages: &[String], recursive: bool) -> Result<()> {
-    let pm = get_package_manager();
+    let pm = get_package_manager()?;
     let service = PackageService::new(pm);
 
     ui::print_header("OMG", &format!("Removing {} package(s)", packages.len()));

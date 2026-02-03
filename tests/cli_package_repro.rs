@@ -14,5 +14,6 @@ async fn test_search_compilation() {
 
 #[tokio::test]
 async fn test_install_compilation() {
-    let _ = packages::install(&["package".to_string()], true, false).await;
+    // Use dry-run to avoid requiring sudo
+    let _ = packages::install(&["package".to_string()], true, true).await;
 }

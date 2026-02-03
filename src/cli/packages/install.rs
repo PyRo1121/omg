@@ -35,7 +35,7 @@ pub async fn install(packages: &[String], yes: bool, dry_run: bool) -> Result<()
         return install_dry_run(packages);
     }
 
-    let pm = get_package_manager();
+    let pm = get_package_manager()?;
 
     // Beautiful header with package count
     print_install_header(packages.len());

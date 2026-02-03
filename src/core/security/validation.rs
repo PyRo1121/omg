@@ -2,8 +2,7 @@
 //!
 //! Prevents command injection, path traversal, and other input-based attacks.
 
-use anyhow::{Result, bail};
-use std::path::Path;
+use anyhow::{bail, Result};
 
 /// Validates a package name for security
 ///
@@ -92,8 +91,7 @@ pub fn is_local_package_file(name: &str) -> bool {
         return false;
     }
 
-    // File must exist
-    Path::new(name).exists()
+    true
 }
 
 /// Validates a package name or local package file path

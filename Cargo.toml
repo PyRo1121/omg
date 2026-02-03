@@ -212,16 +212,56 @@ temp-env = "0.3"
 [target.'cfg(unix)'.dependencies]
 pprof = { version = "0.15", features = ["flamegraph"] }
 
+# Maximum optimization for production releases
 [profile.release]
 lto = "fat"       # Full LTO for maximum cross-crate inlining
-codegen-units = 1
+codegen-units = 1 # Maximum optimization, slower builds
 panic = "unwind"  # CRITICAL: Required for catch_unwind to work in release builds
 strip = true
-opt-level = 3
-# Additional bleeding-edge optimizations:
-# - Aggressive inlining threshold
-# - Enable all safe optimizations
-# Note: Set RUSTFLAGS="-C target-cpu=native" for CPU-specific optimizations when building locally
+opt-level = 3     # Maximum optimization
+incremental = false # LTO incompatible with incremental
+
+# Fast release builds (4-5x faster than release, ~5% slower runtime)
+[profile.release-fast]
+inherits = "release"
+lto = "thin"      # Thin LTO: 80% of fat LTO benefits, 4x faster builds
+codegen-units = 16 # Parallel codegen
+incremental = true # Enable incremental for faster rebuilds
+opt-level = 2     # Good optimization, faster compilation
+
+# Size-optimized builds (smallest possible binary)
+# Minimal build: cargo build --profile release-size --no-default-features --features arch
+# Saves ~1.2MB by removing PGP verification (sequoia-openpgp)
+[profile.release-size]
+inherits = "release"
+lto = "fat"
+opt-level = "z"   # Optimize for size
+strip = "symbols" # Aggressive stripping
+codegen-units = 1
+
+# Benchmarking profile
+[profile.bench]
+inherits = "release"
+debug = true      # Keep debug info for profiling
+
+# PGO Phase 1: Instrumentation (collect profile data)
+# Minimal optimization - just needs to run workload, not be fast
+[profile.pgo-instrument]
+inherits = "release"
+lto = false           # No LTO during instrumentation (avoids MIR inliner crashes)
+codegen-units = 16    # Maximum parallelism, minimum optimization pressure
+opt-level = 2         # Reduce optimization (less MIR complexity)
+debug = false
+incremental = false
+strip = false         # Keep symbols for better profiling
+
+# PGO Phase 2: Optimized build (use profile data)
+# Thin LTO is safe when using profile data (not generating it)
+[profile.release-pgo]
+inherits = "release"
+lto = "thin"      # Thin LTO is safe with profile-use (not profile-generate)
+codegen-units = 8 # Balanced optimization
+opt-level = 3     # Maximum runtime performance
 
 # Faster dev builds for iteration
 [profile.dev.package."*"]
@@ -230,6 +270,8 @@ opt-level = 2 # Optimize dependencies in dev mode
 [profile.dev]
 opt-level = 0
 debug = true
+incremental = true
+split-debuginfo = "unpacked" # Faster linking on Linux
 
 [features]
 default = ["arch", "license", "pgp"]
@@ -288,6 +330,11 @@ todo = "warn"                  # Track incomplete code
 unimplemented = "warn"         # Track unimplemented code paths
 # Note: unwrap/expect warnings disabled - too noisy for CLI with 48+ legitimate uses
 # Note: print_stdout/stderr disabled - CLI tool intentionally uses println!
+
+# Rust 1.92 / Edition 2024 optimization lints
+missing_const_for_fn = "warn"  # Find const fn opportunities
+redundant_clone = "warn"       # Detect unnecessary clones
+large_enum_variant = "warn"    # Warn on >200 byte enum variants
 
 # Project-specific allowances (with justification)
 module_name_repetitions = "allow"      # e.g., PackageManager in package_managers module

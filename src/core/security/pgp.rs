@@ -1,9 +1,14 @@
+//! PGP signature verification using Sequoia-OpenPGP
+//!
+//! Verifies detached and inline PGP signatures for package integrity,
+//! supports keyring management, and validates against trusted keys.
+
 use anyhow::{Context, Result};
-use openpgp::Cert;
-use openpgp::Packet;
 use openpgp::parse::Parse;
 use openpgp::parse::{PacketParser, PacketParserResult};
 use openpgp::policy::StandardPolicy;
+use openpgp::Cert;
+use openpgp::Packet;
 use sequoia_openpgp as openpgp;
 use std::path::Path;
 
