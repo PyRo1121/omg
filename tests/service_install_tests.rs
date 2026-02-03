@@ -17,7 +17,7 @@ use omg_lib::package_managers::get_package_manager;
 #[test]
 #[cfg(any(feature = "arch", feature = "debian"))]
 fn test_service_creation() {
-    let pm = get_package_manager();
+    let pm = get_package_manager().expect("Failed to get package manager");
     let _ = PackageService::new(pm);
 
     // Service should be created successfully
@@ -28,7 +28,7 @@ fn test_service_creation() {
 #[test]
 #[cfg(feature = "arch")]
 fn test_aur_client_initialization() {
-    let pm = get_package_manager();
+    let pm = get_package_manager().expect("Failed to get package manager");
     let pm_name = pm.name();
     let _ = PackageService::new(pm);
 
@@ -44,7 +44,7 @@ fn test_aur_client_initialization() {
 #[test]
 #[cfg(any(feature = "arch", feature = "debian"))]
 fn test_empty_package_list() {
-    let pm = get_package_manager();
+    let pm = get_package_manager().expect("Failed to get package manager");
     let service = PackageService::new(pm);
 
     let rt = tokio::runtime::Runtime::new().unwrap();
@@ -56,7 +56,7 @@ fn test_empty_package_list() {
 #[test]
 #[cfg(any(feature = "arch", feature = "debian"))]
 fn test_service_has_backend() {
-    let pm = get_package_manager();
+    let pm = get_package_manager().expect("Failed to get package manager");
     let pm_name = pm.name();
     let _ = PackageService::new(pm);
 
@@ -69,7 +69,7 @@ fn test_arch_install_logic_compiles() {
     // This test verifies that the Arch-specific install logic compiles correctly
     // It doesn't actually run install, just checks that the code paths are valid
 
-    let pm = get_package_manager();
+    let pm = get_package_manager().expect("Failed to get package manager");
     let pm_name = pm.name();
     let _ = PackageService::new(pm);
 
@@ -81,7 +81,7 @@ fn test_arch_install_logic_compiles() {
 #[test]
 #[cfg(all(not(feature = "arch"), feature = "debian"))]
 fn test_non_arch_install_logic_compiles() {
-    let pm = get_package_manager();
+    let pm = get_package_manager().expect("Failed to get package manager");
     let pm_name = pm.name();
     let _ = PackageService::new(pm);
 

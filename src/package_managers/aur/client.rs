@@ -1028,7 +1028,7 @@ impl AurClient {
                 .unwrap_or_else(|_| "nobody".to_string());
             let fix_spinner = create_spinner("Fixing directory ownership...");
             let fix_result = Command::new("sudo")
-                .args(["chown", "-R", &format!("{}:{}", current_user, current_user)])
+                .args(["chown", "-R", &format!("{current_user}:{current_user}")])
                 .arg(pkg_dir)
                 .status()
                 .await;
