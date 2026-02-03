@@ -993,6 +993,54 @@ Data sourced from existing benchmark tables in README.md.
 
 File sizes: 183-235KB (optimized for web).
 
+### 📦 Dependencies
+
+- **Deps**: Bump actions/cache from 4 to 5 ([#21](https://github.com/PyRo1121/omg/issues/21))
+
+Bumps [actions/cache](https://github.com/actions/cache) from 4 to 5.
+
+  - [Release notes](https://github.com/actions/cache/releases)
+
+  - [Changelog](https://github.com/actions/cache/blob/main/RELEASES.md)
+
+  - [Commits](https://github.com/actions/cache/compare/v4...v5)
+
+---
+
+updated-dependencies:
+
+  - dependency-name: actions/cache
+
+dependency-version: '5'
+
+dependency-type: direct:production
+
+update-type: version-update:semver-major
+
+...
+
+- **Deps**: Bump actions/upload-artifact from 4 to 6 ([#22](https://github.com/PyRo1121/omg/issues/22))
+
+Bumps [actions/upload-artifact](https://github.com/actions/upload-artifact) from 4 to 6.
+
+  - [Release notes](https://github.com/actions/upload-artifact/releases)
+
+  - [Commits](https://github.com/actions/upload-artifact/compare/v4...v6)
+
+---
+
+updated-dependencies:
+
+  - dependency-name: actions/upload-artifact
+
+dependency-version: '6'
+
+dependency-type: direct:production
+
+update-type: version-update:semver-major
+
+...
+
 ### 🔒 Security
 
 - Fix formatting (trailing whitespace in tests)
