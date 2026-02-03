@@ -6,16 +6,16 @@ pub enum AurError {
     #[allow(dead_code)]
     PackageNotFound(String),
 
-    #[error("PKGBUILD not found for '{package}'\n  → The AUR package may not exist or the clone failed\n  → Try: omg aur clean {package} && omg install {package}", package = .0)]
+    #[error("PKGBUILD not found for '{package}'\n  → The AUR package may not exist or the clone failed\n  → Try: rm -rf ~/.cache/omg/aur/{package} && omg install {package}", package = .0)]
     PkgbuildNotFound(String),
 
-    #[error("Build failed for '{package}'\n  → Check the build log: {log_path}\n  → Common fixes:\n    - Install missing dependencies: omg install <dep>\n    - Clean and retry: omg aur clean {package}\n    - Check AUR comments for known issues", package = .package, log_path = .log_path)]
+    #[error("Build failed for '{package}'\n  → Check the build log: {log_path}\n  → Common fixes:\n    - Install missing dependencies: omg install <dep>\n    - Clean and retry: rm -rf ~/.cache/omg/aur/{package} && omg install {package}\n    - Check AUR comments for known issues", package = .package, log_path = .log_path)]
     BuildFailed { package: String, log_path: String },
 
     #[error("Git clone failed for '{package}'\n  → Check if the package exists: https://aur.archlinux.org/packages/{package}\n  → Verify your internet connection\n  → Try again: omg install {package}", package = .0)]
     GitCloneFailed(String),
 
-    #[error("Git pull failed for '{package}'\n  → The local clone may have conflicts\n  → Fix: omg aur clean {package} && omg install {package}", package = .0)]
+    #[error("Git pull failed for '{package}'\n  → The local clone may have conflicts\n  → Fix: rm -rf ~/.cache/omg/aur/{package} && omg install {package}", package = .0)]
     GitPullFailed(String),
 
     #[error(

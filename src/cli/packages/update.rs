@@ -186,6 +186,7 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
     print_update_header("Installing Updates");
 
     let mut installed_count = 0;
+    let mut failed_count = 0;
 
     if official_count > 0 {
         println!(
@@ -212,6 +213,7 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
         for pkg in &aur_packages {
             if let Err(e) = client.install(pkg).await {
                 println!("  {} Failed to install {}: {}", "✗".red(), pkg, e);
+                failed_count += 1;
             } else {
                 installed_count += 1;
             }
@@ -221,7 +223,9 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
     #[cfg(not(feature = "arch"))]
     let _ = &aur_packages;
 
-    if installed_count > 0 {
+    if failed_count > 0 {
+        print_update_partial(installed_count, failed_count);
+    } else if installed_count > 0 {
         print_update_success(installed_count);
     } else {
         print_up_to_date();
@@ -353,6 +357,42 @@ fn print_update_success(count: usize) {
         "✓".green().bold(),
         count.to_string().bold(),
         if count == 1 { "" } else { "s" }
+    );
+    println!();
+}
+
+fn print_update_partial(success_count: usize, fail_count: usize) {
+    use owo_colors::OwoColorize;
+
+    println!();
+    println!(
+        "  {}",
+        "╭─────────────────────────────────────────╮".yellow()
+    );
+    println!(
+        "  {} {} {}",
+        "│".yellow(),
+        "  ⚠ Upgrade Partially Complete  ".bold().yellow(),
+        "│".yellow()
+    );
+    println!(
+        "  {}",
+        "╰─────────────────────────────────────────╯".yellow()
+    );
+    println!();
+    if success_count > 0 {
+        println!(
+            "    {} {} package{} upgraded successfully",
+            "✓".green().bold(),
+            success_count.to_string().bold(),
+            if success_count == 1 { "" } else { "s" }
+        );
+    }
+    println!(
+        "    {} {} package{} failed to upgrade",
+        "✗".red().bold(),
+        fail_count.to_string().bold(),
+        if fail_count == 1 { "" } else { "s" }
     );
     println!();
 }
