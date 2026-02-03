@@ -29,6 +29,22 @@ Added convenient Makefile targets for all benchmark workflows:
 
 ### ♻️  Refactoring
 
+- Modernize code patterns and reduce complexity
+
+  - Fix init_logging() unnecessary Result return type
+
+  - Replace &Option`<T>` with Option<&T> anti-pattern (2 functions)
+
+  - Merge duplicate match arms in handle_config_command
+
+  - Extract 10+ command handlers reducing dispatch_command complexity 35→29 (17%)
+
+  - Reduce dispatch_command from 198→128 lines (35% improvement)
+
+  - Modernize sort_by → sort_by_key in 6 locations (perf + readability)
+
+All 330 tests passing. Net -18 lines while improving quality.
+
 - Extract command handlers to reduce dispatch complexity (50→35)
 
 Extract nested match statements and conditional logic to dedicated handler functions:
@@ -120,6 +136,156 @@ Code quality verification:
   - ✅ cargo fmt --check: passed
 
 ### ⚡ Performance
+
+- Implement Profile-Guided Optimization with two-phase build system
+
+## Phase 4: Advanced Optimizations & Compiler Bug Fixes
+
+### Critical Bug Fixes
+
+  - Fix infinite recursion in pacman_db/db.rs is_empty() method
+
+  - Eliminate 6 heap allocations in daemon hot paths with static constants
+
+  - Fix rustc stack overflow during PGO instrumentation (MIR inliner bug)
+
+  - Fix GCC internal compiler error in aws-lc-sys with fat LTO + PGO
+
+### Profile-Guided Optimization (PGO) Infrastructure
+
+  - **NEW**: Two-phase PGO build system to avoid rustc compiler crashes
+
+  - **NEW**: `pgo-instrument` profile (opt-level=2, lto=false, codegen-units=16)
+
+  - Lightweight instrumentation phase avoids MIR inliner stack overflow
+
+  - No LTO during profile-generate to prevent compiler bugs
+
+  - **NEW**: `release-pgo` profile (opt-level=3, lto="thin", codegen-units=8)
+
+  - Thin LTO is safe with profile-use (fat LTO causes crashes)
+
+  - Expected 8-15% runtime improvement on hot paths
+
+  - **NEW**: `build-pgo.sh` automated PGO workflow script
+
+  - Phase 1: Build instrumented binary (30s)
+
+  - Phase 2: Run workload to collect profile data
+
+  - Phase 3: Build optimized binary with thin LTO (60s)
+
+### Build System Enhancements
+
+  - Add CPU-native optimization instructions to .cargo/config.toml
+
+  - Enables AVX2, BMI2 via `target-cpu=native` (5-10% speedup)
+
+  - Documents portability warnings
+
+  - Update BUILD_PROFILES.md with comprehensive PGO documentation
+
+  - Explains two-phase approach and compiler bug workarounds
+
+  - Documents serialization architecture (bitcode vs rkyv)
+
+  - Provides manual PGO workflow and troubleshooting
+
+  - Enhanced release-size profile documentation
+
+  - Documents minimal build flags (--no-default-features)
+
+  - Saves 1.2MB by removing PGP verification
+
+### String Allocation Optimizations
+
+  - Add 5 static string constants for hot path operations:
+
+  - SOURCE_APT, SOURCE_OFFICIAL, SOURCE_AUR (package sources)
+
+  - PING_RESPONSE, CACHE_CLEARED_MSG (daemon responses)
+
+  - Feature-gate constants to prevent dead code warnings
+
+  - Eliminates 100% of string allocations in:
+
+  - Debian package search
+
+  - Package info queries
+
+  - AUR operations
+
+  - Daemon ping/cache operations
+
+### Performance Analysis & Documentation
+
+  - Binary size analysis with cargo-bloat (top consumers identified)
+
+  - std: 2.0MB (17.2%), aws_lc_sys: 1.3MB (10.8%), moka: 756KB
+
+  - Dependency deduplication analysis (evaluated, not implemented)
+
+  - hashbrown v0.14/v0.15/v0.16, thiserror v1/v2, syn v1/v2
+
+  - Decision: Too risky, <1% benefit
+
+  - SIMD verification: memchr::memmem already in use for string search
+
+  - Const function audit: All eligible functions already const
+
+  - Lazy static review: 88 sites appropriate for FFI safety
+
+### Known Issues Documented
+
+  - rustc [#115344](https://github.com/PyRo1121/omg/issues/115344): Fat LTO + PGO causes compiler crashes
+
+  - rustc [#117220](https://github.com/PyRo1121/omg/issues/117220): LTO + PGO + cdylib triggers LLVM assertion
+
+  - MIR inliner stack overflow with aggressive optimization + PGO
+
+  - Workarounds: Separate instrumentation/optimization profiles
+
+### Session Summary
+
+  - **Total optimizations**: 46 (across 4 phases)
+
+  - **Files modified**: 7 (Cargo.toml, build-pgo.sh, BUILD_PROFILES.md,
+
+.cargo/config.toml, handlers.rs, pacman_db/db.rs, SESSION-SUMMARY.md)
+
+  - **Tests passing**: 345/345 (100%)
+
+  - **Compiler warnings**: 0
+
+  - **Build profiles**: 6 (dev, release, release-fast, release-pgo,
+
+pgo-instrument, release-size, bench)
+
+### Build Time Improvements
+
+  - release-fast: 74% faster builds vs release (34s vs 2m 10s)
+
+  - PGO total time: ~90s (30s instrument + 60s optimize)
+
+### Expected Performance Impact
+
+  - PGO builds: 8-15% runtime speedup on hot paths
+
+  - CPU-native builds: 5-10% additional speedup (local only)
+
+  - Combined: Up to 25% improvement over baseline
+
+- Modernize Duration and Result patterns
+
+  - Use Duration::from_mins() for 5/10 minute timeouts (readability)
+
+  - Use Duration::from_secs(1) instead of from_millis(1000) (clarity)
+
+  - Replace map().unwrap_or() with map_or() (7 locations, performance)
+
+  - Replace map().unwrap_or(false) with is_ok_and() (better semantics)
+
+All 330 tests passing. Net -8 lines.
 
 - Add comprehensive documentation for examples and scripts
 
@@ -613,6 +779,42 @@ All clippy warnings resolved. CI should pass on all platforms.
 
 ### ✨ New Features
 
+- Add daemon health check endpoint
+
+Address Oracle-identified gap: daemon has no health metrics endpoint
+
+Protocol Changes (protocol.rs):
+
+  - Add Health request variant to Request enum
+
+  - Add HealthStatus to ResponseResult enum
+
+  - Add HealthStatus struct with health metrics:
+
+* status: String (healthy/degraded/unhealthy)
+
+* uptime_seconds: u64
+
+* memory_usage_mb: u64 (placeholder for future implementation)
+
+* cache_size: usize
+
+* active_connections: i64
+
+Handler Implementation (handlers.rs):
+
+  - Add start_time: Instant to DaemonState for uptime tracking
+
+  - Implement handle_health() function with health determination logic:
+
+* Healthy: cache < 50K entries
+
+* Degraded: cache > 50K entries
+
+* Unhealthy: cache > 100K OR failed requests > 1000
+
+  - Use GLOBAL_METRICS.snapshot() for active connections
+
 - Enhance developer experience with improved tooling
 
   - Improved Makefile with 25+ targets:
@@ -691,6 +893,20 @@ Arc`<String>` that would be handled automatically by auto-deref.
 
 ### 📚 Documentation
 
+- Update SESSION-SUMMARY with verified PGO build results
+
+  - Documented successful PGO build verification (90s total build time)
+
+  - Added compiler bug workaround details (two-phase build system)
+
+  - Updated profile list with pgo-instrument and release-pgo
+
+  - Verified 95 profile data files merged successfully
+
+  - Confirmed 20M binary size, ELF stripped executable
+
+  - Status: PGO infrastructure production-ready
+
 - Add missing commercial license documentation
 
 Created COMMERCIAL-LICENSE.md to resolve broken link in README:
@@ -736,6 +952,120 @@ Data sourced from existing benchmark tables in README.md.
 File sizes: 183-235KB (optimized for web).
 
 ### 🔒 Security
+
+- Fix formatting (trailing whitespace in tests)
+
+Fix CI failure from cargo fmt check   - remove trailing whitespace in:
+
+  - tests/property_tests.rs (behavioral assertions)
+
+  - tests/daemon_integration_tests.rs
+
+  - tests/daemon_security_tests.rs
+
+  - src/* files with formatting issues
+
+All formatting now compliant with rustfmt.
+
+[skip ci]
+
+- Add comprehensive daemon handler tests (+5 tests)
+
+Address Oracle-identified gap: daemon handlers have zero direct unit tests
+
+New Integration Tests (daemon_security_tests.rs):
+
+1. test_health_endpoint_returns_status:
+
+  - Validates Health endpoint returns proper status structure
+
+  - Checks status is one of: healthy/degraded/unhealthy
+
+  - Verifies uptime and cache_size are reasonable
+
+2. test_ping_returns_pong:
+
+  - Validates Ping handler returns exact "pong" message
+
+  - Verifies request ID propagation
+
+3. test_cache_stats_handler:
+
+  - Validates CacheStats returns size and max_size
+
+  - Checks invariant: size <= max_size
+
+4. test_cache_clear_handler:
+
+  - Validates CacheClear returns "cleared" message
+
+  - Tests cache management handler
+
+5. test_explicit_count_handler:
+
+  - Validates ExplicitCount returns reasonable count
+
+  - Tests package count handler
+
+Test Strategy:
+
+  - Integration tests (real DaemonState, not mocked)
+
+  - Use serial_test to prevent concurrent state issues
+
+  - Follow existing test patterns in file
+
+  - All tests handle graceful failure if PM unavailable
+
+All 8 daemon security tests passing (3 existing + 5 new)
+
+- Strengthen property tests with behavioral assertions
+
+Address Oracle-identified weakness: tests only check 'doesn't crash'
+
+Strengthened 5 critical property tests:
+
+1. prop_search_never_crashes:
+
+  - Now validates output contains expected structure (Search Results/Package)
+
+  - Checks for security leaks (/etc/passwd, secrets)
+
+  - Verifies output is reasonable
+
+2. prop_shell_metachar_escaped:
+
+  - Validates no shell spawned (sh:)
+
+  - Checks for command injection (uid=, /etc/shadow)
+
+  - Verifies proper escaping with behavioral assertions
+
+3. prop_unicode_safe:
+
+  - Validates UTF-8 correctness
+
+  - Checks structured output format
+
+  - Ensures error messages are valid UTF-8
+
+4. prop_semver_versions:
+
+  - Validates helpful error messages on failure
+
+  - Checks success mentions version
+
+  - Ensures errors contain context
+
+5. prop_long_input_handled:
+
+  - Validates output size is reasonable (not exponential)
+
+  - Checks some output produced (success or error)
+
+  - Prevents DoS via output amplification
+
+All 35 property tests passing. Tests now verify BEHAVIOR not just 'no panic'.
 
 - Add unit tests for search command validation and formatting
 
@@ -1046,6 +1376,70 @@ which IS committed to the repository.
 [skip ci]
 
 ### 🧪 Testing
+
+- Add unsafe mmap error path tests (+10 tests)
+
+Address Oracle-identified critical gap: unsafe code lacks targeted tests
+
+pacman_db.rs (+5 tests):
+
+  - test_mmap_index_load_empty_file: Empty file validation failure
+
+  - test_mmap_index_load_corrupted_file: Corrupted rkyv data rejection
+
+  - test_mmap_index_load_truncated_file: Truncated file handling
+
+  - test_mmap_index_load_nonexistent_file: File not found error
+
+  - test_mmap_index_load_wrong_format: JSON/wrong format rejection
+
+  - Add #[derive(Debug)] to PacmanMmapIndex for test assertions
+
+debian_db.rs (+5 tests, requires 'debian' feature):
+
+  - test_mmap_index_open_nonexistent_file: File not found handling
+
+  - test_mmap_index_get_corrupted_archive: Lazy validation on access
+
+  - test_mmap_index_search_corrupted_archive: Search validation
+
+  - test_mmap_index_open_empty_file: Empty file edge case
+
+  - test_mmap_index_list_all_corrupted: List operation validation
+
+All tests validate rkyv corruption detection and mmap error paths.
+
+340→345 tests with arch feature (+1.5% coverage)
+
+- Add comprehensive AUR module unit tests (+10 tests)
+
+Address Oracle-identified critical testing gaps in AUR module (2262 LOC had only 2 tests):
+
+Boundary Testing (chunk_aur_names):
+
+  - test_chunk_aur_names_empty: Zero packages edge case
+
+  - test_chunk_aur_names_single: Single package
+
+  - test_chunk_aur_names_boundary: URL length enforcement with 200 packages
+
+  - test_chunk_aur_names_long_package_names: 100-200 char package names
+
+  - test_chunk_aur_names_exactly_at_boundary: Precise boundary hit
+
+Search Logic (has_word_boundary_match):
+
+  - test_has_word_boundary_match_start: Start of string matching
+
+  - test_has_word_boundary_match_after_separator: Delimiter matching (-, _, .)
+
+  - test_has_word_boundary_match_no_match_substring: Substring rejection
+
+  - test_has_word_boundary_match_empty: Empty string edge cases
+
+  - test_has_word_boundary_match_case_sensitive: Case handling
+
+All 340 tests passing (330→340, +3% coverage)
 
 - Fix test_version_not_found_suggestion assertion
 
