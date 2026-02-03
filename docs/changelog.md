@@ -885,6 +885,16 @@ NEW FEATURES:
 
 ### 🐛 Bug Fixes
 
+- **Ci**: Feature-gate test using alpm_types to fix portable build
+
+The test_display_package_from_package test uses alpm_types::Version and
+
+alpm_types::FullVersion which are only available with the 'arch' feature.
+
+This caused CI failures when building with --no-default-features.
+
+Fixed by adding #[cfg(feature = "arch")] to the test.
+
 - **Ci**: Ignore platform-specific and transitive unmaintained dependencies in security audit
 
 Ignored advisories (all platform-specific or transitive):
