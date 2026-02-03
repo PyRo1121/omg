@@ -31,7 +31,7 @@ fn test_distro_override_arch() {
     }
 
     // ===== ACT =====
-    let pm = get_package_manager();
+    let pm = get_package_manager().unwrap();
 
     // ===== ASSERT =====
     assert_eq!(pm.name(), "pacman");
