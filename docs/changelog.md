@@ -885,6 +885,16 @@ NEW FEATURES:
 
 ### 🐛 Bug Fixes
 
+- **Build**: Fix moved value error in debian search and unused import
+
+  - Fix E0382: Clone query before moving into closure in debian_search()
+
+  - Feature-gate PkgBuild import (only used with pgp feature)
+
+  - Feature-gate query_clone (only used with debian feature)
+
+This fixes compilation errors in Debian and Arch platform builds.
+
 - **Ci**: Remove pgp from platform builds to avoid compiler crash
 
 The sequoia-openpgp crate causes GCC internal compiler errors when
