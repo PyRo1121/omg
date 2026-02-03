@@ -278,6 +278,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(feature = "arch")]
     fn test_display_package_from_package() {
         let pkg = Package {
             name: "firefox".to_string(),
