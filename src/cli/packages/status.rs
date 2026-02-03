@@ -53,13 +53,13 @@ async fn status_json(fast: bool) -> Result<()> {
             status.updates_available,
         )
     } else {
-        let pm = get_package_manager();
+        let pm = get_package_manager()?;
         pm.get_status(fast).await?
     };
 
     #[cfg(not(unix))]
     let (total, explicit, orphans, updates) = {
-        let pm = get_package_manager();
+        let pm = get_package_manager()?;
         pm.get_status(fast).await?
     };
 
@@ -98,7 +98,7 @@ async fn status_fallback(fast: bool) -> Result<()> {
     }
 
     // 2. Fallback to direct path (Cold Path)
-    let pm = get_package_manager();
+    let pm = get_package_manager()?;
     let (total, explicit, orphans, updates) = pm.get_status(fast).await?;
     display_status_report(total, explicit, orphans, updates, start.elapsed(), fast)
 }

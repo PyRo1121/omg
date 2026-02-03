@@ -142,53 +142,40 @@ impl Model for InstallModel {
                 Cmd::batch([
                     Cmd::info("Installing packages..."),
                     Cmd::Exec(Box::new(move || {
-                        // This blocks, but in a real async runtime we'd spawn it properly.
-                        // For CLI tools, blocking briefly is often acceptable, but we'll use
-                        // a thread to be safe if a runtime exists.
-
                         let packages_task = packages.clone();
                         let result = if tokio::runtime::Handle::try_current().is_ok() {
                             std::thread::spawn(move || {
-                                let pm = get_package_manager();
-                                let service = PackageService::new(pm);
                                 let Ok(rt) = tokio::runtime::Runtime::new() else {
                                     return Err(anyhow::anyhow!("Failed to create async runtime"));
                                 };
+                                let pm = get_package_manager()?;
+                                let service = PackageService::new(pm);
                                 rt.block_on(async { service.install(&packages_task, yes).await })
                             })
                             .join()
                             .unwrap_or_else(|_| Err(anyhow::anyhow!("Thread panicked")))
                         } else {
-                            let Ok(rt) = tokio::runtime::Runtime::new() else {
-                                return InstallMsg::Error(
-                                    "Failed to create async runtime".to_string(),
-                                );
-                            };
-                            rt.block_on(async {
-                                let pm = get_package_manager();
+                            (|| {
+                                let Ok(rt) = tokio::runtime::Runtime::new() else {
+                                    return Err(anyhow::anyhow!("Failed to create async runtime"));
+                                };
+                                let pm = get_package_manager()?;
                                 let service = PackageService::new(pm);
-                                service.install(&packages, yes).await
-                            })
+                                rt.block_on(async { service.install(&packages, yes).await })
+                            })()
                         };
 
                         match result {
                             Ok(()) => InstallMsg::Complete,
                             Err(e) => {
                                 let msg = e.to_string();
-                                if msg.contains("not found") {
-                                    // Basic extraction of package name from error message if possible
-                                    // ideally the error would be structured
-                                    if let Some(pkg) = packages.iter().find(|p| msg.contains(*p)) {
-                                        // We don't have suggestions here easily without calling the daemon
-                                        // So we just report it as PackageNotFound with empty suggestions
-                                        // The original install.rs logic for suggestions is complex to port
-                                        // fully inside this blocking closure without async/await access
+                                if msg.contains("not found")
+                                    && let Some(pkg) = packages.iter().find(|p| msg.contains(*p)) {
                                         return InstallMsg::PackageNotFound {
                                             package: pkg.clone(),
                                             suggestions: Vec::new(),
                                         };
                                     }
-                                }
                                 InstallMsg::Error(e.to_string())
                             }
                         }

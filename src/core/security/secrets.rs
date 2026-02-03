@@ -1,3 +1,8 @@
+//! Secret detection using regex patterns and entropy analysis
+//!
+//! Scans files and content for accidentally committed secrets like API keys,
+//! tokens, private keys, and credentials across 20+ secret types.
+
 use anyhow::Result;
 use regex::Regex;
 use serde::{Deserialize, Serialize};

@@ -25,7 +25,7 @@ pub fn info_sync(package: &str) -> Result<bool> {
         anyhow::bail!("Invalid package name: {e}");
     }
 
-    let pm = get_package_manager();
+    let pm = get_package_manager()?;
     let pm_name = pm.name();
 
     // 1. Try daemon first (ULTRA FAST - <1ms)

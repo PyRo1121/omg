@@ -22,6 +22,15 @@ use crate::package_managers::{PackageManager, get_package_manager};
 use crate::package_managers::{alpm_worker::AlpmWorker, search_detailed};
 use parking_lot::RwLock;
 
+// Constants for package source strings to avoid repeated allocations
+#[cfg(any(feature = "debian", feature = "debian-pure"))]
+const SOURCE_APT: &str = "apt";
+const SOURCE_OFFICIAL: &str = "official";
+#[cfg(feature = "arch")]
+const SOURCE_AUR: &str = "aur";
+const PING_RESPONSE: &str = "pong";
+const CACHE_CLEARED_MSG: &str = "cleared";
+
 /// Daemon state shared across handlers
 pub struct DaemonState {
     pub cache: PackageCache,
@@ -72,7 +81,7 @@ impl DaemonState {
             .allow_burst(crate::core::safe_ops::nonzero_u32_or_default(200, 1));
         let rate_limiter = Arc::new(RateLimiter::direct(quota));
 
-        let pm = get_package_manager();
+        let pm = get_package_manager()?;
         tracing::info!("Using package manager: {}", pm.name());
 
         Ok(Self {
@@ -122,7 +131,7 @@ pub async fn handle_request(state: Arc<DaemonState>, request: Request) -> Respon
         Request::Info { id, package } => handle_info(state, id, package).await,
         Request::Ping { id } => Response::Success {
             id,
-            result: ResponseResult::Ping(String::from("pong")),
+            result: ResponseResult::Ping(PING_RESPONSE.to_string()),
         },
         Request::Status { id } => handle_status(state, id).await,
         Request::Explicit { id } => handle_list_explicit(state, id).await,
@@ -142,7 +151,7 @@ pub async fn handle_request(state: Arc<DaemonState>, request: Request) -> Respon
             state.cache.clear();
             Response::Success {
                 id,
-                result: ResponseResult::Message("cleared".to_string()),
+                result: ResponseResult::Message(CACHE_CLEARED_MSG.to_string()),
             }
         }
         Request::Metrics { id } => handle_metrics(id),
@@ -151,7 +160,7 @@ pub async fn handle_request(state: Arc<DaemonState>, request: Request) -> Respon
         Request::DebianSearch { id, query, limit } => {
             handle_debian_search(state, id, query, limit).await
         }
-        Request::Health { id } => handle_health(state, id),
+        Request::Health { id } => handle_health(&state, id),
     }
 }
 
@@ -181,19 +190,17 @@ async fn handle_debian_search(
     GLOBAL_METRICS.inc_cache_misses();
 
     // Run search in blocking task
-    #[cfg(any(feature = "debian", feature = "debian-pure"))]
-    let query_clone = query.clone();
     let results = tokio::task::spawn_blocking(move || {
         #[cfg(any(feature = "debian", feature = "debian-pure"))]
         {
-            crate::package_managers::apt_search_fast(&query_clone).map(|pkgs| {
+            crate::package_managers::apt_search_fast(&query).map(|pkgs| {
                 pkgs.into_iter()
                     .map(|p| PackageInfo {
                         name: p.name,
                         #[allow(clippy::implicit_clone)] // Version is feature-gated type alias; .to_string() is the required conversion
                         version: p.version.to_string(),
                         description: p.description,
-                        source: "apt".to_string(),
+                        source: SOURCE_APT.to_string(),
                     })
                     .collect::<Vec<PackageInfo>>()
             })
@@ -478,7 +485,7 @@ async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) ->
 
     // 3. Try Package Manager Backend
     if let Ok(Some(info)) = state.package_manager.info(&package).await {
-        let detailed = DetailedPackageInfo {
+        let detailed = Arc::new(DetailedPackageInfo {
             name: info.name,
             #[allow(clippy::implicit_clone)] // Version is feature-gated type alias; .to_string() is the required conversion
             version: info.version.to_string(),
@@ -489,13 +496,12 @@ async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) ->
             repo: String::new(),
             depends: Vec::new(),
             licenses: Vec::new(),
-            source: "official".to_string(),
-        };
-        let info_copy = detailed.clone();
-        state.cache.insert_info(detailed);
+            source: SOURCE_OFFICIAL.to_string(),
+        });
+        state.cache.insert_info_arc(Arc::clone(&detailed));
         return Response::Success {
             id,
-            result: ResponseResult::Info(info_copy),
+            result: ResponseResult::Info(Arc::unwrap_or_clone(detailed)),
         };
     }
 
@@ -505,24 +511,23 @@ async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) ->
         && let Ok(details) = search_detailed(&package).await
         && let Some(pkg) = details.into_iter().find(|p| p.name == package)
     {
-        let detailed = DetailedPackageInfo {
+        let detailed = Arc::new(DetailedPackageInfo {
             name: pkg.name,
             version: pkg.version.clone(),
             description: pkg.description.unwrap_or_default(),
             url: pkg.url.unwrap_or_default(),
             size: 0,
             download_size: 0,
-            repo: "aur".to_string(),
+            repo: SOURCE_AUR.to_string(),
             depends: pkg.depends.unwrap_or_default(),
             licenses: pkg.license.unwrap_or_default(),
-            source: "aur".to_string(),
-        };
+            source: SOURCE_AUR.to_string(),
+        });
 
-        let info_copy = detailed.clone();
-        state.cache.insert_info(detailed);
+        state.cache.insert_info_arc(Arc::clone(&detailed));
         return Response::Success {
             id,
-            result: ResponseResult::Info(info_copy),
+            result: ResponseResult::Info(Arc::unwrap_or_clone(detailed)),
         };
     }
 
@@ -755,12 +760,12 @@ async fn handle_list_explicit(state: Arc<DaemonState>, id: RequestId) -> Respons
 
     match packages_result {
         Ok(Ok(packages)) => {
-            let packages_copy = packages.clone();
-            state.cache.update_explicit(packages);
+            let packages_arc = Arc::new(packages);
+            state.cache.update_explicit_arc(Arc::clone(&packages_arc));
             Response::Success {
                 id,
                 result: ResponseResult::Explicit(ExplicitResult {
-                    packages: packages_copy,
+                    packages: Arc::unwrap_or_clone(packages_arc),
                 }),
             }
         }
@@ -842,7 +847,7 @@ fn validation_error(id: RequestId, message: impl Into<String>) -> Response {
     }
 }
 
-fn handle_health(state: Arc<DaemonState>, id: RequestId) -> Response {
+fn handle_health(state: &Arc<DaemonState>, id: RequestId) -> Response {
     let uptime_seconds = state.start_time.elapsed().as_secs();
     let cache_size = state.cache.stats().size;
     let metrics = GLOBAL_METRICS.snapshot();

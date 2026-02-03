@@ -460,7 +460,7 @@ pub mod server {
 
         execute_cmd(Components::loading("Syncing from upstream..."));
 
-        let pm = crate::package_managers::get_package_manager();
+        let pm = crate::package_managers::get_package_manager()?;
         pm.sync().await?;
 
         // Check for updates to show meaningful status

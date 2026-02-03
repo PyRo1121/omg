@@ -1,3 +1,8 @@
+//! SLSA (Supply-chain Levels for Software Artifacts) provenance verification
+//!
+//! Verifies build provenance and determines SLSA levels (L0-L4) per SLSA v1.0
+//! specification for supply chain security attestation.
+
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

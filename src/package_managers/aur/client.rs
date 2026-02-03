@@ -1,30 +1,12 @@
 //! AUR (Arch User Repository) client with build support
 
 use std::collections::HashSet;
-use std::os::unix::fs::MetadataExt;
-use std::sync::Arc;
-
-/// Check if a needle matches at a word boundary in the haystack.
-/// Word boundaries are: start of string, whitespace, `-`, `_`, `.`
-#[inline]
-fn has_word_boundary_match(haystack: &str, needle: &str) -> bool {
-    for (pos, _) in haystack.match_indices(needle) {
-        if pos == 0
-            || haystack.as_bytes()[pos - 1].is_ascii_whitespace()
-            || haystack.as_bytes()[pos - 1] == b'-'
-            || haystack.as_bytes()[pos - 1] == b'_'
-            || haystack.as_bytes()[pos - 1] == b'.'
-        {
-            return true;
-        }
-    }
-    false
-}
 use std::fs::File;
 use std::io::{BufReader, Cursor, Read};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use alpm_pkginfo::{PackageInfoV1, PackageInfoV2};
@@ -37,52 +19,23 @@ use indicatif::{ProgressBar, ProgressStyle};
 use owo_colors::OwoColorize;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use thiserror::Error;
 use tokio::process::Command;
 use tracing::{instrument, warn};
 use which::which;
 
-#[derive(Error, Debug)]
-pub enum AurError {
-    #[error("Package '{0}' not found on AUR")]
-    #[allow(dead_code)]
-    PackageNotFound(String),
+use super::error::AurError;
+use super::utils::{
+    create_dir_as_user, create_dir_as_user_sync, get_original_user, get_original_user_home,
+    has_word_boundary_match, is_root_owned, remove_dir_as_user,
+};
 
-    #[error("PKGBUILD not found for '{package}'\n  → The AUR package may not exist or the clone failed\n  → Try: omg aur clean {package} && omg install {package}", package = .0)]
-    PkgbuildNotFound(String),
-
-    #[error("Build failed for '{package}'\n  → Check the build log: {log_path}\n  → Common fixes:\n    - Install missing dependencies: omg install <dep>\n    - Clean and retry: omg aur clean {package}\n    - Check AUR comments for known issues", package = .package, log_path = .log_path)]
-    BuildFailed { package: String, log_path: String },
-
-    #[error("Git clone failed for '{package}'\n  → Check if the package exists: https://aur.archlinux.org/packages/{package}\n  → Verify your internet connection\n  → Try again: omg install {package}", package = .0)]
-    GitCloneFailed(String),
-
-    #[error("Git pull failed for '{package}'\n  → The local clone may have conflicts\n  → Fix: omg aur clean {package} && omg install {package}", package = .0)]
-    GitPullFailed(String),
-
-    #[error(
-        "Network error connecting to AUR\n  → Check your internet connection\n  → AUR may be temporarily unavailable\n  → Try again in a few minutes"
-    )]
-    NetworkError(#[from] reqwest::Error),
-
-    #[error(
-        "Sandbox build failed\n  → bubblewrap is not installed\n  → Install: sudo pacman -S bubblewrap\n  → Or enable unsafe builds: omg config set aur.allow_unsafe_builds true"
-    )]
-    SandboxUnavailable,
-
-    #[error(
-        "No package archive found after build for '{0}'\n  → The build may have produced a different package name\n  → Check ~/.cache/omg/aur/_pkgdest/ for the built package"
-    )]
-    PackageArchiveNotFound(String),
-}
-
-use super::aur_deps::check_dependencies;
-use super::aur_index::AurIndex;
-use super::aur_metadata::{
+use super::super::aur_deps::check_dependencies;
+use super::super::aur_index::AurIndex;
+use super::super::aur_metadata::{
     AurJsonPackage, get_metadata_path, read_metadata_archive, sync_aur_metadata,
 };
-use super::aur_sources::{download_sources, parse_sources};
-use super::pkgbuild::PkgBuild;
+use super::super::aur_sources::{download_sources, parse_sources};
+use super::super::pkgbuild::PkgBuild;
 use crate::config::{AurBuildMethod, Settings};
 use crate::core::http::shared_client;
 use crate::core::{Package, PackageSource, paths};
@@ -91,96 +44,6 @@ use crate::package_managers::{get_potential_aur_packages, pacman_db};
 const AUR_RPC_URL: &str = "https://aur.archlinux.org/rpc";
 const AUR_GIT_URL: &str = "https://aur.archlinux.org";
 const AUR_RPC_MAX_URI: usize = 4400;
-
-fn get_original_user() -> Option<String> {
-    if !crate::core::is_root() {
-        return None;
-    }
-    std::env::var("SUDO_USER")
-        .ok()
-        .or_else(|| std::env::var("DOAS_USER").ok())
-}
-
-fn get_original_user_home() -> Option<PathBuf> {
-    get_original_user().map(|user| {
-        std::env::var("SUDO_HOME")
-            .map_or_else(|_| PathBuf::from(format!("/home/{user}")), PathBuf::from)
-    })
-}
-
-async fn create_dir_as_user(path: &Path) -> Result<()> {
-    if let Some(user) = get_original_user() {
-        let path_str = path.to_string_lossy();
-        let status = Command::new("sudo")
-            .args(["-u", &user, "mkdir", "-p", "--", path_str.as_ref()])
-            .status()
-            .await
-            .with_context(|| format!("Failed to create directory as user '{user}': {path_str}"))?;
-
-        if !status.success() {
-            anyhow::bail!(
-                "Failed to create directory as user '{}': {}",
-                user,
-                path.display()
-            );
-        }
-        Ok(())
-    } else {
-        tokio::fs::create_dir_all(path)
-            .await
-            .with_context(|| format!("Failed to create directory: {}", path.display()))
-    }
-}
-
-fn is_root_owned(path: &Path) -> bool {
-    path.metadata().is_ok_and(|m| m.uid() == 0)
-}
-
-async fn remove_dir_as_user(path: &Path) -> Result<()> {
-    if let Some(user) = get_original_user() {
-        let path_str = path.to_string_lossy();
-        let status = Command::new("sudo")
-            .args(["-u", &user, "rm", "-rf", "--", path_str.as_ref()])
-            .status()
-            .await
-            .with_context(|| format!("Failed to remove directory as user '{user}': {path_str}"))?;
-
-        if !status.success() {
-            anyhow::bail!(
-                "Failed to remove directory as user '{}': {}",
-                user,
-                path.display()
-            );
-        }
-        Ok(())
-    } else {
-        tokio::fs::remove_dir_all(path)
-            .await
-            .with_context(|| format!("Failed to remove directory: {}", path.display()))
-    }
-}
-
-fn create_dir_as_user_sync(path: &Path) -> Result<()> {
-    if let Some(user) = get_original_user() {
-        let path_str = path.to_string_lossy();
-        let status = std::process::Command::new("sudo")
-            .args(["-u", &user, "mkdir", "-p", "--", path_str.as_ref()])
-            .status()
-            .with_context(|| format!("Failed to create directory as user '{user}': {path_str}"))?;
-
-        if !status.success() {
-            anyhow::bail!(
-                "Failed to create directory as user '{}': {}",
-                user,
-                path.display()
-            );
-        }
-        Ok(())
-    } else {
-        std::fs::create_dir_all(path)
-            .with_context(|| format!("Failed to create directory: {}", path.display()))
-    }
-}
 
 /// AUR API client with build support
 #[derive(Clone)]
@@ -590,7 +453,7 @@ impl AurClient {
     }
 
     fn metadata_index_path() -> PathBuf {
-        super::aur_metadata::get_index_path()
+        super::super::aur_metadata::get_index_path()
     }
 
     fn chunk_aur_names(names: &[String]) -> Vec<Vec<String>> {
@@ -1362,7 +1225,7 @@ impl AurClient {
             let dep_info = check_dependencies(pkg_dir).unwrap_or_else(|e| {
                 tracing::debug!("Failed to check dependencies: {e}");
                 // Fallback: empty info means we'll run makepkg --syncdeps
-                super::aur_deps::DependencyInfo {
+                super::super::aur_deps::DependencyInfo {
                     missing: Vec::new(),
                     satisfied: Vec::new(),
                     total: 0,

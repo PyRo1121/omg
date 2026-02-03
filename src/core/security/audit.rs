@@ -1,3 +1,8 @@
+//! Tamper-proof audit logging with cryptographic integrity verification
+//!
+//! Provides append-only audit logs with SHA-256 chain verification to detect
+//! tampering, log rotation, and compliance-ready event tracking.
+
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -392,15 +397,13 @@ impl AuditIntegrityReport {
 }
 
 /// Global audit logger instance
-static AUDIT_LOGGER: std::sync::LazyLock<std::sync::Mutex<Option<AuditLogger>>> =
-    std::sync::LazyLock::new(|| std::sync::Mutex::new(None));
+static AUDIT_LOGGER: std::sync::LazyLock<parking_lot::Mutex<Option<AuditLogger>>> =
+    std::sync::LazyLock::new(|| parking_lot::Mutex::new(None));
 
 /// Initialize the global audit logger
 pub fn init_audit_logger() -> Result<()> {
     let logger = AuditLogger::new()?;
-    *AUDIT_LOGGER
-        .lock()
-        .map_err(|e| anyhow::anyhow!("Failed to acquire audit logger lock: {e}"))? = Some(logger);
+    *AUDIT_LOGGER.lock() = Some(logger);
     Ok(())
 }
 
@@ -411,9 +414,8 @@ pub fn audit_log(
     resource: &str,
     description: &str,
 ) {
-    if let Ok(mut guard) = AUDIT_LOGGER.lock()
-        && let Some(logger) = guard.as_mut()
-    {
+    let mut guard = AUDIT_LOGGER.lock();
+    if let Some(logger) = guard.as_mut() {
         let _ = logger.log(event, severity, resource, description);
     } else {
         // Fallback to tracing if audit logger is not available
@@ -429,9 +431,8 @@ pub fn audit_log_with_metadata(
     description: &str,
     metadata: serde_json::Value,
 ) {
-    if let Ok(mut guard) = AUDIT_LOGGER.lock()
-        && let Some(logger) = guard.as_mut()
-    {
+    let mut guard = AUDIT_LOGGER.lock();
+    if let Some(logger) = guard.as_mut() {
         let _ = logger.log_with_metadata(event, severity, resource, description, Some(metadata));
     } else {
         // Fallback to tracing if audit logger is not available

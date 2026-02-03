@@ -428,14 +428,14 @@ fn setup_alpm_callbacks(
         main_pb_clone.set_position(percent as u64);
     });
 
-    let dl_pb_map = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::<
+    let dl_pb_map = std::sync::Arc::new(parking_lot::Mutex::new(std::collections::HashMap::<
         String,
         indicatif::ProgressBar,
     >::new()));
     let mp_clone = mp.clone();
 
     alpm.set_dl_cb(dl_pb_map, move |filename, event, map| {
-        let Ok(mut map) = map.lock() else { return };
+        let mut map = map.lock();
         match event.event() {
             alpm::DownloadEvent::Init(_) => {
                 if map.len() < 4 {
@@ -513,11 +513,16 @@ fn prepare_alpm_transaction(
                     })?;
                 }
             } else {
-                let path = std::path::Path::new(&pkg_name);
-                if path.exists() && (pkg_name.contains(".pkg.tar.") || path.is_absolute()) {
+                if pkg_name.contains(".pkg.tar.") || std::path::Path::new(&pkg_name).is_absolute() {
+                    let canonical_path = std::fs::canonicalize(&pkg_name)
+                        .context("Failed to canonicalize package path")?;
+                    let canonical_str = canonical_path
+                        .to_str()
+                        .context("Package path contains invalid UTF-8")?;
+                    
                     let pkg = tx_guard
                         .0
-                        .pkg_load(pkg_name.clone(), true, alpm::SigLevel::USE_DEFAULT)
+                        .pkg_load(canonical_str.to_string(), true, alpm::SigLevel::USE_DEFAULT)
                         .map_err(|e| {
                             anyhow::anyhow!("Failed to load local package {pkg_name}: {e}")
                         })?;

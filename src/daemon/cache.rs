@@ -115,6 +115,13 @@ impl PackageCache {
             .insert(KEY_EXPLICIT.to_string(), Arc::new(packages));
     }
 
+    pub fn update_explicit_arc(&self, packages: Arc<Vec<String>>) {
+        self.explicit_count
+            .insert(KEY_EXPLICIT_COUNT.to_string(), packages.len());
+        self.explicit_packages
+            .insert(KEY_EXPLICIT.to_string(), packages);
+    }
+
     /// Update explicit package count cache
     pub fn update_explicit_count(&self, count: usize) {
         self.explicit_count

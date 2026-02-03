@@ -125,6 +125,7 @@ impl OmgError {
 }
 
 /// Format an error with its suggestion for display
+#[cold]
 pub fn format_error_with_suggestion(err: &OmgError) -> String {
     let mut msg = format!("Error: {err}");
     if let Some(suggestion) = err.suggestion() {
@@ -135,6 +136,7 @@ pub fn format_error_with_suggestion(err: &OmgError) -> String {
 }
 
 /// Common error suggestions for anyhow errors
+#[cold]
 pub fn suggest_for_anyhow(err: &anyhow::Error) -> Option<&'static str> {
     let msg = err.to_string().to_lowercase();
 

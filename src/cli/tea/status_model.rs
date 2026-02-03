@@ -100,7 +100,7 @@ impl Model for StatusModel {
                     // 1. Try Daemon (Hot Path)
                     #[cfg(unix)]
                     let daemon_result = if tokio::runtime::Handle::try_current().is_ok() {
-                        // Already in runtime
+                        // Already in runtime - spawn thread with its own runtime
                         std::thread::spawn(move || {
                             let Ok(rt) = tokio::runtime::Runtime::new() else {
                                 return None;
@@ -126,7 +126,7 @@ impl Model for StatusModel {
                         .ok()
                         .flatten()
                     } else {
-                        // Create runtime
+                        // No existing runtime - create one
                         let Ok(rt) = tokio::runtime::Runtime::new() else {
                             return StatusMsg::Error("Failed to create async runtime".to_string());
                         };
@@ -163,7 +163,7 @@ impl Model for StatusModel {
                                     return Err(anyhow::anyhow!("Failed to create async runtime"));
                                 };
                                 rt.block_on(async {
-                                    let pm = get_package_manager();
+                                    let pm = get_package_manager()?;
                                     pm.get_status(fast).await
                                 })
                             })
@@ -176,7 +176,7 @@ impl Model for StatusModel {
                                 );
                             };
                             rt.block_on(async {
-                                let pm = get_package_manager();
+                                let pm = get_package_manager()?;
                                 pm.get_status(fast).await
                             })
                         };

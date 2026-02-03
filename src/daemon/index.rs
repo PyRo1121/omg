@@ -1,3 +1,9 @@
+//! In-memory package index with string interning for the daemon.
+//!
+//! Provides O(1) package lookups and SIMD-accelerated substring search
+//! for the daemon's hot path. Uses a string pool to deduplicate package
+//! metadata and reduce memory allocations.
+
 use ahash::AHashMap;
 use anyhow::Result;
 
@@ -56,20 +62,21 @@ impl StringPool {
     /// Bounds are verified in both debug and release builds to prevent UB
     /// from corrupted handles.
     #[inline]
-    #[allow(unsafe_code)] // Justified: Bounds checked, pool is append-only valid UTF-8
-    fn get(&self, handle: u64) -> &str {
+    #[allow(unsafe_code)]
+    fn get(&self, handle: u64) -> Result<&str, &'static str> {
         let (offset, len) = unpack(handle);
         let start = offset as usize;
-        let end = start + len as usize;
-        // Bounds check runs in release builds too - defense in depth
-        assert!(
-            end <= self.pool.len(),
-            "StringPool handle out of bounds: end={end} > pool_len={}",
-            self.pool.len()
-        );
+        let end = start
+            .checked_add(len as usize)
+            .ok_or("StringPool handle overflow")?;
+
+        if end > self.pool.len() {
+            return Err("StringPool handle out of bounds");
+        }
+
         // SAFETY: Bounds verified above. The pool is append-only and all data
         // originates from valid UTF-8 strings via `intern()`.
-        unsafe { std::str::from_utf8_unchecked(&self.pool[start..end]) }
+        Ok(unsafe { std::str::from_utf8_unchecked(&self.pool[start..end]) })
     }
 }
 
@@ -289,7 +296,10 @@ impl PackageIndex {
 
         for (idx, item) in self.items.iter().enumerate() {
             // Zero-allocation: pre-lowercased slices from the string pool
-            let name_lower = self.pool.get(item.name_lower_offset);
+            let name_lower = self
+                .pool
+                .get(item.name_lower_offset)
+                .expect("valid name_lower handle from index");
 
             if let Some(name_score) = Self::score_name_match(&query_lower, name_lower, idx) {
                 scored_matches.push((name_score, idx));
@@ -298,7 +308,10 @@ impl PackageIndex {
                 // Only scan descriptions while we still need more results;
                 // description-only matches are lowest priority and cannot
                 // displace name matches in the top-K output.
-                let desc_lower = self.pool.get(item.description_lower_offset);
+                let desc_lower = self
+                    .pool
+                    .get(item.description_lower_offset)
+                    .expect("valid description_lower handle from index");
                 if desc_finder.find(desc_lower.as_bytes()).is_some() {
                     scored_matches.push((
                         RelevanceScore::new(
@@ -324,10 +337,26 @@ impl PackageIndex {
             .filter_map(|(_, idx)| {
                 let item = self.items.get(idx)?;
                 Some(PackageInfo {
-                    name: self.pool.get(item.name_offset).to_string(),
-                    version: self.pool.get(item.version_offset).to_string(),
-                    description: self.pool.get(item.description_offset).to_string(),
-                    source: self.pool.get(item.source_offset).to_string(),
+                    name: self
+                        .pool
+                        .get(item.name_offset)
+                        .expect("valid name handle")
+                        .to_string(),
+                    version: self
+                        .pool
+                        .get(item.version_offset)
+                        .expect("valid version handle")
+                        .to_string(),
+                    description: self
+                        .pool
+                        .get(item.description_offset)
+                        .expect("valid description handle")
+                        .to_string(),
+                    source: self
+                        .pool
+                        .get(item.source_offset)
+                        .expect("valid source handle")
+                        .to_string(),
                 })
             })
             .collect()
@@ -378,16 +407,40 @@ impl PackageIndex {
         let item = &self.items[idx];
 
         Some(DetailedPackageInfo {
-            name: self.pool.get(item.name_offset).to_string(),
-            version: self.pool.get(item.version_offset).to_string(),
-            description: self.pool.get(item.description_offset).to_string(),
-            url: self.pool.get(item.url_offset).to_string(),
+            name: self
+                .pool
+                .get(item.name_offset)
+                .expect("valid name handle")
+                .to_string(),
+            version: self
+                .pool
+                .get(item.version_offset)
+                .expect("valid version handle")
+                .to_string(),
+            description: self
+                .pool
+                .get(item.description_offset)
+                .expect("valid description handle")
+                .to_string(),
+            url: self
+                .pool
+                .get(item.url_offset)
+                .expect("valid url handle")
+                .to_string(),
             size: item.size,
             download_size: item.download_size,
-            repo: self.pool.get(item.repo_offset).to_string(),
+            repo: self
+                .pool
+                .get(item.repo_offset)
+                .expect("valid repo handle")
+                .to_string(),
             depends: Vec::new(),
             licenses: Vec::new(),
-            source: self.pool.get(item.source_offset).to_string(),
+            source: self
+                .pool
+                .get(item.source_offset)
+                .expect("valid source handle")
+                .to_string(),
         })
     }
 
@@ -420,16 +473,40 @@ impl PackageIndex {
         self.items
             .iter()
             .map(|item| DetailedPackageInfo {
-                name: self.pool.get(item.name_offset).to_string(),
-                version: self.pool.get(item.version_offset).to_string(),
-                description: self.pool.get(item.description_offset).to_string(),
-                url: self.pool.get(item.url_offset).to_string(),
+                name: self
+                    .pool
+                    .get(item.name_offset)
+                    .expect("valid name handle")
+                    .to_string(),
+                version: self
+                    .pool
+                    .get(item.version_offset)
+                    .expect("valid version handle")
+                    .to_string(),
+                description: self
+                    .pool
+                    .get(item.description_offset)
+                    .expect("valid description handle")
+                    .to_string(),
+                url: self
+                    .pool
+                    .get(item.url_offset)
+                    .expect("valid url handle")
+                    .to_string(),
                 size: item.size,
                 download_size: item.download_size,
-                repo: self.pool.get(item.repo_offset).to_string(),
+                repo: self
+                    .pool
+                    .get(item.repo_offset)
+                    .expect("valid repo handle")
+                    .to_string(),
                 depends: Vec::new(),
                 licenses: Vec::new(),
-                source: self.pool.get(item.source_offset).to_string(),
+                source: self
+                    .pool
+                    .get(item.source_offset)
+                    .expect("valid source handle")
+                    .to_string(),
             })
             .collect()
     }
@@ -448,8 +525,8 @@ mod tests {
 
         assert_eq!(off1, off3);
         assert_ne!(off1, off2);
-        assert_eq!(pool.get(off1), "hello");
-        assert_eq!(pool.get(off2), "world");
+        assert_eq!(pool.get(off1).unwrap(), "hello");
+        assert_eq!(pool.get(off2).unwrap(), "world");
     }
 
     #[test]
@@ -459,9 +536,9 @@ mod tests {
         let off_space = pool.intern(" ");
         let off_unicode = pool.intern("🦀");
 
-        assert_eq!(pool.get(off_empty), "");
-        assert_eq!(pool.get(off_space), " ");
-        assert_eq!(pool.get(off_unicode), "🦀");
+        assert_eq!(pool.get(off_empty).unwrap(), "");
+        assert_eq!(pool.get(off_space).unwrap(), " ");
+        assert_eq!(pool.get(off_unicode).unwrap(), "🦀");
     }
 
     #[test]
@@ -470,7 +547,7 @@ mod tests {
         for i in 0..1000 {
             let s = format!("string-{i}");
             let off = pool.intern(&s);
-            assert_eq!(pool.get(off), s);
+            assert_eq!(pool.get(off).unwrap(), s);
         }
     }
 

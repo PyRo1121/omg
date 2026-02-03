@@ -147,12 +147,12 @@ impl Model for UpdateModel {
             > = if tokio::runtime::Handle::try_current().is_ok() {
                 // Runtime exists: use a thread to avoid nesting
                 match std::thread::spawn(|| {
-                    let pm = get_package_manager();
+                    let Ok(rt) = tokio::runtime::Runtime::new() else {
+                        return Err(anyhow::anyhow!("Failed to create async runtime"));
+                    };
+                    let pm = get_package_manager()?;
                     let service = PackageService::new(pm);
-                    match tokio::runtime::Runtime::new() {
-                        Ok(rt) => rt.block_on(async { service.list_updates().await }),
-                        Err(e) => Err(anyhow::anyhow!("Failed to create async runtime: {e}")),
-                    }
+                    rt.block_on(async { service.list_updates().await })
                 })
                 .join()
                 {
@@ -163,14 +163,14 @@ impl Model for UpdateModel {
                 }
             } else {
                 // No runtime: create one (production case)
-                match tokio::runtime::Runtime::new() {
-                    Ok(rt) => rt.block_on(async {
-                        let pm = get_package_manager();
-                        let service = PackageService::new(pm);
-                        service.list_updates().await
-                    }),
-                    Err(e) => Err(anyhow::anyhow!("Failed to create async runtime: {e}")),
-                }
+                (|| {
+                    let Ok(rt) = tokio::runtime::Runtime::new() else {
+                        return Err(anyhow::anyhow!("Failed to create async runtime"));
+                    };
+                    let pm = get_package_manager()?;
+                    let service = PackageService::new(pm);
+                    rt.block_on(async { service.list_updates().await })
+                })()
             };
 
             match updates_result {

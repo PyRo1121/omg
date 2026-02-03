@@ -617,6 +617,7 @@ async fn handle_license_command(command: &LicenseCommands) -> Result<()> {
     }
 }
 
+#[allow(clippy::fn_params_excessive_bools)] // Maps directly to CLI flags: --check, --yes, --dry-run, --fast, --turbo
 async fn handle_update_command(check: bool, yes: bool, dry_run: bool, fast: bool, turbo: bool) -> Result<()> {
     if turbo {
         packages::update_turbo().await
@@ -697,6 +698,7 @@ async fn handle_info_command(package: &str) -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::fn_params_excessive_bools)] // Maps directly to CLI flags: --detailed, --interactive, --json, --no-aur
 async fn handle_search_command(query: &str, detailed: bool, interactive: bool, json_flag: bool, no_aur: bool) -> Result<()> {
     packages::search_with_json(query, detailed, interactive, json_flag, no_aur).await
 }
@@ -709,6 +711,7 @@ async fn handle_remove_command(packages: &[String], recursive: bool, yes: bool, 
     packages::remove(packages, recursive, yes, dry_run).await
 }
 
+#[allow(clippy::fn_params_excessive_bools)] // Maps directly to CLI flags: --orphans, --cache, --aur, --all
 async fn handle_clean_command(orphans: bool, cache: bool, aur: bool, all: bool) -> Result<()> {
     packages::clean(orphans, cache, aur, all).await
 }
@@ -722,6 +725,7 @@ fn handle_history_command(limit: usize, search: Option<&str>, transaction_type: 
 }
 
 /// Main command dispatcher - routes commands to appropriate handlers
+#[allow(clippy::too_many_lines)]
 async fn dispatch_command(command: &Commands, ctx: &omg_lib::cli::CliContext, json_flag: bool) -> Result<()> {
     match command {
         Commands::Run { .. }

@@ -1,3 +1,8 @@
+//! Software Bill of Materials (SBOM) generation in `CycloneDX` format
+//!
+//! Generates industry-standard `CycloneDX` 1.5 SBOMs for compliance,
+//! supply chain security, and vulnerability tracking.
+
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::Path;

@@ -289,7 +289,7 @@ impl Default for SyncDbPackage {
     fn default() -> Self {
         Self {
             name: String::new(),
-            version: super::types::zero_version(),
+            version: super::super::types::zero_version(),
             desc: String::new(),
             filename: String::new(),
             csize: 0,
@@ -323,7 +323,7 @@ impl Default for LocalDbPackage {
     fn default() -> Self {
         Self {
             name: String::new(),
-            version: super::types::zero_version(),
+            version: super::super::types::zero_version(),
             desc: String::new(),
             install_date: String::new(),
             licenses: Vec::new(),
@@ -413,7 +413,7 @@ macro_rules! sync_pkg_from_desc {
         SyncDbPackage {
             name: $desc.name.to_string(),
             version: Version::from_str(&$desc.version.to_string())
-                .unwrap_or_else(|_| super::types::zero_version()),
+                .unwrap_or_else(|_| super::super::types::zero_version()),
             desc: $desc.description.to_string(),
             filename: $desc.file_name.to_string(),
             csize: $desc.compressed_size,
@@ -583,7 +583,7 @@ fn parse_local_desc(path: &Path) -> Result<LocalDbPackage> {
         return Ok(LocalDbPackage {
             name: desc.name.to_string(),
             version: Version::from_str(&desc.version.to_string())
-                .unwrap_or_else(|_| super::types::zero_version()),
+                .unwrap_or_else(|_| super::super::types::zero_version()),
             desc: desc.description.to_string(),
             install_date: desc.installdate.to_string(),
             licenses: desc.license.iter().map(ToString::to_string).collect(),
@@ -596,7 +596,7 @@ fn parse_local_desc(path: &Path) -> Result<LocalDbPackage> {
         return Ok(LocalDbPackage {
             name: desc.name.to_string(),
             version: Version::from_str(&desc.version.to_string())
-                .unwrap_or_else(|_| super::types::zero_version()),
+                .unwrap_or_else(|_| super::super::types::zero_version()),
             desc: desc.description.to_string(),
             install_date: desc.installdate.to_string(),
             licenses: desc.license.iter().map(ToString::to_string).collect(),
@@ -647,7 +647,7 @@ fn parse_local_desc_manual(content: &str) -> Result<LocalDbPackage> {
 
     Ok(LocalDbPackage {
         name,
-        version: Version::from_str(&version).unwrap_or_else(|_| super::types::zero_version()),
+        version: Version::from_str(&version).unwrap_or_else(|_| super::super::types::zero_version()),
         desc,
         install_date,
         licenses,
@@ -987,7 +987,7 @@ pub fn invalidate_caches() {
         *mmap_cache = None;
     }
 
-    super::alpm_direct::clear_alpm_cache();
+    super::super::alpm_direct::clear_alpm_cache();
 
     let cache_dir = get_cache_dir();
     let _ = fs::remove_file(cache_dir.join("sync_db.bin"));
@@ -1012,8 +1012,8 @@ pub fn check_updates_fast() -> Result<Vec<(String, Version, Version, String, Str
 /// Compare two version strings using `alpm_types::Version`
 /// Legacy wrapper for compatibility
 pub fn compare_versions(v1: &str, v2: &str) -> std::cmp::Ordering {
-    let ver1 = Version::from_str(v1).unwrap_or_else(|_| super::types::zero_version());
-    let ver2 = Version::from_str(v2).unwrap_or_else(|_| super::types::zero_version());
+    let ver1 = Version::from_str(v1).unwrap_or_else(|_| super::super::types::zero_version());
+    let ver2 = Version::from_str(v2).unwrap_or_else(|_| super::super::types::zero_version());
     ver1.cmp(&ver2)
 }
 
@@ -1168,7 +1168,7 @@ fn convert_mmap_results(archived: Vec<&rkyv::Archived<RkyvSyncPackage>>) -> Vec<
         .into_iter()
         .map(|p| SyncDbPackage {
             name: p.name.to_string(),
-            version: super::types::parse_version_or_zero(&p.version),
+            version: super::super::types::parse_version_or_zero(&p.version),
             desc: p.desc.to_string(),
             filename: p.filename.to_string(),
             csize: p.csize.into(),

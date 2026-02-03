@@ -199,6 +199,29 @@ pub async fn run(listener: UnixListener, state: Arc<DaemonState>) -> Result<()> 
 /// Maximum request size to prevent `DoS` attacks (1MB should be sufficient)
 const MAX_REQUEST_SIZE: usize = 1024 * 1024;
 
+/// Maximum deserialized request size to prevent compression bomb attacks (10MB)
+const MAX_DESERIALIZED_SIZE: usize = 10 * 1024 * 1024;
+
+/// Maximum batch nesting depth to prevent recursion `DoS`
+const MAX_BATCH_DEPTH: usize = 3;
+
+/// Validate batch request depth to prevent recursion `DoS` attacks
+fn validate_batch_depth(request: &Request, depth: usize) -> Result<()> {
+    if depth > MAX_BATCH_DEPTH {
+        return Err(anyhow::anyhow!(
+            "Batch nesting depth {depth} exceeds maximum of {MAX_BATCH_DEPTH}"
+        ));
+    }
+
+    if let Request::Batch { requests, .. } = request {
+        for req in requests.iter() {
+            validate_batch_depth(req, depth + 1)?;
+        }
+    }
+
+    Ok(())
+}
+
 /// RAII guard for tracking active connections
 struct ConnectionGuard;
 
@@ -260,6 +283,38 @@ async fn handle_client(stream: tokio::net::UnixStream, state: Arc<DaemonState>) 
 
         // Decode request
         let request: Request = bitcode::deserialize(&bytes)?;
+
+        // SECURITY: Validate deserialized size to prevent compression bomb attacks
+        let estimated_size = std::mem::size_of_val(&request);
+        if estimated_size > MAX_DESERIALIZED_SIZE {
+            let msg = format!(
+                "Deserialized request too large: {estimated_size} bytes (max {MAX_DESERIALIZED_SIZE})"
+            );
+            tracing::warn!("{}", msg);
+            audit_log(
+                AuditEventType::PolicyViolation,
+                AuditSeverity::Warning,
+                "daemon_server",
+                &msg,
+            );
+            GLOBAL_METRICS.inc_requests_failed();
+            continue;
+        }
+
+        // SECURITY: Validate batch nesting depth to prevent recursion DoS
+        if let Err(e) = validate_batch_depth(&request, 0) {
+            let msg = format!("Invalid batch structure: {e}");
+            tracing::warn!("{}", msg);
+            audit_log(
+                AuditEventType::PolicyViolation,
+                AuditSeverity::Warning,
+                "daemon_server",
+                &msg,
+            );
+            GLOBAL_METRICS.inc_requests_failed();
+            continue;
+        }
+
         let request_id = request.id();
 
         // SECURITY: Enforce per-connection rate limiting

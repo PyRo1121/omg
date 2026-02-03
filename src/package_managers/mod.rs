@@ -59,7 +59,7 @@ pub use types::{parse_version_or_zero, zero_version};
 #[cfg(feature = "arch")]
 pub fn search_sync(query: &str) -> anyhow::Result<Vec<SyncPackage>> {
     if crate::core::paths::test_mode() {
-        let pm = get_package_manager();
+        let pm = get_package_manager()?;
         let results = futures::executor::block_on(pm.search(query))?;
         return Ok(results
             .into_iter()
@@ -80,7 +80,7 @@ pub fn list_explicit_fast() -> anyhow::Result<Vec<String>> {
     #[cfg(feature = "arch")]
     {
         if crate::core::paths::test_mode() {
-            let pm = get_package_manager();
+            let pm = get_package_manager()?;
             return futures::executor::block_on(pm.list_explicit());
         }
         alpm_direct::list_explicit_fast()
@@ -131,48 +131,48 @@ pub use types::PackageInfo as SyncPkgInfo;
 pub use types::{LocalPackage, SyncPackage};
 
 /// Get the appropriate package manager for the current distribution
-pub fn get_package_manager() -> Arc<dyn PackageManager> {
+pub fn get_package_manager() -> anyhow::Result<Arc<dyn PackageManager>> {
     #[allow(unused_imports)]
     // Feature-gated re-exports; not all features compile the same subset
     use crate::core::env::distro::{Distro, detect_distro};
 
     if crate::core::paths::test_mode() {
         let distro = std::env::var("OMG_TEST_DISTRO").unwrap_or_else(|_| "arch".to_string());
-        return Arc::new(mock::MockPackageManager::new(&distro));
+        return Ok(Arc::new(mock::MockPackageManager::new(&distro)));
     }
 
     match detect_distro() {
         #[cfg(feature = "arch")]
-        Distro::Arch => Arc::new(ArchPackageManager::new()),
+        Distro::Arch => Ok(Arc::new(ArchPackageManager::new())),
         // debian provides AptPackageManager
         #[cfg(feature = "debian")]
-        Distro::Debian | Distro::Ubuntu => Arc::new(AptPackageManager::new()),
+        Distro::Debian | Distro::Ubuntu => Ok(Arc::new(AptPackageManager::new())),
         // debian-pure provides PureDebianPackageManager
         #[cfg(all(not(feature = "debian"), feature = "debian-pure"))]
-        Distro::Debian | Distro::Ubuntu => Arc::new(debian_pure::PureDebianPackageManager::new()),
+        Distro::Debian | Distro::Ubuntu => Ok(Arc::new(debian_pure::PureDebianPackageManager::new())),
         // Fedora/RHEL provides DnfPackageManager (pure Rust)
         #[cfg(feature = "fedora")]
-        Distro::Fedora => Arc::new(dnf::DnfPackageManager::new()),
+        Distro::Fedora => Ok(Arc::new(dnf::DnfPackageManager::new())),
         // macOS provides HomebrewPackageManager
         #[cfg(any(feature = "macos", target_os = "macos"))]
-        Distro::MacOS => Arc::new(homebrew::HomebrewPackageManager::new()),
+        Distro::MacOS => Ok(Arc::new(homebrew::HomebrewPackageManager::new())),
         // Windows provides WindowsPackageManager
         #[cfg(feature = "windows")]
-        Distro::Windows => Arc::new(windows::WindowsPackageManager::new()),
+        Distro::Windows => Ok(Arc::new(windows::WindowsPackageManager::new())),
         _ => {
             // Fallback or default
             #[cfg(feature = "arch")]
-            return Arc::new(ArchPackageManager::new());
+            return Ok(Arc::new(ArchPackageManager::new()));
 
             #[cfg(all(not(feature = "arch"), feature = "debian"))]
-            return Arc::new(AptPackageManager::new());
+            return Ok(Arc::new(AptPackageManager::new()));
 
             #[cfg(all(
                 not(feature = "arch"),
                 not(feature = "debian"),
                 feature = "debian-pure"
             ))]
-            return Arc::new(debian_pure::PureDebianPackageManager::new());
+            return Ok(Arc::new(debian_pure::PureDebianPackageManager::new()));
 
             #[cfg(all(
                 not(feature = "arch"),
@@ -180,7 +180,7 @@ pub fn get_package_manager() -> Arc<dyn PackageManager> {
                 not(feature = "debian-pure"),
                 any(feature = "macos", target_os = "macos")
             ))]
-            return Arc::new(homebrew::HomebrewPackageManager::new());
+            return Ok(Arc::new(homebrew::HomebrewPackageManager::new()));
 
             #[cfg(all(
                 not(feature = "arch"),
@@ -189,7 +189,7 @@ pub fn get_package_manager() -> Arc<dyn PackageManager> {
                 not(any(feature = "macos", target_os = "macos")),
                 feature = "fedora"
             ))]
-            return Arc::new(dnf::DnfPackageManager::new());
+            return Ok(Arc::new(dnf::DnfPackageManager::new()));
 
             #[cfg(all(
                 not(feature = "arch"),
@@ -199,7 +199,7 @@ pub fn get_package_manager() -> Arc<dyn PackageManager> {
                 not(feature = "fedora"),
                 feature = "windows"
             ))]
-            return Arc::new(windows::WindowsPackageManager::new());
+            return Ok(Arc::new(windows::WindowsPackageManager::new()));
 
             #[cfg(not(any(
                 feature = "arch",
@@ -211,7 +211,7 @@ pub fn get_package_manager() -> Arc<dyn PackageManager> {
             #[cfg(not(target_os = "macos"))]
             #[allow(unreachable_code)]
             {
-                panic!(
+                anyhow::bail!(
                     "No package manager backend enabled! Build with --features arch, debian, fedora, or windows"
                 );
             }
@@ -223,7 +223,7 @@ pub fn get_package_manager() -> Arc<dyn PackageManager> {
 #[cfg(feature = "debian")]
 pub fn apt_search_sync(query: &str) -> anyhow::Result<Vec<SyncPackage>> {
     if crate::core::paths::test_mode() {
-        let pm = get_package_manager();
+        let pm = get_package_manager()?;
         let results = futures::executor::block_on(pm.search(query))?;
         return Ok(results
             .into_iter()
@@ -243,7 +243,7 @@ pub fn apt_search_sync(query: &str) -> anyhow::Result<Vec<SyncPackage>> {
 #[cfg(feature = "debian")]
 pub fn apt_list_explicit() -> anyhow::Result<Vec<String>> {
     if crate::core::paths::test_mode() {
-        let pm = get_package_manager();
+        let pm = get_package_manager()?;
         return futures::executor::block_on(pm.list_explicit());
     }
     apt::list_explicit()

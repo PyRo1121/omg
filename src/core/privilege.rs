@@ -65,7 +65,7 @@ impl PrivilegeChecker for SystemPrivilegeChecker {
 pub struct MockPrivilegeChecker {
     pub is_root_value: bool,
     pub should_elevate: bool,
-    pub elevation_log: std::sync::Arc<std::sync::Mutex<Vec<(String, Vec<String>)>>>,
+    pub elevation_log: std::sync::Arc<parking_lot::Mutex<Vec<(String, Vec<String>)>>>,
 }
 
 #[cfg(test)]
@@ -81,7 +81,7 @@ impl MockPrivilegeChecker {
         Self {
             is_root_value: false,
             should_elevate: true,
-            elevation_log: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            elevation_log: std::sync::Arc::new(parking_lot::Mutex::new(Vec::new())),
         }
     }
 
@@ -94,7 +94,7 @@ impl MockPrivilegeChecker {
     }
 
     pub fn get_elevation_log(&self) -> Vec<(String, Vec<String>)> {
-        self.elevation_log.lock().unwrap().clone()
+        self.elevation_log.lock().clone()
     }
 }
 
@@ -107,7 +107,6 @@ impl PrivilegeChecker for MockPrivilegeChecker {
     fn elevate(&self, operation: &str, args: &[String]) -> std::io::Result<()> {
         self.elevation_log
             .lock()
-            .unwrap()
             .push((operation.to_string(), args.to_vec()));
 
         if self.should_elevate {
@@ -239,11 +238,11 @@ pub async fn run_self_sudo(args: &[&str]) -> anyhow::Result<()> {
     // Otherwise, try -n first and fall back to interactive mode
 
     // Try non-interactive sudo first (both modes start with this)
-    // Note: We pass OMG_ELEVATED=1 as an argument to sudo, not as env var,
-    // because sudo doesn't pass through env vars from its parent by default.
+    // Note: We set OMG_ELEVATED=1 as an environment variable for the child process.
+    // This prevents infinite recursion when the elevated process checks this flag.
     let status = tokio::process::Command::new("sudo")
         .arg("-n")
-        .arg("OMG_ELEVATED=1")
+        .env("OMG_ELEVATED", "1")
         .arg("--")
         .arg(&exe)
         .args(args)
@@ -310,10 +309,8 @@ pub async fn run_self_sudo(args: &[&str]) -> anyhow::Result<()> {
             Ok(_) | Err(_) => {
                 tracing::debug!("Password required, running interactive sudo");
 
-                // Use tokio async command for consistency
-                // Pass OMG_ELEVATED=1 as argument so sudo sets it for the child
                 let interactive_status = tokio::process::Command::new("sudo")
-                    .arg("OMG_ELEVATED=1")
+                    .env("OMG_ELEVATED", "1")
                     .arg("--")
                     .arg(&exe)
                     .args(args)
