@@ -31,10 +31,10 @@ proptest! {
     fn prop_search_never_crashes(query in "[^\x00]*") {
         let result = run_omg(&["search", &query]);
         prop_assert!(!result.stderr.contains("panicked at"));
-        
+
         if result.success && !result.stdout.is_empty() {
             let has_valid_output = result.stdout.contains("Search Results") ||
-                                  result.stdout.contains("Package") || 
+                                  result.stdout.contains("Package") ||
                                   result.stdout.contains("No results") ||
                                   result.stdout.contains("git") ||
                                   result.stdout.contains("pacman");
@@ -84,15 +84,15 @@ proptest! {
         let input = format!("{word}{meta}{word}");
         let result = run_omg(&["search", &input]);
         prop_assert!(!result.stderr.contains("panicked at"));
-        
+
         prop_assert!(!result.stdout.contains("root:"), "Should not leak /etc/passwd");
         prop_assert!(!result.stdout.contains("/etc/shadow"), "Should not access shadow file");
         prop_assert!(!result.stdout.contains("uid="), "Should not execute `id` command");
         prop_assert!(!result.stderr.contains("sh:"), "Should not spawn shell");
-        
+
         if result.success {
             let has_results = result.stdout.contains("Search Results") ||
-                            result.stdout.contains("No results") || 
+                            result.stdout.contains("No results") ||
                             result.stdout.contains("Package");
             prop_assert!(
                 has_results,
@@ -133,14 +133,14 @@ proptest! {
     fn prop_unicode_safe(s in "\\PC{1,50}") {
         let result = run_omg(&["search", &s]);
         prop_assert!(!result.stderr.contains("panicked at"));
-        
+
         if result.success {
             let is_valid_utf8 = std::str::from_utf8(result.stdout.as_bytes()).is_ok();
             prop_assert!(is_valid_utf8, "Output should be valid UTF-8");
-            
-            let has_structured_output = result.stdout.is_empty() || 
+
+            let has_structured_output = result.stdout.is_empty() ||
                                        result.stdout.contains("Search Results") ||
-                                       result.stdout.contains("Package") || 
+                                       result.stdout.contains("Package") ||
                                        result.stdout.contains("No results");
             prop_assert!(has_structured_output, "Valid output should be structured");
         } else if !result.stderr.is_empty() {
@@ -155,7 +155,7 @@ proptest! {
         let long_input: String = "a".repeat(len);
         let result = run_omg(&["search", &long_input]);
         prop_assert!(!result.stderr.contains("panicked at"));
-        
+
         let output_reasonable_size = result.stdout.len() < len * 100;
         prop_assert!(
             output_reasonable_size,
@@ -163,7 +163,7 @@ proptest! {
             len,
             result.stdout.len()
         );
-        
+
         if result.success || !result.stderr.is_empty() {
             let total_output = result.stdout.len() + result.stderr.len();
             prop_assert!(
@@ -194,15 +194,15 @@ proptest! {
         let version = format!("{major}.{minor}.{patch}");
         let result = run_omg(&["use", "node", &version]);
         prop_assert!(!result.stderr.contains("panicked at"));
-        
+
         if !result.success {
-            let has_helpful_error = result.stderr.contains("not available") || 
+            let has_helpful_error = result.stderr.contains("not available") ||
                                    result.stderr.contains("not found") ||
                                    result.stderr.contains("version") ||
                                    result.stderr.contains("error");
             prop_assert!(
-                has_helpful_error, 
-                "Error should be helpful, got: {}", 
+                has_helpful_error,
+                "Error should be helpful, got: {}",
                 result.stderr.chars().take(200).collect::<String>()
             );
         } else {

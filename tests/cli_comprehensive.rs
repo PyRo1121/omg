@@ -491,7 +491,9 @@ mod error_tests {
         assert!(!result.success, "Should fail for invalid command");
         let combined = result.combined_output();
         assert!(
-            combined.contains("error") || combined.contains("not found") || combined.contains("unrecognized"),
+            combined.contains("error")
+                || combined.contains("not found")
+                || combined.contains("unrecognized"),
             "Should show error message"
         );
     }

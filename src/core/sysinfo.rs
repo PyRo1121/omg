@@ -134,8 +134,7 @@ impl SystemInfo {
 
 /// Detect number of CPU cores
 fn detect_cpu_cores() -> usize {
-    std::thread::available_parallelism()
-        .map_or(1, std::num::NonZero::get)
+    std::thread::available_parallelism().map_or(1, std::num::NonZero::get)
 }
 
 /// Detect kernel version
