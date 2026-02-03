@@ -5,9 +5,9 @@ use crate::package_managers::parse_version_or_zero;
 use crate::package_managers::{PackageManager, types::UpdateInfo};
 use anyhow::Result;
 use async_trait::async_trait;
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::Arc;
-use parking_lot::Mutex;
 
 /// Mock package manager with configurable behavior
 pub struct TestPackageManager {

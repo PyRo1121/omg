@@ -647,7 +647,8 @@ fn parse_local_desc_manual(content: &str) -> Result<LocalDbPackage> {
 
     Ok(LocalDbPackage {
         name,
-        version: Version::from_str(&version).unwrap_or_else(|_| super::super::types::zero_version()),
+        version: Version::from_str(&version)
+            .unwrap_or_else(|_| super::super::types::zero_version()),
         desc,
         install_date,
         licenses,
@@ -1462,7 +1463,7 @@ mod tests {
     fn test_mmap_index_load_truncated_file() {
         let temp_dir = tempfile::TempDir::new().unwrap();
         let test_file = temp_dir.path().join("truncated.rkyv");
-        
+
         let partial_data = vec![0x52, 0x4B, 0x59, 0x56];
         std::fs::write(&test_file, &partial_data).unwrap();
 
@@ -1488,7 +1489,7 @@ mod tests {
     fn test_mmap_index_load_wrong_format() {
         let temp_dir = tempfile::TempDir::new().unwrap();
         let test_file = temp_dir.path().join("wrong_format.rkyv");
-        
+
         let json_data = br#"{"not": "rkyv", "format": "json"}"#;
         std::fs::write(&test_file, json_data).unwrap();
 

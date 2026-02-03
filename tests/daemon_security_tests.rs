@@ -223,12 +223,20 @@ async fn test_health_endpoint_returns_status() {
             assert_eq!(id, 42, "Response ID should match request");
             if let omg_lib::daemon::protocol::ResponseResult::Health(health) = result {
                 assert!(
-                    health.status == "healthy" || health.status == "degraded" || health.status == "unhealthy",
+                    health.status == "healthy"
+                        || health.status == "degraded"
+                        || health.status == "unhealthy",
                     "Status should be one of the valid states, got: {}",
                     health.status
                 );
-                assert!(health.uptime_seconds < 60, "Uptime should be reasonable for test");
-                assert!(health.cache_size < 1_000_000, "Cache size should be reasonable");
+                assert!(
+                    health.uptime_seconds < 60,
+                    "Uptime should be reasonable for test"
+                );
+                assert!(
+                    health.cache_size < 1_000_000,
+                    "Cache size should be reasonable"
+                );
             } else {
                 panic!("Expected Health response result");
             }
@@ -305,7 +313,8 @@ async fn test_cache_stats_handler() {
     match response {
         Response::Success { id, result } => {
             assert_eq!(id, 999);
-            if let omg_lib::daemon::protocol::ResponseResult::CacheStats { size, max_size } = result {
+            if let omg_lib::daemon::protocol::ResponseResult::CacheStats { size, max_size } = result
+            {
                 assert!(size <= max_size, "Cache size should not exceed max");
                 assert!(max_size > 0, "Max cache size should be positive");
             } else {

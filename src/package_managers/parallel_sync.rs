@@ -147,11 +147,11 @@ async fn finalize_downloaded_file(temp_path: &Path, dest: &Path) -> Result<()> {
     let mut file = File::open(temp_path).await?;
     file.flush().await.context("Failed to flush file")?;
     drop(file);
-    
+
     tokio::fs::rename(temp_path, dest)
         .await
         .context("Failed to rename temp file to destination")?;
-    
+
     Ok(())
 }
 

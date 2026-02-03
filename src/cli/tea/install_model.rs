@@ -170,12 +170,13 @@ impl Model for InstallModel {
                             Err(e) => {
                                 let msg = e.to_string();
                                 if msg.contains("not found")
-                                    && let Some(pkg) = packages.iter().find(|p| msg.contains(*p)) {
-                                        return InstallMsg::PackageNotFound {
-                                            package: pkg.clone(),
-                                            suggestions: Vec::new(),
-                                        };
-                                    }
+                                    && let Some(pkg) = packages.iter().find(|p| msg.contains(*p))
+                                {
+                                    return InstallMsg::PackageNotFound {
+                                        package: pkg.clone(),
+                                        suggestions: Vec::new(),
+                                    };
+                                }
                                 InstallMsg::Error(e.to_string())
                             }
                         }

@@ -22,7 +22,7 @@ fn setup_test_env() -> (TempDir, Arc<DaemonState>) {
     }
 
     let temp_dir = TempDir::new().unwrap();
-    
+
     unsafe {
         std::env::set_var("OMG_DAEMON_DATA_DIR", temp_dir.path());
         std::env::set_var("OMG_DATA_DIR", temp_dir.path());
@@ -84,7 +84,10 @@ async fn test_suggest_endpoint_handles_empty_query() {
         Response::Success { id, result } => {
             assert_eq!(id, 200);
             if let ResponseResult::Suggest(suggestions) = result {
-                assert!(suggestions.is_empty(), "Empty query should return empty suggestions");
+                assert!(
+                    suggestions.is_empty(),
+                    "Empty query should return empty suggestions"
+                );
             } else {
                 panic!("Expected Suggest response");
             }
@@ -215,8 +218,12 @@ async fn test_batch_request_handles_mixed_success_and_failure() {
                 assert_eq!(responses.len(), 3);
                 // First and third should succeed (Ping)
                 // Second should fail (invalid package name)
-                let has_success = responses.iter().any(|r| matches!(r, Response::Success { .. }));
-                let has_error = responses.iter().any(|r| matches!(r, Response::Error { .. }));
+                let has_success = responses
+                    .iter()
+                    .any(|r| matches!(r, Response::Success { .. }));
+                let has_error = responses
+                    .iter()
+                    .any(|r| matches!(r, Response::Error { .. }));
                 assert!(has_success, "Should have some successful responses");
                 assert!(has_error, "Should have some error responses");
             } else {
@@ -371,7 +378,10 @@ async fn test_concurrent_search_requests_different_queries() {
     // All should succeed
     for handle in handles {
         let response = handle.await.unwrap();
-        assert!(matches!(response, Response::Success { .. }), "Concurrent search should succeed");
+        assert!(
+            matches!(response, Response::Success { .. }),
+            "Concurrent search should succeed"
+        );
     }
 }
 
@@ -426,7 +436,10 @@ async fn test_invalid_package_name_returns_helpful_error() {
         match response {
             Response::Error { code, message, .. } => {
                 assert_eq!(code, error_codes::INVALID_PARAMS);
-                assert!(message.contains("Invalid package name"), "Error should mention invalid name");
+                assert!(
+                    message.contains("Invalid package name"),
+                    "Error should mention invalid name"
+                );
             }
             Response::Success { .. } => panic!("Should reject invalid package name: {}", invalid),
         }
@@ -451,7 +464,10 @@ async fn test_oversized_query_is_rejected() {
     match response {
         Response::Error { code, message, .. } => {
             assert_eq!(code, error_codes::INVALID_PARAMS);
-            assert!(message.contains("too long") || message.contains("Query"), "Error should mention query length");
+            assert!(
+                message.contains("too long") || message.contains("Query"),
+                "Error should mention query length"
+            );
         }
         Response::Success { .. } => panic!("Should reject oversized query"),
     }
@@ -476,9 +492,15 @@ async fn test_state_recovery_after_error() {
 
     match response {
         Response::Success { result, .. } => {
-            assert!(matches!(result, ResponseResult::Ping(_)), "Daemon should recover after error");
+            assert!(
+                matches!(result, ResponseResult::Ping(_)),
+                "Daemon should recover after error"
+            );
         }
-        Response::Error { message, .. } => panic!("Daemon should be operational after previous error: {}", message),
+        Response::Error { message, .. } => panic!(
+            "Daemon should be operational after previous error: {}",
+            message
+        ),
     }
 }
 
@@ -500,14 +522,19 @@ async fn test_health_status_reflects_cache_size() {
             if let ResponseResult::Health(health) = result {
                 // Verify health status is one of valid states
                 assert!(
-                    health.status == "healthy" || health.status == "degraded" || health.status == "unhealthy",
+                    health.status == "healthy"
+                        || health.status == "degraded"
+                        || health.status == "unhealthy",
                     "Invalid health status: {}",
                     health.status
                 );
 
                 // Verify health reflects cache size
                 if health.cache_size > 50_000 {
-                    assert_eq!(health.status, "degraded", "Large cache should trigger degraded status");
+                    assert_eq!(
+                        health.status, "degraded",
+                        "Large cache should trigger degraded status"
+                    );
                 }
             } else {
                 panic!("Expected Health response");

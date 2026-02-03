@@ -852,9 +852,9 @@ fn handle_health(state: &Arc<DaemonState>, id: RequestId) -> Response {
     let cache_size = state.cache.stats().size;
     let metrics = GLOBAL_METRICS.snapshot();
     let active_connections = metrics.active_connections;
-    
+
     let memory_usage_mb = 0u64;
-    
+
     let status = if cache_size > 50_000 {
         "degraded".to_string()
     } else if cache_size > 100_000 || metrics.requests_failed > 1000 {
@@ -862,7 +862,7 @@ fn handle_health(state: &Arc<DaemonState>, id: RequestId) -> Response {
     } else {
         "healthy".to_string()
     };
-    
+
     Response::Success {
         id,
         result: ResponseResult::Health(HealthStatus {

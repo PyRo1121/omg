@@ -1270,10 +1270,13 @@ mod tests {
 
         let index = DebianMmapIndex::open(&test_file).unwrap();
         let result = index.get("vim");
-        
+
         assert!(result.is_err(), "Should fail to access corrupted archive");
         assert!(
-            result.unwrap_err().to_string().contains("Corrupted Debian package index"),
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Corrupted Debian package index"),
             "Error should mention corruption"
         );
     }
@@ -1286,7 +1289,7 @@ mod tests {
 
         let index = DebianMmapIndex::open(&test_file).unwrap();
         let result = index.search("vim", 10);
-        
+
         assert!(result.is_err(), "Should fail to search corrupted archive");
         assert!(
             result.unwrap_err().to_string().contains("Corrupted"),
@@ -1302,7 +1305,7 @@ mod tests {
 
         let index = DebianMmapIndex::open(&test_file).unwrap();
         let result = index.get("vim");
-        
+
         assert!(result.is_err(), "Should fail to access empty file");
     }
 
@@ -1314,7 +1317,7 @@ mod tests {
 
         let index = DebianMmapIndex::open(&test_file).unwrap();
         let result = index.list_all();
-        
+
         assert!(result.is_err(), "Should fail to list from corrupted file");
     }
 }

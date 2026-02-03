@@ -149,7 +149,9 @@ pub fn get_package_manager() -> anyhow::Result<Arc<dyn PackageManager>> {
         Distro::Debian | Distro::Ubuntu => Ok(Arc::new(AptPackageManager::new())),
         // debian-pure provides PureDebianPackageManager
         #[cfg(all(not(feature = "debian"), feature = "debian-pure"))]
-        Distro::Debian | Distro::Ubuntu => Ok(Arc::new(debian_pure::PureDebianPackageManager::new())),
+        Distro::Debian | Distro::Ubuntu => {
+            Ok(Arc::new(debian_pure::PureDebianPackageManager::new()))
+        }
         // Fedora/RHEL provides DnfPackageManager (pure Rust)
         #[cfg(feature = "fedora")]
         Distro::Fedora => Ok(Arc::new(dnf::DnfPackageManager::new())),

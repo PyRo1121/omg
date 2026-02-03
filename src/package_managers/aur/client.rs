@@ -1665,8 +1665,7 @@ impl AurClient {
     }
 
     fn makepkg_env(&self, pkg_dir: &Path) -> Result<MakepkgEnv> {
-        let jobs = std::thread::available_parallelism()
-            .map_or(1, std::num::NonZero::get);
+        let jobs = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
         let makeflags = self
             .settings
             .aur
@@ -2141,16 +2140,16 @@ mod tests {
     #[test]
     fn test_chunk_aur_names_boundary() {
         let mut names = Vec::new();
-        
+
         // URL boundary calculation: Each package adds "&arg[]=".len() (7) + name.len()
         // Base: "https://aur.archlinux.org/rpc?v=5&type=info" = 47 chars
         // Available: 4400 - 47 = 4353 chars. With 20-char names: 4353 / 27 ≈ 161 packages/chunk
         for i in 0..200 {
             names.push(format!("package-name-{:04}", i));
         }
-        
+
         let chunks = AurClient::chunk_aur_names(&names);
-        
+
         let base_len = format!("{AUR_RPC_URL}?v=5&type=info").len();
         for (idx, chunk) in chunks.iter().enumerate() {
             let mut url_len = base_len;
@@ -2165,9 +2164,12 @@ mod tests {
                 AUR_RPC_MAX_URI
             );
         }
-        
+
         let total_packages: usize = chunks.iter().map(|c| c.len()).sum();
-        assert_eq!(total_packages, 200, "All packages must be included in chunks");
+        assert_eq!(
+            total_packages, 200,
+            "All packages must be included in chunks"
+        );
     }
 
     #[test]
@@ -2178,9 +2180,9 @@ mod tests {
             "c".repeat(200),
             "short".to_string(),
         ];
-        
+
         let chunks = AurClient::chunk_aur_names(&names);
-        
+
         let base_len = format!("{AUR_RPC_URL}?v=5&type=info").len();
         for chunk in &chunks {
             let mut url_len = base_len;
@@ -2189,7 +2191,7 @@ mod tests {
             }
             assert!(url_len <= AUR_RPC_MAX_URI);
         }
-        
+
         let total: usize = chunks.iter().map(|c| c.len()).sum();
         assert_eq!(total, 4);
     }
@@ -2198,14 +2200,14 @@ mod tests {
     fn test_chunk_aur_names_exactly_at_boundary() {
         let base_len = format!("{AUR_RPC_URL}?v=5&type=info").len();
         let available = AUR_RPC_MAX_URI - base_len;
-        
+
         // Formula: arg_size = "&arg[]=".len() + pkg_name.len() = 7 + 10 = 17 chars/pkg
         let arg_size = "&arg[]=".len() + 10;
         let count = available / arg_size;
-        
+
         let names: Vec<String> = (0..count).map(|i| format!("pkg{:06}", i)).collect();
         let chunks = AurClient::chunk_aur_names(&names);
-        
+
         assert_eq!(chunks.len(), 1, "Should fit exactly in one chunk");
         assert_eq!(chunks[0].len(), count);
     }

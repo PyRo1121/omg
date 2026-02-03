@@ -519,7 +519,7 @@ fn prepare_alpm_transaction(
                     let canonical_str = canonical_path
                         .to_str()
                         .context("Package path contains invalid UTF-8")?;
-                    
+
                     let pkg = tx_guard
                         .0
                         .pkg_load(canonical_str.to_string(), true, alpm::SigLevel::USE_DEFAULT)

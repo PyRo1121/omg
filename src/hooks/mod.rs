@@ -213,10 +213,16 @@ fn parse_tool_versions_file(file_path: &Path, versions: &mut HashMap<String, Str
     }
 }
 
-fn parse_rust_toolchain_file(file_path: &Path, runtime: &str, versions: &mut HashMap<String, String>) {
+fn parse_rust_toolchain_file(
+    file_path: &Path,
+    runtime: &str,
+    versions: &mut HashMap<String, String>,
+) {
     if let Ok(content) = std::fs::read_to_string(file_path) {
         for line in content.lines() {
-            if line.contains("channel") && let Some(version) = line.split('=').nth(1) {
+            if line.contains("channel")
+                && let Some(version) = line.split('=').nth(1)
+            {
                 let v = version.trim().trim_matches('"').trim_matches('\'');
                 versions.insert(runtime.to_string(), v.to_string());
             }
@@ -239,7 +245,11 @@ fn parse_go_mod_file(file_path: &Path, runtime: &str, versions: &mut HashMap<Str
     }
 }
 
-fn parse_simple_version_file(file_path: &Path, runtime: &str, versions: &mut HashMap<String, String>) {
+fn parse_simple_version_file(
+    file_path: &Path,
+    runtime: &str,
+    versions: &mut HashMap<String, String>,
+) {
     if let Ok(content) = std::fs::read_to_string(file_path) {
         let version = content.trim().trim_start_matches('v').to_string();
         if !version.is_empty() {
@@ -261,7 +271,9 @@ fn try_parse_version_file(
         "package.json" => {
             if let Some(extra) = read_package_json_versions(dir) {
                 for (runtime, version) in extra {
-                    versions.entry(runtime).or_insert_with(|| version.trim().to_string());
+                    versions
+                        .entry(runtime)
+                        .or_insert_with(|| version.trim().to_string());
                 }
             }
         }
@@ -269,7 +281,9 @@ fn try_parse_version_file(
         ".mise.toml" | ".mise.local.toml" | "mise.toml" => {
             if let Some(extra) = read_mise_versions(file_path) {
                 for (runtime, version) in extra {
-                    versions.entry(runtime).or_insert_with(|| version.trim().to_string());
+                    versions
+                        .entry(runtime)
+                        .or_insert_with(|| version.trim().to_string());
                 }
             }
         }

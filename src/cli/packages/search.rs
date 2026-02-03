@@ -281,7 +281,9 @@ mod tests {
     fn test_display_package_from_package() {
         let pkg = Package {
             name: "firefox".to_string(),
-            version: alpm_types::Version::from("123.0-1".parse::<alpm_types::FullVersion>().unwrap()),
+            version: alpm_types::Version::from(
+                "123.0-1".parse::<alpm_types::FullVersion>().unwrap(),
+            ),
             description: "Fast web browser".to_string(),
             source: crate::core::PackageSource::Official,
             installed: false,
@@ -329,40 +331,43 @@ mod tests {
         let long_query = "a".repeat(101);
         let result = search_internal(&long_query, false, false, false, false).await;
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Search query too long"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Search query too long")
+        );
     }
 
     #[tokio::test]
     async fn test_search_query_control_chars() {
         let result = search_internal("test\x00query", false, false, false, false).await;
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("invalid characters"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("invalid characters")
+        );
     }
 
     #[tokio::test]
     async fn test_search_query_path_traversal() {
         let result = search_internal("../etc/passwd", false, false, false, false).await;
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("path traversal"));
+        assert!(result.unwrap_err().to_string().contains("path traversal"));
     }
 
     #[tokio::test]
     async fn test_search_query_shell_metacharacters() {
         let result = search_internal("test;rm -rf", false, false, false, false).await;
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("shell metacharacters"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("shell metacharacters")
+        );
     }
 
     #[test]

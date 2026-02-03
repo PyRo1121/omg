@@ -560,12 +560,17 @@ async fn handle_workspace_command(command: &omg_lib::cli::WorkspaceCommands) -> 
     use omg_lib::cli::WorkspaceCommands;
     match command {
         WorkspaceCommands::Init { name } => omg_lib::cli::workspace::init(name),
-        WorkspaceCommands::Add { path, name } => omg_lib::cli::workspace::add(path, name.as_deref()),
+        WorkspaceCommands::Add { path, name } => {
+            omg_lib::cli::workspace::add(path, name.as_deref())
+        }
         WorkspaceCommands::Remove { project } => omg_lib::cli::workspace::remove(project),
         WorkspaceCommands::List => omg_lib::cli::workspace::list(),
-        WorkspaceCommands::Run { command: cmd, args, parallel, filter } => {
-            omg_lib::cli::workspace::run(cmd, args, *parallel, filter.as_deref()).await
-        }
+        WorkspaceCommands::Run {
+            command: cmd,
+            args,
+            parallel,
+            filter,
+        } => omg_lib::cli::workspace::run(cmd, args, *parallel, filter.as_deref()).await,
         WorkspaceCommands::Diff { branch } => omg_lib::cli::workspace::diff(branch),
         WorkspaceCommands::Sync { yes } => omg_lib::cli::workspace::sync(*yes),
         WorkspaceCommands::Status => omg_lib::cli::workspace::status(),
@@ -588,20 +593,46 @@ fn handle_container_command(command: &ContainerCommands) -> Result<()> {
     use omg_lib::cli::container;
     match command {
         ContainerCommands::Status => container::status(),
-        ContainerCommands::Run { image, command: cmd, name, detach, interactive, env, volume, workdir } => {
-            container::run(image, cmd, name.clone(), *detach, *interactive, env, volume, workdir.clone())
-        }
-        ContainerCommands::Shell { image, workdir, env, volume } => {
-            container::shell(image.clone(), workdir.clone(), env, volume)
-        }
-        ContainerCommands::Build { dockerfile, tag, no_cache, build_arg, target } => {
-            container::build(dockerfile.clone(), tag, *no_cache, build_arg, target)
-        }
+        ContainerCommands::Run {
+            image,
+            command: cmd,
+            name,
+            detach,
+            interactive,
+            env,
+            volume,
+            workdir,
+        } => container::run(
+            image,
+            cmd,
+            name.clone(),
+            *detach,
+            *interactive,
+            env,
+            volume,
+            workdir.clone(),
+        ),
+        ContainerCommands::Shell {
+            image,
+            workdir,
+            env,
+            volume,
+        } => container::shell(image.clone(), workdir.clone(), env, volume),
+        ContainerCommands::Build {
+            dockerfile,
+            tag,
+            no_cache,
+            build_arg,
+            target,
+        } => container::build(dockerfile.clone(), tag, *no_cache, build_arg, target),
         ContainerCommands::List => container::list(),
         ContainerCommands::Images => container::images(),
         ContainerCommands::Pull { image } => container::pull(image),
         ContainerCommands::Stop { container: c } => container::stop(c),
-        ContainerCommands::Exec { container: c, command: cmd } => container::exec(c, cmd),
+        ContainerCommands::Exec {
+            container: c,
+            command: cmd,
+        } => container::exec(c, cmd),
         ContainerCommands::Init { base } => container::init(base.clone()),
     }
 }
@@ -618,7 +649,13 @@ async fn handle_license_command(command: &LicenseCommands) -> Result<()> {
 }
 
 #[allow(clippy::fn_params_excessive_bools)] // Maps directly to CLI flags: --check, --yes, --dry-run, --fast, --turbo
-async fn handle_update_command(check: bool, yes: bool, dry_run: bool, fast: bool, turbo: bool) -> Result<()> {
+async fn handle_update_command(
+    check: bool,
+    yes: bool,
+    dry_run: bool,
+    fast: bool,
+    turbo: bool,
+) -> Result<()> {
     if turbo {
         packages::update_turbo().await
     } else if fast {
@@ -659,7 +696,10 @@ fn handle_which_command(runtime: &str) {
     }
 }
 
-async fn handle_audit_command(command: Option<&omg_lib::cli::AuditCommands>, ctx: &omg_lib::cli::CliContext) -> Result<()> {
+async fn handle_audit_command(
+    command: Option<&omg_lib::cli::AuditCommands>,
+    ctx: &omg_lib::cli::CliContext,
+) -> Result<()> {
     if let Some(cmd) = command {
         cmd.execute(ctx).await
     } else {
@@ -671,7 +711,9 @@ async fn handle_snapshot_command(command: &SnapshotCommands) -> Result<()> {
     match command {
         SnapshotCommands::Create { message } => snapshot::create(message.clone()).await,
         SnapshotCommands::List => snapshot::list(),
-        SnapshotCommands::Restore { id, dry_run, yes } => snapshot::restore(id, *dry_run, *yes).await,
+        SnapshotCommands::Restore { id, dry_run, yes } => {
+            snapshot::restore(id, *dry_run, *yes).await
+        }
         SnapshotCommands::Delete { id } => snapshot::delete(id),
     }
 }
@@ -699,7 +741,13 @@ async fn handle_info_command(package: &str) -> Result<()> {
 }
 
 #[allow(clippy::fn_params_excessive_bools)] // Maps directly to CLI flags: --detailed, --interactive, --json, --no-aur
-async fn handle_search_command(query: &str, detailed: bool, interactive: bool, json_flag: bool, no_aur: bool) -> Result<()> {
+async fn handle_search_command(
+    query: &str,
+    detailed: bool,
+    interactive: bool,
+    json_flag: bool,
+    no_aur: bool,
+) -> Result<()> {
     packages::search_with_json(query, detailed, interactive, json_flag, no_aur).await
 }
 
@@ -707,7 +755,12 @@ async fn handle_install_command(packages: &[String], yes: bool, dry_run: bool) -
     packages::install(packages, yes, dry_run).await
 }
 
-async fn handle_remove_command(packages: &[String], recursive: bool, yes: bool, dry_run: bool) -> Result<()> {
+async fn handle_remove_command(
+    packages: &[String],
+    recursive: bool,
+    yes: bool,
+    dry_run: bool,
+) -> Result<()> {
     packages::remove(packages, recursive, yes, dry_run).await
 }
 
@@ -716,17 +769,32 @@ async fn handle_clean_command(orphans: bool, cache: bool, aur: bool, all: bool) 
     packages::clean(orphans, cache, aur, all).await
 }
 
-async fn handle_complete_command(shell: &str, current: &str, last: &str, full: Option<&str>) -> Result<()> {
+async fn handle_complete_command(
+    shell: &str,
+    current: &str,
+    last: &str,
+    full: Option<&str>,
+) -> Result<()> {
     commands::complete(shell, current, last, full).await
 }
 
-fn handle_history_command(limit: usize, search: Option<&str>, transaction_type: Option<&str>, from: Option<&str>, to: Option<&str>) -> Result<()> {
+fn handle_history_command(
+    limit: usize,
+    search: Option<&str>,
+    transaction_type: Option<&str>,
+    from: Option<&str>,
+    to: Option<&str>,
+) -> Result<()> {
     commands::history(limit, search, transaction_type, from, to)
 }
 
 /// Main command dispatcher - routes commands to appropriate handlers
 #[allow(clippy::too_many_lines)]
-async fn dispatch_command(command: &Commands, ctx: &omg_lib::cli::CliContext, json_flag: bool) -> Result<()> {
+async fn dispatch_command(
+    command: &Commands,
+    ctx: &omg_lib::cli::CliContext,
+    json_flag: bool,
+) -> Result<()> {
     match command {
         Commands::Run { .. }
         | Commands::Tool { .. }
@@ -736,20 +804,45 @@ async fn dispatch_command(command: &Commands, ctx: &omg_lib::cli::CliContext, js
         | Commands::Enterprise { .. } => {
             command.execute(ctx).await?;
         }
-        Commands::Search { query, detailed, interactive, no_aur } => {
+        Commands::Search {
+            query,
+            detailed,
+            interactive,
+            no_aur,
+        } => {
             handle_search_command(query, *detailed, *interactive, json_flag, *no_aur).await?;
         }
-        Commands::Install { packages, yes, dry_run } => {
+        Commands::Install {
+            packages,
+            yes,
+            dry_run,
+        } => {
             handle_install_command(packages, *yes, *dry_run).await?;
         }
-        Commands::Remove { packages: pkgs, recursive, yes, dry_run } => {
+        Commands::Remove {
+            packages: pkgs,
+            recursive,
+            yes,
+            dry_run,
+        } => {
             handle_remove_command(pkgs, *recursive, *yes, *dry_run).await?;
         }
-        Commands::Update { check, yes, dry_run, fast, turbo } => {
+        Commands::Update {
+            check,
+            yes,
+            dry_run,
+            fast,
+            turbo,
+        } => {
             handle_update_command(*check, *yes, *dry_run, *fast, *turbo).await?;
         }
         Commands::Info { package } => handle_info_command(package).await?,
-        Commands::Clean { orphans, cache, aur, all } => {
+        Commands::Clean {
+            orphans,
+            cache,
+            aur,
+            all,
+        } => {
             handle_clean_command(*orphans, *cache, *aur, *all).await?;
         }
         Commands::Explicit { count } => {
@@ -784,13 +877,22 @@ async fn dispatch_command(command: &Commands, ctx: &omg_lib::cli::CliContext, js
             hooks::completions::generate_completions(shell, *stdout)?;
         }
         Commands::Which { runtime } => handle_which_command(runtime),
-        Commands::Complete { shell, current, last, full } => {
+        Commands::Complete {
+            shell,
+            current,
+            last,
+            full,
+        } => {
             handle_complete_command(shell, current, last, full.as_deref()).await?;
         }
         Commands::Status { fast } => {
             packages::status_with_json(*fast, json_flag).await?;
         }
-        Commands::Doctor { network, eol, turbo } => {
+        Commands::Doctor {
+            network,
+            eol,
+            turbo,
+        } => {
             handle_doctor_command(*network, *eol, *turbo).await?;
         }
         Commands::GenerateMan { output } => {
@@ -807,8 +909,20 @@ async fn dispatch_command(command: &Commands, ctx: &omg_lib::cli::CliContext, js
         Commands::Container { command } => handle_container_command(command)?,
         #[cfg(feature = "license")]
         Commands::License { command } => handle_license_command(command).await?,
-        Commands::History { limit, search, transaction_type, from, to } => {
-            handle_history_command(*limit, search.as_deref(), transaction_type.as_deref(), from.as_deref(), to.as_deref())?;
+        Commands::History {
+            limit,
+            search,
+            transaction_type,
+            from,
+            to,
+        } => {
+            handle_history_command(
+                *limit,
+                search.as_deref(),
+                transaction_type.as_deref(),
+                from.as_deref(),
+                to.as_deref(),
+            )?;
         }
         Commands::Rollback { id, yes } => {
             commands::rollback(id.clone(), *yes).await?;
@@ -823,7 +937,11 @@ async fn dispatch_command(command: &Commands, ctx: &omg_lib::cli::CliContext, js
         Commands::Metrics => {
             commands::metrics().await?;
         }
-        Commands::Init { defaults, skip_shell, skip_daemon } => {
+        Commands::Init {
+            defaults,
+            skip_shell,
+            skip_daemon,
+        } => {
             handle_init_command(*defaults, *skip_shell, *skip_daemon).await?;
         }
         Commands::Why { package, reverse } => {
