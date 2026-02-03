@@ -43,6 +43,47 @@ pub fn can_write_pacman_db() -> bool {
     has_package_caps() || crate::core::privilege::is_root()
 }
 
+/// Show a one-time hint about turbo mode if not enabled
+/// Returns true if the hint was shown
+#[cfg(target_os = "linux")]
+pub fn maybe_show_turbo_hint() -> bool {
+    use std::io::Write;
+
+    if has_package_caps() || is_elevated() || crate::core::privilege::is_root() {
+        return false;
+    }
+
+    let hint_file = crate::core::paths::data_dir().join(".turbo_hint_shown");
+    if hint_file.exists() {
+        return false;
+    }
+
+    use owo_colors::OwoColorize;
+    eprintln!();
+    eprintln!(
+        "  {} {}",
+        "TIP:".bright_cyan().bold(),
+        "Enable turbo mode for instant package operations:".dimmed()
+    );
+    eprintln!("       {}", "omg doctor --turbo".cyan().bold());
+    eprintln!(
+        "       {}",
+        "(one-time setup, eliminates sudo prompts)".dimmed()
+    );
+    eprintln!();
+
+    if let Ok(mut file) = std::fs::File::create(&hint_file) {
+        let _ = file.write_all(b"1");
+    }
+
+    true
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn maybe_show_turbo_hint() -> bool {
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

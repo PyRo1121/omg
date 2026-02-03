@@ -460,10 +460,19 @@ async fn async_main(args: Vec<String>) -> Result<()> {
     // Initialize logging
     init_logging(cli.verbose);
 
-    // Telemetry ping on first run
     spawn_telemetry_ping();
 
-    // Privilege elevation if needed
+    if matches!(
+        &cli.command,
+        Commands::Install { .. }
+            | Commands::Remove { .. }
+            | Commands::Update { .. }
+            | Commands::Sync
+            | Commands::Clean { .. }
+    ) {
+        omg_lib::core::maybe_show_turbo_hint();
+    }
+
     let needs_root = matches!(&cli.command, Commands::Sync | Commands::Clean { .. });
     if needs_root && !is_root() {
         elevate_if_needed(&args)?;

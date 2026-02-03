@@ -223,9 +223,11 @@ pub async fn run_self_sudo(args: &[&str]) -> anyhow::Result<()> {
 
     if is_test_mode {
         anyhow::bail!(
-            "Privilege elevation is not supported in test mode.\n\
+            "Privilege elevation not supported in development mode.\n\
              \n\
-             For testing, run with appropriate sudo permissions: sudo {} {:?}",
+             Options:\n\
+             • Use installed binary with turbo mode: omg doctor --turbo\n\
+             • Run directly with sudo: sudo {} {:?}",
             exe.display(),
             args
         );
@@ -260,17 +262,17 @@ pub async fn run_self_sudo(args: &[&str]) -> anyhow::Result<()> {
                 // If sudo -n fails with exit code 1, it often means password is required
                 if s.code() == Some(1) {
                     anyhow::bail!(
-                        "Privilege elevation failed in non-interactive mode (--yes flag).\n\
+                        "Privilege elevation failed (--yes flag prevents password prompt).\n\
                          \n\
-                         This happens because 'sudo' requires a password, but --yes prevents prompting.\n\
+                         RECOMMENDED: Enable turbo mode for zero-sudo operations:\n\
+                           omg doctor --turbo\n\
                          \n\
-                         To fix this, either:\n\
-                         1. Run without --yes to enter your password once.\n\
-                         2. Configure NOPASSWD for omg in your sudoers file:\n\
-                            Run 'sudo visudo' and add:\n\
-                            {user} ALL=(ALL) NOPASSWD: {exe}\n\
+                         This grants omg Linux capabilities to manage packages without sudo.\n\
                          \n\
-                         (Replace {user} with your username)",
+                         Alternatives:\n\
+                         • Remove --yes flag to allow password prompt\n\
+                         • Configure NOPASSWD in sudoers: sudo visudo\n\
+                           {user} ALL=(ALL) NOPASSWD: {exe}",
                         user = whoami::username().unwrap_or_else(|_| "username".to_string()),
                         exe = exe.display()
                     );
@@ -278,20 +280,13 @@ pub async fn run_self_sudo(args: &[&str]) -> anyhow::Result<()> {
                 anyhow::bail!("Elevated command failed with exit code: {s}")
             }
             Err(e) => {
-                // In non-interactive mode, provide clear error message
                 anyhow::bail!(
-                    "Failed to elevate privileges in non-interactive mode (--yes flag).\n\
+                    "Failed to elevate privileges: {e}\n\
                      \n\
-                     Error: {e}\n\
+                     RECOMMENDED: Enable turbo mode for zero-sudo operations:\n\
+                       omg doctor --turbo\n\
                      \n\
-                     For non-interactive sudo, configure NOPASSWD in sudoers:\n\
-                     sudo visudo\n\
-                     \n\
-                     Add line (replace username):\n\
-                     username ALL=(ALL) NOPASSWD: {}\n\
-                     \n\
-                     Or remove --yes flag to allow password prompt.",
-                    exe.display()
+                     This is a one-time setup that allows omg to manage packages instantly."
                 )
             }
         }
@@ -327,20 +322,13 @@ pub async fn run_self_sudo(args: &[&str]) -> anyhow::Result<()> {
                     }
                     Err(e) => {
                         anyhow::bail!(
-                            "Failed to run with sudo privileges.\n\
+                            "Failed to run with sudo privileges: {e}\n\
                              \n\
-                             Error: {e}\n\
+                             RECOMMENDED: Enable turbo mode for zero-sudo operations:\n\
+                               omg doctor --turbo\n\
                              \n\
-                             For automation/CI, configure sudo with NOPASSWD:\n\
-                             sudo visudo\n\
-                             \n\
-                             And add line (replace username):\n\
-                             username ALL=(ALL) NOPASSWD: {}\n\
-                             \n\
-                             For zero-overhead operations, enable capabilities:\n\
-                             sudo setcap 'cap_dac_override,cap_fowner,cap_chown+ep' {}",
-                            exe.display(),
-                            exe.display()
+                             This is a one-time setup that allows omg to manage packages\n\
+                             without sudo prompts, even in scripts and automation."
                         )
                     }
                 }
