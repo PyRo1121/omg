@@ -23,6 +23,7 @@ fn setup_test_env() -> (TempDir, Arc<DaemonState>) {
 
     let temp_dir = TempDir::new().unwrap();
 
+    #[allow(unsafe_code)]
     unsafe {
         std::env::set_var("OMG_DAEMON_DATA_DIR", temp_dir.path());
         std::env::set_var("OMG_DATA_DIR", temp_dir.path());
@@ -288,10 +289,10 @@ async fn test_cache_clear_invalidates_cache() {
     // Check cache size is now zero
     let stats2 = handle_request(Arc::clone(&state), stats_req).await;
 
-    if let Response::Success { result, .. } = stats2 {
-        if let ResponseResult::CacheStats { size, .. } = result {
-            assert_eq!(size, 0, "Cache should be empty after clear");
-        }
+    if let Response::Success { result, .. } = stats2
+        && let ResponseResult::CacheStats { size, .. } = result
+    {
+        assert_eq!(size, 0, "Cache should be empty after clear");
     }
 }
 
@@ -554,12 +555,12 @@ async fn test_metrics_increment_on_requests() {
     let metrics_req = Request::Metrics { id: 1100 };
     let initial = handle_request(Arc::clone(&state), metrics_req.clone()).await;
 
-    let initial_count = if let Response::Success { result, .. } = initial {
-        if let ResponseResult::Metrics(m) = result {
-            m.requests_total
-        } else {
-            0
-        }
+    let initial_count = if let Response::Success {
+        result: ResponseResult::Metrics(m),
+        ..
+    } = initial
+    {
+        m.requests_total
     } else {
         0
     };
@@ -573,15 +574,15 @@ async fn test_metrics_increment_on_requests() {
     // Get updated metrics
     let updated = handle_request(Arc::clone(&state), metrics_req).await;
 
-    if let Response::Success { result, .. } = updated {
-        if let ResponseResult::Metrics(m) = result {
-            assert!(
-                m.requests_total > initial_count,
-                "Request count should increment, initial: {}, current: {}",
-                initial_count,
-                m.requests_total
-            );
-        }
+    if let Response::Success { result, .. } = updated
+        && let ResponseResult::Metrics(m) = result
+    {
+        assert!(
+            m.requests_total > initial_count,
+            "Request count should increment, initial: {}, current: {}",
+            initial_count,
+            m.requests_total
+        );
     }
 }
 
@@ -594,12 +595,12 @@ async fn test_uptime_increases_monotonically() {
     let req = Request::Health { id: 1200 };
     let response1 = handle_request(Arc::clone(&state), req.clone()).await;
 
-    let uptime1 = if let Response::Success { result, .. } = response1 {
-        if let ResponseResult::Health(h) = result {
-            h.uptime_seconds
-        } else {
-            0
-        }
+    let uptime1 = if let Response::Success {
+        result: ResponseResult::Health(h),
+        ..
+    } = response1
+    {
+        h.uptime_seconds
     } else {
         0
     };
@@ -609,13 +610,13 @@ async fn test_uptime_increases_monotonically() {
 
     let response2 = handle_request(Arc::clone(&state), req).await;
 
-    if let Response::Success { result, .. } = response2 {
-        if let ResponseResult::Health(h) = result {
-            assert!(
-                h.uptime_seconds >= uptime1,
-                "Uptime should increase monotonically"
-            );
-        }
+    if let Response::Success { result, .. } = response2
+        && let ResponseResult::Health(h) = result
+    {
+        assert!(
+            h.uptime_seconds >= uptime1,
+            "Uptime should increase monotonically"
+        );
     }
 }
 
