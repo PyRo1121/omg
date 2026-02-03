@@ -885,6 +885,14 @@ NEW FEATURES:
 
 ### 🐛 Bug Fixes
 
+- **Ci**: Fix remaining clippy warnings in integration tests
+
+  - Add #[allow(unsafe_code)] to test env var setup (required for TempDir isolation)
+
+  - Collapse nested if let to if let with pattern matching in metrics test (line 557)
+
+  - Add .unwrap() to get_package_manager() in logic tests (fix E0599)
+
 - **Ci**: Feature-gate test using alpm_types to fix portable build
 
 The test_display_package_from_package test uses alpm_types::Version and
