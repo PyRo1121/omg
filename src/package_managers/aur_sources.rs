@@ -118,7 +118,7 @@ fn extract_http_source(source_url: &str) -> Option<SourceFile> {
     })
 }
 
-/// Download sources concurrently (up to 4 at a time)
+/// Download sources concurrently (up to 8 at a time)
 ///
 /// Downloads are skipped if the file already exists in SRCDEST.
 /// Errors are logged but not fatal - makepkg will retry on build.
@@ -160,9 +160,9 @@ pub async fn download_sources(sources: Vec<SourceFile>, srcdest: &Path) -> usize
         }
     });
 
-    // Download up to 4 files concurrently
+    // Download up to 8 files concurrently (network I/O bound, safe to parallelize)
     let results: Vec<Result<()>> = stream::iter(download_futures)
-        .buffer_unordered(4)
+        .buffer_unordered(8)
         .collect()
         .await;
 

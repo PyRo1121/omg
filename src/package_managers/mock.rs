@@ -256,8 +256,15 @@ impl PackageManager for MockPackageManager {
         let distro_name = self.distro_name;
         let mut state = Self::load_state(distro_name);
         let pkgs = self.db.packages.lock().unwrap();
+
         for pkg in packages {
-            // Use available version if present, otherwise db version, otherwise "0"
+            let exists = state.available.contains_key(pkg) || pkgs.contains_key(pkg);
+            if !exists {
+                anyhow::bail!("Package {pkg} not found in any repository");
+            }
+        }
+
+        for pkg in packages {
             let version = state
                 .available
                 .get(pkg)
@@ -332,10 +339,11 @@ impl PackageManager for MockPackageManager {
     }
 
     async fn get_status(&self, _fast: bool) -> Result<(usize, usize, usize, usize)> {
-        let db = self.db.clone();
         let state = Self::load_state(self.distro_name);
-        let total = db.packages.lock().unwrap().len();
-        let explicit = state.installed.len();
+        // total = all installed packages
+        // explicit = explicitly installed packages (in mock, all are explicit since no dependency tracking)
+        let total = state.installed.len();
+        let explicit = total; // All installed packages are explicit in the mock
         Ok((total, explicit, 0, 0))
     }
 
@@ -403,9 +411,10 @@ mod tests {
         let dir = tempdir().unwrap();
         temp_env::with_var("OMG_DATA_DIR", Some(dir.path()), || {
             let pm1 = MockPackageManager::new("arch");
+            pm1.db
+                .add_package("test-pkg", "1.0.0", "Test package", "extra");
             futures::executor::block_on(pm1.install(&["test-pkg".to_string()])).unwrap();
 
-            // New instance should see the change
             let pm2 = MockPackageManager::new("arch");
             let installed = futures::executor::block_on(pm2.list_explicit()).unwrap();
             assert!(installed.contains(&"test-pkg".to_string()));

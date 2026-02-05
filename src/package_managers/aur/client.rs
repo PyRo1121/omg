@@ -843,6 +843,7 @@ impl AurClient {
             .env("PKGDEST", &env.pkgdest)
             .env("SRCDEST", &env.srcdest)
             .env("BUILDDIR", &env.builddir)
+            .stdin(std::process::Stdio::null())
             .current_dir(&pkg_dir);
 
         for (key, value) in &env.extra_env {
@@ -945,19 +946,14 @@ impl AurClient {
         }
 
         // Spawn the process and wait for it to complete
-        let child = cmd
+        let status = cmd
             .current_dir(pkg_dir)
+            .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::from(log_file))
             .stderr(std::process::Stdio::from(log_file_err))
-            .spawn()
-            .context("Failed to spawn makepkg")?;
-
-        let output = child
-            .wait_with_output()
+            .status()
             .await
-            .context("Failed to wait for makepkg")?;
-
-        let status = output.status;
+            .context("Failed to run makepkg")?;
 
         spinner.finish_and_clear();
         if !status.success() {
@@ -988,18 +984,56 @@ impl AurClient {
                 cmd.env("HOME", home_path);
             }
 
-            cmd.args(["git", "clone", "--depth=1", "--", &url, dest_str.as_ref()]);
+            // Optimized clone: shallow + partial clone (skip blobs) + sparse checkout
+            cmd.args([
+                "git",
+                "clone",
+                "--depth=1",
+                "--filter=blob:none", // Partial clone: download only needed blobs on demand
+                "--sparse",           // Enable sparse checkout for minimal working tree
+                "--",
+                &url,
+                dest_str.as_ref(),
+            ]);
+
+            // Prevent git from prompting for credentials
+            cmd.env("GIT_TERMINAL_PROMPT", "0");
 
             let status = cmd
+                .stdin(std::process::Stdio::null())
                 .status()
                 .await
                 .with_context(|| format!("Failed to run git clone as user '{user}'"))?;
 
-            spinner.finish_and_clear();
-
             if !status.success() {
                 anyhow::bail!("git clone failed for {url}");
             }
+
+            // Configure sparse checkout to only materialize PKGBUILD and .SRCINFO
+            let mut sparse_cmd = Command::new("sudo");
+            sparse_cmd.args(["-u", &user]);
+            if let Some(ref home_path) = home {
+                sparse_cmd.arg("-H");
+                sparse_cmd.env("HOME", home_path);
+            }
+            sparse_cmd
+                .current_dir(&dest)
+                .env("GIT_TERMINAL_PROMPT", "0")
+                .stdin(std::process::Stdio::null())
+                .args([
+                    "git",
+                    "sparse-checkout",
+                    "set",
+                    "PKGBUILD",
+                    ".SRCINFO",
+                    "*.patch",
+                    "*.install",
+                ]);
+
+            // Run sparse-checkout (non-fatal if it fails - full clone still works)
+            let _ = sparse_cmd.status().await;
+
+            spinner.finish_and_clear();
         } else {
             let url_clone = url.clone();
             let dest_clone = dest.clone();
@@ -1074,8 +1108,10 @@ impl AurClient {
             }
 
             cmd.args(["git", "-C", pkg_dir_str.as_ref(), "pull", "--ff-only"]);
+            cmd.env("GIT_TERMINAL_PROMPT", "0");
 
             let status = cmd
+                .stdin(std::process::Stdio::null())
                 .status()
                 .await
                 .with_context(|| format!("Failed to run git pull as user '{user}'"))?;
@@ -1280,6 +1316,7 @@ impl AurClient {
                 let dep_status = dep_cmd
                     .args(["--syncdeps", "--noconfirm", "--nobuild"])
                     .current_dir(pkg_dir)
+                    .stdin(Stdio::null())
                     .stdout(Stdio::inherit()) // Show makepkg output
                     .stderr(Stdio::inherit()) // Show errors
                     .status()
@@ -1403,6 +1440,7 @@ impl AurClient {
             cmd.args(makepkg_args);
 
             let status = cmd
+                .stdin(Stdio::null())
                 .stdout(Stdio::from(log_file))
                 .stderr(Stdio::from(log_file_err))
                 .status()
@@ -1521,6 +1559,7 @@ impl AurClient {
 
         let status = cmd
             .current_dir(pkg_dir)
+            .stdin(Stdio::null())
             .stdout(Stdio::from(log_file))
             .stderr(Stdio::from(log_file_err))
             .status()
@@ -1577,6 +1616,7 @@ impl AurClient {
             .env("PKGDEST", &env.pkgdest)
             .env("SRCDEST", &env.srcdest)
             .env("BUILDDIR", &env.builddir)
+            .stdin(Stdio::null())
             .stdout(Stdio::from(log_file))
             .stderr(Stdio::from(log_file_err));
 

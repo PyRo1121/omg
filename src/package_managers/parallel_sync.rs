@@ -125,6 +125,55 @@ fn build_db_url(mirror_template: &str, repo: &str) -> String {
 
 const MAX_RETRIES: u32 = 3;
 const INITIAL_BACKOFF_MS: u64 = 100;
+const MIRROR_RACE_TIMEOUT_MS: u64 = 2000;
+
+async fn race_mirrors(client: &Client, urls: &[String]) -> Option<usize> {
+    use futures::future::select_all;
+    use std::time::Duration;
+
+    if urls.is_empty() {
+        return None;
+    }
+    if urls.len() == 1 {
+        return Some(0);
+    }
+
+    let futures: Vec<_> = urls
+        .iter()
+        .enumerate()
+        .map(|(idx, url)| {
+            let client = client.clone();
+            let url = url.clone();
+            Box::pin(async move {
+                let result = tokio::time::timeout(
+                    Duration::from_millis(MIRROR_RACE_TIMEOUT_MS),
+                    client.head(&url).send(),
+                )
+                .await;
+                match result {
+                    Ok(Ok(resp))
+                        if resp.status().is_success()
+                            || resp.status() == reqwest::StatusCode::NOT_MODIFIED =>
+                    {
+                        Some(idx)
+                    }
+                    _ => None,
+                }
+            })
+        })
+        .collect();
+
+    let mut remaining = futures;
+    while !remaining.is_empty() {
+        let (result, _idx, rest) = select_all(remaining).await;
+        if let Some(winner_idx) = result {
+            return Some(winner_idx);
+        }
+        remaining = rest;
+    }
+
+    Some(0)
+}
 
 async fn download_response_to_file(
     mut response: reqwest::Response,
@@ -166,6 +215,25 @@ async fn download_db(
         || "unknown".to_string(),
         |s| s.to_string_lossy().to_string(),
     );
+    pb.set_message(format!("{repo_name} (racing mirrors...)"));
+
+    let urls = if urls.len() > 1 {
+        if let Some(fastest_idx) = race_mirrors(client, &urls).await {
+            let mut reordered = Vec::with_capacity(urls.len());
+            reordered.push(urls[fastest_idx].clone());
+            for (i, url) in urls.iter().enumerate() {
+                if i != fastest_idx {
+                    reordered.push(url.clone());
+                }
+            }
+            reordered
+        } else {
+            urls
+        }
+    } else {
+        urls
+    };
+
     pb.set_message(repo_name.clone());
 
     let existing_mtime = if dest.exists() {

@@ -20,6 +20,7 @@ pub mod packages;
 pub mod pacman_conf;
 pub mod paths;
 pub mod privilege;
+pub mod retry;
 pub mod runtime_resolver;
 pub mod safe_ops;
 pub mod security;
@@ -29,6 +30,7 @@ pub mod sysinfo;
 pub mod task_runner;
 pub mod telemetry;
 pub mod testing;
+pub mod transactions;
 mod types;
 pub mod usage;
 
