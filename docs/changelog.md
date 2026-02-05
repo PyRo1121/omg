@@ -779,6 +779,16 @@ All clippy warnings resolved. CI should pass on all platforms.
 
 ### ✨ New Features
 
+- Prefer pre-built -bin AUR packages for instant installation
+
+When installing AUR packages like 'brave', automatically prefer
+
+'brave-bin' (pre-built binary) over 'brave' (source compilation).
+
+This reduces install time from hours to seconds for packages that
+
+offer pre-built binaries.
+
 - **Ux**: Improve turbo mode discoverability
 
   - Improve error messages to suggest 'omg doctor --turbo' when sudo fails
