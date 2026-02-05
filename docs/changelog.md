@@ -907,6 +907,24 @@ NEW FEATURES:
 
 ### 🐛 Bug Fixes
 
+- AUR install - use correct package name, eliminate double sudo
+
+Critical fixes:
+
+  - Use aur_pkg.name (brave-bin) not original pkg_name (brave) when installing
+
+  - Pre-check official repos WITHOUT sudo before falling back to AUR
+
+  - Consistent package name in all UI messages
+
+This fixes:
+
+  - brave-bin now installs correctly in ~20 seconds
+
+  - No more double sudo prompts
+
+  - Source builds should work properly now
+
 - Clippy format string, test API, and bytes security update
 
   - Use inline format string for current_user in chown command
