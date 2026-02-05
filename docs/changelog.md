@@ -907,6 +907,16 @@ NEW FEATURES:
 
 ### 🐛 Bug Fixes
 
+- AUR source builds - real-time output and proper stdin handling
+
+Critical fixes for source package builds (e.g., brave, not brave-bin):
+
+  - Show real-time build output (stdout/stderr inherit) so users see progress
+
+  - Allow stdin inherit for dependency installation (sudo prompts work)
+
+  - Source builds like brave now work properly (10-15 min compile time expected)
+
 - AUR install - use correct package name, eliminate double sudo
 
 Critical fixes:
