@@ -40,6 +40,38 @@ pub async fn install(packages: &[String], yes: bool, dry_run: bool) -> Result<()
     // Beautiful header with package count
     print_install_header(packages.len());
 
+    // Check if all packages exist in official repos BEFORE calling install
+    // This avoids unnecessary sudo prompt for packages that don't exist
+    #[cfg(feature = "arch")]
+    {
+        let mut missing_packages = Vec::new();
+        for pkg in packages {
+            if crate::package_managers::get_sync_pkg_info(pkg).ok().flatten().is_none() {
+                missing_packages.push(pkg.clone());
+            }
+        }
+
+        // If any packages are missing from official repos, try AUR first
+        if !missing_packages.is_empty() {
+            if missing_packages.len() == 1 {
+                return handle_missing_package(missing_packages[0].clone(),
+                    anyhow::anyhow!("Package not found in official repos"), yes).await;
+            }
+            // Multiple missing packages - install official ones first, then handle missing
+            if missing_packages.len() < packages.len() {
+                let official: Vec<String> = packages.iter()
+                    .filter(|p| !missing_packages.contains(p))
+                    .cloned()
+                    .collect();
+                if !official.is_empty() {
+                    pm.install(&official).await?;
+                }
+            }
+            return handle_missing_package(missing_packages[0].clone(),
+                anyhow::anyhow!("Package not found in official repos"), yes).await;
+        }
+    }
+
     if let Err(e) = pm.install(packages).await {
         let msg = e.to_string();
 
@@ -385,7 +417,7 @@ async fn handle_aur_package(
     } else if console::user_attended() {
         use dialoguer::Confirm;
         Confirm::with_theme(&ui::prompt_theme())
-            .with_prompt(format!("Install {} from AUR?", pkg_name.bold()))
+            .with_prompt(format!("Install {} from AUR?", aur_pkg.name.bold()))
             .default(false)
             .interact()?
     } else {
@@ -407,7 +439,7 @@ async fn handle_aur_package(
     println!(
         "  {} {} {}",
         "│".magenta(),
-        format!("  Building {pkg_name}  ").bold().magenta(),
+        format!("  Building {}  ", aur_pkg.name).bold().magenta(),
         "│".magenta()
     );
     println!(
@@ -419,7 +451,8 @@ async fn handle_aur_package(
     println!("  {} Cloning from AUR...", "→".cyan().bold());
 
     let aur_client = AurClient::new();
-    aur_client.install(pkg_name).await?;
+    // CRITICAL: Use aur_pkg.name (e.g., "brave-bin") not original pkg_name (e.g., "brave")
+    aur_client.install(&aur_pkg.name).await?;
 
     // Success message for AUR
     println!();
@@ -441,10 +474,10 @@ async fn handle_aur_package(
     println!(
         "    {} {} installed from AUR",
         "✓".green().bold(),
-        pkg_name.bold()
+        aur_pkg.name.bold()
     );
     println!();
 
-    crate::core::usage::track_install(&[pkg_name.to_string()]);
+    crate::core::usage::track_install(std::slice::from_ref(&aur_pkg.name));
     Ok(())
 }
