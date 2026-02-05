@@ -51,12 +51,17 @@ pub async fn install(packages: &[String], yes: bool, dry_run: bool) -> Result<()
             }
         }
 
-        // If any packages are missing from official repos, try AUR first
+        // If any packages are missing from official repos, try AUR WITHOUT sudo prompt
         if !missing_packages.is_empty() {
+            // CRITICAL FIX: Don't call pm.install() for missing packages!
+            // That would prompt for sudo unnecessarily for AUR packages.
+
             if missing_packages.len() == 1 {
+                // Single missing package - go straight to AUR
                 return handle_missing_package(missing_packages[0].clone(),
                     anyhow::anyhow!("Package not found in official repos"), yes).await;
             }
+
             // Multiple missing packages - install official ones first, then handle missing
             if missing_packages.len() < packages.len() {
                 let official: Vec<String> = packages.iter()
@@ -64,11 +69,17 @@ pub async fn install(packages: &[String], yes: bool, dry_run: bool) -> Result<()
                     .cloned()
                     .collect();
                 if !official.is_empty() {
+                    // Only prompt for sudo for official packages
                     pm.install(&official).await?;
                 }
             }
-            return handle_missing_package(missing_packages[0].clone(),
-                anyhow::anyhow!("Package not found in official repos"), yes).await;
+
+            // Handle missing packages one by one (AUR)
+            for missing_pkg in missing_packages {
+                handle_missing_package(missing_pkg,
+                    anyhow::anyhow!("Package not found in official repos"), yes).await?;
+            }
+            return Ok(());
         }
     }
 
@@ -133,11 +144,11 @@ fn print_install_success(packages: &[String]) {
             println!("    {} {}", "✓".green().bold(), pkg.bold());
         }
     } else {
-        println!(
-            "    {} {} packages installed successfully",
-            "✓".green().bold(),
-            packages.len().to_string().bold()
-        );
+    println!(
+        " {} {} packages installed successfully",
+        "✓".green().bold(),
+        packages.len().bold()
+    );
     }
     println!();
 }
