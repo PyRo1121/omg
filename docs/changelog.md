@@ -907,6 +907,14 @@ NEW FEATURES:
 
 ### 🐛 Bug Fixes
 
+- Optimize AUR install flow - skip unnecessary pm.install() for AUR packages
+
+When package is not found in official repos, go directly to AUR handler
+
+instead of calling pm.install() which would prompt for sudo unnecessarily.
+
+This eliminates wasted sudo prompts and speeds up AUR installations.
+
 - Allow epoch colons in package filenames for AUR install
 
 The fast path validation was using validate_package_names() which
