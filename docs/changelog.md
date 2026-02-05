@@ -907,6 +907,22 @@ NEW FEATURES:
 
 ### 🐛 Bug Fixes
 
+- Allow epoch colons in package filenames for AUR install
+
+The fast path validation was using validate_package_names() which
+
+rejects colons, but Arch package versions can have epochs like
+
+1:1.86.148-1 which appear in filenames.
+
+Changed to validate_package_names_or_files() which properly allows
+
+local .pkg.tar.* files with any valid filename characters.
+
+This fixes: "Invalid character ':' in package name" error when
+
+installing AUR packages with epoch versions (e.g., brave-bin).
+
 - AUR source builds - real-time output and proper stdin handling
 
 Critical fixes for source package builds (e.g., brave, not brave-bin):
