@@ -94,8 +94,8 @@ fn try_fast_elevated(args: &[String]) -> Option<Result<()>> {
     // Handle commands that may have packages
     match command.as_str() {
         "install" if !packages.is_empty() => {
-            // Validate package names (security)
-            omg_lib::core::security::validate_package_names(&packages).ok()?;
+            // Validate package names or local package files (security)
+            omg_lib::core::security::validate_package_names_or_files(&packages).ok()?;
             // Direct transaction with minimal success output
             let result = omg_lib::package_managers::execute_transaction(
                 packages.clone(),
@@ -497,7 +497,11 @@ async fn async_main(args: Vec<String>) -> Result<()> {
 /// Validate package names for security
 fn validate_package_security(command: &Commands) -> Result<()> {
     match command {
-        Commands::Install { packages, .. } | Commands::Remove { packages, .. } => {
+        Commands::Install { packages, .. } => {
+            // Install can accept package names OR local .pkg.tar.* files
+            omg_lib::core::security::validate_package_names_or_files(packages)?;
+        }
+        Commands::Remove { packages, .. } => {
             omg_lib::core::security::validate_package_names(packages)?;
         }
         Commands::Info { package }
