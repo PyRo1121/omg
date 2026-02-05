@@ -270,9 +270,34 @@ async fn try_aur_package(pkg_name: &str) -> Result<crate::core::Package> {
 
     let results = aur.search(pkg_name).await?;
 
-    results
-        .into_iter()
-        .find(|p| p.name == pkg_name)
+    // Check for exact match
+    let exact_match = results.iter().find(|p| p.name == pkg_name);
+
+    // Check for -bin version (pre-built binary - much faster to install)
+    let bin_name = format!("{pkg_name}-bin");
+    let bin_match = results.iter().find(|p| p.name == bin_name);
+
+    // Prefer -bin package if available (instant install vs hours of compilation)
+    // Common patterns: brave -> brave-bin, firefox -> firefox-bin, etc.
+    if let Some(bin_pkg) = bin_match {
+        if exact_match.is_some() {
+            use owo_colors::OwoColorize;
+            println!();
+            println!(
+                "  {} Found pre-built binary package: {}",
+                "→".cyan().bold(),
+                bin_pkg.name.green().bold()
+            );
+            println!(
+                "  {} This installs in seconds instead of compiling from source",
+                "ℹ".blue()
+            );
+        }
+        return Ok(bin_pkg.clone());
+    }
+
+    exact_match
+        .cloned()
         .ok_or_else(|| anyhow::anyhow!("Package not found in AUR"))
 }
 
