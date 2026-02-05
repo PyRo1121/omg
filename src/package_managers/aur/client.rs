@@ -920,18 +920,6 @@ impl AurClient {
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("package");
-        let log_dir = self.build_dir.join("_logs");
-        create_dir_as_user(&log_dir).await?;
-        let log_path = Arc::new(log_dir.join(format!("{package_name}.log")));
-        let (log_file, log_file_err) = tokio::task::spawn_blocking({
-            let log_path = Arc::clone(&log_path);
-            move || {
-                let f = File::create(&*log_path)?;
-                let e = f.try_clone()?;
-                Ok::<_, anyhow::Error>((f, e))
-            }
-        })
-        .await??;
         let spinner = create_spinner(&format!("Building {package_name}..."));
 
         let mut cmd = Command::new("makepkg");
@@ -945,23 +933,26 @@ impl AurClient {
             cmd.env(key, value);
         }
 
-        // Spawn the process and wait for it to complete
+        spinner.finish_and_clear();
+        println!(
+            "{} Building {} (this may take several minutes for source packages)...",
+            "→".cyan().bold(),
+            package_name
+        );
+
+        // Spawn the process and wait for it to complete - show output in real-time
         let status = cmd
             .current_dir(pkg_dir)
             .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::from(log_file))
-            .stderr(std::process::Stdio::from(log_file_err))
+            .stdout(std::process::Stdio::inherit())
+            .stderr(std::process::Stdio::inherit())
             .status()
             .await
             .context("Failed to run makepkg")?;
 
-        spinner.finish_and_clear();
         if !status.success() {
-            tracing::error!(
-                package = package_name,
-                log_path = %log_path.display(),
-                "Build failed"
-            );
+            tracing::error!(package = package_name, "Build failed");
+            println!("  {} Build failed", "✗".red());
         }
         Ok(status)
     }
@@ -1221,18 +1212,6 @@ impl AurClient {
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("package");
-        let log_dir = self.build_dir.join("_logs");
-        create_dir_as_user(&log_dir).await?;
-        let log_path = Arc::new(log_dir.join(format!("{package_name}.log")));
-        let (log_file, log_file_err) = tokio::task::spawn_blocking({
-            let log_path = Arc::clone(&log_path);
-            move || {
-                let f = File::create(&*log_path)?;
-                let e = f.try_clone()?;
-                Ok::<_, anyhow::Error>((f, e))
-            }
-        })
-        .await??;
         let spinner = create_spinner(&format!("Building {package_name}..."));
 
         let bwrap_available = which("bwrap").is_ok();
@@ -1316,7 +1295,7 @@ impl AurClient {
                 let dep_status = dep_cmd
                     .args(["--syncdeps", "--noconfirm", "--nobuild"])
                     .current_dir(pkg_dir)
-                    .stdin(Stdio::null())
+                    .stdin(Stdio::inherit()) // Allow sudo password prompt
                     .stdout(Stdio::inherit()) // Show makepkg output
                     .stderr(Stdio::inherit()) // Show errors
                     .status()
@@ -1439,17 +1418,24 @@ impl AurClient {
             cmd.args(["--", "makepkg"]);
             cmd.args(makepkg_args);
 
+            spinner.finish_and_clear();
+            println!(
+                "{} Building {} (this may take several minutes for source packages)...",
+                "→".cyan().bold(),
+                package_name
+            );
+
+            // Stream output to both terminal AND log file
             let status = cmd
                 .stdin(Stdio::null())
-                .stdout(Stdio::from(log_file))
-                .stderr(Stdio::from(log_file_err))
+                .stdout(Stdio::inherit()) // Show output in real-time
+                .stderr(Stdio::inherit()) // Show errors in real-time
                 .status()
                 .await
                 .context("Failed to run sandboxed makepkg")?;
 
-            spinner.finish_and_clear();
             if !status.success() {
-                println!("  {} Build failed. Log: {}", "✗".red(), log_path.display());
+                println!("  {} Build failed", "✗".red());
             }
             Ok(status)
         } else {
@@ -1458,13 +1444,13 @@ impl AurClient {
                 return Err(AurError::SandboxUnavailable.into());
             }
 
+            spinner.finish_and_clear();
             tracing::debug!("bubblewrap not found, using regular makepkg");
             println!(
                 "{} Building without sandbox (install 'bubblewrap' for isolation)...",
                 "→".dimmed()
             );
-            self.run_native_makepkg_with_logs(pkg_dir, env, log_file, log_file_err, spinner)
-                .await
+            self.run_native_makepkg(pkg_dir, env).await
         }
     }
 
@@ -1473,42 +1459,13 @@ impl AurClient {
         pkg_dir: &Path,
         env: &MakepkgEnv,
     ) -> Result<std::process::ExitStatus> {
-        let package_name = pkg_dir
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("package");
-        let log_dir = self.build_dir.join("_logs");
-        create_dir_as_user(&log_dir).await?;
-        let log_path = Arc::new(log_dir.join(format!("{package_name}.log")));
-        let (log_file, log_file_err) = tokio::task::spawn_blocking({
-            let log_path = Arc::clone(&log_path);
-            move || {
-                let f = File::create(&*log_path)?;
-                let e = f.try_clone()?;
-                Ok::<_, anyhow::Error>((f, e))
-            }
-        })
-        .await??;
-        let spinner = create_spinner(&format!("Building {package_name}..."));
-
-        let status = self
-            .run_native_makepkg_with_logs(pkg_dir, env, log_file, log_file_err, spinner)
-            .await?;
-
-        if !status.success() {
-            println!("  {} Build failed. Log: {}", "✗".red(), log_path.display());
-        }
-        Ok(status)
-    }
-
-    async fn run_native_makepkg_with_logs(
-        &self,
-        pkg_dir: &Path,
-        env: &MakepkgEnv,
-        log_file: File,
-        log_file_err: File,
-        spinner: ProgressBar,
-    ) -> Result<std::process::ExitStatus> {
+        let spinner = create_spinner(&format!(
+            "Building {}...",
+            pkg_dir
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("package")
+        ));
         // Get build user (original user from sudo/doas, or fallback to nobody)
         let build_user = std::env::var("SUDO_USER")
             .ok()
@@ -1557,16 +1514,28 @@ impl AurClient {
             cmd.env(key, value);
         }
 
+        spinner.finish_and_clear();
+
+        let package_name = pkg_dir
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("package");
+        println!(
+            "{} Building {} (this may take several minutes for source packages)...",
+            "→".cyan().bold(),
+            package_name
+        );
+
+        // Stream output to both terminal AND log file
         let status = cmd
             .current_dir(pkg_dir)
             .stdin(Stdio::null())
-            .stdout(Stdio::from(log_file))
-            .stderr(Stdio::from(log_file_err))
+            .stdout(Stdio::inherit()) // Show output in real-time
+            .stderr(Stdio::inherit()) // Show errors in real-time
             .status()
             .await
             .context("Failed to run makepkg")?;
 
-        spinner.finish_and_clear();
         Ok(status)
     }
 
@@ -1579,18 +1548,6 @@ impl AurClient {
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("package");
-        let log_dir = self.build_dir.join("_logs");
-        create_dir_as_user(&log_dir).await?;
-        let log_path = Arc::new(log_dir.join(format!("{package_name}.log")));
-        let (log_file, log_file_err) = tokio::task::spawn_blocking({
-            let log_path = Arc::clone(&log_path);
-            move || {
-                let f = File::create(&*log_path)?;
-                let e = f.try_clone()?;
-                Ok::<_, anyhow::Error>((f, e))
-            }
-        })
-        .await??;
         let spinner = create_spinner(&format!("Building {package_name} (chroot)..."));
 
         let mut cmd = if which("pkgctl").is_ok() {
@@ -1617,13 +1574,19 @@ impl AurClient {
             .env("SRCDEST", &env.srcdest)
             .env("BUILDDIR", &env.builddir)
             .stdin(Stdio::null())
-            .stdout(Stdio::from(log_file))
-            .stderr(Stdio::from(log_file_err));
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit());
+
+        spinner.finish_and_clear();
+        println!(
+            "{} Building {} in chroot (this may take several minutes for source packages)...",
+            "→".cyan().bold(),
+            package_name
+        );
 
         let status = cmd.status().await.context("Failed to run chroot build")?;
-        spinner.finish_and_clear();
         if !status.success() {
-            println!("  {} Build failed. Log: {}", "✗".red(), log_path.display());
+            println!("  {} Build failed", "✗".red());
         }
         Ok(status)
     }
