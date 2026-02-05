@@ -104,6 +104,10 @@ impl Default for Settings {
 impl Default for AurBuildSettings {
     fn default() -> Self {
         let jobs = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
+
+        let sysinfo = crate::core::sysinfo::SystemInfo::detect();
+        let recommendation = sysinfo.recommend();
+
         Self {
             build_method: AurBuildMethod::Native,
             build_concurrency: jobs.max(1),
@@ -116,9 +120,9 @@ impl Default for AurBuildSettings {
             pkgdest: None,
             srcdest: None,
             cache_builds: true,
-            enable_ccache: false,
+            enable_ccache: recommendation.enable_ccache,
             ccache_dir: None,
-            enable_sccache: false,
+            enable_sccache: recommendation.enable_sccache,
             sccache_dir: None,
         }
     }

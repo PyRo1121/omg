@@ -203,20 +203,34 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
     if !aur_packages.is_empty() {
         println!();
         println!(
-            "  {} Building {} AUR package{}...",
+            "  {} Building {} AUR package{} in parallel...",
             "→".magenta(),
             aur_packages.len(),
             if aur_packages.len() == 1 { "" } else { "s" }
         );
 
-        let client = crate::package_managers::AurClient::new();
-        for pkg in &aur_packages {
-            if let Err(e) = client.install(pkg).await {
-                println!("  {} Failed to install {}: {}", "✗".red(), pkg, e);
-                failed_count += 1;
-            } else {
-                installed_count += 1;
-            }
+        use crate::package_managers::aur::{BuildJob, ParallelBuilder};
+        use std::sync::Arc;
+
+        let client = Arc::new(crate::package_managers::AurClient::new());
+
+        let jobs: Vec<BuildJob> = aur_packages
+            .iter()
+            .map(|pkg| BuildJob::new(pkg.clone(), Vec::new()))
+            .collect();
+
+        let max_concurrent = std::env::var("OMG_AUR_PARALLEL")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(2);
+
+        let builder = ParallelBuilder::new(client, max_concurrent);
+
+        if let Err(e) = builder.build_packages(jobs).await {
+            println!("  {} Failed to build AUR packages: {}", "✗".red(), e);
+            failed_count += aur_packages.len();
+        } else {
+            installed_count += aur_packages.len();
         }
     }
 

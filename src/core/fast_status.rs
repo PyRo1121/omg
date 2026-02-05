@@ -102,6 +102,20 @@ impl FastStatus {
         Self::read_from_file(&path).map(|s| s.explicit_packages as usize)
     }
 
+    /// Read orphan count directly (fastest path)
+    #[must_use]
+    pub fn read_orphan_count() -> Option<usize> {
+        let path = paths::fast_status_path();
+        Self::read_from_file(&path).map(|s| s.orphan_packages as usize)
+    }
+
+    /// Read updates count directly (fastest path)
+    #[must_use]
+    pub fn read_updates_count() -> Option<usize> {
+        let path = paths::fast_status_path();
+        Self::read_from_file(&path).map(|s| s.updates_available as usize)
+    }
+
     /// Write status to default path
     pub fn write_default(&self) -> std::io::Result<()> {
         self.write_to_file(&paths::fast_status_path())

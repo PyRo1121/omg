@@ -27,6 +27,9 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// Status refresh interval (5 minutes)
 const STATUS_REFRESH_INTERVAL: Duration = Duration::from_mins(5);
 
+/// Memory cleanup interval (30 minutes) - matches mmap TTL
+const MEMORY_CLEANUP_INTERVAL: Duration = Duration::from_mins(30);
+
 /// Per-connection rate limit (requests per second)
 const CLIENT_RATE_LIMIT_HZ: u32 = 50;
 /// Per-connection burst size
@@ -142,10 +145,34 @@ pub async fn run(listener: UnixListener, state: Arc<DaemonState>) -> Result<()> 
                 })
                 .await;
             }
+
+            // Pre-warm search cache with common queries for instant first searches
+            {
+                let state_search = Arc::clone(state);
+                tokio::task::spawn_blocking(move || {
+                    let common_queries = ["", "linux", "python", "node", "firefox", "git"];
+                    for query in common_queries {
+                        let results = state_search.index.search(query, 50);
+                        let results_arc = std::sync::Arc::new(results);
+                        state_search
+                            .cache
+                            .insert_arc(query.to_string(), results_arc);
+                    }
+                    tracing::debug!(
+                        "Pre-warmed search cache with {} common queries",
+                        common_queries.len()
+                    );
+                })
+                .await
+                .ok();
+            }
         }
 
         // Initial refresh
         refresh_status(&state_worker).await;
+
+        // Track last cleanup time for periodic mmap cleanup
+        let mut last_cleanup = std::time::Instant::now();
 
         loop {
             tokio::select! {
@@ -153,6 +180,15 @@ pub async fn run(listener: UnixListener, state: Arc<DaemonState>) -> Result<()> 
                     tracing::debug!("Refreshing system status cache...");
                     refresh_status(&state_worker).await;
                     tracing::debug!("Status cache refreshed");
+
+                    // Periodic mmap cleanup (every 30 min) to prevent 500MB+ memory leaks
+                    if last_cleanup.elapsed() >= MEMORY_CLEANUP_INTERVAL {
+                        #[cfg(any(feature = "debian", feature = "debian-pure"))]
+                        {
+                            crate::package_managers::debian_db::cleanup_expired_mmaps();
+                        }
+                        last_cleanup = std::time::Instant::now();
+                    }
                 }
                 () = worker_token.cancelled() => {
                     tracing::info!("Background worker shutting down");

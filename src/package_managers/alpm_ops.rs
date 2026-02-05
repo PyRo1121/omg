@@ -297,7 +297,9 @@ struct AlpmTransaction<'a>(&'a mut alpm::Alpm);
 
 impl Drop for AlpmTransaction<'_> {
     fn drop(&mut self) {
-        let _ = self.0.trans_release();
+        if let Err(e) = self.0.trans_release() {
+            tracing::warn!("Failed to release ALPM transaction: {e}");
+        }
     }
 }
 
@@ -331,7 +333,9 @@ pub fn execute_transaction(
     });
 
     for db_name in &repos {
-        let _ = alpm.register_syncdb(db_name.as_str(), alpm::SigLevel::USE_DEFAULT);
+        if let Err(e) = alpm.register_syncdb(db_name.as_str(), alpm::SigLevel::USE_DEFAULT) {
+            tracing::warn!("Failed to register sync database '{db_name}': {e}");
+        }
     }
 
     configure_mirrors(&mut alpm)?;
@@ -428,14 +432,10 @@ fn setup_alpm_callbacks(
         main_pb_clone.set_position(percent as u64);
     });
 
-    let dl_pb_map = std::sync::Arc::new(parking_lot::Mutex::new(std::collections::HashMap::<
-        String,
-        indicatif::ProgressBar,
-    >::new()));
+    let dl_pb_map = std::sync::Arc::new(dashmap::DashMap::<String, indicatif::ProgressBar>::new());
     let mp_clone = mp.clone();
 
     alpm.set_dl_cb(dl_pb_map, move |filename, event, map| {
-        let mut map = map.lock();
         match event.event() {
             alpm::DownloadEvent::Init(_) => {
                 if map.len() < 4 {
@@ -466,7 +466,7 @@ fn setup_alpm_callbacks(
             }
             alpm::DownloadEvent::Retry(_) => {}
             alpm::DownloadEvent::Completed(_) => {
-                if let Some(pb) = map.remove(filename) {
+                if let Some((_, pb)) = map.remove(filename) {
                     pb.finish_and_clear();
                 }
             }
@@ -565,27 +565,48 @@ fn commit_alpm_transaction(alpm: &mut alpm::Alpm, main_pb: &indicatif::ProgressB
 
     #[cfg(feature = "pgp")]
     {
+        use rayon::prelude::*;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
         let verifier = PgpVerifier::new();
         let pkgs_to_add = alpm.trans_add();
 
         if !pkgs_to_add.is_empty() {
-            main_pb.set_message("Verifying package signatures with Sequoia...");
-            for pkg in pkgs_to_add {
-                let pkg_name: &str = pkg.name();
-                if let Some(pkg_filename) = pkg.filename() {
-                    let cache_path = paths::pacman_cache_dir().join(pkg_filename);
-                    let sig_path =
-                        std::path::PathBuf::from(format!("{}.sig", cache_path.display()));
+            main_pb.set_message("Verifying package signatures in parallel...");
 
-                    if cache_path.exists()
-                        && sig_path.exists()
-                        && let Err(e) = verifier.verify_package(&cache_path, &sig_path)
-                    {
-                        anyhow::bail!(
-                            "✗ SECURITY ALERT: PGP verification failed for {pkg_name}.\n  Error: {e}\n  The package may be corrupted or tampered with."
-                        );
-                    }
+            let verification_data: Vec<_> = pkgs_to_add
+                .iter()
+                .filter_map(|pkg| {
+                    pkg.filename().map(|filename| {
+                        let cache_path = paths::pacman_cache_dir().join(filename);
+                        let sig_path =
+                            std::path::PathBuf::from(format!("{}.sig", cache_path.display()));
+                        (pkg.name().to_string(), cache_path, sig_path)
+                    })
+                })
+                .filter(|(_, cache_path, sig_path)| cache_path.exists() && sig_path.exists())
+                .collect();
+
+            let failed = AtomicBool::new(false);
+            let failure_msg = std::sync::Mutex::new(String::new());
+
+            verification_data.par_iter().for_each(|(pkg_name, cache_path, sig_path)| {
+                if failed.load(Ordering::Relaxed) {
+                    return;
                 }
+                if let Err(e) = verifier.verify_package(cache_path, sig_path) {
+                    failed.store(true, Ordering::Relaxed);
+                    // Use unwrap_or_else to recover from potential mutex poisoning
+                    let mut msg = failure_msg.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                    *msg = format!(
+                        "✗ SECURITY ALERT: PGP verification failed for {pkg_name}.\n  Error: {e}\n  The package may be corrupted or tampered with."
+                    );
+                }
+            });
+
+            if failed.load(Ordering::Relaxed) {
+                let msg = failure_msg.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+                anyhow::bail!(msg);
             }
         }
     }
@@ -622,8 +643,10 @@ fn configure_mirrors(alpm: &mut alpm::Alpm) -> Result<()> {
             if let Ok(servers) = config.resolve_servers(repo, arch) {
                 for db in alpm.syncdbs_mut() {
                     if db.name() == repo.name {
-                        for server in &servers {
-                            let _ = db.add_server(server.clone());
+                        for server in servers {
+                            if let Err(e) = db.add_server(server.clone()) {
+                                tracing::debug!("Failed to add server '{server}' to repo '{}': {e}", db.name());
+                            }
                         }
                         break;
                     }
@@ -649,10 +672,12 @@ fn configure_mirrors(alpm: &mut alpm::Alpm) -> Result<()> {
     }
 
     for db in alpm.syncdbs_mut() {
-        let db_name = db.name().to_string();
+        let db_name = db.name();
         for server in &servers {
-            let url = server.replace("$repo", &db_name).replace("$arch", arch);
-            let _ = db.add_server(url);
+            let url = server.replace("$repo", db_name).replace("$arch", arch);
+            if let Err(e) = db.add_server(url.clone()) {
+                tracing::debug!("Failed to add server '{url}' to repo '{db_name}': {e}");
+            }
         }
     }
     Ok(())

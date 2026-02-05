@@ -98,6 +98,9 @@ moka = { version = "0.12", features = ["sync"] }
 memchr = "2.7"                                   # SIMD-accelerated string search
 memmap2 = "0.9"
 mimalloc = { version = "0.1", default-features = false }  # 10-20% faster allocator
+smallvec = { version = "1.14", features = ["union"] }    # Inline vectors for small collections
+aho-corasick = "1.1"                                      # Multi-pattern SIMD search
+bumpalo = "3.18"                                          # Arena allocator for temporary allocations
 
 # Logging
 tracing = "0.1.44"
@@ -204,7 +207,7 @@ serde_json = "1.0"                                           # JSON parsing for 
 serial_test = "3.2"                                          # Serialize tests that modify global state
 scopeguard = "1.2"
 tar = "0.4"
-flate2 = "1.0"
+flate2 = { version = "1.0", default-features = false, features = ["zlib"] }
 chrono = "0.4"
 temp-env = "0.3"
 

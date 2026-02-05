@@ -18,7 +18,7 @@ pub mod apt;
 #[cfg(feature = "arch")]
 pub mod arch;
 #[cfg(feature = "arch")]
-mod aur;
+pub mod aur;
 #[cfg(feature = "arch")]
 pub mod aur_deps;
 #[cfg(feature = "arch")]

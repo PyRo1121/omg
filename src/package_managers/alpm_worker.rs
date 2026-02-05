@@ -63,10 +63,13 @@ impl AlpmWorker {
                 match req {
                     AlpmRequest::Info(name, reply) => {
                         let res = get_pkg_info_from_db(&alpm, &name);
-                        let _ = reply.send(res);
+                        if reply.send(res).is_err() {
+                            tracing::debug!("ALPM worker: reply channel closed for package '{name}'");
+                        }
                     }
                 }
             }
+            tracing::debug!("ALPM worker shutting down");
         });
 
         Self { tx }
