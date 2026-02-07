@@ -3,8 +3,10 @@
 //! This module provides full Debian/Ubuntu support using `rust-apt` FFI bindings.
 //! It requires `libapt-pkg-dev` to be installed on the system.
 
+use std::future::Future;
+use std::pin::Pin;
+
 use anyhow::{Context, Result};
-use async_trait::async_trait;
 
 use crate::core::is_root;
 use crate::core::{Package, PackageSource};
@@ -37,163 +39,201 @@ impl AptPackageManager {
     }
 }
 
-#[async_trait]
 impl crate::package_managers::PackageManager for AptPackageManager {
     fn name(&self) -> &'static str {
         "apt"
     }
 
-    async fn search(&self, query: &str) -> Result<Vec<Package>> {
+    fn search(
+        &self,
+        query: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<Package>>> + Send + '_>> {
         let query = query.to_string();
-        // Try fast path first
-        let fast_results = super::debian_db::search_fast(&query);
-        if let Ok(results) = fast_results
-            && !results.is_empty()
-        {
-            return Ok(results);
-        }
+        Box::pin(async move {
+            // Try fast path first
+            let fast_results = super::debian_db::search_fast(&query);
+            if let Ok(results) = fast_results
+                && !results.is_empty()
+            {
+                return Ok(results);
+            }
 
-        let results = tokio::task::spawn_blocking(move || search_sync(&query))
-            .await
-            .context("APT search task failed")??;
+            let results = tokio::task::spawn_blocking(move || search_sync(&query))
+                .await
+                .context("APT search task failed")??;
 
-        Ok(sync_to_packages(results))
+            Ok(sync_to_packages(results))
+        })
     }
 
-    async fn install(&self, packages: &[String]) -> Result<()> {
+    fn install(
+        &self,
+        packages: &[String],
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
         let packages = packages.to_vec();
-        // SECURITY: Validate package names
-        crate::core::security::validate_package_names(&packages)?;
+        Box::pin(async move {
+            // SECURITY: Validate package names
+            crate::core::security::validate_package_names(&packages)?;
 
-        if !is_root() {
-            let mut args = vec!["install", "--"];
-            let pkg_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
-            args.extend_from_slice(&pkg_refs);
-            crate::core::privilege::run_self_sudo(&args).await?;
-            return Ok(());
-        }
+            if !is_root() {
+                let mut args = vec!["install", "--"];
+                let pkg_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
+                args.extend_from_slice(&pkg_refs);
+                crate::core::privilege::run_self_sudo(&args).await?;
+                return Ok(());
+            }
 
-        tokio::task::spawn_blocking(move || install_blocking(&packages))
-            .await
-            .context("APT install task failed")??;
-        Ok(())
+            tokio::task::spawn_blocking(move || install_blocking(&packages))
+                .await
+                .context("APT install task failed")??;
+            Ok(())
+        })
     }
 
-    async fn remove(&self, packages: &[String]) -> Result<()> {
+    fn remove(&self, packages: &[String]) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
         let packages = packages.to_vec();
-        // SECURITY: Validate package names
-        crate::core::security::validate_package_names(&packages)?;
+        Box::pin(async move {
+            // SECURITY: Validate package names
+            crate::core::security::validate_package_names(&packages)?;
 
-        if !is_root() {
-            let mut args = vec!["remove", "--"];
-            let pkg_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
-            args.extend_from_slice(&pkg_refs);
-            crate::core::privilege::run_self_sudo(&args).await?;
-            return Ok(());
-        }
+            if !is_root() {
+                let mut args = vec!["remove", "--"];
+                let pkg_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
+                args.extend_from_slice(&pkg_refs);
+                crate::core::privilege::run_self_sudo(&args).await?;
+                return Ok(());
+            }
 
-        tokio::task::spawn_blocking(move || remove_blocking(&packages))
-            .await
-            .context("APT remove task failed")??;
-        Ok(())
+            tokio::task::spawn_blocking(move || remove_blocking(&packages))
+                .await
+                .context("APT remove task failed")??;
+            Ok(())
+        })
     }
 
-    async fn update(&self) -> Result<()> {
-        if !is_root() {
-            crate::core::privilege::run_self_sudo(&["update"]).await?;
-            return Ok(());
-        }
+    fn update(&self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
+        Box::pin(async move {
+            if !is_root() {
+                crate::core::privilege::run_self_sudo(&["update"]).await?;
+                return Ok(());
+            }
 
-        tokio::task::spawn_blocking(update_blocking)
-            .await
-            .context("APT update task failed")??;
-        Ok(())
+            tokio::task::spawn_blocking(update_blocking)
+                .await
+                .context("APT update task failed")??;
+            Ok(())
+        })
     }
 
-    async fn sync(&self) -> Result<()> {
-        AptPackageManager::new().sync_databases().await
+    fn sync(&self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
+        Box::pin(async move { AptPackageManager::new().sync_databases().await })
     }
 
-    async fn info(&self, package: &str) -> Result<Option<Package>> {
+    fn info(
+        &self,
+        package: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<Package>>> + Send + '_>> {
         let package = package.to_string();
-        // SECURITY: Validate package name
-        crate::core::security::validate_package_name(&package)?;
+        Box::pin(async move {
+            // SECURITY: Validate package name
+            crate::core::security::validate_package_name(&package)?;
 
-        // Try fast path first
-        if let Ok(Some(pkg)) = super::debian_db::get_info_fast(&package) {
-            return Ok(Some(pkg));
-        }
+            // Try fast path first
+            if let Ok(Some(pkg)) = super::debian_db::get_info_fast(&package) {
+                return Ok(Some(pkg));
+            }
 
-        let info = tokio::task::spawn_blocking(move || get_sync_pkg_info(&package))
-            .await
-            .context("APT info task failed")??;
-        Ok(info.map(|info| Package {
-            name: info.name,
-            version: info.version,
-            description: info.description,
-            source: PackageSource::Official,
-            installed: info.installed,
-        }))
+            let info = tokio::task::spawn_blocking(move || get_sync_pkg_info(&package))
+                .await
+                .context("APT info task failed")??;
+            Ok(info.map(|info| Package {
+                name: info.name,
+                version: info.version,
+                description: info.description,
+                source: PackageSource::Official,
+                installed: info.installed,
+            }))
+        })
     }
 
-    async fn list_installed(&self) -> Result<Vec<Package>> {
-        // Try fast path first
-        if let Ok(installed) = super::debian_db::list_installed_fast() {
-            return Ok(installed
-                .into_iter()
-                .map(|p| Package {
-                    name: p.name,
-                    version: p.version,
-                    description: p.description,
-                    source: PackageSource::Official,
-                    installed: true,
-                })
-                .collect());
-        }
-        Ok(local_to_packages(list_installed_fast()?))
+    fn list_installed(&self) -> Pin<Box<dyn Future<Output = Result<Vec<Package>>> + Send + '_>> {
+        Box::pin(async move {
+            // Try fast path first
+            if let Ok(installed) = super::debian_db::list_installed_fast() {
+                return Ok(installed
+                    .into_iter()
+                    .map(|p| Package {
+                        name: p.name,
+                        version: p.version,
+                        description: p.description,
+                        source: PackageSource::Official,
+                        installed: true,
+                    })
+                    .collect());
+            }
+            Ok(local_to_packages(list_installed_fast()?))
+        })
     }
 
-    async fn get_status(&self, fast: bool) -> Result<(usize, usize, usize, usize)> {
-        // Try fast path for counts
-        if let Ok((total, explicit, _, _)) = super::debian_db::get_counts_fast() {
-            if fast {
+    fn get_status(
+        &self,
+        fast: bool,
+    ) -> Pin<Box<dyn Future<Output = Result<(usize, usize, usize, usize)>> + Send + '_>> {
+        Box::pin(async move {
+            // Try fast path for counts
+            if let Ok((total, explicit, _, _)) = super::debian_db::get_counts_fast() {
+                if fast {
+                    return Ok((total, explicit, 0, 0));
+                }
+
+                // If not fast, we still want accuracy for orphans/updates
+                if let Ok((_, _, orphans, updates)) = get_system_status() {
+                    return Ok((total, explicit, orphans, updates));
+                }
                 return Ok((total, explicit, 0, 0));
             }
 
-            // If not fast, we still want accuracy for orphans/updates
-            if let Ok((_, _, orphans, updates)) = get_system_status() {
-                return Ok((total, explicit, orphans, updates));
+            get_system_status()
+        })
+    }
+
+    fn list_explicit(&self) -> Pin<Box<dyn Future<Output = Result<Vec<String>>> + Send + '_>> {
+        Box::pin(async move {
+            if let Ok(explicit) = super::debian_db::list_explicit_fast() {
+                return Ok(explicit);
             }
-            return Ok((total, explicit, 0, 0));
-        }
-
-        get_system_status()
+            list_explicit()
+        })
     }
 
-    async fn list_explicit(&self) -> Result<Vec<String>> {
-        if let Ok(explicit) = super::debian_db::list_explicit_fast() {
-            return Ok(explicit);
-        }
-        list_explicit()
+    fn list_updates(
+        &self,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<Vec<crate::package_managers::types::UpdateInfo>>>
+                + Send
+                + '_,
+        >,
+    > {
+        Box::pin(async move {
+            let updates = list_updates()?;
+            Ok(updates
+                .into_iter()
+                .map(
+                    |(name, old_ver, new_ver)| crate::package_managers::types::UpdateInfo {
+                        name,
+                        old_version: old_ver,
+                        new_version: new_ver,
+                        repo: "apt".to_string(),
+                    },
+                )
+                .collect())
+        })
     }
 
-    async fn list_updates(&self) -> Result<Vec<crate::package_managers::types::UpdateInfo>> {
-        let updates = list_updates()?;
-        Ok(updates
-            .into_iter()
-            .map(
-                |(name, old_ver, new_ver)| crate::package_managers::types::UpdateInfo {
-                    name,
-                    old_version: old_ver,
-                    new_version: new_ver,
-                    repo: "apt".to_string(),
-                },
-            )
-            .collect())
-    }
-
-    async fn is_installed(&self, package: &str) -> bool {
-        super::debian_db::is_installed_fast(package)
+    fn is_installed(&self, package: &str) -> Pin<Box<dyn Future<Output = bool> + Send + '_>> {
+        let result = super::debian_db::is_installed_fast(package);
+        Box::pin(async move { result })
     }
 }
 pub fn search_sync(query: &str) -> Result<Vec<SyncPackage>> {
@@ -468,7 +508,7 @@ fn sync_databases_blocking() -> Result<()> {
     Ok(())
 }
 
-#[allow(clippy::cast_possible_wrap)] // Package sizes fit in i64; clamped to i64::MAX via unwrap_or
+#[expect(clippy::cast_possible_wrap)] // Package sizes fit in i64; clamped to i64::MAX via unwrap_or
 fn map_local_package(pkg: &rust_apt::Package<'_>) -> LocalPackage {
     let version = pkg
         .installed()

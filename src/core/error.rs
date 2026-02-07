@@ -39,7 +39,9 @@ pub enum OmgError {
     #[error("[OMG-E304] Decompression failed: {package} - {reason}")]
     DecompressionFailed { package: String, reason: String },
 
-    #[error("[OMG-E305] Insufficient disk space: {required} bytes required, {available} bytes available")]
+    #[error(
+        "[OMG-E305] Insufficient disk space: {required} bytes required, {available} bytes available"
+    )]
     InsufficientDiskSpace { required: u64, available: u64 },
 
     #[error("[OMG-E306] Mirror unavailable: {mirror}")]
@@ -168,6 +170,7 @@ impl OmgError {
 
 /// Format an error with its suggestion for display
 #[cold]
+#[must_use]
 pub fn format_error_with_suggestion(err: &OmgError) -> String {
     let mut msg = format!("Error: {err}");
     if let Some(suggestion) = err.suggestion() {
@@ -179,6 +182,7 @@ pub fn format_error_with_suggestion(err: &OmgError) -> String {
 
 /// Common error suggestions for anyhow errors
 #[cold]
+#[must_use]
 pub fn suggest_for_anyhow(err: &anyhow::Error) -> Option<&'static str> {
     let msg = err.to_string().to_lowercase();
 
@@ -216,7 +220,7 @@ pub fn suggest_for_anyhow(err: &anyhow::Error) -> Option<&'static str> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)] // Idiomatic in tests: panics on failure with clear error context
+#[expect(clippy::unwrap_used)] // Idiomatic in tests: panics on failure with clear error context
 mod tests {
     use super::*;
 

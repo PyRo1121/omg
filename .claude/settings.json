@@ -1,16 +1,21 @@
 {
-  "enabledPlugins": {
-    "unit-testing@claude-code-workflows": true,
-    "comprehensive-review@claude-code-workflows": true,
-    "systems-programming@claude-code-workflows": true,
-    "agent-orchestration@claude-code-workflows": true,
-    "dependency-management@claude-code-workflows": true,
-    "performance-testing-review@claude-code-workflows": true,
-    "code-review-ai@claude-code-workflows": true,
-    "tdd-workflows@claude-code-workflows": true,
-    "code-documentation@claude-code-workflows": true,
-    "web-scripting@claude-code-workflows": true,
-    "playwright@claude-plugins-official": true
+  "enabledPlugins": {},
+  "defaultMode": "bypassPermissions",
+  "env": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
   },
-  "defaultMode": "bypassPermissions"
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "file=\"$CLAUDE_FILE_PATH\"; if [ -n \"$file\" ] && echo \"$file\" | grep -q '\\.rs$'; then cd /home/pyro1121/Documents/omg && cargo fmt -- \"$file\" 2>/dev/null; fi",
+            "timeout": 10000
+          }
+        ]
+      }
+    ]
+  }
 }

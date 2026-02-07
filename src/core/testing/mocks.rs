@@ -1,13 +1,16 @@
 //! Mock implementations for testing
 
+use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
+
+use anyhow::Result;
+use std::sync::Mutex;
+
 use crate::core::{Package, PackageSource};
 use crate::package_managers::parse_version_or_zero;
 use crate::package_managers::{PackageManager, types::UpdateInfo};
-use anyhow::Result;
-use async_trait::async_trait;
-use parking_lot::Mutex;
-use std::collections::HashMap;
-use std::sync::Arc;
 
 /// Mock package manager with configurable behavior
 pub struct TestPackageManager {
@@ -32,7 +35,7 @@ impl TestPackageManager {
 
     /// Add a package to the mock database
     pub fn add_package(&self, name: &str, version: &str, description: &str) {
-        let mut packages = self.packages.lock();
+        let mut packages = self.packages.lock().expect("lock poisoned");
         packages.insert(
             name.to_string(),
             Package {
@@ -40,36 +43,46 @@ impl TestPackageManager {
                 version: parse_version_or_zero(version),
                 description: description.to_string(),
                 source: PackageSource::Official,
-                installed: self.installed.lock().contains(&name.to_string()),
+                installed: self
+                    .installed
+                    .lock()
+                    .expect("lock poisoned")
+                    .contains(&name.to_string()),
             },
         );
     }
 
     /// Mark a package as installed
     pub fn install_package(&self, name: &str) {
-        self.installed.lock().insert(name.to_string());
+        self.installed
+            .lock()
+            .expect("lock poisoned")
+            .insert(name.to_string());
         // Update the package in the database
-        if let Some(pkg) = self.packages.lock().get_mut(name) {
+        if let Some(pkg) = self.packages.lock().expect("lock poisoned").get_mut(name) {
             pkg.installed = true;
         }
     }
 
     /// Remove a package (mark as not installed)
     pub fn remove_package(&self, name: &str) {
-        self.installed.lock().remove(&name.to_string());
-        if let Some(pkg) = self.packages.lock().get_mut(name) {
+        self.installed
+            .lock()
+            .expect("lock poisoned")
+            .remove(&name.to_string());
+        if let Some(pkg) = self.packages.lock().expect("lock poisoned").get_mut(name) {
             pkg.installed = false;
         }
     }
 
     /// Set available updates
     pub fn set_updates(&self, updates: Vec<UpdateInfo>) {
-        *self.updates.lock() = updates;
+        *self.updates.lock().expect("lock poisoned") = updates;
     }
 
     /// Configure whether operations should fail
     pub fn set_fail_operations(&self, fail: bool) {
-        *self.fail_operations.lock() = fail;
+        *self.fail_operations.lock().expect("lock poisoned") = fail;
     }
 
     /// Set artificial delay for operations (useful for testing async behavior)
@@ -111,12 +124,15 @@ impl TestPackageManager {
 
     /// Helper to check if a package is in the database
     pub fn has_package(&self, name: &str) -> bool {
-        self.packages.lock().contains_key(name)
+        self.packages
+            .lock()
+            .expect("lock poisoned")
+            .contains_key(name)
     }
 
     /// Helper to get the number of packages in the database
     pub fn package_count(&self) -> usize {
-        self.packages.lock().len()
+        self.packages.lock().expect("lock poisoned").len()
     }
 }
 
@@ -126,158 +142,182 @@ impl Default for TestPackageManager {
     }
 }
 
-#[async_trait]
 impl PackageManager for TestPackageManager {
     fn name(&self) -> &'static str {
         "test-mock"
     }
 
-    async fn search(&self, query: &str) -> Result<Vec<Package>> {
+    fn search(
+        &self,
+        query: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<Package>>> + Send + '_>> {
         let query = query.to_lowercase();
-        let packages = self.packages.clone();
-        let fail = *self.fail_operations.lock();
         let delay = self.search_delay_ms;
+        Box::pin(async move {
+            if delay > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+            }
 
-        if delay > 0 {
-            tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
-        }
+            let fail = *self.fail_operations.lock().expect("lock poisoned");
+            if fail {
+                anyhow::bail!("Search operation failed (test failure mode)");
+            }
 
-        if fail {
-            anyhow::bail!("Search operation failed (test failure mode)");
-        }
-
-        let pkgs = packages.lock();
-        Ok(pkgs
-            .values()
-            .filter(|p| {
-                p.name.to_lowercase().contains(&query)
-                    || p.description.to_lowercase().contains(&query)
-            })
-            .cloned()
-            .collect())
+            let pkgs = self.packages.lock().expect("lock poisoned");
+            Ok(pkgs
+                .values()
+                .filter(|p| {
+                    p.name.to_lowercase().contains(&query)
+                        || p.description.to_lowercase().contains(&query)
+                })
+                .cloned()
+                .collect())
+        })
     }
 
-    async fn install(&self, packages: &[String]) -> Result<()> {
-        let packages: Vec<String> = packages.to_vec();
-        let installed = self.installed.clone();
-        let fail = *self.fail_operations.lock();
+    fn install(
+        &self,
+        packages: &[String],
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
+        let packages = packages.to_vec();
+        Box::pin(async move {
+            let fail = *self.fail_operations.lock().expect("lock poisoned");
+            if fail {
+                anyhow::bail!("Install operation failed (test failure mode)");
+            }
 
-        if fail {
-            anyhow::bail!("Install operation failed (test failure mode)");
-        }
-
-        for pkg in packages {
-            installed.lock().insert(pkg);
-        }
-        Ok(())
+            for pkg in packages {
+                self.installed.lock().expect("lock poisoned").insert(pkg);
+            }
+            Ok(())
+        })
     }
 
-    async fn remove(&self, packages: &[String]) -> Result<()> {
-        let packages: Vec<String> = packages.to_vec();
-        let installed = self.installed.clone();
-        let fail = *self.fail_operations.lock();
+    fn remove(&self, packages: &[String]) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
+        let packages = packages.to_vec();
+        Box::pin(async move {
+            let fail = *self.fail_operations.lock().expect("lock poisoned");
+            if fail {
+                anyhow::bail!("Remove operation failed (test failure mode)");
+            }
 
-        if fail {
-            anyhow::bail!("Remove operation failed (test failure mode)");
-        }
-
-        for pkg in packages {
-            installed.lock().remove(&pkg);
-        }
-        Ok(())
+            for pkg in packages {
+                self.installed.lock().expect("lock poisoned").remove(&pkg);
+            }
+            Ok(())
+        })
     }
 
-    async fn update(&self) -> Result<()> {
-        let fail = *self.fail_operations.lock();
-
-        if fail {
-            anyhow::bail!("Update operation failed (test failure mode)");
-        }
-        Ok(())
+    fn update(&self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
+        Box::pin(async move {
+            let fail = *self.fail_operations.lock().expect("lock poisoned");
+            if fail {
+                anyhow::bail!("Update operation failed (test failure mode)");
+            }
+            Ok(())
+        })
     }
 
-    async fn sync(&self) -> Result<()> {
-        let fail = *self.fail_operations.lock();
-
-        if fail {
-            anyhow::bail!("Sync operation failed (test failure mode)");
-        }
-        Ok(())
+    fn sync(&self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
+        Box::pin(async move {
+            let fail = *self.fail_operations.lock().expect("lock poisoned");
+            if fail {
+                anyhow::bail!("Sync operation failed (test failure mode)");
+            }
+            Ok(())
+        })
     }
 
-    async fn info(&self, package: &str) -> Result<Option<Package>> {
+    fn info(
+        &self,
+        package: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<Package>>> + Send + '_>> {
         let package = package.to_string();
-        let packages = self.packages.clone();
-        let fail = *self.fail_operations.lock();
+        Box::pin(async move {
+            let fail = *self.fail_operations.lock().expect("lock poisoned");
+            if fail {
+                anyhow::bail!("Info operation failed (test failure mode)");
+            }
 
-        if fail {
-            anyhow::bail!("Info operation failed (test failure mode)");
-        }
-
-        Ok(packages.lock().get(&package).cloned())
+            Ok(self
+                .packages
+                .lock()
+                .expect("lock poisoned")
+                .get(&package)
+                .cloned())
+        })
     }
 
-    async fn list_installed(&self) -> Result<Vec<Package>> {
-        let packages = self.packages.clone();
-        let installed = self.installed.clone();
-        let fail = *self.fail_operations.lock();
+    fn list_installed(&self) -> Pin<Box<dyn Future<Output = Result<Vec<Package>>> + Send + '_>> {
+        Box::pin(async move {
+            let fail = *self.fail_operations.lock().expect("lock poisoned");
+            if fail {
+                anyhow::bail!("List installed operation failed (test failure mode)");
+            }
 
-        if fail {
-            anyhow::bail!("List installed operation failed (test failure mode)");
-        }
-
-        let installed_set = installed.lock();
-        let pkgs = packages.lock();
-        Ok(pkgs
-            .values()
-            .filter(|p| installed_set.contains(&p.name))
-            .cloned()
-            .collect())
+            let installed_set = self.installed.lock().expect("lock poisoned");
+            let pkgs = self.packages.lock().expect("lock poisoned");
+            Ok(pkgs
+                .values()
+                .filter(|p| installed_set.contains(&p.name))
+                .cloned()
+                .collect())
+        })
     }
 
-    async fn get_status(&self, _fast: bool) -> Result<(usize, usize, usize, usize)> {
-        let packages = self.packages.clone();
-        let installed = self.installed.clone();
-        let updates = self.updates.clone();
-        let fail = *self.fail_operations.lock();
+    fn get_status(
+        &self,
+        _fast: bool,
+    ) -> Pin<Box<dyn Future<Output = Result<(usize, usize, usize, usize)>> + Send + '_>> {
+        Box::pin(async move {
+            let fail = *self.fail_operations.lock().expect("lock poisoned");
+            if fail {
+                anyhow::bail!("Get status operation failed (test failure mode)");
+            }
 
-        if fail {
-            anyhow::bail!("Get status operation failed (test failure mode)");
-        }
-
-        let total = packages.lock().len();
-        let explicit = installed.lock().len();
-        let updates_count = updates.lock().len();
-        Ok((total, explicit, 0, updates_count))
+            let total = self.packages.lock().expect("lock poisoned").len();
+            let explicit = self.installed.lock().expect("lock poisoned").len();
+            let updates_count = self.updates.lock().expect("lock poisoned").len();
+            Ok((total, explicit, 0, updates_count))
+        })
     }
 
-    async fn list_explicit(&self) -> Result<Vec<String>> {
-        let installed = self.installed.clone();
-        let fail = *self.fail_operations.lock();
+    fn list_explicit(&self) -> Pin<Box<dyn Future<Output = Result<Vec<String>>> + Send + '_>> {
+        Box::pin(async move {
+            let fail = *self.fail_operations.lock().expect("lock poisoned");
+            if fail {
+                anyhow::bail!("List explicit operation failed (test failure mode)");
+            }
 
-        if fail {
-            anyhow::bail!("List explicit operation failed (test failure mode)");
-        }
-
-        Ok(installed.lock().iter().cloned().collect())
+            Ok(self
+                .installed
+                .lock()
+                .expect("lock poisoned")
+                .iter()
+                .cloned()
+                .collect())
+        })
     }
 
-    async fn list_updates(&self) -> Result<Vec<UpdateInfo>> {
-        let updates = self.updates.clone();
-        let fail = *self.fail_operations.lock();
+    fn list_updates(&self) -> Pin<Box<dyn Future<Output = Result<Vec<UpdateInfo>>> + Send + '_>> {
+        Box::pin(async move {
+            let fail = *self.fail_operations.lock().expect("lock poisoned");
+            if fail {
+                anyhow::bail!("List updates operation failed (test failure mode)");
+            }
 
-        if fail {
-            anyhow::bail!("List updates operation failed (test failure mode)");
-        }
-
-        Ok(updates.lock().clone())
+            Ok(self.updates.lock().expect("lock poisoned").clone())
+        })
     }
 
-    async fn is_installed(&self, package: &str) -> bool {
+    fn is_installed(&self, package: &str) -> Pin<Box<dyn Future<Output = bool> + Send + '_>> {
         let package = package.to_string();
-        let installed = self.installed.clone();
-
-        installed.lock().contains(&package)
+        Box::pin(async move {
+            self.installed
+                .lock()
+                .expect("lock poisoned")
+                .contains(&package)
+        })
     }
 }
 

@@ -12,6 +12,18 @@ use crate::core::paths;
 use crate::package_managers::pacman_db;
 use crate::package_managers::types::{LocalPackage, PackageInfo, SyncPackage};
 
+/// Zero-allocation case-insensitive substring search (ASCII-only)
+#[inline]
+fn contains_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
+    if needle.len() > haystack.len() {
+        return false;
+    }
+    haystack
+        .as_bytes()
+        .windows(needle.len())
+        .any(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
+}
+
 static CACHE_EPOCH: AtomicU64 = AtomicU64::new(0);
 
 thread_local! {
@@ -82,7 +94,7 @@ where
 ///
 /// SAFETY: Uses `catch_unwind` to ensure `RefCell` is properly released even if
 /// the closure panics, preventing the thread-local from becoming poisoned.
-#[allow(clippy::expect_used)] // ALPM handle initialization; failure indicates system misconfiguration
+#[expect(clippy::expect_used)] // ALPM handle initialization; failure indicates system misconfiguration
 pub fn with_handle<F, R>(f: F) -> Result<R>
 where
     F: FnOnce(&Alpm) -> Result<R>,
@@ -91,12 +103,7 @@ where
         let current_epoch = CACHE_EPOCH.load(Ordering::Acquire);
         let mut maybe_handle = cell.borrow_mut();
 
-        let needs_refresh = match &*maybe_handle {
-            Some((_, epoch)) => *epoch != current_epoch,
-            None => true,
-        };
-
-        if needs_refresh {
+        if !matches!(&*maybe_handle, Some((_, epoch)) if *epoch == current_epoch) {
             *maybe_handle = Some((create_alpm_handle()?, current_epoch));
         }
 
@@ -129,7 +136,7 @@ where
 ///
 /// SAFETY: Uses `catch_unwind` to ensure `RefCell` is properly released even if
 /// the closure panics, preventing the thread-local from becoming poisoned.
-#[allow(clippy::expect_used)] // ALPM handle initialization; failure indicates system misconfiguration
+#[expect(clippy::expect_used)] // ALPM handle initialization; failure indicates system misconfiguration
 pub fn with_handle_mut<F, R>(f: F) -> Result<R>
 where
     F: FnOnce(&mut Alpm) -> Result<R>,
@@ -138,12 +145,7 @@ where
         let current_epoch = CACHE_EPOCH.load(Ordering::Acquire);
         let mut maybe_handle = cell.borrow_mut();
 
-        let needs_refresh = match &*maybe_handle {
-            Some((_, epoch)) => *epoch != current_epoch,
-            None => true,
-        };
-
-        if needs_refresh {
+        if !matches!(&*maybe_handle, Some((_, epoch)) if *epoch == current_epoch) {
             *maybe_handle = Some((create_alpm_handle()?, current_epoch));
         }
 
@@ -172,40 +174,41 @@ pub fn clear_alpm_cache() {
 }
 
 /// Search local database (installed packages) - INSTANT
+#[inline]
 pub fn search_local(query: &str) -> Result<Vec<LocalPackage>> {
     with_handle(|handle| {
         let localdb = handle.localdb();
-        let query_lower = query.to_lowercase();
+        let query_lower = query.to_ascii_lowercase();
+        let mut results = Vec::with_capacity(64);
 
-        let results = localdb
-            .pkgs()
-            .iter()
-            .filter(|pkg| {
-                pkg.name().contains(&query_lower)
-                    || pkg
-                        .desc()
-                        .is_some_and(|d| d.to_lowercase().contains(&query_lower))
-            })
-            .map(|pkg| LocalPackage {
-                name: pkg.name().to_string(),
-                version: super::types::parse_version_or_zero(pkg.version()),
-                description: pkg.desc().unwrap_or("").to_string(),
-                install_size: pkg.isize(),
-                reason: match pkg.reason() {
-                    PackageReason::Explicit => "explicit",
-                    PackageReason::Depend => "dependency",
-                },
-            })
-            .collect();
+        for pkg in localdb.pkgs() {
+            if pkg.name().contains(&query_lower)
+                || pkg
+                    .desc()
+                    .is_some_and(|d| contains_ignore_ascii_case(d, &query_lower))
+            {
+                results.push(LocalPackage {
+                    name: pkg.name().to_string(),
+                    version: super::types::parse_version_or_zero(pkg.version()),
+                    description: pkg.desc().unwrap_or("").to_string(),
+                    install_size: pkg.isize(),
+                    reason: match pkg.reason() {
+                        PackageReason::Explicit => "explicit",
+                        PackageReason::Depend => "dependency",
+                    },
+                });
+            }
+        }
 
         Ok(results)
     })
 }
 
 /// Search sync databases (available packages) - FAST (<10ms)
+#[inline]
 pub fn search_sync(query: &str) -> Result<Vec<SyncPackage>> {
     with_handle(|handle| {
-        let query_lower = query.to_lowercase();
+        let query_lower = query.to_ascii_lowercase();
         let mut results = Vec::with_capacity(64);
 
         for db in handle.syncdbs() {
@@ -213,7 +216,7 @@ pub fn search_sync(query: &str) -> Result<Vec<SyncPackage>> {
                 if pkg.name().contains(&query_lower)
                     || pkg
                         .desc()
-                        .is_some_and(|d| d.to_lowercase().contains(&query_lower))
+                        .is_some_and(|d| contains_ignore_ascii_case(d, &query_lower))
                 {
                     let installed = handle.localdb().pkg(pkg.name()).is_ok();
 
@@ -234,6 +237,7 @@ pub fn search_sync(query: &str) -> Result<Vec<SyncPackage>> {
 }
 
 /// Get package info - INSTANT (<1ms)
+#[inline]
 pub fn get_package_info(name: &str) -> Result<Option<PackageInfo>> {
     with_handle(|handle| {
         // Try local first
@@ -286,6 +290,7 @@ pub fn get_package_info(name: &str) -> Result<Option<PackageInfo>> {
 
 /// Batch get package info for multiple packages - 10-50x faster than individual lookups
 /// Single ALPM handle call amortizes overhead across all packages
+#[inline]
 pub fn get_package_info_batch(names: &[&str]) -> Result<Vec<Option<PackageInfo>>> {
     with_handle(|handle| {
         let localdb = handle.localdb();
@@ -348,21 +353,19 @@ pub fn get_package_info_batch(names: &[&str]) -> Result<Vec<Option<PackageInfo>>
 pub fn list_installed_fast() -> Result<Vec<LocalPackage>> {
     with_handle(|handle| {
         let localdb = handle.localdb();
+        let pkg_count = localdb.pkgs().len();
 
-        let results = localdb
-            .pkgs()
-            .iter()
-            .map(|pkg| LocalPackage {
-                name: pkg.name().to_string(),
-                version: super::types::parse_version_or_zero(pkg.version()),
-                description: pkg.desc().unwrap_or("").to_string(),
-                install_size: pkg.isize(),
-                reason: match pkg.reason() {
-                    PackageReason::Explicit => "explicit",
-                    PackageReason::Depend => "dependency",
-                },
-            })
-            .collect();
+        let mut results = Vec::with_capacity(pkg_count);
+        results.extend(localdb.pkgs().iter().map(|pkg| LocalPackage {
+            name: pkg.name().to_string(),
+            version: super::types::parse_version_or_zero(pkg.version()),
+            description: pkg.desc().unwrap_or("").to_string(),
+            install_size: pkg.isize(),
+            reason: match pkg.reason() {
+                PackageReason::Explicit => "explicit",
+                PackageReason::Depend => "dependency",
+            },
+        }));
 
         Ok(results)
     })
@@ -411,28 +414,25 @@ pub fn list_orphans_fast() -> Result<Vec<String>> {
 /// List installed packages with license information - for compliance scanning
 pub fn list_installed_with_licenses() -> Result<Vec<(String, String, String)>> {
     with_handle(|handle| {
-        let results = handle
-            .localdb()
-            .pkgs()
-            .iter()
-            .map(|pkg| {
-                let licenses = pkg.licenses();
-                let license_str = if licenses.is_empty() {
-                    "Unknown".to_string()
-                } else {
-                    licenses
-                        .iter()
-                        .map(std::string::ToString::to_string)
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                };
-                (
-                    pkg.name().to_string(),
-                    license_str,
-                    pkg.version().to_string(),
-                )
-            })
-            .collect();
+        let pkgs = handle.localdb().pkgs();
+        let mut results = Vec::with_capacity(pkgs.len());
+        results.extend(pkgs.iter().map(|pkg| {
+            let licenses = pkg.licenses();
+            let license_str = if licenses.is_empty() {
+                "Unknown".to_string()
+            } else {
+                licenses
+                    .iter()
+                    .map(std::string::ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            };
+            (
+                pkg.name().to_string(),
+                license_str,
+                pkg.version().to_string(),
+            )
+        }));
 
         Ok(results)
     })
@@ -463,6 +463,7 @@ pub fn has_update(package: &str) -> Result<bool> {
 }
 
 /// Check if package is installed - INSTANT
+#[inline]
 pub fn is_installed_fast(name: &str) -> Result<bool> {
     with_handle(|handle| Ok(handle.localdb().pkg(name).is_ok()))
 }
@@ -503,11 +504,14 @@ pub fn get_explicit_count_fast() -> Result<usize> {
 }
 
 /// List all known package names (local + sync) for completion - FAST
+#[inline]
 pub fn list_all_package_names() -> Result<Vec<String>> {
     with_handle(|handle| {
-        let mut names = std::collections::HashSet::new();
+        let localdb = handle.localdb();
+        let sync_count: usize = handle.syncdbs().iter().map(|db| db.pkgs().len()).sum();
+        let mut names = ahash::AHashSet::with_capacity(localdb.pkgs().len() + sync_count);
 
-        for pkg in handle.localdb().pkgs() {
+        for pkg in localdb.pkgs() {
             names.insert(pkg.name().to_string());
         }
 

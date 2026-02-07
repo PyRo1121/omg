@@ -86,10 +86,6 @@ mod wrappers;
 pub use cmd::{Cmd, cmd};
 pub use renderer::Renderer;
 
-// Re-export lip-gloss renderer (when stable)
-// pub use lipgloss_renderer::LipGlossRenderer;
-// pub use lipgloss_renderer::Theme;
-
 // Re-export configuration types for convenience
 pub use cmd::{
     BorderStyle, PanelConfig, ProgressConfig, ProgressStyle, SpinnerConfig, SpinnerStyle,
@@ -297,7 +293,7 @@ impl<M: Model> Program<M> {
     }
 
     /// Check if there are more commands to process
-    #[allow(clippy::unnecessary_wraps, clippy::unused_self)] // Placeholder: signature matches Tea trait contract for future command queue
+    #[expect(clippy::unnecessary_wraps, clippy::unused_self)] // Placeholder: signature matches Tea trait contract for future command queue
     fn next_cmd(&self) -> io::Result<Option<Cmd<M::Msg>>> {
         // For now, we process commands synchronously
         // In the future, this could check a queue or channel

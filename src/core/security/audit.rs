@@ -116,6 +116,7 @@ pub struct AuditEntry {
 
 impl AuditEntry {
     /// Compute the hash of this entry (excluding the hash field itself)
+    #[must_use]
     pub fn compute_hash(&self) -> String {
         let mut hasher = Sha256::new();
         hasher.update(self.id.as_bytes());
@@ -133,6 +134,7 @@ impl AuditEntry {
     }
 
     /// Verify the integrity of this entry
+    #[must_use]
     pub fn verify(&self) -> bool {
         if let Some(hash) = &self.hash {
             &self.compute_hash() == hash
@@ -313,7 +315,7 @@ impl AuditLogger {
     }
 
     /// Get recent audit entries
-    #[allow(clippy::needless_collect)] // Need to collect to reverse the iterator
+    #[expect(clippy::needless_collect)] // Need to collect to reverse the iterator
     pub fn get_recent(&self, limit: usize) -> Result<Vec<AuditEntry>> {
         let file = File::open(&self.log_path)?;
         let reader = BufReader::new(file);
@@ -391,19 +393,20 @@ pub struct AuditIntegrityReport {
 }
 
 impl AuditIntegrityReport {
+    #[must_use]
     pub fn is_valid(&self) -> bool {
         self.chain_valid && self.total_entries == self.valid_entries
     }
 }
 
 /// Global audit logger instance
-static AUDIT_LOGGER: std::sync::LazyLock<parking_lot::Mutex<Option<AuditLogger>>> =
-    std::sync::LazyLock::new(|| parking_lot::Mutex::new(None));
+static AUDIT_LOGGER: std::sync::LazyLock<std::sync::Mutex<Option<AuditLogger>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(None));
 
 /// Initialize the global audit logger
 pub fn init_audit_logger() -> Result<()> {
     let logger = AuditLogger::new()?;
-    *AUDIT_LOGGER.lock() = Some(logger);
+    *AUDIT_LOGGER.lock().expect("lock poisoned") = Some(logger);
     Ok(())
 }
 
@@ -414,7 +417,7 @@ pub fn audit_log(
     resource: &str,
     description: &str,
 ) {
-    let mut guard = AUDIT_LOGGER.lock();
+    let mut guard = AUDIT_LOGGER.lock().expect("lock poisoned");
     if let Some(logger) = guard.as_mut() {
         let _ = logger.log(event, severity, resource, description);
     } else {
@@ -431,7 +434,7 @@ pub fn audit_log_with_metadata(
     description: &str,
     metadata: serde_json::Value,
 ) {
-    let mut guard = AUDIT_LOGGER.lock();
+    let mut guard = AUDIT_LOGGER.lock().expect("lock poisoned");
     if let Some(logger) = guard.as_mut() {
         let _ = logger.log_with_metadata(event, severity, resource, description, Some(metadata));
     } else {

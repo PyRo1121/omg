@@ -35,7 +35,14 @@ fn build_docker_image() -> bool {
 
     // Build image
     let status = Command::new("docker")
-        .args(["build", "-f", "Dockerfile.arch-e2e", "-t", "omg-arch-e2e", "."])
+        .args([
+            "build",
+            "-f",
+            "Dockerfile.arch-e2e",
+            "-t",
+            "omg-arch-e2e",
+            ".",
+        ])
         .status()
         .expect("Failed to build Docker image");
 
@@ -109,7 +116,10 @@ fn test_docker_real_install() {
     let (verify_success, verify_out, _) = run_in_docker(&["pacman", "-Qi", "ripgrep"]);
 
     assert!(verify_success, "Package should be installed");
-    assert!(verify_out.contains("ripgrep"), "Should find installed package");
+    assert!(
+        verify_out.contains("ripgrep"),
+        "Should find installed package"
+    );
 }
 
 #[test]
@@ -148,7 +158,10 @@ fn test_docker_explicit_packages() {
 
     assert!(success, "Explicit command should succeed");
     // Base system should have some explicitly installed packages
-    assert!(!stdout.trim().is_empty(), "Should list some explicit packages");
+    assert!(
+        !stdout.trim().is_empty(),
+        "Should list some explicit packages"
+    );
 }
 
 #[test]

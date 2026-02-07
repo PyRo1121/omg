@@ -428,7 +428,7 @@ struct CliResult {
     success: bool,
     stdout: String,
     stderr: String,
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     duration: std::time::Duration,
 }
 

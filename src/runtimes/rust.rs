@@ -535,11 +535,10 @@ impl RustToolchainSpec {
 
         // Handle dated beta releases (e.g., "1.82.0-beta.5")
         if channel.chars().next().is_some_and(|c| c.is_ascii_digit())
-            && segments.get(1).is_some_and(|seg| seg.starts_with("beta"))
+            && let Some(beta_part) = segments.get(1)
+            && beta_part.starts_with("beta")
         {
-            if let Some(beta_part) = segments.get(1) {
-                channel = format!("{channel}-{beta_part}");
-            }
+            channel = format!("{channel}-{beta_part}");
             segments.drain(0..2);
         } else {
             segments.remove(0);
@@ -634,7 +633,7 @@ fn manifest_component_url(manifest: &toml::Value, component: &str, target: &str)
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)] // Idiomatic in tests: panics on failure with clear error context
+#[expect(clippy::unwrap_used)] // Idiomatic in tests: panics on failure with clear error context
 mod tests {
     use super::*;
 

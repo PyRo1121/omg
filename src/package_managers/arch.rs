@@ -1,6 +1,7 @@
+use std::future::Future;
+use std::pin::Pin;
+
 use anyhow::Result as AnyhowResult;
-use async_trait::async_trait;
-use futures::future::Future;
 use owo_colors::OwoColorize;
 
 use crate::core::{Package, PackageSource, can_write_pacman_db, privilege};
@@ -55,143 +56,194 @@ where
     Ok(())
 }
 
-#[async_trait]
 impl PackageManager for ArchPackageManager {
     fn name(&self) -> &'static str {
         "pacman"
     }
 
-    async fn search(&self, query: &str) -> AnyhowResult<Vec<Package>> {
+    #[inline]
+    fn search(
+        &self,
+        query: &str,
+    ) -> Pin<Box<dyn Future<Output = AnyhowResult<Vec<Package>>> + Send + '_>> {
         let query = query.to_string();
-        // Offload ALPM search to blocking thread
-        tokio::task::spawn_blocking(move || {
-            // Direct ALPM search is handled by search_sync in alpm_direct.rs
-            let results = crate::package_managers::search_sync(&query)?;
-            Ok(results
-                .into_iter()
-                .map(|p| Package {
-                    name: p.name,
-                    version: p.version,
-                    description: p.description,
-                    source: PackageSource::Official,
-                    installed: p.installed,
-                })
-                .collect())
-        })
-        .await?
-    }
-
-    async fn install(&self, packages: &[String]) -> AnyhowResult<()> {
-        crate::core::security::validate_package_names_or_files(packages)?;
-        if packages.is_empty() {
-            return Ok(());
-        }
-
-        let packages = packages.to_vec();
-        run_privileged_operation("install", &packages, || {
-            let pkgs = packages.clone();
-            async move {
-                tokio::task::spawn_blocking(move || {
-                    crate::package_managers::execute_transaction(pkgs, false, false, None)
-                })
-                .await??;
-                Ok(())
-            }
-        })
-        .await
-    }
-
-    async fn remove(&self, packages: &[String]) -> AnyhowResult<()> {
-        crate::core::security::validate_package_names(packages)?;
-        if packages.is_empty() {
-            return Ok(());
-        }
-
-        let packages = packages.to_vec();
-        run_privileged_operation("remove", &packages, || {
-            let pkgs = packages.clone();
-            async move {
-                tokio::task::spawn_blocking(move || {
-                    crate::package_managers::execute_transaction(pkgs, true, false, None)
-                })
-                .await??;
-                Ok(())
-            }
-        })
-        .await
-    }
-
-    async fn update(&self) -> AnyhowResult<()> {
-        run_privileged_operation("update", &[], || async {
-            let prefix = format!("{}", "OMG".cyan().bold());
-            tracing::info!("{prefix} Starting full system upgrade...");
+        Box::pin(async move {
+            // Offload ALPM search to blocking thread
             tokio::task::spawn_blocking(move || {
-                crate::package_managers::execute_transaction(Vec::new(), false, true, None)
+                // Direct ALPM search is handled by search_sync in alpm_direct.rs
+                let results = crate::package_managers::search_sync(&query)?;
+                Ok(results
+                    .into_iter()
+                    .map(|p| Package {
+                        name: p.name,
+                        version: p.version,
+                        description: p.description,
+                        source: PackageSource::Official,
+                        installed: p.installed,
+                    })
+                    .collect())
             })
-            .await??;
-            Ok(())
+            .await?
         })
-        .await
     }
 
-    async fn sync(&self) -> AnyhowResult<()> {
-        run_privileged_operation("sync", &[], || async {
-            crate::package_managers::sync_databases_parallel().await?;
-            Ok(())
+    fn install(
+        &self,
+        packages: &[String],
+    ) -> Pin<Box<dyn Future<Output = AnyhowResult<()>> + Send + '_>> {
+        let packages = packages.to_vec();
+        Box::pin(async move {
+            crate::core::security::validate_package_names_or_files(&packages)?;
+            if packages.is_empty() {
+                return Ok(());
+            }
+
+            run_privileged_operation("install", &packages, || {
+                let pkgs = packages.clone();
+                async move {
+                    tokio::task::spawn_blocking(move || {
+                        crate::package_managers::execute_transaction(pkgs, false, false, None)
+                    })
+                    .await??;
+                    Ok(())
+                }
+            })
+            .await
         })
-        .await
     }
 
-    async fn info(&self, package: &str) -> AnyhowResult<Option<Package>> {
-        // SECURITY: Validate package name
-        crate::core::security::validate_package_name(package)?;
+    fn remove(
+        &self,
+        packages: &[String],
+    ) -> Pin<Box<dyn Future<Output = AnyhowResult<()>> + Send + '_>> {
+        let packages = packages.to_vec();
+        Box::pin(async move {
+            crate::core::security::validate_package_names(&packages)?;
+            if packages.is_empty() {
+                return Ok(());
+            }
 
-        // Try direct ALPM info
-        if let Ok(Some(info)) = crate::package_managers::get_package_info(package) {
-            return Ok(Some(Package {
-                name: info.name,
-                version: info.version,
-                description: info.description,
-                source: PackageSource::Official,
-                installed: info.installed,
-            }));
-        }
-        Ok(None)
+            run_privileged_operation("remove", &packages, || {
+                let pkgs = packages.clone();
+                async move {
+                    tokio::task::spawn_blocking(move || {
+                        crate::package_managers::execute_transaction(pkgs, true, false, None)
+                    })
+                    .await??;
+                    Ok(())
+                }
+            })
+            .await
+        })
     }
 
-    async fn list_installed(&self) -> AnyhowResult<Vec<Package>> {
-        // LIGHTNING FAST: Direct ALPM list
-        // Offload to blocking thread
-        tokio::task::spawn_blocking(move || {
-            let pkgs = crate::package_managers::list_installed_fast()?;
-            Ok(pkgs
-                .into_iter()
-                .map(|p| Package {
-                    name: p.name,
-                    version: p.version,
-                    description: p.description,
-                    source: PackageSource::Official,
-                    installed: true,
+    fn update(&self) -> Pin<Box<dyn Future<Output = AnyhowResult<()>> + Send + '_>> {
+        Box::pin(async move {
+            run_privileged_operation("update", &[], || async {
+                let prefix = format!("{}", "OMG".cyan().bold());
+                tracing::info!("{prefix} Starting full system upgrade...");
+                tokio::task::spawn_blocking(move || {
+                    crate::package_managers::execute_transaction(Vec::new(), false, true, None)
                 })
-                .collect())
+                .await??;
+                Ok(())
+            })
+            .await
         })
-        .await?
     }
 
-    async fn get_status(&self, _fast: bool) -> AnyhowResult<(usize, usize, usize, usize)> {
-        get_system_status()
+    fn sync(&self) -> Pin<Box<dyn Future<Output = AnyhowResult<()>> + Send + '_>> {
+        Box::pin(async move {
+            run_privileged_operation("sync", &[], || async {
+                crate::package_managers::sync_databases_parallel().await?;
+                Ok(())
+            })
+            .await
+        })
     }
 
-    async fn list_explicit(&self) -> AnyhowResult<Vec<String>> {
-        tokio::task::spawn_blocking(crate::package_managers::list_explicit_fast).await?
+    #[inline]
+    fn info(
+        &self,
+        package: &str,
+    ) -> Pin<Box<dyn Future<Output = AnyhowResult<Option<Package>>> + Send + '_>> {
+        let package = package.to_string();
+        Box::pin(async move {
+            // SECURITY: Validate package name
+            crate::core::security::validate_package_name(&package)?;
+
+            // Try direct ALPM info
+            if let Ok(Some(info)) = crate::package_managers::get_package_info(&package) {
+                return Ok(Some(Package {
+                    name: info.name,
+                    version: info.version,
+                    description: info.description,
+                    source: PackageSource::Official,
+                    installed: info.installed,
+                }));
+            }
+            Ok(None)
+        })
     }
 
-    async fn list_updates(&self) -> AnyhowResult<Vec<crate::package_managers::types::UpdateInfo>> {
-        tokio::task::spawn_blocking(crate::package_managers::get_update_list).await?
+    #[inline]
+    fn list_installed(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = AnyhowResult<Vec<Package>>> + Send + '_>> {
+        Box::pin(async move {
+            // LIGHTNING FAST: Direct ALPM list
+            // Offload to blocking thread
+            tokio::task::spawn_blocking(move || {
+                let pkgs = crate::package_managers::list_installed_fast()?;
+                Ok(pkgs
+                    .into_iter()
+                    .map(|p| Package {
+                        name: p.name,
+                        version: p.version,
+                        description: p.description,
+                        source: PackageSource::Official,
+                        installed: true,
+                    })
+                    .collect())
+            })
+            .await?
+        })
     }
 
-    async fn is_installed(&self, package: &str) -> bool {
-        crate::package_managers::is_installed_fast(package).unwrap_or(false)
+    fn get_status(
+        &self,
+        _fast: bool,
+    ) -> Pin<Box<dyn Future<Output = AnyhowResult<(usize, usize, usize, usize)>> + Send + '_>> {
+        Box::pin(async move { get_system_status() })
+    }
+
+    #[inline]
+    fn list_explicit(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = AnyhowResult<Vec<String>>> + Send + '_>> {
+        Box::pin(async move {
+            tokio::task::spawn_blocking(crate::package_managers::list_explicit_fast).await?
+        })
+    }
+
+    #[inline]
+    fn list_updates(
+        &self,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = AnyhowResult<Vec<crate::package_managers::types::UpdateInfo>>>
+                + Send
+                + '_,
+        >,
+    > {
+        Box::pin(async move {
+            tokio::task::spawn_blocking(crate::package_managers::get_update_list).await?
+        })
+    }
+
+    fn is_installed(&self, package: &str) -> Pin<Box<dyn Future<Output = bool> + Send + '_>> {
+        let result = crate::package_managers::is_installed_fast(package).unwrap_or_default();
+        Box::pin(async move { result })
     }
 }
 
@@ -223,5 +275,5 @@ pub async fn list_explicit() -> AnyhowResult<Vec<String>> {
 }
 
 pub async fn is_installed(package: &str) -> bool {
-    crate::package_managers::is_installed_fast(package).unwrap_or(false)
+    crate::package_managers::is_installed_fast(package).unwrap_or_default()
 }

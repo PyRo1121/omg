@@ -1,6 +1,6 @@
 //! AUR (Arch User Repository) client with build support
 
-use std::collections::HashSet;
+use ahash::AHashSet;
 use std::fs::File;
 use std::io::{BufReader, Cursor, Read};
 use std::path::{Path, PathBuf};
@@ -45,6 +45,8 @@ use crate::package_managers::{get_potential_aur_packages, pacman_db};
 const AUR_RPC_URL: &str = "https://aur.archlinux.org/rpc";
 const AUR_GIT_URL: &str = "https://aur.archlinux.org";
 const AUR_RPC_MAX_URI: usize = 4400;
+/// Pre-computed length of the AUR RPC info base URL (47 bytes)
+const AUR_RPC_INFO_BASE_LEN: usize = 47;
 
 /// AUR API client with build support
 #[derive(Clone)]
@@ -154,16 +156,15 @@ impl AurClient {
             .results
             .into_iter()
             .filter(|p| {
-                if let Err(e) = crate::core::security::validate_package_name(&p.name) {
-                    tracing::warn!(
-                        "Rejecting invalid package name from AUR search: {} ({})",
-                        p.name,
-                        e
-                    );
-                    false
-                } else {
-                    true
-                }
+                crate::core::security::validate_package_name(&p.name)
+                    .inspect_err(|e| {
+                        tracing::warn!(
+                            "Rejecting invalid package name from AUR search: {} ({})",
+                            p.name,
+                            e
+                        );
+                    })
+                    .is_ok()
             })
             .map(|p| Package {
                 name: p.name,
@@ -328,8 +329,8 @@ impl AurClient {
         // 3. Fallback to metadata archive (slower JSON)
         if let Some(archive) = self.load_metadata_archive().await? {
             let mut updates = Vec::new();
-            let names: HashSet<&str> = foreign_packages.iter().map(String::as_str).collect();
-            let mut seen_names = HashSet::new();
+            let names: AHashSet<&str> = foreign_packages.iter().map(String::as_str).collect();
+            let mut seen_names = AHashSet::new();
 
             for p in archive.results {
                 if !names.contains(p.name.as_str()) {
@@ -458,17 +459,16 @@ impl AurClient {
     }
 
     fn chunk_aur_names(names: &[String]) -> Vec<Vec<String>> {
-        let base_len = format!("{AUR_RPC_URL}?v=5&type=info").len();
         let mut chunks: Vec<Vec<String>> = Vec::with_capacity((names.len() / 100) + 1);
         let mut current: Vec<String> = Vec::with_capacity(100);
-        let mut current_len = base_len;
+        let mut current_len = AUR_RPC_INFO_BASE_LEN;
 
         for name in names {
             let arg_len = "&arg[]=".len() + name.len();
             if !current.is_empty() && current_len + arg_len > AUR_RPC_MAX_URI {
                 chunks.push(current);
                 current = Vec::with_capacity(100);
-                current_len = base_len;
+                current_len = AUR_RPC_INFO_BASE_LEN;
             }
             current_len += arg_len;
             current.push(name.clone());
@@ -779,7 +779,7 @@ impl AurClient {
             let entry_path = entry.path()?;
             if entry_path.components().count() <= 2
                 && let Some(file_name) = entry_path.file_name().and_then(|n| n.to_str())
-                && (file_name == ".PKGINFO" || file_name == "PKGINFO")
+                && matches!(file_name, ".PKGINFO" | "PKGINFO")
             {
                 let mut content = String::new();
                 entry.read_to_string(&mut content)?;
@@ -1655,7 +1655,11 @@ impl AurClient {
 
         let mut missing_keys = Vec::with_capacity(pkgbuild.validpgpkeys.len());
         for key_id in &pkgbuild.validpgpkeys {
-            if key_id.chars().any(|c| !c.is_ascii_hexdigit()) || key_id.len() > 64 {
+            if key_id.is_empty()
+                || key_id.len() < 8
+                || key_id.len() > 64
+                || key_id.chars().any(|c| !c.is_ascii_hexdigit())
+            {
                 tracing::warn!("Skipping invalid PGP key ID: {key_id}");
                 continue;
             }
@@ -1851,20 +1855,26 @@ impl AurClient {
             create_dir_as_user(parent).await?;
         }
 
+        let cache_key = cache_key.to_string();
         if let Some(user) = get_original_user() {
-            let cache_path_str = cache_path.to_string_lossy();
-            let cache_key = cache_key.to_string();
-            let status = Command::new("sudo")
-                .args(["-u", &user, "sh", "-c"])
-                .arg(format!("echo '{cache_key}' > '{cache_path_str}'"))
-                .status()
-                .await?;
+            let mut child = Command::new("sudo")
+                .args(["-u", &user, "tee"])
+                .arg(&cache_path)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .spawn()?;
 
+            if let Some(mut stdin) = child.stdin.take() {
+                use tokio::io::AsyncWriteExt;
+                stdin.write_all(cache_key.as_bytes()).await?;
+                stdin.write_all(b"\n").await?;
+            }
+
+            let status = child.wait().await?;
             if !status.success() {
                 anyhow::bail!("Failed to write cache key as user '{user}'");
             }
         } else {
-            let cache_key = cache_key.to_string();
             tokio::task::spawn_blocking(move || {
                 std::fs::write(cache_path, cache_key)?;
                 Ok::<(), anyhow::Error>(())
@@ -1948,7 +1958,7 @@ impl Default for AurClient {
 }
 
 /// Create a spinner
-#[allow(clippy::literal_string_with_formatting_args, clippy::expect_used)] // Static indicatif template is always valid; braces are template syntax not Rust format args
+#[expect(clippy::literal_string_with_formatting_args, clippy::expect_used)] // Static indicatif template is always valid; braces are template syntax not Rust format args
 fn create_spinner(msg: &str) -> ProgressBar {
     let pb = ProgressBar::new_spinner();
     pb.set_style(
@@ -2071,7 +2081,7 @@ pub struct AurPackageDetail {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)] // Idiomatic in tests: panics on failure with clear error context
+#[expect(clippy::unwrap_used)] // Idiomatic in tests: panics on failure with clear error context
 mod tests {
     use super::*;
     use std::path::PathBuf;
@@ -2180,9 +2190,8 @@ mod tests {
 
         let chunks = AurClient::chunk_aur_names(&names);
 
-        let base_len = format!("{AUR_RPC_URL}?v=5&type=info").len();
         for (idx, chunk) in chunks.iter().enumerate() {
-            let mut url_len = base_len;
+            let mut url_len = AUR_RPC_INFO_BASE_LEN;
             for name in chunk {
                 url_len += "&arg[]=".len() + name.len();
             }
@@ -2210,9 +2219,8 @@ mod tests {
 
         let chunks = AurClient::chunk_aur_names(&names);
 
-        let base_len = format!("{AUR_RPC_URL}?v=5&type=info").len();
         for chunk in &chunks {
-            let mut url_len = base_len;
+            let mut url_len = AUR_RPC_INFO_BASE_LEN;
             for name in chunk {
                 url_len += "&arg[]=".len() + name.len();
             }
@@ -2225,8 +2233,7 @@ mod tests {
 
     #[test]
     fn test_chunk_aur_names_exactly_at_boundary() {
-        let base_len = format!("{AUR_RPC_URL}?v=5&type=info").len();
-        let available = AUR_RPC_MAX_URI - base_len;
+        let available = AUR_RPC_MAX_URI - AUR_RPC_INFO_BASE_LEN;
 
         // Formula: arg_size = "&arg[]=".len() + pkg_name.len() = 7 + 10 = 17 chars/pkg
         let arg_size = "&arg[]=".len() + 10;

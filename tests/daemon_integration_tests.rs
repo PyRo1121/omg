@@ -167,7 +167,7 @@ async fn test_batch_request_executes_all_subcommands() {
 
     let req = Request::Batch {
         id: 300,
-        requests: Box::new(subrequests),
+        requests: subrequests,
     };
     let response = handle_request(Arc::clone(&state), req).await;
 
@@ -209,7 +209,7 @@ async fn test_batch_request_handles_mixed_success_and_failure() {
 
     let req = Request::Batch {
         id: 301,
-        requests: Box::new(subrequests),
+        requests: subrequests,
     };
     let response = handle_request(Arc::clone(&state), req).await;
 

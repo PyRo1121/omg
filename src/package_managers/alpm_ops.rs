@@ -50,8 +50,8 @@ pub fn get_update_list() -> Result<Vec<UpdateInfo>> {
 
         // Build HashMap of sync packages: name -> (version_str, repo_name)
         // This converts O(n×m) lookups to O(n+m) with single HashMap lookup per package
-        let mut sync_map: std::collections::HashMap<&str, (&str, &str)> =
-            std::collections::HashMap::with_capacity(local_pkg_count);
+        let mut sync_map: ahash::AHashMap<&str, (&str, &str)> =
+            ahash::AHashMap::with_capacity(local_pkg_count);
 
         for db in syncdbs {
             let repo_name = db.name();
@@ -101,26 +101,42 @@ pub fn get_update_download_list() -> Result<Vec<DownloadInfo>> {
         let localdb = alpm.localdb();
         let syncdbs = alpm.syncdbs();
         let local_pkg_count = localdb.pkgs().len();
+
+        // Build HashMap of sync packages: name -> (version_str, repo_name, filename, dl_size)
+        // Converts O(n*m) nested loop to O(n+m) with single HashMap lookup per package
+        let mut sync_map: ahash::AHashMap<&str, (&str, &str, &str, u64)> =
+            ahash::AHashMap::with_capacity(local_pkg_count);
+
+        for db in syncdbs {
+            let repo_name = db.name();
+            for pkg in db.pkgs() {
+                sync_map.entry(pkg.name()).or_insert_with(|| {
+                    (
+                        pkg.version().as_str(),
+                        repo_name,
+                        pkg.filename().unwrap_or_default(),
+                        pkg.download_size() as u64,
+                    )
+                });
+            }
+        }
+
         let mut downloads = Vec::with_capacity(local_pkg_count / 20);
 
         for pkg in localdb.pkgs() {
             let name = pkg.name();
             let local_ver = pkg.version().as_str();
 
-            for db in syncdbs {
-                if let Ok(sync_pkg) = db.pkg(name) {
-                    let sync_ver = sync_pkg.version().as_str();
-                    if alpm::vercmp(sync_ver, local_ver) == std::cmp::Ordering::Greater {
-                        downloads.push(DownloadInfo {
-                            name: name.to_string(),
-                            version: super::types::parse_version_or_zero(sync_ver),
-                            repo: db.name().to_string(),
-                            filename: sync_pkg.filename().unwrap_or_default().to_string(),
-                            size: sync_pkg.download_size() as u64,
-                        });
-                        break;
-                    }
-                }
+            if let Some(&(sync_ver, repo, filename, dl_size)) = sync_map.get(name)
+                && alpm::vercmp(sync_ver, local_ver) == std::cmp::Ordering::Greater
+            {
+                downloads.push(DownloadInfo {
+                    name: name.to_string(),
+                    version: super::types::parse_version_or_zero(sync_ver),
+                    repo: repo.to_string(),
+                    filename: filename.to_string(),
+                    size: dl_size,
+                });
             }
         }
 
@@ -187,8 +203,7 @@ pub fn clean_cache(keep_versions: usize) -> Result<(usize, u64)> {
         return Ok((0, 0));
     }
 
-    let mut packages: std::collections::HashMap<String, Vec<std::path::PathBuf>> =
-        std::collections::HashMap::new();
+    let mut packages: ahash::AHashMap<String, Vec<std::path::PathBuf>> = ahash::AHashMap::new();
 
     for entry in std::fs::read_dir(&cache_dir)? {
         let entry = entry?;
@@ -304,6 +319,7 @@ impl Drop for AlpmTransaction<'_> {
 }
 
 /// Execute a libalpm transaction (install/remove/sysupgrade)
+#[inline]
 pub fn execute_transaction(
     packages: Vec<String>,
     remove: bool,
@@ -349,7 +365,7 @@ pub fn execute_transaction(
 }
 
 /// Setup ALPM callbacks for progress bars
-#[allow(clippy::expect_used)] // ALPM database operations; failure indicates corrupted pacman database
+#[expect(clippy::expect_used)] // ALPM database operations; failure indicates corrupted pacman database
 fn setup_alpm_callbacks(
     alpm: &alpm::Alpm,
     mp: &indicatif::MultiProgress,
@@ -463,6 +479,7 @@ fn setup_alpm_callbacks(
 }
 
 /// Prepare an ALPM transaction for execution
+#[inline]
 fn prepare_alpm_transaction(
     alpm: &mut alpm::Alpm,
     packages: Vec<String>,
@@ -497,7 +514,7 @@ fn prepare_alpm_transaction(
     } else {
         for pkg_name in packages {
             if remove {
-                if let Ok(pkg) = tx_guard.0.localdb().pkg(pkg_name.clone()) {
+                if let Ok(pkg) = tx_guard.0.localdb().pkg(pkg_name.as_str()) {
                     tx_guard.0.trans_remove_pkg(pkg).map_err(|e| {
                         anyhow::anyhow!("Failed to add {pkg_name} to removal list: {e}")
                     })?;
@@ -526,7 +543,7 @@ fn prepare_alpm_transaction(
 
                 let mut found = false;
                 for db in tx_guard.0.syncdbs() {
-                    if let Ok(pkg) = db.pkg(pkg_name.clone()) {
+                    if let Ok(pkg) = db.pkg(pkg_name.as_str()) {
                         tx_guard.0.trans_add_pkg(pkg).map_err(|e| {
                             anyhow::anyhow!("Failed to add {pkg_name} to installation list: {e}")
                         })?;
@@ -550,7 +567,6 @@ fn prepare_alpm_transaction(
 }
 
 /// Commit an ALPM transaction
-#[allow(clippy::expect_used)] // ALPM database operations; failure indicates corrupted pacman database
 fn commit_alpm_transaction(alpm: &mut alpm::Alpm, main_pb: &indicatif::ProgressBar) -> Result<()> {
     main_pb.set_message("Preparing transaction...");
 
@@ -636,7 +652,6 @@ fn commit_alpm_transaction(alpm: &mut alpm::Alpm, main_pb: &indicatif::ProgressB
 }
 
 /// Configure ALPM servers for all repos (official + custom)
-#[allow(clippy::expect_used)]
 fn configure_mirrors(alpm: &mut alpm::Alpm) -> Result<()> {
     let conf_path = paths::pacman_conf_path();
     let arch = std::env::consts::ARCH;

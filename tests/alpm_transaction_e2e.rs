@@ -10,8 +10,8 @@ mod alpm_harness;
 mod common;
 
 use alpm_harness::{AlpmHarness, HarnessPkg};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 // =============================================================================
@@ -178,7 +178,11 @@ fn test_alpm_sync_database_query() {
         assert!(!syncdbs.is_empty(), "Should have sync databases");
         for db in syncdbs {
             let count = db.pkgs().len();
-            assert!(count > 0, "Sync database '{}' should not be empty", db.name());
+            assert!(
+                count > 0,
+                "Sync database '{}' should not be empty",
+                db.name()
+            );
         }
         Ok(())
     })
@@ -194,7 +198,11 @@ fn test_alpm_package_version_comparison() {
         for pkg in localdb.pkgs().iter().take(5) {
             let version = pkg.version().as_str();
             let cmp = alpm::vercmp(version, version);
-            assert_eq!(cmp, std::cmp::Ordering::Equal, "Version should equal itself");
+            assert_eq!(
+                cmp,
+                std::cmp::Ordering::Equal,
+                "Version should equal itself"
+            );
         }
         Ok(())
     })
@@ -244,7 +252,8 @@ fn test_alpm_log_callback() {
         counter.fetch_add(1, Ordering::Relaxed);
     });
 
-    alpm.trans_init(alpm::TransFlag::empty()).expect("Should init");
+    alpm.trans_init(alpm::TransFlag::empty())
+        .expect("Should init");
     alpm.trans_release().expect("Should release");
 }
 
@@ -258,11 +267,15 @@ fn test_alpm_progress_callback() {
     let harness = AlpmHarness::new().expect("Failed to create harness");
     let mut alpm = harness.alpm().expect("Failed to get handle");
 
-    alpm.set_progress_cb(counter_clone, |_op, _name, _percent, _n, _total, counter| {
-        counter.fetch_add(1, Ordering::Relaxed);
-    });
+    alpm.set_progress_cb(
+        counter_clone,
+        |_op, _name, _percent, _n, _total, counter| {
+            counter.fetch_add(1, Ordering::Relaxed);
+        },
+    );
 
-    alpm.trans_init(alpm::TransFlag::empty()).expect("Should init");
+    alpm.trans_init(alpm::TransFlag::empty())
+        .expect("Should init");
     alpm.trans_release().expect("Should release");
 }
 
@@ -280,13 +293,17 @@ fn test_alpm_rapid_transaction_creation() {
 
     for _ in 0..iterations {
         let mut alpm = harness.alpm().expect("Failed to get handle");
-        alpm.trans_init(alpm::TransFlag::empty()).expect("Init failed");
+        alpm.trans_init(alpm::TransFlag::empty())
+            .expect("Init failed");
         alpm.trans_release().expect("Release failed");
     }
 
     let duration = start.elapsed();
     let avg = duration / iterations;
-    assert!(avg.as_millis() < 100, "Transaction creation should be fast (avg: {avg:?})");
+    assert!(
+        avg.as_millis() < 100,
+        "Transaction creation should be fast (avg: {avg:?})"
+    );
 }
 
 #[test]
@@ -300,8 +317,10 @@ fn test_alpm_memory_leak_detection() {
 
     for _ in 0..100 {
         let mut alpm = harness.alpm().expect("Failed to get handle");
-        alpm.register_syncdb("core", alpm::SigLevel::NONE).expect("reg db");
-        alpm.trans_init(alpm::TransFlag::empty()).expect("Init failed");
+        alpm.register_syncdb("core", alpm::SigLevel::NONE)
+            .expect("reg db");
+        alpm.trans_init(alpm::TransFlag::empty())
+            .expect("Init failed");
 
         for db in alpm.syncdbs() {
             if let Ok(pkg) = db.pkg("test-a") {
@@ -326,7 +345,8 @@ fn test_alpm_double_release_protection() {
     let harness = AlpmHarness::new().expect("Failed to create harness");
     let mut alpm = harness.alpm().expect("Failed to get handle");
 
-    alpm.trans_init(alpm::TransFlag::empty()).expect("Init should work");
+    alpm.trans_init(alpm::TransFlag::empty())
+        .expect("Init should work");
     alpm.trans_release().expect("First release should work");
 
     let result = alpm.trans_release();
@@ -340,10 +360,14 @@ fn test_alpm_init_without_release() {
     let harness = AlpmHarness::new().expect("Failed to create harness");
     let mut alpm = harness.alpm().expect("Failed to get handle");
 
-    alpm.trans_init(alpm::TransFlag::empty()).expect("Init should work");
+    alpm.trans_init(alpm::TransFlag::empty())
+        .expect("Init should work");
 
     let result = alpm.trans_init(alpm::TransFlag::empty());
-    assert!(result.is_err(), "Double init without release should return error");
+    assert!(
+        result.is_err(),
+        "Double init without release should return error"
+    );
 
     alpm.trans_release().expect("Release should work");
 }
@@ -355,7 +379,8 @@ fn test_alpm_empty_transaction_prepare() {
     let harness = AlpmHarness::new().expect("Failed to create harness");
     let mut alpm = harness.alpm().expect("Failed to get handle");
 
-    alpm.trans_init(alpm::TransFlag::empty()).expect("Init should work");
+    alpm.trans_init(alpm::TransFlag::empty())
+        .expect("Init should work");
     drop(alpm.trans_prepare());
     alpm.trans_release().expect("Release should work");
 }

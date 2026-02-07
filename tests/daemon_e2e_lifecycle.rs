@@ -130,7 +130,10 @@ impl DaemonTestFixture {
             return false;
         };
 
-        matches!(response, omg_lib::daemon::protocol::Response::Success { .. })
+        matches!(
+            response,
+            omg_lib::daemon::protocol::Response::Success { .. }
+        )
     }
 }
 

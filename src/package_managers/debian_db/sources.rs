@@ -88,7 +88,7 @@ impl RepoType {
         }
     }
 
-    #[allow(dead_code)] // Future feature: sources.list writing
+    #[expect(dead_code)] // Future feature: sources.list writing
     fn as_str(self) -> &'static str {
         match self {
             Self::Binary => "deb",
@@ -132,27 +132,28 @@ pub fn parse_all_sources() -> Result<Vec<Repository>> {
         if let Ok(entries) = fs::read_dir(sources_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if let Some(ext) = path.extension() {
-                    let result = if ext == "list" {
-                        parse_sources_list(&path)
-                    } else if ext == "sources" {
-                        parse_deb822_sources(&path)
-                    } else {
-                        continue;
-                    };
+                let Some(ext) = path.extension() else {
+                    continue;
+                };
+                let result = if ext == "list" {
+                    parse_sources_list(&path)
+                } else if ext == "sources" {
+                    parse_deb822_sources(&path)
+                } else {
+                    continue;
+                };
 
-                    match result {
-                        Ok(parsed) => {
-                            tracing::debug!(
-                                "Parsed {} repositories from {}",
-                                parsed.len(),
-                                path.display()
-                            );
-                            repos.extend(parsed);
-                        }
-                        Err(e) => {
-                            tracing::warn!("Failed to parse {}: {}", path.display(), e);
-                        }
+                match result {
+                    Ok(parsed) => {
+                        tracing::debug!(
+                            "Parsed {} repositories from {}",
+                            parsed.len(),
+                            path.display()
+                        );
+                        repos.extend(parsed);
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to parse {}: {}", path.display(), e);
                     }
                 }
             }

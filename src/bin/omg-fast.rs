@@ -40,7 +40,7 @@ fn main() {
     let cmd = args.get(1).map_or("ec", String::as_str);
 
     // Fast path for search/info via daemon IPC
-    if (cmd == "s" || cmd == "search") && args.len() >= 3 {
+    if matches!(cmd, "s" | "search") && args.len() >= 3 {
         let query = &args[2];
         // SECURITY: Basic validation for minimal binary
         if query.len() > 100 || query.chars().any(char::is_control) {
@@ -50,7 +50,7 @@ fn main() {
         fast_search(query);
         return;
     }
-    if (cmd == "i" || cmd == "info") && args.len() >= 3 {
+    if matches!(cmd, "i" | "info") && args.len() >= 3 {
         let package = &args[2];
         // SECURITY: Basic validation for minimal binary
         if package.len() > 100

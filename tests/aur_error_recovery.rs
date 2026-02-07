@@ -1,5 +1,10 @@
 #![cfg(feature = "arch")]
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic, clippy::nursery)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::pedantic,
+    clippy::nursery
+)]
 //! AUR Error Recovery & Resilience Tests
 //!
 //! Comprehensive testing of error handling, recovery mechanisms, and edge cases
@@ -217,7 +222,10 @@ async fn test_error_aur_rpc_failure() {
 
     result.assert_success();
 
-    println!("✓ AUR RPC retry logic validated (completed in {:?})", duration);
+    println!(
+        "✓ AUR RPC retry logic validated (completed in {:?})",
+        duration
+    );
 }
 
 // ============================================================================
@@ -454,7 +462,10 @@ async fn test_error_root_owned_cache() {
 
     // Either succeeds after fixing ownership or fails with helpful error
     let output = result.combined_output();
-    println!("Result: {}", if result.success { "success" } else { "failed" });
+    println!(
+        "Result: {}",
+        if result.success { "success" } else { "failed" }
+    );
 
     if !result.success {
         assert!(
@@ -548,9 +559,9 @@ async fn test_edge_package_name_special_chars() {
 
     // Valid special chars in package names: - _ + @ . (but must follow rules)
     let valid_chars = vec![
-        "python-pytest",     // Hyphens are common
-        "lib32-gcc-libs",    // Numbers and hyphens
-        "ttf-font-awesome",  // Multiple hyphens
+        "python-pytest",    // Hyphens are common
+        "lib32-gcc-libs",   // Numbers and hyphens
+        "ttf-font-awesome", // Multiple hyphens
     ];
 
     for name in valid_chars {
@@ -559,11 +570,7 @@ async fn test_edge_package_name_special_chars() {
     }
 
     // Invalid names should be rejected
-    let invalid_names = vec![
-        "../../../etc/passwd",
-        "package;rm-rf",
-        "package`whoami`",
-    ];
+    let invalid_names = vec!["../../../etc/passwd", "package;rm-rf", "package`whoami`"];
 
     for name in invalid_names {
         let result = run_omg(&["install", name]);

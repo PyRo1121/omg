@@ -1,5 +1,10 @@
 #![cfg(feature = "arch")]
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic, clippy::nursery)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::pedantic,
+    clippy::nursery
+)]
 //! Comprehensive S-tier AUR e2e Tests
 //!
 //! These tests exercise the complete AUR workflow in production-like scenarios,
@@ -260,7 +265,10 @@ async fn test_build_vcs_packages() {
 
     assert!(check.status.success(), "paru-git should be installed");
 
-    println!("✓ Successfully built and installed VCS package in {:?}", duration);
+    println!(
+        "✓ Successfully built and installed VCS package in {:?}",
+        duration
+    );
 }
 
 // ============================================================================
@@ -438,15 +446,18 @@ async fn test_deps_circular_detection() {
     use std::collections::HashSet;
 
     let mut graph = HashMap::new();
-    graph.insert("pkg-a".to_string(), ["pkg-b".to_string()].into_iter().collect::<HashSet<_>>());
-    graph.insert("pkg-b".to_string(), ["pkg-a".to_string()].into_iter().collect::<HashSet<_>>());
+    graph.insert(
+        "pkg-a".to_string(),
+        ["pkg-b".to_string()].into_iter().collect::<HashSet<_>>(),
+    );
+    graph.insert(
+        "pkg-b".to_string(),
+        ["pkg-a".to_string()].into_iter().collect::<HashSet<_>>(),
+    );
 
     let result = ParallelBuilder::topological_levels(&graph);
 
-    assert!(
-        result.is_err(),
-        "Should detect circular dependency"
-    );
+    assert!(result.is_err(), "Should detect circular dependency");
     assert!(
         result.unwrap_err().to_string().contains("Circular"),
         "Error should mention circular dependency"
@@ -681,7 +692,10 @@ async fn test_advanced_build_caching() {
     println!("Cached build: {:?}", duration2);
 
     // Cached build should be faster (or similar if already very fast)
-    println!("✓ Build caching validated (first: {:?}, cached: {:?})", duration1, duration2);
+    println!(
+        "✓ Build caching validated (first: {:?}, cached: {:?})",
+        duration1, duration2
+    );
 }
 
 /// Test version upgrades

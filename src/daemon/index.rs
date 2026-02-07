@@ -74,12 +74,10 @@ impl PackageBloomFilter {
 #[derive(Default)]
 struct StringPool {
     pool: Vec<u8>,
-    #[allow(dead_code)] // Infrastructure field for string interning optimization
     offsets: AHashMap<String, u64>,
 }
 
 /// Pack a 32-bit offset and 32-bit length into a single u64 handle.
-#[allow(dead_code)] // Infrastructure function for string interning optimization
 const fn pack(offset: u32, len: u32) -> u64 {
     (offset as u64) | ((len as u64) << 32)
 }
@@ -90,7 +88,6 @@ const fn unpack(handle: u64) -> (u32, u32) {
 }
 
 impl StringPool {
-    #[allow(dead_code)] // Infrastructure method for string interning optimization
     fn intern(&mut self, s: &str) -> u64 {
         if let Some(&handle) = self.offsets.get(s) {
             return handle;
@@ -117,7 +114,7 @@ impl StringPool {
     /// Bounds are verified in both debug and release builds to prevent UB
     /// from corrupted handles.
     #[inline]
-    #[allow(unsafe_code)]
+    #[expect(unsafe_code)]
     fn get(&self, handle: u64) -> Result<&str, &'static str> {
         let (offset, len) = unpack(handle);
         let start = offset as usize;
@@ -544,18 +541,34 @@ impl PackageIndex {
             return Vec::new();
         }
         let query_lower = query.to_ascii_lowercase();
-        self.name_to_idx
-            .keys()
-            .filter(|name| name.to_ascii_lowercase().starts_with(&query_lower))
-            .take(limit)
-            .cloned()
-            .collect()
+        let mut suggestions = Vec::with_capacity(limit);
+
+        for item in &self.items {
+            if suggestions.len() >= limit {
+                break;
+            }
+            // Use pre-lowercased name from string pool (zero allocation per item)
+            let name_lower = self
+                .pool
+                .get(item.name_lower_offset)
+                .expect("valid name_lower handle from index");
+            if name_lower.starts_with(&query_lower) {
+                suggestions.push(
+                    self.pool
+                        .get(item.name_offset)
+                        .expect("valid name handle")
+                        .to_string(),
+                );
+            }
+        }
+
+        suggestions
     }
 
     pub fn all_packages(&self) -> Vec<DetailedPackageInfo> {
-        self.items
-            .iter()
-            .map(|item| DetailedPackageInfo {
+        let mut results = Vec::with_capacity(self.items.len());
+        results.extend(self.items.iter().map(|item| {
+            DetailedPackageInfo {
                 name: self
                     .pool
                     .get(item.name_offset)
@@ -590,8 +603,9 @@ impl PackageIndex {
                     .get(item.source_offset)
                     .expect("valid source handle")
                     .to_string(),
-            })
-            .collect()
+            }
+        }));
+        results
     }
 }
 

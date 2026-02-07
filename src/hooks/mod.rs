@@ -162,7 +162,7 @@ pub fn print_hook(shell: &str) -> Result<()> {
 /// Target: <10ms execution time
 pub fn hook_env(shell: &str) -> Result<()> {
     // SECURITY: Validate shell
-    if !["zsh", "bash", "fish"].contains(&shell.to_lowercase().as_str()) {
+    if !matches!(shell.to_lowercase().as_str(), "zsh" | "bash" | "fish") {
         anyhow::bail!("Unsupported shell: {shell}");
     }
 
@@ -204,11 +204,12 @@ fn parse_tool_versions_file(file_path: &Path, versions: &mut HashMap<String, Str
     if let Ok(content) = std::fs::read_to_string(file_path) {
         for line in content.lines() {
             let parts: Vec<&str> = line.split_whitespace().collect();
-            if let (Some(rt_part), Some(ver_part)) = (parts.first(), parts.get(1)) {
-                let rt = normalize_runtime_name(rt_part);
-                let ver = (*ver_part).to_string();
-                versions.entry(rt).or_insert(ver);
-            }
+            let (Some(rt_part), Some(ver_part)) = (parts.first(), parts.get(1)) else {
+                continue;
+            };
+            let rt = normalize_runtime_name(rt_part);
+            let ver = (*ver_part).to_string();
+            versions.entry(rt).or_insert(ver);
         }
     }
 }
@@ -234,12 +235,11 @@ fn parse_go_mod_file(file_path: &Path, runtime: &str, versions: &mut HashMap<Str
     if let Ok(content) = std::fs::read_to_string(file_path) {
         for line in content.lines() {
             let line = line.trim();
-            if let Some(version) = line.strip_prefix("go ") {
-                let version = version.trim();
-                if !version.is_empty() {
-                    versions.insert(runtime.to_string(), version.to_string());
-                    break;
-                }
+            if let Some(version) = line.strip_prefix("go ")
+                && !version.trim().is_empty()
+            {
+                versions.insert(runtime.to_string(), version.trim().to_string());
+                break;
             }
         }
     }
@@ -717,7 +717,7 @@ end
 ";
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)] // Idiomatic in tests: panics on failure with clear error context
+#[expect(clippy::unwrap_used)] // Idiomatic in tests: panics on failure with clear error context
 mod tests {
     use super::*;
     use std::fs;

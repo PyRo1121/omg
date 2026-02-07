@@ -1262,7 +1262,7 @@ mod daemon_tests {
         // Given: A batch request with multiple sub-requests
         let batch = Request::Batch {
             id: 1,
-            requests: Box::new(vec![
+            requests: vec![
                 Request::Search {
                     id: 2,
                     query: "vim".to_string(),
@@ -1272,7 +1272,7 @@ mod daemon_tests {
                     id: 3,
                     package: "git".to_string(),
                 },
-            ]),
+            ],
         };
 
         // When: We serialize with bitcode

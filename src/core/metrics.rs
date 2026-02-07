@@ -121,6 +121,7 @@ impl Metrics {
         self.status_requests.fetch_add(1, Ordering::Relaxed);
     }
 
+    #[must_use]
     pub fn snapshot(&self) -> MetricsSnapshot {
         MetricsSnapshot {
             requests_total: self.requests_total.load(Ordering::Relaxed),

@@ -11,17 +11,19 @@
 //! - Binary cache: Use rkyv for zero-copy deserialization on subsequent loads
 //! - Fuzzy matching: nucleo-matcher for intelligent search ranking
 
+use std::future::Future;
+use std::pin::Pin;
+
 use ahash::AHashSet;
 use anyhow::{Context, Result, bail};
-use async_trait::async_trait;
 use nucleo_matcher::{
     Config as MatcherConfig, Matcher, Utf32Str,
     pattern::{CaseMatching, Normalization, Pattern},
 };
-use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::RwLock;
 use std::sync::{Arc, LazyLock};
 use std::time::{Instant, SystemTime};
 use tokio::fs;
@@ -446,13 +448,13 @@ impl HomebrewPackageManager {
     /// 3. Homebrew's local JSON cache (~50-100ms, no network)
     /// 4. Homebrew API fetch (2-3s, requires network)
     async fn ensure_cache(&self) -> Result<()> {
-        if self.cache.read().is_some() {
+        if self.cache.read().expect("lock poisoned").is_some() {
             return Ok(());
         }
 
         if let Ok(Some(cache)) = self.load_cache_from_disk().await {
             tracing::debug!("Loaded cache from OMG rkyv store");
-            *self.cache.write() = Some(cache);
+            *self.cache.write().expect("lock poisoned") = Some(cache);
             return Ok(());
         }
 
@@ -461,13 +463,13 @@ impl HomebrewPackageManager {
             if let Err(e) = self.save_cache_to_disk(&cache).await {
                 tracing::warn!("Failed to persist Homebrew cache to OMG format: {}", e);
             }
-            *self.cache.write() = Some(cache);
+            *self.cache.write().expect("lock poisoned") = Some(cache);
             return Ok(());
         }
 
         tracing::debug!("No local cache available, fetching from Homebrew API");
         let cache = self.fetch_and_cache_formulas().await?;
-        *self.cache.write() = Some(cache);
+        *self.cache.write().expect("lock poisoned") = Some(cache);
 
         Ok(())
     }
@@ -533,10 +535,10 @@ impl HomebrewPackageManager {
         let installed_on_request = receipt
             .as_ref()
             .and_then(|r| r.installed_on_request)
-            .unwrap_or(false);
+            .unwrap_or_default();
 
         // Get description from cache if available
-        let description = if let Some(cache) = self.cache.read().as_ref() {
+        let description = if let Some(cache) = self.cache.read().expect("lock poisoned").as_ref() {
             cache
                 .formula_map
                 .get(name)
@@ -563,7 +565,7 @@ impl HomebrewPackageManager {
     /// - Returns top 50 results sorted by score
     ///
     /// Performance: O(n) where n = total packages (~7000), ~30-40ms per search
-    #[allow(clippy::unused_self)] // Part of consistent struct method API
+    #[expect(clippy::unused_self)] // Part of consistent struct method API
     fn fuzzy_search(&self, cache: &FormulaCache, query: &str) -> Vec<Package> {
         let mut matcher = Matcher::new(MatcherConfig::DEFAULT);
         let pattern = Pattern::parse(query, CaseMatching::Ignore, Normalization::Smart);
@@ -576,13 +578,11 @@ impl HomebrewPackageManager {
             let haystack_name = Utf32Str::new(&formula.name, &mut buf);
             let score = pattern.score(haystack_name, &mut matcher);
 
-            let final_score = if let Some(s) = score {
-                Some(s)
-            } else {
+            let final_score = score.or_else(|| {
                 buf.clear();
                 let haystack_desc = Utf32Str::new(&formula.desc, &mut buf);
                 pattern.score(haystack_desc, &mut matcher)
-            };
+            });
 
             if let Some(score) = final_score {
                 results.push((score, idx, true)); // true = formula
@@ -595,13 +595,11 @@ impl HomebrewPackageManager {
             let haystack_name = Utf32Str::new(&cask.token, &mut buf);
             let score = pattern.score(haystack_name, &mut matcher);
 
-            let final_score = if let Some(s) = score {
-                Some(s)
-            } else {
+            let final_score = score.or_else(|| {
                 buf.clear();
                 let haystack_desc = Utf32Str::new(&cask.desc, &mut buf);
                 pattern.score(haystack_desc, &mut matcher)
-            };
+            });
 
             if let Some(score) = final_score {
                 results.push((score, idx, false)); // false = cask
@@ -669,7 +667,7 @@ impl HomebrewPackageManager {
             .and_then(|m| m.modified().ok());
 
         let needs_refresh = {
-            let cache = INSTALLED_CACHE.read();
+            let cache = INSTALLED_CACHE.read().expect("lock poisoned");
             cache.cellar_mtime != cellar_mtime || cache.packages.is_empty()
         };
 
@@ -677,7 +675,7 @@ impl HomebrewPackageManager {
             if let Ok(names) = self.list_installed_sync() {
                 let set: AHashSet<String> = names.into_iter().collect();
 
-                let mut cache = INSTALLED_CACHE.write();
+                let mut cache = INSTALLED_CACHE.write().expect("lock poisoned");
                 cache.packages = set;
                 cache.cellar_mtime = cellar_mtime;
                 cache.last_refreshed = Some(Instant::now());
@@ -688,7 +686,7 @@ impl HomebrewPackageManager {
     #[must_use]
     pub fn is_installed_fast(&self, package: &str) -> bool {
         {
-            let cache = INSTALLED_CACHE.read();
+            let cache = INSTALLED_CACHE.read().expect("lock poisoned");
             if let Some(last) = cache.last_refreshed {
                 if last.elapsed().as_secs() < INSTALLED_CACHE_TTL_SECS {
                     return cache.packages.contains(package);
@@ -698,7 +696,11 @@ impl HomebrewPackageManager {
 
         self.refresh_installed_cache_if_needed();
 
-        INSTALLED_CACHE.read().packages.contains(package)
+        INSTALLED_CACHE
+            .read()
+            .expect("lock poisoned")
+            .packages
+            .contains(package)
     }
 
     async fn run_brew(&self, args: &[&str]) -> Result<()> {
@@ -723,159 +725,195 @@ impl Default for HomebrewPackageManager {
     }
 }
 
-#[async_trait]
 impl PackageManager for HomebrewPackageManager {
     fn name(&self) -> &'static str {
         "brew"
     }
 
-    async fn search(&self, query: &str) -> Result<Vec<Package>> {
-        self.ensure_cache().await?;
+    fn search(
+        &self,
+        query: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<Package>>> + Send + '_>> {
+        let query = query.to_string();
+        Box::pin(async move {
+            self.ensure_cache().await?;
 
-        let cache = self.cache.read();
-        let cache = cache.as_ref().context("Cache not loaded")?;
+            let cache = self.cache.read().expect("lock poisoned");
+            let cache = cache.as_ref().context("Cache not loaded")?;
 
-        Ok(self.fuzzy_search(cache, query))
+            Ok(self.fuzzy_search(cache, &query))
+        })
     }
 
-    async fn install(&self, packages: &[String]) -> Result<()> {
-        if packages.is_empty() {
-            return Ok(());
-        }
-        crate::core::security::validate_package_names(packages)?;
+    fn install(
+        &self,
+        packages: &[String],
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
+        let packages = packages.to_vec();
+        Box::pin(async move {
+            if packages.is_empty() {
+                return Ok(());
+            }
+            crate::core::security::validate_package_names(&packages)?;
 
-        let mut args = vec!["install"];
-        let pkg_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
-        args.extend_from_slice(&pkg_refs);
+            let mut args = vec!["install"];
+            let pkg_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
+            args.extend_from_slice(&pkg_refs);
 
-        self.run_brew(&args).await
+            self.run_brew(&args).await
+        })
     }
 
-    async fn remove(&self, packages: &[String]) -> Result<()> {
-        if packages.is_empty() {
-            return Ok(());
-        }
-        crate::core::security::validate_package_names(packages)?;
+    fn remove(&self, packages: &[String]) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
+        let packages = packages.to_vec();
+        Box::pin(async move {
+            if packages.is_empty() {
+                return Ok(());
+            }
+            crate::core::security::validate_package_names(&packages)?;
 
-        let mut args = vec!["uninstall"];
-        let pkg_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
-        args.extend_from_slice(&pkg_refs);
+            let mut args = vec!["uninstall"];
+            let pkg_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
+            args.extend_from_slice(&pkg_refs);
 
-        self.run_brew(&args).await
+            self.run_brew(&args).await
+        })
     }
 
-    async fn update(&self) -> Result<()> {
-        self.run_brew(&["upgrade"]).await
+    fn update(&self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
+        Box::pin(async move { self.run_brew(&["upgrade"]).await })
     }
 
-    async fn sync(&self) -> Result<()> {
-        // Sync from API instead of running brew update
-        let cache = self.fetch_and_cache_formulas().await?;
-        *self.cache.write() = Some(cache);
-        Ok(())
+    fn sync(&self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
+        Box::pin(async move {
+            // Sync from API instead of running brew update
+            let cache = self.fetch_and_cache_formulas().await?;
+            *self.cache.write().expect("lock poisoned") = Some(cache);
+            Ok(())
+        })
     }
 
-    async fn info(&self, package: &str) -> Result<Option<Package>> {
-        self.ensure_cache().await?;
+    fn info(
+        &self,
+        package: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<Package>>> + Send + '_>> {
+        let package = package.to_string();
+        Box::pin(async move {
+            self.ensure_cache().await?;
 
-        let cache = self.cache.read();
-        let cache = cache.as_ref().context("Cache not loaded")?;
+            let cache = self.cache.read().expect("lock poisoned");
+            let cache = cache.as_ref().context("Cache not loaded")?;
 
-        // Check formulas first
-        if let Some(&idx) = cache.formula_map.get(package) {
-            let formula = &cache.formulas[idx];
-            return Ok(Some(Package {
-                name: formula.name.clone(),
-                version: parse_version_or_zero(formula.versions.stable.as_deref().unwrap_or("0")),
-                description: formula.desc.clone(),
-                source: PackageSource::Official,
-                installed: !formula.installed.is_empty(),
-            }));
-        }
-
-        // Check casks
-        if let Some(&idx) = cache.cask_map.get(package) {
-            let cask = &cache.casks[idx];
-            return Ok(Some(Package {
-                name: cask.token.clone(),
-                version: parse_version_or_zero(cask.version.as_deref().unwrap_or("0")),
-                description: cask.desc.clone(),
-                source: PackageSource::Official,
-                installed: false,
-            }));
-        }
-
-        Ok(None)
-    }
-
-    async fn list_installed(&self) -> Result<Vec<Package>> {
-        let packages = self.read_installed_packages().await?;
-
-        Ok(packages
-            .into_iter()
-            .map(|p| Package {
-                name: p.name,
-                version: parse_version_or_zero(&p.version),
-                description: p.description,
-                source: PackageSource::Official,
-                installed: true,
-            })
-            .collect())
-    }
-
-    async fn get_status(&self, _fast: bool) -> Result<(usize, usize, usize, usize)> {
-        let packages = self.read_installed_packages().await?;
-        let total = packages.len();
-        let explicit = packages.iter().filter(|p| p.installed_on_request).count();
-
-        // Homebrew doesn't have orphans concept like pacman
-        // Updates require syncing database first
-        Ok((total, explicit, 0, 0))
-    }
-
-    async fn list_explicit(&self) -> Result<Vec<String>> {
-        let packages = self.read_installed_packages().await?;
-
-        Ok(packages
-            .into_iter()
-            .filter(|p| p.installed_on_request)
-            .map(|p| p.name)
-            .collect())
-    }
-
-    async fn list_updates(&self) -> Result<Vec<UpdateInfo>> {
-        self.ensure_cache().await?;
-
-        let installed = self.read_installed_packages().await?;
-        let cache = self.cache.read();
-        let cache = cache.as_ref().context("Cache not loaded")?;
-
-        let mut updates = Vec::new();
-
-        for pkg in installed {
-            if let Some(&idx) = cache.formula_map.get(&pkg.name) {
+            // Check formulas first
+            if let Some(&idx) = cache.formula_map.get(&*package) {
                 let formula = &cache.formulas[idx];
-                if let Some(stable_version) = &formula.versions.stable {
-                    let current = parse_version_or_zero(&pkg.version);
-                    let available = parse_version_or_zero(stable_version);
+                return Ok(Some(Package {
+                    name: formula.name.clone(),
+                    version: parse_version_or_zero(
+                        formula.versions.stable.as_deref().unwrap_or("0"),
+                    ),
+                    description: formula.desc.clone(),
+                    source: PackageSource::Official,
+                    installed: !formula.installed.is_empty(),
+                }));
+            }
 
-                    if available > current {
-                        updates.push(UpdateInfo {
-                            name: pkg.name.clone(),
-                            old_version: pkg.version.clone(),
-                            new_version: stable_version.clone(),
-                            repo: "homebrew".to_string(),
-                        });
+            // Check casks
+            if let Some(&idx) = cache.cask_map.get(&*package) {
+                let cask = &cache.casks[idx];
+                return Ok(Some(Package {
+                    name: cask.token.clone(),
+                    version: parse_version_or_zero(cask.version.as_deref().unwrap_or("0")),
+                    description: cask.desc.clone(),
+                    source: PackageSource::Official,
+                    installed: false,
+                }));
+            }
+
+            Ok(None)
+        })
+    }
+
+    fn list_installed(&self) -> Pin<Box<dyn Future<Output = Result<Vec<Package>>> + Send + '_>> {
+        Box::pin(async move {
+            let packages = self.read_installed_packages().await?;
+
+            Ok(packages
+                .into_iter()
+                .map(|p| Package {
+                    name: p.name,
+                    version: parse_version_or_zero(&p.version),
+                    description: p.description,
+                    source: PackageSource::Official,
+                    installed: true,
+                })
+                .collect())
+        })
+    }
+
+    fn get_status(
+        &self,
+        _fast: bool,
+    ) -> Pin<Box<dyn Future<Output = Result<(usize, usize, usize, usize)>> + Send + '_>> {
+        Box::pin(async move {
+            let packages = self.read_installed_packages().await?;
+            let total = packages.len();
+            let explicit = packages.iter().filter(|p| p.installed_on_request).count();
+
+            // Homebrew doesn't have orphans concept like pacman
+            // Updates require syncing database first
+            Ok((total, explicit, 0, 0))
+        })
+    }
+
+    fn list_explicit(&self) -> Pin<Box<dyn Future<Output = Result<Vec<String>>> + Send + '_>> {
+        Box::pin(async move {
+            let packages = self.read_installed_packages().await?;
+
+            Ok(packages
+                .into_iter()
+                .filter(|p| p.installed_on_request)
+                .map(|p| p.name)
+                .collect())
+        })
+    }
+
+    fn list_updates(&self) -> Pin<Box<dyn Future<Output = Result<Vec<UpdateInfo>>> + Send + '_>> {
+        Box::pin(async move {
+            self.ensure_cache().await?;
+
+            let installed = self.read_installed_packages().await?;
+            let cache = self.cache.read().expect("lock poisoned");
+            let cache = cache.as_ref().context("Cache not loaded")?;
+
+            let mut updates = Vec::new();
+
+            for pkg in installed {
+                if let Some(&idx) = cache.formula_map.get(&pkg.name) {
+                    let formula = &cache.formulas[idx];
+                    if let Some(stable_version) = &formula.versions.stable {
+                        let current = parse_version_or_zero(&pkg.version);
+                        let available = parse_version_or_zero(stable_version);
+
+                        if available > current {
+                            updates.push(UpdateInfo {
+                                name: pkg.name.clone(),
+                                old_version: pkg.version.clone(),
+                                new_version: stable_version.clone(),
+                                repo: "homebrew".to_string(),
+                            });
+                        }
                     }
                 }
             }
-        }
 
-        Ok(updates)
+            Ok(updates)
+        })
     }
 
-    async fn is_installed(&self, package: &str) -> bool {
-        self.is_installed_fast(package)
+    fn is_installed(&self, package: &str) -> Pin<Box<dyn Future<Output = bool> + Send + '_>> {
+        let result = self.is_installed_fast(package);
+        Box::pin(async move { result })
     }
 }
 

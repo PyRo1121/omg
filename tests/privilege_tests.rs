@@ -145,7 +145,7 @@ impl TestResult {
         self
     }
 
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     fn assert_not_contains(&self, pattern: &str) -> &Self {
         assert!(
             !self.contains(pattern),

@@ -102,12 +102,11 @@ pub async fn use_version(runtime: &str, version: Option<&str>) -> Result<()> {
         v.to_string()
     } else {
         let active = crate::hooks::get_active_versions();
-        if let Some(v) = active.get(&runtime.to_lowercase()) {
-            println!("{} Detected version {} from file", "→".blue(), v.yellow());
-            v.clone()
-        } else {
+        let Some(v) = active.get(&runtime.to_lowercase()) else {
             anyhow::bail!("No version specified and none detected in .tool-versions, .nvmrc, etc.");
-        }
+        };
+        println!("{} Detected version {} from file", "→".blue(), v.yellow());
+        v.clone()
     };
 
     ui::print_header("OMG", &format!("Switching {runtime} to version {version}"));

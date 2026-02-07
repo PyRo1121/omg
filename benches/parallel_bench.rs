@@ -9,7 +9,7 @@
 #![allow(clippy::expect_used)]
 
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
-use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
 use std::time::Duration;
@@ -71,29 +71,25 @@ fn bench_parallel_rayon_processing(c: &mut Criterion) {
 
     for count in item_counts {
         group.throughput(Throughput::Elements(count as u64));
-        group.bench_with_input(
-            BenchmarkId::new("par_iter_map", count),
-            &count,
-            |b, &n| {
-                b.iter(|| {
-                    let items: Vec<usize> = (0..n).collect();
+        group.bench_with_input(BenchmarkId::new("par_iter_map", count), &count, |b, &n| {
+            b.iter(|| {
+                let items: Vec<usize> = (0..n).collect();
 
-                    let results: Vec<usize> = items
-                        .par_iter()
-                        .map(|&i| {
-                            // Simulate CPU work
-                            let mut x = i;
-                            for _ in 0..1000 {
-                                x = x.wrapping_mul(31).wrapping_add(17);
-                            }
-                            x
-                        })
-                        .collect();
+                let results: Vec<usize> = items
+                    .par_iter()
+                    .map(|&i| {
+                        // Simulate CPU work
+                        let mut x = i;
+                        for _ in 0..1000 {
+                            x = x.wrapping_mul(31).wrapping_add(17);
+                        }
+                        x
+                    })
+                    .collect();
 
-                    std::hint::black_box(results)
-                });
-            },
-        );
+                std::hint::black_box(results)
+            });
+        });
 
         group.bench_with_input(
             BenchmarkId::new("sequential_map", count),
@@ -336,43 +332,42 @@ fn bench_parallel_task_spawning(c: &mut Criterion) {
                         handles.push(handle);
                     }
 
-                    let results: Vec<usize> =
-                        futures::future::join_all(handles).await.into_iter().flatten().collect();
+                    let results: Vec<usize> = futures::future::join_all(handles)
+                        .await
+                        .into_iter()
+                        .flatten()
+                        .collect();
 
                     std::hint::black_box(results)
                 })
             });
         });
 
-        group.bench_with_input(
-            BenchmarkId::new("spawn_channel", count),
-            &count,
-            |b, &n| {
-                b.iter(|| {
-                    rt.block_on(async {
-                        use tokio::sync::mpsc;
+        group.bench_with_input(BenchmarkId::new("spawn_channel", count), &count, |b, &n| {
+            b.iter(|| {
+                rt.block_on(async {
+                    use tokio::sync::mpsc;
 
-                        let (tx, mut rx) = mpsc::channel::<usize>(n);
+                    let (tx, mut rx) = mpsc::channel::<usize>(n);
 
-                        for i in 0..n {
-                            let tx = tx.clone();
-                            tokio::spawn(async move {
-                                tokio::time::sleep(Duration::from_micros(10)).await;
-                                let _ = tx.send(i * 2).await;
-                            });
-                        }
-                        drop(tx);
+                    for i in 0..n {
+                        let tx = tx.clone();
+                        tokio::spawn(async move {
+                            tokio::time::sleep(Duration::from_micros(10)).await;
+                            let _ = tx.send(i * 2).await;
+                        });
+                    }
+                    drop(tx);
 
-                        let mut results = Vec::with_capacity(n);
-                        while let Some(value) = rx.recv().await {
-                            results.push(value);
-                        }
+                    let mut results = Vec::with_capacity(n);
+                    while let Some(value) = rx.recv().await {
+                        results.push(value);
+                    }
 
-                        std::hint::black_box(results)
-                    })
-                });
-            },
-        );
+                    std::hint::black_box(results)
+                })
+            });
+        });
     }
 
     group.finish();

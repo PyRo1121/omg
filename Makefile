@@ -176,9 +176,9 @@ fmt-check:
 clippy:
 	cargo clippy --features arch -- -D warnings
 
-# Run clippy with pedantic and nursery lints
+# Run clippy with all targets (pedantic+nursery configured in Cargo.toml [lints])
 clippy-strict:
-	cargo clippy --features arch --all-targets -- -D warnings -W clippy::pedantic -W clippy::nursery
+	cargo clippy --features arch --all-targets -- -D warnings
 
 # Security audit dependencies
 audit:

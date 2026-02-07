@@ -1,8 +1,8 @@
 [package]
 name = "omg"
-version = "0.1.206"
+version = "0.1.208"
 edition = "2024"
-rust-version = "1.92"
+rust-version = "1.93"
 description = "The Fastest Unified Package Manager for Arch Linux + All Language Runtimes"
 authors = ["OMG Team"]
 license = "AGPL-3.0-or-later"
@@ -41,7 +41,6 @@ clap_mangen = "0.2"  # Man page generation
 anyhow = "1.0.100"
 thiserror = "2.0.17"
 trait-variant = "0.1"
-async-trait = "0.1"
 
 # Async runtime
 tokio = { version = "1.49", features = [
@@ -91,7 +90,6 @@ ruzstd = "0.8.2" # Pure Rust zstd decoder (replaces zstd)
 # Git operations - using command-line git (always available on Arch)
 
 # Memory management
-parking_lot = "0.12.5"
 zerocopy = { version = "0.8", features = ["derive"] }
 dashmap = "6.1.0"
 moka = { version = "0.12", features = ["sync"] }
@@ -317,7 +315,7 @@ sequoia-openpgp = ["dep:sequoia-openpgp"]
 sequoia-net = ["dep:sequoia-net"]
 
 # ============================================================================
-# Rust 1.92 / Edition 2024 Lint Configuration
+# Rust 1.93 / Edition 2024 Lint Configuration
 # ============================================================================
 [lints.rust]
 # Warn on unsafe code blocks to encourage review
@@ -340,7 +338,7 @@ unimplemented = "warn"         # Track unimplemented code paths
 # Note: unwrap/expect warnings disabled - too noisy for CLI with 48+ legitimate uses
 # Note: print_stdout/stderr disabled - CLI tool intentionally uses println!
 
-# Rust 1.92 / Edition 2024 optimization lints
+# Rust 1.93 / Edition 2024 optimization lints
 missing_const_for_fn = "warn"  # Find const fn opportunities
 redundant_clone = "warn"       # Detect unnecessary clones
 large_enum_variant = "warn"    # Warn on >200 byte enum variants

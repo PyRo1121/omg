@@ -35,7 +35,11 @@ fn test_harness_package_search() -> Result<()> {
         }
     }
 
-    assert_eq!(results.len(), 1, "Should find 1 package matching 'fire' in core");
+    assert_eq!(
+        results.len(),
+        1,
+        "Should find 1 package matching 'fire' in core"
+    );
     assert_eq!(results[0].name(), "firefox");
     assert_eq!(results[0].version().as_str(), "122.0-1");
 
@@ -140,7 +144,10 @@ fn test_harness_epoch_version_comparison() -> Result<()> {
     let v_without_epoch = alpm::Version::new("3.0-1");
 
     // Epoch takes precedence
-    assert!(v_with_epoch > v_without_epoch, "1:2.0-1 > 3.0-1 (epoch wins)");
+    assert!(
+        v_with_epoch > v_without_epoch,
+        "1:2.0-1 > 3.0-1 (epoch wins)"
+    );
 
     Ok(())
 }
@@ -216,8 +223,14 @@ fn test_harness_alpm_initialization() -> Result<()> {
     // Verify ALPM can be initialized with harness paths
     let alpm = harness.alpm()?;
 
-    assert_eq!(alpm.root().trim_end_matches('/'), harness.root().to_str().unwrap());
-    assert_eq!(alpm.dbpath().trim_end_matches('/'), harness.db_path().to_str().unwrap());
+    assert_eq!(
+        alpm.root().trim_end_matches('/'),
+        harness.root().to_str().unwrap()
+    );
+    assert_eq!(
+        alpm.dbpath().trim_end_matches('/'),
+        harness.db_path().to_str().unwrap()
+    );
 
     // Verify filesystem layout exists
     assert!(harness.root().join("var/lib/pacman").exists());
@@ -256,9 +269,9 @@ fn test_harness_version_sorting() -> Result<()> {
     packages.sort_by(|a, b| b.version().cmp(a.version()));
 
     // Should be sorted: 6.7.2 > 6.7.1 > 6.6.15
-    assert_eq!(packages[0].name(), "kernel-zen");    // 6.7.2-1
-    assert_eq!(packages[1].name(), "kernel");        // 6.7.1-1
-    assert_eq!(packages[2].name(), "kernel-lts");    // 6.6.15-1
+    assert_eq!(packages[0].name(), "kernel-zen"); // 6.7.2-1
+    assert_eq!(packages[1].name(), "kernel"); // 6.7.1-1
+    assert_eq!(packages[2].name(), "kernel-lts"); // 6.6.15-1
 
     Ok(())
 }

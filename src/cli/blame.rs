@@ -162,7 +162,7 @@ fn get_package_info(package: &str) -> Result<(bool, Option<String>, String)> {
 }
 
 #[cfg(not(any(feature = "arch", feature = "debian")))]
-#[allow(clippy::unnecessary_wraps)] // Result return required: API compat with feature-gated impls
+#[expect(clippy::unnecessary_wraps)] // Result return required: API compat with feature-gated impls
 fn get_package_info(_package: &str) -> Result<(bool, Option<String>, String)> {
     Ok((false, None, "unknown".to_string()))
 }
@@ -215,7 +215,7 @@ fn show_required_by(package: &str) -> Result<Cmd<()>> {
 }
 
 #[cfg(not(any(feature = "arch", feature = "debian")))]
-#[allow(clippy::unnecessary_wraps)] // Result return required: API compat with feature-gated impls
+#[expect(clippy::unnecessary_wraps)] // Result return required: API compat with feature-gated impls
 fn show_required_by(_package: &str) -> Result<Cmd<()>> {
     Ok(Cmd::info("Dependency information not available"))
 }
@@ -223,14 +223,15 @@ fn show_required_by(_package: &str) -> Result<Cmd<()>> {
 fn format_timestamp(ts: i64) -> String {
     use jiff::Timestamp;
 
-    if let Ok(dt) = Timestamp::from_second(ts) {
-        // Format as ISO-like but more readable
-        format!("{dt}")
-            .chars()
-            .take(16)
-            .collect::<String>()
-            .replace('T', " ")
-    } else {
-        "unknown".to_string()
-    }
+    Timestamp::from_second(ts).map_or_else(
+        |_| "unknown".to_string(),
+        |dt| {
+            // Format as ISO-like but more readable
+            format!("{dt}")
+                .chars()
+                .take(16)
+                .collect::<String>()
+                .replace('T', " ")
+        },
+    )
 }

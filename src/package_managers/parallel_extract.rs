@@ -14,7 +14,7 @@
 //! - Path traversal attacks blocked (CVE-2025-29787 mitigation)
 //! - Symlink escape attacks blocked
 
-use std::collections::HashSet;
+use ahash::AHashSet;
 use std::fs::{self, File};
 use std::io::{BufReader, Read};
 use std::path::{Component, Path, PathBuf};
@@ -22,8 +22,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context, Result};
-use parking_lot::Mutex;
 use rayon::prelude::*;
+use std::sync::Mutex;
 
 use crate::core::paths;
 
@@ -110,7 +110,7 @@ impl ExtractionProgress {
 
     /// Set current package name
     pub fn set_current(&self, name: &str) {
-        *self.current_package.lock() = name.to_string();
+        *self.current_package.lock().expect("lock poisoned") = name.to_string();
     }
 }
 
@@ -315,9 +315,9 @@ pub fn extract_packages_parallel(
 /// Check for file conflicts between packages before extraction
 ///
 /// Returns a set of conflicting file paths if any exist.
-pub fn check_file_conflicts(packages: &[PackageFile]) -> Result<HashSet<PathBuf>> {
-    let mut all_files: HashSet<PathBuf> = HashSet::new();
-    let mut conflicts: HashSet<PathBuf> = HashSet::new();
+pub fn check_file_conflicts(packages: &[PackageFile]) -> Result<AHashSet<PathBuf>> {
+    let mut all_files: AHashSet<PathBuf> = AHashSet::new();
+    let mut conflicts: AHashSet<PathBuf> = AHashSet::new();
 
     for pkg in packages {
         let files = list_package_files(&pkg.path)?;

@@ -16,14 +16,9 @@ use rustix::thread::CapabilitySet;
 #[cfg(target_os = "linux")]
 pub fn has_package_caps() -> bool {
     // Check effective capabilities
-    match rustix::thread::capabilities(None) {
-        Ok(caps) => {
-            let effective = caps.effective;
-            // We need CAP_DAC_OVERRIDE to write to root-owned directories
-            effective.contains(CapabilitySet::DAC_OVERRIDE)
-        }
-        Err(_) => false,
-    }
+    // We need CAP_DAC_OVERRIDE to write to root-owned directories
+    rustix::thread::capabilities(None)
+        .is_ok_and(|caps| caps.effective.contains(CapabilitySet::DAC_OVERRIDE))
 }
 
 #[cfg(not(target_os = "linux"))]

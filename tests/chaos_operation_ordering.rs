@@ -23,7 +23,9 @@ enum Operation {
 
 /// Generate random but realistic operation sequences
 fn random_operations() -> impl Strategy<Value = Vec<Operation>> {
-    let package_names = vec!["firefox", "rust", "python", "git", "vim", "neovim", "zsh", "tmux"];
+    let package_names = vec![
+        "firefox", "rust", "python", "git", "vim", "neovim", "zsh", "tmux",
+    ];
 
     prop::collection::vec(
         prop_oneof![
@@ -35,7 +37,7 @@ fn random_operations() -> impl Strategy<Value = Vec<Operation>> {
             2 => Just(Operation::ListInstalled),
             1 => Just(Operation::Clear),
         ],
-        10..100
+        10..100,
     )
 }
 
@@ -236,12 +238,19 @@ impl SystemState {
         self.operation_count += 1;
         // Mock search: return packages that contain query
         let all_packages = vec![
-            "firefox", "firefox-developer-edition",
-            "rust", "rust-analyzer",
-            "python", "python-pip", "python-numpy",
-            "git", "github-cli",
-            "vim", "neovim",
-            "zsh", "tmux",
+            "firefox",
+            "firefox-developer-edition",
+            "rust",
+            "rust-analyzer",
+            "python",
+            "python-pip",
+            "python-numpy",
+            "git",
+            "github-cli",
+            "vim",
+            "neovim",
+            "zsh",
+            "tmux",
         ];
 
         all_packages

@@ -4,16 +4,14 @@
 //!
 //! Run with: cargo bench --features arch --bench pacman_comparison
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
 use std::process::Command;
 use std::time::Duration;
 
 fn omg_binary() -> String {
     std::env::var("OMG_BINARY").unwrap_or_else(|_| {
-        let path = std::env::current_dir()
-            .unwrap()
-            .join("target/release/omg");
+        let path = std::env::current_dir().unwrap().join("target/release/omg");
         path.to_str().unwrap().to_string()
     })
 }

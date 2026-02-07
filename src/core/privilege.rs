@@ -11,7 +11,7 @@ use std::sync::LazyLock;
 #[cfg(not(test))]
 use anyhow::Context;
 #[cfg(not(test))]
-use parking_lot::Mutex;
+use std::sync::Mutex;
 
 /// Global mutex to serialize privilege elevation attempts
 /// Prevents deadlocks when multiple threads try to elevate simultaneously
@@ -65,7 +65,7 @@ impl PrivilegeChecker for SystemPrivilegeChecker {
 pub struct MockPrivilegeChecker {
     pub is_root_value: bool,
     pub should_elevate: bool,
-    pub elevation_log: std::sync::Arc<parking_lot::Mutex<Vec<(String, Vec<String>)>>>,
+    pub elevation_log: std::sync::Arc<std::sync::Mutex<Vec<(String, Vec<String>)>>>,
 }
 
 #[cfg(test)]
@@ -81,7 +81,7 @@ impl MockPrivilegeChecker {
         Self {
             is_root_value: false,
             should_elevate: true,
-            elevation_log: std::sync::Arc::new(parking_lot::Mutex::new(Vec::new())),
+            elevation_log: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
         }
     }
 
@@ -94,7 +94,7 @@ impl MockPrivilegeChecker {
     }
 
     pub fn get_elevation_log(&self) -> Vec<(String, Vec<String>)> {
-        self.elevation_log.lock().clone()
+        self.elevation_log.lock().expect("lock poisoned").clone()
     }
 }
 
@@ -107,6 +107,7 @@ impl PrivilegeChecker for MockPrivilegeChecker {
     fn elevate(&self, operation: &str, args: &[String]) -> std::io::Result<()> {
         self.elevation_log
             .lock()
+            .expect("lock poisoned")
             .push((operation.to_string(), args.to_vec()));
 
         if self.should_elevate {
@@ -173,7 +174,7 @@ pub fn elevate_if_needed(args: &[String]) -> anyhow::Result<()> {
     #[cfg(not(test))]
     {
         // Acquire lock before elevation to prevent concurrent sudo attempts
-        let _guard = ELEVATION_MUTEX.lock();
+        let _guard = ELEVATION_MUTEX.lock().expect("lock poisoned");
 
         let yes_mode = YES_FLAG.load(Ordering::Relaxed);
         tracing::debug!(

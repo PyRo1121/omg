@@ -5932,7 +5932,7 @@ dependencies = [
 
 [[package]]
 name = "omg"
-version = "0.1.206"
+version = "0.1.208"
 dependencies = [
  "ahash",
  "aho-corasick",
@@ -5945,7 +5945,6 @@ dependencies = [
  "anyhow",
  "ar",
  "assert_cmd",
- "async-trait",
  "bitcode",
  "bumpalo",
  "cargo-audit",
@@ -5985,7 +5984,6 @@ dependencies = [
  "nucleo-matcher",
  "openssl-sys",
  "owo-colors",
- "parking_lot",
  "pprof",
  "predicates",
  "proptest",

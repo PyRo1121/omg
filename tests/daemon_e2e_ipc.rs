@@ -23,7 +23,7 @@ use tokio::net::{UnixListener, UnixStream};
 use tokio::time::{sleep, timeout};
 
 /// Helper to extract response ID
-#[allow(dead_code)]
+#[expect(dead_code)]
 fn response_id(response: &Response) -> u64 {
     match response {
         Response::Success { id, .. } => *id,
@@ -45,7 +45,7 @@ impl IpcTestFixture {
         let data_dir = temp_dir.path().join("data");
         std::fs::create_dir_all(&data_dir)?;
 
-        #[allow(unsafe_code)]
+        #[expect(unsafe_code)]
         unsafe {
             std::env::set_var("OMG_DAEMON_DATA_DIR", &data_dir);
             std::env::set_var("OMG_DATA_DIR", &data_dir);
@@ -85,8 +85,8 @@ impl IpcTestFixture {
     }
 
     async fn handle_connection(stream: UnixStream, state: Arc<DaemonState>) -> Result<()> {
-        use tokio_util::codec::{Framed, LengthDelimitedCodec};
         use futures::{SinkExt, StreamExt};
+        use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
         let mut framed = Framed::new(stream, LengthDelimitedCodec::new());
 
@@ -181,7 +181,12 @@ async fn test_large_request_handling() -> Result<()> {
         }
         Response::Error { code, message, .. } => {
             // May fail if query is invalid, but should not crash
-            assert_ne!(code, error_codes::INTERNAL_ERROR, "Should not cause internal error: {}", message);
+            assert_ne!(
+                code,
+                error_codes::INTERNAL_ERROR,
+                "Should not cause internal error: {}",
+                message
+            );
         }
     }
 
@@ -208,7 +213,11 @@ async fn test_oversized_query_rejection() -> Result<()> {
 
     match response {
         Response::Error { code, .. } => {
-            assert_eq!(code, error_codes::INVALID_PARAMS, "Oversized query should be rejected");
+            assert_eq!(
+                code,
+                error_codes::INVALID_PARAMS,
+                "Oversized query should be rejected"
+            );
         }
         Response::Success { .. } => {
             panic!("Oversized query should be rejected");
@@ -240,7 +249,10 @@ async fn test_empty_request_handling() -> Result<()> {
         Response::Success { id, result } => {
             assert_eq!(id, 4);
             if let ResponseResult::Search(search_result) = result {
-                assert!(search_result.packages.is_empty(), "Empty query should return no results");
+                assert!(
+                    search_result.packages.is_empty(),
+                    "Empty query should return no results"
+                );
             }
         }
         Response::Error { .. } => {
@@ -291,7 +303,10 @@ async fn test_multiple_concurrent_connections() -> Result<()> {
     // Wait for all clients
     for handle in handles {
         let response = handle.await??;
-        assert!(matches!(response, Response::Success { .. }), "All clients should succeed");
+        assert!(
+            matches!(response, Response::Success { .. }),
+            "All clients should succeed"
+        );
     }
 
     Ok(())
@@ -467,7 +482,8 @@ async fn test_invalid_package_name_injection() -> Result<()> {
     match response {
         Response::Error { code, .. } => {
             assert_eq!(
-                code, error_codes::INVALID_PARAMS,
+                code,
+                error_codes::INVALID_PARAMS,
                 "Injection attempt should be rejected"
             );
         }
@@ -502,7 +518,7 @@ async fn test_batch_request_single_roundtrip() -> Result<()> {
 
     let batch_request = Request::Batch {
         id: 500,
-        requests: Box::new(subrequests),
+        requests: subrequests,
     };
 
     let start = std::time::Instant::now();
@@ -543,13 +559,11 @@ async fn test_oversized_batch_rejection() -> Result<()> {
     let mut stream = fixture.connect().await?;
 
     // Create batch exceeding MAX_BATCH_SIZE (100)
-    let subrequests: Vec<Request> = (0..150)
-        .map(|i| Request::Ping { id: i })
-        .collect();
+    let subrequests: Vec<Request> = (0..150).map(|i| Request::Ping { id: i }).collect();
 
     let batch_request = Request::Batch {
         id: 600,
-        requests: Box::new(subrequests),
+        requests: subrequests,
     };
 
     let response = fixture.send_request(&mut stream, &batch_request).await?;
@@ -557,7 +571,8 @@ async fn test_oversized_batch_rejection() -> Result<()> {
     match response {
         Response::Error { code, .. } => {
             assert_eq!(
-                code, error_codes::INVALID_PARAMS,
+                code,
+                error_codes::INVALID_PARAMS,
                 "Oversized batch should be rejected"
             );
         }
@@ -580,12 +595,12 @@ async fn test_nested_batch_rejection() -> Result<()> {
     // Create nested batch (batch within batch)
     let inner_batch = Request::Batch {
         id: 1,
-        requests: Box::new(vec![Request::Ping { id: 2 }]),
+        requests: vec![Request::Ping { id: 2 }],
     };
 
     let outer_batch = Request::Batch {
         id: 700,
-        requests: Box::new(vec![inner_batch]),
+        requests: vec![inner_batch],
     };
 
     let response = fixture.send_request(&mut stream, &outer_batch).await?;
@@ -593,7 +608,8 @@ async fn test_nested_batch_rejection() -> Result<()> {
     match response {
         Response::Error { code, .. } => {
             assert_eq!(
-                code, error_codes::INVALID_PARAMS,
+                code,
+                error_codes::INVALID_PARAMS,
                 "Nested batch should be rejected"
             );
         }

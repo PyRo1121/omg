@@ -99,7 +99,7 @@ impl Workspace {
         temp_mark: &mut HashMap<String, bool>,
         result: &mut Vec<String>,
     ) -> Result<()> {
-        if temp_mark.get(name).copied().unwrap_or(false) {
+        if temp_mark.get(name).copied().unwrap_or_default() {
             anyhow::bail!("Circular dependency detected involving project: {name}");
         }
 

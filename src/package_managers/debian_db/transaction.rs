@@ -252,8 +252,8 @@ impl Transaction {
     /// OPTIMIZATION: Uses batched parallel unpacking with rayon for CPU-bound decompression.
     /// Downloads complete packages are collected and unpacked in parallel batches.
     async fn download_and_unpack_pipelined(&mut self) -> Result<()> {
-        use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
         use tokio::sync::mpsc;
 
         // OPTIMIZATION: Memory-conscious HTTP client configuration
@@ -409,13 +409,13 @@ impl Transaction {
                         tracing::debug!("Unpacking {} immediately", name);
                         match unpack_deb_standalone(&deb_path, &name, &temp_dir_unpack) {
                             Ok(files) => {
-                                let mut guard = installed_files.lock().unwrap();
+                                let mut guard = installed_files.lock().expect("lock poisoned");
                                 guard.extend(files);
                                 tracing::debug!("Unpacked {} successfully", name);
                             }
                             Err(e) => {
                                 tracing::error!("Failed to unpack {}: {}", name, e);
-                                let mut guard = unpack_errors.lock().unwrap();
+                                let mut guard = unpack_errors.lock().expect("lock poisoned");
                                 guard.push((name.clone(), e));
                             }
                         }
@@ -510,7 +510,7 @@ impl Transaction {
 
     /// Download all packages in parallel with HTTP/2 multiplexing
     /// NOTE: Kept for potential fallback; pipelined version is now preferred
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     async fn download_packages(&mut self) -> Result<()> {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(300))
@@ -672,7 +672,7 @@ impl Transaction {
 
     /// Unpack all downloaded packages
     /// NOTE: Kept for potential fallback; pipelined version is now preferred
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     fn unpack_packages(&mut self) -> Result<()> {
         // Collect paths first to avoid borrow conflict
         let packages: Vec<_> = self
@@ -695,7 +695,7 @@ impl Transaction {
 
     /// Unpack a single .deb file
     /// NOTE: Kept for potential fallback; pipelined version is now preferred
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     fn unpack_deb(&mut self, deb_path: &Path, package_name: &str) -> Result<()> {
         tracing::debug!("Unpacking .deb: {} ({})", package_name, deb_path.display());
 
@@ -945,7 +945,10 @@ impl Transaction {
                 pb.finish();
                 overall.inc(1);
                 tracing::error!("Failed to run prerm script for {}: {}", package_name, e);
-                anyhow::bail!("Package removal failed during prerm script for {}", package_name);
+                anyhow::bail!(
+                    "Package removal failed during prerm script for {}",
+                    package_name
+                );
             }
 
             // Remove package files
@@ -956,7 +959,10 @@ impl Transaction {
                 pb.finish();
                 overall.inc(1);
                 tracing::error!("Failed to remove files for {}: {}", package_name, e);
-                anyhow::bail!("Package removal failed during file removal for {}", package_name);
+                anyhow::bail!(
+                    "Package removal failed during file removal for {}",
+                    package_name
+                );
             }
 
             // Run postrm script
@@ -967,7 +973,10 @@ impl Transaction {
                 pb.finish();
                 overall.inc(1);
                 tracing::error!("Failed to run postrm script for {}: {}", package_name, e);
-                anyhow::bail!("Package removal failed during postrm script for {}", package_name);
+                anyhow::bail!(
+                    "Package removal failed during postrm script for {}",
+                    package_name
+                );
             }
 
             // Update dpkg status
@@ -978,7 +987,10 @@ impl Transaction {
                 pb.finish();
                 overall.inc(1);
                 tracing::error!("Failed to update dpkg status for {}: {}", package_name, e);
-                anyhow::bail!("Package removal failed during status update for {}", package_name);
+                anyhow::bail!(
+                    "Package removal failed during status update for {}",
+                    package_name
+                );
             }
 
             // Clean up dpkg info files
@@ -1010,12 +1022,15 @@ impl Default for Transaction {
     }
 }
 
-
 /// Standalone function to unpack a .deb file (for use in pipelined processing)
 ///
 /// This is separate from the Transaction method to allow concurrent unpacking
 /// without holding a mutable borrow on the transaction.
-fn unpack_deb_standalone(deb_path: &Path, package_name: &str, temp_dir: &Path) -> Result<Vec<PathBuf>> {
+fn unpack_deb_standalone(
+    deb_path: &Path,
+    package_name: &str,
+    temp_dir: &Path,
+) -> Result<Vec<PathBuf>> {
     tracing::debug!("Unpacking .deb: {} ({})", package_name, deb_path.display());
 
     let extract_dir = temp_dir.join(package_name);
@@ -1124,7 +1139,8 @@ fn extract_tar(data: &[u8], dest: &Path) -> Result<()> {
 fn extract_tar_to_root(data: &[u8]) -> Result<Vec<PathBuf>> {
     // OPTIMIZATION: Conservative buffer pre-allocation to reduce memory usage
     // Check compression format and allocate conservatively
-    let (decompressed, estimated_ratio) = if data.len() > 4 && data.starts_with(b"\x28\xb5\x2f\xfd") {
+    let (decompressed, estimated_ratio) = if data.len() > 4 && data.starts_with(b"\x28\xb5\x2f\xfd")
+    {
         // Zstd: Fast decompression, good compression
         let mut decoder = ruzstd::decoding::StreamingDecoder::new(std::io::Cursor::new(data))
             .map_err(|e| anyhow::anyhow!("Failed to create zstd decoder: {e}"))?;
@@ -1298,7 +1314,7 @@ fn prepare_status_entry(control_file: &Path) -> Result<String> {
 }
 
 /// Update /var/lib/dpkg/status with package info
-#[allow(dead_code)]
+#[expect(dead_code)]
 fn update_dpkg_status(name: &str, version: &str, control_dir: &Path) -> Result<()> {
     let control_file = control_dir.join("control");
     if !control_file.exists() {
@@ -1697,7 +1713,10 @@ fn remove_package_files(package_name: &str) -> Result<()> {
     }
 
     let Some(list_path) = list_file_path else {
-        tracing::warn!("No .list file found for {}, cannot remove files", package_name);
+        tracing::warn!(
+            "No .list file found for {}, cannot remove files",
+            package_name
+        );
         return Ok(());
     };
 
@@ -1813,8 +1832,8 @@ fn update_dpkg_status_for_removal(package_name: &str) -> Result<()> {
     }
 
     // Read entire status file
-    let status_content = fs::read_to_string(status_path)
-        .context("Failed to read dpkg status file")?;
+    let status_content =
+        fs::read_to_string(status_path).context("Failed to read dpkg status file")?;
 
     // Parse and update the package paragraph
     let mut updated_content = String::with_capacity(status_content.len());
@@ -1847,17 +1866,24 @@ fn update_dpkg_status_for_removal(package_name: &str) -> Result<()> {
     }
 
     // Atomic write using temp file + rename
-    let parent = status_path.parent().unwrap_or_else(|| Path::new("/var/lib/dpkg"));
-    let mut temp_file = NamedTempFile::new_in(parent)
-        .context("Failed to create temporary status file")?;
+    let parent = status_path
+        .parent()
+        .unwrap_or_else(|| Path::new("/var/lib/dpkg"));
+    let mut temp_file =
+        NamedTempFile::new_in(parent).context("Failed to create temporary status file")?;
 
-    temp_file.write_all(updated_content.as_bytes())
+    temp_file
+        .write_all(updated_content.as_bytes())
         .context("Failed to write updated status")?;
 
-    temp_file.persist(status_path)
+    temp_file
+        .persist(status_path)
         .context("Failed to persist updated status file")?;
 
-    tracing::debug!("Updated dpkg status for {} to config-files state", package_name);
+    tracing::debug!(
+        "Updated dpkg status for {} to config-files state",
+        package_name
+    );
     Ok(())
 }
 
@@ -1867,8 +1893,8 @@ fn cleanup_dpkg_info_files(package_name: &str) -> Result<()> {
 
     // Files to remove
     let extensions_to_remove = [
-        "list", "md5sums", "prerm", "postinst", "preinst", "postrm",
-        "triggers", "shlibs", "symbols",
+        "list", "md5sums", "prerm", "postinst", "preinst", "postrm", "triggers", "shlibs",
+        "symbols",
     ];
 
     let mut removed_count = 0;

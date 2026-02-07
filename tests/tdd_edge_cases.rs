@@ -62,7 +62,7 @@ async fn test_daemon_protocol_boundaries() {
     }
     let req_batch = Request::Batch {
         id: 0,
-        requests: Box::new(batch),
+        requests: batch,
     };
     assert_eq!(req_batch.id(), 0);
 }

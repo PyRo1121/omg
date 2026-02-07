@@ -928,7 +928,7 @@ fn ensure_js_package_manager(command: &str) -> Result<()> {
 // Runtime resolution functions moved to core::runtime_resolver module
 
 /// Run a task in watch mode - re-run on file changes
-#[allow(clippy::unused_async)] // Async for API consistency with other task functions
+#[expect(clippy::unused_async)] // Async for API consistency with other task functions
 pub async fn run_task_watch(
     task_name: &str,
     extra_args: &[String],
@@ -1062,7 +1062,7 @@ pub async fn run_tasks_parallel(
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)] // Idiomatic in tests: panics on failure with clear error context
+#[expect(clippy::unwrap_used)] // Idiomatic in tests: panics on failure with clear error context
 mod tests {
     use super::*;
     use std::fs;

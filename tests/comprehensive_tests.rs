@@ -17,7 +17,7 @@
 
 mod common;
 
-#[allow(unused_imports)]
+#[expect(unused_imports)]
 use common::fixtures::*;
 use common::*;
 use std::time::Duration;

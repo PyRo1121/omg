@@ -13,7 +13,7 @@ use tempfile::TempDir;
 
 #[tokio::test]
 #[serial]
-#[allow(unsafe_code)] // Test setup requires env var modification
+#[expect(unsafe_code)] // Test setup requires env var modification
 async fn test_metrics_collection() {
     // Setup
     let temp_dir = TempDir::new().unwrap();
@@ -93,7 +93,7 @@ async fn test_metrics_collection() {
 
 #[tokio::test]
 #[serial]
-#[allow(unsafe_code)] // Test setup requires env var modification
+#[expect(unsafe_code)] // Test setup requires env var modification
 async fn test_security_audit_metrics() {
     let temp_dir = TempDir::new().unwrap();
     // SAFETY: Test setup - modifying environment variables for isolated test execution.

@@ -186,7 +186,7 @@ const fn try_fast_elevated(_args: &[String]) -> Option<Result<()>> {
 }
 
 fn has_help_flag(args: &[String]) -> bool {
-    args.iter().any(|a| a == "--help" || a == "-h")
+    args.iter().any(|a| matches!(a.as_str(), "--help" | "-h"))
 }
 
 fn has_all_flag(args: &[String]) -> bool {
@@ -199,7 +199,9 @@ fn try_fast_explicit_count(args: &[String]) -> bool {
         return false;
     }
 
-    if args.len() >= 2 && args[1] == "explicit" && args.iter().any(|a| a == "--count" || a == "-c")
+    if args.len() >= 2
+        && args[1] == "explicit"
+        && args.iter().any(|a| matches!(a.as_str(), "--count" | "-c"))
     {
         if let Some(count) = omg_lib::core::fast_status::FastStatus::read_explicit_count() {
             println!("{count}");
@@ -223,7 +225,7 @@ fn try_fast_search(args: &[String]) -> bool {
         if query.starts_with('-') {
             return false;
         }
-        if packages::search_sync_cli(query, false, false, true).unwrap_or(false) {
+        if packages::search_sync_cli(query, false, false, true).unwrap_or_default() {
             return true;
         }
     }
@@ -241,7 +243,7 @@ fn try_fast_info(args: &[String]) -> bool {
         if package.starts_with('-') {
             return false;
         }
-        if packages::info_sync_cli(package).unwrap_or(false) {
+        if packages::info_sync_cli(package).unwrap_or_default() {
             return true;
         }
     }
@@ -319,8 +321,11 @@ fn try_fast_list(args: &[String]) -> bool {
         return false;
     }
 
-    if args.len() >= 2 && (args[1] == "list" || args[1] == "ls") {
-        if args.iter().any(|a| a == "--available" || a == "-a") {
+    if args.len() >= 2 && matches!(args[1].as_str(), "list" | "ls") {
+        if args
+            .iter()
+            .any(|a| matches!(a.as_str(), "--available" | "-a"))
+        {
             return false;
         }
 
@@ -435,7 +440,6 @@ fn main() -> Result<()> {
     result
 }
 
-#[allow(clippy::too_many_lines)] // Main dispatch function - refactoring would reduce readability
 async fn async_main(args: Vec<String>) -> Result<()> {
     omg_lib::cli::style::init_theme();
     let cmd_start = omg_lib::core::analytics::start_timer();
@@ -661,7 +665,7 @@ async fn handle_license_command(command: &LicenseCommands) -> Result<()> {
     }
 }
 
-#[allow(clippy::fn_params_excessive_bools)] // Maps directly to CLI flags: --check, --yes, --dry-run, --fast, --turbo
+#[expect(clippy::fn_params_excessive_bools)] // Maps directly to CLI flags: --check, --yes, --dry-run, --fast, --turbo
 async fn handle_update_command(
     check: bool,
     yes: bool,
@@ -753,7 +757,7 @@ async fn handle_info_command(package: &str) -> Result<()> {
     Ok(())
 }
 
-#[allow(clippy::fn_params_excessive_bools)] // Maps directly to CLI flags: --detailed, --interactive, --json, --no-aur
+#[expect(clippy::fn_params_excessive_bools)] // Maps directly to CLI flags: --detailed, --interactive, --json, --no-aur
 async fn handle_search_command(
     query: &str,
     detailed: bool,
@@ -777,8 +781,14 @@ async fn handle_remove_command(
     packages::remove(packages, recursive, yes, dry_run).await
 }
 
-#[allow(clippy::fn_params_excessive_bools)] // Maps directly to CLI flags: --orphans, --cache, --aur, --all
-async fn handle_clean_command(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bool) -> Result<()> {
+#[expect(clippy::fn_params_excessive_bools)] // Maps directly to CLI flags: --orphans, --cache, --aur, --all
+async fn handle_clean_command(
+    orphans: bool,
+    cache: bool,
+    aur: bool,
+    all: bool,
+    dry_run: bool,
+) -> Result<()> {
     packages::clean(orphans, cache, aur, all, dry_run).await
 }
 
@@ -802,7 +812,7 @@ fn handle_history_command(
 }
 
 /// Main command dispatcher - routes commands to appropriate handlers
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines)]
 async fn dispatch_command(
     command: &Commands,
     ctx: &omg_lib::cli::CliContext,

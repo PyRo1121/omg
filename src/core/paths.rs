@@ -1,8 +1,8 @@
 //! Shared filesystem paths with test-friendly overrides.
 
-use parking_lot::RwLock;
 use std::path::PathBuf;
 use std::sync::OnceLock;
+use std::sync::RwLock;
 
 #[derive(Default, Debug)]
 struct PathOverrides {
@@ -19,14 +19,14 @@ fn get_overrides() -> &'static RwLock<PathOverrides> {
 
 /// Set path overrides for testing. Safe and thread-safe.
 pub fn set_test_overrides(root: Option<PathBuf>, db_dir: Option<PathBuf>) {
-    let mut guard = get_overrides().write();
+    let mut guard = get_overrides().write().expect("lock poisoned");
     guard.pacman_root = root;
     guard.pacman_db_dir = db_dir;
 }
 
 /// Reset all path overrides.
 pub fn reset_test_overrides() {
-    let mut guard = get_overrides().write();
+    let mut guard = get_overrides().write().expect("lock poisoned");
     *guard = PathOverrides::default();
 }
 
@@ -108,7 +108,7 @@ pub fn cache_dir() -> PathBuf {
 /// Pacman root directory (default: /).
 #[must_use]
 pub fn pacman_root() -> PathBuf {
-    let guard = get_overrides().read();
+    let guard = get_overrides().read().expect("lock poisoned");
     if let Some(ref root) = guard.pacman_root {
         return root.clone();
     }
@@ -118,7 +118,7 @@ pub fn pacman_root() -> PathBuf {
 /// Pacman database directory (default: /var/lib/pacman).
 #[must_use]
 pub fn pacman_db_dir() -> PathBuf {
-    let guard = get_overrides().read();
+    let guard = get_overrides().read().expect("lock poisoned");
     if let Some(ref db) = guard.pacman_db_dir {
         return db.clone();
     }

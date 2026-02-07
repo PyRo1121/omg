@@ -121,7 +121,11 @@ pub fn validate_deb_archive(deb_path: &Path, package_name: &str) -> Result<()> {
         );
     }
 
-    tracing::debug!("Validated .deb archive for {}: {}", package_name, deb_path.display());
+    tracing::debug!(
+        "Validated .deb archive for {}: {}",
+        package_name,
+        deb_path.display()
+    );
     Ok(())
 }
 
@@ -136,21 +140,16 @@ pub async fn check_mirror_availability(mirror_url: &str) -> Result<()> {
         .timeout(Duration::from_secs(5))
         .build()?;
 
-    let response = client
-        .head(mirror_url)
-        .send()
-        .await
-        .with_context(|| {
-            format!(
-                "Mirror unreachable: {}\n\
+    let response = client.head(mirror_url).send().await.with_context(|| {
+        format!(
+            "Mirror unreachable: {}\n\
                 💡 Troubleshooting:\n\
                 - Check network: ping $(echo {} | cut -d'/' -f3)\n\
                 - Try different mirror in /etc/apt/sources.list\n\
                 - Check firewall/proxy settings",
-                mirror_url,
-                mirror_url
-            )
-        })?;
+            mirror_url, mirror_url
+        )
+    })?;
 
     if !response.status().is_success() {
         anyhow::bail!(

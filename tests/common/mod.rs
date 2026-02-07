@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
 // Re-export serial_test for use in test files
-#[allow(unused_imports)]
+#[expect(unused_imports)]
 pub use serial_test::serial;
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -35,7 +35,7 @@ static INIT: Once = Once::new();
 /// Note: Environment variables are set once at initialization. Tests that need
 /// to modify environment variables should use the `#[serial]` attribute from
 /// the `serial_test` crate to prevent data races.
-#[allow(unsafe_code)] // Test initialization requires env var setup
+#[expect(unsafe_code)] // Test initialization requires env var setup
 pub fn init_test_env() {
     INIT.call_once(|| {
         // SAFETY: We are in a single-threaded context during Once::call_once initialization.
@@ -51,8 +51,8 @@ pub fn init_test_env() {
 
 /// Test configuration flags
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
-#[allow(clippy::struct_excessive_bools)]
+#[expect(dead_code)]
+#[expect(clippy::struct_excessive_bools)]
 pub struct TestConfig {
     pub run_system_tests: bool,
     pub run_network_tests: bool,
@@ -91,7 +91,7 @@ impl Default for TestConfig {
     }
 }
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 impl TestConfig {
     pub fn skip_if_no_system(&self, test_name: &str) -> bool {
         if self.run_system_tests {
@@ -152,7 +152,7 @@ pub struct CommandResult {
     pub duration: Duration,
 }
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 impl CommandResult {
     pub fn combined_output(&self) -> String {
         format!("{}{}", self.stdout, self.stderr)
@@ -317,7 +317,7 @@ pub fn run_shell(cmd: &str) -> CommandResult {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// A test project with managed temp directory
-#[allow(dead_code)]
+#[expect(dead_code)]
 pub struct TestProject {
     pub dir: TempDir,
     pub data_dir: TempDir,
@@ -326,7 +326,7 @@ pub struct TestProject {
     pub config: TestConfig,
 }
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 impl TestProject {
     pub fn new() -> Self {
         init_test_env();

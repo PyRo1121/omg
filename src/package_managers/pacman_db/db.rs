@@ -17,7 +17,6 @@ use anyhow::{Context, Result};
 use flate2::read::GzDecoder;
 use futures::stream::StreamExt;
 use memmap2::Mmap;
-use parking_lot::RwLock;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -25,6 +24,7 @@ use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::sync::RwLock;
 
 use std::time::SystemTime;
 use tracing::instrument;
@@ -123,7 +123,7 @@ impl PacmanMmapIndex {
     pub fn load(path: &Path) -> Result<Self> {
         let file = File::open(path)?;
         // SAFETY: Standard mmap usage - file handle kept open by the Mmap
-        #[allow(unsafe_code)]
+        #[expect(unsafe_code)]
         let mmap = unsafe { Mmap::map(&file)? };
 
         // Validate the archive structure before storing - this is the key safety check
@@ -152,12 +152,13 @@ impl PacmanMmapIndex {
     #[inline]
     fn archived(&self) -> &rkyv::Archived<RkyvSyncIndex> {
         // SAFETY: See method documentation above
-        #[allow(unsafe_code)]
+        #[expect(unsafe_code)]
         unsafe {
             rkyv::access_unchecked::<rkyv::Archived<RkyvSyncIndex>>(&self.mmap)
         }
     }
 
+    #[inline]
     pub fn get(&self, name: &str) -> Option<&rkyv::Archived<RkyvSyncPackage>> {
         let archived = self.archived();
         archived
@@ -169,24 +170,28 @@ impl PacmanMmapIndex {
     pub fn search(&self, query: &str) -> Vec<&rkyv::Archived<RkyvSyncPackage>> {
         let query_lower = query.to_lowercase();
         let archived = self.archived();
-        archived
-            .packages
-            .iter()
-            .filter(|p| {
-                contains_ignore_case(p.name.as_str(), &query_lower)
-                    || contains_ignore_case(p.desc.as_str(), &query_lower)
-            })
-            .collect()
+        let mut results = Vec::with_capacity(64);
+        for p in archived.packages.iter() {
+            if contains_ignore_case(p.name.as_str(), &query_lower)
+                || contains_ignore_case(p.desc.as_str(), &query_lower)
+            {
+                results.push(p);
+            }
+        }
+        results
     }
 
+    #[inline]
     pub fn len(&self) -> usize {
         self.archived().packages.len()
     }
 
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
+    #[inline]
     pub fn mtime(&self) -> u64 {
         self.mtime
     }
@@ -245,7 +250,7 @@ fn collect_sync_db_paths(sync_dir: &Path) -> Vec<(PathBuf, String)> {
 
             // Skip standard repos (already added above)
             if let Some(name) = name
-                && !["core", "extra", "multilib"].contains(&name.as_str())
+                && !matches!(name.as_str(), "core" | "extra" | "multilib")
             {
                 dbs.push((path, name));
             }
@@ -661,7 +666,7 @@ pub fn get_detailed_packages() -> Result<Vec<SyncDbPackage>> {
 
     ensure_sync_cache_loaded(&sync_dir)?;
 
-    let cache = SYNC_DB_CACHE.read();
+    let cache = SYNC_DB_CACHE.read().expect("lock poisoned");
 
     Ok(cache.packages.values().cloned().collect())
 }
@@ -680,8 +685,8 @@ pub fn check_updates_cached() -> Result<Vec<(String, Version, Version, String, S
     ensure_local_cache_loaded(&local_dir)?;
 
     // Hold both cache locks simultaneously - no cloning!
-    let sync_cache = SYNC_DB_CACHE.read();
-    let local_cache = LOCAL_DB_CACHE.read();
+    let sync_cache = SYNC_DB_CACHE.read().expect("lock poisoned");
+    let local_cache = LOCAL_DB_CACHE.read().expect("lock poisoned");
 
     // Compare versions - Parallelized with Rayon for <1ms update check on 2000+ pkgs
     // Optimized: filter references first, then clone only needed data at the end
@@ -819,7 +824,7 @@ fn ensure_sync_cache_loaded(sync_dir: &Path) -> Result<()> {
     let current_mtime = get_newest_db_mtime(sync_dir);
 
     {
-        let mut cache = SYNC_DB_CACHE.write();
+        let mut cache = SYNC_DB_CACHE.write().expect("lock poisoned");
         if cache.last_modified == Some(current_mtime)
             && !cache.packages.is_empty()
             && !is_cache_expired(cache.last_accessed)
@@ -841,7 +846,7 @@ fn ensure_sync_cache_loaded(sync_dir: &Path) -> Result<()> {
     if let Ok(disk_cache) = load_cache_from_disk::<DbCache>("sync_db")
         && disk_cache.last_modified == Some(current_mtime)
     {
-        let mut cache = SYNC_DB_CACHE.write();
+        let mut cache = SYNC_DB_CACHE.write().expect("lock poisoned");
 
         // Double-check: another thread may have loaded while we were waiting
         if cache.last_modified == Some(current_mtime) && !cache.packages.is_empty() {
@@ -858,7 +863,7 @@ fn ensure_sync_cache_loaded(sync_dir: &Path) -> Result<()> {
     let packages = load_sync_packages(sync_dir)?;
 
     // Update memory cache with double-checked locking
-    let mut cache = SYNC_DB_CACHE.write();
+    let mut cache = SYNC_DB_CACHE.write().expect("lock poisoned");
 
     // Re-check: another thread may have loaded while we were parsing
     if cache.last_modified == Some(current_mtime) && !cache.packages.is_empty() {
@@ -890,7 +895,7 @@ fn ensure_local_cache_loaded(local_dir: &Path) -> Result<()> {
     let current_mtime = get_local_db_mtime(local_dir)?;
 
     {
-        let mut cache = LOCAL_DB_CACHE.write();
+        let mut cache = LOCAL_DB_CACHE.write().expect("lock poisoned");
         if cache.last_modified == Some(current_mtime)
             && !cache.packages.is_empty()
             && !is_cache_expired(cache.last_accessed)
@@ -912,7 +917,7 @@ fn ensure_local_cache_loaded(local_dir: &Path) -> Result<()> {
     if let Ok(disk_cache) = load_cache_from_disk::<LocalDbCache>("local_db")
         && disk_cache.last_modified == Some(current_mtime)
     {
-        let mut cache = LOCAL_DB_CACHE.write();
+        let mut cache = LOCAL_DB_CACHE.write().expect("lock poisoned");
 
         // Double-check: another thread may have loaded while we were waiting
         if cache.last_modified == Some(current_mtime) && !cache.packages.is_empty() {
@@ -929,7 +934,7 @@ fn ensure_local_cache_loaded(local_dir: &Path) -> Result<()> {
     let packages = parse_local_db(local_dir)?;
 
     // Update memory cache
-    let mut cache = LOCAL_DB_CACHE.write();
+    let mut cache = LOCAL_DB_CACHE.write().expect("lock poisoned");
 
     // Double-check: another thread may have loaded while we were parsing
     if cache.last_modified == Some(current_mtime) && !cache.packages.is_empty() {
@@ -974,17 +979,17 @@ fn get_local_db_mtime(local_dir: &Path) -> Result<SystemTime> {
 /// Force refresh of all caches (call after sync/install)
 pub fn invalidate_caches() {
     {
-        let mut cache = SYNC_DB_CACHE.write();
+        let mut cache = SYNC_DB_CACHE.write().expect("lock poisoned");
         cache.packages.clear();
         cache.last_modified = None;
     }
     {
-        let mut cache = LOCAL_DB_CACHE.write();
+        let mut cache = LOCAL_DB_CACHE.write().expect("lock poisoned");
         cache.packages.clear();
         cache.last_modified = None;
     }
     {
-        let mut mmap_cache = SYNC_MMAP_INDEX.write();
+        let mut mmap_cache = SYNC_MMAP_INDEX.write().expect("lock poisoned");
         *mmap_cache = None;
     }
 
@@ -1019,20 +1024,22 @@ pub fn compare_versions(v1: &str, v2: &str) -> std::cmp::Ordering {
 }
 
 /// Get a specific local package - FAST (<1ms)
+#[inline]
 pub fn get_local_package(name: &str) -> Result<Option<LocalDbPackage>> {
     let local_dir = paths::pacman_local_dir();
     ensure_local_cache_loaded(&local_dir)?;
 
-    let cache = LOCAL_DB_CACHE.read();
+    let cache = LOCAL_DB_CACHE.read().expect("lock poisoned");
     Ok(cache.packages.get(name).cloned())
 }
 
 /// Get a specific sync package by exact name - FAST (<1ms)
+#[inline]
 pub fn get_sync_package(name: &str) -> Result<Option<SyncDbPackage>> {
     let sync_dir = paths::pacman_sync_dir();
     ensure_sync_cache_loaded(&sync_dir)?;
 
-    let cache = SYNC_DB_CACHE.read();
+    let cache = SYNC_DB_CACHE.read().expect("lock poisoned");
     Ok(cache.packages.get(name).cloned())
 }
 
@@ -1041,7 +1048,7 @@ fn list_local_cached_filtered(query: Option<&str>) -> Result<Vec<LocalDbPackage>
     let local_dir = paths::pacman_local_dir();
     ensure_local_cache_loaded(&local_dir)?;
 
-    let cache = LOCAL_DB_CACHE.read();
+    let cache = LOCAL_DB_CACHE.read().expect("lock poisoned");
 
     let results = match query {
         None => cache.packages.values().cloned().collect(),
@@ -1073,6 +1080,7 @@ pub fn list_local_cached() -> Result<Vec<LocalDbPackage>> {
 }
 
 /// Check if package is installed using cache - INSTANT
+#[inline]
 #[must_use]
 pub fn is_installed_cached(name: &str) -> bool {
     let local_dir = paths::pacman_local_dir();
@@ -1080,7 +1088,7 @@ pub fn is_installed_cached(name: &str) -> bool {
         return false;
     }
 
-    let cache = LOCAL_DB_CACHE.read();
+    let cache = LOCAL_DB_CACHE.read().expect("lock poisoned");
     cache.packages.contains_key(name)
 }
 
@@ -1092,17 +1100,17 @@ pub fn list_all_names_cached() -> Result<Vec<String>> {
     ensure_sync_cache_loaded(&sync_dir)?;
     ensure_local_cache_loaded(&local_dir)?;
 
-    let mut names = std::collections::HashSet::new();
+    let mut names = ahash::AHashSet::new();
 
     {
-        let cache = LOCAL_DB_CACHE.read();
+        let cache = LOCAL_DB_CACHE.read().expect("lock poisoned");
         for name in cache.packages.keys() {
             names.insert(name.clone());
         }
     }
 
     {
-        let cache = SYNC_DB_CACHE.read();
+        let cache = SYNC_DB_CACHE.read().expect("lock poisoned");
         for name in cache.packages.keys() {
             names.insert(name.clone());
         }
@@ -1120,7 +1128,7 @@ pub fn search_sync_fast(query: &str) -> Result<Vec<SyncDbPackage>> {
     ensure_sync_cache_loaded(&sync_dir)?;
 
     let query_lower = query.to_lowercase();
-    let cache = SYNC_DB_CACHE.read();
+    let cache = SYNC_DB_CACHE.read().expect("lock poisoned");
 
     let results = cache
         .packages
@@ -1145,7 +1153,7 @@ pub fn search_sync_mmap(query: &str) -> Result<Vec<SyncDbPackage>> {
         .map_or(0, |d| d.as_secs());
 
     {
-        let mmap_guard = SYNC_MMAP_INDEX.read();
+        let mmap_guard = SYNC_MMAP_INDEX.read().expect("lock poisoned");
         if let Some(ref idx) = *mmap_guard
             && idx.mtime() == mtime_secs
         {
@@ -1155,7 +1163,7 @@ pub fn search_sync_mmap(query: &str) -> Result<Vec<SyncDbPackage>> {
 
     if let Some(idx) = try_load_mmap_index(mtime_secs) {
         let results = convert_mmap_results(idx.search(query));
-        let mut mmap_guard = SYNC_MMAP_INDEX.write();
+        let mut mmap_guard = SYNC_MMAP_INDEX.write().expect("lock poisoned");
         *mmap_guard = Some(idx);
         return Ok(results);
     }
@@ -1226,8 +1234,8 @@ pub fn get_potential_aur_packages() -> Result<Vec<String>> {
     ensure_sync_cache_loaded(&sync_dir)?;
     ensure_local_cache_loaded(&local_dir)?;
 
-    let sync_cache = SYNC_DB_CACHE.read();
-    let local_cache = LOCAL_DB_CACHE.read();
+    let sync_cache = SYNC_DB_CACHE.read().expect("lock poisoned");
+    let local_cache = LOCAL_DB_CACHE.read().expect("lock poisoned");
 
     let mut potential = Vec::with_capacity(local_cache.packages.len() / 10);
     for name in local_cache.packages.keys() {
@@ -1314,11 +1322,12 @@ fn chunk_aur_names(names: &[String]) -> Vec<Vec<String>> {
 }
 
 /// Get total package counts - INSTANT (<1ms with cache)
+#[inline]
 pub fn get_counts_fast() -> Result<(usize, usize, usize)> {
     let local_dir = paths::pacman_local_dir();
     ensure_local_cache_loaded(&local_dir)?;
 
-    let cache = LOCAL_DB_CACHE.read();
+    let cache = LOCAL_DB_CACHE.read().expect("lock poisoned");
     let total = cache.packages.len();
     let explicit = cache.packages.values().filter(|p| p.explicit).count();
 
@@ -1326,13 +1335,14 @@ pub fn get_counts_fast() -> Result<(usize, usize, usize)> {
 }
 
 /// Get explicit package count only - INSTANT
+#[inline]
 pub fn get_explicit_count() -> Result<usize> {
     let (_, explicit, _) = get_counts_fast()?;
     Ok(explicit)
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)] // Idiomatic in tests: panics on failure with clear error context
+#[expect(clippy::unwrap_used, clippy::expect_used)] // Idiomatic in tests: panics on failure with clear error context
 mod tests {
     use super::*;
 

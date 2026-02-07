@@ -13,7 +13,7 @@ use owo_colors::OwoColorize;
 use sha2::{Digest, Sha256};
 
 /// Progress bar style for downloads
-#[allow(clippy::expect_used)] // Path operations on known-valid HOME directory; failure is unrecoverable
+#[expect(clippy::expect_used)] // Path operations on known-valid HOME directory; failure is unrecoverable
 pub fn download_progress_style() -> ProgressStyle {
     ProgressStyle::default_bar()
         .template(
@@ -24,7 +24,7 @@ pub fn download_progress_style() -> ProgressStyle {
 }
 
 /// Progress bar style for extraction
-#[allow(clippy::expect_used)] // Path operations on known-valid HOME directory; failure is unrecoverable
+#[expect(clippy::expect_used)] // Path operations on known-valid HOME directory; failure is unrecoverable
 pub fn extract_progress_style() -> ProgressStyle {
     ProgressStyle::default_spinner()
         .template("{spinner:.green} {msg}")
@@ -32,7 +32,6 @@ pub fn extract_progress_style() -> ProgressStyle {
 }
 
 /// Download a file with progress bar and optional checksum verification
-#[allow(clippy::unwrap_used)] // Path parsing on validated runtime paths; failure indicates corrupted state
 pub async fn download_with_progress(
     client: &reqwest::Client,
     url: &str,
@@ -489,7 +488,7 @@ macro_rules! impl_runtime_common {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)] // Idiomatic in tests: panics on failure with clear error context
+#[expect(clippy::unwrap_used, clippy::expect_used)] // Idiomatic in tests: panics on failure with clear error context
 mod tests {
     use super::*;
     use tempfile::TempDir;

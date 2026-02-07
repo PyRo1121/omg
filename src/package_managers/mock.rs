@@ -5,12 +5,14 @@
 
 #![allow(clippy::unwrap_used)]
 
-use anyhow::Result;
-use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
+
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
 
 use crate::core::{Package, PackageSource, paths};
 use crate::package_managers::traits::PackageManager;
@@ -222,182 +224,217 @@ impl MockPackageManager {
     }
 
     // Used only when arch feature is disabled
-    #[allow(dead_code)] // Mock implementation field; used in test fixtures
+    #[expect(dead_code)] // Mock implementation field; used in test fixtures
     fn is_newer(old: &str, new: &str) -> bool {
         matches!(old.cmp(new), std::cmp::Ordering::Less)
     }
 }
 
-#[async_trait]
 impl PackageManager for MockPackageManager {
     fn name(&self) -> &'static str {
         self.distro_name
     }
 
-    async fn search(&self, query: &str) -> Result<Vec<Package>> {
+    fn search(
+        &self,
+        query: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<Package>>> + Send + '_>> {
         let query = query.to_lowercase();
-        let db = self.db.clone();
-        let state = Self::load_state(self.distro_name);
-        let pkgs = db.packages.lock().unwrap();
-        Ok(pkgs
-            .values()
-            .filter(|p| p.name.contains(&query) || p.description.to_lowercase().contains(&query))
-            .map(|p| Package {
+        Box::pin(async move {
+            let db = self.db.clone();
+            let state = Self::load_state(self.distro_name);
+            let pkgs = db.packages.lock().unwrap();
+            Ok(pkgs
+                .values()
+                .filter(|p| {
+                    p.name.contains(&query) || p.description.to_lowercase().contains(&query)
+                })
+                .map(|p| Package {
+                    name: p.name.clone(),
+                    version: parse_version_or_zero(&p.version),
+                    description: p.description.clone(),
+                    source: PackageSource::Official,
+                    installed: state.installed.contains_key(&p.name),
+                })
+                .collect())
+        })
+    }
+
+    fn install(
+        &self,
+        packages: &[String],
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
+        let packages = packages.to_vec();
+        Box::pin(async move {
+            let distro_name = self.distro_name;
+            let mut state = Self::load_state(distro_name);
+            let pkgs = self.db.packages.lock().unwrap();
+
+            for pkg in &packages {
+                let exists = state.available.contains_key(pkg) || pkgs.contains_key(pkg);
+                if !exists {
+                    anyhow::bail!("Package {pkg} not found in any repository");
+                }
+            }
+
+            for pkg in &packages {
+                let version = state
+                    .available
+                    .get(pkg)
+                    .or_else(|| pkgs.get(pkg).map(|p| &p.version))
+                    .cloned()
+                    .unwrap_or_else(|| "0".to_string());
+                state.installed.insert(pkg.clone(), version);
+            }
+            Self::save_state(distro_name, &state);
+            Ok(())
+        })
+    }
+
+    fn remove(&self, packages: &[String]) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
+        let packages = packages.to_vec();
+        Box::pin(async move {
+            let distro_name = self.distro_name;
+            let mut state = Self::load_state(distro_name);
+            for pkg in &packages {
+                state.installed.remove(pkg);
+            }
+            Self::save_state(distro_name, &state);
+            Ok(())
+        })
+    }
+
+    fn update(&self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
+        Box::pin(async move { Ok(()) })
+    }
+
+    fn sync(&self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
+        Box::pin(async move { Ok(()) })
+    }
+
+    fn info(
+        &self,
+        package: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<Package>>> + Send + '_>> {
+        let package = package.to_string();
+        Box::pin(async move {
+            let db = self.db.clone();
+            let state = Self::load_state(self.distro_name);
+            let pkgs = db.packages.lock().unwrap();
+            Ok(pkgs.get(&package).map(|p| Package {
                 name: p.name.clone(),
                 version: parse_version_or_zero(&p.version),
                 description: p.description.clone(),
                 source: PackageSource::Official,
                 installed: state.installed.contains_key(&p.name),
-            })
-            .collect())
+            }))
+        })
     }
 
-    async fn install(&self, packages: &[String]) -> Result<()> {
-        let distro_name = self.distro_name;
-        let mut state = Self::load_state(distro_name);
-        let pkgs = self.db.packages.lock().unwrap();
-
-        for pkg in packages {
-            let exists = state.available.contains_key(pkg) || pkgs.contains_key(pkg);
-            if !exists {
-                anyhow::bail!("Package {pkg} not found in any repository");
-            }
-        }
-
-        for pkg in packages {
-            let version = state
-                .available
-                .get(pkg)
-                .or_else(|| pkgs.get(pkg).map(|p| &p.version))
-                .cloned()
-                .unwrap_or_else(|| "0".to_string());
-            state.installed.insert(pkg.clone(), version);
-        }
-        Self::save_state(distro_name, &state);
-        Ok(())
-    }
-
-    async fn remove(&self, packages: &[String]) -> Result<()> {
-        let distro_name = self.distro_name;
-        let mut state = Self::load_state(distro_name);
-        for pkg in packages {
-            state.installed.remove(pkg);
-        }
-        Self::save_state(distro_name, &state);
-        Ok(())
-    }
-
-    async fn update(&self) -> Result<()> {
-        Ok(())
-    }
-
-    async fn sync(&self) -> Result<()> {
-        Ok(())
-    }
-
-    async fn info(&self, package: &str) -> Result<Option<Package>> {
-        let db = self.db.clone();
-        let state = Self::load_state(self.distro_name);
-        let pkgs = db.packages.lock().unwrap();
-        Ok(pkgs.get(package).map(|p| Package {
-            name: p.name.clone(),
-            version: parse_version_or_zero(&p.version),
-            description: p.description.clone(),
-            source: PackageSource::Official,
-            installed: state.installed.contains_key(&p.name),
-        }))
-    }
-
-    async fn list_installed(&self) -> Result<Vec<Package>> {
-        let db = self.db.clone();
-        let state = Self::load_state(self.distro_name);
-        let pkgs = db.packages.lock().unwrap();
-        Ok(state
-            .installed
-            .iter()
-            .map(|(name, version)| {
-                if let Some(p) = pkgs.get(name) {
-                    Package {
-                        name: p.name.clone(),
-                        version: parse_version_or_zero(version),
-                        description: p.description.clone(),
-                        source: PackageSource::Official,
-                        installed: true,
+    fn list_installed(&self) -> Pin<Box<dyn Future<Output = Result<Vec<Package>>> + Send + '_>> {
+        Box::pin(async move {
+            let db = self.db.clone();
+            let state = Self::load_state(self.distro_name);
+            let pkgs = db.packages.lock().unwrap();
+            Ok(state
+                .installed
+                .iter()
+                .map(|(name, version)| {
+                    if let Some(p) = pkgs.get(name) {
+                        Package {
+                            name: p.name.clone(),
+                            version: parse_version_or_zero(version),
+                            description: p.description.clone(),
+                            source: PackageSource::Official,
+                            installed: true,
+                        }
+                    } else {
+                        // Package installed but not in db (e.g. manually added to mock state)
+                        Package {
+                            name: name.clone(),
+                            version: parse_version_or_zero(version),
+                            description: "Mock package".to_string(),
+                            source: PackageSource::Official,
+                            installed: true,
+                        }
                     }
-                } else {
-                    // Package installed but not in db (e.g. manually added to mock state)
-                    Package {
-                        name: name.clone(),
-                        version: parse_version_or_zero(version),
-                        description: "Mock package".to_string(),
-                        source: PackageSource::Official,
-                        installed: true,
+                })
+                .collect())
+        })
+    }
+
+    fn get_status(
+        &self,
+        _fast: bool,
+    ) -> Pin<Box<dyn Future<Output = Result<(usize, usize, usize, usize)>> + Send + '_>> {
+        Box::pin(async move {
+            let state = Self::load_state(self.distro_name);
+            // total = all installed packages
+            // explicit = explicitly installed packages (in mock, all are explicit since no dependency tracking)
+            let total = state.installed.len();
+            let explicit = total; // All installed packages are explicit in the mock
+            Ok((total, explicit, 0, 0))
+        })
+    }
+
+    fn list_explicit(&self) -> Pin<Box<dyn Future<Output = Result<Vec<String>>> + Send + '_>> {
+        Box::pin(async move {
+            let state = Self::load_state(self.distro_name);
+            Ok(state.installed.keys().cloned().collect())
+        })
+    }
+
+    fn list_updates(&self) -> Pin<Box<dyn Future<Output = Result<Vec<UpdateInfo>>> + Send + '_>> {
+        Box::pin(async move {
+            let db = self.db.clone();
+            let state = Self::load_state(self.distro_name);
+            let pkgs = db.packages.lock().unwrap();
+            let mut updates = Vec::new();
+
+            for (pkg_name, installed_ver) in &state.installed {
+                if let Some(available_ver) = state.available.get(pkg_name) {
+                    // Use repo from db if available, else "unknown"
+                    let repo = pkgs
+                        .get(pkg_name)
+                        .map_or_else(|| "unknown".to_string(), |p| p.repo.clone());
+
+                    #[cfg(feature = "arch")]
+                    let is_update_needed = {
+                        use crate::package_managers::types::Version as AlpmVersion;
+                        use std::str::FromStr;
+
+                        let installed = AlpmVersion::from_str(installed_ver)
+                            .unwrap_or_else(|_| AlpmVersion::from_str("0").unwrap());
+                        let available = AlpmVersion::from_str(available_ver)
+                            .unwrap_or_else(|_| AlpmVersion::from_str("0").unwrap());
+
+                        available > installed
+                    };
+
+                    #[cfg(not(feature = "arch"))]
+                    let is_update_needed = Self::is_newer(installed_ver, available_ver);
+
+                    if is_update_needed {
+                        updates.push(UpdateInfo {
+                            name: pkg_name.clone(),
+                            old_version: installed_ver.clone(),
+                            new_version: available_ver.clone(),
+                            repo,
+                        });
                     }
                 }
-            })
-            .collect())
-    }
-
-    async fn get_status(&self, _fast: bool) -> Result<(usize, usize, usize, usize)> {
-        let state = Self::load_state(self.distro_name);
-        // total = all installed packages
-        // explicit = explicitly installed packages (in mock, all are explicit since no dependency tracking)
-        let total = state.installed.len();
-        let explicit = total; // All installed packages are explicit in the mock
-        Ok((total, explicit, 0, 0))
-    }
-
-    async fn list_explicit(&self) -> Result<Vec<String>> {
-        let state = Self::load_state(self.distro_name);
-        Ok(state.installed.keys().cloned().collect())
-    }
-
-    async fn list_updates(&self) -> Result<Vec<UpdateInfo>> {
-        let db = self.db.clone();
-        let state = Self::load_state(self.distro_name);
-        let pkgs = db.packages.lock().unwrap();
-        let mut updates = Vec::new();
-
-        for (pkg_name, installed_ver) in &state.installed {
-            if let Some(available_ver) = state.available.get(pkg_name) {
-                // Use repo from db if available, else "unknown"
-                let repo = pkgs
-                    .get(pkg_name)
-                    .map_or_else(|| "unknown".to_string(), |p| p.repo.clone());
-
-                #[cfg(feature = "arch")]
-                let is_update_needed = {
-                    use crate::package_managers::types::Version as AlpmVersion;
-                    use std::str::FromStr;
-
-                    let installed = AlpmVersion::from_str(installed_ver)
-                        .unwrap_or_else(|_| AlpmVersion::from_str("0").unwrap());
-                    let available = AlpmVersion::from_str(available_ver)
-                        .unwrap_or_else(|_| AlpmVersion::from_str("0").unwrap());
-
-                    available > installed
-                };
-
-                #[cfg(not(feature = "arch"))]
-                let is_update_needed = Self::is_newer(installed_ver, available_ver);
-
-                if is_update_needed {
-                    updates.push(UpdateInfo {
-                        name: pkg_name.clone(),
-                        old_version: installed_ver.clone(),
-                        new_version: available_ver.clone(),
-                        repo,
-                    });
-                }
             }
-        }
 
-        Ok(updates)
+            Ok(updates)
+        })
     }
 
-    async fn is_installed(&self, package: &str) -> bool {
-        let state = Self::load_state(self.distro_name);
-        state.installed.contains_key(package)
+    fn is_installed(&self, package: &str) -> Pin<Box<dyn Future<Output = bool> + Send + '_>> {
+        let package = package.to_string();
+        Box::pin(async move {
+            let state = Self::load_state(self.distro_name);
+            state.installed.contains_key(&package)
+        })
     }
 }
 

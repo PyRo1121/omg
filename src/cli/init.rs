@@ -414,19 +414,17 @@ fn detect_shell_from_parent_process() -> Option<Shell> {
     let ppid = std::process::id();
 
     // Try to read /proc/{ppid}/comm or /proc/{ppid}/cmdline
-    if let Ok(comm) = fs::read_to_string(format!("/proc/{ppid}/comm")) {
-        let comm = comm.trim();
-        if let Some(s) = parse_shell_path(comm) {
-            return Some(s);
-        }
+    if let Ok(comm) = fs::read_to_string(format!("/proc/{ppid}/comm"))
+        && let Some(s) = parse_shell_path(comm.trim())
+    {
+        return Some(s);
     }
 
     // Fallback: check cmdline
-    if let Ok(cmdline) = fs::read_to_string(format!("/proc/{ppid}/cmdline")) {
-        let first_arg = cmdline.split('\0').next().unwrap_or("");
-        if let Some(s) = parse_shell_path(first_arg) {
-            return Some(s);
-        }
+    if let Ok(cmdline) = fs::read_to_string(format!("/proc/{ppid}/cmdline"))
+        && let Some(s) = parse_shell_path(cmdline.split('\0').next().unwrap_or(""))
+    {
+        return Some(s);
     }
 
     None

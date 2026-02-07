@@ -54,7 +54,7 @@ impl AurIndex {
         // - No concurrent mutations possible (read-only file descriptor)
         // Alternative considered: Read entire file into memory would be slower
         // and use more RAM for large AUR archives (>100MB)
-        #[allow(unsafe_code)]
+        #[expect(unsafe_code)]
         let mmap = unsafe { Mmap::map(&file)? };
 
         Ok(Self { mmap })
@@ -67,7 +67,7 @@ impl AurIndex {
     }
 
     /// Check if a package exists in the index
-    #[allow(dead_code)] // Struct fields used by daemon indexer; deserialized at runtime
+    #[allow(dead_code)] // Public API convenience method; used in tests
     pub fn contains(&self, name: &str) -> Result<bool> {
         Ok(self.get(name)?.is_some())
     }
@@ -87,7 +87,6 @@ impl AurIndex {
     }
 
     /// Search for packages matching a query (substring match in name or description)
-    #[allow(clippy::map_unwrap_or)] // Readability: map().unwrap_or() is explicit about the transformation
     pub fn search(&self, query: &str, limit: usize) -> Result<Vec<&ArchivedAurEntry>> {
         let archive = self.archive()?;
         let query = query.to_lowercase();
@@ -99,10 +98,9 @@ impl AurIndex {
                 e.name.as_str().to_lowercase().contains(&query)
                     || e.description
                         .as_ref()
-                        .map(|d: &rkyv::string::ArchivedString| {
+                        .is_some_and(|d: &rkyv::string::ArchivedString| {
                             d.as_str().to_lowercase().contains(&query)
                         })
-                        .unwrap_or(false)
             })
             .take(limit)
             .collect())

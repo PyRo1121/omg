@@ -17,7 +17,7 @@ use std::time::Duration;
 
 /// Modern spinner with contextual message (bun-style)
 #[must_use]
-#[allow(clippy::expect_used, clippy::literal_string_with_formatting_args)]
+#[expect(clippy::expect_used, clippy::literal_string_with_formatting_args)]
 pub fn modern_spinner(phase: &str, action: &str) -> ProgressBar {
     let pb = ProgressBar::new_spinner();
 
@@ -396,7 +396,7 @@ pub fn print_timing(label: &str, duration: std::time::Duration) {
 
 /// Print download progress (minimal, updates in-place)
 #[must_use]
-#[allow(clippy::expect_used, clippy::literal_string_with_formatting_args)]
+#[expect(clippy::expect_used, clippy::literal_string_with_formatting_args)]
 pub fn download_progress(filename: &str, total_bytes: u64) -> ProgressBar {
     let pb = ProgressBar::new(total_bytes);
 

@@ -350,15 +350,11 @@ fn check_path() -> bool {
     if crate::core::paths::test_mode() {
         return true;
     }
-    if let Ok(path) = std::env::var("PATH") {
-        // Check for ~/.local/bin or wherever we install
-        // We can't know for sure where user installed, but usually ~/.local/bin
-        // Or check if 'omg' is found in PATH and matches current executable path?
-        if let Ok(exe) = std::env::current_exe()
-            && let Some(parent) = exe.parent()
-        {
-            return path.contains(parent.to_str().unwrap_or(""));
-        }
+    if let Ok(path) = std::env::var("PATH")
+        && let Ok(exe) = std::env::current_exe()
+        && let Some(parent) = exe.parent()
+    {
+        return path.contains(parent.to_str().unwrap_or(""));
     }
     false
 }

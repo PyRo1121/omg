@@ -26,13 +26,15 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock};
 
+use std::future::Future;
+use std::pin::Pin;
+
 use ahash::AHashSet;
 use anyhow::{Context, Result, bail};
-use async_trait::async_trait;
 use dashmap::DashMap;
 use memmap2::Mmap;
-use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
+use std::sync::RwLock;
 use tempfile::NamedTempFile;
 use tokio::fs;
 use tokio::sync::OnceCell;
@@ -45,6 +47,8 @@ use libscoop::{Session, SyncOption, operation};
 
 /// TTL for cache eviction safety net (30 minutes)
 const CACHE_TTL_SECS: u64 = 30 * 60;
+/// TTL for persistent disk cache (24 hours)
+const DISK_CACHE_TTL_SECS: u64 = 86400;
 
 /// Global cache for installed package names
 static INSTALLED_CACHE: LazyLock<RwLock<Option<AHashSet<String>>>> =
@@ -122,7 +126,7 @@ struct ScoopArchVariant {
 
 /// Windows registry entry for installed software (for future registry enumeration)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[allow(dead_code)]
+#[expect(dead_code)]
 struct RegistryPackage {
     name: String,
     version: String,
@@ -319,7 +323,7 @@ impl WindowsMmapIndex {
         self.archive().map(|a| a.packages.len()).unwrap_or(0)
     }
 
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.is_empty()
     }
@@ -343,7 +347,7 @@ pub struct WindowsPackageManager {
     /// In-memory package index (name -> package)
     package_index: Arc<DashMap<String, Package>>,
     /// Installed packages cache (written on install/remove for future read optimization)
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     installed_cache: Arc<RwLock<Vec<String>>>,
     /// Initialization guard to prevent race conditions
     init_guard: OnceCell<()>,
@@ -457,7 +461,7 @@ impl WindowsPackageManager {
     }
 
     fn search_mmap(&self, query: &str) -> Option<Vec<Package>> {
-        let mmap_guard = WINDOWS_MMAP_INDEX.read();
+        let mmap_guard = WINDOWS_MMAP_INDEX.read().expect("lock poisoned");
 
         if let Some(ref mmap) = *mmap_guard
             && !mmap.is_expired()
@@ -475,7 +479,7 @@ impl WindowsPackageManager {
                 .search(query)
                 .ok()
                 .map(|results| self.convert_rkyv_packages(results));
-            let mut mmap_guard = WINDOWS_MMAP_INDEX.write();
+            let mut mmap_guard = WINDOWS_MMAP_INDEX.write().expect("lock poisoned");
             *mmap_guard = Some(mmap);
             return result;
         }
@@ -559,7 +563,7 @@ impl WindowsPackageManager {
         }
 
         if let Some(mmap) = Self::try_load_mmap_index() {
-            let mut mmap_guard = WINDOWS_MMAP_INDEX.write();
+            let mut mmap_guard = WINDOWS_MMAP_INDEX.write().expect("lock poisoned");
             *mmap_guard = Some(mmap);
         }
 
@@ -685,7 +689,7 @@ impl WindowsPackageManager {
     }
 
     pub fn is_installed_fast(&self, package: &str) -> bool {
-        if let Some(ref cache) = *INSTALLED_CACHE.read() {
+        if let Some(ref cache) = *INSTALLED_CACHE.read().expect("lock poisoned") {
             return cache.contains(&package.to_lowercase());
         }
 
@@ -693,6 +697,7 @@ impl WindowsPackageManager {
 
         INSTALLED_CACHE
             .read()
+            .expect("lock poisoned")
             .as_ref()
             .is_some_and(|c| c.contains(&package.to_lowercase()))
     }
@@ -708,7 +713,7 @@ impl WindowsPackageManager {
             names.extend(scoop_pkgs.iter().map(|p| p.name.to_lowercase()));
         }
 
-        *INSTALLED_CACHE.write() = Some(names);
+        *INSTALLED_CACHE.write().expect("lock poisoned") = Some(names);
     }
 
     /// Scan Windows registry for installed software
@@ -764,7 +769,7 @@ impl WindowsPackageManager {
     }
 
     #[cfg(not(target_os = "windows"))]
-    #[allow(clippy::unused_async)] // Must be async to match Windows impl
+    #[expect(clippy::unused_async)] // Must be async to match Windows impl
     async fn scan_registry_packages(&self) -> Result<Vec<Package>> {
         // Non-Windows: return empty list
         Ok(Vec::new())
@@ -786,7 +791,7 @@ impl WindowsPackageManager {
             .duration_since(std::time::UNIX_EPOCH)?
             .as_secs();
 
-        if now - cache.cache_time > 86400 {
+        if now - cache.cache_time > DISK_CACHE_TTL_SECS {
             bail!("Cache expired");
         }
 
@@ -879,8 +884,8 @@ impl WindowsPackageManager {
     }
 
     #[cfg(not(target_os = "windows"))]
-    #[allow(clippy::unused_async)]
-    #[allow(dead_code)]
+    #[expect(clippy::unused_async)]
+    #[expect(dead_code)]
     async fn run_scoop_operation(&self, _args: &[&str]) -> Result<()> {
         bail!("Scoop is only available on Windows");
     }
@@ -892,261 +897,297 @@ impl Default for WindowsPackageManager {
     }
 }
 
-#[async_trait]
 impl PackageManager for WindowsPackageManager {
     fn name(&self) -> &'static str {
         "scoop"
     }
 
-    async fn search(&self, query: &str) -> Result<Vec<Package>> {
-        if let Some(results) = self.search_mmap(query) {
-            return Ok(results);
-        }
-
-        self.ensure_initialized().await?;
-
-        let query_lower = query.to_lowercase();
-        let results: Vec<Package> = self
-            .package_index
-            .iter()
-            .filter(|entry| {
-                let name_lower = entry.key().to_lowercase();
-                let desc_lower = entry.value().description.to_lowercase();
-                name_lower.contains(&query_lower) || desc_lower.contains(&query_lower)
-            })
-            .map(|entry| entry.value().clone())
-            .collect();
-
-        Ok(results)
-    }
-
-    async fn install(&self, packages: &[String]) -> Result<()> {
-        crate::core::security::validate_package_names(packages)?;
-        #[cfg(target_os = "windows")]
-        {
-            let mut args = vec!["install"];
-            let pkg_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
-            args.extend_from_slice(&pkg_refs);
-            self.run_scoop_operation(&args).await?;
-
-            // Update installed cache
-            let mut cache = self.installed_cache.write();
-            for pkg in packages {
-                if !cache.contains(pkg) {
-                    cache.push(pkg.clone());
-                }
+    fn search(
+        &self,
+        query: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<Package>>> + Send + '_>> {
+        let query = query.to_string();
+        Box::pin(async move {
+            if let Some(results) = self.search_mmap(&query) {
+                return Ok(results);
             }
-            Ok(())
-        }
 
-        #[cfg(not(target_os = "windows"))]
-        {
-            let _ = packages; // Suppress unused warning
-            bail!("Install operation requires Windows")
-        }
+            self.ensure_initialized().await?;
+
+            let query_lower = query.to_lowercase();
+            let results: Vec<Package> = self
+                .package_index
+                .iter()
+                .filter(|entry| {
+                    let name_lower = entry.key().to_lowercase();
+                    let desc_lower = entry.value().description.to_lowercase();
+                    name_lower.contains(&query_lower) || desc_lower.contains(&query_lower)
+                })
+                .map(|entry| entry.value().clone())
+                .collect();
+
+            Ok(results)
+        })
     }
 
-    async fn remove(&self, packages: &[String]) -> Result<()> {
-        crate::core::security::validate_package_names(packages)?;
-        #[cfg(target_os = "windows")]
-        {
-            let mut args = vec!["uninstall"];
-            let pkg_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
-            args.extend_from_slice(&pkg_refs);
-            self.run_scoop_operation(&args).await?;
+    fn install(
+        &self,
+        packages: &[String],
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
+        let packages = packages.to_vec();
+        Box::pin(async move {
+            crate::core::security::validate_package_names(&packages)?;
+            #[cfg(target_os = "windows")]
+            {
+                let mut args = vec!["install"];
+                let pkg_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
+                args.extend_from_slice(&pkg_refs);
+                self.run_scoop_operation(&args).await?;
 
-            // Update installed cache
-            let mut cache = self.installed_cache.write();
-            cache.retain(|p| !packages.contains(p));
-            Ok(())
-        }
-
-        #[cfg(not(target_os = "windows"))]
-        {
-            let _ = packages; // Suppress unused warning
-            bail!("Remove operation requires Windows")
-        }
-    }
-
-    async fn update(&self) -> Result<()> {
-        #[cfg(target_os = "windows")]
-        {
-            self.run_scoop_operation(&["update", "*"]).await?;
-            // Invalidate cache after update
-            let cache_path = self.cache_dir.join("packages.cache");
-            let _ = fs::remove_file(cache_path).await;
-            Ok(())
-        }
-
-        #[cfg(not(target_os = "windows"))]
-        bail!("Update operation requires Windows")
-    }
-
-    async fn sync(&self) -> Result<()> {
-        #[cfg(target_os = "windows")]
-        {
-            self.run_scoop_operation(&["update"]).await?;
-            // Rebuild index after sync
-            self.rebuild_index().await?;
-            Ok(())
-        }
-
-        #[cfg(not(target_os = "windows"))]
-        bail!("Sync operation requires Windows")
-    }
-
-    async fn info(&self, package: &str) -> Result<Option<Package>> {
-        // Ensure index is initialized (race-condition safe via OnceCell)
-        self.ensure_initialized().await?;
-
-        Ok(self
-            .package_index
-            .get(package)
-            .map(|entry| entry.value().clone()))
-    }
-
-    async fn list_installed(&self) -> Result<Vec<Package>> {
-        let mut all_packages = Vec::new();
-
-        if let Ok(registry) = enumerate_registry_packages() {
-            all_packages.extend(registry.into_iter().map(|p| Package {
-                name: p.name,
-                version: crate::package_managers::types::parse_version_or_zero(&p.version),
-                description: p.description,
-                source: PackageSource::Official,
-                installed: true,
-            }));
-        }
-
-        let apps_dir = self.scoop_dir.join("apps");
-        if apps_dir.exists() {
-            let mut entries = fs::read_dir(&apps_dir).await?;
-
-            while let Some(entry) = entries.next_entry().await? {
-                let path = entry.path();
-                if !path.is_dir() {
-                    continue;
-                }
-
-                let name = path
-                    .file_name()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("unknown")
-                    .to_string();
-
-                if name == "scoop" {
-                    continue;
-                }
-
-                let manifest_path = path.join("current").join("manifest.json");
-                let (version, description) = if manifest_path.exists() {
-                    match self.parse_scoop_manifest(&manifest_path).await {
-                        Ok(manifest) => (manifest.version, manifest.description),
-                        Err(_) => ("0.0.0".to_string(), String::new()),
+                // Update installed cache
+                let mut cache = self.installed_cache.write().expect("lock poisoned");
+                for pkg in &packages {
+                    if !cache.contains(pkg) {
+                        cache.push(pkg.clone());
                     }
-                } else {
-                    ("0.0.0".to_string(), String::new())
-                };
+                }
+                Ok(())
+            }
 
-                all_packages.push(Package {
-                    name,
-                    version: crate::package_managers::types::parse_version_or_zero(&version),
-                    description,
+            #[cfg(not(target_os = "windows"))]
+            {
+                let _ = packages; // Suppress unused warning
+                bail!("Install operation requires Windows")
+            }
+        })
+    }
+
+    fn remove(&self, packages: &[String]) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
+        let packages = packages.to_vec();
+        Box::pin(async move {
+            crate::core::security::validate_package_names(&packages)?;
+            #[cfg(target_os = "windows")]
+            {
+                let mut args = vec!["uninstall"];
+                let pkg_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
+                args.extend_from_slice(&pkg_refs);
+                self.run_scoop_operation(&args).await?;
+
+                // Update installed cache
+                let mut cache = self.installed_cache.write().expect("lock poisoned");
+                cache.retain(|p| !packages.contains(p));
+                Ok(())
+            }
+
+            #[cfg(not(target_os = "windows"))]
+            {
+                let _ = packages; // Suppress unused warning
+                bail!("Remove operation requires Windows")
+            }
+        })
+    }
+
+    fn update(&self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
+        Box::pin(async move {
+            #[cfg(target_os = "windows")]
+            {
+                self.run_scoop_operation(&["update", "*"]).await?;
+                // Invalidate cache after update
+                let cache_path = self.cache_dir.join("packages.cache");
+                let _ = fs::remove_file(cache_path).await;
+                Ok(())
+            }
+
+            #[cfg(not(target_os = "windows"))]
+            bail!("Update operation requires Windows")
+        })
+    }
+
+    fn sync(&self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
+        Box::pin(async move {
+            #[cfg(target_os = "windows")]
+            {
+                self.run_scoop_operation(&["update"]).await?;
+                // Rebuild index after sync
+                self.rebuild_index().await?;
+                Ok(())
+            }
+
+            #[cfg(not(target_os = "windows"))]
+            bail!("Sync operation requires Windows")
+        })
+    }
+
+    fn info(
+        &self,
+        package: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<Package>>> + Send + '_>> {
+        let package = package.to_string();
+        Box::pin(async move {
+            // Ensure index is initialized (race-condition safe via OnceCell)
+            self.ensure_initialized().await?;
+
+            Ok(self
+                .package_index
+                .get(&*package)
+                .map(|entry| entry.value().clone()))
+        })
+    }
+
+    fn list_installed(&self) -> Pin<Box<dyn Future<Output = Result<Vec<Package>>> + Send + '_>> {
+        Box::pin(async move {
+            let mut all_packages = Vec::new();
+
+            if let Ok(registry) = enumerate_registry_packages() {
+                all_packages.extend(registry.into_iter().map(|p| Package {
+                    name: p.name,
+                    version: crate::package_managers::types::parse_version_or_zero(&p.version),
+                    description: p.description,
                     source: PackageSource::Official,
                     installed: true,
-                });
+                }));
             }
-        }
 
-        Ok(all_packages)
-    }
-
-    async fn get_status(&self, fast: bool) -> Result<(usize, usize, usize, usize)> {
-        let installed = if fast {
-            // Fast path: count directories
             let apps_dir = self.scoop_dir.join("apps");
             if apps_dir.exists() {
-                let mut count = 0;
                 let mut entries = fs::read_dir(&apps_dir).await?;
-                while entries.next_entry().await?.is_some() {
-                    count += 1;
-                }
-                count
-            } else {
-                0
-            }
-        } else {
-            self.list_installed().await?.len()
-        };
 
-        // Windows doesn't have explicit/dependency distinction like pacman
-        let explicit = installed;
-        let orphans = 0;
+                while let Some(entry) = entries.next_entry().await? {
+                    let path = entry.path();
+                    if !path.is_dir() {
+                        continue;
+                    }
 
-        // Get updates count
-        let updates = self.list_updates().await?.len();
+                    let name = path
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("unknown")
+                        .to_string();
 
-        Ok((installed, explicit, orphans, updates))
-    }
+                    if name == "scoop" {
+                        continue;
+                    }
 
-    async fn list_explicit(&self) -> Result<Vec<String>> {
-        // On Windows/Scoop, all installed packages are "explicit"
-        let packages = self.list_installed().await?;
-        Ok(packages.into_iter().map(|p| p.name).collect())
-    }
+                    let manifest_path = path.join("current").join("manifest.json");
+                    let (version, description) = if manifest_path.exists() {
+                        match self.parse_scoop_manifest(&manifest_path).await {
+                            Ok(manifest) => (manifest.version, manifest.description),
+                            Err(_) => ("0.0.0".to_string(), String::new()),
+                        }
+                    } else {
+                        ("0.0.0".to_string(), String::new())
+                    };
 
-    async fn list_updates(&self) -> Result<Vec<UpdateInfo>> {
-        #[cfg(target_os = "windows")]
-        {
-            use libscoop::QueryOption;
-
-            let scoop_dir = self.scoop_dir.clone();
-
-            tokio::task::spawn_blocking(move || {
-                let session = Session::new();
-                let packages = operation::package_query(
-                    &session,
-                    vec![""],
-                    vec![QueryOption::Upgradable],
-                    true,
-                )
-                .map_err(|e| anyhow::anyhow!("libscoop query failed: {}", e))?;
-
-                let mut updates = Vec::new();
-
-                for pkg in packages {
-                    let app_dir = scoop_dir.join("apps").join(pkg.name());
-                    let current_manifest = app_dir.join("current").join("manifest.json");
-
-                    let old_version =
-                        if let Ok(content) = std::fs::read_to_string(&current_manifest) {
-                            serde_json::from_str::<serde_json::Value>(&content)
-                                .ok()
-                                .and_then(|v| v["version"].as_str().map(String::from))
-                                .unwrap_or_else(|| "unknown".to_string())
-                        } else {
-                            "unknown".to_string()
-                        };
-
-                    updates.push(UpdateInfo {
-                        name: pkg.name().to_string(),
-                        old_version,
-                        new_version: pkg.version().to_string(),
-                        repo: "scoop".to_string(),
+                    all_packages.push(Package {
+                        name,
+                        version: crate::package_managers::types::parse_version_or_zero(&version),
+                        description,
+                        source: PackageSource::Official,
+                        installed: true,
                     });
                 }
+            }
 
-                Ok(updates)
-            })
-            .await?
-        }
-
-        #[cfg(not(target_os = "windows"))]
-        Ok(Vec::new())
+            Ok(all_packages)
+        })
     }
 
-    async fn is_installed(&self, package: &str) -> bool {
-        self.is_installed_fast(package)
+    fn get_status(
+        &self,
+        fast: bool,
+    ) -> Pin<Box<dyn Future<Output = Result<(usize, usize, usize, usize)>> + Send + '_>> {
+        Box::pin(async move {
+            let installed = if fast {
+                // Fast path: count directories
+                let apps_dir = self.scoop_dir.join("apps");
+                if apps_dir.exists() {
+                    let mut count = 0;
+                    let mut entries = fs::read_dir(&apps_dir).await?;
+                    while entries.next_entry().await?.is_some() {
+                        count += 1;
+                    }
+                    count
+                } else {
+                    0
+                }
+            } else {
+                self.list_installed().await?.len()
+            };
+
+            // Windows doesn't have explicit/dependency distinction like pacman
+            let explicit = installed;
+            let orphans = 0;
+
+            // Get updates count
+            let updates = self.list_updates().await?.len();
+
+            Ok((installed, explicit, orphans, updates))
+        })
+    }
+
+    fn list_explicit(&self) -> Pin<Box<dyn Future<Output = Result<Vec<String>>> + Send + '_>> {
+        Box::pin(async move {
+            // On Windows/Scoop, all installed packages are "explicit"
+            let packages = self.list_installed().await?;
+            Ok(packages.into_iter().map(|p| p.name).collect())
+        })
+    }
+
+    fn list_updates(&self) -> Pin<Box<dyn Future<Output = Result<Vec<UpdateInfo>>> + Send + '_>> {
+        Box::pin(async move {
+            #[cfg(target_os = "windows")]
+            {
+                use libscoop::QueryOption;
+
+                let scoop_dir = self.scoop_dir.clone();
+
+                tokio::task::spawn_blocking(move || {
+                    let session = Session::new();
+                    let packages = operation::package_query(
+                        &session,
+                        vec![""],
+                        vec![QueryOption::Upgradable],
+                        true,
+                    )
+                    .map_err(|e| anyhow::anyhow!("libscoop query failed: {}", e))?;
+
+                    let mut updates = Vec::new();
+
+                    for pkg in packages {
+                        let app_dir = scoop_dir.join("apps").join(pkg.name());
+                        let current_manifest = app_dir.join("current").join("manifest.json");
+
+                        let old_version =
+                            if let Ok(content) = std::fs::read_to_string(&current_manifest) {
+                                serde_json::from_str::<serde_json::Value>(&content)
+                                    .ok()
+                                    .and_then(|v| v["version"].as_str().map(String::from))
+                                    .unwrap_or_else(|| "unknown".to_string())
+                            } else {
+                                "unknown".to_string()
+                            };
+
+                        updates.push(UpdateInfo {
+                            name: pkg.name().to_string(),
+                            old_version,
+                            new_version: pkg.version().to_string(),
+                            repo: "scoop".to_string(),
+                        });
+                    }
+
+                    Ok(updates)
+                })
+                .await?
+            }
+
+            #[cfg(not(target_os = "windows"))]
+            Ok(Vec::new())
+        })
+    }
+
+    fn is_installed(&self, package: &str) -> Pin<Box<dyn Future<Output = bool> + Send + '_>> {
+        let result = self.is_installed_fast(package);
+        Box::pin(async move { result })
     }
 }
 

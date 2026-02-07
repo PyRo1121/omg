@@ -45,7 +45,7 @@ pub fn info_sync(package: &str) -> Result<bool> {
     }
 
     // 2. Fallback to local package manager (Sync-like via block_on if needed, but here we just use the backend functions)
-    if pm_name == "apt" || pm_name == "apt-pure" {
+    if matches!(pm_name, "apt" | "apt-pure") {
         #[cfg(feature = "debian")]
         {
             if let Some(info) = crate::package_managers::apt_get_sync_pkg_info(package)
@@ -69,7 +69,14 @@ pub fn info_sync(package: &str) -> Result<bool> {
                 ui::print_kv("Name", &style::package(&pkg.name));
                 ui::print_kv("Version", &style::version(&pkg.version.to_string()));
                 ui::print_kv("Description", &pkg.description);
-                ui::print_kv("Status", if pkg.installed { "installed" } else { "not installed" });
+                ui::print_kv(
+                    "Status",
+                    if pkg.installed {
+                        "installed"
+                    } else {
+                        "not installed"
+                    },
+                );
                 ui::print_kv(
                     "Source",
                     &format!("Official repository ({})", style::info("apt")),

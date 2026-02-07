@@ -48,11 +48,8 @@ pub async fn status(_ctx: &CliContext) -> Result<()> {
     let online_machines = members
         .iter()
         .filter(|m| {
-            if let Ok(ts) = jiff::Timestamp::from_second(parse_timestamp(&m.last_seen_at)) {
-                now - ts.as_second() < one_day
-            } else {
-                false
-            }
+            jiff::Timestamp::from_second(parse_timestamp(&m.last_seen_at))
+                .is_ok_and(|ts| now - ts.as_second() < one_day)
         })
         .count();
 
@@ -112,13 +109,9 @@ pub async fn status(_ctx: &CliContext) -> Result<()> {
 }
 
 fn parse_timestamp(s: &str) -> i64 {
-    use std::str::FromStr;
     // Simple parser for "YYYY-MM-DD HH:MM:SS" or ISO
-    if let Ok(ts) = jiff::Timestamp::from_str(s) {
-        ts.as_second()
-    } else {
-        0
-    }
+    s.parse::<jiff::Timestamp>()
+        .map_or(0, jiff::Timestamp::as_second)
 }
 
 /// Push configuration to fleet

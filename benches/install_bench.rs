@@ -9,7 +9,7 @@
 #![allow(clippy::expect_used)]
 
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
-use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
 use std::time::Duration;
@@ -30,16 +30,41 @@ fn bench_install_resolution(c: &mut Criterion) {
         (
             "medium",
             vec![
-                "vim", "curl", "git", "htop", "tmux", "build-essential", "gcc", "make",
-                "python3", "nodejs",
+                "vim",
+                "curl",
+                "git",
+                "htop",
+                "tmux",
+                "build-essential",
+                "gcc",
+                "make",
+                "python3",
+                "nodejs",
             ],
         ),
         (
             "large",
             vec![
-                "vim", "curl", "git", "htop", "tmux", "build-essential", "gcc", "make",
-                "python3", "nodejs", "gcc-multilib", "gdb", "valgrind", "strace", "ltrace",
-                "binutils", "automake", "autoconf", "libtool", "pkg-config",
+                "vim",
+                "curl",
+                "git",
+                "htop",
+                "tmux",
+                "build-essential",
+                "gcc",
+                "make",
+                "python3",
+                "nodejs",
+                "gcc-multilib",
+                "gdb",
+                "valgrind",
+                "strace",
+                "ltrace",
+                "binutils",
+                "automake",
+                "autoconf",
+                "libtool",
+                "pkg-config",
             ],
         ),
     ];
@@ -105,9 +130,9 @@ fn bench_install_dependency_graph_sizes(c: &mut Criterion) {
 
     // Test packages with different dependency tree complexities
     let test_cases = vec![
-        ("minimal_deps", "hello"), // Minimal dependencies
-        ("moderate_deps", "vim"),   // Moderate dependency tree
-        ("complex_deps", "build-essential"), // Complex dependency tree
+        ("minimal_deps", "hello"),            // Minimal dependencies
+        ("moderate_deps", "vim"),             // Moderate dependency tree
+        ("complex_deps", "build-essential"),  // Complex dependency tree
         ("large_deps", "libreoffice-common"), // Large dependency tree (if available)
     ];
 
@@ -205,33 +230,25 @@ fn bench_install_memory_allocation(c: &mut Criterion) {
 
     for size in sizes {
         group.throughput(Throughput::Elements(size as u64));
-        group.bench_with_input(
-            BenchmarkId::new("vec_allocation", size),
-            &size,
-            |b, &n| {
-                b.iter(|| {
-                    let mut vec = Vec::with_capacity(n);
-                    for i in 0..n {
-                        vec.push(format!("package-{i}"));
-                    }
-                    std::hint::black_box(vec)
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("vec_allocation", size), &size, |b, &n| {
+            b.iter(|| {
+                let mut vec = Vec::with_capacity(n);
+                for i in 0..n {
+                    vec.push(format!("package-{i}"));
+                }
+                std::hint::black_box(vec)
+            });
+        });
 
-        group.bench_with_input(
-            BenchmarkId::new("vec_no_capacity", size),
-            &size,
-            |b, &n| {
-                b.iter(|| {
-                    let mut vec = Vec::new();
-                    for i in 0..n {
-                        vec.push(format!("package-{i}"));
-                    }
-                    std::hint::black_box(vec)
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("vec_no_capacity", size), &size, |b, &n| {
+            b.iter(|| {
+                let mut vec = Vec::new();
+                for i in 0..n {
+                    vec.push(format!("package-{i}"));
+                }
+                std::hint::black_box(vec)
+            });
+        });
     }
 
     group.finish();

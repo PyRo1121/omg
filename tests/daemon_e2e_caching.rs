@@ -14,9 +14,7 @@
 use anyhow::Result;
 use omg_lib::daemon::cache::PackageCache;
 use omg_lib::daemon::handlers::{DaemonState, handle_request};
-use omg_lib::daemon::protocol::{
-    PackageInfo, Request, Response, ResponseResult,
-};
+use omg_lib::daemon::protocol::{PackageInfo, Request, Response, ResponseResult};
 use serial_test::serial;
 use std::sync::Arc;
 use std::time::Duration;
@@ -35,7 +33,7 @@ impl CacheTestFixture {
         let data_dir = temp_dir.path().join("data");
         std::fs::create_dir_all(&data_dir)?;
 
-        #[allow(unsafe_code)]
+        #[expect(unsafe_code)]
         unsafe {
             std::env::set_var("OMG_DAEMON_DATA_DIR", &data_dir);
             std::env::set_var("OMG_DATA_DIR", &data_dir);
@@ -142,9 +140,7 @@ async fn test_cache_hit_rate_tracking() -> Result<()> {
     fixture.clear_cache();
 
     // Get initial metrics
-    let metrics1 = fixture
-        .send_request(Request::Metrics { id: 100 })
-        .await;
+    let metrics1 = fixture.send_request(Request::Metrics { id: 100 }).await;
 
     let (initial_hits, initial_misses) = if let Response::Success {
         result: ResponseResult::Metrics(m),
@@ -175,9 +171,7 @@ async fn test_cache_hit_rate_tracking() -> Result<()> {
         .await;
 
     // Check metrics
-    let metrics2 = fixture
-        .send_request(Request::Metrics { id: 101 })
-        .await;
+    let metrics2 = fixture.send_request(Request::Metrics { id: 101 }).await;
 
     if let Response::Success {
         result: ResponseResult::Metrics(m),
@@ -223,9 +217,7 @@ async fn test_explicit_cache_clear() -> Result<()> {
     assert!(size_before > 0, "Cache should have entries");
 
     // Clear cache
-    let clear_response = fixture
-        .send_request(Request::CacheClear { id: 2 })
-        .await;
+    let clear_response = fixture.send_request(Request::CacheClear { id: 2 }).await;
 
     assert!(
         matches!(clear_response, Response::Success { .. }),
@@ -322,14 +314,10 @@ async fn test_status_cache_coherency() -> Result<()> {
     let fixture = CacheTestFixture::new().await?;
 
     // First status request
-    let status1 = fixture
-        .send_request(Request::Status { id: 1 })
-        .await;
+    let status1 = fixture.send_request(Request::Status { id: 1 }).await;
 
     // Second status request (should be cached)
-    let status2 = fixture
-        .send_request(Request::Status { id: 2 })
-        .await;
+    let status2 = fixture.send_request(Request::Status { id: 2 }).await;
 
     // Both should succeed and return same data
     match (status1, status2) {
@@ -577,7 +565,7 @@ async fn test_persistent_cache_survival() -> Result<()> {
     let data_dir = temp_dir.path().join("data");
     std::fs::create_dir_all(&data_dir)?;
 
-    #[allow(unsafe_code)]
+    #[expect(unsafe_code)]
     unsafe {
         std::env::set_var("OMG_DAEMON_DATA_DIR", &data_dir);
         std::env::set_var("OMG_DATA_DIR", &data_dir);
@@ -641,7 +629,7 @@ async fn test_corrupted_cache_recovery() -> Result<()> {
     let cache_file = data_dir.join("cache.redb");
     std::fs::write(&cache_file, b"CORRUPTED DATA")?;
 
-    #[allow(unsafe_code)]
+    #[expect(unsafe_code)]
     unsafe {
         std::env::set_var("OMG_DAEMON_DATA_DIR", &data_dir);
         std::env::set_var("OMG_DATA_DIR", &data_dir);
@@ -656,11 +644,7 @@ async fn test_corrupted_cache_recovery() -> Result<()> {
     match result {
         Ok(state) => {
             // Successfully recovered, verify it works
-            let response = handle_request(
-                Arc::new(state),
-                Request::Ping { id: 1 },
-            )
-            .await;
+            let response = handle_request(Arc::new(state), Request::Ping { id: 1 }).await;
 
             assert!(
                 matches!(response, Response::Success { .. }),
