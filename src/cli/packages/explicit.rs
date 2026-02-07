@@ -3,7 +3,6 @@
 use anyhow::Result;
 use serde::Serialize;
 
-use crate::cli::ui;
 #[cfg(unix)]
 use crate::core::client::DaemonClient;
 #[cfg(unix)]
@@ -121,19 +120,23 @@ fn display_explicit_list(mut packages: Vec<String>, json: bool) -> Result<()> {
         return Ok(());
     }
 
+    use owo_colors::OwoColorize;
     use std::io::Write;
     let mut stdout = std::io::BufWriter::new(std::io::stdout());
 
-    ui::print_header("OMG", "Explicitly installed packages");
-    ui::print_spacer();
+    // Modern header
+    crate::cli::modern_ui::print_phase_header("📦", "Explicit Packages", &format!("{} installed", packages.len()));
+    println!();
 
     for pkg in &packages {
-        ui::print_list_item(pkg, None);
+        if crate::cli::style::colors_enabled() {
+            println!("  {} {}", "·".cyan(), pkg.bold());
+        } else {
+            println!("  · {pkg}");
+        }
     }
 
-    ui::print_spacer();
-    ui::print_success(format!("Total: {} packages", packages.len()));
-    ui::print_spacer();
+    println!();
     stdout.flush()?;
     Ok(())
 }

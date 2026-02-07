@@ -33,7 +33,8 @@ fn test_pure_debian_detection() {
         std::env::set_var("OMG_TEST_DISTRO", "debian");
     }
 
-    let pm = omg_lib::package_managers::get_package_manager();
+    let pm =
+        omg_lib::package_managers::get_package_manager().expect("Failed to get package manager");
     // In test mode, it returns MockPackageManager, not PureDebianPackageManager.
     // This is expected behavior for existing logic.
     assert_eq!(pm.name(), "apt");

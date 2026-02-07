@@ -268,4 +268,77 @@ mod tests {
         assert!(validate_relative_path("foo//bar").is_err());
         assert!(validate_relative_path("foo\0bar").is_err());
     }
+
+    #[test]
+    fn test_is_local_package_file() {
+        // Valid local package files
+        assert!(is_local_package_file(
+            "/home/user/package-1.0-1-x86_64.pkg.tar.zst"
+        ));
+        assert!(is_local_package_file(
+            "/home/user/package-1.0-1-x86_64.pkg.tar.xz"
+        ));
+        assert!(is_local_package_file(
+            "/home/user/package-1.0-1-x86_64.pkg.tar.gz"
+        ));
+        assert!(is_local_package_file(
+            "/home/user/package-1.0-1-x86_64.pkg.tar.bz2"
+        ));
+        assert!(is_local_package_file(
+            "/tmp/brave-bin-1:1.73.104-1-x86_64.pkg.tar.zst"
+        ));
+        assert!(is_local_package_file(
+            "/var/cache/omg/aur/package/package.pkg.tar.zst"
+        ));
+
+        // Invalid - not absolute paths
+        assert!(!is_local_package_file("package-1.0-1-x86_64.pkg.tar.zst"));
+        assert!(!is_local_package_file("./package-1.0-1-x86_64.pkg.tar.zst"));
+        assert!(!is_local_package_file(
+            "../package-1.0-1-x86_64.pkg.tar.zst"
+        ));
+
+        // Invalid - wrong extension
+        assert!(!is_local_package_file(
+            "/home/user/package-1.0-1-x86_64.tar.gz"
+        ));
+        assert!(!is_local_package_file(
+            "/home/user/package-1.0-1-x86_64.deb"
+        ));
+        assert!(!is_local_package_file("/home/user/package.txt"));
+
+        // Invalid - path traversal
+        assert!(!is_local_package_file("/home/../etc/package.pkg.tar.zst"));
+        assert!(!is_local_package_file(
+            "/home/user/../root/package.pkg.tar.zst"
+        ));
+
+        // Edge cases - not package names
+        assert!(!is_local_package_file("brave"));
+        assert!(!is_local_package_file("brave-bin"));
+        assert!(!is_local_package_file("python3"));
+    }
+
+    #[test]
+    fn test_validate_package_name_or_file() {
+        // Valid package names
+        assert!(validate_package_name_or_file("python").is_ok());
+        assert!(validate_package_name_or_file("brave-bin").is_ok());
+        assert!(validate_package_name_or_file("lib-foo").is_ok());
+
+        // Valid local package files
+        assert!(
+            validate_package_name_or_file("/home/user/package-1.0-1-x86_64.pkg.tar.zst").is_ok()
+        );
+        assert!(
+            validate_package_name_or_file("/tmp/brave-bin-1:1.73.104-1-x86_64.pkg.tar.zst").is_ok()
+        );
+
+        // Invalid - malicious package names
+        assert!(validate_package_name_or_file("pkg; rm -rf /").is_err());
+        assert!(validate_package_name_or_file("pkg$(whoami)").is_err());
+
+        // Invalid - path traversal
+        assert!(validate_package_name_or_file("/home/../etc/package.pkg.tar.zst").is_err());
+    }
 }

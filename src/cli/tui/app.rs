@@ -334,7 +334,7 @@ impl App {
     }
 
     pub async fn clean_cache(&self) -> Result<()> {
-        crate::cli::packages::clean(true, true, true, false).await
+        crate::cli::packages::clean(true, true, true, false, false).await
     }
 
     #[allow(clippy::unused_async)] // Async required: feature-gated branches call .await; fallback stubs omit it

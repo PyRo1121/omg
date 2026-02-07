@@ -1,0 +1,39 @@
+FROM ubuntu:24.04
+
+# Prevent interactive prompts during apt install
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install dependencies - note: time package provides GNU time (/usr/bin/time)
+RUN apt-get update && apt-get install -y \
+    curl \
+    wget \
+    time \
+    sudo \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install hyperfine (for statistical benchmarks)
+RUN HYPERFINE_VERSION=1.19.0 && \
+    ARCH=$(dpkg --print-architecture) && \
+    curl -fsSL "https://github.com/sharkdp/hyperfine/releases/download/v${HYPERFINE_VERSION}/hyperfine_${HYPERFINE_VERSION}_${ARCH}.deb" \
+        -o /tmp/hyperfine.deb && \
+    dpkg -i /tmp/hyperfine.deb && \
+    rm /tmp/hyperfine.deb
+
+# Create benchmark directory
+WORKDIR /benchmark
+
+# Copy the omg binary (will be provided at build time)
+# Note: target/ is in .dockerignore, so we copy from omg-binary which is created by the benchmark script
+COPY omg-binary /usr/local/bin/omg
+RUN chmod +x /usr/local/bin/omg
+
+# Copy benchmark script
+COPY benchmark_ubuntu.sh /benchmark/benchmark_ubuntu.sh
+RUN chmod +x /benchmark/benchmark_ubuntu.sh
+
+# Ensure apt cache is populated
+RUN apt-get update
+
+# Run as root for install tests
+CMD ["/benchmark/benchmark_ubuntu.sh"]

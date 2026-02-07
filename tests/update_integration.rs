@@ -10,106 +10,12 @@
 
 #![allow(clippy::unwrap_used)]
 #![allow(clippy::pedantic)]
+#![allow(clippy::nursery)]
 
-use std::env;
-use std::process::{Command, Stdio};
-use std::time::Instant;
+mod common;
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// TEST HELPERS
-// ═══════════════════════════════════════════════════════════════════════════════
-
-struct TestResult {
-    success: bool,
-    stdout: String,
-    stderr: String,
-    exit_code: i32,
-    duration: std::time::Duration,
-}
-
-fn run_omg_update(args: &[&str]) -> TestResult {
-    let start = Instant::now();
-    let output = Command::new(env!("CARGO_BIN_EXE_omg"))
-        .args(["update"])
-        .args(args)
-        .env("OMG_TEST_MODE", "1")
-        .env("OMG_DISABLE_DAEMON", "1")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .expect("Failed to execute omg update");
-
-    let duration = start.elapsed();
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-
-    TestResult {
-        success: output.status.success(),
-        stdout,
-        stderr,
-        exit_code: output.status.code().unwrap_or(-1),
-        duration,
-    }
-}
-
-fn run_omg_update_with_env(args: &[&str], env_vars: &[(&str, &str)]) -> TestResult {
-    let start = Instant::now();
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_omg"));
-    cmd.args(["update"])
-        .args(args)
-        .env("OMG_TEST_MODE", "1")
-        .env("OMG_DISABLE_DAEMON", "1")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-
-    for (key, value) in env_vars {
-        cmd.env(key, value);
-    }
-
-    let output = cmd.output().expect("Failed to execute omg update");
-    let duration = start.elapsed();
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-
-    TestResult {
-        success: output.status.success(),
-        stdout,
-        stderr,
-        exit_code: output.status.code().unwrap_or(-1),
-        duration,
-    }
-}
-
-impl TestResult {
-    fn combined(&self) -> String {
-        format!("{}{}", self.stdout, self.stderr)
-    }
-
-    fn assert_no_password_prompt(&self) -> &Self {
-        let combined = self.combined();
-        assert!(
-            !combined.contains("[sudo]")
-                && !combined.contains("password for")
-                && !combined.contains("Password:"),
-            "Should not prompt for password. Got:\n{}",
-            combined
-        );
-        self
-    }
-
-    fn assert_no_hang(&self) -> &Self {
-        assert!(
-            self.duration.as_secs() < 30,
-            "Command should complete quickly, took {:?}",
-            self.duration
-        );
-        self
-    }
-}
-
-fn system_tests_enabled() -> bool {
-    matches!(env::var("OMG_RUN_SYSTEM_TESTS"), Ok(v) if v == "1")
-}
+use common::*;
+use std::time::Duration;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // CHECK MODE TESTS
@@ -120,40 +26,34 @@ mod check_mode_tests {
 
     #[test]
     fn test_check_flag_is_recognized() {
-        let result = run_omg_update(&["--check"]);
+        let result = run_omg(&["update", "--check"]);
         // --check is a valid flag
         assert!(result.exit_code >= 0);
     }
 
     #[test]
     fn test_check_mode_succeeds() {
-        if !system_tests_enabled() {
-            eprintln!("Skipping system test");
-            return;
-        }
+        require_system_tests!();
 
-        let result = run_omg_update(&["--check"]);
-        result.assert_no_password_prompt();
+        let result = run_omg(&["update", "--check"]);
+        assert_no_password_prompt(&result);
 
         // Check mode should succeed
         assert!(
             result.success || result.exit_code >= 0,
             "Check mode should succeed. Output:\n{}",
-            result.combined()
+            result.combined_output()
         );
     }
 
     #[test]
     fn test_check_mode_reports_status() {
-        if !system_tests_enabled() {
-            eprintln!("Skipping system test");
-            return;
-        }
+        require_system_tests!();
 
-        let result = run_omg_update(&["--check"]);
-        result.assert_no_password_prompt();
+        let result = run_omg(&["update", "--check"]);
+        assert_no_password_prompt(&result);
 
-        let combined = result.combined();
+        let combined = result.combined_output();
 
         // Should report update status
         assert!(
@@ -169,31 +69,21 @@ mod check_mode_tests {
 
     #[test]
     fn test_check_mode_is_fast() {
-        if !system_tests_enabled() {
-            eprintln!("Skipping system test");
-            return;
-        }
+        require_system_tests!();
 
-        let result = run_omg_update(&["--check"]);
-        result.assert_no_password_prompt();
+        let result = run_omg(&["update", "--check"]);
+        assert_no_password_prompt(&result);
 
         // Check mode should complete quickly
-        assert!(
-            result.duration.as_secs() < 5,
-            "Check mode should complete in <5s, took {:?}",
-            result.duration
-        );
+        result.assert_duration_under(Duration::from_secs(5));
     }
 
     #[test]
     fn test_check_mode_with_yes_flag() {
-        if !system_tests_enabled() {
-            eprintln!("Skipping system test");
-            return;
-        }
+        require_system_tests!();
 
-        let result = run_omg_update(&["--check", "--yes"]);
-        result.assert_no_password_prompt();
+        let result = run_omg(&["update", "--check", "--yes"]);
+        assert_no_password_prompt(&result);
 
         // Should work (though --yes is redundant with --check)
         assert!(result.exit_code >= 0, "Check with --yes should not error");
@@ -209,10 +99,10 @@ mod non_interactive_tests {
 
     #[test]
     fn test_yes_flag_without_tty() {
-        let result = run_omg_update_with_env(&["--yes"], &[("CI", "1")]);
+        let result = run_omg_with_env(&["update", "--yes"], &[("CI", "1")]);
 
         // Should not complain about interactive mode
-        let combined = result.combined();
+        let combined = result.combined_output();
         assert!(
             !combined.contains("requires an interactive terminal") || result.success,
             "--yes should work in non-interactive mode. Got:\n{}",
@@ -222,14 +112,16 @@ mod non_interactive_tests {
 
     #[test]
     fn test_short_y_flag() {
-        let result = run_omg_update(&["-y"]);
+        let result = run_omg(&["update", "-y"]);
         assert!(result.exit_code >= 0);
     }
 
     #[test]
     fn test_ci_mode_with_yes() {
-        let result =
-            run_omg_update_with_env(&["--yes"], &[("CI", "1"), ("OMG_NON_INTERACTIVE", "1")]);
+        let result = run_omg_with_env(
+            &["update", "--yes"],
+            &[("CI", "1"), ("OMG_NON_INTERACTIVE", "1")],
+        );
 
         // Should work in CI mode with --yes
         assert!(result.exit_code >= 0, "CI mode with --yes should work");
@@ -237,9 +129,9 @@ mod non_interactive_tests {
 
     #[test]
     fn test_ci_mode_without_yes_fails_gracefully() {
-        let result = run_omg_update_with_env(&[], &[("CI", "1")]);
+        let result = run_omg_with_env(&["update"], &[("CI", "1")]);
 
-        let combined = result.combined();
+        let combined = result.combined_output();
 
         if !result.success {
             // Should show helpful error about needing --yes
@@ -264,9 +156,9 @@ mod sudo_integration_tests {
 
     #[test]
     fn test_update_without_privileges_shows_helpful_error() {
-        let result = run_omg_update(&["--yes"]);
+        let result = run_omg(&["update", "--yes"]);
 
-        let combined = result.combined();
+        let combined = result.combined_output();
 
         if !result.success {
             // Should show helpful message about sudo
@@ -285,12 +177,12 @@ mod sudo_integration_tests {
     #[test]
     fn test_check_mode_never_prompts_for_password() {
         // CRITICAL TEST: Check mode should NEVER prompt for password
-        let result = run_omg_update(&["--check"]);
+        let result = run_omg(&["update", "--check"]);
 
-        result.assert_no_password_prompt();
+        assert_no_password_prompt(&result);
 
         // Check for specific password prompt patterns
-        let combined = result.combined();
+        let combined = result.combined_output();
         assert!(
             !combined.contains("[sudo]")
                 && !combined.to_lowercase().contains("password")
@@ -303,12 +195,12 @@ mod sudo_integration_tests {
     #[test]
     fn test_n_flag_fallback_in_ci() {
         // Test that sudo -n fallback works in CI
-        let result = run_omg_update_with_env(&["--yes"], &[("CI", "1")]);
+        let result = run_omg_with_env(&["update", "--yes"], &[("CI", "1")]);
 
         // Should not hang waiting for password
-        result.assert_no_hang();
+        assert_no_hang(&result);
 
-        let combined = result.combined();
+        let combined = result.combined_output();
 
         // If it fails, should show CI-friendly error
         if !result.success {
@@ -335,7 +227,7 @@ mod elm_workflow_tests {
     #[test]
     fn test_elm_model_initialization() {
         // Test that Elm model initializes correctly
-        let result = run_omg_update(&["--check"]);
+        let result = run_omg(&["update", "--check"]);
 
         // Should not crash during model init
         assert!(
@@ -347,15 +239,12 @@ mod elm_workflow_tests {
     #[test]
     fn test_elm_update_cycle() {
         // Test the Model-Update-View cycle
-        if !system_tests_enabled() {
-            eprintln!("Skipping system test");
-            return;
-        }
+        require_system_tests!();
 
-        let result = run_omg_update(&["--check"]);
+        let result = run_omg(&["update", "--check"]);
 
         // The Elm cycle should complete
-        let combined = result.combined();
+        let combined = result.combined_output();
 
         // View should render successfully
         assert!(
@@ -370,9 +259,9 @@ mod elm_workflow_tests {
     #[test]
     fn test_elm_view_rendering() {
         // Test that Elm view renders correctly
-        let result = run_omg_update(&["--check"]);
+        let result = run_omg(&["update", "--check"]);
 
-        let combined = result.combined();
+        let combined = result.combined_output();
 
         // Should not crash and should produce some output
         // The Elm UI should render without errors
@@ -393,11 +282,11 @@ mod error_handling_tests {
 
     #[test]
     fn test_invalid_flag_rejected() {
-        let result = run_omg_update(&["--invalid-flag-xyz"]);
+        let result = run_omg(&["update", "--invalid-flag-xyz"]);
 
         assert!(!result.success, "Invalid flag should fail");
 
-        let combined = result.combined();
+        let combined = result.combined_output();
         assert!(
             combined.contains("error")
                 || combined.contains("unrecognized")
@@ -409,7 +298,7 @@ mod error_handling_tests {
 
     #[test]
     fn test_extra_arguments_ignored_or_error() {
-        let result = run_omg_update(&["--check", "extra", "args"]);
+        let result = run_omg(&["update", "--check", "extra", "args"]);
 
         // May succeed or fail, but should not crash
         assert!(
@@ -420,14 +309,14 @@ mod error_handling_tests {
 
     #[test]
     fn test_missing_daemon_fallback() {
-        // We set OMG_DISABLE_DAEMON=1 in run_omg_update
-        let result = run_omg_update(&["--check"]);
+        // We set OMG_DISABLE_DAEMON=1 in run_omg
+        let result = run_omg(&["update", "--check"]);
 
         // Should work without daemon
         assert!(
             result.exit_code >= 0,
             "Should work without daemon. Output:\n{}",
-            result.combined()
+            result.combined_output()
         );
     }
 }
@@ -441,12 +330,9 @@ mod performance_tests {
 
     #[test]
     fn test_check_mode_performance() {
-        if !system_tests_enabled() {
-            eprintln!("Skipping system test");
-            return;
-        }
+        require_system_tests!();
 
-        let result = run_omg_update(&["--check"]);
+        let result = run_omg(&["update", "--check"]);
 
         // Should be fast
         assert!(
@@ -459,8 +345,8 @@ mod performance_tests {
     #[test]
     fn test_update_command_start_time() {
         // Test that command starts quickly
-        let start = Instant::now();
-        let _result = run_omg_update(&["--check"]);
+        let start = std::time::Instant::now();
+        let _result = run_omg(&["update", "--check"]);
         let elapsed = start.elapsed();
 
         // Should start reasonably fast (allowing for cold start)
@@ -478,10 +364,11 @@ mod performance_tests {
 
 mod output_format_tests {
     use super::*;
+    use std::env;
 
     #[test]
     fn test_output_is_utf8() {
-        let result = run_omg_update(&["--check"]);
+        let result = run_omg(&["update", "--check"]);
 
         // String is always valid UTF-8 in Rust, just verify it's not corrupted
         assert!(
@@ -492,9 +379,9 @@ mod output_format_tests {
 
     #[test]
     fn test_output_does_not_leak_paths() {
-        let result = run_omg_update(&["--check"]);
+        let result = run_omg(&["update", "--check"]);
 
-        let combined = result.combined();
+        let combined = result.combined_output();
 
         // Should not expose sensitive paths
         assert!(
@@ -506,9 +393,9 @@ mod output_format_tests {
 
     #[test]
     fn test_error_messages_are_user_friendly() {
-        let result = run_omg_update(&["--invalid-xyz-flag"]);
+        let result = run_omg(&["update", "--invalid-xyz-flag"]);
 
-        let combined = result.combined();
+        let combined = result.combined_output();
 
         if !result.success {
             // Error messages should be helpful
@@ -535,26 +422,26 @@ mod regression_tests {
     fn regression_sudo_password_prompt_bug() {
         // Regression test for the sudo password prompt bug
         // The bug was: update would prompt for password even in check mode
-        let result = run_omg_update(&["--check"]);
+        let result = run_omg(&["update", "--check"]);
 
-        result.assert_no_password_prompt();
+        assert_no_password_prompt(&result);
 
         // Should complete quickly (not hang on password prompt)
-        result.assert_no_hang();
+        assert_no_hang(&result);
     }
 
     #[test]
     fn regression_n_flag_fallback_detection() {
         // Regression test for -n flag fallback detection
         // The bug was: sudo -n exit code wasn't properly detected
-        let result = run_omg_update_with_env(&["--yes"], &[("CI", "1")]);
+        let result = run_omg_with_env(&["update", "--yes"], &[("CI", "1")]);
 
         // Should not hang
-        result.assert_no_hang();
+        assert_no_hang(&result);
 
         // If it fails, should have helpful error
         if !result.success {
-            let combined = result.combined();
+            let combined = result.combined_output();
             assert!(
                 combined.contains("sudo")
                     || combined.contains("NOPASSWD")
@@ -568,13 +455,13 @@ mod regression_tests {
     #[test]
     fn regression_elm_fallback_on_error() {
         // Test that Elm UI falls back gracefully on error
-        let result = run_omg_update(&["--check"]);
+        let result = run_omg(&["update", "--check"]);
 
         // Should either work with Elm or fall back
         assert!(
             result.exit_code >= 0,
             "Should handle Elm error gracefully. Output:\n{}",
-            result.combined()
+            result.combined_output()
         );
     }
 }
@@ -591,7 +478,7 @@ mod concurrency_tests {
     fn test_concurrent_check_commands() {
         // Test that multiple check commands don't interfere
         let handles: Vec<_> = (0..5)
-            .map(|_| thread::spawn(|| run_omg_update(&["--check"])))
+            .map(|_| thread::spawn(|| run_omg(&["update", "--check"])))
             .collect();
 
         for handle in handles {
@@ -610,7 +497,7 @@ mod security_tests {
 
     #[test]
     fn test_no_command_injection() {
-        let result = run_omg_update(&["--check", ";", "rm", "-rf", "/"]);
+        let result = run_omg(&["update", "--check", ";", "rm", "-rf", "/"]);
 
         // Should not execute injected commands
         assert!(
@@ -621,13 +508,36 @@ mod security_tests {
 
     #[test]
     fn test_no_path_traversal_in_args() {
-        let result = run_omg_update(&["--check", "../../../etc/passwd"]);
+        let result = run_omg(&["update", "--check", "../../../etc/passwd"]);
 
         // Should not expose system files
-        let combined = result.combined();
+        let combined = result.combined_output();
         assert!(
             !combined.contains("root:") && !combined.contains("/bin/bash"),
             "Should not expose system files"
         );
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// HELPER FUNCTIONS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+fn assert_no_password_prompt(result: &CommandResult) {
+    let combined = result.combined_output();
+    assert!(
+        !combined.contains("[sudo]")
+            && !combined.contains("password for")
+            && !combined.contains("Password:"),
+        "Should not prompt for password. Got:\n{}",
+        combined
+    );
+}
+
+fn assert_no_hang(result: &CommandResult) {
+    assert!(
+        result.duration.as_secs() < 30,
+        "Command should complete quickly, took {:?}",
+        result.duration
+    );
 }

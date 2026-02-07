@@ -11,7 +11,9 @@ use alpm_types::Version;
 #[cfg(not(feature = "arch"))]
 type Version = String;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
+#[cfg(feature = "arch")]
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -213,7 +215,10 @@ impl Transaction {
 
     #[cfg(not(feature = "arch"))]
     async fn remove_package(&self, package: &str) -> Result<()> {
-        tracing::warn!("Rollback remove not implemented for this platform: {}", package);
+        tracing::warn!(
+            "Rollback remove not implemented for this platform: {}",
+            package
+        );
         Ok(())
     }
 
@@ -237,7 +242,11 @@ impl Transaction {
 
     #[cfg(not(feature = "arch"))]
     async fn install_package(&self, package: &str, version: &Version) -> Result<()> {
-        tracing::warn!("Rollback install not implemented for this platform: {}-{}", package, version);
+        tracing::warn!(
+            "Rollback install not implemented for this platform: {}-{}",
+            package,
+            version
+        );
         Ok(())
     }
 
@@ -262,6 +271,7 @@ impl Transaction {
     }
 
     #[cfg(not(feature = "arch"))]
+    #[allow(dead_code)] // Only called from arch-specific code path
     async fn install_local_package(&self, _path: &std::path::Path) -> Result<()> {
         tracing::warn!("Rollback install_local not implemented for this platform");
         Ok(())

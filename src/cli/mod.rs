@@ -28,6 +28,7 @@ pub mod json_output;
 pub mod license;
 pub mod man;
 pub mod migrate;
+pub mod modern_ui;
 pub mod new;
 pub mod outdated;
 pub mod packages;

@@ -84,6 +84,31 @@ impl DaemonState {
         let pm = get_package_manager()?;
         tracing::info!("Using package manager: {}", pm.name());
 
+        // Pre-warm Debian package cache if on Debian/Ubuntu
+        #[cfg(any(feature = "debian", feature = "debian-pure"))]
+        {
+            tracing::info!("Pre-warming Debian package cache...");
+            let start = std::time::Instant::now();
+
+            // CRITICAL: Load mmap index first for zero-copy searches
+            // NOTE: Temporarily disabled - ensure_mmap_loaded not exported yet
+            // let mmap_loaded = crate::package_managers::debian_db::ensure_mmap_loaded();
+            // if mmap_loaded {
+            //     tracing::info!("Zero-copy mmap index loaded for ultra-fast searches");
+            // }
+
+            // Load the full index as fallback
+            if let Err(e) = crate::package_managers::debian_db::ensure_index_loaded() {
+                tracing::warn!("Failed to pre-warm Debian cache: {}", e);
+            } else {
+                let duration = start.elapsed();
+                tracing::info!(
+                    "Debian cache pre-warmed in {:?}",
+                    duration
+                );
+            }
+        }
+
         Ok(Self {
             cache,
             persistent,

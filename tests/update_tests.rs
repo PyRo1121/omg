@@ -21,71 +21,10 @@
 #![allow(clippy::missing_panics_doc)]
 #![allow(clippy::missing_errors_doc)]
 
-use std::env;
-use std::process::{Command, Stdio};
+mod common;
+
+use common::*;
 use std::time::Instant;
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// TEST UTILITIES
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/// Helper to run omg update commands and capture output
-fn run_omg_update(args: &[&str]) -> (bool, String, String) {
-    let output = Command::new(env!("CARGO_BIN_EXE_omg"))
-        .args(["update"])
-        .args(args)
-        .env("OMG_TEST_MODE", "1")
-        .env("OMG_DISABLE_DAEMON", "1")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .expect("Failed to execute omg update");
-
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-    (output.status.success(), stdout, stderr)
-}
-
-/// Helper to combine stdout and stderr
-fn combine_output(stdout: &str, stderr: &str) -> String {
-    if stderr.is_empty() {
-        stdout.to_string()
-    } else if stdout.is_empty() {
-        stderr.to_string()
-    } else {
-        format!("{}{}", stdout, stderr)
-    }
-}
-
-/// Helper to run omg update with environment variables
-fn run_omg_update_with_env(args: &[&str], env_vars: &[(&str, &str)]) -> (bool, String, String) {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_omg"));
-    cmd.args(["update"])
-        .args(args)
-        .env("OMG_TEST_MODE", "1")
-        .env("OMG_DISABLE_DAEMON", "1")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-
-    for (key, value) in env_vars {
-        cmd.env(key, value);
-    }
-
-    let output = cmd.output().expect("Failed to execute omg update");
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-    (output.status.success(), stdout, stderr)
-}
-
-/// Check if system tests are enabled
-fn system_tests_enabled() -> bool {
-    matches!(env::var("OMG_RUN_SYSTEM_TESTS"), Ok(value) if value == "1")
-}
-
-/// Check if destructive tests are enabled
-fn destructive_tests_enabled() -> bool {
-    matches!(env::var("OMG_RUN_DESTRUCTIVE_TESTS"), Ok(value) if value == "1")
-}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // UPDATE CHECK TESTS
@@ -97,15 +36,12 @@ mod update_check {
     /// Test that update check succeeds without errors
     #[test]
     fn test_update_check_succeeds() {
-        if !system_tests_enabled() {
-            eprintln!("Skipping system test (set OMG_RUN_SYSTEM_TESTS=1)");
-            return;
-        }
+        require_system_tests!();
 
-        let (success, stdout, stderr) = run_omg_update(&["--check"]);
-        assert!(success, "Update check should succeed");
+        let result = run_omg(&["update", "--check"]);
+        assert!(result.success, "Update check should succeed");
         assert!(
-            !stdout.is_empty() || !stderr.is_empty(),
+            !result.stdout.is_empty() || !result.stderr.is_empty(),
             "Update check should produce output"
         );
     }
@@ -113,15 +49,12 @@ mod update_check {
     /// Test that update check reports update status
     #[test]
     fn test_update_check_reports_status() {
-        if !system_tests_enabled() {
-            eprintln!("Skipping system test (set OMG_RUN_SYSTEM_TESTS=1)");
-            return;
-        }
+        require_system_tests!();
 
-        let (success, stdout, stderr) = run_omg_update(&["--check"]);
-        let combined = combine_output(&stdout, &stderr);
+        let result = run_omg(&["update", "--check"]);
+        let combined = result.combined_output();
 
-        assert!(success, "Update check should succeed");
+        assert!(result.success, "Update check should succeed");
 
         // Should report either updates available or system up to date
         assert!(
@@ -137,16 +70,13 @@ mod update_check {
     /// Test that update check doesn't make changes
     #[test]
     fn test_update_check_is_readonly() {
-        if !system_tests_enabled() {
-            eprintln!("Skipping system test (set OMG_RUN_SYSTEM_TESTS=1)");
-            return;
-        }
+        require_system_tests!();
 
-        let (success, stdout, stderr) = run_omg_update(&["--check"]);
-        assert!(success, "Update check should succeed");
+        let result = run_omg(&["update", "--check"]);
+        assert!(result.success, "Update check should succeed");
 
         // Should not contain execution messages
-        let combined = combine_output(&stdout, &stderr);
+        let combined = result.combined_output();
         assert!(
             !combined.contains("Executing")
                 && !combined.contains("Installing")
@@ -168,11 +98,11 @@ mod yes_flag {
     #[test]
     fn test_yes_flag_accepted() {
         // This just verifies the flag is parsed, doesn't actually run update
-        let (_success, _stdout, _stderr) = run_omg_update(&["--yes"]);
+        let result = run_omg(&["update", "--yes"]);
         // May succeed or fail (depends on root, daemon, etc.)
         // Should not panic or hang
         assert!(
-            !_stdout.is_empty() || !_stderr.is_empty(),
+            !result.stdout.is_empty() || !result.stderr.is_empty(),
             "Command should produce output"
         );
     }
@@ -180,10 +110,10 @@ mod yes_flag {
     /// Test that -y short flag works
     #[test]
     fn test_short_yes_flag() {
-        let (_success, _stdout, _stderr) = run_omg_update(&["-y"]);
+        let result = run_omg(&["update", "-y"]);
         // Should be equivalent to --yes
         assert!(
-            !_stdout.is_empty() || !_stderr.is_empty(),
+            !result.stdout.is_empty() || !result.stderr.is_empty(),
             "Command should produce output"
         );
     }
@@ -191,8 +121,8 @@ mod yes_flag {
     /// Test that --yes and --check can be combined
     #[test]
     fn test_yes_and_check_flags() {
-        let (_success, stdout, stderr) = run_omg_update(&["--check", "--yes"]);
-        let combined = combine_output(&stdout, &stderr);
+        let result = run_omg(&["update", "--check", "--yes"]);
+        let combined = result.combined_output();
 
         // Should work (though --yes is redundant with --check)
         assert!(!combined.is_empty(), "Should produce output");
@@ -209,19 +139,15 @@ mod non_interactive {
     /// Test that running without TTY and without --yes fails with helpful error
     #[test]
     fn test_non_interactive_without_yes_fails() {
-        if !system_tests_enabled() {
-            eprintln!("Skipping system test (set OMG_RUN_SYSTEM_TESTS=1)");
-            return;
-        }
+        require_system_tests!();
 
         // Set CI environment variable to simulate non-interactive environment
-        let (success, stdout, stderr) =
-            run_omg_update_with_env(&[], &[("CI", "true"), ("OMG_NON_INTERACTIVE", "1")]);
+        let result = run_omg_with_env(&["update"], &[("CI", "true"), ("OMG_NON_INTERACTIVE", "1")]);
 
-        let combined = combine_output(&stdout, &stderr);
+        let combined = result.combined_output();
 
         // Should fail because no TTY and no --yes
-        assert!(!success, "Should fail without TTY and --yes");
+        assert!(!result.success, "Should fail without TTY and --yes");
 
         // Should show helpful error message
         assert!(
@@ -238,14 +164,11 @@ mod non_interactive {
     /// Test that --yes works in non-interactive mode
     #[test]
     fn test_yes_flag_works_non_interactive() {
-        if !destructive_tests_enabled() {
-            eprintln!("Skipping destructive test (set OMG_RUN_DESTRUCTIVE_TESTS=1)");
-            return;
-        }
+        require_destructive_tests!();
 
-        let (_success, stdout, stderr) = run_omg_update_with_env(&["--yes"], &[("CI", "1")]);
+        let result = run_omg_with_env(&["update", "--yes"], &[("CI", "1")]);
 
-        let combined = combine_output(&stdout, &stderr);
+        let combined = result.combined_output();
 
         // Should not complain about interactive mode
         assert!(
@@ -259,14 +182,11 @@ mod non_interactive {
     /// Test that sudo command is suggested in non-interactive mode
     #[test]
     fn test_sudo_suggestion_non_interactive() {
-        if !system_tests_enabled() {
-            eprintln!("Skipping system test (set OMG_RUN_SYSTEM_TESTS=1)");
-            return;
-        }
+        require_system_tests!();
 
-        let (_success, stdout, stderr) = run_omg_update_with_env(&[], &[("CI", "1")]);
+        let result = run_omg_with_env(&["update"], &[("CI", "1")]);
 
-        let combined = combine_output(&stdout, &stderr);
+        let combined = result.combined_output();
 
         // Should suggest sudo or --yes
         assert!(
@@ -289,11 +209,11 @@ mod error_handling {
     /// Test that invalid flags are rejected
     #[test]
     fn test_invalid_flag() {
-        let (success, stdout, stderr) = run_omg_update(&["--invalid-flag"]);
+        let result = run_omg(&["update", "--invalid-flag"]);
 
-        assert!(!success, "Invalid flag should fail");
+        assert!(!result.success, "Invalid flag should fail");
 
-        let combined = format!("{stdout}{stderr}");
+        let combined = result.combined_output();
         assert!(
             combined.contains("error")
                 || combined.contains("unrecognized")
@@ -306,11 +226,11 @@ mod error_handling {
     /// Test that too many arguments are handled
     #[test]
     fn test_too_many_arguments() {
-        let (_success, stdout, stderr) = run_omg_update(&["--check", "extra", "arguments"]);
+        let result = run_omg(&["update", "--check", "extra", "arguments"]);
 
         // May succeed or fail depending on implementation
         assert!(
-            !stdout.is_empty() || !stderr.is_empty(),
+            !result.stdout.is_empty() || !result.stderr.is_empty(),
             "Should produce output"
         );
     }
@@ -318,13 +238,13 @@ mod error_handling {
     /// Test that command handles missing daemon gracefully
     #[test]
     fn test_handles_missing_daemon() {
-        // We set OMG_DISABLE_DAEMON=1 in run_omg_update, so this tests
+        // We set OMG_DISABLE_DAEMON=1 in run_omg, so this tests
         // that the CLI falls back to direct mode properly
-        let (_success, stdout, stderr) = run_omg_update(&["--check"]);
+        let result = run_omg(&["update", "--check"]);
 
         // Should work without daemon
         assert!(
-            !stdout.is_empty() || !stderr.is_empty(),
+            !result.stdout.is_empty() || !result.stderr.is_empty(),
             "Should produce output without daemon"
         );
     }
@@ -340,18 +260,15 @@ mod performance {
     /// Test that update check completes quickly
     #[test]
     fn test_update_check_performance() {
-        if !system_tests_enabled() {
-            eprintln!("Skipping system test (set OMG_RUN_SYSTEM_TESTS=1)");
-            return;
-        }
+        require_system_tests!();
 
         let start = Instant::now();
-        let (success, stdout, stderr) = run_omg_update(&["--check"]);
+        let result = run_omg(&["update", "--check"]);
         let elapsed = start.elapsed();
 
-        assert!(success, "Update check should succeed");
+        assert!(result.success, "Update check should succeed");
         assert!(
-            !stdout.is_empty() || !stderr.is_empty(),
+            !result.stdout.is_empty() || !result.stderr.is_empty(),
             "Should produce output"
         );
 
@@ -361,26 +278,23 @@ mod performance {
             elapsed.as_millis() < 2000,
             "Update check should complete in <2s, took {}ms. Output:\nstdout:\n{}\nstderr:\n{}",
             elapsed.as_millis(),
-            stdout,
-            stderr
+            result.stdout,
+            result.stderr
         );
     }
 
     /// Test that update check with --yes flag is also fast
     #[test]
     fn test_update_with_yes_performance() {
-        if !destructive_tests_enabled() {
-            eprintln!("Skipping destructive test (set OMG_RUN_DESTRUCTIVE_TESTS=1)");
-            return;
-        }
+        require_destructive_tests!();
 
         let start = Instant::now();
-        let (success, stdout, stderr) = run_omg_update(&["--yes"]);
+        let result = run_omg(&["update", "--yes"]);
         let elapsed = start.elapsed();
 
-        assert!(success, "Update with --yes should succeed");
+        assert!(result.success, "Update with --yes should succeed");
         assert!(
-            !stdout.is_empty() || !stderr.is_empty(),
+            !result.stdout.is_empty() || !result.stderr.is_empty(),
             "Should produce output"
         );
 
@@ -404,32 +318,29 @@ mod integration_scenarios {
     /// Test typical update workflow: check -> confirm -> update
     #[test]
     fn test_typical_update_workflow() {
-        if !system_tests_enabled() {
-            eprintln!("Skipping system test (set OMG_RUN_SYSTEM_TESTS=1)");
-            return;
-        }
+        require_system_tests!();
 
         // Step 1: Check for updates
-        let (success1, stdout1, stderr1) = run_omg_update(&["--check"]);
-        assert!(success1, "Update check should succeed");
-        let has_updates = stdout1.contains("update")
-            || stdout1.contains("update")
-            || stdout1.to_lowercase().contains("updates");
+        let result = run_omg(&["update", "--check"]);
+        assert!(result.success, "Update check should succeed");
+        let has_updates = result.stdout.contains("update")
+            || result.stdout.contains("update")
+            || result.stdout.to_lowercase().contains("updates");
 
-        let combined1 = format!("{stdout1}{stderr1}");
+        let combined = result.combined_output();
 
         // Step 2: If there are updates, the output should show them
         if has_updates {
             assert!(
-                combined1.contains("Found") || combined1.contains("→") || combined1.contains("->"),
-                "Should show available updates. Got:\n{combined1}"
+                combined.contains("Found") || combined.contains("→") || combined.contains("->"),
+                "Should show available updates. Got:\n{combined}"
             );
         } else {
             assert!(
-                combined1.contains("up to date")
-                    || combined1.contains("System is up to date")
-                    || combined1.contains("✓"),
-                "Should show system up to date. Got:\n{combined1}"
+                combined.contains("up to date")
+                    || combined.contains("System is up to date")
+                    || combined.contains("✓"),
+                "Should show system up to date. Got:\n{combined}"
             );
         }
     }
@@ -437,17 +348,14 @@ mod integration_scenarios {
     /// Test that update command works with sudo privileges
     #[test]
     fn test_update_with_sudo() {
-        if !destructive_tests_enabled() {
-            eprintln!("Skipping destructive test (set OMG_RUN_DESTRUCTIVE_TESTS=1)");
-            return;
-        }
+        require_destructive_tests!();
 
         // This test requires actual root/sudo, so we just verify it doesn't crash
-        let (success, stdout, stderr) = run_omg_update(&["--yes"]);
-        let combined = format!("{stdout}{stderr}");
+        let result = run_omg(&["update", "--yes"]);
+        let combined = result.combined_output();
 
         // May fail if not root, but should show meaningful error
-        if !success {
+        if !result.success {
             assert!(
                 combined.contains("root")
                     || combined.contains("sudo")
@@ -462,15 +370,12 @@ mod integration_scenarios {
     /// Test that update handles empty update list
     #[test]
     fn test_update_with_no_updates() {
-        if !system_tests_enabled() {
-            eprintln!("Skipping system test (set OMG_RUN_SYSTEM_TESTS=1)");
-            return;
-        }
+        require_system_tests!();
 
-        let (success, stdout, stderr) = run_omg_update(&["--check"]);
-        let combined = format!("{stdout}{stderr}");
+        let result = run_omg(&["update", "--check"]);
+        let combined = result.combined_output();
 
-        assert!(success, "Update check should succeed");
+        assert!(result.success, "Update check should succeed");
 
         // Should handle both cases: updates available or system up to date
         // (we can't control which case happens in a real system)
@@ -494,15 +399,12 @@ mod output_format {
     /// Test that update output is readable
     #[test]
     fn test_output_is_readable() {
-        if !system_tests_enabled() {
-            eprintln!("Skipping system test (set OMG_RUN_SYSTEM_TESTS=1)");
-            return;
-        }
+        require_system_tests!();
 
-        let (success, stdout, stderr) = run_omg_update(&["--check"]);
-        let combined = format!("{stdout}{stderr}");
+        let result = run_omg(&["update", "--check"]);
+        let combined = result.combined_output();
 
-        assert!(success, "Update check should succeed");
+        assert!(result.success, "Update check should succeed");
 
         // Output should not be empty
         assert!(
@@ -520,15 +422,12 @@ mod output_format {
     /// Test that update shows version information
     #[test]
     fn test_output_shows_versions() {
-        if !system_tests_enabled() {
-            eprintln!("Skipping system test (set OMG_RUN_SYSTEM_TESTS=1)");
-            return;
-        }
+        require_system_tests!();
 
-        let (success, stdout, stderr) = run_omg_update(&["--check"]);
-        let combined = format!("{stdout}{stderr}");
+        let result = run_omg(&["update", "--check"]);
+        let combined = result.combined_output();
 
-        assert!(success, "Update check should succeed");
+        assert!(result.success, "Update check should succeed");
 
         // If there are updates, should show version information
         // (may be in "old → new" format)

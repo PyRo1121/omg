@@ -33,8 +33,26 @@ pub enum OmgError {
     #[error("[OMG-E301] Network error: {0}")]
     NetworkError(#[from] reqwest::Error),
 
+    #[error("[OMG-E303] Download failed: {package} - {reason}")]
+    DownloadFailed { package: String, reason: String },
+
+    #[error("[OMG-E304] Decompression failed: {package} - {reason}")]
+    DecompressionFailed { package: String, reason: String },
+
+    #[error("[OMG-E305] Insufficient disk space: {required} bytes required, {available} bytes available")]
+    InsufficientDiskSpace { required: u64, available: u64 },
+
+    #[error("[OMG-E306] Mirror unavailable: {mirror}")]
+    MirrorUnavailable { mirror: String },
+
     #[error("[OMG-E401] Configuration error: {0}")]
     ConfigError(String),
+
+    #[error("[OMG-E402] Dependency resolution failed: {package} - {reason}")]
+    DependencyResolutionFailed { package: String, reason: String },
+
+    #[error("[OMG-E403] Package verification failed: {package} - {reason}")]
+    VerificationFailed { package: String, reason: String },
 
     #[error("[OMG-E501] Daemon not running")]
     DaemonNotRunning,
@@ -69,7 +87,13 @@ impl OmgError {
             Self::PermissionDenied(_) => Some("OMG-E203"),
             Self::NetworkError(_) => Some("OMG-E301"),
             Self::RateLimitExceeded { .. } => Some("OMG-E302"),
+            Self::DownloadFailed { .. } => Some("OMG-E303"),
+            Self::DecompressionFailed { .. } => Some("OMG-E304"),
+            Self::InsufficientDiskSpace { .. } => Some("OMG-E305"),
+            Self::MirrorUnavailable { .. } => Some("OMG-E306"),
             Self::ConfigError(_) => Some("OMG-E401"),
+            Self::DependencyResolutionFailed { .. } => Some("OMG-E402"),
+            Self::VerificationFailed { .. } => Some("OMG-E403"),
             Self::DaemonNotRunning => Some("OMG-E501"),
             Self::Other(_) => None,
         }
@@ -119,6 +143,24 @@ impl OmgError {
             Self::RateLimitExceeded { .. } => {
                 Some("Wait for the cooldown period, then retry your request")
             }
+            Self::DownloadFailed { .. } => Some(
+                "Check your network connection and repository mirror availability.\nTry: omg sync to refresh repository metadata",
+            ),
+            Self::DecompressionFailed { .. } => Some(
+                "Package may be corrupted. Try clearing cache: omg clean\nCheck available disk space: df -h /var/cache",
+            ),
+            Self::InsufficientDiskSpace { .. } => {
+                Some("Free up disk space or use a different target directory")
+            }
+            Self::MirrorUnavailable { .. } => Some(
+                "Repository mirror may be down. Try different mirror or wait and retry.\nCheck /etc/apt/sources.list (Debian) or /etc/pacman.conf (Arch)",
+            ),
+            Self::DependencyResolutionFailed { .. } => Some(
+                "Check if required dependencies are available in enabled repositories.\nTry: omg sync to refresh package database",
+            ),
+            Self::VerificationFailed { .. } => Some(
+                "Package integrity check failed. Try: omg clean && omg sync\nIf issue persists, the repository may be compromised",
+            ),
             Self::IoError(_) | Self::Other(_) => None,
         }
     }

@@ -1,6 +1,6 @@
 [package]
 name = "omg"
-version = "0.1.205"
+version = "0.1.206"
 edition = "2024"
 rust-version = "1.92"
 description = "The Fastest Unified Package Manager for Arch Linux + All Language Runtimes"
@@ -12,7 +12,7 @@ keywords = ["package-manager", "arch-linux", "version-manager", "runtime"]
 categories = ["command-line-utilities", "development-tools"]
 
 [package.metadata.cargo-machete]
-ignored = ["ar", "gzp", "winnow", "debian-packaging"]
+ignored = ["ar", "winnow", "debian-packaging"]
 
 [lib]
 name = "omg_lib"
@@ -65,7 +65,7 @@ toml = "0.9.11"
 bitcode = { version = "0.6", features = ["serde"] }
 
 # HTTP client
-reqwest = { version = "0.13.1", features = ["json", "stream"] }
+reqwest = { version = "0.13.1", features = ["json", "stream", "gzip", "brotli"] }
 httpdate = "1.0.3"
 
 # Version Control
@@ -101,6 +101,8 @@ mimalloc = { version = "0.1", default-features = false }  # 10-20% faster alloca
 smallvec = { version = "1.14", features = ["union"] }    # Inline vectors for small collections
 aho-corasick = "1.1"                                      # Multi-pattern SIMD search
 bumpalo = "3.18"                                          # Arena allocator for temporary allocations
+rustc-hash = "2.1"                                        # FxHash - faster non-cryptographic hashing
+fst = "0.4"                                               # Finite State Transducer for O(1) search
 
 # Logging
 tracing = "0.1.44"
@@ -128,6 +130,9 @@ home = "0.5.12"
 # Cryptography
 sha2 = "0.10.9"
 hex = "0.4.3"
+
+# System calls (for disk space checks, etc.)
+nix = { version = "0.30", features = ["fs"] }
 
 # Date & Time
 jiff = { version = "0.2.18", features = ["serde"] }
@@ -176,7 +181,6 @@ rustix = { version = "1.1", features = ["fs", "process", "thread"] }
 # Debian/Ubuntu 2026 Performance Stack
 debian-packaging = { version = "0.18", optional = true } # Pure Rust apt reimplementation
 winnow = { version = "0.7", optional = true }            # Zero-copy parser combinators
-gzp = { version = "2.0", optional = true }               # Parallel gzip/zstd decompression
 ar = { version = "0.9", optional = true }                # Pure Rust .ar archive parsing
 rkyv = { version = "0.8", features = ["bytecheck"] }              # Zero-copy deserialization
 whoami = "2.0.2"
@@ -210,6 +214,8 @@ tar = "0.4"
 flate2 = { version = "1.0", default-features = false, features = ["zlib"] }
 chrono = "0.4"
 temp-env = "0.3"
+zstd = "0.13"                                                # For decompression benchmarks
+lzma-rs = "0.3"                                              # For decompression benchmarks
 
 # Unix-specific dependencies
 [target.'cfg(unix)'.dependencies]
@@ -293,10 +299,10 @@ windows = []
 
 # Debian/Ubuntu support - unified feature
 # Requires libapt-pkg-dev: `apt install libapt-pkg-dev`
-debian = ["debian-packaging", "winnow", "gzp", "ar", "rust-apt"]
+debian = ["debian-packaging", "winnow", "ar", "rust-apt"]
 
 # Pure Rust Debian support (no FFI, no system dependencies) - for testing/indexing
-debian-pure = ["debian-packaging", "winnow", "gzp", "ar"]
+debian-pure = ["debian-packaging", "winnow", "ar"]
 
 # Fedora/RHEL support (DNF/RPM) - Pure Rust, no system dependencies
 fedora = ["rusqlite", "quick-xml"]

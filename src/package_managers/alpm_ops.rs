@@ -376,25 +376,11 @@ fn setup_alpm_callbacks(
 
             #[cfg(feature = "pgp")]
             {
-                use crate::core::security::keyserver;
-                if let Ok(handle) = tokio::runtime::Handle::try_current() {
-                    match handle.block_on(keyserver::fetch_key(fingerprint)) {
-                        Ok(cert) => {
-                            let info = keyserver::get_key_info(&cert);
-                            tracing::info!("Fetched and verified key: {info}");
-                            q.set_import(true);
-                        }
-                        Err(e) => {
-                            tracing::warn!("Failed to fetch key {fingerprint}: {e}");
-                            tracing::info!("Run: omg key import {fingerprint}");
-                            q.set_import(false);
-                        }
-                    }
-                } else {
-                    tracing::warn!("Cannot fetch key (no async runtime)");
-                    tracing::info!("Run: omg key import {fingerprint}");
-                    q.set_import(false);
-                }
+                // Skip automatic key fetching during ALPM callbacks to avoid runtime issues
+                // User should import keys manually before package operations
+                tracing::warn!("PGP key not trusted: {fingerprint} ({uid})");
+                tracing::info!("Import key manually: omg key import {fingerprint}");
+                q.set_import(false);
             }
 
             #[cfg(not(feature = "pgp"))]
@@ -492,7 +478,11 @@ fn prepare_alpm_transaction(
 
     alpm.trans_init(flags).map_err(|e| match e {
         alpm::Error::HandleLock => {
-            anyhow::anyhow!("Database is locked. Is another package manager running?")
+            anyhow::anyhow!(
+                "✗ Database is locked by another process.\n  \
+                 → Check if pacman, yay, or another package manager is running.\n  \
+                 → If no other process is running, remove: /var/lib/pacman/db.lck"
+            )
         }
         _ => anyhow::anyhow!("Failed to initialize transaction: {e}"),
     })?;
@@ -545,7 +535,12 @@ fn prepare_alpm_transaction(
                     }
                 }
                 if !found {
-                    anyhow::bail!("Package {pkg_name} not found in any repository");
+                    anyhow::bail!(
+                        "✗ Package '{pkg_name}' not found in any configured repository.\n  \
+                         → Run 'omg sync' to update package databases\n  \
+                         → Search AUR: omg search {pkg_name}\n  \
+                         → Check package name at: https://archlinux.org/packages/"
+                    );
                 }
             }
         }
@@ -557,9 +552,14 @@ fn prepare_alpm_transaction(
 /// Commit an ALPM transaction
 #[allow(clippy::expect_used)] // ALPM database operations; failure indicates corrupted pacman database
 fn commit_alpm_transaction(alpm: &mut alpm::Alpm, main_pb: &indicatif::ProgressBar) -> Result<()> {
+    main_pb.set_message("Preparing transaction...");
+
     alpm.trans_prepare().map_err(|e| {
         anyhow::anyhow!(
-            "✗ Preparation Error: Transaction failed to prepare: {e}.\n  This may be due to conflicting packages or missing dependencies."
+            "✗ Transaction preparation failed: {e}\n  \
+             → This may be due to conflicting packages or missing dependencies.\n  \
+             → Try running: omg update && omg install <package>\n  \
+             → For more details: omg info <package>"
         )
     })?;
 
@@ -605,7 +605,10 @@ fn commit_alpm_transaction(alpm: &mut alpm::Alpm, main_pb: &indicatif::ProgressB
             });
 
             if failed.load(Ordering::Relaxed) {
-                let msg = failure_msg.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+                let msg = failure_msg
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone();
                 anyhow::bail!(msg);
             }
         }
@@ -645,7 +648,10 @@ fn configure_mirrors(alpm: &mut alpm::Alpm) -> Result<()> {
                     if db.name() == repo.name {
                         for server in servers {
                             if let Err(e) = db.add_server(server.clone()) {
-                                tracing::debug!("Failed to add server '{server}' to repo '{}': {e}", db.name());
+                                tracing::debug!(
+                                    "Failed to add server '{server}' to repo '{}': {e}",
+                                    db.name()
+                                );
                             }
                         }
                         break;
