@@ -132,7 +132,7 @@ sha2 = "0.10.9"
 hex = "0.4.3"
 
 # System calls (for disk space checks, etc.)
-nix = { version = "0.30", features = ["fs"] }
+nix = { version = "0.31", features = ["fs"] }
 
 # Date & Time
 jiff = { version = "0.2.18", features = ["serde"] }
@@ -190,8 +190,8 @@ sentry = { version = "0.46.1", features = ["anyhow", "tracing"] }
 sentry-tracing = "0.46.1"
 
 # Cross-platform package manager support
-rusqlite = { version = "0.33", features = ["bundled"], optional = true }  # SQLite for RPM db
-quick-xml = { version = "0.37", features = ["serialize"], optional = true }  # Fast XML parsing
+rusqlite = { version = "0.38", features = ["bundled"], optional = true }  # SQLite for RPM db
+quick-xml = { version = "0.39", features = ["serialize"], optional = true }  # Fast XML parsing
 
 # Windows-specific (conditional) - only compiled on Windows
 [target.'cfg(target_os = "windows")'.dependencies]
