@@ -27,8 +27,8 @@ pub async fn remove(packages: &[String], recursive: bool, _yes: bool, dry_run: b
 
 #[allow(clippy::unnecessary_wraps)] // Result return required: API compat with feature-gated impls
 fn remove_dry_run(packages: &[String], recursive: bool) -> Result<()> {
-    ui::print_header("OMG", "Dry Run - Remove Preview");
-    ui::print_spacer();
+    crate::cli::modern_ui::print_phase_header("🗑️", "Remove Preview", "dry run");
+    println!();
 
     println!(
         "  {} The following packages would be removed:\n",
@@ -111,8 +111,8 @@ async fn remove_fallback(packages: &[String], recursive: bool) -> Result<()> {
     let pm = get_package_manager()?;
     let service = PackageService::new(pm);
 
-    ui::print_header("OMG", &format!("Removing {} package(s)", packages.len()));
-    ui::print_spacer();
+    crate::cli::modern_ui::print_phase_header("🗑️", "Remove", &format!("{} package(s)", packages.len()));
+    println!();
 
     service.remove(packages, recursive).await?;
 

@@ -138,7 +138,8 @@ async fn search_internal(
     }
 
     let mut stdout = std::io::BufWriter::new(std::io::stdout());
-    writeln!(stdout, "\n{}", style::header("Search Results"))?;
+    // Modern search header - no extra blank line
+    writeln!(stdout, "{}", style::header("Search Results"))?;
 
     for pkg in display_packages.iter().take(50) {
         writeln!(stdout, "{}", format_package(pkg))?;
@@ -220,7 +221,7 @@ fn search_sync_official_only(query: &str) -> Result<bool> {
         }
 
         let mut stdout = std::io::BufWriter::new(std::io::stdout());
-        writeln!(stdout, "\n{}", style::header("Search Results"))?;
+        writeln!(stdout, "{}", style::header("Search Results"))?;
 
         for pkg in res.packages.iter().take(50) {
             let source_style = if pkg.source == "AUR" {

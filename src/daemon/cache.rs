@@ -80,6 +80,7 @@ impl PackageCache {
     }
 
     /// Get cached system status (Arc clone is cheap - just pointer copy)
+    /// Inlined for hot-path performance (called on every `omg status`)
     #[inline]
     #[must_use]
     pub fn get_status(&self) -> Option<Arc<StatusResult>> {
@@ -129,6 +130,7 @@ impl PackageCache {
     }
 
     /// Get cached results for a query (Arc clone is cheap - just pointer copy)
+    /// Inlined for hot-path performance (called on every search)
     #[inline]
     #[must_use]
     pub fn get(&self, query: &str) -> Option<Arc<Vec<PackageInfo>>> {
@@ -182,14 +184,29 @@ impl PackageCache {
         self.explicit_count.invalidate_all();
     }
 
+    /// Sync pending cache operations
+    /// Moka cache is eventually consistent, this ensures all pending operations complete.
+    /// Primarily used in tests to ensure cache state is synchronized before assertions.
+    pub fn sync(&self) {
+        self.cache.run_pending_tasks();
+        self.debian_cache.run_pending_tasks();
+        self.detailed_cache.run_pending_tasks();
+        self.info_miss_cache.run_pending_tasks();
+        self.system_status.run_pending_tasks();
+        self.explicit_packages.run_pending_tasks();
+        self.explicit_count.run_pending_tasks();
+    }
+
     /// Get detailed info from cache (Arc clone is cheap - just pointer copy)
+    /// Inlined for hot-path performance (called on every `omg info`)
     #[inline]
     #[must_use]
     pub fn get_info(&self, name: &str) -> Option<Arc<DetailedPackageInfo>> {
         self.detailed_cache.get(name)
     }
 
-    /// Check if package info is known to be missing
+    /// Check if package info is known to be missing (negative cache)
+    /// Inlined for hot-path performance (prevents unnecessary lookups)
     #[inline]
     #[must_use]
     pub fn is_info_miss(&self, name: &str) -> bool {
@@ -225,8 +242,10 @@ pub struct CacheStats {
 
 impl Default for PackageCache {
     fn default() -> Self {
-        // 1000 entries, 5 minute TTL; status cache 30s
-        Self::new_with_ttls(1000, 300, 30)
+        // 1000 entries, 5 minute TTL for search results
+        // Status cache: 2 minutes (frequent operations are fast with ALPM caching)
+        // This reduces unnecessary status refreshes while still feeling responsive
+        Self::new_with_ttls(1000, 300, 120)
     }
 }
 

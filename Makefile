@@ -1,6 +1,6 @@
 # OMG Makefile - Development and Testing Targets
 
-.PHONY: help build release test check fmt clippy clean bench bench-fast bench-hyperfine bench-hyperfine-fast bench-charts docker-debian docker-ubuntu docker-test install audit dev
+.PHONY: help build release test check fmt clippy clean bench bench-fast bench-hyperfine bench-hyperfine-fast bench-charts docker-debian docker-ubuntu docker-test install audit dev test-property test-fuzz test-chaos test-advanced test-security
 
 # Default target - show help
 .DEFAULT_GOAL := help
@@ -21,6 +21,14 @@ help:
 	@echo "  make tdd             - Watch mode (requires cargo-watch)"
 	@echo "  make coverage        - Generate coverage report"
 	@echo ""
+	@echo "Advanced Testing:"
+	@echo "  make test-property   - Run property-based tests"
+	@echo "  make test-fuzz       - Run fuzzing tests (5 min)"
+	@echo "  make test-fuzz-quick - Run fuzzing tests (1 min)"
+	@echo "  make test-chaos      - Run chaos tests"
+	@echo "  make test-advanced   - Run all advanced tests"
+	@echo "  make test-security   - Run security-focused tests"
+	@echo ""
 	@echo "Quality:"
 	@echo "  make check           - Fast check without building"
 	@echo "  make fmt             - Format code"
@@ -31,9 +39,12 @@ help:
 	@echo "  make qa              - Run all quality checks"
 	@echo ""
 	@echo "Benchmarking:"
-	@echo "  make bench           - Full benchmark suite"
-	@echo "  make bench-fast      - Quick benchmark"
-	@echo "  make bench-hyperfine - Hyperfine benchmark"
+	@echo "  make bench               - Full benchmark suite"
+	@echo "  make bench-fast          - Quick benchmark"
+	@echo "  make bench-hyperfine     - Hyperfine benchmark"
+	@echo "  make bench-ubuntu        - Ubuntu/Debian benchmark (Docker)"
+	@echo "  make bench-ubuntu-local  - Quick local Debian speed test"
+	@echo "  make bench-verify        - Verify benchmark setup"
 	@echo ""
 	@echo "Docker:"
 	@echo "  make docker-test     - Test on Debian+Ubuntu"
@@ -77,6 +88,73 @@ test:
 # Run library tests only (fast)
 test-lib:
 	cargo test --lib --features arch
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Advanced Testing
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Run property-based tests
+test-property:
+	@echo "Running property-based tests..."
+	cargo test --test property_version_advanced --features arch
+	@echo "✓ Property tests passed!"
+
+# Run fuzzing tests (5 minutes per target)
+test-fuzz:
+	@echo "Running fuzzing tests (5 minutes per target)..."
+	@command -v cargo-fuzz >/dev/null 2>&1 || (echo "Installing cargo-fuzz..." && cargo +nightly install cargo-fuzz)
+	cargo +nightly fuzz run ipc_messages -- -max_total_time=300 -seed=1
+	cargo +nightly fuzz run package_names -- -max_total_time=300 -seed=2
+	@if [ -d fuzz/artifacts ]; then \
+		echo "⚠️  Fuzzing found crashes! Check fuzz/artifacts/"; \
+		ls -la fuzz/artifacts/; \
+		exit 1; \
+	else \
+		echo "✓ Fuzzing tests passed (no crashes)!"; \
+	fi
+
+# Run fuzzing tests (quick mode - 60 seconds per target for CI)
+test-fuzz-quick:
+	@echo "Running quick fuzzing tests (60s per target)..."
+	@command -v cargo-fuzz >/dev/null 2>&1 || (echo "Installing cargo-fuzz..." && cargo +nightly install cargo-fuzz)
+	cargo +nightly fuzz run ipc_messages -- -max_total_time=60 -seed=1
+	cargo +nightly fuzz run package_names -- -max_total_time=60 -seed=2
+	@if [ -d fuzz/artifacts ]; then \
+		echo "⚠️  Fuzzing found crashes! Check fuzz/artifacts/"; \
+		exit 1; \
+	else \
+		echo "✓ Quick fuzzing tests passed!"; \
+	fi
+
+# Run chaos tests
+test-chaos:
+	@echo "Running chaos tests..."
+	cargo test --test chaos_operation_ordering
+	@echo "✓ Chaos tests passed!"
+
+# Run all advanced tests (property + fuzz-quick + chaos)
+test-advanced: test-property test-fuzz-quick test-chaos
+	@echo ""
+	@echo "════════════════════════════════════════════════════════════════"
+	@echo "  All advanced tests passed! ✓"
+	@echo "════════════════════════════════════════════════════════════════"
+
+# Run security-focused tests (fuzzing + property tests for validation)
+test-security:
+	@echo "Running security-focused tests..."
+	@echo "1. Package name security fuzzing..."
+	@command -v cargo-fuzz >/dev/null 2>&1 || (echo "Installing cargo-fuzz..." && cargo +nightly install cargo-fuzz)
+	cargo +nightly fuzz run package_names -- -max_total_time=180 -seed=42
+	@echo "2. IPC message validation fuzzing..."
+	cargo +nightly fuzz run ipc_messages -- -max_total_time=180 -seed=43
+	@echo "3. Property-based validation tests..."
+	cargo test --test property_version_advanced --features arch
+	@if [ -d fuzz/artifacts ]; then \
+		echo "⚠️  Security issues found! Check fuzz/artifacts/"; \
+		exit 1; \
+	else \
+		echo "✓ Security tests passed!"; \
+	fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Quality Checks
@@ -203,3 +281,34 @@ dev-stop:
 # Full development cycle: format, check, test
 dev-check: fmt check test-lib
 	@echo "✓ Development checks passed!"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Ubuntu/Debian Benchmarks
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Verify benchmark setup before running
+bench-verify:
+	@echo "Verifying benchmark setup..."
+	./scripts/verify_benchmark_setup.sh
+
+# Run comprehensive Ubuntu benchmark in Docker (includes install tests)
+bench-ubuntu:
+	@echo "Running comprehensive Ubuntu benchmark..."
+	./run_ubuntu_benchmark.sh
+
+# Quick local Debian speed test (no Docker required)
+bench-ubuntu-local:
+	@echo "Running quick local Debian speed test..."
+	cargo build --release --features debian-pure
+	./test_debian_speed.sh
+
+# Save benchmark results to file with timestamp
+bench-ubuntu-save:
+	@echo "Running benchmark and saving results..."
+	./run_ubuntu_benchmark.sh 2>&1 | tee benchmark_results_$(shell date +%Y%m%d_%H%M%S).txt
+
+# Generate benchmark report template
+bench-report:
+	@echo "Generating benchmark report template..."
+	./scripts/generate_benchmark_report.sh benchmark_report.md
+	@echo "Report template created: benchmark_report.md"

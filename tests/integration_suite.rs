@@ -29,89 +29,23 @@
 #![allow(clippy::missing_panics_doc)] // Test functions are expected to panic
 #![allow(clippy::missing_errors_doc)] // Test helpers don't need docs
 
+mod common;
+
+use common::*;
 use std::env;
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::Path;
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
-
+use std::time::Duration;
 use tempfile::TempDir;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TEST UTILITIES
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Helper to run omg commands and capture output
-fn run_omg(args: &[&str]) -> (bool, String, String) {
-    let output = Command::new(env!("CARGO_BIN_EXE_omg"))
-        .args(args)
-        .env("OMG_TEST_MODE", "1")
-        .env("OMG_DISABLE_DAEMON", "1")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .expect("Failed to execute omg");
-
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-    (output.status.success(), stdout, stderr)
-}
-
-/// Helper to run omg commands with a specific working directory
-fn run_omg_in_dir(args: &[&str], dir: &Path) -> (bool, String, String) {
-    let output = Command::new(env!("CARGO_BIN_EXE_omg"))
-        .args(args)
-        .current_dir(dir)
-        .env("OMG_TEST_MODE", "1")
-        .env("OMG_DISABLE_DAEMON", "1")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .expect("Failed to execute omg");
-
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-    (output.status.success(), stdout, stderr)
-}
-
-/// Helper to run omg commands with environment variables
-fn run_omg_with_env(args: &[&str], env_vars: &[(&str, &str)]) -> (bool, String, String) {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_omg"));
-    cmd.args(args)
-        .env("OMG_TEST_MODE", "1")
-        .env("OMG_DISABLE_DAEMON", "1")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-
-    for (key, value) in env_vars {
-        cmd.env(key, value);
-    }
-
-    let output = cmd.output().expect("Failed to execute omg");
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-    (output.status.success(), stdout, stderr)
-}
-
-/// Helper to run omg commands with daemon enabled
-fn run_omg_with_daemon(args: &[&str]) -> (bool, String, String) {
-    let output = Command::new(env!("CARGO_BIN_EXE_omg"))
-        .args(args)
-        .env("OMG_TEST_MODE", "1")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .expect("Failed to execute omg");
-
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-    (output.status.success(), stdout, stderr)
-}
-
 /// Helper to measure execution time
 fn measure_time<F: FnOnce() -> T, T>(f: F) -> (T, Duration) {
-    let start = Instant::now();
+    let start = std::time::Instant::now();
     let result = f();
     (result, start.elapsed())
 }
@@ -192,25 +126,25 @@ mod cli_foundation {
 
     #[test]
     fn test_version_flag() {
-        let (success, stdout, _) = run_omg(&["--version"]);
-        assert!(success, "omg --version should succeed");
+        let result = run_omg(&["--version"]);
+        assert!(result.success, "omg --version should succeed");
         assert!(
-            stdout.contains("omg"),
+            result.stdout.contains("omg"),
             "Version output should contain 'omg'"
         );
     }
 
     #[test]
     fn test_help_flag() {
-        let (success, stdout, _) = run_omg(&["--help"]);
-        assert!(success, "omg --help should succeed");
+        let result = run_omg(&["--help"]);
+        assert!(result.success, "omg --help should succeed");
         // Check for key elements in the help output
         assert!(
-            stdout.contains("Essential Commands") || stdout.contains("Usage"),
+            result.stdout.contains("Essential Commands") || result.stdout.contains("Usage"),
             "Help should contain commands section"
         );
         assert!(
-            stdout.contains("search") || stdout.contains("Commands"),
+            result.stdout.contains("search") || result.stdout.contains("Commands"),
             "Help should show search command"
         );
     }
@@ -223,11 +157,13 @@ mod cli_foundation {
         ];
 
         for cmd in subcommands {
-            let (success, stdout, _) = run_omg(&[cmd, "--help"]);
-            assert!(success, "omg {cmd} --help should succeed");
+            let result = run_omg(&[cmd, "--help"]);
+            assert!(result.success, "omg {cmd} --help should succeed");
             // Help output should contain the command name or usage info
             assert!(
-                stdout.contains(cmd) || stdout.contains("Usage") || stdout.len() > 50,
+                result.stdout.contains(cmd)
+                    || result.stdout.contains("Usage")
+                    || result.stdout.len() > 50,
                 "Help for {cmd} should contain meaningful information"
             );
         }
@@ -235,10 +171,10 @@ mod cli_foundation {
 
     #[test]
     fn test_invalid_command() {
-        let (success, _, stderr) = run_omg(&["nonexistent-command"]);
-        assert!(!success, "Invalid command should fail");
+        let result = run_omg(&["nonexistent-command"]);
+        assert!(!result.success, "Invalid command should fail");
         assert!(
-            stderr.contains("error") || stderr.contains("unrecognized"),
+            result.stderr.contains("error") || result.stderr.contains("unrecognized"),
             "Should report error for invalid command"
         );
     }
@@ -246,10 +182,10 @@ mod cli_foundation {
     #[test]
     fn test_missing_required_args() {
         // Install requires package names
-        let (success, _, stderr) = run_omg(&["install"]);
-        assert!(!success, "install without args should fail");
+        let result = run_omg(&["install"]);
+        assert!(!result.success, "install without args should fail");
         assert!(
-            stderr.contains("required") || stderr.contains("error"),
+            result.stderr.contains("required") || result.stderr.contains("error"),
             "Should report missing arguments"
         );
     }
@@ -257,20 +193,20 @@ mod cli_foundation {
     #[test]
     fn test_verbose_flags() {
         // Test -v, -vv, -vvv
-        let (success, _, _) = run_omg(&["-v", "status"]);
-        assert!(success, "omg -v status should succeed");
+        let result = run_omg(&["-v", "status"]);
+        assert!(result.success, "omg -v status should succeed");
 
-        let (success, _, _) = run_omg(&["-vv", "status"]);
-        assert!(success, "omg -vv status should succeed");
+        let result = run_omg(&["-vv", "status"]);
+        assert!(result.success, "omg -vv status should succeed");
 
-        let (success, _, _) = run_omg(&["-vvv", "status"]);
-        assert!(success, "omg -vvv status should succeed");
+        let result = run_omg(&["-vvv", "status"]);
+        assert!(result.success, "omg -vvv status should succeed");
     }
 
     #[test]
     fn test_quiet_flag() {
-        let (success, stdout, _) = run_omg(&["-q", "status"]);
-        assert!(success, "omg -q status should succeed");
+        let result = run_omg(&["-q", "status"]);
+        assert!(result.success, "omg -q status should succeed");
         // Quiet mode should produce minimal output
     }
 }
@@ -288,11 +224,13 @@ mod package_management {
             eprintln!("Skipping system test (set OMG_RUN_SYSTEM_TESTS=1)");
             return;
         }
-        let (success, stdout, _) = run_omg(&["search", "firefox"]);
-        assert!(success, "Search should succeed");
-        assert!(stdout.contains("firefox"), "Should find firefox");
+        let result = run_omg(&["search", "firefox"]);
+        assert!(result.success, "Search should succeed");
+        assert!(result.stdout.contains("firefox"), "Should find firefox");
         assert!(
-            stdout.contains("Official") || stdout.contains("extra") || stdout.contains("core"),
+            result.stdout.contains("Official")
+                || result.stdout.contains("extra")
+                || result.stdout.contains("core"),
             "Should indicate official repository"
         );
     }
@@ -303,14 +241,14 @@ mod package_management {
             eprintln!("Skipping network test (set OMG_RUN_NETWORK_TESTS=1)");
             return;
         }
-        let (success, stdout, _) = run_omg(&["search", "firefox", "--detailed"]);
-        assert!(success, "Detailed search should succeed");
+        let result = run_omg(&["search", "firefox", "--detailed"]);
+        assert!(result.success, "Detailed search should succeed");
         // Detailed output should include votes/popularity for AUR
     }
 
     #[test]
     fn test_search_empty_query() {
-        let (success, _, stderr) = run_omg(&["search", ""]);
+        let result = run_omg(&["search", ""]);
         // Empty query might return error or empty results
         // Both are acceptable behaviors
     }
@@ -318,21 +256,21 @@ mod package_management {
     #[test]
     fn test_search_special_characters() {
         // Test with special characters that might break parsing
-        let (success, _, _) = run_omg(&["search", "lib++"]);
+        let result = run_omg(&["search", "lib++"]);
         // Should not crash
     }
 
     #[test]
     fn test_search_unicode() {
         // Test with unicode characters
-        let (success, _, _) = run_omg(&["search", "日本語"]);
+        let result = run_omg(&["search", "日本語"]);
         // Should not crash, may return no results
     }
 
     #[test]
     fn test_search_very_long_query() {
         let long_query = "a".repeat(1000);
-        let (success, _, _) = run_omg(&["search", &long_query]);
+        let result = run_omg(&["search", &long_query]);
         // Should handle gracefully (no crash, may return error)
     }
 
@@ -342,12 +280,13 @@ mod package_management {
             eprintln!("Skipping system test (set OMG_RUN_SYSTEM_TESTS=1)");
             return;
         }
-        let (success, stdout, _) = run_omg(&["info", "pacman"]);
-        assert!(success, "Info for official package should succeed");
-        assert!(stdout.contains("pacman"), "Should show package name");
+        let result = run_omg(&["info", "pacman"]);
+        assert!(result.success, "Info for official package should succeed");
+        assert!(result.stdout.contains("pacman"), "Should show package name");
         // Version is displayed as "pacman X.Y.Z" format
         assert!(
-            stdout.contains("Version") || stdout.contains('.') && stdout.contains("pacman"),
+            result.stdout.contains("Version")
+                || result.stdout.contains('.') && result.stdout.contains("pacman"),
             "Should show version"
         );
     }
@@ -355,10 +294,10 @@ mod package_management {
     #[test]
     #[cfg(feature = "arch")]
     fn test_info_nonexistent_package() {
-        let (success, stdout, _) = run_omg(&["info", "this-package-does-not-exist-12345"]);
+        let result = run_omg(&["info", "this-package-does-not-exist-12345"]);
         // Should fail gracefully or show "not found"
         assert!(
-            !success || stdout.contains("not found"),
+            !result.success || result.stdout.contains("not found"),
             "Should indicate package not found"
         );
     }
@@ -372,9 +311,11 @@ mod package_management {
 
         let pkg = env::var("OMG_TEST_PACKAGE").unwrap_or_else(|_| "ripgrep".to_string());
         let args = vec!["install", "-y", &pkg];
-        let (success, stdout, stderr) = run_omg(&args);
+        let result = run_omg(&args);
         assert!(
-            success || stdout.contains("already installed") || stderr.contains("already installed"),
+            result.success
+                || result.stdout.contains("already installed")
+                || result.stderr.contains("already installed"),
             "Install should succeed or report already installed"
         );
     }
@@ -386,8 +327,8 @@ mod package_management {
             return;
         }
 
-        let (success, _stdout, _stderr) = run_omg(&["update", "--check"]);
-        assert!(success, "Update check should succeed");
+        let result = run_omg(&["update", "--check"]);
+        assert!(result.success, "Update check should succeed");
     }
 
     #[test]
@@ -397,10 +338,10 @@ mod package_management {
             return;
         }
 
-        let (success, stdout, stderr) = run_omg(&["update", "--check"]);
-        let combined = format!("{stdout}{stderr}");
+        let result = run_omg(&["update", "--check"]);
+        let combined = result.combined_output();
 
-        assert!(success, "Update check should succeed");
+        assert!(result.success, "Update check should succeed");
         assert!(!combined.is_empty(), "Update check should produce output");
 
         // Verify update detection code path is exercised
@@ -434,8 +375,8 @@ mod package_management {
             return;
         }
 
-        let (success, stdout, stderr) = run_omg(&["update", "--yes"]);
-        let combined = format!("{stdout}{stderr}");
+        let result = run_omg(&["update", "--yes"]);
+        let combined = result.combined_output();
 
         // Should complete without hanging
         assert!(!combined.is_empty(), "Should produce output");
@@ -460,13 +401,12 @@ mod package_management {
 
         // Test that running in non-interactive mode without --yes
         // gives a helpful error message
-        let (success, stdout, stderr) =
-            run_omg_with_env(&["update"], &[("CI", "true"), ("OMG_NON_INTERACTIVE", "1")]);
+        let result = run_omg_with_env(&["update"], &[("CI", "true"), ("OMG_NON_INTERACTIVE", "1")]);
 
-        let combined = format!("{stdout}{stderr}");
+        let combined = result.combined_output();
 
         // Should fail without --yes in non-interactive mode
-        assert!(!success, "Should fail without TTY and --yes");
+        assert!(!result.success, "Should fail without TTY and --yes");
 
         // Should provide helpful error message
         assert!(
@@ -482,21 +422,21 @@ mod package_management {
 
     #[test]
     fn test_status_command() {
-        let (success, stdout, _) = run_omg(&["status"]);
-        assert!(success, "Status should succeed");
+        let result = run_omg(&["status"]);
+        assert!(result.success, "Status should succeed");
         assert!(
-            stdout.contains("Packages")
-                || stdout.contains("Updates")
-                || stdout.contains("Runtimes"),
+            result.stdout.contains("Packages")
+                || result.stdout.contains("Updates")
+                || result.stdout.contains("Runtimes"),
             "Status should show system info"
         );
     }
 
     #[test]
     fn test_clean_help() {
-        let (success, stdout, stderr) = run_omg(&["clean", "--help"]);
-        assert!(success, "Clean help should succeed");
-        let output = format!("{stdout}{stderr}");
+        let result = run_omg(&["clean", "--help"]);
+        assert!(result.success, "Clean help should succeed");
+        let output = result.combined_output();
         // Debug output
         if !output.contains("orphans") && !output.contains("cache") {
             eprintln!("Clean help output:\n{output}");
@@ -516,8 +456,8 @@ mod package_management {
             eprintln!("Skipping system test (set OMG_RUN_SYSTEM_TESTS=1)");
             return;
         }
-        let (success, stdout, _) = run_omg(&["explicit"]);
-        assert!(success, "Explicit should succeed");
+        let result = run_omg(&["explicit"]);
+        assert!(result.success, "Explicit should succeed");
         // Should list some packages on a real Arch system
     }
 }
@@ -533,21 +473,21 @@ mod runtime_management {
 
     #[test]
     fn test_list_all_runtimes() {
-        let (success, stdout, _) = run_omg(&["list"]);
-        assert!(success, "List should succeed");
+        let result = run_omg(&["list"]);
+        assert!(result.success, "List should succeed");
         // Should list available runtimes
     }
 
     #[test]
     fn test_list_installed_node() {
-        let (success, _, _) = run_omg(&["list", "node"]);
-        assert!(success, "List node should succeed");
+        let result = run_omg(&["list", "node"]);
+        assert!(result.success, "List node should succeed");
     }
 
     #[test]
     fn test_list_installed_python() {
-        let (success, _, _) = run_omg(&["list", "python"]);
-        assert!(success, "List python should succeed");
+        let result = run_omg(&["list", "python"]);
+        assert!(result.success, "List python should succeed");
     }
 
     #[test]
@@ -556,8 +496,8 @@ mod runtime_management {
             eprintln!("Skipping network test (set OMG_RUN_NETWORK_TESTS=1)");
             return;
         }
-        let (success, stdout, _) = run_omg(&["list", "node", "--available"]);
-        assert!(success, "List available node should succeed");
+        let result = run_omg(&["list", "node", "--available"]);
+        assert!(result.success, "List available node should succeed");
         // Should show versions from nodejs.org
     }
 
@@ -567,8 +507,8 @@ mod runtime_management {
             eprintln!("Skipping network test (set OMG_RUN_NETWORK_TESTS=1)");
             return;
         }
-        let (success, stdout, _) = run_omg(&["list", "python", "--available"]);
-        assert!(success, "List available python should succeed");
+        let result = run_omg(&["list", "python", "--available"]);
+        assert!(result.success, "List available python should succeed");
     }
 
     #[test]
@@ -577,8 +517,8 @@ mod runtime_management {
             eprintln!("Skipping network test (set OMG_RUN_NETWORK_TESTS=1)");
             return;
         }
-        let (success, stdout, _) = run_omg(&["list", "go", "--available"]);
-        assert!(success, "List available go should succeed");
+        let result = run_omg(&["list", "go", "--available"]);
+        assert!(result.success, "List available go should succeed");
     }
 
     #[test]
@@ -587,8 +527,8 @@ mod runtime_management {
             eprintln!("Skipping network test (set OMG_RUN_NETWORK_TESTS=1)");
             return;
         }
-        let (success, stdout, _) = run_omg(&["list", "rust", "--available"]);
-        assert!(success, "List available rust should succeed");
+        let result = run_omg(&["list", "rust", "--available"]);
+        assert!(result.success, "List available rust should succeed");
     }
 
     #[test]
@@ -597,8 +537,8 @@ mod runtime_management {
             eprintln!("Skipping network test (set OMG_RUN_NETWORK_TESTS=1)");
             return;
         }
-        let (success, stdout, _) = run_omg(&["list", "ruby", "--available"]);
-        assert!(success, "List available ruby should succeed");
+        let result = run_omg(&["list", "ruby", "--available"]);
+        assert!(result.success, "List available ruby should succeed");
     }
 
     #[test]
@@ -607,8 +547,8 @@ mod runtime_management {
             eprintln!("Skipping network test (set OMG_RUN_NETWORK_TESTS=1)");
             return;
         }
-        let (success, stdout, _) = run_omg(&["list", "java", "--available"]);
-        assert!(success, "List available java should succeed");
+        let result = run_omg(&["list", "java", "--available"]);
+        assert!(result.success, "List available java should succeed");
         // Should show LTS markers
     }
 
@@ -618,16 +558,18 @@ mod runtime_management {
             eprintln!("Skipping network test (set OMG_RUN_NETWORK_TESTS=1)");
             return;
         }
-        let (success, stdout, _) = run_omg(&["list", "bun", "--available"]);
-        assert!(success, "List available bun should succeed");
+        let result = run_omg(&["list", "bun", "--available"]);
+        assert!(result.success, "List available bun should succeed");
     }
 
     #[test]
     fn test_list_unknown_runtime() {
-        let (success, stdout, _) = run_omg(&["list", "unknownruntime"]);
+        let result = run_omg(&["list", "unknownruntime"]);
         // Should fail or show error
         assert!(
-            !success || stdout.contains("Unknown") || stdout.contains("Supported"),
+            !result.success
+                || result.stdout.contains("Unknown")
+                || result.stdout.contains("Supported"),
             "Should indicate unknown runtime"
         );
     }
@@ -635,18 +577,20 @@ mod runtime_management {
     #[test]
     fn test_which_command() {
         for runtime in RUNTIMES {
-            let (success, _, _) = run_omg(&["which", runtime]);
-            assert!(success, "which {runtime} should succeed");
+            let result = run_omg(&["which", runtime]);
+            assert!(result.success, "which {runtime} should succeed");
         }
     }
 
     #[test]
     fn test_use_without_version_no_config() {
         let temp_dir = TempDir::new().unwrap();
-        let (success, _, stderr) = run_omg_in_dir(&["use", "node"], temp_dir.path());
+        let result = run_omg_in_dir(&["use", "node"], temp_dir.path());
         // Should fail because no version file exists
         assert!(
-            !success || stderr.contains("No version") || stderr.contains("detected"),
+            !result.success
+                || result.stderr.contains("No version")
+                || result.stderr.contains("detected"),
             "Should fail without version file"
         );
     }
@@ -656,10 +600,12 @@ mod runtime_management {
         let temp_dir = TempDir::new().unwrap();
         create_test_project(temp_dir.path(), "node");
 
-        let (success, stdout, _) = run_omg_in_dir(&["use", "node"], temp_dir.path());
+        let result = run_omg_in_dir(&["use", "node"], temp_dir.path());
         // Should detect the version from .nvmrc
         assert!(
-            success || stdout.contains("20.10.0") || stdout.contains("Detected"),
+            result.success
+                || result.stdout.contains("20.10.0")
+                || result.stdout.contains("Detected"),
             "Should detect version from .nvmrc"
         );
     }
@@ -669,10 +615,12 @@ mod runtime_management {
         let temp_dir = TempDir::new().unwrap();
         create_test_project(temp_dir.path(), "python");
 
-        let (success, stdout, _) = run_omg_in_dir(&["use", "python"], temp_dir.path());
+        let result = run_omg_in_dir(&["use", "python"], temp_dir.path());
         // Should detect the version from .python-version
         assert!(
-            success || stdout.contains("3.11.0") || stdout.contains("Detected"),
+            result.success
+                || result.stdout.contains("3.11.0")
+                || result.stdout.contains("Detected"),
             "Should detect version from .python-version"
         );
     }
@@ -683,40 +631,46 @@ mod runtime_management {
         create_test_project(temp_dir.path(), "tool-versions");
 
         // Test Node detection from .tool-versions
-        let (success, stdout, _) = run_omg_in_dir(&["use", "node"], temp_dir.path());
+        let result = run_omg_in_dir(&["use", "node"], temp_dir.path());
         assert!(
-            success || stdout.contains("20.10.0"),
+            result.success || result.stdout.contains("20.10.0"),
             "Should detect node version from .tool-versions"
         );
 
         // Test Python detection from .tool-versions
-        let (success, stdout, _) = run_omg_in_dir(&["use", "python"], temp_dir.path());
+        let result = run_omg_in_dir(&["use", "python"], temp_dir.path());
         assert!(
-            success || stdout.contains("3.11.0"),
+            result.success || result.stdout.contains("3.11.0"),
             "Should detect python version from .tool-versions"
         );
     }
 
     #[test]
     fn test_use_invalid_version_format() {
-        let (success, _, _) = run_omg(&["use", "node", "not-a-version"]);
+        let result = run_omg(&["use", "node", "not-a-version"]);
         // Should handle gracefully (may try to install or fail)
     }
 
     #[test]
     fn test_runtime_alias_node_nodejs() {
         // "nodejs" should work the same as "node"
-        let (success1, stdout1, _) = run_omg(&["list", "node"]);
-        let (success2, stdout2, _) = run_omg(&["list", "nodejs"]);
-        assert_eq!(success1, success2, "node and nodejs should behave the same");
+        let result1 = run_omg(&["list", "node"]);
+        let result2 = run_omg(&["list", "nodejs"]);
+        assert_eq!(
+            result1.success, result2.success,
+            "node and nodejs should behave the same"
+        );
     }
 
     #[test]
     fn test_runtime_alias_go_golang() {
         // "golang" should work the same as "go"
-        let (success1, _, _) = run_omg(&["list", "go"]);
-        let (success2, _, _) = run_omg(&["list", "golang"]);
-        assert_eq!(success1, success2, "go and golang should behave the same");
+        let result1 = run_omg(&["list", "go"]);
+        let result2 = run_omg(&["list", "golang"]);
+        assert_eq!(
+            result1.success, result2.success,
+            "go and golang should behave the same"
+        );
     }
 }
 
@@ -730,10 +684,10 @@ mod environment_management {
     #[test]
     fn test_env_capture() {
         let temp_dir = TempDir::new().unwrap();
-        let (success, stdout, _) = run_omg_in_dir(&["env", "capture"], temp_dir.path());
-        assert!(success, "env capture should succeed");
+        let result = run_omg_in_dir(&["env", "capture"], temp_dir.path());
+        assert!(result.success, "env capture should succeed");
         assert!(
-            stdout.contains("omg.lock") || stdout.contains("captured"),
+            result.stdout.contains("omg.lock") || result.stdout.contains("captured"),
             "Should mention lock file"
         );
 
@@ -772,15 +726,15 @@ mod environment_management {
         let temp_dir = TempDir::new().unwrap();
 
         // Capture
-        let (capture_success, _, _) = run_omg_in_dir(&["env", "capture"], temp_dir.path());
-        assert!(capture_success, "env capture should succeed");
+        let capture_result = run_omg_in_dir(&["env", "capture"], temp_dir.path());
+        assert!(capture_result.success, "env capture should succeed");
 
         // Check immediately - should work (may or may not report drift depending on timing)
-        let (success, stdout, stderr) = run_omg_in_dir(&["env", "check"], temp_dir.path());
-        let combined = format!("{stdout}{stderr}");
+        let result = run_omg_in_dir(&["env", "check"], temp_dir.path());
+        let combined = result.combined_output();
         // Should either succeed or give meaningful output about drift
         assert!(
-            success || combined.contains("drift") || combined.contains("check"),
+            result.success || combined.contains("drift") || combined.contains("check"),
             "env check should work: {combined}"
         );
     }
@@ -790,12 +744,12 @@ mod environment_management {
         let temp_dir = TempDir::new().unwrap();
 
         // Check without capturing first
-        let (success, _, stderr) = run_omg_in_dir(&["env", "check"], temp_dir.path());
-        assert!(!success, "env check should fail without omg.lock");
+        let result = run_omg_in_dir(&["env", "check"], temp_dir.path());
+        assert!(!result.success, "env check should fail without omg.lock");
         assert!(
-            stderr.contains("omg.lock")
-                || stderr.contains("not found")
-                || stderr.contains("capture"),
+            result.stderr.contains("omg.lock")
+                || result.stderr.contains("not found")
+                || result.stderr.contains("capture"),
             "Should mention missing lock file"
         );
     }
@@ -806,10 +760,12 @@ mod environment_management {
         run_omg_in_dir(&["env", "capture"], temp_dir.path());
 
         // Clear GITHUB_TOKEN
-        let (success, _, stderr) = run_omg_with_env(&["env", "share"], &[("GITHUB_TOKEN", "")]);
+        let result = run_omg_with_env(&["env", "share"], &[("GITHUB_TOKEN", "")]);
         // Should fail because no token
         assert!(
-            !success || stderr.contains("GITHUB_TOKEN") || stderr.contains("token"),
+            !result.success
+                || result.stderr.contains("GITHUB_TOKEN")
+                || result.stderr.contains("token"),
             "Should require GITHUB_TOKEN"
         );
     }
@@ -819,27 +775,38 @@ mod environment_management {
         let temp_dir = TempDir::new().unwrap();
 
         // Try to share without capturing first
-        let (success, _, stderr) = run_omg_in_dir(&["env", "share"], temp_dir.path());
-        assert!(!success, "env share should fail without omg.lock");
+        let result = run_omg_in_dir(&["env", "share"], temp_dir.path());
+        assert!(!result.success, "env share should fail without omg.lock");
     }
 
     #[test]
     fn test_env_sync_invalid_url() {
         let temp_dir = TempDir::new().unwrap();
 
-        let (success, _, stderr) =
-            run_omg_in_dir(&["env", "sync", "not-a-valid-gist-url"], temp_dir.path());
-        assert!(!success, "env sync should fail with invalid URL");
+        let result = run_omg_in_dir(&["env", "sync", "not-a-valid-gist-url"], temp_dir.path());
+        assert!(!result.success, "env sync should fail with invalid URL");
     }
 
     #[test]
     fn test_env_subcommand_help() {
-        let (success, stdout, _) = run_omg(&["env", "--help"]);
-        assert!(success, "env --help should succeed");
-        assert!(stdout.contains("capture"), "Should list capture subcommand");
-        assert!(stdout.contains("check"), "Should list check subcommand");
-        assert!(stdout.contains("share"), "Should list share subcommand");
-        assert!(stdout.contains("sync"), "Should list sync subcommand");
+        let result = run_omg(&["env", "--help"]);
+        assert!(result.success, "env --help should succeed");
+        assert!(
+            result.stdout.contains("capture"),
+            "Should list capture subcommand"
+        );
+        assert!(
+            result.stdout.contains("check"),
+            "Should list check subcommand"
+        );
+        assert!(
+            result.stdout.contains("share"),
+            "Should list share subcommand"
+        );
+        assert!(
+            result.stdout.contains("sync"),
+            "Should list sync subcommand"
+        );
     }
 }
 
@@ -852,15 +819,15 @@ mod security {
 
     #[test]
     fn test_audit_command() {
-        let (success, _stdout, stderr) = run_omg(&["audit"]);
+        let result = run_omg(&["audit"]);
         // May succeed or fail depending on daemon status or license tier
         // Should not crash
         assert!(
-            success
-                || stderr.contains("daemon")
-                || stderr.contains("Daemon")
-                || stderr.contains("requires")
-                || stderr.contains("tier"),
+            result.success
+                || result.stderr.contains("daemon")
+                || result.stderr.contains("Daemon")
+                || result.stderr.contains("requires")
+                || result.stderr.contains("tier"),
             "Audit should work or report daemon/license issue"
         );
     }
@@ -892,8 +859,8 @@ banned_packages = ["malware-pkg"]
     #[test]
     fn test_security_grade_display() {
         // When searching, security grades should be visible
-        let (success, stdout, _) = run_omg(&["info", "pacman"]);
-        assert!(success, "Info should succeed");
+        let result = run_omg(&["info", "pacman"]);
+        assert!(result.success, "Info should succeed");
         // Note: Security grade display depends on implementation
     }
 }
@@ -907,42 +874,42 @@ mod completions {
 
     #[test]
     fn test_completions_bash() {
-        let (success, stdout, _) = run_omg(&["completions", "bash", "--stdout"]);
-        assert!(success, "Bash completions should succeed");
+        let result = run_omg(&["completions", "bash", "--stdout"]);
+        assert!(result.success, "Bash completions should succeed");
         assert!(
-            stdout.contains("complete")
-                || stdout.contains("_omg")
-                || stdout.contains("_omg_completions"),
+            result.stdout.contains("complete")
+                || result.stdout.contains("_omg")
+                || result.stdout.contains("_omg_completions"),
             "Should output bash completion script"
         );
     }
 
     #[test]
     fn test_completions_zsh() {
-        let (success, stdout, _) = run_omg(&["completions", "zsh", "--stdout"]);
-        assert!(success, "Zsh completions should succeed");
+        let result = run_omg(&["completions", "zsh", "--stdout"]);
+        assert!(result.success, "Zsh completions should succeed");
         assert!(
-            stdout.contains("compdef") || stdout.contains("_omg"),
+            result.stdout.contains("compdef") || result.stdout.contains("_omg"),
             "Should output zsh completion script"
         );
     }
 
     #[test]
     fn test_completions_fish() {
-        let (success, stdout, _) = run_omg(&["completions", "fish", "--stdout"]);
-        assert!(success, "Fish completions should succeed");
+        let result = run_omg(&["completions", "fish", "--stdout"]);
+        assert!(result.success, "Fish completions should succeed");
         assert!(
-            stdout.contains("complete") || stdout.contains("omg"),
+            result.stdout.contains("complete") || result.stdout.contains("omg"),
             "Should output fish completion script"
         );
     }
 
     #[test]
     fn test_completions_invalid_shell() {
-        let (success, _, stderr) = run_omg(&["completions", "invalidshell"]);
-        assert!(!success, "Invalid shell should fail");
+        let result = run_omg(&["completions", "invalidshell"]);
+        assert!(!result.success, "Invalid shell should fail");
         assert!(
-            stderr.contains("Unsupported") || stderr.contains("error"),
+            result.stderr.contains("Unsupported") || result.stderr.contains("error"),
             "Should report unsupported shell"
         );
     }
@@ -950,7 +917,7 @@ mod completions {
     #[test]
     fn test_hidden_complete_command() {
         // Test the hidden dynamic completion command
-        let (success, _, _) = run_omg(&["complete", "--shell", "zsh", "--current", "fire"]);
+        let result = run_omg(&["complete", "--shell", "zsh", "--current", "fire"]);
         // May or may not be implemented as a visible command
     }
 
@@ -958,7 +925,7 @@ mod completions {
     fn test_fuzzy_completion_typo() {
         // This tests the internal completion engine
         // The hidden complete command should handle typos
-        let (success, stdout, _) = run_omg(&["complete", "--shell", "zsh", "--current", "frfx"]);
+        let result = run_omg(&["complete", "--shell", "zsh", "--current", "frfx"]);
         // If implemented, should suggest "firefox"
     }
 }
@@ -972,25 +939,25 @@ mod shell_hooks {
 
     #[test]
     fn test_unicode_search() {
-        let (success, _, _) = run_omg(&["search", "café"]);
-        assert!(success, "Unicode search should succeed");
+        let result = run_omg(&["search", "café"]);
+        assert!(result.success, "Unicode search should succeed");
     }
 
     #[test]
     fn test_hook_zsh() {
-        let (success, stdout, _) = run_omg(&["hook", "zsh"]);
-        assert!(success, "Hook zsh should succeed");
+        let result = run_omg(&["hook", "zsh"]);
+        assert!(result.success, "Hook zsh should succeed");
     }
 
     #[test]
     fn test_hook_fish() {
-        let (success, stdout, _) = run_omg(&["hook", "fish"]);
-        assert!(success, "Hook fish should succeed");
+        let result = run_omg(&["hook", "fish"]);
+        assert!(result.success, "Hook fish should succeed");
     }
 
     #[test]
     fn test_hook_invalid_shell() {
-        let (success, _, _) = run_omg(&["hook", "invalidshell"]);
+        let result = run_omg(&["hook", "invalidshell"]);
         // Should fail or return empty
     }
 }
@@ -1004,28 +971,28 @@ mod config {
 
     #[test]
     fn test_config_list() {
-        let (success, stdout, _) = run_omg(&["config"]);
-        assert!(success, "Config list should succeed");
+        let result = run_omg(&["config"]);
+        assert!(result.success, "Config list should succeed");
         // Should show configuration
     }
 
     #[test]
     fn test_config_get_key() {
         // Use proper config get subcommand
-        let (success, _, _) = run_omg(&["config", "get", "telemetry.enabled"]);
-        assert!(success, "Config get should succeed");
+        let result = run_omg(&["config", "get", "telemetry.enabled"]);
+        assert!(result.success, "Config get should succeed");
     }
 
     #[test]
     fn test_config_get_invalid_key() {
         // Use proper config get subcommand - invalid key reports error message
-        let (_, stdout, _) = run_omg(&["config", "get", "nonexistent_key"]);
+        let result = run_omg(&["config", "get", "nonexistent_key"]);
         assert!(
-            stdout.contains("Unknown")
-                || stdout.contains("not found")
-                || stdout.contains("invalid"),
+            result.stdout.contains("Unknown")
+                || result.stdout.contains("not found")
+                || result.stdout.contains("invalid"),
             "Config get for invalid key should report error, got: {}",
-            stdout
+            result.stdout
         );
     }
 }
@@ -1043,8 +1010,8 @@ mod performance {
             eprintln!("Skipping perf test (set OMG_RUN_PERF_TESTS=1)");
             return;
         }
-        let ((success, _, _), duration) = measure_time(|| run_omg(&["status"]));
-        assert!(success, "Status should succeed");
+        let (result, duration) = measure_time(|| run_omg(&["status"]));
+        assert!(result.success, "Status should succeed");
 
         // Status should complete in under 500ms (generous for CI)
         assert!(
@@ -1059,8 +1026,8 @@ mod performance {
             eprintln!("Skipping perf test (set OMG_RUN_PERF_TESTS=1)");
             return;
         }
-        let ((success, _, _), duration) = measure_time(|| run_omg(&["list"]));
-        assert!(success, "List should succeed");
+        let (result, duration) = measure_time(|| run_omg(&["list"]));
+        assert!(result.success, "List should succeed");
 
         // List installed should be very fast
         assert!(
@@ -1075,8 +1042,8 @@ mod performance {
             eprintln!("Skipping perf test (set OMG_RUN_PERF_TESTS=1)");
             return;
         }
-        let ((success, _, _), duration) = measure_time(|| run_omg(&["which", "node"]));
-        assert!(success, "Which should succeed");
+        let (result, duration) = measure_time(|| run_omg(&["which", "node"]));
+        assert!(result.success, "Which should succeed");
 
         // Which should be extremely fast (< 50ms)
         assert!(
@@ -1091,8 +1058,8 @@ mod performance {
             eprintln!("Skipping perf test (set OMG_RUN_PERF_TESTS=1)");
             return;
         }
-        let ((success, _, _), duration) = measure_time(|| run_omg(&["--help"]));
-        assert!(success, "Help should succeed");
+        let (result, duration) = measure_time(|| run_omg(&["--help"]));
+        assert!(result.success, "Help should succeed");
 
         // Help should be instant
         assert!(
@@ -1107,9 +1074,8 @@ mod performance {
             eprintln!("Skipping perf test (set OMG_RUN_PERF_TESTS=1)");
             return;
         }
-        let ((success, _, _), duration) =
-            measure_time(|| run_omg(&["completions", "zsh", "--stdout"]));
-        assert!(success, "Completions should succeed");
+        let (result, duration) = measure_time(|| run_omg(&["completions", "zsh", "--stdout"]));
+        assert!(result.success, "Completions should succeed");
 
         // Completions generation should be fast
         assert!(
@@ -1145,8 +1111,8 @@ mod error_handling {
         let mut f = File::create(temp_dir.path().join("omg.lock")).unwrap();
         writeln!(f, "this is not valid toml {{{{").unwrap();
 
-        let (success, _, stderr) = run_omg_in_dir(&["env", "check"], temp_dir.path());
-        assert!(!success, "Should fail with invalid lock file");
+        let result = run_omg_in_dir(&["env", "check"], temp_dir.path());
+        assert!(!result.success, "Should fail with invalid lock file");
         // Should show a helpful error, not panic
     }
 
@@ -1158,7 +1124,7 @@ mod error_handling {
         let mut f = File::create(temp_dir.path().join("omg.lock")).unwrap();
         writeln!(f, "[wrong_section]\nkey = \"value\"").unwrap();
 
-        let (success, _, _) = run_omg_in_dir(&["env", "check"], temp_dir.path());
+        let result = run_omg_in_dir(&["env", "check"], temp_dir.path());
         // Should handle gracefully
     }
 
@@ -1185,8 +1151,8 @@ mod edge_cases {
     fn test_empty_environment() {
         let temp_dir = TempDir::new().unwrap();
         // Empty directory - no runtimes, no packages tracked
-        let (success, _, _) = run_omg_in_dir(&["env", "capture"], temp_dir.path());
-        assert!(success, "Should handle empty environment");
+        let result = run_omg_in_dir(&["env", "capture"], temp_dir.path());
+        assert!(result.success, "Should handle empty environment");
     }
 
     #[test]
@@ -1206,7 +1172,7 @@ mod edge_cases {
         fs::create_dir_all(&deep_path).unwrap();
 
         // Running from deep path should still find .nvmrc at root
-        let (success, stdout, _) = run_omg_in_dir(&["use", "node"], &deep_path);
+        let result = run_omg_in_dir(&["use", "node"], &deep_path);
         // Should detect version from parent directories
     }
 
@@ -1233,16 +1199,16 @@ mod edge_cases {
             .collect();
 
         for handle in handles {
-            let (success, _, _) = handle.join().unwrap();
-            assert!(success, "Concurrent status should succeed");
+            let result = handle.join().unwrap();
+            assert!(result.success, "Concurrent status should succeed");
         }
     }
 
     #[test]
     fn test_very_large_package_list() {
         // Searching for common terms that return many results
-        let (success, _, _) = run_omg(&["search", "lib"]);
-        assert!(success, "Large search should succeed");
+        let result = run_omg(&["search", "lib"]);
+        assert!(result.success, "Large search should succeed");
     }
 
     #[test]
@@ -1252,7 +1218,7 @@ mod edge_cases {
         std::fs::create_dir(&unicode_dir).unwrap();
 
         let result = run_omg_in_dir(&["status"], &unicode_dir);
-        assert!(result.0, "Should work in unicode directory");
+        assert!(result.success, "Should work in unicode directory");
     }
 
     #[test]
@@ -1262,7 +1228,7 @@ mod edge_cases {
         let mut f = File::create(temp_dir.path().join(".nvmrc")).unwrap();
         writeln!(f, "  20.10.0  ").unwrap();
 
-        let (success, stdout, _) = run_omg_in_dir(&["use", "node"], temp_dir.path());
+        let result = run_omg_in_dir(&["use", "node"], temp_dir.path());
         // Should trim whitespace
     }
 
@@ -1273,28 +1239,28 @@ mod edge_cases {
         writeln!(f, "# This is a comment").unwrap();
         writeln!(f, "20.10.0").unwrap();
 
-        let (success, _, _) = run_omg_in_dir(&["use", "node"], temp_dir.path());
+        let result = run_omg_in_dir(&["use", "node"], temp_dir.path());
         // Should handle comments (implementation dependent)
     }
 
     #[test]
     fn test_lts_version_alias() {
         // Using "lts" as a version
-        let (success, _, _) = run_omg(&["use", "node", "lts"]);
+        let result = run_omg(&["use", "node", "lts"]);
         // Should resolve to actual LTS version
     }
 
     #[test]
     fn test_latest_version_alias() {
         // Using "latest" as a version
-        let (success, _, _) = run_omg(&["use", "node", "latest"]);
+        let result = run_omg(&["use", "node", "latest"]);
         // Should resolve to latest version
     }
 
     #[test]
     fn test_partial_version() {
         // Using partial version like "20" instead of "20.10.0"
-        let (success, _, _) = run_omg(&["use", "node", "20"]);
+        let result = run_omg(&["use", "node", "20"]);
         // Should resolve to latest 20.x.x
     }
 }
@@ -1310,8 +1276,11 @@ mod database {
     fn test_database_creation() {
         // The database should be created automatically
         // Just verify omg runs - DB is created on demand
-        let (success, _, _) = run_omg(&["status"]);
-        assert!(success, "Status should succeed (creates DB if needed)");
+        let result = run_omg(&["status"]);
+        assert!(
+            result.success,
+            "Status should succeed (creates DB if needed)"
+        );
     }
 
     #[test]
@@ -1324,8 +1293,8 @@ mod database {
             .collect();
 
         for handle in handles {
-            let (success, _, _) = handle.join().unwrap();
-            assert!(success, "Concurrent DB access should succeed");
+            let result = handle.join().unwrap();
+            assert!(result.success, "Concurrent DB access should succeed");
         }
     }
 }
@@ -1339,10 +1308,10 @@ mod daemon {
 
     #[test]
     fn test_daemon_help() {
-        let (success, stdout, _) = run_omg(&["daemon", "--help"]);
-        assert!(success, "Daemon help should succeed");
+        let result = run_omg(&["daemon", "--help"]);
+        assert!(result.success, "Daemon help should succeed");
         assert!(
-            stdout.contains("foreground"),
+            result.stdout.contains("foreground"),
             "Should mention foreground option"
         );
     }
@@ -1351,21 +1320,21 @@ mod daemon {
     fn test_status_with_daemon() {
         // Status should work with daemon enabled (daemon may or may not be running)
         // This tests that the status command doesn't crash when daemon support is enabled
-        let (success, stdout, stderr) = run_omg_with_daemon(&["status"]);
-        let combined = format!("{stdout}{stderr}");
+        let result = run_omg_with_env(&["status"], &[]);
+        let combined = result.combined_output();
 
         // Status should succeed regardless of whether daemon is actually running
         // It should gracefully fall back to direct mode if daemon is unavailable
         assert!(
-            success,
+            result.success,
             "Status should succeed with daemon support enabled. Output: {combined}"
         );
 
         // Should produce meaningful output
         assert!(
-            stdout.contains("Package")
-                || stdout.contains("Runtime")
-                || stdout.contains("OMG")
+            result.stdout.contains("Package")
+                || result.stdout.contains("Runtime")
+                || result.stdout.contains("OMG")
                 || combined.contains("daemon"),
             "Status should show system info or daemon status. Output: {combined}"
         );
@@ -1387,20 +1356,20 @@ mod integration_scenarios {
         create_test_project(temp_dir.path(), "tool-versions");
 
         // 2. Developer runs status to see what's needed
-        let (success, _, _) = run_omg_in_dir(&["status"], temp_dir.path());
-        assert!(success, "Status should work");
+        let result = run_omg_in_dir(&["status"], temp_dir.path());
+        assert!(result.success, "Status should work");
 
         // 3. Developer syncs environment (if lock exists from team)
         // Simulated by running env capture
-        let (success, _, _) = run_omg_in_dir(&["env", "capture"], temp_dir.path());
-        assert!(success, "Env capture should work");
+        let result = run_omg_in_dir(&["env", "capture"], temp_dir.path());
+        assert!(result.success, "Env capture should work");
 
         // 4. Check for drift - may report drift if runtimes not installed, that's OK
-        let (success, stdout, stderr) = run_omg_in_dir(&["env", "check"], temp_dir.path());
+        let result = run_omg_in_dir(&["env", "check"], temp_dir.path());
         // Either succeeds or reports drift (both are valid outcomes)
-        let combined = format!("{stdout}{stderr}");
+        let combined = result.combined_output();
         assert!(
-            success
+            result.success
                 || combined.contains("drift")
                 || combined.contains("Drift")
                 || combined.contains("check"),
@@ -1422,14 +1391,14 @@ mod integration_scenarios {
         writeln!(f, "20.0.0").unwrap();
 
         // Switch to project 1
-        let (success, stdout1, _) = run_omg_in_dir(&["use", "node"], project1.path());
+        let result1 = run_omg_in_dir(&["use", "node"], project1.path());
 
         // Switch to project 2
-        let (success, stdout2, _) = run_omg_in_dir(&["use", "node"], project2.path());
+        let result2 = run_omg_in_dir(&["use", "node"], project2.path());
 
         // Versions should be different
         assert!(
-            stdout1.contains("18") || stdout2.contains("20"),
+            result1.stdout.contains("18") || result2.stdout.contains("20"),
             "Should detect different versions per project"
         );
     }
@@ -1437,20 +1406,20 @@ mod integration_scenarios {
     #[test]
     fn scenario_security_audit_workflow() {
         // 1. Run status to see overview
-        let (success, _, _) = run_omg(&["status"]);
-        assert!(success, "Status should work");
+        let result = run_omg(&["status"]);
+        assert!(result.success, "Status should work");
 
         // 2. Run full audit
-        let (_, stdout, _) = run_omg(&["audit"]);
+        let result = run_omg(&["audit"]);
         // May require daemon
 
         // 3. Search for a package to install
-        let (success, _, _) = run_omg(&["search", "firefox"]);
-        assert!(success, "Search should work");
+        let result = run_omg(&["search", "firefox"]);
+        assert!(result.success, "Search should work");
 
         // 4. Get info on package
-        let (success, _, _) = run_omg(&["info", "firefox"]);
-        assert!(success, "Info should work");
+        let result = run_omg(&["info", "firefox"]);
+        assert!(result.success, "Info should work");
     }
 
     #[test]
@@ -1460,8 +1429,8 @@ mod integration_scenarios {
 
         // Dev 1 captures their environment
         create_test_project(dev1_dir.path(), "tool-versions");
-        let (success, _, _) = run_omg_in_dir(&["env", "capture"], dev1_dir.path());
-        assert!(success, "Dev1 capture should work");
+        let result = run_omg_in_dir(&["env", "capture"], dev1_dir.path());
+        assert!(result.success, "Dev1 capture should work");
 
         // Copy lock file to dev2 (simulating gist share/sync)
         let lock_content = fs::read_to_string(dev1_dir.path().join("omg.lock")).unwrap();
@@ -1469,8 +1438,8 @@ mod integration_scenarios {
 
         // Dev 2 checks their environment - may report drift since different machine
         create_test_project(dev2_dir.path(), "tool-versions");
-        let (_, stdout, stderr) = run_omg_in_dir(&["env", "check"], dev2_dir.path());
-        let combined = format!("{stdout}{stderr}");
+        let result = run_omg_in_dir(&["env", "check"], dev2_dir.path());
+        let combined = result.combined_output();
         // Should run without crashing, may report drift
         assert!(
             combined.contains("drift") || combined.contains("check") || combined.contains("match"),
@@ -1489,8 +1458,8 @@ mod mise_integration {
     #[test]
     fn test_mise_manager_initialization() {
         // List should work regardless of mise availability
-        let (success, _, _) = run_omg(&["list"]);
-        assert!(success, "List should succeed");
+        let result = run_omg(&["list"]);
+        assert!(result.success, "List should succeed");
     }
 
     #[test]
@@ -1510,8 +1479,8 @@ zig = "0.11.0"
         .unwrap();
 
         // Status should work with .mise.toml present
-        let (success, _, _) = run_omg_in_dir(&["status"], temp_dir.path());
-        assert!(success, "Status should work with .mise.toml");
+        let result = run_omg_in_dir(&["status"], temp_dir.path());
+        assert!(result.success, "Status should work with .mise.toml");
     }
 
     #[test]
@@ -1519,10 +1488,10 @@ zig = "0.11.0"
         let temp_dir = TempDir::new().unwrap();
 
         // Try to use an unknown runtime - should handle gracefully
-        let (_, stdout, stderr) = run_omg_in_dir(&["use", "erlang", "26.0"], temp_dir.path());
+        let result = run_omg_in_dir(&["use", "erlang", "26.0"], temp_dir.path());
 
         // Should either work (via mise) or give helpful message
-        let combined = format!("{stdout}{stderr}");
+        let combined = result.combined_output();
         assert!(
             combined.contains("mise")
                 || combined.contains("erlang")
@@ -1546,10 +1515,11 @@ mod version_detection {
         let mut f = File::create(temp_dir.path().join(".nvmrc")).unwrap();
         writeln!(f, "20.10.0").unwrap();
 
-        let (_, stdout, _) = run_omg_in_dir(&["use", "node"], temp_dir.path());
+        let result = run_omg_in_dir(&["use", "node"], temp_dir.path());
         assert!(
-            stdout.contains("20.10.0") || stdout.contains("Detected"),
-            "Should detect version from .nvmrc: {stdout}"
+            result.stdout.contains("20.10.0") || result.stdout.contains("Detected"),
+            "Should detect version from .nvmrc: {}",
+            result.stdout
         );
     }
 
@@ -1559,9 +1529,9 @@ mod version_detection {
         let mut f = File::create(temp_dir.path().join(".node-version")).unwrap();
         writeln!(f, "18.19.0").unwrap();
 
-        let (_, stdout, _) = run_omg_in_dir(&["use", "node"], temp_dir.path());
+        let result = run_omg_in_dir(&["use", "node"], temp_dir.path());
         assert!(
-            stdout.contains("18.19.0") || stdout.contains("Detected"),
+            result.stdout.contains("18.19.0") || result.stdout.contains("Detected"),
             "Should detect version from .node-version"
         );
     }
@@ -1572,9 +1542,9 @@ mod version_detection {
         let mut f = File::create(temp_dir.path().join(".python-version")).unwrap();
         writeln!(f, "3.12.0").unwrap();
 
-        let (_, stdout, _) = run_omg_in_dir(&["use", "python"], temp_dir.path());
+        let result = run_omg_in_dir(&["use", "python"], temp_dir.path());
         assert!(
-            stdout.contains("3.12.0") || stdout.contains("Detected"),
+            result.stdout.contains("3.12.0") || result.stdout.contains("Detected"),
             "Should detect version from .python-version"
         );
     }
@@ -1586,9 +1556,9 @@ mod version_detection {
         writeln!(f, "nodejs 20.10.0\npython 3.11.0\nruby 3.2.0\ngo 1.21.0").unwrap();
 
         // Each runtime should be detected
-        let (_, stdout_node, _) = run_omg_in_dir(&["use", "node"], temp_dir.path());
+        let result = run_omg_in_dir(&["use", "node"], temp_dir.path());
         assert!(
-            stdout_node.contains("20.10.0") || stdout_node.contains("Detected"),
+            result.stdout.contains("20.10.0") || result.stdout.contains("Detected"),
             "Should detect node from .tool-versions"
         );
     }
@@ -1599,9 +1569,9 @@ mod version_detection {
         let mut f = File::create(temp_dir.path().join("package.json")).unwrap();
         writeln!(f, r#"{{"name": "test", "engines": {{"node": "20.10.0"}}}}"#).unwrap();
 
-        let (_, stdout, _) = run_omg_in_dir(&["use", "node"], temp_dir.path());
+        let result = run_omg_in_dir(&["use", "node"], temp_dir.path());
         assert!(
-            stdout.contains("20.10.0") || stdout.contains("Detected"),
+            result.stdout.contains("20.10.0") || result.stdout.contains("Detected"),
             "Should detect node version from package.json engines"
         );
     }
@@ -1612,9 +1582,9 @@ mod version_detection {
         let mut f = File::create(temp_dir.path().join("package.json")).unwrap();
         writeln!(f, r#"{{"name": "test", "volta": {{"node": "18.18.0"}}}}"#).unwrap();
 
-        let (_, stdout, _) = run_omg_in_dir(&["use", "node"], temp_dir.path());
+        let result = run_omg_in_dir(&["use", "node"], temp_dir.path());
         assert!(
-            stdout.contains("18.18.0") || stdout.contains("Detected"),
+            result.stdout.contains("18.18.0") || result.stdout.contains("Detected"),
             "Should detect node version from package.json volta"
         );
     }
@@ -1629,11 +1599,12 @@ mod version_detection {
         )
         .unwrap();
 
-        let (_, stdout, _) = run_omg_in_dir(&["use", "node"], temp_dir.path());
+        let result = run_omg_in_dir(&["use", "node"], temp_dir.path());
         // engines should take priority over volta
         assert!(
-            stdout.contains("20.0.0"),
-            "engines should take priority over volta: {stdout}"
+            result.stdout.contains("20.0.0"),
+            "engines should take priority over volta: {}",
+            result.stdout
         );
     }
 
@@ -1644,8 +1615,8 @@ mod version_detection {
         let mut f = File::create(temp_dir.path().join(".go-version")).unwrap();
         writeln!(f, "1.21.0").unwrap();
 
-        let (_, stdout, stderr) = run_omg_in_dir(&["use", "go"], temp_dir.path());
-        let combined = format!("{stdout}{stderr}");
+        let result = run_omg_in_dir(&["use", "go"], temp_dir.path());
+        let combined = result.combined_output();
         // Should detect version or show switching message
         assert!(
             combined.contains("1.21")
@@ -1662,9 +1633,11 @@ mod version_detection {
         let mut f = File::create(temp_dir.path().join("rust-toolchain.toml")).unwrap();
         writeln!(f, "[toolchain]\nchannel = \"1.75.0\"").unwrap();
 
-        let (_, stdout, _) = run_omg_in_dir(&["use", "rust"], temp_dir.path());
+        let result = run_omg_in_dir(&["use", "rust"], temp_dir.path());
         assert!(
-            stdout.contains("1.75") || stdout.contains("Detected") || stdout.contains("stable"),
+            result.stdout.contains("1.75")
+                || result.stdout.contains("Detected")
+                || result.stdout.contains("stable"),
             "Should detect rust version from rust-toolchain.toml"
         );
     }
@@ -1675,9 +1648,9 @@ mod version_detection {
         let mut f = File::create(temp_dir.path().join(".nvmrc")).unwrap();
         writeln!(f, "  20.10.0  \n").unwrap();
 
-        let (_, stdout, _) = run_omg_in_dir(&["use", "node"], temp_dir.path());
+        let result = run_omg_in_dir(&["use", "node"], temp_dir.path());
         assert!(
-            stdout.contains("20.10.0"),
+            result.stdout.contains("20.10.0"),
             "Should trim whitespace from version files"
         );
     }
@@ -1688,9 +1661,9 @@ mod version_detection {
         let mut f = File::create(temp_dir.path().join(".nvmrc")).unwrap();
         writeln!(f, "v20.10.0").unwrap();
 
-        let (_, stdout, _) = run_omg_in_dir(&["use", "node"], temp_dir.path());
+        let result = run_omg_in_dir(&["use", "node"], temp_dir.path());
         assert!(
-            stdout.contains("20.10.0"),
+            result.stdout.contains("20.10.0"),
             "Should handle v prefix in version"
         );
     }
@@ -1708,9 +1681,9 @@ mod version_detection {
         fs::create_dir_all(&nested).unwrap();
 
         // Should find .nvmrc from parent
-        let (_, stdout, _) = run_omg_in_dir(&["use", "node"], &nested);
+        let result = run_omg_in_dir(&["use", "node"], &nested);
         assert!(
-            stdout.contains("20.10.0") || stdout.contains("Detected"),
+            result.stdout.contains("20.10.0") || result.stdout.contains("Detected"),
             "Should find version file in parent directories"
         );
     }
@@ -1730,10 +1703,10 @@ mod pacman_database {
             return;
         }
 
-        let (success, stdout, _) = run_omg(&["search", "pacman"]);
-        assert!(success, "Search should succeed");
+        let result = run_omg(&["search", "pacman"]);
+        assert!(result.success, "Search should succeed");
         assert!(
-            stdout.contains("pacman"),
+            result.stdout.contains("pacman"),
             "Search for 'pacman' should find pacman"
         );
     }
@@ -1745,12 +1718,12 @@ mod pacman_database {
             return;
         }
 
-        let (success, stdout, _) = run_omg(&["search", "firefox"]);
-        assert!(success, "Search should succeed");
+        let result = run_omg(&["search", "firefox"]);
+        assert!(result.success, "Search should succeed");
 
         // Output should contain package name
         assert!(
-            stdout.contains("firefox") || stdout.contains("results"),
+            result.stdout.contains("firefox") || result.stdout.contains("results"),
             "Search output should show results"
         );
     }
@@ -1762,9 +1735,9 @@ mod pacman_database {
             return;
         }
 
-        let (success, stdout, _) = run_omg(&["info", "pacman"]);
-        assert!(success, "Info should succeed for installed package");
-        assert!(stdout.contains("pacman"), "Should show package name");
+        let result = run_omg(&["info", "pacman"]);
+        assert!(result.success, "Info should succeed for installed package");
+        assert!(result.stdout.contains("pacman"), "Should show package name");
     }
 
     #[test]
@@ -1774,8 +1747,8 @@ mod pacman_database {
             return;
         }
 
-        let (_, stdout, stderr) = run_omg(&["update", "--check"]);
-        let combined = format!("{stdout}{stderr}");
+        let result = run_omg(&["update", "--check"]);
+        let combined = result.combined_output();
         assert!(
             combined.contains("update")
                 || combined.contains("up to date")
@@ -1792,10 +1765,10 @@ mod pacman_database {
             return;
         }
 
-        let (success, stdout, _) = run_omg(&["explicit"]);
-        assert!(success, "Explicit should succeed");
+        let result = run_omg(&["explicit"]);
+        assert!(result.success, "Explicit should succeed");
 
-        let line_count = stdout.lines().filter(|l| !l.is_empty()).count();
+        let line_count = result.stdout.lines().filter(|l| !l.is_empty()).count();
         assert!(line_count > 1, "Should list explicitly installed packages");
     }
 }
@@ -1814,10 +1787,10 @@ mod aur_integration {
             return;
         }
 
-        let (success, stdout, _) = run_omg(&["search", "yay", "--detailed"]);
-        assert!(success, "AUR search should succeed");
+        let result = run_omg(&["search", "yay", "--detailed"]);
+        assert!(result.success, "AUR search should succeed");
         assert!(
-            stdout.contains("yay") || stdout.contains("AUR"),
+            result.stdout.contains("yay") || result.stdout.contains("AUR"),
             "Should find AUR packages"
         );
     }
@@ -1829,8 +1802,8 @@ mod aur_integration {
             return;
         }
 
-        let (_, stdout, stderr) = run_omg(&["update", "--check"]);
-        let combined = format!("{stdout}{stderr}");
+        let result = run_omg(&["update", "--check"]);
+        let combined = result.combined_output();
 
         // Should mention AUR in output
         assert!(
@@ -1860,10 +1833,10 @@ mod regression_tests {
         }
 
         // Search should find packages from all repos (V2 format)
-        let (success, stdout, _) = run_omg(&["search", "linux"]);
-        assert!(success, "Search should succeed");
+        let result = run_omg(&["search", "linux"]);
+        assert!(result.success, "Search should succeed");
         assert!(
-            stdout.contains("linux"),
+            result.stdout.contains("linux"),
             "Should find packages from V2 format databases"
         );
     }
@@ -1876,17 +1849,21 @@ mod regression_tests {
             return;
         }
 
-        let (success, stdout, stderr) = run_omg(&["explicit"]);
+        let result = run_omg(&["explicit"]);
         // In CI containers, explicit may fail or return few packages - that's OK
         // The key test is that it doesn't panic
         assert!(
-            !stderr.contains("panicked at"),
+            !result.stderr.contains("panicked at"),
             "Should not panic when listing explicit packages"
         );
-        if success {
+        if result.success {
             // CI containers may have very few explicit packages
             // Just verify we can parse the output
-            let _package_count = stdout.lines().filter(|l| !l.trim().is_empty()).count();
+            let _package_count = result
+                .stdout
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .count();
             // If we reached here, parsing succeeded
         }
     }
@@ -1902,10 +1879,11 @@ mod regression_tests {
         )
         .unwrap();
 
-        let (_, stdout, _) = run_omg_in_dir(&["use", "node"], temp_dir.path());
+        let result = run_omg_in_dir(&["use", "node"], temp_dir.path());
         assert!(
-            stdout.contains("22.0.0"),
-            "engines (22.0.0) should take priority over volta (16.0.0): {stdout}"
+            result.stdout.contains("22.0.0"),
+            "engines (22.0.0) should take priority over volta (16.0.0): {}",
+            result.stdout
         );
     }
 }
@@ -1925,8 +1903,8 @@ mod stress_tests {
             .collect();
 
         for handle in handles {
-            let (success, _, _) = handle.join().unwrap();
-            assert!(success, "Concurrent status should succeed");
+            let result = handle.join().unwrap();
+            assert!(result.success, "Concurrent status should succeed");
         }
     }
 
@@ -1937,8 +1915,8 @@ mod stress_tests {
             .collect();
 
         for handle in handles {
-            let (success, _, _) = handle.join().unwrap();
-            assert!(success, "Concurrent list should succeed");
+            let result = handle.join().unwrap();
+            assert!(result.success, "Concurrent list should succeed");
         }
     }
 
@@ -1955,10 +1933,11 @@ mod stress_tests {
 
         // Run multiple times rapidly
         for i in 0..10 {
-            let (success, stdout, stderr) = run_omg_in_dir(&["use", "node"], temp_dir.path());
+            let result = run_omg_in_dir(&["use", "node"], temp_dir.path());
             assert!(
-                success,
-                "Rapid version detection failed on iteration {i}: stdout: '{stdout}', stderr: '{stderr}'"
+                result.success,
+                "Rapid version detection failed on iteration {i}: stdout: '{}', stderr: '{}'",
+                result.stdout, result.stderr
             );
         }
     }
@@ -1971,8 +1950,8 @@ mod stress_tests {
         }
 
         // Search for common term that returns many results
-        let (success, _, _) = run_omg(&["search", "lib"]);
-        assert!(success, "Large search should succeed");
+        let result = run_omg(&["search", "lib"]);
+        assert!(result.success, "Large search should succeed");
     }
 }
 
@@ -1985,20 +1964,23 @@ mod output_format {
 
     #[test]
     fn test_version_output_format() {
-        let (success, stdout, _) = run_omg(&["--version"]);
-        assert!(success);
-        assert!(stdout.contains("omg"), "Version should contain 'omg'");
+        let result = run_omg(&["--version"]);
+        assert!(result.success);
+        assert!(
+            result.stdout.contains("omg"),
+            "Version should contain 'omg'"
+        );
         // Should have version number pattern
         assert!(
-            stdout.contains('.') || stdout.contains("0."),
+            result.stdout.contains('.') || result.stdout.contains("0."),
             "Version should have version number"
         );
     }
 
     #[test]
     fn test_help_lists_all_commands() {
-        let (success, stdout, _) = run_omg(&["--help"]);
-        assert!(success);
+        let result = run_omg(&["--help"]);
+        assert!(result.success);
 
         let expected_commands = [
             "search", "install", "remove", "update", "info", "status", "use", "list",
@@ -2006,7 +1988,7 @@ mod output_format {
 
         for cmd in expected_commands {
             assert!(
-                stdout.to_lowercase().contains(cmd),
+                result.stdout.to_lowercase().contains(cmd),
                 "Help should list '{cmd}' command"
             );
         }
@@ -2014,31 +1996,36 @@ mod output_format {
 
     #[test]
     fn test_status_output_sections() {
-        let (success, stdout, _) = run_omg(&["status"]);
-        assert!(success, "Status should succeed");
+        let result = run_omg(&["status"]);
+        assert!(result.success, "Status should succeed");
 
         // Should have some structured output
         assert!(
-            stdout.contains("Package") || stdout.contains("Runtime") || stdout.contains("OMG"),
+            result.stdout.contains("Package")
+                || result.stdout.contains("Runtime")
+                || result.stdout.contains("OMG"),
             "Status should have structured sections"
         );
     }
 
     #[test]
     fn test_list_output_format() {
-        let (success, stdout, stderr) = run_omg(&["list"]);
+        let result = run_omg(&["list"]);
         // In CI, list may fail if no runtimes are installed - that's OK
         // The key test is no panic
-        assert!(!stderr.contains("panicked at"), "List should not panic");
-        if success && !stdout.is_empty() {
+        assert!(
+            !result.stderr.contains("panicked at"),
+            "List should not panic"
+        );
+        if result.success && !result.stdout.is_empty() {
             // If it succeeds, check for expected content
             assert!(
-                stdout.contains("Node")
-                    || stdout.contains("Python")
-                    || stdout.contains("runtime")
-                    || stdout.contains("OMG")
-                    || stdout.contains("No")
-                    || stdout.is_empty(),
+                result.stdout.contains("Node")
+                    || result.stdout.contains("Python")
+                    || result.stdout.contains("runtime")
+                    || result.stdout.contains("OMG")
+                    || result.stdout.contains("No")
+                    || result.stdout.is_empty(),
                 "List should show runtime information or indicate none"
             );
         }
@@ -2054,20 +2041,22 @@ mod error_messages {
 
     #[test]
     fn test_invalid_command_error() {
-        let (success, _, stderr) = run_omg(&["nonexistent-command"]);
-        assert!(!success, "Invalid command should fail");
+        let result = run_omg(&["nonexistent-command"]);
+        assert!(!result.success, "Invalid command should fail");
         assert!(
-            stderr.contains("error") || stderr.contains("unrecognized"),
+            result.stderr.contains("error") || result.stderr.contains("unrecognized"),
             "Should report error for invalid command"
         );
     }
 
     #[test]
     fn test_missing_package_name_error() {
-        let (success, _, stderr) = run_omg(&["install"]);
-        assert!(!success, "Install without args should fail");
+        let result = run_omg(&["install"]);
+        assert!(!result.success, "Install without args should fail");
         assert!(
-            stderr.contains("required") || stderr.contains("error") || stderr.contains("argument"),
+            result.stderr.contains("required")
+                || result.stderr.contains("error")
+                || result.stderr.contains("argument"),
             "Should report missing arguments"
         );
     }
@@ -2080,18 +2069,19 @@ mod error_messages {
         let mut f = File::create(temp_dir.path().join("omg.lock")).unwrap();
         writeln!(f, "this is not valid toml {{{{").unwrap();
 
-        let (success, _, stderr) = run_omg_in_dir(&["env", "check"], temp_dir.path());
-        assert!(!success, "Should fail with invalid lock file");
+        let result = run_omg_in_dir(&["env", "check"], temp_dir.path());
+        assert!(!result.success, "Should fail with invalid lock file");
         // Should not panic, should give error
     }
 
     #[test]
     #[cfg(feature = "arch")]
     fn test_nonexistent_package_info() {
-        let (success, stdout, _) =
-            run_omg(&["info", "this-package-definitely-does-not-exist-12345"]);
+        let result = run_omg(&["info", "this-package-definitely-does-not-exist-12345"]);
         assert!(
-            !success || stdout.contains("not found") || stdout.contains("No package"),
+            !result.success
+                || result.stdout.contains("not found")
+                || result.stdout.contains("No package"),
             "Should indicate package not found"
         );
     }
@@ -2099,9 +2089,11 @@ mod error_messages {
     #[test]
     fn test_use_without_version_no_config() {
         let temp_dir = TempDir::new().unwrap();
-        let (success, _, stderr) = run_omg_in_dir(&["use", "node"], temp_dir.path());
+        let result = run_omg_in_dir(&["use", "node"], temp_dir.path());
         assert!(
-            !success || stderr.contains("No version") || stderr.contains("detected"),
+            !result.success
+                || result.stderr.contains("No version")
+                || result.stderr.contains("detected"),
             "Should fail without version file"
         );
     }

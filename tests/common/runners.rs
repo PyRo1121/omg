@@ -108,6 +108,7 @@ impl TestRunner {
         let passed = results.iter().filter(|r| r.passed).count();
         let failed = total - passed;
         let total_duration: Duration = results.iter().map(|r| r.duration).sum();
+        drop(results);
 
         TestSummary {
             total,
@@ -136,6 +137,7 @@ impl TestRunner {
                 println!("       Error: {err}");
             }
         }
+        drop(results);
 
         let summary = self.summary();
         println!("\n───────────────────────────────────────────────────────────────");
@@ -210,6 +212,7 @@ impl StressRunner {
     fn compute_results(&self) -> StressResults {
         let results = self.results.lock().unwrap();
         let mut durations: Vec<_> = results.iter().copied().collect();
+        drop(results);
         durations.sort();
 
         let total: Duration = durations.iter().sum();

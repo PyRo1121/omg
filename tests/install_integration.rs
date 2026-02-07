@@ -8,173 +8,133 @@
 //!
 //! Tests both official and AUR package installation on Arch Linux
 
-#[cfg(feature = "arch")]
-mod arch_install_tests {
-    use std::process::Command;
+#![cfg(feature = "arch")]
 
-    /// Helper function to run omg command
-    #[allow(dead_code)]
-    fn run_omg(args: &[&str]) -> std::process::Output {
-        Command::new("cargo")
-            .args(["run", "--release", "--", args[0], args[1]])
-            .output()
-            .expect("Failed to execute omg command")
+mod common;
+
+use common::*;
+use std::process::Command;
+
+/// Remove a package using pacman
+fn remove_package(pkg: &str) -> bool {
+    Command::new("sudo")
+        .args(["pacman", "-Rdd", "--noconfirm", pkg])
+        .output()
+        .map(|out| out.status.success())
+        .unwrap_or(false)
+}
+
+#[test]
+fn test_install_official_package() {
+    require_system_tests!();
+    require_arch!();
+
+    // Use a small, safe package for testing
+    let test_pkg = "ripgrep";
+
+    // Skip if already installed
+    if is_package_installed(test_pkg) {
+        println!("Package {} already installed, skipping test", test_pkg);
+        return;
     }
 
-    /// Check if a package is installed
-    fn is_package_installed(pkg: &str) -> bool {
-        Command::new("pacman")
-            .args(["-Q", pkg])
-            .output()
-            .map(|out| out.status.success())
-            .unwrap_or(false)
+    // Try to install
+    let result = run_omg(&["install", "-y", test_pkg]);
+
+    // Cleanup
+    if is_package_installed(test_pkg) {
+        remove_package(test_pkg);
     }
 
-    /// Install a package and return success status
-    fn install_package(pkg: &str) -> bool {
-        let output = Command::new("sudo")
-            .args([
-                "-E",
-                "cargo",
-                "run",
-                "--release",
-                "--",
-                "install",
-                "-y",
-                pkg,
-            ])
-            .output();
+    result.assert_success();
+    assert!(
+        result.contains("installed") || result.contains("success"),
+        "Expected success message in output"
+    );
+}
 
-        match output {
-            Ok(out) => out.status.success(),
-            Err(e) => {
-                eprintln!("Install command failed: {}", e);
-                false
-            }
-        }
+#[test]
+fn test_install_aur_package() {
+    require_system_tests!();
+    require_arch!();
+
+    // Test with a small AUR package
+    let test_pkg = "helium-browser-bin";
+
+    // Skip if already installed
+    if is_package_installed(test_pkg) {
+        println!("Package {} already installed, skipping test", test_pkg);
+        return;
     }
 
-    /// Remove a package
-    fn remove_package(pkg: &str) -> bool {
-        Command::new("sudo")
-            .args(["pacman", "-Rdd", "--noconfirm", pkg])
-            .output()
-            .map(|out| out.status.success())
-            .unwrap_or(false)
+    // Try to install from AUR
+    let result = run_omg(&["install", "-y", test_pkg]);
+
+    // Cleanup
+    if is_package_installed(test_pkg) {
+        remove_package(test_pkg);
     }
 
-    #[test]
-    #[ignore] // System test - run with OMG_RUN_SYSTEM_TESTS=1
-    fn test_install_official_package() {
-        // Use a small, safe package for testing
-        let test_pkg = "ripgrep";
+    result.assert_success();
+    assert!(
+        result.contains("installed") || result.contains("success"),
+        "Expected success message in output"
+    );
+}
 
-        // Skip if already installed
-        if is_package_installed(test_pkg) {
-            println!("Package {} already installed, skipping test", test_pkg);
-            return;
-        }
+#[test]
+fn test_install_mixed_packages() {
+    require_system_tests!();
+    require_arch!();
 
-        // Try to install
-        let success = install_package(test_pkg);
+    // Test installing both official and AUR packages in one command
+    let official_pkg = "bat";
+    let aur_pkg = "helium-browser-bin";
 
-        // Cleanup
-        if is_package_installed(test_pkg) {
-            remove_package(test_pkg);
-        }
+    // Skip if already installed
+    let official_installed = is_package_installed(official_pkg);
+    let aur_installed = is_package_installed(aur_pkg);
 
-        assert!(success, "Failed to install official package {}", test_pkg);
+    if official_installed && aur_installed {
+        println!("Packages already installed, skipping test");
+        return;
     }
 
-    #[test]
-    #[ignore] // System test - run with OMG_RUN_SYSTEM_TESTS=1
-    fn test_install_aur_package() {
-        // Test with a small AUR package
-        let test_pkg = "helium-browser-bin";
+    // Try to install both
+    let result = run_omg(&["install", "-y", official_pkg, aur_pkg]);
 
-        // Skip if already installed
-        if is_package_installed(test_pkg) {
-            println!("Package {} already installed, skipping test", test_pkg);
-            return;
-        }
-
-        // Try to install from AUR
-        let success = install_package(test_pkg);
-
-        // Cleanup
-        if is_package_installed(test_pkg) {
-            remove_package(test_pkg);
-        }
-
-        assert!(success, "Failed to install AUR package {}", test_pkg);
+    // Cleanup
+    if is_package_installed(official_pkg) && !official_installed {
+        remove_package(official_pkg);
+    }
+    if is_package_installed(aur_pkg) && !aur_installed {
+        remove_package(aur_pkg);
     }
 
-    #[test]
-    #[ignore] // System test - run with OMG_RUN_SYSTEM_TESTS=1
-    fn test_install_mixed_packages() {
-        // Test installing both official and AUR packages in one command
-        let official_pkg = "bat";
-        let aur_pkg = "helium-browser-bin";
+    result.assert_success();
+    assert!(
+        result.contains("installed") || result.contains("success"),
+        "Expected success message in output"
+    );
+}
 
-        // Skip if already installed
-        let official_installed = is_package_installed(official_pkg);
-        let aur_installed = is_package_installed(aur_pkg);
+#[test]
+fn test_install_nonexistent_package() {
+    require_system_tests!();
+    require_arch!();
 
-        if official_installed && aur_installed {
-            println!("Packages already installed, skipping test");
-            return;
-        }
+    let fake_pkg = "this-package-does-not-exist-12345";
 
-        // Try to install both
-        let output = Command::new("sudo")
-            .args([
-                "-E",
-                "cargo",
-                "run",
-                "--release",
-                "--",
-                "install",
-                "-y",
-                official_pkg,
-                aur_pkg,
-            ])
-            .output();
+    let result = run_omg(&["install", fake_pkg]);
 
-        let success = output.map(|out| out.status.success()).unwrap_or(false);
+    // Should fail
+    result.assert_failure();
 
-        // Cleanup
-        if is_package_installed(official_pkg) && !official_installed {
-            remove_package(official_pkg);
-        }
-        if is_package_installed(aur_pkg) && !aur_installed {
-            remove_package(aur_pkg);
-        }
-
-        assert!(success, "Failed to install mixed packages");
-    }
-
-    #[test]
-    #[ignore] // System test - run with OMG_RUN_SYSTEM_TESTS=1
-    fn test_install_nonexistent_package() {
-        let fake_pkg = "this-package-does-not-exist-12345";
-
-        let output = Command::new("cargo")
-            .args(["run", "--release", "--", "install", fake_pkg])
-            .output()
-            .expect("Failed to execute omg command");
-
-        // Should fail
-        assert!(!output.status.success());
-
-        // Should contain error message
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let output = format!("{}{}", stdout, stderr);
-
-        assert!(
-            output.contains("not found") || output.contains("Package not found"),
-            "Expected 'not found' in output, got: {}",
-            output
-        );
-    }
+    // Should contain error message
+    let output = result.combined_output();
+    assert!(
+        output.contains("not found") || output.contains("Package not found"),
+        "Expected 'not found' in output, got: {}",
+        output
+    );
 }

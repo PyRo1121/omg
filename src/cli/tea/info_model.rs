@@ -325,7 +325,7 @@ async fn fetch_info(package: &str) -> InfoMsg {
                 });
             }
         }
-    } else if pm.name() == "apt" {
+    } else if pm.name() == "apt" || pm.name() == "apt-pure" {
         #[cfg(feature = "debian")]
         {
             if let Some(info) = crate::package_managers::apt_get_sync_pkg_info(package)
@@ -340,6 +340,27 @@ async fn fetch_info(package: &str) -> InfoMsg {
                     repo: "apt".to_string(),
                     url: info.url,
                     size: info.install_size.map(|s| s as u64),
+                    licenses: vec![],
+                    maintainer: None,
+                    popularity: None,
+                    out_of_date: false,
+                });
+            }
+        }
+        #[cfg(all(not(feature = "debian"), feature = "debian-pure"))]
+        {
+            if let Some(pkg) = crate::package_managers::debian_db::get_info_fast(package)
+                .ok()
+                .flatten()
+            {
+                return InfoMsg::InfoReceived(PackageInfo {
+                    name: pkg.name,
+                    version: pkg.version.to_string(),
+                    description: pkg.description,
+                    source: InfoSource::Official,
+                    repo: "apt".to_string(),
+                    url: None,
+                    size: None,
                     licenses: vec![],
                     maintainer: None,
                     popularity: None,

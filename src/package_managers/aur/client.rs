@@ -493,38 +493,24 @@ impl AurClient {
             None
         };
 
-        // Beautiful header matching the new install.rs style
-        use owo_colors::OwoColorize;
-        println!();
-        println!(
-            "  {}",
-            "╭─────────────────────────────────────────╮".magenta()
-        );
-        println!(
-            "  {} {} {}",
-            "│".magenta(),
-            format!("  Building {package}  ").bold().magenta(),
-            "│".magenta()
-        );
-        println!(
-            "  {}",
-            "╰─────────────────────────────────────────╯".magenta()
-        );
-        println!();
-
         create_dir_as_user(&self.build_dir).await?;
 
         let pkg_dir = self.build_dir.join(package);
 
         if pkg_dir.exists() {
-            println!("{} Updating existing source...", "→".blue());
+            let pull_pb =
+                crate::cli::modern_ui::modern_spinner("Updating", &format!("{package} source"));
             self.git_pull(&pkg_dir).await.map_err(|e| {
+                crate::cli::modern_ui::finish_clear(&pull_pb);
                 tracing::warn!("Git pull failed for {}: {}", package, e);
                 AurError::GitPullFailed(package.to_string())
             })?;
+            crate::cli::modern_ui::finish_success(&pull_pb, "Updated", "source from AUR");
         } else {
-            println!("{} Cloning from AUR...", "→".blue());
+            let clone_pb =
+                crate::cli::modern_ui::modern_spinner("Cloning", &format!("{package} from AUR"));
             self.git_clone(package).await.map_err(|e| {
+                crate::cli::modern_ui::finish_clear(&clone_pb);
                 tracing::warn!("Git clone failed for {}: {}", package, e);
                 // Provide helpful error that explains the failure
                 anyhow::anyhow!(
@@ -534,6 +520,11 @@ impl AurClient {
                      → Original error: {e}"
                 )
             })?;
+            crate::cli::modern_ui::finish_success(
+                &clone_pb,
+                "Cloned",
+                &format!("{package} repository"),
+            );
         }
 
         let pkgbuild_path = pkg_dir.join("PKGBUILD");
@@ -562,22 +553,39 @@ impl AurClient {
             .cached_package(package, &env.pkgdest, &cache_key)
             .await?
         {
-            println!("{} Using cached build...", "→".blue());
+            crate::cli::modern_ui::print_info(&format!("Using cached build for {package}"));
             cached
         } else {
             let log_path = self.build_dir.join("_logs").join(format!("{package}.log"));
+
+            // Note: run_build() shows its own real-time output, no spinner needed
+            let build_start = std::time::Instant::now();
             let status = self
                 .run_build(&pkg_dir, &env)
                 .await
                 .with_context(|| format!("Failed to run makepkg for '{package}'"))?;
+            let build_elapsed = build_start.elapsed();
 
             if !status.success() {
+                use owo_colors::OwoColorize;
+                println!();
+                println!("  {} Build failed for {}", "✗".red(), package);
+                println!("  {} Check log: {}", "→".dimmed(), log_path.display());
                 return Err(AurError::BuildFailed {
                     package: package.to_string(),
                     log_path: log_path.display().to_string(),
                 }
                 .into());
             }
+
+            println!();
+            use owo_colors::OwoColorize;
+            println!(
+                "  {} Built {} in {:.1}s",
+                "✓".green().bold(),
+                package.bold(),
+                build_elapsed.as_secs_f64()
+            );
 
             let pkg_file = Self::find_built_package(&pkg_dir, &env.pkgdest)
                 .await
@@ -586,10 +594,10 @@ impl AurClient {
             pkg_file
         };
 
-        println!("{} Installing built package...", "→".blue());
+        println!();
+        let install_pb = crate::cli::modern_ui::modern_spinner("Installing", package);
         Self::install_built_package(&pkg_file).await?;
-
-        println!("\n{} {} installed successfully!", "✓".green(), package);
+        crate::cli::modern_ui::finish_success(&install_pb, "Installed", package);
 
         Ok(())
     }
@@ -2167,7 +2175,7 @@ mod tests {
         // Base: "https://aur.archlinux.org/rpc?v=5&type=info" = 47 chars
         // Available: 4400 - 47 = 4353 chars. With 20-char names: 4353 / 27 ≈ 161 packages/chunk
         for i in 0..200 {
-            names.push(format!("package-name-{:04}", i));
+            names.push(format!("package-name-{i:04}"));
         }
 
         let chunks = AurClient::chunk_aur_names(&names);
@@ -2180,14 +2188,11 @@ mod tests {
             }
             assert!(
                 url_len <= AUR_RPC_MAX_URI,
-                "Chunk {} has URL length {} which exceeds max {}",
-                idx,
-                url_len,
-                AUR_RPC_MAX_URI
+                "Chunk {idx} has URL length {url_len} which exceeds max {AUR_RPC_MAX_URI}"
             );
         }
 
-        let total_packages: usize = chunks.iter().map(|c| c.len()).sum();
+        let total_packages: usize = chunks.iter().map(Vec::len).sum();
         assert_eq!(
             total_packages, 200,
             "All packages must be included in chunks"
@@ -2214,7 +2219,7 @@ mod tests {
             assert!(url_len <= AUR_RPC_MAX_URI);
         }
 
-        let total: usize = chunks.iter().map(|c| c.len()).sum();
+        let total: usize = chunks.iter().map(Vec::len).sum();
         assert_eq!(total, 4);
     }
 
@@ -2227,7 +2232,7 @@ mod tests {
         let arg_size = "&arg[]=".len() + 10;
         let count = available / arg_size;
 
-        let names: Vec<String> = (0..count).map(|i| format!("pkg{:06}", i)).collect();
+        let names: Vec<String> = (0..count).map(|i| format!("pkg{i:06}")).collect();
         let chunks = AurClient::chunk_aur_names(&names);
 
         assert_eq!(chunks.len(), 1, "Should fit exactly in one chunk");

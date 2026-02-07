@@ -18,28 +18,15 @@
 #![allow(clippy::missing_panics_doc)]
 #![allow(clippy::missing_errors_doc)]
 
+mod common;
+use common::*;
+
 use std::env;
-use std::process::{Command, Stdio};
 use std::time::Instant;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TEST UTILITIES
 // ═══════════════════════════════════════════════════════════════════════════════
-
-fn run_omg(args: &[&str]) -> (bool, String, String) {
-    let output = Command::new(env!("CARGO_BIN_EXE_omg"))
-        .args(args)
-        .env("OMG_TEST_MODE", "1")
-        .env("OMG_DISABLE_DAEMON", "1")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .expect("Failed to execute omg");
-
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-    (output.status.success(), stdout, stderr)
-}
 
 fn measure_time<F: FnOnce() -> T, T>(f: F) -> (T, std::time::Duration) {
     let start = Instant::now();
@@ -66,10 +53,10 @@ mod cli_performance {
             return;
         }
 
-        let ((success, stdout, _), duration) = measure_time(|| run_omg(&["--version"]));
+        let (result, duration) = measure_time(|| run_omg(&["--version"]));
 
-        assert!(success, "Version flag should succeed");
-        assert!(stdout.contains("omg"), "Should show version");
+        assert!(result.success, "Version flag should succeed");
+        assert!(result.stdout.contains("omg"), "Should show version");
         assert!(
             duration.as_millis() < 50,
             "Version flag should complete in <50ms, took {}ms",
@@ -84,10 +71,10 @@ mod cli_performance {
             return;
         }
 
-        let ((success, stdout, _), duration) = measure_time(|| run_omg(&["--help"]));
+        let (result, duration) = measure_time(|| run_omg(&["--help"]));
 
-        assert!(success, "Help flag should succeed");
-        assert!(!stdout.is_empty(), "Should show help");
+        assert!(result.success, "Help flag should succeed");
+        assert!(!result.stdout.is_empty(), "Should show help");
         assert!(
             duration.as_millis() < 100,
             "Help flag should complete in <100ms, took {}ms",
@@ -102,9 +89,9 @@ mod cli_performance {
             return;
         }
 
-        let ((success, _, _), duration) = measure_time(|| run_omg(&["status"]));
+        let (result, duration) = measure_time(|| run_omg(&["status"]));
 
-        assert!(success, "Status command should succeed");
+        assert!(result.success, "Status command should succeed");
         assert!(
             duration.as_millis() < 200,
             "Status command should complete in <200ms, took {}ms",
@@ -127,9 +114,9 @@ mod search_performance {
             return;
         }
 
-        let ((success, _, _), duration) = measure_time(|| run_omg(&["search", "firefox"]));
+        let (result, duration) = measure_time(|| run_omg(&["search", "firefox"]));
 
-        assert!(success, "Search should succeed");
+        assert!(result.success, "Search should succeed");
         assert!(
             duration.as_millis() < 100,
             "Search should complete in <100ms, took {}ms",
@@ -145,9 +132,9 @@ mod search_performance {
         }
 
         let long_query = "a".repeat(100);
-        let ((success, _, _), duration) = measure_time(|| run_omg(&["search", &long_query]));
+        let (result, duration) = measure_time(|| run_omg(&["search", &long_query]));
 
-        assert!(success, "Long query search should succeed");
+        assert!(result.success, "Long query search should succeed");
         assert!(
             duration.as_millis() < 200,
             "Long query search should complete in <200ms, took {}ms",
@@ -162,9 +149,9 @@ mod search_performance {
             return;
         }
 
-        let ((success, _, _), duration) = measure_time(|| run_omg(&["search", "café"]));
+        let (result, duration) = measure_time(|| run_omg(&["search", "café"]));
 
-        assert!(success, "Unicode search should succeed");
+        assert!(result.success, "Unicode search should succeed");
         assert!(
             duration.as_millis() < 200,
             "Unicode search should complete in <200ms, took {}ms",
@@ -179,9 +166,9 @@ mod search_performance {
             return;
         }
 
-        let ((success, _, _), duration) = measure_time(|| run_omg(&["info", "pacman"]));
+        let (result, duration) = measure_time(|| run_omg(&["info", "pacman"]));
 
-        assert!(success, "Info command should succeed");
+        assert!(result.success, "Info command should succeed");
         assert!(
             duration.as_millis() < 100,
             "Info command should complete in <100ms, took {}ms",
@@ -204,10 +191,10 @@ mod update_performance {
             return;
         }
 
-        let ((success, stdout, _), duration) = measure_time(|| run_omg(&["update", "--check"]));
+        let (result, duration) = measure_time(|| run_omg(&["update", "--check"]));
 
-        assert!(success, "Update check should succeed");
-        assert!(!stdout.is_empty(), "Should produce output");
+        assert!(result.success, "Update check should succeed");
+        assert!(!result.stdout.is_empty(), "Should produce output");
 
         // Direct ALPM operations should be fast
         assert!(
@@ -224,10 +211,10 @@ mod update_performance {
             return;
         }
 
-        let ((success, stdout, _), duration) = measure_time(|| run_omg(&["explicit"]));
+        let (result, duration) = measure_time(|| run_omg(&["explicit"]));
 
-        assert!(success, "Explicit command should succeed");
-        assert!(!stdout.is_empty(), "Should produce output");
+        assert!(result.success, "Explicit command should succeed");
+        assert!(!result.stdout.is_empty(), "Should produce output");
 
         // Direct ALPM query should be fast
         assert!(
@@ -252,10 +239,10 @@ mod runtime_performance {
             return;
         }
 
-        let ((success, stdout, _), duration) = measure_time(|| run_omg(&["list"]));
+        let (result, duration) = measure_time(|| run_omg(&["list"]));
 
-        assert!(success, "List command should succeed");
-        assert!(!stdout.is_empty(), "Should produce output");
+        assert!(result.success, "List command should succeed");
+        assert!(!result.stdout.is_empty(), "Should produce output");
         assert!(
             duration.as_millis() < 200,
             "List command should complete in <200ms, took {}ms",
@@ -270,9 +257,9 @@ mod runtime_performance {
             return;
         }
 
-        let ((success, _, _), duration) = measure_time(|| run_omg(&["which", "node"]));
+        let (result, duration) = measure_time(|| run_omg(&["which", "node"]));
 
-        assert!(success, "Which command should succeed");
+        assert!(result.success, "Which command should succeed");
         assert!(
             duration.as_millis() < 100,
             "Which command should complete in <100ms, took {}ms",
@@ -287,9 +274,9 @@ mod runtime_performance {
             return;
         }
 
-        let ((success, _, _), duration) = measure_time(|| run_omg(&["config"]));
+        let (result, duration) = measure_time(|| run_omg(&["config"]));
 
-        assert!(success, "Config command should succeed");
+        assert!(result.success, "Config command should succeed");
         assert!(
             duration.as_millis() < 100,
             "Config command should complete in <100ms, took {}ms",
@@ -315,32 +302,16 @@ mod environment_performance {
 
         let temp_dir = TempDir::new().unwrap();
 
-        let ((success, stdout, _), duration) =
+        let (result, duration) =
             measure_time(|| run_omg_in_dir(&["env", "capture"], temp_dir.path()));
 
-        assert!(success, "Env capture should succeed");
-        assert!(!stdout.is_empty(), "Should produce output");
+        assert!(result.success, "Env capture should succeed");
+        assert!(!result.stdout.is_empty(), "Should produce output");
         assert!(
             duration.as_millis() < 500,
             "Env capture should complete in <500ms, took {}ms",
             duration.as_millis()
         );
-    }
-
-    fn run_omg_in_dir(args: &[&str], dir: &std::path::Path) -> (bool, String, String) {
-        let output = Command::new(env!("CARGO_BIN_EXE_omg"))
-            .args(args)
-            .current_dir(dir)
-            .env("OMG_TEST_MODE", "1")
-            .env("OMG_DISABLE_DAEMON", "1")
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output()
-            .expect("Failed to execute omg");
-
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-        (output.status.success(), stdout, stderr)
     }
 }
 
@@ -358,11 +329,10 @@ mod completions_performance {
             return;
         }
 
-        let ((success, stdout, _), duration) =
-            measure_time(|| run_omg(&["completions", "bash", "--stdout"]));
+        let (result, duration) = measure_time(|| run_omg(&["completions", "bash", "--stdout"]));
 
-        assert!(success, "Completions generation should succeed");
-        assert!(!stdout.is_empty(), "Should generate completions");
+        assert!(result.success, "Completions generation should succeed");
+        assert!(!result.stdout.is_empty(), "Should generate completions");
         assert!(
             duration.as_millis() < 200,
             "Completions generation should complete in <200ms, took {}ms",
@@ -377,10 +347,10 @@ mod completions_performance {
             return;
         }
 
-        let ((success, stdout, _), duration) = measure_time(|| run_omg(&["hook", "bash"]));
+        let (result, duration) = measure_time(|| run_omg(&["hook", "bash"]));
 
-        assert!(success, "Hook generation should succeed");
-        assert!(!stdout.is_empty(), "Should generate hook code");
+        assert!(result.success, "Hook generation should succeed");
+        assert!(!result.stdout.is_empty(), "Should generate hook code");
         assert!(
             duration.as_millis() < 100,
             "Hook generation should complete in <100ms, took {}ms",
@@ -472,9 +442,9 @@ mod cold_start {
         }
 
         // First run may initialize databases
-        let ((success, _, _), duration) = measure_time(|| run_omg(&["status"]));
+        let (result, duration) = measure_time(|| run_omg(&["status"]));
 
-        assert!(success, "First run should succeed");
+        assert!(result.success, "First run should succeed");
         assert!(
             duration.as_secs() < 10,
             "First run should complete in <10s, took {}s",
@@ -490,12 +460,12 @@ mod cold_start {
         }
 
         // Warm up with a run
-        run_omg(&["status"]);
+        let _ = run_omg(&["status"]);
 
         // Then measure warm performance
-        let ((success, _, _), duration) = measure_time(|| run_omg(&["status"]));
+        let (result, duration) = measure_time(|| run_omg(&["status"]));
 
-        assert!(success, "Warm run should succeed");
+        assert!(result.success, "Warm run should succeed");
         assert!(
             duration.as_millis() < 200,
             "Warm run should complete in <200ms, took {}ms",
@@ -519,11 +489,11 @@ mod memory_usage {
         }
 
         let start = Instant::now();
-        let (success, stdout, _) = run_omg(&["--help"]);
+        let result = run_omg(&["--help"]);
         let duration = start.elapsed();
 
-        assert!(success, "Help should succeed");
-        assert!(!stdout.is_empty(), "Should produce output");
+        assert!(result.success, "Help should succeed");
+        assert!(!result.stdout.is_empty(), "Should produce output");
 
         // Help should be instant and lightweight
         assert!(
@@ -541,10 +511,10 @@ mod memory_usage {
         }
 
         let start = Instant::now();
-        let (success, _, _) = run_omg(&["search", "lib"]);
+        let result = run_omg(&["search", "lib"]);
         let duration = start.elapsed();
 
-        assert!(success, "Search should succeed");
+        assert!(result.success, "Search should succeed");
 
         // Even broad search should be fast with direct ALPM
         assert!(

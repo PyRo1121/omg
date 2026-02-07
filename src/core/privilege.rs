@@ -242,9 +242,18 @@ pub async fn run_self_sudo(args: &[&str]) -> anyhow::Result<()> {
     // Try non-interactive sudo first (both modes start with this)
     // Note: We set OMG_ELEVATED=1 as an environment variable for the child process.
     // This prevents infinite recursion when the elevated process checks this flag.
+    //
+    // CRITICAL: Remove CARGO_* environment variables to prevent elevated process
+    // from writing to user's target directory as root (causing permission errors).
     let status = tokio::process::Command::new("sudo")
         .arg("-n")
         .env("OMG_ELEVATED", "1")
+        .env_remove("CARGO_PRIMARY_PACKAGE")
+        .env_remove("CARGO_MANIFEST_DIR")
+        .env_remove("CARGO_TARGET_DIR")
+        .env_remove("CARGO_PKG_NAME")
+        .env_remove("CARGO_PKG_VERSION")
+        .env_remove("OUT_DIR")
         .arg("--")
         .arg(&exe)
         .args(args)
@@ -306,6 +315,12 @@ pub async fn run_self_sudo(args: &[&str]) -> anyhow::Result<()> {
 
                 let interactive_status = tokio::process::Command::new("sudo")
                     .env("OMG_ELEVATED", "1")
+                    .env_remove("CARGO_PRIMARY_PACKAGE")
+                    .env_remove("CARGO_MANIFEST_DIR")
+                    .env_remove("CARGO_TARGET_DIR")
+                    .env_remove("CARGO_PKG_NAME")
+                    .env_remove("CARGO_PKG_VERSION")
+                    .env_remove("OUT_DIR")
                     .arg("--")
                     .arg(&exe)
                     .args(args)

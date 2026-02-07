@@ -1,0 +1,27 @@
+FROM debian:bookworm
+
+# Install benchmarking tools and dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    build-essential \
+    pkg-config \
+    libssl-dev \
+    time \
+    hyperfine \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create benchmark directory
+WORKDIR /benchmark
+
+# Copy the omg binary (will be provided at build time)
+COPY target/release/omg /usr/local/bin/omg
+RUN chmod +x /usr/local/bin/omg
+
+# Copy Debian benchmark script
+COPY benchmark_debian.sh /benchmark/benchmark_debian.sh
+RUN chmod +x /benchmark/benchmark_debian.sh
+
+# Ensure apt cache is populated
+RUN apt-get update
+
+CMD ["/benchmark/benchmark_debian.sh"]

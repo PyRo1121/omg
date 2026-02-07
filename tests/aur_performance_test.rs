@@ -1,4 +1,9 @@
-#![cfg(feature = "arch")]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::pedantic,
+    clippy::nursery
+)]
 //! AUR Performance Integration Tests
 //!
 //! These tests validate all AUR optimizations work together:
@@ -8,17 +13,24 @@
 //! - Progress reporting
 //! - Sudoloop for non-blocking operations
 //!
-//! Run manually with: `cargo test --features arch --test aur_performance_test -- --ignored`
+//! Run manually with: `OMG_RUN_SYSTEM_TESTS=1 cargo test --features arch --test aur_performance_test`
 //!
 //! WARNING: These tests perform real package installations and require sudo!
 //! Only run in disposable containers or development environments.
 
-use std::time::Instant;
+#![cfg(feature = "arch")]
+
+mod common;
+
+use common::*;
+use std::time::{Duration, Instant};
 
 /// Test AUR package installation with all optimizations enabled
 #[tokio::test]
-#[ignore = "Manual execution only - requires sudo and real installations"]
 async fn test_aur_install_speed() {
+    require_system_tests!();
+    require_arch!();
+
     // Test packages chosen for different characteristics:
     // - yay-bin: Binary package (no build time)
     // - paru-bin: Binary package with dependencies
@@ -30,27 +42,12 @@ async fn test_aur_install_speed() {
         let start = Instant::now();
 
         // Run OMG install
-        let output = std::process::Command::new("cargo")
-            .args([
-                "run",
-                "--release",
-                "--features",
-                "arch",
-                "--",
-                "install",
-                package,
-            ])
-            .output()
-            .expect("Failed to execute omg install");
+        let result = run_omg(&["install", package]);
 
         let duration = start.elapsed();
 
         // Verify installation succeeded
-        assert!(
-            output.status.success(),
-            "Installation of {package} failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+        result.assert_success();
 
         // Verify reasonable performance (< 60s for binary packages)
         assert!(
@@ -64,8 +61,10 @@ async fn test_aur_install_speed() {
 
 /// Test parallel download performance
 #[tokio::test]
-#[ignore = "Manual execution only - requires network and sudo"]
 async fn test_parallel_downloads() {
+    require_system_tests!();
+    require_arch!();
+
     println!("\n=== Testing parallel source downloads ===");
 
     // Package with multiple sources to download
@@ -74,27 +73,11 @@ async fn test_parallel_downloads() {
     let start = Instant::now();
 
     // Run OMG install with parallel downloads
-    let output = std::process::Command::new("cargo")
-        .args([
-            "run",
-            "--release",
-            "--features",
-            "arch",
-            "--",
-            "install",
-            package,
-        ])
-        .output()
-        .expect("Failed to execute omg install");
+    let result = run_omg(&["install", package]);
 
     let duration = start.elapsed();
 
-    assert!(
-        output.status.success(),
-        "Installation of {} failed: {}",
-        package,
-        String::from_utf8_lossy(&output.stderr)
-    );
+    result.assert_success();
 
     // With parallel downloads, should be significantly faster
     // This is a complex package but should complete reasonably quickly
@@ -108,28 +91,18 @@ async fn test_parallel_downloads() {
 
 /// Test smart dependency resolution avoids unnecessary work
 #[tokio::test]
-#[ignore = "Manual execution only - requires sudo"]
 async fn test_smart_dependency_resolution() {
+    require_system_tests!();
+    require_arch!();
+
     println!("\n=== Testing smart dependency resolution ===");
 
     // Install base package first
     let base_package = "yay-bin";
     println!("Installing base package: {base_package}");
 
-    let output = std::process::Command::new("cargo")
-        .args([
-            "run",
-            "--release",
-            "--features",
-            "arch",
-            "--",
-            "install",
-            base_package,
-        ])
-        .output()
-        .expect("Failed to install base package");
-
-    assert!(output.status.success(), "Base package installation failed");
+    let result = run_omg(&["install", base_package]);
+    result.assert_success();
 
     // Now install a package that might share dependencies
     // Smart resolution should skip already-satisfied dependencies
@@ -138,26 +111,11 @@ async fn test_smart_dependency_resolution() {
 
     let start = Instant::now();
 
-    let output = std::process::Command::new("cargo")
-        .args([
-            "run",
-            "--release",
-            "--features",
-            "arch",
-            "--",
-            "install",
-            test_package,
-        ])
-        .output()
-        .expect("Failed to install test package");
+    let result = run_omg(&["install", test_package]);
 
     let duration = start.elapsed();
 
-    assert!(
-        output.status.success(),
-        "Installation failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    result.assert_success();
 
     // Should be faster since shared dependencies are already installed
     assert!(
@@ -166,4 +124,118 @@ async fn test_smart_dependency_resolution() {
     );
 
     println!("✓ Smart dependency resolution completed in {duration:?}");
+}
+
+/// Test performance reporting and progress indicators
+#[tokio::test]
+async fn test_progress_reporting() {
+    require_system_tests!();
+    require_arch!();
+
+    println!("\n=== Testing progress reporting ===");
+
+    let package = "yay-bin";
+
+    let result = run_omg(&["install", package]);
+    result.assert_success();
+
+    // Check that output includes progress indicators or status messages
+    // The exact format may vary, but we should see some indication of progress
+    let output = result.combined_output();
+
+    // Look for typical progress indicators
+    let has_progress = output.contains("Installing")
+        || output.contains("Downloading")
+        || output.contains("Building")
+        || output.contains("→")
+        || output.contains("✓");
+
+    assert!(
+        has_progress,
+        "Expected progress indicators in output, but found none"
+    );
+
+    println!("✓ Progress reporting working correctly");
+}
+
+/// Test that performance meets target thresholds
+#[tokio::test]
+async fn test_performance_benchmarks() {
+    require_system_tests!();
+    require_arch!();
+
+    println!("\n=== Testing performance benchmarks ===");
+
+    let benchmarks = vec![
+        ("yay-bin", Duration::from_secs(45)), // Binary package should be fast
+        ("paru-bin", Duration::from_secs(45)),
+    ];
+
+    for (package, max_duration) in benchmarks {
+        println!("Benchmarking {package}...");
+
+        let start = Instant::now();
+        let result = run_omg(&["install", package]);
+        let duration = start.elapsed();
+
+        result.assert_success();
+        result.assert_duration_under(max_duration);
+
+        println!("✓ {package}: {duration:?} (target: {max_duration:?})");
+    }
+}
+
+/// Test installation of multiple packages in sequence
+#[tokio::test]
+async fn test_sequential_installations() {
+    require_system_tests!();
+    require_arch!();
+
+    println!("\n=== Testing sequential installations ===");
+
+    let packages = vec!["yay-bin", "paru-bin"];
+
+    let start = Instant::now();
+
+    for package in &packages {
+        println!("Installing {package}...");
+        let result = run_omg(&["install", package]);
+        result.assert_success();
+    }
+
+    let total_duration = start.elapsed();
+
+    // With optimizations, sequential installs should complete in reasonable time
+    // Even with 2 packages, should finish in < 90s total
+    assert!(
+        total_duration.as_secs() < 90,
+        "Sequential installations took too long: {total_duration:?}"
+    );
+
+    println!("✓ Sequential installations completed in {total_duration:?}");
+}
+
+/// Test error handling doesn't significantly impact performance
+#[tokio::test]
+async fn test_error_handling_performance() {
+    require_system_tests!();
+    require_arch!();
+
+    println!("\n=== Testing error handling performance ===");
+
+    // Try to install a non-existent package
+    let start = Instant::now();
+    let result = run_omg(&["install", "this-package-does-not-exist-xyz123"]);
+    let duration = start.elapsed();
+
+    // Should fail quickly
+    result.assert_failure();
+
+    // Error handling should be fast (< 10s)
+    assert!(
+        duration.as_secs() < 10,
+        "Error handling took too long: {duration:?}"
+    );
+
+    println!("✓ Error handling completed in {duration:?}");
 }

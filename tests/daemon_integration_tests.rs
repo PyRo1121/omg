@@ -359,7 +359,7 @@ async fn test_concurrent_search_requests_different_queries() {
     let (_temp, state) = setup_test_env();
 
     // Send concurrent searches with different queries
-    let queries = vec!["firefox", "vim", "git", "bash", "python"];
+    let queries = ["firefox", "vim", "git", "bash", "python"];
     let mut handles = vec![];
 
     for (i, query) in queries.iter().enumerate() {

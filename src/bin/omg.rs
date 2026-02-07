@@ -778,8 +778,8 @@ async fn handle_remove_command(
 }
 
 #[allow(clippy::fn_params_excessive_bools)] // Maps directly to CLI flags: --orphans, --cache, --aur, --all
-async fn handle_clean_command(orphans: bool, cache: bool, aur: bool, all: bool) -> Result<()> {
-    packages::clean(orphans, cache, aur, all).await
+async fn handle_clean_command(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bool) -> Result<()> {
+    packages::clean(orphans, cache, aur, all, dry_run).await
 }
 
 async fn handle_complete_command(
@@ -855,8 +855,9 @@ async fn dispatch_command(
             cache,
             aur,
             all,
+            dry_run,
         } => {
-            handle_clean_command(*orphans, *cache, *aur, *all).await?;
+            handle_clean_command(*orphans, *cache, *aur, *all, *dry_run).await?;
         }
         Commands::Explicit { count } => {
             packages::explicit_sync_with_json(*count, json_flag)?;

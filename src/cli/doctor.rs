@@ -381,16 +381,8 @@ pub fn enable_turbo_mode() -> Result<()> {
     let exe = std::env::current_exe()?;
     let exe_path = exe.display();
 
-    println!();
-    println!("  {}", "╭─────────────────────────────────────────╮".cyan());
-    println!(
-        "  {} {} {}",
-        "│".cyan(),
-        "  TURBO MODE - Zero-Sudo Operations  ".bold(),
-        "│".cyan()
-    );
-    println!("  {}", "╰─────────────────────────────────────────╯".cyan());
-    println!();
+    // Modern header without box drawing
+    crate::cli::modern_ui::print_phase_header("⚡", "TURBO MODE", "Zero-Sudo Operations");
 
     // Check if already enabled
     if crate::core::caps::has_package_caps() {

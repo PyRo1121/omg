@@ -2,16 +2,14 @@
 
 use anyhow::Result;
 use dialoguer::Select;
-
-use crate::cli::ui;
-#[cfg(unix)]
-use crate::core::client::DaemonClient;
-use crate::package_managers::get_package_manager;
-
 use futures::future::BoxFuture;
 
+use crate::cli::{modern_ui, ui};
+#[cfg(unix)]
+use crate::core::client::DaemonClient;
 #[cfg(feature = "arch")]
 use crate::package_managers::AurClient;
+use crate::package_managers::get_package_manager;
 
 fn extract_missing_package(msg: &str, packages: &[String]) -> Option<String> {
     // Match pattern: "Package {name} not found in any repository" from alpm_ops.rs
@@ -26,6 +24,12 @@ fn extract_missing_package(msg: &str, packages: &[String]) -> Option<String> {
     packages.iter().find(|p| msg.contains(p.as_str())).cloned()
 }
 
+/// Install packages from repositories or AUR
+///
+/// # Arguments
+/// * `packages` - Package names to install
+/// * `yes` - Skip confirmation prompts
+/// * `dry_run` - Show what would be installed without actually installing
 pub async fn install(packages: &[String], yes: bool, dry_run: bool) -> Result<()> {
     if packages.is_empty() {
         anyhow::bail!("No packages specified");
@@ -37,19 +41,48 @@ pub async fn install(packages: &[String], yes: bool, dry_run: bool) -> Result<()
 
     let pm = get_package_manager()?;
 
-    // Beautiful header with package count
-    print_install_header(packages.len());
+    // Modern header with package count
+    modern_ui::print_phase_header(
+        "📦",
+        "Install",
+        &format!(
+            "{} {}",
+            packages.len(),
+            if packages.len() == 1 {
+                "package"
+            } else {
+                "packages"
+            }
+        ),
+    );
+
+    // Show resolution phase for user feedback
+    let pb = modern_ui::modern_spinner("Resolving", "package sources");
+    std::thread::sleep(std::time::Duration::from_millis(50)); // Brief visual feedback
 
     // Check if all packages exist in official repos BEFORE calling install
     // This avoids unnecessary sudo prompt for packages that don't exist
     #[cfg(feature = "arch")]
     {
+        use crate::core::security::is_local_package_file;
+
         let mut missing_packages = Vec::new();
         for pkg in packages {
-            if crate::package_managers::get_sync_pkg_info(pkg).ok().flatten().is_none() {
+            // Skip local package files - they don't need repo lookup
+            // These are absolute paths to .pkg.tar.zst files from AUR builds
+            if is_local_package_file(pkg) {
+                modern_ui::finish_info(&pb, &format!("Local package: {pkg}"));
+                continue;
+            }
+            if crate::package_managers::get_sync_pkg_info(pkg)
+                .ok()
+                .flatten()
+                .is_none()
+            {
                 missing_packages.push(pkg.clone());
             }
         }
+        modern_ui::finish_clear(&pb);
 
         // If any packages are missing from official repos, try AUR WITHOUT sudo prompt
         if !missing_packages.is_empty() {
@@ -58,13 +91,18 @@ pub async fn install(packages: &[String], yes: bool, dry_run: bool) -> Result<()
 
             if missing_packages.len() == 1 {
                 // Single missing package - go straight to AUR
-                return handle_missing_package(missing_packages[0].clone(),
-                    anyhow::anyhow!("Package not found in official repos"), yes).await;
+                return handle_missing_package(
+                    missing_packages[0].clone(),
+                    anyhow::anyhow!("Package not found in official repos"),
+                    yes,
+                )
+                .await;
             }
 
             // Multiple missing packages - install official ones first, then handle missing
             if missing_packages.len() < packages.len() {
-                let official: Vec<String> = packages.iter()
+                let official: Vec<String> = packages
+                    .iter()
                     .filter(|p| !missing_packages.contains(p))
                     .cloned()
                     .collect();
@@ -76,11 +114,20 @@ pub async fn install(packages: &[String], yes: bool, dry_run: bool) -> Result<()
 
             // Handle missing packages one by one (AUR)
             for missing_pkg in missing_packages {
-                handle_missing_package(missing_pkg,
-                    anyhow::anyhow!("Package not found in official repos"), yes).await?;
+                handle_missing_package(
+                    missing_pkg,
+                    anyhow::anyhow!("Package not found in official repos"),
+                    yes,
+                )
+                .await?;
             }
             return Ok(());
         }
+    }
+
+    #[cfg(not(feature = "arch"))]
+    {
+        modern_ui::finish_clear(&pb);
     }
 
     if let Err(e) = pm.install(packages).await {
@@ -92,82 +139,33 @@ pub async fn install(packages: &[String], yes: bool, dry_run: bool) -> Result<()
         return Err(e);
     }
 
-    // Success message
-    print_install_success(packages);
+    // Modern success message
+    modern_ui::print_success_with_packages(
+        &format!(
+            "Installed {} {}",
+            packages.len(),
+            if packages.len() == 1 {
+                "package"
+            } else {
+                "packages"
+            }
+        ),
+        packages,
+    );
 
     crate::core::usage::track_install(packages);
     Ok(())
 }
 
-fn print_install_header(count: usize) {
-    use owo_colors::OwoColorize;
-
-    println!();
-    println!("  {}", "╭─────────────────────────────────────────╮".cyan());
-    println!(
-        "  {} {} {}",
-        "│".cyan(),
-        format!(
-            "  Installing {} package{}  ",
-            count,
-            if count == 1 { "" } else { "s" }
-        )
-        .bold(),
-        "│".cyan()
-    );
-    println!("  {}", "╰─────────────────────────────────────────╯".cyan());
-    println!();
-}
-
-fn print_install_success(packages: &[String]) {
-    use owo_colors::OwoColorize;
-
-    println!();
-    println!(
-        "  {}",
-        "╭─────────────────────────────────────────╮".green()
-    );
-    println!(
-        "  {} {} {}",
-        "│".green(),
-        "  ✓ Installation Complete!  ".bold().green(),
-        "│".green()
-    );
-    println!(
-        "  {}",
-        "╰─────────────────────────────────────────╯".green()
-    );
-
-    println!();
-    if packages.len() <= 5 {
-        for pkg in packages {
-            println!("    {} {}", "✓".green().bold(), pkg.bold());
-        }
-    } else {
-    println!(
-        " {} {} packages installed successfully",
-        "✓".green().bold(),
-        packages.len().bold()
-    );
-    }
-    println!();
-}
+// Removed old box-drawing functions - using modern_ui now
 
 #[allow(clippy::unnecessary_wraps)] // Result return required: API compat with feature-gated impls
 fn install_dry_run(packages: &[String]) -> Result<()> {
     use comfy_table::{Table, modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL};
     use owo_colors::OwoColorize;
 
-    println!();
-    println!("  {}", "╭─────────────────────────────────────────╮".blue());
-    println!(
-        "  {} {} {}",
-        "│".blue(),
-        "  DRY RUN - Install Preview  ".bold().blue(),
-        "│".blue()
-    );
-    println!("  {}", "╰─────────────────────────────────────────╯".blue());
-    println!();
+    // Modern dry-run header
+    crate::cli::modern_ui::print_phase_header("📋", "Install Preview", "dry run");
 
     let mut table = Table::new();
     table
@@ -252,17 +250,8 @@ fn handle_missing_package(
 
         use owo_colors::OwoColorize;
 
-        println!();
-        println!("  {}", "╭─────────────────────────────────────────╮".red());
-        println!(
-            "  {} {} {}",
-            "│".red(),
-            format!("  Package '{pkg_name}' Not Found  ").bold().red(),
-            "│".red()
-        );
-        println!("  {}", "╰─────────────────────────────────────────╯".red());
-        println!();
-        println!("  {} Did you mean one of these?", "→".cyan().bold());
+        modern_ui::print_error(&format!("Package '{pkg_name}' not found"));
+        modern_ui::print_info("Did you mean one of these?");
         println!();
 
         // Skip interactive prompt when --yes is true
@@ -346,89 +335,24 @@ async fn try_aur_package(pkg_name: &str) -> Result<crate::core::Package> {
 
 #[cfg(feature = "arch")]
 async fn handle_aur_package(
-    pkg_name: &str,
+    _pkg_name: &str,
     aur_pkg: crate::core::Package,
     yes: bool,
 ) -> Result<()> {
-    use comfy_table::{Table, modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL};
-    use owo_colors::OwoColorize;
-
-    println!();
-    println!(
-        "  {}",
-        "╭─────────────────────────────────────────╮".yellow()
+    // Modern AUR package info display
+    modern_ui::print_aur_package_info(
+        &aur_pkg.name,
+        &aur_pkg.version.to_string(),
+        &aur_pkg.description,
     );
-    println!(
-        "  {} {} {}",
-        "│".yellow(),
-        format!("  ⚠ Package '{pkg_name}' not found  ")
-            .bold()
-            .yellow(),
-        "│".yellow()
-    );
-    println!(
-        "  {}",
-        "╰─────────────────────────────────────────╯".yellow()
-    );
-    println!();
-
-    // Create beautiful info table
-    let mut table = Table::new();
-    table
-        .load_preset(UTF8_FULL)
-        .apply_modifier(UTF8_ROUND_CORNERS)
-        .set_header(vec!["AUR Package Details"]);
-
-    table.add_row(vec![format!(
-        "{} {}",
-        "Package:".dimmed(),
-        aur_pkg.name.bold()
-    )]);
-    table.add_row(vec![format!(
-        "{} {}",
-        "Version:".dimmed(),
-        aur_pkg.version.to_string().cyan()
-    )]);
-
-    if !aur_pkg.description.is_empty() {
-        table.add_row(vec![format!(
-            "{} {}",
-            "Description:".dimmed(),
-            aur_pkg.description
-        )]);
-    }
-
-    table.add_row(vec![format!(
-        "{} {}",
-        "Source:".dimmed(),
-        "Arch User Repository".magenta()
-    )]);
-
-    println!("{table}");
-    println!();
-
-    // Security warning
-    println!("  {}", "╭─────────────────────────────────────────╮".red());
-    println!(
-        "  {} {} {}",
-        "│".red(),
-        "  ⚠ SECURITY NOTICE  ".bold().red(),
-        "│".red()
-    );
-    println!("  {}", "╰─────────────────────────────────────────╯".red());
-    println!();
-    println!("  {} AUR packages are user-submitted", "•".dimmed());
-    println!("  {} Not vetted by Arch Linux", "•".dimmed());
-    println!("  {} Review PKGBUILD before installing", "•".dimmed());
-    println!();
 
     let should_install = if yes {
-        println!("  {} Auto-accepting (--yes flag)", "→".cyan());
+        modern_ui::print_info("Auto-accepting (--yes flag)");
         true
     } else if console::user_attended() {
         use dialoguer::Confirm;
         Confirm::with_theme(&ui::prompt_theme())
-            .with_prompt(format!("Install {} from AUR?", aur_pkg.name.bold()))
+            .with_prompt(format!("Install {} from AUR?", aur_pkg.name))
             .default(false)
             .interact()?
     } else {
@@ -436,58 +360,19 @@ async fn handle_aur_package(
     };
 
     if !should_install {
-        println!();
-        println!("  {} Installation cancelled", "✗".red().bold());
-        println!();
+        modern_ui::print_error("Installation cancelled");
         anyhow::bail!("Installation cancelled by user");
     }
 
-    println!();
-    println!(
-        "  {}",
-        "╭─────────────────────────────────────────╮".magenta()
-    );
-    println!(
-        "  {} {} {}",
-        "│".magenta(),
-        format!("  Building {}  ", aur_pkg.name).bold().magenta(),
-        "│".magenta()
-    );
-    println!(
-        "  {}",
-        "╰─────────────────────────────────────────╯".magenta()
-    );
-    println!();
-
-    println!("  {} Cloning from AUR...", "→".cyan().bold());
+    // Show build phase
+    modern_ui::print_aur_build_phase("Building", &aur_pkg.name);
 
     let aur_client = AurClient::new();
     // CRITICAL: Use aur_pkg.name (e.g., "brave-bin") not original pkg_name (e.g., "brave")
     aur_client.install(&aur_pkg.name).await?;
 
-    // Success message for AUR
-    println!();
-    println!(
-        "  {}",
-        "╭─────────────────────────────────────────╮".green()
-    );
-    println!(
-        "  {} {} {}",
-        "│".green(),
-        "  ✓ AUR Build Complete!  ".bold().green(),
-        "│".green()
-    );
-    println!(
-        "  {}",
-        "╰─────────────────────────────────────────╯".green()
-    );
-    println!();
-    println!(
-        "    {} {} installed from AUR",
-        "✓".green().bold(),
-        aur_pkg.name.bold()
-    );
-    println!();
+    // Modern success message for AUR
+    modern_ui::print_success(&format!("Built and installed {} from AUR", aur_pkg.name));
 
     crate::core::usage::track_install(std::slice::from_ref(&aur_pkg.name));
     Ok(())

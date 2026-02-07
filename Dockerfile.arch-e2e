@@ -1,0 +1,34 @@
+# Dockerfile for E2E testing on Arch Linux
+FROM archlinux:latest
+
+# Update system and install base dependencies
+RUN pacman -Syu --noconfirm && \
+    pacman -S --noconfirm \
+        base-devel \
+        git \
+        sudo \
+        vim \
+        which \
+        && \
+    pacman -Scc --noconfirm
+
+# Create test user with sudo access
+RUN useradd -m -G wheel -s /bin/bash testuser && \
+    echo "%wheel ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+
+# Set up working directory
+WORKDIR /opt/omg
+
+# Copy OMG binary
+COPY omg-binary /usr/local/bin/omg
+RUN chmod +x /usr/local/bin/omg
+
+# Verify installation
+RUN omg --version
+
+# Switch to test user for tests
+USER testuser
+WORKDIR /home/testuser
+
+# Default command
+CMD ["/bin/bash"]

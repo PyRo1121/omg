@@ -13,3 +13,15 @@ name = "parse_config"
 path = "fuzz_targets/parse_config.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "ipc_messages"
+path = "fuzz_targets/ipc_messages.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "package_names"
+path = "fuzz_targets/package_names.rs"
+test = false
+doc = false

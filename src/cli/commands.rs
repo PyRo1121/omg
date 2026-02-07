@@ -14,7 +14,7 @@ use crate::package_managers::{apt_get_system_status, apt_list_all_package_names}
 use crate::cli::{style, ui};
 use crate::core::env::distro::use_debian_backend;
 use dialoguer::{Confirm, Select};
-use ratatui::prelude::Stylize;
+use owo_colors::OwoColorize;
 
 #[cfg(feature = "arch")]
 use crate::package_managers::get_system_status;
@@ -56,8 +56,14 @@ pub async fn complete(_shell: &str, current: &str, last: &str, full: Option<&str
     let limit = if current.is_empty() { 50 } else { 200 };
 
     let suggestions = match last {
-        "install" | "i" | "remove" | "r" | "info" => {
+        "install" | "i" | "info" => {
             let mut results = complete_package_names(&engine, current, last, in_tool).await?;
+            results.truncate(limit);
+            results
+        }
+        "remove" | "r" => {
+            // Remove should only show INSTALLED packages
+            let mut results = complete_installed_packages(&engine, current);
             results.truncate(limit);
             results
         }
@@ -106,6 +112,34 @@ async fn complete_package_names(
     }
 
     Ok(engine.fuzzy_match(current, names))
+}
+
+/// Complete installed package names for remove command
+fn complete_installed_packages(
+    engine: &crate::core::completion::CompletionEngine,
+    current: &str,
+) -> Vec<String> {
+    let names = get_installed_package_names();
+    engine.fuzzy_match(current, names)
+}
+
+/// Get installed package names for remove completion
+fn get_installed_package_names() -> Vec<String> {
+    #[cfg(feature = "arch")]
+    {
+        if let Ok(installed) = crate::package_managers::list_installed_fast() {
+            return installed.into_iter().map(|p| p.name).collect();
+        }
+    }
+
+    #[cfg(any(feature = "debian", feature = "debian-pure"))]
+    {
+        if let Ok(installed) = crate::package_managers::debian_db::list_installed_fast() {
+            return installed.into_iter().map(|p| p.name).collect();
+        }
+    }
+
+    Vec::new()
 }
 
 /// Get package names from daemon with fallback to direct access
@@ -305,7 +339,9 @@ fn output_suggestions(
 pub fn status_sync() -> Result<()> {
     let _start = std::time::Instant::now();
 
-    ui::print_header("System", "Current Status");
+    // Modern header without old styling
+    use crate::cli::modern_ui;
+    modern_ui::print_phase_header("📊", "System Status", "overview");
 
     // ULTRA FAST: Try binary status file first (zero IPC, sub-ms)
     let (total, explicit, orphans, updates, security_vulnerabilities, cached_runtimes) =
@@ -386,62 +422,72 @@ pub fn status_sync() -> Result<()> {
             }
         };
 
-    let mut content = Vec::new();
+    // Modern minimal status layout - no box drawing
+    println!();
 
-    // Packages
-    content.push(format!(
-        "Packages:  {} total ({} explicit)",
+    // Package stats
+    println!(
+        "  {} {} total, {} explicit",
+        "Packages".bold(),
         total.to_string().cyan(),
         explicit.to_string().cyan()
-    ));
+    );
 
     // Updates
     if updates > 0 {
-        content.push(format!(
-            "Updates:   {} available",
+        println!(
+            "  {} {} available",
+            "Updates".bold(),
             updates.to_string().yellow().bold()
-        ));
+        );
     } else {
-        content.push(format!("Updates:   {}", "Up to date".green()));
+        println!(
+            "  {} {}",
+            "Updates".bold(),
+            "Up to date".green()
+        );
     }
 
-    // Orphans
+    // Orphans (only show if > 0)
     if orphans > 0 {
-        content.push(format!(
-            "Orphans:   {} packages",
-            orphans.to_string().yellow()
-        ));
+        println!(
+            "  {} {}",
+            "Orphans".bold(),
+            format!("{orphans} packages").yellow()
+        );
     }
 
     // Security
     if security_vulnerabilities > 0 {
-        content.push(format!(
-            "Security:  {} vulnerabilities found!",
-            security_vulnerabilities.to_string().red().bold()
-        ));
+        println!(
+            "  {} {}",
+            "Security".bold(),
+            format!("{security_vulnerabilities} vulnerabilities").red().bold()
+        );
     } else {
-        content.push(format!("Security:  {}", "No known issues".green()));
+        println!(
+            "  {} {}",
+            "Security".bold(),
+            "No known issues".green()
+        );
     }
 
     // Daemon status
     #[cfg(unix)]
     {
         let socket = crate::core::client::default_socket_path();
-        let daemon_status = if socket.exists() {
-            "Running".green()
+        if socket.exists() {
+            println!("  {} {}", "Daemon".bold(), "Running".green());
         } else {
-            "Offline".gray()
-        };
-        content.push(format!("Daemon:    {daemon_status}"));
+            println!("  {} {}", "Daemon".bold(), "Offline".dimmed());
+        }
     }
-
-    ui::print_card("Overview", content);
 
     // Runtimes - INSTANT FROM CACHE (Unix only, from daemon)
     #[cfg(unix)]
     {
-        ui::print_spacer();
-        println!("{}", "Runtimes:".bold());
+        println!();
+        println!("  {}", "Runtimes".bold());
 
         if let Some(versions) = cached_runtimes {
             for (rt_name, v) in &versions {
@@ -455,7 +501,7 @@ pub fn status_sync() -> Result<()> {
                     "ruby" => "Ruby",
                     _ => rt_name.as_str(),
                 };
-                ui::print_list_item(label, Some(v));
+                println!("    {} {} {}", "·".cyan(), label, v.dimmed());
             }
         } else {
             // Fallback to local probing if daemon is down
@@ -471,21 +517,29 @@ pub fn status_sync() -> Result<()> {
                         "ruby" => "Ruby",
                         _ => rt_name,
                     };
-                    ui::print_list_item(label, Some(&v));
+                    println!("    {} {} {}", "·".cyan(), label, v.dimmed());
                 }
             }
         }
     }
 
+    // Modern tip styling
+    println!();
     if updates > 0 {
-        ui::print_tip("Run 'omg update --check' to see detailed package changes.");
+        println!("  {} Run {} to see detailed package changes",
+            "Tip".dimmed().italic(),
+            "omg update --check".cyan());
     } else if security_vulnerabilities > 0 {
-        ui::print_tip("Run 'omg audit' to identify and fix security issues.");
+        println!("  {} Run {} to identify and fix security issues",
+            "Tip".dimmed().italic(),
+            "omg audit".cyan());
     } else {
-        ui::print_tip("Your system is healthy! Run 'omg dash' for an interactive view.");
+        println!("  {} Your system is healthy! Run {} for an interactive view",
+            "Tip".dimmed().italic(),
+            "omg dash".cyan());
     }
 
-    ui::print_spacer();
+    println!();
     Ok(())
 }
 

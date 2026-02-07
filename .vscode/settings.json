@@ -3,12 +3,12 @@
   "rust-analyzer.check.command": "clippy",
   "rust-analyzer.check.extraArgs": [
     "--features",
-    "arch",
+    "arch,debian-pure",
     "--",
     "-D",
     "warnings"
   ],
-  "rust-analyzer.cargo.features": ["arch"],
+  "rust-analyzer.cargo.features": ["arch", "debian-pure"],
   "rust-analyzer.rustfmt.extraArgs": ["+nightly"],
   
   // Editor settings

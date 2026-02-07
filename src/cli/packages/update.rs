@@ -3,25 +3,14 @@
 use anyhow::Result;
 use dialoguer::Confirm;
 
-use crate::cli::{style, ui};
+use crate::cli::{modern_ui, style, ui};
 use crate::package_managers::{get_package_manager, types::UpdateInfo};
 
 /// Fast update - sync + upgrade in a single privileged operation
 /// This is the fastest way to update your system
 #[cfg(feature = "arch")]
 pub async fn update_fast() -> Result<()> {
-    use owo_colors::OwoColorize;
-
-    println!();
-    println!("  {}", "╭─────────────────────────────────────────╮".cyan());
-    println!(
-        "  {} {} {}",
-        "│".cyan(),
-        "  ⚡ Fast System Update  ".bold().cyan(),
-        "│".cyan()
-    );
-    println!("  {}", "╰─────────────────────────────────────────╯".cyan());
-    println!();
+    modern_ui::print_phase_header("⚡", "Fast System Update", "sync + upgrade");
 
     // Use the fullupdate command which does sync + sysupgrade in one go
     crate::package_managers::arch::run_privileged_operation("fullupdate", &[], || async {
@@ -43,22 +32,7 @@ pub async fn update_fast() -> Result<()> {
 pub async fn update_turbo() -> Result<()> {
     use owo_colors::OwoColorize;
 
-    println!();
-    println!(
-        "  {}",
-        "╭─────────────────────────────────────────╮".bright_magenta()
-    );
-    println!(
-        "  {} {} {}",
-        "│".bright_magenta(),
-        "  🚀 TURBO System Update  ".bold().bright_magenta(),
-        "│".bright_magenta()
-    );
-    println!(
-        "  {}",
-        "╰─────────────────────────────────────────╯".bright_magenta()
-    );
-    println!();
+    modern_ui::print_phase_header("🚀", "TURBO System Update", "cached, no sync");
 
     println!(
         "  {} Checking for updates (cached, no sync)...",
@@ -94,28 +68,88 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
 
     let pm = get_package_manager()?;
 
-    print_update_header("Syncing Package Databases");
-    pm.sync().await?;
+    // On Arch, sync requires root so we defer it until we actually upgrade.
+    // For check/dry-run modes, we use the existing (possibly stale) sync databases.
+    // For the actual upgrade, we combine sync + upgrade into a single privileged call.
+    #[cfg(feature = "arch")]
+    let skip_sync = check_only || dry_run || !crate::core::caps::can_write_pacman_db();
+    #[cfg(feature = "arch")]
+    let needs_deferred_sync = !check_only && !dry_run && !crate::core::caps::can_write_pacman_db();
+
+    // Non-arch platforms: sync doesn't need root
+    #[cfg(not(feature = "arch"))]
+    let skip_sync = check_only || dry_run;
+    #[cfg(not(feature = "arch"))]
+    let needs_deferred_sync = false;
+
+    if check_only || dry_run {
+        modern_ui::print_phase_header(
+            "🔄",
+            "Update",
+            if check_only {
+                "Checking for updates (no sync)"
+            } else {
+                "Dry run - checking for updates"
+            },
+        );
+    } else if skip_sync {
+        // Arch without root: skip sync here, will sync+upgrade together later
+        modern_ui::print_phase_header("🔄", "Update", "Checking for updates");
+    } else {
+        modern_ui::print_phase_header("🔄", "Update", "Checking for updates");
+
+        let pb = modern_ui::modern_spinner("Syncing", "package databases");
+        let sync_start = std::time::Instant::now();
+        pm.sync().await?;
+        let sync_elapsed = sync_start.elapsed();
+
+        modern_ui::finish_success(
+            &pb,
+            "Synced",
+            &format!(
+                "{} databases in {:.2}s",
+                if cfg!(feature = "arch") { "3" } else { "1" },
+                sync_elapsed.as_secs_f64()
+            ),
+        );
+    }
 
     let mut all_updates: Vec<UpdateInfo> = Vec::with_capacity(32); // Typical update count
 
-    let pb = style::spinner("Checking official repositories...");
+    let pb = modern_ui::modern_spinner("Checking", "official repositories");
+    let check_start = std::time::Instant::now();
     let official_updates: Vec<UpdateInfo> = pm.list_updates().await?;
-    pb.finish_and_clear();
+    let check_elapsed = check_start.elapsed();
+
+    if official_updates.is_empty() {
+        modern_ui::finish_info(&pb, "No updates in official repositories");
+    } else {
+        modern_ui::finish_success(
+            &pb,
+            "Found",
+            &format!(
+                "{} update(s) in {:.2}s",
+                official_updates.len(),
+                check_elapsed.as_secs_f64()
+            ),
+        );
+    }
 
     let official_count = official_updates.len();
     all_updates.extend(official_updates);
 
     #[cfg(feature = "arch")]
-    let (aur_count, aur_packages) = {
+    let (_aur_count, aur_packages) = {
         use crate::core::env::distro::use_debian_backend;
         if use_debian_backend() {
             (0, Vec::new())
         } else {
-            println!("  {} Checking AUR packages...", "→".cyan());
+            let aur_pb = modern_ui::modern_spinner("Checking", "AUR packages");
+            let aur_start = std::time::Instant::now();
             let client = crate::package_managers::AurClient::new();
             match client.get_update_list().await {
                 Ok(aur_updates) => {
+                    let aur_elapsed = aur_start.elapsed();
                     let count = aur_updates.len();
                     let packages: Vec<String> = aur_updates
                         .iter()
@@ -129,9 +163,23 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
                             repo: "AUR".to_string(),
                         });
                     }
+                    if count == 0 {
+                        modern_ui::finish_info(&aur_pb, "No updates in AUR");
+                    } else {
+                        modern_ui::finish_success(
+                            &aur_pb,
+                            "Found",
+                            &format!(
+                                "{} AUR update(s) in {:.2}s",
+                                count,
+                                aur_elapsed.as_secs_f64()
+                            ),
+                        );
+                    }
                     (count, packages)
                 }
                 Err(e) => {
+                    modern_ui::finish_clear(&aur_pb);
                     tracing::warn!("Failed to check AUR updates: {}", e);
                     (0, Vec::new())
                 }
@@ -140,12 +188,12 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
     };
 
     #[cfg(not(feature = "arch"))]
-    let (aur_count, aur_packages): (usize, Vec<String>) = (0, Vec::new());
+    let (_aur_count, aur_packages): (usize, Vec<String>) = (0, Vec::new());
 
     println!();
 
     if all_updates.is_empty() {
-        print_up_to_date();
+        modern_ui::print_up_to_date();
         return Ok(());
     }
 
@@ -153,7 +201,7 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
         return update_dry_run(&all_updates);
     }
 
-    print_update_summary(&all_updates, official_count, aur_count);
+    modern_ui::print_update_summary(&all_updates);
 
     if check_only {
         println!();
@@ -183,20 +231,52 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
     }
 
     println!();
-    print_update_header("Installing Updates");
+    modern_ui::print_section("Installing updates");
 
     let mut installed_count = 0;
+    #[cfg_attr(not(feature = "arch"), allow(unused_mut))]
     let mut failed_count = 0;
 
     if official_count > 0 {
-        println!(
-            "  {} Upgrading {} official package{}...",
-            "→".cyan(),
-            official_count,
-            if official_count == 1 { "" } else { "s" }
-        );
-        pm.update().await?;
-        installed_count += official_count;
+        #[cfg(feature = "arch")]
+        if needs_deferred_sync {
+            // Combine sync + upgrade in a single privileged operation
+            let pb = modern_ui::modern_spinner(
+                "Syncing & upgrading",
+                &format!("{official_count} official packages"),
+            );
+            crate::package_managers::arch::run_privileged_operation(
+                "fullupdate",
+                &[],
+                || async { Ok(()) },
+            )
+            .await?;
+            modern_ui::finish_success(
+                &pb,
+                "Synced & upgraded",
+                &format!("{official_count} packages"),
+            );
+            installed_count += official_count;
+        } else {
+            let pb = modern_ui::modern_spinner(
+                "Upgrading",
+                &format!("{official_count} official packages"),
+            );
+            pm.update().await?;
+            modern_ui::finish_success(&pb, "Upgraded", &format!("{official_count} packages"));
+            installed_count += official_count;
+        }
+
+        #[cfg(not(feature = "arch"))]
+        {
+            let pb = modern_ui::modern_spinner(
+                "Upgrading",
+                &format!("{official_count} official packages"),
+            );
+            pm.update().await?;
+            modern_ui::finish_success(&pb, "Upgraded", &format!("{official_count} packages"));
+            installed_count += official_count;
+        }
     }
 
     #[cfg(feature = "arch")]
@@ -238,178 +318,18 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
     let _ = &aur_packages;
 
     if failed_count > 0 {
-        print_update_partial(installed_count, failed_count);
+        modern_ui::print_warning(&format!(
+            "Upgraded {installed_count} packages, {failed_count} failed"
+        ));
     } else if installed_count > 0 {
-        print_update_success(installed_count);
+        modern_ui::print_success(&format!("Upgraded {installed_count} packages"));
     } else {
-        print_up_to_date();
+        modern_ui::print_up_to_date();
     }
     Ok(())
 }
 
-fn print_update_header(title: &str) {
-    use owo_colors::OwoColorize;
-
-    println!();
-    println!("  {}", "╭─────────────────────────────────────────╮".cyan());
-    println!("  {} {:^39} {}", "│".cyan(), title.bold(), "│".cyan());
-    println!("  {}", "╰─────────────────────────────────────────╯".cyan());
-    println!();
-}
-
-fn print_up_to_date() {
-    use owo_colors::OwoColorize;
-
-    println!(
-        "  {}",
-        "╭─────────────────────────────────────────╮".green()
-    );
-    println!(
-        "  {} {} {}",
-        "│".green(),
-        "  ✓ System is up to date!  ".bold().green(),
-        "│".green()
-    );
-    println!(
-        "  {}",
-        "╰─────────────────────────────────────────╯".green()
-    );
-    println!();
-}
-
-fn print_update_summary(updates: &[UpdateInfo], official_count: usize, aur_count: usize) {
-    use owo_colors::OwoColorize;
-
-    let total = updates.len();
-
-    println!(
-        "  {}",
-        "╭─────────────────────────────────────────╮".bright_yellow()
-    );
-    println!(
-        "  {} {} {}",
-        "│".bright_yellow(),
-        format!(
-            "  📦 {} update{} available  ",
-            total,
-            if total == 1 { "" } else { "s" }
-        )
-        .bold(),
-        "│".bright_yellow()
-    );
-    println!(
-        "  {}",
-        "╰─────────────────────────────────────────╯".bright_yellow()
-    );
-    println!();
-
-    if official_count > 0 {
-        println!(
-            "  {} {} from official repositories",
-            "→".cyan(),
-            official_count.to_string().bold()
-        );
-    }
-    if aur_count > 0 {
-        println!(
-            "  {} {} from AUR",
-            "→".magenta(),
-            aur_count.to_string().bold()
-        );
-    }
-    println!();
-
-    let display_limit = 20;
-    for update in updates.iter().take(display_limit) {
-        let repo_badge = if update.repo == "AUR" {
-            format!("{}", "(AUR)".magenta())
-        } else {
-            format!("{}", format!("({})", update.repo).dimmed())
-        };
-
-        println!(
-            "    {} {} {} {} {} {}",
-            "•".dimmed(),
-            update.name.bold(),
-            update.old_version.dimmed(),
-            "→".cyan(),
-            update.new_version.green(),
-            repo_badge
-        );
-    }
-
-    if updates.len() > display_limit {
-        println!(
-            "    {} {}",
-            "…".dimmed(),
-            format!("and {} more", updates.len() - display_limit).dimmed()
-        );
-    }
-}
-
-fn print_update_success(count: usize) {
-    use owo_colors::OwoColorize;
-
-    println!();
-    println!(
-        "  {}",
-        "╭─────────────────────────────────────────╮".green()
-    );
-    println!(
-        "  {} {} {}",
-        "│".green(),
-        "  ✓ Upgrade Complete!  ".bold().green(),
-        "│".green()
-    );
-    println!(
-        "  {}",
-        "╰─────────────────────────────────────────╯".green()
-    );
-    println!();
-    println!(
-        "    {} {} package{} upgraded successfully",
-        "✓".green().bold(),
-        count.to_string().bold(),
-        if count == 1 { "" } else { "s" }
-    );
-    println!();
-}
-
-fn print_update_partial(success_count: usize, fail_count: usize) {
-    use owo_colors::OwoColorize;
-
-    println!();
-    println!(
-        "  {}",
-        "╭─────────────────────────────────────────╮".yellow()
-    );
-    println!(
-        "  {} {} {}",
-        "│".yellow(),
-        "  ⚠ Upgrade Partially Complete  ".bold().yellow(),
-        "│".yellow()
-    );
-    println!(
-        "  {}",
-        "╰─────────────────────────────────────────╯".yellow()
-    );
-    println!();
-    if success_count > 0 {
-        println!(
-            "    {} {} package{} upgraded successfully",
-            "✓".green().bold(),
-            success_count.to_string().bold(),
-            if success_count == 1 { "" } else { "s" }
-        );
-    }
-    println!(
-        "    {} {} package{} failed to upgrade",
-        "✗".red().bold(),
-        fail_count.to_string().bold(),
-        if fail_count == 1 { "" } else { "s" }
-    );
-    println!();
-}
+// Removed old box-drawing functions - using modern_ui now
 
 #[allow(clippy::unnecessary_wraps)] // Result return required: API compat with feature-gated impls
 fn update_dry_run(updates: &[UpdateInfo]) -> Result<()> {

@@ -198,6 +198,9 @@ pub enum Commands {
         /// Remove all (orphans + cache + aur)
         #[arg(short = 'a', long)]
         all: bool,
+        /// Show what would be cleaned without making changes
+        #[arg(long)]
+        dry_run: bool,
     },
 
     /// List explicitly installed packages
