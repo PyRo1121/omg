@@ -10,7 +10,7 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 
 ---
 
-## [Unreleased]
+## [0.1.206] - 2026-02-07
 ### Build
 
 - Add benchmark targets to Makefile
@@ -778,6 +778,34 @@ Added backticks around dirs::data_dir() and OMG_DATA_DIR
 All clippy warnings resolved. CI should pass on all platforms.
 
 ### ✨ New Features
+
+- Fix update without root, comprehensive e2e test suite, v0.1.206
+
+Major changes:
+
+  - Fix `omg update` requiring root for check/dry-run modes on Arch
+
+  - Defer sync until upgrade, check updates from existing db without root
+
+  - Combine sync+upgrade in single privileged `fullupdate` call
+
+  - Add 250+ S-tier e2e tests across 15 test files:
+
+  - ALPM transaction lifecycle, harness integration
+
+  - AUR dependency resolution, error recovery, security
+
+  - Daemon lifecycle, caching, concurrency, IPC, performance
+
+  - Chaos/property-based testing with proptest
+
+  - Security privilege escalation tests
+
+  - Expose daemon cache sync() for test consistency
+
+  - Add modern UI module, benchmarks, fuzz targets
+
+  - Performance optimizations for debian-pure backend
 
 - Prefer pre-built -bin AUR packages for instant installation
 
