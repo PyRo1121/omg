@@ -36,7 +36,7 @@ pub struct Settings {
 }
 
 /// AUR build configuration
-#[allow(clippy::struct_excessive_bools)] // Configuration struct: booleans map to user-facing toggle options
+#[expect(clippy::struct_excessive_bools)] // Configuration struct: booleans map to user-facing toggle options
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AurBuildSettings {

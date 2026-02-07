@@ -12,7 +12,7 @@ use tempfile::TempDir;
 
 #[tokio::test]
 #[serial]
-#[allow(unsafe_code)] // Test setup requires env var modification
+#[expect(unsafe_code)] // Test setup requires env var modification
 async fn test_global_rate_limiting() {
     // Clear all caches before changing environment
     #[cfg(feature = "arch")]
@@ -63,7 +63,7 @@ async fn test_global_rate_limiting() {
 
 #[tokio::test]
 #[serial]
-#[allow(unsafe_code)] // Test setup requires env var modification
+#[expect(unsafe_code)] // Test setup requires env var modification
 async fn test_input_validation_audit() {
     // Clear all caches before changing environment
     #[cfg(feature = "arch")]
@@ -133,7 +133,7 @@ async fn test_input_validation_audit() {
 
 #[tokio::test]
 #[serial]
-#[allow(unsafe_code)] // Test setup requires env var modification
+#[expect(unsafe_code)] // Test setup requires env var modification
 async fn test_batch_size_limit_audit() {
     // Clear all caches before changing environment
     #[cfg(feature = "arch")]
@@ -166,10 +166,7 @@ async fn test_batch_size_limit_audit() {
         requests.push(Request::Ping { id: 1 });
     }
 
-    let req = Request::Batch {
-        id: 1,
-        requests: Box::new(requests),
-    };
+    let req = Request::Batch { id: 1, requests };
 
     let response = handle_request(Arc::clone(&state), req).await;
 
@@ -194,7 +191,7 @@ async fn test_batch_size_limit_audit() {
 
 #[tokio::test]
 #[serial]
-#[allow(unsafe_code)]
+#[expect(unsafe_code)]
 async fn test_health_endpoint_returns_status() {
     #[cfg(feature = "arch")]
     {
@@ -247,7 +244,7 @@ async fn test_health_endpoint_returns_status() {
 
 #[tokio::test]
 #[serial]
-#[allow(unsafe_code)]
+#[expect(unsafe_code)]
 async fn test_ping_returns_pong() {
     #[cfg(feature = "arch")]
     {
@@ -286,7 +283,7 @@ async fn test_ping_returns_pong() {
 
 #[tokio::test]
 #[serial]
-#[allow(unsafe_code)]
+#[expect(unsafe_code)]
 async fn test_cache_stats_handler() {
     #[cfg(feature = "arch")]
     {
@@ -327,7 +324,7 @@ async fn test_cache_stats_handler() {
 
 #[tokio::test]
 #[serial]
-#[allow(unsafe_code)]
+#[expect(unsafe_code)]
 async fn test_cache_clear_handler() {
     #[cfg(feature = "arch")]
     {
@@ -366,7 +363,7 @@ async fn test_cache_clear_handler() {
 
 #[tokio::test]
 #[serial]
-#[allow(unsafe_code)]
+#[expect(unsafe_code)]
 async fn test_explicit_count_handler() {
     #[cfg(feature = "arch")]
     {

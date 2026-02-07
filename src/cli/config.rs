@@ -80,7 +80,7 @@ pub fn set(key: &str, value: &str) -> Result<()> {
             };
         }
         "default_shell" => {
-            if !["bash", "zsh", "fish"].contains(&value) {
+            if !matches!(value, "bash" | "zsh" | "fish") {
                 anyhow::bail!("Invalid shell. Valid values: bash, zsh, fish");
             }
             settings.default_shell = value.to_string();
@@ -242,7 +242,7 @@ pub fn validate() -> Result<()> {
             }
 
             // Check default shell
-            if !["bash", "zsh", "fish"].contains(&settings.default_shell.as_str()) {
+            if !matches!(settings.default_shell.as_str(), "bash" | "zsh" | "fish") {
                 println!(
                     "  {} Invalid default_shell: {}",
                     style::error("✗"),

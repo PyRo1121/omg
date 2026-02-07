@@ -13,12 +13,12 @@
 
 use omg_lib::core::privilege::{PrivilegeChecker, SystemPrivilegeChecker};
 use omg_lib::core::security::audit::{AuditEventType, AuditLogger, AuditSeverity};
+#[cfg(feature = "pgp")]
+use omg_lib::core::security::pgp::PgpVerifier;
 use omg_lib::core::security::policy::{SecurityGrade, SecurityPolicy};
 use omg_lib::core::security::secrets::{SecretScanner, SecretSeverity};
 use omg_lib::core::security::slsa::{SlsaLevel, SlsaVerifier};
 use omg_lib::core::security::validation::*;
-#[cfg(feature = "pgp")]
-use omg_lib::core::security::pgp::PgpVerifier;
 use std::fs;
 use tempfile::{NamedTempFile, TempDir};
 
@@ -44,7 +44,9 @@ mod privilege_escalation {
         use omg_lib::core::privilege::elevate_for_operation;
 
         // Set test mode to prevent actual sudo execution
-        unsafe { std::env::set_var("OMG_TEST_MODE", "1"); }
+        unsafe {
+            std::env::set_var("OMG_TEST_MODE", "1");
+        }
 
         let empty_args = Vec::new();
 
@@ -54,20 +56,29 @@ mod privilege_escalation {
         let result = elevate_for_operation("install", &empty_args);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("not supported in development mode") || err.contains("OMG_TEST_MODE"),
-                "Expected test mode error, got: {}", err);
+        assert!(
+            err.contains("not supported in development mode") || err.contains("OMG_TEST_MODE"),
+            "Expected test mode error, got: {}",
+            err
+        );
 
         // For the rest, just verify they don't panic and the error is not about whitelist
         for op in ["remove", "upgrade", "update", "sync", "clean"] {
             let result = elevate_for_operation(op, &empty_args);
             if let Err(e) = result {
                 let msg = e.to_string();
-                assert!(!msg.contains("not whitelisted"),
-                        "Operation {} should pass whitelist but got: {}", op, msg);
+                assert!(
+                    !msg.contains("not whitelisted"),
+                    "Operation {} should pass whitelist but got: {}",
+                    op,
+                    msg
+                );
             }
         }
 
-        unsafe { std::env::remove_var("OMG_TEST_MODE"); }
+        unsafe {
+            std::env::remove_var("OMG_TEST_MODE");
+        }
     }
 
     #[test]
@@ -193,7 +204,9 @@ mod security_validation {
         assert!(is_local_package_file("/home/user/pkg.pkg.tar.zst"));
         assert!(is_local_package_file("/tmp/pkg.pkg.tar.xz"));
         assert!(is_local_package_file("/var/cache/pkg.pkg.tar.gz"));
-        assert!(is_local_package_file("/tmp/brave-bin-1:1.73.104-1-x86_64.pkg.tar.zst"));
+        assert!(is_local_package_file(
+            "/tmp/brave-bin-1:1.73.104-1-x86_64.pkg.tar.zst"
+        ));
 
         // Invalid - not absolute
         assert!(!is_local_package_file("pkg.pkg.tar.zst"));
@@ -249,8 +262,11 @@ mod security_validation {
         ];
 
         for path in paths {
-            assert!(validate_relative_path(path).is_err(),
-                "Should block symlink traversal: {}", path);
+            assert!(
+                validate_relative_path(path).is_err(),
+                "Should block symlink traversal: {}",
+                path
+            );
         }
     }
 
@@ -267,8 +283,10 @@ mod security_validation {
         let filename = safe_path.file_name().unwrap().to_str().unwrap();
 
         // File name should pass validation
-        assert!(validate_package_name(filename).is_ok() ||
-                validate_package_name_or_file(path_str).is_ok());
+        assert!(
+            validate_package_name(filename).is_ok()
+                || validate_package_name_or_file(path_str).is_ok()
+        );
     }
 
     #[test]
@@ -294,8 +312,7 @@ mod security_validation {
 
         // Many path segments
         let deep_path = (0..1000).map(|_| "a").collect::<Vec<_>>().join("/");
-        assert!(validate_relative_path(&deep_path).is_ok() ||
-                deep_path.len() > 255);
+        assert!(validate_relative_path(&deep_path).is_ok() || deep_path.len() > 255);
     }
 }
 
@@ -344,14 +361,17 @@ mod pgp_verification {
         writeln!(sig, "not a valid signature").unwrap();
         sig.flush().unwrap();
 
-        let result = verifier.verify_detached(
-            data.path(),
-            sig.path(),
-            std::path::Path::new("/dev/null"),
-        );
+        let result =
+            verifier.verify_detached(data.path(), sig.path(), std::path::Path::new("/dev/null"));
 
         // Should fail to parse signature
-        assert!(result.is_err() || result.unwrap_err().to_string().contains("No valid signature"));
+        assert!(
+            result.is_err()
+                || result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("No valid signature")
+        );
     }
 
     #[test]
@@ -394,11 +414,8 @@ mod pgp_verification {
         writeln!(sig, "sig").unwrap();
         sig.flush().unwrap();
 
-        let result = verifier.verify_detached(
-            data.path(),
-            sig.path(),
-            std::path::Path::new("/dev/null"),
-        );
+        let result =
+            verifier.verify_detached(data.path(), sig.path(), std::path::Path::new("/dev/null"));
 
         assert!(result.is_err());
     }
@@ -416,7 +433,9 @@ mod sbom_audit {
     fn test_audit_logger_creation() {
         // Should create in temp directory
         let temp_dir = TempDir::new().unwrap();
-        unsafe { std::env::set_var("OMG_DATA_DIR", temp_dir.path()); }
+        unsafe {
+            std::env::set_var("OMG_DATA_DIR", temp_dir.path());
+        }
 
         let result = AuditLogger::new();
         assert!(result.is_ok(), "Should create audit logger");
@@ -476,31 +495,39 @@ mod sbom_audit {
     #[test]
     fn test_audit_chain_integrity() {
         let temp_dir = TempDir::new().unwrap();
-        unsafe { std::env::set_var("OMG_DATA_DIR", temp_dir.path()); }
+        unsafe {
+            std::env::set_var("OMG_DATA_DIR", temp_dir.path());
+        }
 
         let mut logger = AuditLogger::new().unwrap();
 
         // Log multiple events
-        logger.log(
-            AuditEventType::PackageInstall,
-            AuditSeverity::Info,
-            "vim",
-            "Installed vim",
-        ).unwrap();
+        logger
+            .log(
+                AuditEventType::PackageInstall,
+                AuditSeverity::Info,
+                "vim",
+                "Installed vim",
+            )
+            .unwrap();
 
-        logger.log(
-            AuditEventType::PackageUpgrade,
-            AuditSeverity::Info,
-            "git",
-            "Upgraded git",
-        ).unwrap();
+        logger
+            .log(
+                AuditEventType::PackageUpgrade,
+                AuditSeverity::Info,
+                "git",
+                "Upgraded git",
+            )
+            .unwrap();
 
-        logger.log(
-            AuditEventType::SecurityAudit,
-            AuditSeverity::Warning,
-            "system",
-            "Performed security audit",
-        ).unwrap();
+        logger
+            .log(
+                AuditEventType::SecurityAudit,
+                AuditSeverity::Warning,
+                "system",
+                "Performed security audit",
+            )
+            .unwrap();
 
         // Verify integrity
         let report = logger.verify_integrity().unwrap();
@@ -557,7 +584,9 @@ mod sbom_audit {
         drop(file);
 
         // Verify should detect tampering
-        unsafe { std::env::set_var("OMG_DATA_DIR", temp_dir.path()); }
+        unsafe {
+            std::env::set_var("OMG_DATA_DIR", temp_dir.path());
+        }
         let logger = AuditLogger::new().unwrap();
         let report = logger.verify_integrity().unwrap();
 
@@ -591,14 +620,32 @@ mod sbom_audit {
         let verifier = SlsaVerifier::new().unwrap();
 
         // Core packages should be Level 3
-        assert_eq!(verifier.determine_slsa_level("glibc", true), SlsaLevel::Level3);
-        assert_eq!(verifier.determine_slsa_level("linux", true), SlsaLevel::Level3);
-        assert_eq!(verifier.determine_slsa_level("pacman", true), SlsaLevel::Level3);
-        assert_eq!(verifier.determine_slsa_level("systemd", true), SlsaLevel::Level3);
+        assert_eq!(
+            verifier.determine_slsa_level("glibc", true),
+            SlsaLevel::Level3
+        );
+        assert_eq!(
+            verifier.determine_slsa_level("linux", true),
+            SlsaLevel::Level3
+        );
+        assert_eq!(
+            verifier.determine_slsa_level("pacman", true),
+            SlsaLevel::Level3
+        );
+        assert_eq!(
+            verifier.determine_slsa_level("systemd", true),
+            SlsaLevel::Level3
+        );
 
         // Regular official packages should be Level 2
-        assert_eq!(verifier.determine_slsa_level("vim", true), SlsaLevel::Level2);
-        assert_eq!(verifier.determine_slsa_level("firefox", true), SlsaLevel::Level2);
+        assert_eq!(
+            verifier.determine_slsa_level("vim", true),
+            SlsaLevel::Level2
+        );
+        assert_eq!(
+            verifier.determine_slsa_level("firefox", true),
+            SlsaLevel::Level2
+        );
 
         // AUR packages should be None
         assert_eq!(verifier.determine_slsa_level("yay", false), SlsaLevel::None);
@@ -624,8 +671,11 @@ mod attack_scenarios {
         ];
 
         for name in malicious {
-            assert!(validate_package_name(name).is_err(),
-                "Should reject malicious name: {}", name);
+            assert!(
+                validate_package_name(name).is_err(),
+                "Should reject malicious name: {}",
+                name
+            );
         }
     }
 
@@ -643,9 +693,11 @@ mod attack_scenarios {
 
         for path in attacks {
             // Should be blocked by validation
-            assert!(validate_package_name(path).is_err() ||
-                   validate_relative_path(path).is_err(),
-                "Should block path injection: {}", path);
+            assert!(
+                validate_package_name(path).is_err() || validate_relative_path(path).is_err(),
+                "Should block path injection: {}",
+                path
+            );
         }
     }
 
@@ -663,8 +715,11 @@ mod attack_scenarios {
         ];
 
         for injection in injections {
-            assert!(validate_package_name(injection).is_err(),
-                "Should block command injection: {}", injection);
+            assert!(
+                validate_package_name(injection).is_err(),
+                "Should block command injection: {}",
+                injection
+            );
         }
     }
 
@@ -679,9 +734,13 @@ mod attack_scenarios {
         for (op, args) in bypass_attempts {
             // Should fail validation before elevation
             for arg in &args {
-                assert!(validate_package_name(arg).is_err() ||
-                       validate_package_name_or_file(arg).is_err(),
-                    "Should block bypass attempt: {} {}", op, arg);
+                assert!(
+                    validate_package_name(arg).is_err()
+                        || validate_package_name_or_file(arg).is_err(),
+                    "Should block bypass attempt: {} {}",
+                    op,
+                    arg
+                );
             }
         }
     }
@@ -706,7 +765,7 @@ mod attack_scenarios {
         let scanner = SecretScanner::new();
 
         // AWS keys (using realistic format, not EXAMPLE)
-        let content = "AWS_ACCESS_KEY_ID=AKIAI44QH8DHBEXAMPLE";  // Real format but still fake
+        let content = "AWS_ACCESS_KEY_ID=AKIAI44QH8DHBEXAMPLE"; // Real format but still fake
         let _findings = scanner.scan_content(content, "test.env").unwrap();
         // Note: May be filtered as placeholder if contains "EXAMPLE"
         // So we'll test with actual private key pattern which is more reliable
@@ -715,7 +774,11 @@ mod attack_scenarios {
         let content = "-----BEGIN RSA PRIVATE KEY-----\nMIIE...";
         let findings = scanner.scan_content(content, "key.pem").unwrap();
         assert!(!findings.is_empty(), "Should detect private key");
-        assert!(findings.iter().any(|f| f.severity == SecretSeverity::Critical));
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.severity == SecretSeverity::Critical)
+        );
     }
 
     #[test]
@@ -731,8 +794,11 @@ mod attack_scenarios {
 
         for placeholder in placeholders {
             let findings = scanner.scan_content(placeholder, "test.txt").unwrap();
-            assert!(findings.is_empty(),
-                "Should ignore placeholder: {}", placeholder);
+            assert!(
+                findings.is_empty(),
+                "Should ignore placeholder: {}",
+                placeholder
+            );
         }
     }
 
@@ -747,19 +813,39 @@ mod attack_scenarios {
         };
 
         // Banned package
-        assert!(policy.check_package("telnet", false, Some("BSD"), SecurityGrade::Verified).is_err());
+        assert!(
+            policy
+                .check_package("telnet", false, Some("BSD"), SecurityGrade::Verified)
+                .is_err()
+        );
 
         // AUR when disabled
-        assert!(policy.check_package("yay", true, Some("MIT"), SecurityGrade::Community).is_err());
+        assert!(
+            policy
+                .check_package("yay", true, Some("MIT"), SecurityGrade::Community)
+                .is_err()
+        );
 
         // Wrong license
-        assert!(policy.check_package("pkg", false, Some("GPL-3.0"), SecurityGrade::Verified).is_err());
+        assert!(
+            policy
+                .check_package("pkg", false, Some("GPL-3.0"), SecurityGrade::Verified)
+                .is_err()
+        );
 
         // Below minimum grade
-        assert!(policy.check_package("pkg", false, Some("MIT"), SecurityGrade::Community).is_err());
+        assert!(
+            policy
+                .check_package("pkg", false, Some("MIT"), SecurityGrade::Community)
+                .is_err()
+        );
 
         // Valid package
-        assert!(policy.check_package("vim", false, Some("MIT"), SecurityGrade::Verified).is_ok());
+        assert!(
+            policy
+                .check_package("vim", false, Some("MIT"), SecurityGrade::Verified)
+                .is_ok()
+        );
     }
 
     #[test]
@@ -791,8 +877,11 @@ mod attack_scenarios {
         for attack in unicode_attacks {
             // Should handle gracefully without panic
             let result = validate_package_name(attack);
-            assert!(result.is_ok() || result.is_err(),
-                "Should handle unicode: {:?}", attack);
+            assert!(
+                result.is_ok() || result.is_err(),
+                "Should handle unicode: {:?}",
+                attack
+            );
         }
     }
 }
@@ -823,31 +912,39 @@ mod integration {
     #[test]
     fn test_audit_log_security_events() {
         let temp_dir = TempDir::new().unwrap();
-        unsafe { std::env::set_var("OMG_DATA_DIR", temp_dir.path()); }
+        unsafe {
+            std::env::set_var("OMG_DATA_DIR", temp_dir.path());
+        }
 
         let mut logger = AuditLogger::new().unwrap();
 
         // Log security events
-        logger.log(
-            AuditEventType::SignatureVerified,
-            AuditSeverity::Info,
-            "firefox-100.0.pkg.tar.zst",
-            "Package signature verified",
-        ).unwrap();
+        logger
+            .log(
+                AuditEventType::SignatureVerified,
+                AuditSeverity::Info,
+                "firefox-100.0.pkg.tar.zst",
+                "Package signature verified",
+            )
+            .unwrap();
 
-        logger.log(
-            AuditEventType::VulnerabilityDetected,
-            AuditSeverity::Critical,
-            "openssl",
-            "CVE-2024-1234 detected",
-        ).unwrap();
+        logger
+            .log(
+                AuditEventType::VulnerabilityDetected,
+                AuditSeverity::Critical,
+                "openssl",
+                "CVE-2024-1234 detected",
+            )
+            .unwrap();
 
-        logger.log(
-            AuditEventType::PolicyViolation,
-            AuditSeverity::Warning,
-            "telnet",
-            "Attempted to install banned package",
-        ).unwrap();
+        logger
+            .log(
+                AuditEventType::PolicyViolation,
+                AuditSeverity::Warning,
+                "telnet",
+                "Attempted to install banned package",
+            )
+            .unwrap();
 
         // Verify all events logged
         let report = logger.verify_integrity().unwrap();
@@ -859,7 +956,9 @@ mod integration {
     fn test_end_to_end_security_workflow() {
         // Simulate complete security workflow
         let temp_dir = TempDir::new().unwrap();
-        unsafe { std::env::set_var("OMG_DATA_DIR", temp_dir.path()); }
+        unsafe {
+            std::env::set_var("OMG_DATA_DIR", temp_dir.path());
+        }
 
         // 1. Validate package name
         let pkg_name = "vim";
@@ -867,7 +966,11 @@ mod integration {
 
         // 2. Check policy
         let policy = SecurityPolicy::default();
-        assert!(policy.check_package(pkg_name, false, Some("MIT"), SecurityGrade::Verified).is_ok());
+        assert!(
+            policy
+                .check_package(pkg_name, false, Some("MIT"), SecurityGrade::Verified)
+                .is_ok()
+        );
 
         // 3. Verify SLSA level
         let verifier = SlsaVerifier::new().unwrap();
@@ -882,12 +985,14 @@ mod integration {
 
         // 5. Audit the operation
         let mut logger = AuditLogger::new().unwrap();
-        logger.log(
-            AuditEventType::PackageInstall,
-            AuditSeverity::Info,
-            pkg_name,
-            "Package installed successfully",
-        ).unwrap();
+        logger
+            .log(
+                AuditEventType::PackageInstall,
+                AuditSeverity::Info,
+                pkg_name,
+                "Package installed successfully",
+            )
+            .unwrap();
 
         // Verify audit integrity
         let report = logger.verify_integrity().unwrap();

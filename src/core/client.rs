@@ -21,7 +21,7 @@ use tokio_util::codec::{Framed, LengthDelimitedCodec};
 #[cfg(unix)]
 use crate::daemon::protocol::{
     DetailedPackageInfo, PackageInfo, Request, Response, ResponseResult, SearchResult,
-    SecurityAuditResult, StatusResult,
+    SecurityAuditResult, StatusResult, UpdateEntry,
 };
 #[cfg(unix)]
 use std::io::{Read, Write};
@@ -271,6 +271,15 @@ impl DaemonClient {
         }
     }
 
+    /// List available package updates via daemon (uses hot ALPM worker)
+    pub async fn list_updates(&mut self) -> Result<Vec<UpdateEntry>> {
+        let id = self.request_id.fetch_add(1, Ordering::SeqCst);
+        match self.call(Request::ListUpdates { id }).await? {
+            ResponseResult::ListUpdates(updates) => Ok(updates),
+            _ => anyhow::bail!("Invalid response type"),
+        }
+    }
+
     /// Trigger a security audit
     pub async fn security_audit(&mut self) -> Result<SecurityAuditResult> {
         let id = self.request_id.fetch_add(1, Ordering::SeqCst);
@@ -292,14 +301,8 @@ impl DaemonClient {
     /// Execute multiple requests in a single IPC round-trip
     pub async fn batch(&mut self, requests: Vec<Request>) -> Result<Vec<Response>> {
         let id = self.request_id.fetch_add(1, Ordering::SeqCst);
-        match self
-            .call(Request::Batch {
-                id,
-                requests: Box::new(requests),
-            })
-            .await?
-        {
-            ResponseResult::Batch(responses) => Ok(*responses),
+        match self.call(Request::Batch { id, requests }).await? {
+            ResponseResult::Batch(responses) => Ok(responses),
             _ => anyhow::bail!("Invalid response type"),
         }
     }

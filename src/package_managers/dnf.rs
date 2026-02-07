@@ -14,15 +14,17 @@
 //! 4. Cache parsed metadata in binary format using `bitcode`
 //! 5. COPR support via REST API
 
+use std::future::Future;
+use std::pin::Pin;
+
 use anyhow::{Context, Result};
-use async_trait::async_trait;
 use dashmap::DashMap;
-use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
+use std::sync::RwLock;
 use tokio::fs;
 
 use crate::core::{Package, PackageSource, is_root};
@@ -36,7 +38,7 @@ use rusqlite::{Connection, OpenFlags};
 const RPM_HEADER_MAGIC: [u8; 8] = [0x8e, 0xad, 0xe8, 0x01, 0x00, 0x00, 0x00, 0x00];
 
 /// RPM tag constants for parsing header entries
-#[allow(dead_code)]
+#[expect(dead_code)]
 mod rpm_tags {
     pub const NAME: u32 = 1000;
     pub const VERSION: u32 = 1001;
@@ -54,7 +56,7 @@ mod rpm_tags {
 }
 
 /// RPM header data types
-#[allow(dead_code)]
+#[expect(dead_code)]
 mod rpm_types {
     pub const STRING: u32 = 6;
     pub const STRING_ARRAY: u32 = 8;
@@ -86,7 +88,7 @@ struct RepoIndex {
 
 /// COPR repository package
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)] // Reserved for future COPR integration
+#[expect(dead_code)] // Reserved for future COPR integration
 struct CoprPackage {
     name: String,
     #[serde(default)]
@@ -111,7 +113,7 @@ pub struct DnfPackageManager {
 
 /// Installed package information from RPM database
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // Fields used for future RPM database implementation
+#[expect(dead_code)] // Fields used for future RPM database implementation
 struct InstalledPackage {
     name: String,
     version: String,
@@ -256,7 +258,7 @@ impl DnfPackageManager {
     /// RPM headers use a binary format:
     /// - Magic: 0x8eade801 00000000
     /// - Index entries: tag(u32), type(u32), offset(i32), count(u32)
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     fn parse_rpm_header(blob: &[u8]) -> Result<HashMap<u32, Vec<u8>>> {
         if blob.len() < 16 {
             anyhow::bail!("RPM header too short");
@@ -435,14 +437,14 @@ impl DnfPackageManager {
     /// Load repository metadata from yum.repos.d configuration
     async fn load_repo_metadata(&self) -> Result<Vec<RepoPackage>> {
         // Check in-memory cache first
-        if let Some(ref packages) = *self.repo_cache.read() {
+        if let Some(ref packages) = *self.repo_cache.read().expect("lock poisoned") {
             return Ok(packages.clone());
         }
 
         // Check binary cache on disk
         let cache_file = self.cache_dir.join("repo_index.bin");
         if let Ok(cached) = self.load_cached_index(&cache_file).await {
-            *self.repo_cache.write() = Some(cached.packages.clone());
+            *self.repo_cache.write().expect("lock poisoned") = Some(cached.packages.clone());
             return Ok(cached.packages);
         }
 
@@ -451,7 +453,7 @@ impl DnfPackageManager {
 
         // Save to binary cache and update in-memory cache
         self.save_cached_index(&cache_file, &packages).await?;
-        *self.repo_cache.write() = Some(packages.clone());
+        *self.repo_cache.write().expect("lock poisoned") = Some(packages.clone());
 
         Ok(packages)
     }
@@ -569,7 +571,7 @@ impl DnfPackageManager {
     }
 
     /// Fetch packages from a repository
-    #[allow(clippy::unused_async)] // Reserved for future async HTTP fetching
+    #[expect(clippy::unused_async)] // Reserved for future async HTTP fetching
     async fn fetch_repo_packages(&self, repo: &RepoConfig) -> Result<Vec<RepoPackage>> {
         // This is a simplified implementation
         // Full implementation would:
@@ -585,7 +587,7 @@ impl DnfPackageManager {
     }
 
     /// Search COPR repositories
-    #[allow(dead_code)] // Reserved for future COPR integration
+    #[expect(dead_code)] // Reserved for future COPR integration
     async fn search_copr(&self, query: &str) -> Result<Vec<Package>> {
         let url = format!(
             "https://copr.fedorainfracloud.org/api_3/project/search?query={}",
@@ -622,7 +624,7 @@ impl DnfPackageManager {
     }
 
     /// Execute DNF command with privilege escalation if needed
-    #[allow(clippy::unused_async)] // May add async operations in future
+    #[expect(clippy::unused_async)] // May add async operations in future
     fn run_dnf(&self, args: &[&str]) -> Result<()> {
         let mut cmd = if is_root() {
             Command::new("dnf")
@@ -637,7 +639,7 @@ impl DnfPackageManager {
         if status.success() {
             // Invalidate caches after mutations
             self.installed_cache.clear();
-            let mut cache = self.repo_cache.write();
+            let mut cache = self.repo_cache.write().expect("lock poisoned");
             *cache = None;
             Ok(())
         } else {
@@ -656,234 +658,275 @@ struct RepoConfig {
     mirrorlist: Option<String>,
 }
 
-#[async_trait]
 impl PackageManager for DnfPackageManager {
     fn name(&self) -> &'static str {
         "dnf"
     }
 
-    async fn search(&self, query: &str) -> Result<Vec<Package>> {
+    fn search(
+        &self,
+        query: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<Package>>> + Send + '_>> {
         let query_lower = query.to_lowercase();
-
-        // Search installed packages first
-        let installed = self.load_installed_packages().await?;
-        let mut results: Vec<Package> = installed
-            .iter()
-            .filter(|pkg| {
-                pkg.name.to_lowercase().contains(&query_lower)
-                    || pkg.summary.to_lowercase().contains(&query_lower)
-            })
-            .map(|pkg| Package {
-                name: pkg.name.clone(),
-                version: parse_version_or_zero(&format!("{}-{}", pkg.version, pkg.release)),
-                description: pkg.summary.clone(),
-                source: PackageSource::Official,
-                installed: true,
-            })
-            .collect();
-
-        // Search repository metadata
-        if let Ok(repo_packages) = self.load_repo_metadata().await {
-            let repo_results: Vec<Package> = repo_packages
+        Box::pin(async move {
+            // Search installed packages first
+            let installed = self.load_installed_packages().await?;
+            let mut results: Vec<Package> = installed
                 .iter()
                 .filter(|pkg| {
                     pkg.name.to_lowercase().contains(&query_lower)
                         || pkg.summary.to_lowercase().contains(&query_lower)
                 })
-                .map(|pkg| {
-                    let is_installed = installed.iter().any(|i| i.name == pkg.name);
-                    Package {
-                        name: pkg.name.clone(),
-                        version: parse_version_or_zero(&format!("{}-{}", pkg.version, pkg.release)),
-                        description: pkg.summary.clone(),
-                        source: PackageSource::Official,
-                        installed: is_installed,
-                    }
+                .map(|pkg| Package {
+                    name: pkg.name.clone(),
+                    version: parse_version_or_zero(&format!("{}-{}", pkg.version, pkg.release)),
+                    description: pkg.summary.clone(),
+                    source: PackageSource::Official,
+                    installed: true,
                 })
                 .collect();
 
-            results.extend(repo_results);
-        }
+            // Search repository metadata
+            if let Ok(repo_packages) = self.load_repo_metadata().await {
+                let repo_results: Vec<Package> = repo_packages
+                    .iter()
+                    .filter(|pkg| {
+                        pkg.name.to_lowercase().contains(&query_lower)
+                            || pkg.summary.to_lowercase().contains(&query_lower)
+                    })
+                    .map(|pkg| {
+                        let is_installed = installed.iter().any(|i| i.name == pkg.name);
+                        Package {
+                            name: pkg.name.clone(),
+                            version: parse_version_or_zero(&format!(
+                                "{}-{}",
+                                pkg.version, pkg.release
+                            )),
+                            description: pkg.summary.clone(),
+                            source: PackageSource::Official,
+                            installed: is_installed,
+                        }
+                    })
+                    .collect();
 
-        // Deduplicate by name
-        results.sort_by(|a, b| a.name.cmp(&b.name));
-        results.dedup_by(|a, b| a.name == b.name);
-
-        Ok(results)
-    }
-
-    async fn install(&self, packages: &[String]) -> Result<()> {
-        crate::core::security::validate_package_names(packages)?;
-        let packages = packages.to_vec();
-
-        tokio::task::spawn_blocking({
-            let manager = Self::new();
-            move || {
-                let mut args = vec!["install"];
-                let pkg_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
-                args.extend_from_slice(&pkg_refs);
-                manager.run_dnf(&args)
+                results.extend(repo_results);
             }
+
+            // Deduplicate by name
+            results.sort_by(|a, b| a.name.cmp(&b.name));
+            results.dedup_by(|a, b| a.name == b.name);
+
+            Ok(results)
         })
-        .await?
     }
 
-    async fn remove(&self, packages: &[String]) -> Result<()> {
-        crate::core::security::validate_package_names(packages)?;
+    fn install(
+        &self,
+        packages: &[String],
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
         let packages = packages.to_vec();
+        Box::pin(async move {
+            crate::core::security::validate_package_names(&packages)?;
 
-        tokio::task::spawn_blocking({
-            let manager = Self::new();
-            move || {
-                let mut args = vec!["remove"];
-                let pkg_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
-                args.extend_from_slice(&pkg_refs);
-                manager.run_dnf(&args)
-            }
-        })
-        .await?
-    }
-
-    async fn update(&self) -> Result<()> {
-        tokio::task::spawn_blocking({
-            let manager = Self::new();
-            move || manager.run_dnf(&["upgrade"])
-        })
-        .await?
-    }
-
-    async fn sync(&self) -> Result<()> {
-        // Clear caches and trigger metadata refresh
-        self.installed_cache.clear();
-        {
-            let mut cache = self.repo_cache.write();
-            *cache = None;
-        }
-
-        // Remove binary cache to force re-parsing
-        let cache_file = self.cache_dir.join("repo_index.bin");
-        let _ = fs::remove_file(cache_file).await;
-
-        tokio::task::spawn_blocking({
-            let manager = Self::new();
-            move || manager.run_dnf(&["makecache"])
-        })
-        .await?
-    }
-
-    async fn info(&self, package: &str) -> Result<Option<Package>> {
-        let installed = self.load_installed_packages().await?;
-
-        if let Some(pkg) = installed.iter().find(|p| p.name == package) {
-            return Ok(Some(Package {
-                name: pkg.name.clone(),
-                version: parse_version_or_zero(&format!("{}-{}", pkg.version, pkg.release)),
-                description: pkg.summary.clone(),
-                source: PackageSource::Official,
-                installed: true,
-            }));
-        }
-
-        // Search repository metadata
-        if let Ok(repo_packages) = self.load_repo_metadata().await
-            && let Some(pkg) = repo_packages.iter().find(|p| p.name == package)
-        {
-            return Ok(Some(Package {
-                name: pkg.name.clone(),
-                version: parse_version_or_zero(&format!("{}-{}", pkg.version, pkg.release)),
-                description: pkg.summary.clone(),
-                source: PackageSource::Official,
-                installed: false,
-            }));
-        }
-
-        Ok(None)
-    }
-
-    async fn list_installed(&self) -> Result<Vec<Package>> {
-        let installed = self.load_installed_packages().await?;
-
-        Ok(installed
-            .into_iter()
-            .map(|pkg| Package {
-                name: pkg.name,
-                version: parse_version_or_zero(&format!("{}-{}", pkg.version, pkg.release)),
-                description: pkg.summary,
-                source: PackageSource::Official,
-                installed: true,
+            tokio::task::spawn_blocking({
+                let manager = Self::new();
+                move || {
+                    let mut args = vec!["install"];
+                    let pkg_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
+                    args.extend_from_slice(&pkg_refs);
+                    manager.run_dnf(&args)
+                }
             })
-            .collect())
+            .await?
+        })
     }
 
-    async fn get_status(&self, _fast: bool) -> Result<(usize, usize, usize, usize)> {
-        let installed = self.load_installed_packages().await?;
-        let total = installed.len();
-        let explicit = installed
-            .iter()
-            .filter(|p| p.reason == InstallReason::User)
-            .count();
+    fn remove(&self, packages: &[String]) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
+        let packages = packages.to_vec();
+        Box::pin(async move {
+            crate::core::security::validate_package_names(&packages)?;
 
-        // Count orphans (dependencies with no dependents)
-        // This requires dependency graph analysis - simplified for now
-        let orphans = 0;
-
-        // Count available updates
-        let updates = self.list_updates().await?.len();
-
-        Ok((total, explicit, orphans, updates))
+            tokio::task::spawn_blocking({
+                let manager = Self::new();
+                move || {
+                    let mut args = vec!["remove"];
+                    let pkg_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
+                    args.extend_from_slice(&pkg_refs);
+                    manager.run_dnf(&args)
+                }
+            })
+            .await?
+        })
     }
 
-    async fn list_explicit(&self) -> Result<Vec<String>> {
-        let installed = self.load_installed_packages().await?;
-
-        Ok(installed
-            .into_iter()
-            .filter(|pkg| pkg.reason == InstallReason::User)
-            .map(|pkg| pkg.name)
-            .collect())
+    fn update(&self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
+        Box::pin(async move {
+            tokio::task::spawn_blocking({
+                let manager = Self::new();
+                move || manager.run_dnf(&["upgrade"])
+            })
+            .await?
+        })
     }
 
-    async fn list_updates(&self) -> Result<Vec<UpdateInfo>> {
-        let installed = self.load_installed_packages().await?;
-        let repo_packages = self.load_repo_metadata().await?;
+    fn sync(&self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
+        Box::pin(async move {
+            // Clear caches and trigger metadata refresh
+            self.installed_cache.clear();
+            {
+                let mut cache = self.repo_cache.write().expect("lock poisoned");
+                *cache = None;
+            }
 
-        let mut installed_map = HashMap::new();
-        for pkg in &installed {
-            installed_map.insert(&pkg.name, pkg);
-        }
+            // Remove binary cache to force re-parsing
+            let cache_file = self.cache_dir.join("repo_index.bin");
+            let _ = fs::remove_file(cache_file).await;
 
-        let mut updates = Vec::new();
+            tokio::task::spawn_blocking({
+                let manager = Self::new();
+                move || manager.run_dnf(&["makecache"])
+            })
+            .await?
+        })
+    }
 
-        for repo_pkg in &repo_packages {
-            if let Some(installed_pkg) = installed_map.get(&repo_pkg.name) {
-                let installed_ver = parse_version_or_zero(&format!(
-                    "{}-{}",
-                    installed_pkg.version, installed_pkg.release
-                ));
-                let available_ver =
-                    parse_version_or_zero(&format!("{}-{}", repo_pkg.version, repo_pkg.release));
+    fn info(
+        &self,
+        package: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<Package>>> + Send + '_>> {
+        let package = package.to_string();
+        Box::pin(async move {
+            let installed = self.load_installed_packages().await?;
 
-                if available_ver > installed_ver {
-                    updates.push(UpdateInfo {
-                        name: repo_pkg.name.clone(),
-                        old_version: format!("{}-{}", installed_pkg.version, installed_pkg.release),
-                        new_version: format!("{}-{}", repo_pkg.version, repo_pkg.release),
-                        repo: repo_pkg.repo.clone(),
-                    });
+            if let Some(pkg) = installed.iter().find(|p| p.name == package) {
+                return Ok(Some(Package {
+                    name: pkg.name.clone(),
+                    version: parse_version_or_zero(&format!("{}-{}", pkg.version, pkg.release)),
+                    description: pkg.summary.clone(),
+                    source: PackageSource::Official,
+                    installed: true,
+                }));
+            }
+
+            // Search repository metadata
+            if let Ok(repo_packages) = self.load_repo_metadata().await
+                && let Some(pkg) = repo_packages.iter().find(|p| p.name == package)
+            {
+                return Ok(Some(Package {
+                    name: pkg.name.clone(),
+                    version: parse_version_or_zero(&format!("{}-{}", pkg.version, pkg.release)),
+                    description: pkg.summary.clone(),
+                    source: PackageSource::Official,
+                    installed: false,
+                }));
+            }
+
+            Ok(None)
+        })
+    }
+
+    fn list_installed(&self) -> Pin<Box<dyn Future<Output = Result<Vec<Package>>> + Send + '_>> {
+        Box::pin(async move {
+            let installed = self.load_installed_packages().await?;
+
+            Ok(installed
+                .into_iter()
+                .map(|pkg| Package {
+                    name: pkg.name,
+                    version: parse_version_or_zero(&format!("{}-{}", pkg.version, pkg.release)),
+                    description: pkg.summary,
+                    source: PackageSource::Official,
+                    installed: true,
+                })
+                .collect())
+        })
+    }
+
+    fn get_status(
+        &self,
+        _fast: bool,
+    ) -> Pin<Box<dyn Future<Output = Result<(usize, usize, usize, usize)>> + Send + '_>> {
+        Box::pin(async move {
+            let installed = self.load_installed_packages().await?;
+            let total = installed.len();
+            let explicit = installed
+                .iter()
+                .filter(|p| p.reason == InstallReason::User)
+                .count();
+
+            // Count orphans (dependencies with no dependents)
+            // This requires dependency graph analysis - simplified for now
+            let orphans = 0;
+
+            // Count available updates
+            let updates = self.list_updates().await?.len();
+
+            Ok((total, explicit, orphans, updates))
+        })
+    }
+
+    fn list_explicit(&self) -> Pin<Box<dyn Future<Output = Result<Vec<String>>> + Send + '_>> {
+        Box::pin(async move {
+            let installed = self.load_installed_packages().await?;
+
+            Ok(installed
+                .into_iter()
+                .filter(|pkg| pkg.reason == InstallReason::User)
+                .map(|pkg| pkg.name)
+                .collect())
+        })
+    }
+
+    fn list_updates(&self) -> Pin<Box<dyn Future<Output = Result<Vec<UpdateInfo>>> + Send + '_>> {
+        Box::pin(async move {
+            let installed = self.load_installed_packages().await?;
+            let repo_packages = self.load_repo_metadata().await?;
+
+            let mut installed_map = HashMap::new();
+            for pkg in &installed {
+                installed_map.insert(&pkg.name, pkg);
+            }
+
+            let mut updates = Vec::new();
+
+            for repo_pkg in &repo_packages {
+                if let Some(installed_pkg) = installed_map.get(&repo_pkg.name) {
+                    let installed_ver = parse_version_or_zero(&format!(
+                        "{}-{}",
+                        installed_pkg.version, installed_pkg.release
+                    ));
+                    let available_ver = parse_version_or_zero(&format!(
+                        "{}-{}",
+                        repo_pkg.version, repo_pkg.release
+                    ));
+
+                    if available_ver > installed_ver {
+                        updates.push(UpdateInfo {
+                            name: repo_pkg.name.clone(),
+                            old_version: format!(
+                                "{}-{}",
+                                installed_pkg.version, installed_pkg.release
+                            ),
+                            new_version: format!("{}-{}", repo_pkg.version, repo_pkg.release),
+                            repo: repo_pkg.repo.clone(),
+                        });
+                    }
                 }
             }
-        }
 
-        Ok(updates)
+            Ok(updates)
+        })
     }
 
-    async fn is_installed(&self, package: &str) -> bool {
-        self.installed_cache.contains_key(package)
-            || self
-                .load_installed_packages()
-                .await
-                .map(|packages| packages.iter().any(|p| p.name == package))
-                .unwrap_or(false)
+    fn is_installed(&self, package: &str) -> Pin<Box<dyn Future<Output = bool> + Send + '_>> {
+        let package = package.to_string();
+        Box::pin(async move {
+            self.installed_cache.contains_key(&package)
+                || self
+                    .load_installed_packages()
+                    .await
+                    .is_ok_and(|packages| packages.iter().any(|p| p.name == package))
+        })
     }
 }
 

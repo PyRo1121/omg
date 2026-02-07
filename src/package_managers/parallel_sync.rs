@@ -204,7 +204,7 @@ async fn finalize_downloaded_file(temp_path: &Path, dest: &Path) -> Result<()> {
     Ok(())
 }
 
-#[allow(clippy::literal_string_with_formatting_args, clippy::expect_used)] // Static indicatif templates are always valid; braces are template syntax
+#[expect(clippy::literal_string_with_formatting_args, clippy::expect_used)] // Static indicatif templates are always valid; braces are template syntax
 async fn download_db(
     client: &Client,
     urls: Vec<String>,
@@ -337,7 +337,7 @@ async fn download_db(
 /// 1. Downloads all databases simultaneously (parallel I/O)
 /// 2. Uses HTTP/2 connection pooling
 /// 3. Shows real-time progress for each database
-#[allow(clippy::literal_string_with_formatting_args, clippy::expect_used)] // Static indicatif templates are always valid; braces are template syntax
+#[expect(clippy::literal_string_with_formatting_args, clippy::expect_used)] // Static indicatif templates are always valid; braces are template syntax
 pub async fn sync_databases_parallel() -> Result<()> {
     let mirrors = get_mirrors()?;
 
@@ -719,7 +719,7 @@ async fn download_package(
 }
 
 /// Download multiple packages in parallel
-#[allow(clippy::expect_used)] // Static indicatif template is always valid
+#[expect(clippy::expect_used)] // Static indicatif template is always valid
 pub async fn download_packages_parallel(
     jobs: Vec<DownloadJob>,
     concurrency: usize,

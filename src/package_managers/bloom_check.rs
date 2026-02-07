@@ -59,8 +59,9 @@ impl PackageBloomFilter {
         }
     }
 
-    /// Hash a package (name, version) pair to multiple indices
-    fn hash_indices(&self, name: &str, version: &str) -> Vec<usize> {
+    /// Compute double-hash pair for a package (name, version)
+    #[inline]
+    fn hash_pair(name: &str, version: &str) -> (usize, usize) {
         let mut hasher1 = AHasher::default();
         name.hash(&mut hasher1);
         version.hash(&mut hasher1);
@@ -71,15 +72,14 @@ impl PackageBloomFilter {
         name.hash(&mut hasher2);
         let h2 = hasher2.finish() as usize;
 
-        (0..self.num_hashes)
-            .map(|i| (h1.wrapping_add(i.wrapping_mul(h2))) % self.num_bits)
-            .collect()
+        (h1, h2)
     }
 
     /// Add a package to the filter
     pub fn insert(&mut self, name: &str, version: &str) {
-        let indices = self.hash_indices(name, version);
-        for idx in indices {
+        let (h1, h2) = Self::hash_pair(name, version);
+        for i in 0..self.num_hashes {
+            let idx = (h1.wrapping_add(i.wrapping_mul(h2))) % self.num_bits;
             let word_idx = idx / 64;
             let bit_idx = idx % 64;
             self.bits[word_idx] |= 1u64 << bit_idx;
@@ -91,7 +91,9 @@ impl PackageBloomFilter {
     /// Returns false if the package definitely doesn't exist
     #[must_use]
     pub fn contains(&self, name: &str, version: &str) -> bool {
-        for idx in self.hash_indices(name, version) {
+        let (h1, h2) = Self::hash_pair(name, version);
+        for i in 0..self.num_hashes {
+            let idx = (h1.wrapping_add(i.wrapping_mul(h2))) % self.num_bits;
             let word_idx = idx / 64;
             let bit_idx = idx % 64;
             if self.bits[word_idx] & (1u64 << bit_idx) == 0 {
@@ -224,25 +226,14 @@ pub fn quick_update_check() -> Result<bool> {
     // Try to load cached filter
     let filter = if bloom_path.exists() {
         // Check if filter is still valid
-        if let Ok(meta) = fs::metadata(&bloom_path) {
-            if let Ok(filter_mtime) = meta.modified() {
-                if current_mtime.is_some_and(|db_mtime| filter_mtime >= db_mtime) {
-                    // Filter is newer than DBs, still valid
-                    PackageBloomFilter::load(&bloom_path)?
-                } else {
-                    // DBs updated, rebuild filter
-                    let filter = build_sync_bloom_filter()?;
-                    filter.save(&bloom_path)?;
-                    filter
-                }
-            } else {
-                // Can't get mtime, rebuild
-                let filter = build_sync_bloom_filter()?;
-                filter.save(&bloom_path)?;
-                filter
-            }
+        if let Ok(meta) = fs::metadata(&bloom_path)
+            && let Ok(filter_mtime) = meta.modified()
+            && current_mtime.is_some_and(|db_mtime| filter_mtime >= db_mtime)
+        {
+            // Filter is newer than DBs, still valid
+            PackageBloomFilter::load(&bloom_path)?
         } else {
-            // Can't stat file, rebuild
+            // Can't stat file, can't get mtime, or DBs updated - rebuild
             let filter = build_sync_bloom_filter()?;
             filter.save(&bloom_path)?;
             filter

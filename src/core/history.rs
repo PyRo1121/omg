@@ -4,6 +4,9 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
+/// Maximum number of transactions to retain in history
+const MAX_HISTORY_TRANSACTIONS: usize = 1000;
+
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
 pub enum TransactionType {
     Install,
@@ -98,8 +101,8 @@ impl HistoryManager {
 
         history.push(transaction);
 
-        // Keep only last 1000 transactions to prevent file bloat
-        let excess = history.len().saturating_sub(1000);
+        // Keep only last N transactions to prevent file bloat
+        let excess = history.len().saturating_sub(MAX_HISTORY_TRANSACTIONS);
         if excess > 0 {
             history.drain(0..excess);
         }

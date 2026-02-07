@@ -16,10 +16,16 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::time::Instant;
 
-use parking_lot::RwLock;
+use std::sync::RwLock;
 
 const ANALYTICS_API_URL: &str = "https://api.pyro1121.com/api/analytics";
 const MAX_RETRIES: u32 = 5;
+/// Maximum events in queue before oldest are drained
+const MAX_EVENT_QUEUE_SIZE: usize = 1000;
+/// Number of events to drain when queue exceeds max size
+const EVENT_DRAIN_COUNT: usize = 500;
+/// Session inactivity timeout in seconds (30 minutes)
+const SESSION_TIMEOUT_SECS: i64 = 1800;
 
 /// Global state caches to avoid redundant disk I/O
 static SESSION_CACHE: OnceLock<RwLock<SessionState>> = OnceLock::new();
@@ -139,6 +145,7 @@ impl SessionState {
         SESSION_CACHE
             .get_or_init(|| RwLock::new(Self::load_from_disk()))
             .read()
+            .expect("lock poisoned")
             .clone()
     }
 
@@ -152,7 +159,7 @@ impl SessionState {
 
     pub fn save(&self) -> Result<()> {
         if let Some(cache) = SESSION_CACHE.get() {
-            let mut writer = cache.write();
+            let mut writer = cache.write().expect("lock poisoned");
             *writer = self.clone();
         }
 
@@ -163,12 +170,13 @@ impl SessionState {
     }
 
     /// Check if we need a new session (>30 min since last activity)
+    #[must_use]
     pub fn needs_new_session(&self) -> bool {
         if self.session_id.is_empty() {
             return true;
         }
         let now = jiff::Timestamp::now().as_second();
-        now - self.last_heartbeat > 1800 // 30 minutes
+        now - self.last_heartbeat > SESSION_TIMEOUT_SECS
     }
 
     /// Start a new session
@@ -211,6 +219,7 @@ impl EventQueue {
         QUEUE_CACHE
             .get_or_init(|| RwLock::new(Self::load_from_disk()))
             .read()
+            .expect("lock poisoned")
             .clone()
     }
 
@@ -224,7 +233,7 @@ impl EventQueue {
 
     pub fn save(&self) -> Result<()> {
         if let Some(cache) = QUEUE_CACHE.get() {
-            let mut writer = cache.write();
+            let mut writer = cache.write().expect("lock poisoned");
             *writer = self.clone();
         }
 
@@ -236,12 +245,13 @@ impl EventQueue {
 
     pub fn push(&mut self, event: AnalyticsEvent) {
         self.events.push(event);
-        if self.events.len() > 1000 {
-            self.events.drain(0..500);
+        if self.events.len() > MAX_EVENT_QUEUE_SIZE {
+            self.events.drain(0..EVENT_DRAIN_COUNT);
         }
         let _ = self.save();
     }
 
+    #[must_use]
     pub fn needs_flush(&self) -> bool {
         let now = jiff::Timestamp::now().as_second();
         // Flush every 60 seconds or if we have 50+ events
@@ -255,6 +265,7 @@ impl EventQueue {
 }
 
 /// Check if analytics is enabled
+#[must_use]
 pub fn is_enabled() -> bool {
     !crate::core::telemetry::is_telemetry_opt_out()
 }
@@ -280,6 +291,7 @@ fn get_session() -> SessionState {
 }
 
 /// Get current session ID
+#[must_use]
 pub fn session_id() -> String {
     get_session().session_id
 }
@@ -334,7 +346,7 @@ fn create_event(
 }
 
 /// Queue an event for sending
-#[allow(clippy::implicit_hasher)] // Public API: callers pass HashMap directly; specifying hasher would break ergonomics
+#[expect(clippy::implicit_hasher)] // Public API: callers pass HashMap directly; specifying hasher would break ergonomics
 pub fn queue_event(
     event_type: EventType,
     event_name: &str,
@@ -388,7 +400,7 @@ pub fn track_command(
 }
 
 /// Track a feature usage
-#[allow(clippy::implicit_hasher)] // Public API: callers pass HashMap directly; specifying hasher would break ergonomics
+#[expect(clippy::implicit_hasher)] // Public API: callers pass HashMap directly; specifying hasher would break ergonomics
 pub fn track_feature(feature: &str, properties: HashMap<String, serde_json::Value>) {
     if !is_enabled() {
         return;
@@ -425,7 +437,7 @@ pub fn track_error(error_type: &str, message: &str, context: Option<&str>) {
 }
 
 /// Track performance metric
-#[allow(clippy::implicit_hasher)] // Public API: callers pass HashMap directly; specifying hasher would break ergonomics
+#[expect(clippy::implicit_hasher)] // Public API: callers pass HashMap directly; specifying hasher would break ergonomics
 pub fn track_performance(
     operation: &str,
     duration_ms: u64,
@@ -444,12 +456,14 @@ pub fn track_performance(
 }
 
 /// Start timing an operation
+#[must_use]
 pub fn start_timer() -> Instant {
     SESSION_START.get_or_init(Instant::now);
     Instant::now()
 }
 
 /// End timing and get duration
+#[must_use]
 pub fn end_timer(start: Instant) -> u64 {
     start.elapsed().as_millis() as u64
 }
@@ -636,6 +650,7 @@ pub enum UserStage {
 }
 
 impl UserStage {
+    #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Installed => "installed",
@@ -669,6 +684,7 @@ pub fn track_stage_transition(from: Option<UserStage>, to: UserStage) {
 }
 
 /// Calculate current user stage based on usage
+#[must_use]
 pub fn calculate_user_stage(stats: &super::usage::UsageStats) -> UserStage {
     let days_since_first_use = if stats.first_use_date.is_empty() {
         0

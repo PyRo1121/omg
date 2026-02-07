@@ -118,7 +118,11 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
 
     let pb = modern_ui::modern_spinner("Checking", "official repositories");
     let check_start = std::time::Instant::now();
-    let official_updates: Vec<UpdateInfo> = pm.list_updates().await?;
+    // Try daemon IPC first (hot ALPM worker = ~5ms), fall back to direct ALPM (~150ms)
+    let official_updates: Vec<UpdateInfo> = match try_daemon_list_updates().await {
+        Some(updates) => updates,
+        None => pm.list_updates().await?,
+    };
     let check_elapsed = check_start.elapsed();
 
     if official_updates.is_empty() {
@@ -245,11 +249,9 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
                 "Syncing & upgrading",
                 &format!("{official_count} official packages"),
             );
-            crate::package_managers::arch::run_privileged_operation(
-                "fullupdate",
-                &[],
-                || async { Ok(()) },
-            )
+            crate::package_managers::arch::run_privileged_operation("fullupdate", &[], || async {
+                Ok(())
+            })
             .await?;
             modern_ui::finish_success(
                 &pb,
@@ -331,7 +333,7 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
 
 // Removed old box-drawing functions - using modern_ui now
 
-#[allow(clippy::unnecessary_wraps)] // Result return required: API compat with feature-gated impls
+#[expect(clippy::unnecessary_wraps)] // Result return required: API compat with feature-gated impls
 fn update_dry_run(updates: &[UpdateInfo]) -> Result<()> {
     ui::print_header("OMG", "Dry Run - Update Preview");
     ui::print_spacer();
@@ -392,4 +394,21 @@ fn update_dry_run(updates: &[UpdateInfo]) -> Result<()> {
     ui::print_dry_run_footer();
 
     Ok(())
+}
+
+/// Try to get update list from daemon IPC (fast path, ~5ms with hot ALPM worker)
+async fn try_daemon_list_updates() -> Option<Vec<UpdateInfo>> {
+    let mut client = crate::core::client::DaemonClient::connect().await.ok()?;
+    let entries = client.list_updates().await.ok()?;
+    Some(
+        entries
+            .into_iter()
+            .map(|e| UpdateInfo {
+                name: e.name,
+                old_version: e.old_version,
+                new_version: e.new_version,
+                repo: e.repo,
+            })
+            .collect(),
+    )
 }

@@ -1,7 +1,8 @@
 //! Mock implementations for isolated testing
 
-use async_trait::async_trait;
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 /// Mock package database for testing without real system access
@@ -361,100 +362,147 @@ impl MockPackageManager {
     }
 }
 
-#[async_trait]
 impl omg_lib::package_managers::PackageManager for MockPackageManager {
     fn name(&self) -> &'static str {
         "mock"
     }
 
-    async fn search(&self, query: &str) -> anyhow::Result<Vec<omg_lib::core::Package>> {
-        use omg_lib::core::{Package, PackageSource};
-        use omg_lib::package_managers::parse_version_or_zero;
-        Ok(self
-            .db
-            .search(query)
-            .into_iter()
-            .map(|p| Package {
+    fn search(
+        &self,
+        query: &str,
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Vec<omg_lib::core::Package>>> + Send + '_>>
+    {
+        let query = query.to_string();
+        Box::pin(async move {
+            use omg_lib::core::{Package, PackageSource};
+            use omg_lib::package_managers::parse_version_or_zero;
+            Ok(self
+                .db
+                .search(&query)
+                .into_iter()
+                .map(|p| Package {
+                    installed: self.db.is_installed(&p.name),
+                    name: p.name,
+                    version: parse_version_or_zero(&p.version),
+                    description: p.description,
+                    source: PackageSource::Official,
+                })
+                .collect())
+        })
+    }
+
+    fn install(
+        &self,
+        packages: &[String],
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + '_>> {
+        let packages = packages.to_vec();
+        Box::pin(async move {
+            for pkg in &packages {
+                self.db.install(pkg).map_err(|e| anyhow::anyhow!(e))?;
+            }
+            Ok(())
+        })
+    }
+
+    fn remove(
+        &self,
+        packages: &[String],
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + '_>> {
+        let packages = packages.to_vec();
+        Box::pin(async move {
+            for pkg in &packages {
+                self.db.remove(pkg).map_err(|e| anyhow::anyhow!(e))?;
+            }
+            Ok(())
+        })
+    }
+
+    fn update(&self) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + '_>> {
+        Box::pin(async move { Ok(()) })
+    }
+
+    fn sync(&self) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + '_>> {
+        Box::pin(async move { Ok(()) })
+    }
+
+    fn info(
+        &self,
+        package: &str,
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Option<omg_lib::core::Package>>> + Send + '_>>
+    {
+        let package = package.to_string();
+        Box::pin(async move {
+            use omg_lib::core::{Package, PackageSource};
+            use omg_lib::package_managers::parse_version_or_zero;
+            Ok(self.db.get(&package).map(|p| Package {
                 installed: self.db.is_installed(&p.name),
                 name: p.name,
                 version: parse_version_or_zero(&p.version),
                 description: p.description,
                 source: PackageSource::Official,
-            })
-            .collect())
+            }))
+        })
     }
 
-    async fn install(&self, packages: &[String]) -> anyhow::Result<()> {
-        for pkg in packages {
-            self.db.install(pkg).map_err(|e| anyhow::anyhow!(e))?;
-        }
-        Ok(())
-    }
-
-    async fn remove(&self, packages: &[String]) -> anyhow::Result<()> {
-        for pkg in packages {
-            self.db.remove(pkg).map_err(|e| anyhow::anyhow!(e))?;
-        }
-        Ok(())
-    }
-
-    async fn update(&self) -> anyhow::Result<()> {
-        Ok(())
-    }
-
-    async fn sync(&self) -> anyhow::Result<()> {
-        Ok(())
-    }
-
-    async fn info(&self, package: &str) -> anyhow::Result<Option<omg_lib::core::Package>> {
-        use omg_lib::core::{Package, PackageSource};
-        use omg_lib::package_managers::parse_version_or_zero;
-        Ok(self.db.get(package).map(|p| Package {
-            installed: self.db.is_installed(&p.name),
-            name: p.name,
-            version: parse_version_or_zero(&p.version),
-            description: p.description,
-            source: PackageSource::Official,
-        }))
-    }
-
-    async fn list_installed(&self) -> anyhow::Result<Vec<omg_lib::core::Package>> {
-        use omg_lib::core::{Package, PackageSource};
-        use omg_lib::package_managers::parse_version_or_zero;
-        let installed_names = self.db.installed.lock().unwrap().clone();
-        let mut results = Vec::new();
-        for name in installed_names {
-            if let Some(p) = self.db.get(&name) {
-                results.push(Package {
-                    installed: true,
-                    name: p.name,
-                    version: parse_version_or_zero(&p.version),
-                    description: p.description,
-                    source: PackageSource::Official,
-                });
-            }
-        }
-        Ok(results)
-    }
-
-    async fn get_status(&self, _fast: bool) -> anyhow::Result<(usize, usize, usize, usize)> {
-        let total = self.db.packages.lock().unwrap().len();
-        let explicit = self.db.installed.lock().unwrap().len();
-        Ok((total, explicit, 0, 0))
-    }
-
-    async fn list_explicit(&self) -> anyhow::Result<Vec<String>> {
-        let installed = self.db.installed.lock().unwrap().clone();
-        Ok(installed)
-    }
-
-    async fn list_updates(
+    fn list_installed(
         &self,
-    ) -> anyhow::Result<Vec<omg_lib::package_managers::types::UpdateInfo>> {
-        Ok(self.db.updates.lock().unwrap().clone())
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Vec<omg_lib::core::Package>>> + Send + '_>>
+    {
+        Box::pin(async move {
+            use omg_lib::core::{Package, PackageSource};
+            use omg_lib::package_managers::parse_version_or_zero;
+            let installed_names = self.db.installed.lock().unwrap().clone();
+            let mut results = Vec::new();
+            for name in installed_names {
+                if let Some(p) = self.db.get(&name) {
+                    results.push(Package {
+                        installed: true,
+                        name: p.name,
+                        version: parse_version_or_zero(&p.version),
+                        description: p.description,
+                        source: PackageSource::Official,
+                    });
+                }
+            }
+            Ok(results)
+        })
     }
 
-    async fn is_installed(&self, package: &str) -> bool {
-        self.db.is_installed(package)
+    fn get_status(
+        &self,
+        _fast: bool,
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<(usize, usize, usize, usize)>> + Send + '_>>
+    {
+        Box::pin(async move {
+            let total = self.db.packages.lock().unwrap().len();
+            let explicit = self.db.installed.lock().unwrap().len();
+            Ok((total, explicit, 0, 0))
+        })
+    }
+
+    fn list_explicit(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Vec<String>>> + Send + '_>> {
+        Box::pin(async move {
+            let installed = self.db.installed.lock().unwrap().clone();
+            Ok(installed)
+        })
+    }
+
+    fn list_updates(
+        &self,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = anyhow::Result<Vec<omg_lib::package_managers::types::UpdateInfo>>>
+                + Send
+                + '_,
+        >,
+    > {
+        Box::pin(async move { Ok(self.db.updates.lock().unwrap().clone()) })
+    }
+
+    fn is_installed(&self, package: &str) -> Pin<Box<dyn Future<Output = bool> + Send + '_>> {
+        let result = self.db.is_installed(package);
+        Box::pin(async move { result })
     }
 }

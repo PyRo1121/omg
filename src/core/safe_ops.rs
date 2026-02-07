@@ -105,12 +105,11 @@ pub fn validate_path<P: AsRef<Path>>(path: P) -> Result<PathBuf> {
     }
 
     // Check for null bytes
-    if let Some(path_str) = path.to_str() {
-        if path_str.contains('\0') {
-            return Err(anyhow::anyhow!("Path contains null byte"));
-        }
-    } else {
+    let Some(path_str) = path.to_str() else {
         return Err(anyhow::anyhow!("Path contains invalid UTF-8"));
+    };
+    if path_str.contains('\0') {
+        return Err(anyhow::anyhow!("Path contains null byte"));
     }
 
     // Return the path as-is (canonicalize() fails for non-existent paths)
@@ -190,7 +189,7 @@ pub struct TransactionGuard<T> {
 // SAFETY: The expects below guard a logical invariant — `inner` is `Some` until
 // `commit()` consumes it. Calling `inner()`/`inner_mut()` after `commit()` is a
 // programming error (use-after-move), so panicking is correct.
-#[allow(clippy::expect_used)]
+#[expect(clippy::expect_used)]
 impl<T> TransactionGuard<T> {
     /// Create a new transaction guard
     pub fn new(transaction: T) -> Self {
@@ -201,6 +200,7 @@ impl<T> TransactionGuard<T> {
     }
 
     /// Get a reference to the inner transaction
+    #[must_use]
     pub fn inner(&self) -> &T {
         self.inner.as_ref().expect("Transaction already consumed")
     }
@@ -246,6 +246,7 @@ impl AtomicCounter {
     }
 
     /// Get the current value
+    #[must_use]
     pub fn get(&self) -> u64 {
         self.value.load(Ordering::SeqCst)
     }

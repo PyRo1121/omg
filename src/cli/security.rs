@@ -925,7 +925,7 @@ pub async fn fix_vulnerabilities(
                 // Check if there's an available update
                 #[cfg(feature = "arch")]
                 {
-                    if crate::package_managers::alpm_direct::has_update(pkg).unwrap_or(false) {
+                    if crate::package_managers::alpm_direct::has_update(pkg).unwrap_or_default() {
                         to_upgrade.push(pkg.clone());
                     } else {
                         for vuln in vulns {

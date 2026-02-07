@@ -62,7 +62,7 @@ impl Database {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)] // Idiomatic in tests: panics on failure with clear error context
+#[expect(clippy::unwrap_used)] // Idiomatic in tests: panics on failure with clear error context
 mod tests {
     use super::*;
     use tempfile::TempDir;

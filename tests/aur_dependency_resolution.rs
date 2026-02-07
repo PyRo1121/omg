@@ -1,5 +1,10 @@
 #![cfg(feature = "arch")]
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic, clippy::nursery)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::pedantic,
+    clippy::nursery
+)]
 //! AUR Dependency Resolution & Parallel Build Tests
 //!
 //! Comprehensive testing of dependency graph construction, topological sorting,
@@ -75,7 +80,10 @@ fn test_depgraph_diamond_dependency() {
         BuildJob::new("base".to_string(), vec![]),
         BuildJob::new("left".to_string(), vec!["base".to_string()]),
         BuildJob::new("right".to_string(), vec!["base".to_string()]),
-        BuildJob::new("top".to_string(), vec!["left".to_string(), "right".to_string()]),
+        BuildJob::new(
+            "top".to_string(),
+            vec!["left".to_string(), "right".to_string()],
+        ),
     ];
 
     let graph = ParallelBuilder::build_dependency_graph(&jobs);
@@ -96,7 +104,10 @@ fn test_depgraph_mixed_internal_external() {
     // Some dependencies are in the build set, some are external (filtered out)
     let jobs = vec![
         BuildJob::new("pkg-a".to_string(), vec!["external-lib".to_string()]),
-        BuildJob::new("pkg-b".to_string(), vec!["pkg-a".to_string(), "system-lib".to_string()]),
+        BuildJob::new(
+            "pkg-b".to_string(),
+            vec!["pkg-a".to_string(), "system-lib".to_string()],
+        ),
     ];
 
     let graph = ParallelBuilder::build_dependency_graph(&jobs);
@@ -156,11 +167,19 @@ fn test_toposort_diamond_pattern() {
 
     let mut graph = HashMap::new();
     graph.insert("base".to_string(), HashSet::new());
-    graph.insert("left".to_string(), ["base".to_string()].into_iter().collect());
-    graph.insert("right".to_string(), ["base".to_string()].into_iter().collect());
+    graph.insert(
+        "left".to_string(),
+        ["base".to_string()].into_iter().collect(),
+    );
+    graph.insert(
+        "right".to_string(),
+        ["base".to_string()].into_iter().collect(),
+    );
     graph.insert(
         "top".to_string(),
-        ["left".to_string(), "right".to_string()].into_iter().collect(),
+        ["left".to_string(), "right".to_string()]
+            .into_iter()
+            .collect(),
     );
 
     let levels = ParallelBuilder::topological_levels(&graph).unwrap();
@@ -197,9 +216,15 @@ fn test_toposort_complex_graph() {
     graph.insert("c".to_string(), ["b".to_string()].into_iter().collect());
     graph.insert("d".to_string(), ["c".to_string()].into_iter().collect());
     graph.insert("e".to_string(), ["c".to_string()].into_iter().collect());
-    graph.insert("f".to_string(), ["d".to_string(), "e".to_string()].into_iter().collect());
+    graph.insert(
+        "f".to_string(),
+        ["d".to_string(), "e".to_string()].into_iter().collect(),
+    );
     graph.insert("g".to_string(), ["e".to_string()].into_iter().collect());
-    graph.insert("h".to_string(), ["f".to_string(), "g".to_string()].into_iter().collect());
+    graph.insert(
+        "h".to_string(),
+        ["f".to_string(), "g".to_string()].into_iter().collect(),
+    );
 
     let levels = ParallelBuilder::topological_levels(&graph).unwrap();
 
@@ -274,7 +299,10 @@ fn test_circular_complex_with_cycle() {
     let mut graph = HashMap::new();
     graph.insert("a".to_string(), HashSet::new());
     graph.insert("b".to_string(), ["a".to_string()].into_iter().collect());
-    graph.insert("c".to_string(), ["b".to_string(), "d".to_string()].into_iter().collect());
+    graph.insert(
+        "c".to_string(),
+        ["b".to_string(), "d".to_string()].into_iter().collect(),
+    );
     graph.insert("d".to_string(), ["c".to_string()].into_iter().collect()); // c -> d -> c cycle
 
     let result = ParallelBuilder::topological_levels(&graph);
@@ -349,7 +377,10 @@ fn test_parallel_mixed_parallelism() {
         BuildJob::new("pkg1".to_string(), vec![]),
         BuildJob::new("pkg2".to_string(), vec!["pkg1".to_string()]),
         BuildJob::new("pkg3".to_string(), vec!["pkg1".to_string()]),
-        BuildJob::new("pkg4".to_string(), vec!["pkg2".to_string(), "pkg3".to_string()]),
+        BuildJob::new(
+            "pkg4".to_string(),
+            vec!["pkg2".to_string(), "pkg3".to_string()],
+        ),
         BuildJob::new("pkg5".to_string(), vec!["pkg4".to_string()]),
         BuildJob::new("pkg6".to_string(), vec!["pkg4".to_string()]),
     ];

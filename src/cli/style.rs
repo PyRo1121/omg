@@ -125,10 +125,10 @@ pub fn colors_enabled() -> bool {
 
     // 2. Check if OMG_COLORS is explicitly disabled
     if let Ok(val) = env::var("OMG_COLORS") {
-        if val == "never" || val == "0" || val == "false" {
+        if matches!(val.as_str(), "never" | "0" | "false") {
             return false;
         }
-        if val == "always" || val == "1" || val == "true" {
+        if matches!(val.as_str(), "always" | "1" | "true") {
             return true;
         }
     }
@@ -328,7 +328,7 @@ pub fn duration(ms: u64) -> String {
 
 /// Create a spinner for indeterminate progress
 #[must_use]
-#[allow(clippy::expect_used, clippy::literal_string_with_formatting_args)] // Static indicatif templates are always valid; braces are template syntax not Rust format args
+#[expect(clippy::expect_used, clippy::literal_string_with_formatting_args)] // Static indicatif templates are always valid; braces are template syntax not Rust format args
 pub fn spinner(msg: &str) -> ProgressBar {
     let pb = ProgressBar::new_spinner();
 
@@ -358,7 +358,7 @@ pub fn spinner(msg: &str) -> ProgressBar {
 
 /// Create a progress bar for determinate progress
 #[must_use]
-#[allow(clippy::expect_used, clippy::literal_string_with_formatting_args)] // Static indicatif templates are always valid; braces are template syntax not Rust format args
+#[expect(clippy::expect_used, clippy::literal_string_with_formatting_args)] // Static indicatif templates are always valid; braces are template syntax not Rust format args
 pub fn progress_bar(total: u64, msg: &str) -> ProgressBar {
     let pb = ProgressBar::new(total);
 
@@ -380,7 +380,7 @@ pub fn progress_bar(total: u64, msg: &str) -> ProgressBar {
 
 /// Create a download progress bar with speed and ETA
 #[must_use]
-#[allow(clippy::expect_used, clippy::literal_string_with_formatting_args)] // Static indicatif templates are always valid; braces are template syntax not Rust format args
+#[expect(clippy::expect_used, clippy::literal_string_with_formatting_args)] // Static indicatif templates are always valid; braces are template syntax not Rust format args
 pub fn download_bar(total: u64, filename: &str) -> ProgressBar {
     let pb = ProgressBar::new(total);
 

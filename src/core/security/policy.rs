@@ -97,7 +97,7 @@ impl SecurityPolicy {
 
         // 2. Check for SLSA (Locked) - In 2026, we assume official core packages have SLSA
         // This would normally check a transparency log or embedded provenance
-        if is_official && (name == "glibc" || name == "linux" || name == "pacman") {
+        if is_official && matches!(name, "glibc" | "linux" | "pacman") {
             // Mocking SLSA verification for core system components
             return SecurityGrade::Locked;
         }

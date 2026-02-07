@@ -137,14 +137,18 @@ fn bench_read_strategies(c: &mut Criterion) {
         std::fs::write(&test_file, &data).unwrap();
 
         // Direct read
-        group.bench_with_input(BenchmarkId::new("direct_read", name), &test_file, |b, path| {
-            b.iter(|| {
-                let mut file = File::open(path).unwrap();
-                let mut buffer = Vec::new();
-                file.read_to_end(&mut buffer).unwrap();
-                std::hint::black_box(buffer)
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("direct_read", name),
+            &test_file,
+            |b, path| {
+                b.iter(|| {
+                    let mut file = File::open(path).unwrap();
+                    let mut buffer = Vec::new();
+                    file.read_to_end(&mut buffer).unwrap();
+                    std::hint::black_box(buffer)
+                });
+            },
+        );
 
         // Buffered read
         group.bench_with_input(
@@ -177,14 +181,18 @@ fn bench_read_strategies(c: &mut Criterion) {
         );
 
         // Memory-mapped read
-        group.bench_with_input(BenchmarkId::new("mmap_read", name), &test_file, |b, path| {
-            b.iter(|| {
-                let file = File::open(path).unwrap();
-                let mmap = unsafe { memmap2::Mmap::map(&file).unwrap() };
-                let len = mmap.len();
-                std::hint::black_box(len)
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("mmap_read", name),
+            &test_file,
+            |b, path| {
+                b.iter(|| {
+                    let file = File::open(path).unwrap();
+                    let mmap = unsafe { memmap2::Mmap::map(&file).unwrap() };
+                    let len = mmap.len();
+                    std::hint::black_box(len)
+                });
+            },
+        );
 
         // Chunked read
         group.bench_with_input(
@@ -233,19 +241,23 @@ fn bench_async_io(c: &mut Criterion) {
         let data: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
 
         // Async write
-        group.bench_with_input(BenchmarkId::new("async_write", name), &data, |b, test_data| {
-            let temp_dir = TempDir::new().unwrap();
+        group.bench_with_input(
+            BenchmarkId::new("async_write", name),
+            &data,
+            |b, test_data| {
+                let temp_dir = TempDir::new().unwrap();
 
-            b.iter(|| {
-                rt.block_on(async {
-                    let path = temp_dir.path().join("async.bin");
-                    let mut file = tokio::fs::File::create(&path).await.unwrap();
-                    file.write_all(test_data).await.unwrap();
-                    file.flush().await.unwrap();
-                    std::hint::black_box(test_data.len())
-                })
-            });
-        });
+                b.iter(|| {
+                    rt.block_on(async {
+                        let path = temp_dir.path().join("async.bin");
+                        let mut file = tokio::fs::File::create(&path).await.unwrap();
+                        file.write_all(test_data).await.unwrap();
+                        file.flush().await.unwrap();
+                        std::hint::black_box(test_data.len())
+                    })
+                });
+            },
+        );
 
         // Create test file for read benchmarks
         let temp_dir = TempDir::new().unwrap();
@@ -381,24 +393,32 @@ fn bench_stream_processing(c: &mut Criterion) {
         let data: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
 
         // Process in one go
-        group.bench_with_input(BenchmarkId::new("all_at_once", name), &data, |b, test_data| {
-            b.iter(|| {
-                let result: Vec<u8> = test_data.iter().map(|&b| b.wrapping_add(1)).collect();
-                std::hint::black_box(result)
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("all_at_once", name),
+            &data,
+            |b, test_data| {
+                b.iter(|| {
+                    let result: Vec<u8> = test_data.iter().map(|&b| b.wrapping_add(1)).collect();
+                    std::hint::black_box(result)
+                });
+            },
+        );
 
         // Process in 4KB chunks
-        group.bench_with_input(BenchmarkId::new("chunked_4k", name), &data, |b, test_data| {
-            b.iter(|| {
-                let mut result = Vec::with_capacity(test_data.len());
-                for chunk in test_data.chunks(4096) {
-                    let processed: Vec<u8> = chunk.iter().map(|&b| b.wrapping_add(1)).collect();
-                    result.extend(processed);
-                }
-                std::hint::black_box(result)
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("chunked_4k", name),
+            &data,
+            |b, test_data| {
+                b.iter(|| {
+                    let mut result = Vec::with_capacity(test_data.len());
+                    for chunk in test_data.chunks(4096) {
+                        let processed: Vec<u8> = chunk.iter().map(|&b| b.wrapping_add(1)).collect();
+                        result.extend(processed);
+                    }
+                    std::hint::black_box(result)
+                });
+            },
+        );
 
         // Cursor-based processing
         group.bench_with_input(BenchmarkId::new("cursor", name), &data, |b, test_data| {

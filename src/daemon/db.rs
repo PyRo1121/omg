@@ -187,9 +187,9 @@ impl PersistentCache {
 
     /// Check if cached index is still valid
     pub fn is_index_valid(&self, current_db_mtime: u64) -> bool {
-        match self.get_index_meta() {
-            Ok(Some(meta)) => meta.db_mtime == current_db_mtime,
-            _ => false,
-        }
+        self.get_index_meta()
+            .ok()
+            .flatten()
+            .is_some_and(|meta| meta.db_mtime == current_db_mtime)
     }
 }

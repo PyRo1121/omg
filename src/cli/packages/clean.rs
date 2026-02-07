@@ -17,7 +17,7 @@ use crate::package_managers::debian_db::{clean_package_cache, list_orphans_fast}
 use crate::cli::style;
 
 /// Clean up orphans and caches
-#[allow(clippy::fn_params_excessive_bools)] // Parameters map directly to CLI boolean flags (orphans, cache, aur, all, dry_run)
+#[expect(clippy::fn_params_excessive_bools)] // Parameters map directly to CLI boolean flags (orphans, cache, aur, all, dry_run)
 pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bool) -> Result<()> {
     if dry_run {
         crate::cli::modern_ui::print_phase_header("🧹", "Clean Preview", "dry run");
@@ -69,10 +69,22 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bo
         }
 
         use owo_colors::OwoColorize;
-        println!("  {} To clear package cache: {}", "·".dimmed(), "omg clean --cache".cyan());
+        println!(
+            "  {} To clear package cache: {}",
+            "·".dimmed(),
+            "omg clean --cache".cyan()
+        );
         #[cfg(feature = "arch")]
-        println!("  {} To clear AUR builds: {}", "·".dimmed(), "omg clean --aur".cyan());
-        println!("  {} To clean everything: {}", "·".dimmed(), "omg clean --all".cyan());
+        println!(
+            "  {} To clear AUR builds: {}",
+            "·".dimmed(),
+            "omg clean --aur".cyan()
+        );
+        println!(
+            "  {} To clean everything: {}",
+            "·".dimmed(),
+            "omg clean --all".cyan()
+        );
         println!();
         return Ok(());
     }
@@ -83,12 +95,20 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bo
             if dry_run {
                 let orphan_list = list_orphans_direct().unwrap_or_default();
                 use owo_colors::OwoColorize;
-                println!("  {} Would remove {} orphan packages:", "→".cyan(), orphan_list.len());
+                println!(
+                    "  {} Would remove {} orphan packages:",
+                    "→".cyan(),
+                    orphan_list.len()
+                );
                 for pkg in orphan_list.iter().take(10) {
                     println!("    {} {}", "·".dimmed(), pkg);
                 }
                 if orphan_list.len() > 10 {
-                    println!("    {} and {} more...", "·".dimmed(), orphan_list.len() - 10);
+                    println!(
+                        "    {} and {} more...",
+                        "·".dimmed(),
+                        orphan_list.len() - 10
+                    );
                 }
             } else {
                 remove_orphans().await?;
@@ -108,7 +128,10 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bo
         {
             if dry_run {
                 use owo_colors::OwoColorize;
-                println!("  {} Would clear package cache (keep 1 recent version)", "→".cyan());
+                println!(
+                    "  {} Would clear package cache (keep 1 recent version)",
+                    "→".cyan()
+                );
             } else {
                 crate::cli::modern_ui::print_info("Clearing package cache...");
                 match clean_cache(1) {
@@ -131,7 +154,10 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bo
         #[cfg(feature = "debian")]
         {
             use owo_colors::OwoColorize;
-            println!("  {} Use 'apt clean' for cache cleanup on Debian", "ℹ".blue());
+            println!(
+                "  {} Use 'apt clean' for cache cleanup on Debian",
+                "ℹ".blue()
+            );
         }
     }
 
@@ -189,8 +215,16 @@ async fn handle_debian_pure_clean(
             println!("    Run: {}", "omg clean --orphans".cyan());
         }
 
-        println!("  {} To clear package cache: {}", "·".dimmed(), "omg clean --cache".cyan());
-        println!("  {} To clean everything: {}", "·".dimmed(), "omg clean --all".cyan());
+        println!(
+            "  {} To clear package cache: {}",
+            "·".dimmed(),
+            "omg clean --cache".cyan()
+        );
+        println!(
+            "  {} To clean everything: {}",
+            "·".dimmed(),
+            "omg clean --all".cyan()
+        );
         println!();
         return Ok(());
     }
@@ -211,7 +245,11 @@ async fn handle_debian_pure_clean(
                 println!("    {} {}", "·".dimmed(), pkg);
             }
             if orphan_list.len() > 10 {
-                println!("    {} and {} more...", "·".dimmed(), orphan_list.len() - 10);
+                println!(
+                    "    {} and {} more...",
+                    "·".dimmed(),
+                    orphan_list.len() - 10
+                );
             }
         } else {
             crate::cli::modern_ui::print_info(&format!(

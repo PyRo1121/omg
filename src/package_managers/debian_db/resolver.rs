@@ -60,7 +60,7 @@ pub enum VersionOp {
 }
 
 impl VersionOp {
-    #[allow(dead_code)] // Kept for potential future use
+    #[expect(dead_code)] // Kept for potential future use
     fn from_str(s: &str) -> Option<Self> {
         match s.trim() {
             "=" => Some(Self::Eq),
@@ -383,7 +383,12 @@ impl DependencyResolver {
         // Check if already installed
         if let Some(installed_ver) = self.installed.get(&dep.name)
             && (dep.version_constraint.is_none()
-                || Self::version_satisfies(installed_ver, dep.version_constraint.as_ref().unwrap()))
+                || Self::version_satisfies(
+                    installed_ver,
+                    dep.version_constraint
+                        .as_ref()
+                        .expect("guarded by is_none() check"),
+                ))
         {
             return Ok(());
         }
@@ -391,7 +396,12 @@ impl DependencyResolver {
         // Check if available
         if let Some(pkg) = self.available.get(&dep.name)
             && (dep.version_constraint.is_none()
-                || Self::version_satisfies(&pkg.version, dep.version_constraint.as_ref().unwrap()))
+                || Self::version_satisfies(
+                    &pkg.version,
+                    dep.version_constraint
+                        .as_ref()
+                        .expect("guarded by is_none() check"),
+                ))
         {
             return self.resolve_package_readonly(&dep.name, visited, to_install);
         }
@@ -424,20 +434,20 @@ impl DependencyResolver {
         let mut error_msg = format!("Cannot satisfy dependency: {}", dep.name);
         if !dep.alternatives.is_empty() {
             let alt_names: Vec<_> = dep.alternatives.iter().map(|a| a.name.as_str()).collect();
-            error_msg.push_str(&format!(
-                "\n  Tried alternatives: {}",
-                alt_names.join(", ")
-            ));
+            error_msg.push_str(&format!("\n  Tried alternatives: {}", alt_names.join(", ")));
         }
         if let Some(constraint) = &dep.version_constraint {
-            error_msg.push_str(&format!(" (version: {:?} {})", constraint.op, constraint.version));
+            error_msg.push_str(&format!(
+                " (version: {:?} {})",
+                constraint.op, constraint.version
+            ));
         }
         error_msg.push_str(
             "\n💡 This dependency is not available in any enabled repository.\n\
             Try:\n\
             - omg sync (refresh package database)\n\
             - Check that required repositories are enabled\n\
-            - Install the dependency manually first"
+            - Install the dependency manually first",
         );
 
         anyhow::bail!(error_msg)
@@ -453,7 +463,12 @@ impl DependencyResolver {
         // Check if already installed
         if let Some(installed_ver) = self.installed.get(&dep.name)
             && (dep.version_constraint.is_none()
-                || Self::version_satisfies(installed_ver, dep.version_constraint.as_ref().unwrap()))
+                || Self::version_satisfies(
+                    installed_ver,
+                    dep.version_constraint
+                        .as_ref()
+                        .expect("guarded by is_none() check"),
+                ))
         {
             return Ok(());
         }
@@ -461,7 +476,12 @@ impl DependencyResolver {
         // Check if available
         if let Some(pkg) = self.available.get(&dep.name)
             && (dep.version_constraint.is_none()
-                || Self::version_satisfies(&pkg.version, dep.version_constraint.as_ref().unwrap()))
+                || Self::version_satisfies(
+                    &pkg.version,
+                    dep.version_constraint
+                        .as_ref()
+                        .expect("guarded by is_none() check"),
+                ))
         {
             return self.resolve_package(&dep.name, visited, to_install);
         }
@@ -491,20 +511,20 @@ impl DependencyResolver {
         let mut error_msg = format!("Cannot satisfy dependency: {}", dep.name);
         if !dep.alternatives.is_empty() {
             let alt_names: Vec<_> = dep.alternatives.iter().map(|a| a.name.as_str()).collect();
-            error_msg.push_str(&format!(
-                "\n  Tried alternatives: {}",
-                alt_names.join(", ")
-            ));
+            error_msg.push_str(&format!("\n  Tried alternatives: {}", alt_names.join(", ")));
         }
         if let Some(constraint) = &dep.version_constraint {
-            error_msg.push_str(&format!(" (version: {:?} {})", constraint.op, constraint.version));
+            error_msg.push_str(&format!(
+                " (version: {:?} {})",
+                constraint.op, constraint.version
+            ));
         }
         error_msg.push_str(
             "\n💡 This dependency is not available in any enabled repository.\n\
             Try:\n\
             - omg sync (refresh package database)\n\
             - Check that required repositories are enabled\n\
-            - Install the dependency manually first"
+            - Install the dependency manually first",
         );
 
         anyhow::bail!(error_msg)
@@ -774,7 +794,7 @@ fn compare_version_part(a: &str, b: &str) -> std::cmp::Ordering {
             if c.is_ascii_digit() {
                 break;
             }
-            a_prefix.push(a_chars.next().unwrap());
+            a_prefix.push(a_chars.next().expect("peek() confirmed Some"));
         }
 
         let mut b_prefix = String::new();
@@ -782,7 +802,7 @@ fn compare_version_part(a: &str, b: &str) -> std::cmp::Ordering {
             if c.is_ascii_digit() {
                 break;
             }
-            b_prefix.push(b_chars.next().unwrap());
+            b_prefix.push(b_chars.next().expect("peek() confirmed Some"));
         }
 
         match compare_non_digit(&a_prefix, &b_prefix) {
@@ -796,7 +816,7 @@ fn compare_version_part(a: &str, b: &str) -> std::cmp::Ordering {
             if !c.is_ascii_digit() {
                 break;
             }
-            a_num.push(a_chars.next().unwrap());
+            a_num.push(a_chars.next().expect("peek() confirmed Some"));
         }
 
         let mut b_num = String::new();
@@ -804,7 +824,7 @@ fn compare_version_part(a: &str, b: &str) -> std::cmp::Ordering {
             if !c.is_ascii_digit() {
                 break;
             }
-            b_num.push(b_chars.next().unwrap());
+            b_num.push(b_chars.next().expect("peek() confirmed Some"));
         }
 
         if a_num.is_empty() && b_num.is_empty() {

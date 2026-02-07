@@ -380,13 +380,14 @@ fn rand_byte() -> u8 {
 
 fn format_timestamp(ts: i64) -> String {
     use jiff::Timestamp;
-    if let Ok(dt) = Timestamp::from_second(ts) {
-        format!("{dt}")
-            .chars()
-            .take(16)
-            .collect::<String>()
-            .replace('T', " ")
-    } else {
-        "unknown".to_string()
-    }
+    Timestamp::from_second(ts).map_or_else(
+        |_| "unknown".to_string(),
+        |dt| {
+            format!("{dt}")
+                .chars()
+                .take(16)
+                .collect::<String>()
+                .replace('T', " ")
+        },
+    )
 }

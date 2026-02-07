@@ -40,7 +40,7 @@ impl ConcurrencyTestFixture {
         let data_dir = temp_dir.path().join("data");
         std::fs::create_dir_all(&data_dir)?;
 
-        #[allow(unsafe_code)]
+        #[expect(unsafe_code)]
         unsafe {
             std::env::set_var("OMG_DAEMON_DATA_DIR", &data_dir);
             std::env::set_var("OMG_DATA_DIR", &data_dir);
@@ -398,7 +398,7 @@ async fn test_no_deadlock_with_batch_requests() -> Result<()> {
 
             let batch = Request::Batch {
                 id: i,
-                requests: Box::new(subrequests),
+                requests: subrequests,
             };
 
             handle_request(state, batch).await
@@ -522,11 +522,8 @@ async fn test_no_race_in_metrics_updates() -> Result<()> {
     }
 
     // Check final metrics
-    let metrics_response = handle_request(
-        Arc::clone(&fixture.state),
-        Request::Metrics { id: 1000 },
-    )
-    .await;
+    let metrics_response =
+        handle_request(Arc::clone(&fixture.state), Request::Metrics { id: 1000 }).await;
 
     if let Response::Success {
         result: ResponseResult::Metrics(metrics),
@@ -636,11 +633,7 @@ async fn test_arc_reference_counting() -> Result<()> {
     }
 
     // State should still be valid
-    let response = handle_request(
-        Arc::clone(&fixture.state),
-        Request::Ping { id: 999 },
-    )
-    .await;
+    let response = handle_request(Arc::clone(&fixture.state), Request::Ping { id: 999 }).await;
 
     assert!(
         matches!(response, Response::Success { .. }),

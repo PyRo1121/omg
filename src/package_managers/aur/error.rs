@@ -2,10 +2,6 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum AurError {
-    #[error("Package '{0}' not found on AUR")]
-    #[allow(dead_code)]
-    PackageNotFound(String),
-
     #[error("PKGBUILD not found for '{package}'\n  → The AUR package may not exist or the clone failed\n  → Try: rm -rf ~/.cache/omg/aur/{package} && omg install {package}", package = .0)]
     PkgbuildNotFound(String),
 

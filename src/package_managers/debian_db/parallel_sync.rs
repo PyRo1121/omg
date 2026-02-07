@@ -44,7 +44,7 @@ const CACHE_TTL_SECS: u64 = 6 * 60 * 60;
 
 /// Repository sync state for caching
 #[derive(serde::Serialize, serde::Deserialize, Default)]
-#[allow(dead_code)] // Future feature: incremental sync
+#[expect(dead_code)] // Future feature: incremental sync
 struct SyncCache {
     /// When this cache was created
     synced_at: u64,
@@ -88,7 +88,11 @@ fn is_apt_cache_fresh() -> bool {
                     && let Ok(elapsed) = SystemTime::now().duration_since(mtime)
                 {
                     if elapsed.as_secs() < FRESH_THRESHOLD_SECS {
-                        tracing::debug!("Found fresh apt cache file: {} ({}s old)", name, elapsed.as_secs());
+                        tracing::debug!(
+                            "Found fresh apt cache file: {} ({}s old)",
+                            name,
+                            elapsed.as_secs()
+                        );
                         return true;
                     }
                 }
@@ -319,56 +323,64 @@ async fn sync_repository(
 
     // OPTIMIZATION: Try only the 2 most common formats to reduce wasted requests
     // Modern Debian/Ubuntu repos use gzip (99%) or xz (1%)
-    let component_downloads: Vec<_> = repo.components.iter().flat_map(|component| {
-        let formats = [
-            (".gz", decompress_gzip as fn(&[u8]) -> Result<Vec<u8>>),
-            (".xz", decompress_xz),
-        ];
+    let component_downloads: Vec<_> = repo
+        .components
+        .iter()
+        .flat_map(|component| {
+            let formats = [
+                (".gz", decompress_gzip as fn(&[u8]) -> Result<Vec<u8>>),
+                (".xz", decompress_xz),
+            ];
 
-        let cache_dir_inner = cache_dir_ref.clone();
-        formats.into_iter().map(move |(ext, decompress)| {
-            let client = client.clone();
-            let cache_dir = cache_dir_inner.clone();
-            let component = component.clone();
-            let repo_uri = repo.uri.clone();
-            let repo_suite = repo.suite.clone();
+            let cache_dir_inner = cache_dir_ref.clone();
+            formats.into_iter().map(move |(ext, decompress)| {
+                let client = client.clone();
+                let cache_dir = cache_dir_inner.clone();
+                let component = component.clone();
+                let repo_uri = repo.uri.clone();
+                let repo_suite = repo.suite.clone();
 
-            async move {
-                let url = format!(
-                    "{}/dists/{}/{}/binary-{}/Packages{ext}",
-                    repo_uri.trim_end_matches('/'),
-                    repo_suite,
-                    component,
-                    arch
-                );
+                async move {
+                    let url = format!(
+                        "{}/dists/{}/{}/binary-{}/Packages{ext}",
+                        repo_uri.trim_end_matches('/'),
+                        repo_suite,
+                        component,
+                        arch
+                    );
 
-                let packages_path = cache_dir.join(format!("{component}_{arch}_Packages"));
+                    let packages_path = cache_dir.join(format!("{component}_{arch}_Packages"));
 
-                match download_bytes_with_retry(&client, &url).await {
-                    Ok(data) => {
-                        match decompress(&data) {
+                    match download_bytes_with_retry(&client, &url).await {
+                        Ok(data) => match decompress(&data) {
                             Ok(decompressed) => {
                                 atomic_write(&packages_path, &decompressed)?;
-                                tracing::debug!("Successfully downloaded component {component} ({ext})");
-                                Ok::<Option<(String, String)>, anyhow::Error>(Some((component.clone(), ext.to_string())))
+                                tracing::debug!(
+                                    "Successfully downloaded component {component} ({ext})"
+                                );
+                                Ok::<Option<(String, String)>, anyhow::Error>(Some((
+                                    component.clone(),
+                                    ext.to_string(),
+                                )))
                             }
                             Err(e) => {
                                 tracing::debug!("Decompression failed for {url}: {e}");
                                 Ok::<Option<(String, String)>, anyhow::Error>(None)
                             }
-                        }
+                        },
+                        Err(_) => Ok::<Option<(String, String)>, anyhow::Error>(None), // File not available in this format
                     }
-                    Err(_) => Ok::<Option<(String, String)>, anyhow::Error>(None), // File not available in this format
                 }
-            }
+            })
         })
-    }).collect();
+        .collect();
 
     // Execute all downloads concurrently (try all formats at once)
     let results = futures::future::join_all(component_downloads).await;
 
     // Check that we got at least one success per component
-    let mut successful_components: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut successful_components: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
     for result in results {
         match result {
             Ok(Some((component, _ext))) => {
@@ -409,7 +421,6 @@ enum DownloadResult {
     /// Server returned 304 Not Modified
     NotModified,
 }
-
 
 /// Download a file with conditional request (If-Modified-Since) support
 async fn conditional_download_with_retry(
@@ -489,7 +500,9 @@ async fn conditional_download_with_retry(
 /// Download bytes with retry logic and HTTP conditional request support
 /// Returns None if server returns 304 Not Modified (use cached copy)
 async fn download_bytes_with_retry(client: &Client, url: &str) -> Result<Vec<u8>> {
-    download_bytes_conditional(client, url, None).await.map(|opt| opt.unwrap_or_default())
+    download_bytes_conditional(client, url, None)
+        .await
+        .map(|opt| opt.unwrap_or_default())
 }
 
 /// Download bytes with optional If-Modified-Since header
@@ -584,7 +597,7 @@ fn atomic_write(dest: &Path, data: &[u8]) -> Result<()> {
 }
 
 /// Verify SHA256 checksum of data
-#[allow(dead_code)] // Future feature: Release file verification
+#[expect(dead_code)] // Future feature: Release file verification
 fn verify_checksum(data: &[u8], expected_hash: &str) -> Result<()> {
     let mut hasher = Sha256::new();
     hasher.update(data);
@@ -599,7 +612,7 @@ fn verify_checksum(data: &[u8], expected_hash: &str) -> Result<()> {
 }
 
 /// Parse Release file to extract SHA256 checksums
-#[allow(dead_code)] // Future feature: Release file verification
+#[expect(dead_code)] // Future feature: Release file verification
 fn parse_release_file(content: &str) -> std::collections::HashMap<String, String> {
     let mut checksums = std::collections::HashMap::new();
     let mut in_sha256_section = false;
@@ -710,7 +723,7 @@ fn decompress_xz(data: &[u8]) -> Result<Vec<u8>> {
 
 // LZ4 compression format - not currently used by Debian/Ubuntu repos
 // but kept for potential future support
-#[allow(dead_code)]
+#[expect(dead_code)]
 fn decompress_lz4(data: &[u8]) -> Result<Vec<u8>> {
     lz4_flex::decompress_size_prepended(data)
         .map_err(|e| anyhow::anyhow!("LZ4 decompression failed: {e}"))
@@ -718,8 +731,8 @@ fn decompress_lz4(data: &[u8]) -> Result<Vec<u8>> {
 
 // No-op decompression for uncompressed Packages files
 // Not currently used but kept as part of the decompression function pointer pattern
-#[allow(dead_code)]
-#[allow(clippy::unnecessary_wraps)] // Used as function pointer with other decompression functions
+#[expect(dead_code)]
+#[expect(clippy::unnecessary_wraps)] // Used as function pointer with other decompression functions
 fn decompress_none(data: &[u8]) -> Result<Vec<u8>> {
     Ok(data.to_vec())
 }

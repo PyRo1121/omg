@@ -97,7 +97,11 @@ pub async fn run(listener: UnixListener, state: Arc<DaemonState>) -> Result<()> 
 
             if let Ok((versions, status)) = result {
                 // Update runtime versions safely
-                (*state.runtime_versions.write()).clone_from(&versions);
+                state
+                    .runtime_versions
+                    .write()
+                    .expect("lock poisoned")
+                    .clone_from(&versions);
 
                 if let Ok((total, explicit, orphans, updates)) = status {
                     // Write fast status file for zero-IPC CLI reads
@@ -250,7 +254,7 @@ fn validate_batch_depth(request: &Request, depth: usize) -> Result<()> {
     }
 
     if let Request::Batch { requests, .. } = request {
-        for req in requests.iter() {
+        for req in requests {
             validate_batch_depth(req, depth + 1)?;
         }
     }

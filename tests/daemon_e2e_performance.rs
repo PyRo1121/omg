@@ -31,7 +31,7 @@ impl PerformanceTestFixture {
         let data_dir = temp_dir.path().join("data");
         std::fs::create_dir_all(&data_dir)?;
 
-        #[allow(unsafe_code)]
+        #[expect(unsafe_code)]
         unsafe {
             std::env::set_var("OMG_DAEMON_DATA_DIR", &data_dir);
             std::env::set_var("OMG_DATA_DIR", &data_dir);
@@ -54,7 +54,7 @@ impl PerformanceTestFixture {
         (response, duration)
     }
 
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     async fn measure_batch(&self, requests: Vec<Request>) -> (Vec<Response>, Duration) {
         let start = Instant::now();
         let mut responses = Vec::with_capacity(requests.len());
@@ -137,16 +137,12 @@ async fn bench_ping_latency() -> Result<()> {
 
     // Warmup
     for i in 0..10 {
-        fixture
-            .measure_request(Request::Ping { id: i })
-            .await;
+        fixture.measure_request(Request::Ping { id: i }).await;
     }
 
     // Measure
     for i in 0..100 {
-        let (response, duration) = fixture
-            .measure_request(Request::Ping { id: i })
-            .await;
+        let (response, duration) = fixture.measure_request(Request::Ping { id: i }).await;
 
         assert!(
             matches!(response, Response::Success { .. }),
@@ -305,16 +301,12 @@ async fn bench_status_latency() -> Result<()> {
 
     // Warmup
     for i in 0..5 {
-        fixture
-            .measure_request(Request::Status { id: i })
-            .await;
+        fixture.measure_request(Request::Status { id: i }).await;
     }
 
     // Measure
     for i in 0..50 {
-        let (response, duration) = fixture
-            .measure_request(Request::Status { id: i })
-            .await;
+        let (response, duration) = fixture.measure_request(Request::Status { id: i }).await;
 
         assert!(
             matches!(response, Response::Success { .. }),
@@ -347,11 +339,7 @@ async fn bench_sequential_throughput() -> Result<()> {
     let request_count = 1000;
 
     for i in 0..request_count {
-        let _ = handle_request(
-            Arc::clone(&fixture.state),
-            Request::Ping { id: i },
-        )
-        .await;
+        let _ = handle_request(Arc::clone(&fixture.state), Request::Ping { id: i }).await;
     }
 
     let duration = start.elapsed();
@@ -382,9 +370,8 @@ async fn bench_concurrent_throughput() -> Result<()> {
     let mut handles = vec![];
     for i in 0..request_count {
         let state = Arc::clone(&fixture.state);
-        let handle = tokio::spawn(async move {
-            handle_request(state, Request::Ping { id: i }).await
-        });
+        let handle =
+            tokio::spawn(async move { handle_request(state, Request::Ping { id: i }).await });
         handles.push(handle);
     }
 
@@ -428,7 +415,7 @@ async fn bench_batch_throughput() -> Result<()> {
 
         let batch_request = Request::Batch {
             id: batch_id as u64,
-            requests: Box::new(subrequests),
+            requests: subrequests,
         };
 
         let _ = handle_request(Arc::clone(&fixture.state), batch_request).await;
@@ -474,11 +461,8 @@ async fn bench_cache_memory_efficiency() -> Result<()> {
     }
 
     // Check cache stats
-    let stats_response = handle_request(
-        Arc::clone(&fixture.state),
-        Request::CacheStats { id: 999 },
-    )
-    .await;
+    let stats_response =
+        handle_request(Arc::clone(&fixture.state), Request::CacheStats { id: 999 }).await;
 
     if let Response::Success {
         result: ResponseResult::CacheStats { size, max_size },
@@ -492,10 +476,7 @@ async fn bench_cache_memory_efficiency() -> Result<()> {
             (size as f64 / max_size as f64) * 100.0
         );
 
-        assert!(
-            size <= max_size,
-            "Cache should respect max size"
-        );
+        assert!(size <= max_size, "Cache should respect max size");
     }
 
     Ok(())
@@ -520,11 +501,7 @@ async fn bench_state_memory_footprint() -> Result<()> {
     }
 
     // State should still be valid and responsive
-    let response = handle_request(
-        Arc::clone(&fixture.state),
-        Request::Ping { id: 999 },
-    )
-    .await;
+    let response = handle_request(Arc::clone(&fixture.state), Request::Ping { id: 999 }).await;
 
     assert!(
         matches!(response, Response::Success { .. }),
@@ -568,11 +545,8 @@ async fn bench_cache_hit_rate() -> Result<()> {
     }
 
     // Check metrics
-    let metrics_response = handle_request(
-        Arc::clone(&fixture.state),
-        Request::Metrics { id: 999 },
-    )
-    .await;
+    let metrics_response =
+        handle_request(Arc::clone(&fixture.state), Request::Metrics { id: 999 }).await;
 
     if let Response::Success {
         result: ResponseResult::Metrics(m),
@@ -615,10 +589,10 @@ async fn bench_index_search_performance() -> Result<()> {
 
     // Test various query patterns
     let queries = vec![
-        "a",      // Very short (many matches)
-        "lib",    // Common prefix
-        "python", // Specific package
-        "fire",   // Partial match
+        "a",                       // Very short (many matches)
+        "lib",                     // Common prefix
+        "python",                  // Specific package
+        "fire",                    // Partial match
         "nonexistent-package-xyz", // No matches
     ];
 
@@ -707,9 +681,8 @@ async fn stress_high_volume_requests() -> Result<()> {
     // 2000 concurrent requests
     for i in 0..2000 {
         let state = Arc::clone(&fixture.state);
-        let handle = tokio::spawn(async move {
-            handle_request(state, Request::Ping { id: i }).await
-        });
+        let handle =
+            tokio::spawn(async move { handle_request(state, Request::Ping { id: i }).await });
         handles.push(handle);
     }
 
@@ -771,11 +744,7 @@ async fn stress_rapid_cache_churn() -> Result<()> {
     }
 
     // System should still be responsive
-    let response = handle_request(
-        Arc::clone(&fixture.state),
-        Request::Ping { id: 999 },
-    )
-    .await;
+    let response = handle_request(Arc::clone(&fixture.state), Request::Ping { id: 999 }).await;
 
     assert!(
         matches!(response, Response::Success { .. }),

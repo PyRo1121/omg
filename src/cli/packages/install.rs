@@ -159,7 +159,7 @@ pub async fn install(packages: &[String], yes: bool, dry_run: bool) -> Result<()
 
 // Removed old box-drawing functions - using modern_ui now
 
-#[allow(clippy::unnecessary_wraps)] // Result return required: API compat with feature-gated impls
+#[expect(clippy::unnecessary_wraps)] // Result return required: API compat with feature-gated impls
 fn install_dry_run(packages: &[String]) -> Result<()> {
     use comfy_table::{Table, modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL};
     use owo_colors::OwoColorize;

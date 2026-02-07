@@ -125,7 +125,11 @@ fn display_explicit_list(mut packages: Vec<String>, json: bool) -> Result<()> {
     let mut stdout = std::io::BufWriter::new(std::io::stdout());
 
     // Modern header
-    crate::cli::modern_ui::print_phase_header("📦", "Explicit Packages", &format!("{} installed", packages.len()));
+    crate::cli::modern_ui::print_phase_header(
+        "📦",
+        "Explicit Packages",
+        &format!("{} installed", packages.len()),
+    );
     println!();
 
     for pkg in &packages {

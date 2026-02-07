@@ -126,7 +126,11 @@ fn bench_version_comparison_realistic(c: &mut Criterion) {
         // Debian revisions
         ("debian_rev", "1.0-1", "1.0-2"),
         ("debian_rev_ubuntu", "1.0-1ubuntu1", "1.0-1ubuntu2"),
-        ("debian_rev_complex", "2:7.4.052-1ubuntu3.1", "2:7.4.052-1ubuntu4"),
+        (
+            "debian_rev_complex",
+            "2:7.4.052-1ubuntu3.1",
+            "2:7.4.052-1ubuntu4",
+        ),
         // Tilde (pre-release) handling
         ("tilde_beta", "1.0~beta", "1.0~rc"),
         ("tilde_vs_release", "1.0~rc1", "1.0"),
@@ -250,18 +254,14 @@ fn bench_index_operations(c: &mut Criterion) {
     ];
 
     for query in queries {
-        group.bench_with_input(
-            BenchmarkId::new("index_lookup", query),
-            &query,
-            |b, &q| {
-                b.iter(|| {
-                    // search_fast uses FST index internally
-                    let results = search_fast(q).expect("search should succeed");
-                    // Measure just the index lookup by only checking count
-                    std::hint::black_box(results.len())
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("index_lookup", query), &query, |b, &q| {
+            b.iter(|| {
+                // search_fast uses FST index internally
+                let results = search_fast(q).expect("search should succeed");
+                // Measure just the index lookup by only checking count
+                std::hint::black_box(results.len())
+            });
+        });
     }
 
     group.finish();
@@ -362,20 +362,16 @@ fn bench_memory_patterns(c: &mut Criterion) {
         // SmallVec (for small collections)
         use smallvec::SmallVec;
 
-        group.bench_with_input(
-            BenchmarkId::new("smallvec_8", size),
-            &size,
-            |b, &n| {
-                b.iter(|| {
-                    let mut packages: SmallVec<[String; 8]> = SmallVec::new();
-                    for i in 0..n.min(20) {
-                        // Limit to avoid excessive stack usage
-                        packages.push(format!("package-{i}"));
-                    }
-                    std::hint::black_box(packages)
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("smallvec_8", size), &size, |b, &n| {
+            b.iter(|| {
+                let mut packages: SmallVec<[String; 8]> = SmallVec::new();
+                for i in 0..n.min(20) {
+                    // Limit to avoid excessive stack usage
+                    packages.push(format!("package-{i}"));
+                }
+                std::hint::black_box(packages)
+            });
+        });
     }
 
     group.finish();

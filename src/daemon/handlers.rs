@@ -20,7 +20,7 @@ use crate::package_managers::AurClient;
 use crate::package_managers::{PackageManager, get_package_manager};
 #[cfg(feature = "arch")]
 use crate::package_managers::{alpm_worker::AlpmWorker, search_detailed};
-use parking_lot::RwLock;
+use std::sync::RwLock;
 
 // Constants for package source strings to avoid repeated allocations
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
@@ -90,22 +90,12 @@ impl DaemonState {
             tracing::info!("Pre-warming Debian package cache...");
             let start = std::time::Instant::now();
 
-            // CRITICAL: Load mmap index first for zero-copy searches
-            // NOTE: Temporarily disabled - ensure_mmap_loaded not exported yet
-            // let mmap_loaded = crate::package_managers::debian_db::ensure_mmap_loaded();
-            // if mmap_loaded {
-            //     tracing::info!("Zero-copy mmap index loaded for ultra-fast searches");
-            // }
-
-            // Load the full index as fallback
+            // Load the full index
             if let Err(e) = crate::package_managers::debian_db::ensure_index_loaded() {
                 tracing::warn!("Failed to pre-warm Debian cache: {}", e);
             } else {
                 let duration = start.elapsed();
-                tracing::info!(
-                    "Debian cache pre-warmed in {:?}",
-                    duration
-                );
+                tracing::info!("Debian cache pre-warmed in {:?}", duration);
             }
         }
 
@@ -181,11 +171,12 @@ pub async fn handle_request(state: Arc<DaemonState>, request: Request) -> Respon
         }
         Request::Metrics { id } => handle_metrics(id),
         Request::Suggest { id, query, limit } => handle_suggest(state, id, query, limit).await,
-        Request::Batch { id, requests } => handle_batch(state, id, *requests).await,
+        Request::Batch { id, requests } => handle_batch(state, id, requests).await,
         Request::DebianSearch { id, query, limit } => {
             handle_debian_search(state, id, query, limit).await
         }
         Request::Health { id } => handle_health(&state, id),
+        Request::ListUpdates { id } => handle_list_updates(state, id).await,
     }
 }
 
@@ -225,7 +216,7 @@ async fn handle_debian_search(
                 pkgs.into_iter()
                     .map(|p| PackageInfo {
                         name: p.name,
-                        #[allow(clippy::implicit_clone)] // Version is feature-gated type alias; .to_string() is the required conversion
+                        #[expect(clippy::implicit_clone)] // Version is feature-gated type alias; .to_string() is the required conversion
                         version: p.version.to_string(),
                         description: p.description,
                         source: SOURCE_APT.to_string(),
@@ -267,6 +258,12 @@ const DEFAULT_SEARCH_LIMIT: usize = 50;
 const MAX_SEARCH_LIMIT: usize = 1000;
 /// Concurrency for vulnerability scanning
 const SCAN_CONCURRENCY: usize = 32;
+/// Cache size threshold for "degraded" health status
+const HEALTH_DEGRADED_CACHE_THRESHOLD: usize = 50_000;
+/// Cache size threshold for "unhealthy" health status
+const HEALTH_UNHEALTHY_CACHE_THRESHOLD: usize = 100_000;
+/// Failed request threshold for "unhealthy" health status
+const HEALTH_UNHEALTHY_FAILURES_THRESHOLD: u64 = 1000;
 
 /// Handle metrics request
 fn handle_metrics(id: RequestId) -> Response {
@@ -399,7 +396,7 @@ async fn handle_batch(state: Arc<DaemonState>, id: RequestId, requests: Vec<Requ
 
     Response::Success {
         id,
-        result: ResponseResult::Batch(Box::new(responses)),
+        result: ResponseResult::Batch(responses),
     }
 }
 
@@ -641,7 +638,11 @@ async fn handle_status(state: Arc<DaemonState>, id: RequestId) -> Response {
                 orphan_packages: orphans,
                 updates_available: updates,
                 security_vulnerabilities: 0,
-                runtime_versions: state.runtime_versions.read().clone(),
+                runtime_versions: state
+                    .runtime_versions
+                    .read()
+                    .expect("lock poisoned")
+                    .clone(),
             };
 
             let res_arc = Arc::new(res);
@@ -883,10 +884,12 @@ fn handle_health(state: &Arc<DaemonState>, id: RequestId) -> Response {
 
     let memory_usage_mb = 0u64;
 
-    let status = if cache_size > 50_000 {
-        "degraded".to_string()
-    } else if cache_size > 100_000 || metrics.requests_failed > 1000 {
+    let status = if cache_size > HEALTH_UNHEALTHY_CACHE_THRESHOLD
+        || metrics.requests_failed > HEALTH_UNHEALTHY_FAILURES_THRESHOLD
+    {
         "unhealthy".to_string()
+    } else if cache_size > HEALTH_DEGRADED_CACHE_THRESHOLD {
+        "degraded".to_string()
     } else {
         "healthy".to_string()
     };
@@ -900,6 +903,54 @@ fn handle_health(state: &Arc<DaemonState>, id: RequestId) -> Response {
             cache_size,
             active_connections,
         }),
+    }
+}
+
+/// Handle list updates request using the hot ALPM worker (zero ALPM init overhead)
+async fn handle_list_updates(state: Arc<DaemonState>, id: RequestId) -> Response {
+    #[cfg(feature = "arch")]
+    {
+        use super::protocol::UpdateEntry;
+        match state.alpm_worker.list_updates().await {
+            Ok(updates) => Response::Success {
+                id,
+                result: ResponseResult::ListUpdates(
+                    updates
+                        .into_iter()
+                        .map(|u| UpdateEntry {
+                            name: u.name,
+                            old_version: u.old_version,
+                            new_version: u.new_version,
+                            repo: u.repo,
+                        })
+                        .collect(),
+                ),
+            },
+            Err(e) => internal_error(id, format!("Failed to list updates: {e}")),
+        }
+    }
+    #[cfg(not(feature = "arch"))]
+    {
+        match state.package_manager.list_updates().await {
+            Ok(updates) => {
+                use super::protocol::UpdateEntry;
+                Response::Success {
+                    id,
+                    result: ResponseResult::ListUpdates(
+                        updates
+                            .into_iter()
+                            .map(|u| UpdateEntry {
+                                name: u.name,
+                                old_version: u.old_version,
+                                new_version: u.new_version,
+                                repo: u.repo,
+                            })
+                            .collect(),
+                    ),
+                }
+            }
+            Err(e) => internal_error(id, format!("Failed to list updates: {e}")),
+        }
     }
 }
 

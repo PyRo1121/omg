@@ -107,8 +107,7 @@ fn bench_gzip_decompress(c: &mut Criterion) {
 
     // Compress with gzip
     let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
-    std::io::copy(&mut std::io::Cursor::new(&test_data), &mut encoder)
-        .expect("compression failed");
+    std::io::copy(&mut std::io::Cursor::new(&test_data), &mut encoder).expect("compression failed");
     let compressed = encoder.finish().expect("finish failed");
 
     let mut group = c.benchmark_group("gzip_decompression");
@@ -153,7 +152,8 @@ fn bench_compression_formats_comparison(c: &mut Criterion) {
     let zstd_compressed =
         zstd::encode_all(std::io::Cursor::new(&test_data), 3).expect("zstd compression failed");
 
-    let mut gzip_encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    let mut gzip_encoder =
+        flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
     std::io::copy(&mut std::io::Cursor::new(&test_data), &mut gzip_encoder)
         .expect("gzip compression failed");
     let gzip_compressed = gzip_encoder.finish().expect("gzip finish failed");
@@ -190,8 +190,9 @@ fn bench_compression_formats_comparison(c: &mut Criterion) {
         &zstd_compressed,
         |b, data| {
             b.iter(|| {
-                let mut decoder = ruzstd::decoding::StreamingDecoder::new(std::io::Cursor::new(data))
-                    .expect("decoder creation failed");
+                let mut decoder =
+                    ruzstd::decoding::StreamingDecoder::new(std::io::Cursor::new(data))
+                        .expect("decoder creation failed");
                 let mut decompressed = Vec::with_capacity(data.len() * 5);
                 decoder
                     .read_to_end(&mut decompressed)

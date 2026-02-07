@@ -23,7 +23,7 @@ proptest! {
         // Should never panic
         let _ = AlpmVersion::from_str(&version_str);
     }
-    
+
     #[test]
     fn prop_version_reflexivity(
         major in 0u32..1000u32,
@@ -35,7 +35,7 @@ proptest! {
             prop_assert_eq!(v.cmp(&v), Ordering::Equal);
         }
     }
-    
+
     #[test]
     fn prop_version_transitivity(
         v1_major in 0u32..100u32,
@@ -44,11 +44,11 @@ proptest! {
     ) {
         let mut versions = vec![v1_major, v2_major, v3_major];
         versions.sort_unstable();
-        
+
         let v1_str = format!("{}.0.0", versions[0]);
         let v2_str = format!("{}.0.0", versions[1]);
         let v3_str = format!("{}.0.0", versions[2]);
-        
+
         if let (Ok(v1), Ok(v2), Ok(v3)) = (
             AlpmVersion::from_str(&v1_str),
             AlpmVersion::from_str(&v2_str),
@@ -60,7 +60,7 @@ proptest! {
             }
         }
     }
-    
+
     #[test]
     fn prop_version_epoch_dominates(
         epoch1 in 0u32..10u32,
@@ -69,7 +69,7 @@ proptest! {
     ) {
         let v1_str = format!("{}:{}.0.0", epoch1, major);
         let v2_str = format!("{}:{}.0.0", epoch2, major);
-        
+
         if let (Ok(v1), Ok(v2)) = (
             AlpmVersion::from_str(&v1_str),
             AlpmVersion::from_str(&v2_str)

@@ -1,54 +1,68 @@
 //! Package manager trait definition
 
+use std::future::Future;
+use std::pin::Pin;
+
 use anyhow::Result;
-use async_trait::async_trait;
 
 use crate::core::Package;
 
 /// Trait for package manager backends (object-safe for dynamic dispatch)
 ///
-/// Uses `async_trait` to enable async methods in object-safe traits.
-/// This allows `Arc<dyn PackageManager>` for runtime polymorphism.
-///
-/// Rust 2026 Note: We keep `async_trait` for object safety (required for dyn).
-/// trait-variant generates native async fn which returns impl Future, making
-/// the trait NOT object-safe. Since this codebase uses `Arc<dyn PackageManager>`
-/// extensively, we must keep `async_trait` for compatibility.
-#[async_trait]
+/// Uses manually desugared async methods (returning `Pin<Box<dyn Future>>`)
+/// to maintain object safety for `Arc<dyn PackageManager>`.
 pub trait PackageManager: Send + Sync {
     /// Get the name of this package manager
     fn name(&self) -> &'static str;
 
     /// Search for packages
-    async fn search(&self, query: &str) -> Result<Vec<Package>>;
+    fn search(
+        &self,
+        query: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<Package>>> + Send + '_>>;
 
     /// Install packages
-    async fn install(&self, packages: &[String]) -> Result<()>;
+    fn install(&self, packages: &[String])
+    -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>>;
 
     /// Remove packages
-    async fn remove(&self, packages: &[String]) -> Result<()>;
+    fn remove(&self, packages: &[String]) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>>;
 
     /// Update all packages (upgrade system)
-    async fn update(&self) -> Result<()>;
+    fn update(&self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>>;
 
     /// Synchronize package databases (refresh metadata)
-    async fn sync(&self) -> Result<()>;
+    fn sync(&self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>>;
 
     /// Get information about a package
-    async fn info(&self, package: &str) -> Result<Option<Package>>;
+    fn info(
+        &self,
+        package: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<Package>>> + Send + '_>>;
 
     /// List installed packages
-    async fn list_installed(&self) -> Result<Vec<Package>>;
+    fn list_installed(&self) -> Pin<Box<dyn Future<Output = Result<Vec<Package>>> + Send + '_>>;
 
     /// Get system status (total, explicit, orphans, updates)
-    async fn get_status(&self, fast: bool) -> Result<(usize, usize, usize, usize)>;
+    fn get_status(
+        &self,
+        fast: bool,
+    ) -> Pin<Box<dyn Future<Output = Result<(usize, usize, usize, usize)>> + Send + '_>>;
 
     /// List explicitly installed package names
-    async fn list_explicit(&self) -> Result<Vec<String>>;
+    fn list_explicit(&self) -> Pin<Box<dyn Future<Output = Result<Vec<String>>> + Send + '_>>;
 
     /// List available updates
-    async fn list_updates(&self) -> Result<Vec<crate::package_managers::types::UpdateInfo>>;
+    fn list_updates(
+        &self,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<Vec<crate::package_managers::types::UpdateInfo>>>
+                + Send
+                + '_,
+        >,
+    >;
 
     /// Check if a specific package is installed
-    async fn is_installed(&self, package: &str) -> bool;
+    fn is_installed(&self, package: &str) -> Pin<Box<dyn Future<Output = bool> + Send + '_>>;
 }

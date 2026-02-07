@@ -11,9 +11,9 @@ use alpm_types::Version;
 #[cfg(not(feature = "arch"))]
 type Version = String;
 
-use anyhow::Result;
 #[cfg(feature = "arch")]
 use anyhow::Context;
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -104,6 +104,7 @@ impl Transaction {
     }
 
     /// Get all completed operations (for partial rollback)
+    #[must_use]
     pub fn completed_operations(&self) -> &[Operation] {
         &self.operations
     }
@@ -271,7 +272,7 @@ impl Transaction {
     }
 
     #[cfg(not(feature = "arch"))]
-    #[allow(dead_code)] // Only called from arch-specific code path
+    #[expect(dead_code)] // Only called from arch-specific code path
     async fn install_local_package(&self, _path: &std::path::Path) -> Result<()> {
         tracing::warn!("Rollback install_local not implemented for this platform");
         Ok(())
@@ -299,6 +300,7 @@ impl Transaction {
     }
 
     /// Get transaction duration
+    #[must_use]
     pub fn duration(&self) -> Duration {
         SystemTime::now()
             .duration_since(self.timestamp)

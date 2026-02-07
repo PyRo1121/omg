@@ -55,7 +55,7 @@ pub enum Request {
     /// Batch multiple requests in a single IPC round-trip
     Batch {
         id: RequestId,
-        requests: Box<Vec<Request>>,
+        requests: Vec<Request>,
     },
     /// Search Debian/Ubuntu packages (apt)
     DebianSearch {
@@ -65,6 +65,10 @@ pub enum Request {
     },
     /// Get daemon health status
     Health {
+        id: RequestId,
+    },
+    /// List available package updates (uses hot ALPM worker)
+    ListUpdates {
         id: RequestId,
     },
 }
@@ -86,7 +90,8 @@ impl Request {
             | Self::Suggest { id, .. }
             | Self::Batch { id, .. }
             | Self::DebianSearch { id, .. }
-            | Self::Health { id } => *id,
+            | Self::Health { id }
+            | Self::ListUpdates { id } => *id,
         }
     }
 }
@@ -122,10 +127,11 @@ pub enum ResponseResult {
     Suggest(Vec<String>),
     Message(String),
     /// Batch response containing multiple results
-    Batch(Box<Vec<Response>>),
+    Batch(Vec<Response>),
     /// Debian search results (list of package info)
     DebianSearch(Vec<PackageInfo>),
     Health(HealthStatus),
+    ListUpdates(Vec<UpdateEntry>),
 }
 
 // Error codes
@@ -227,4 +233,13 @@ pub struct HealthStatus {
     pub memory_usage_mb: u64,
     pub cache_size: usize,
     pub active_connections: i64,
+}
+
+/// Update entry for IPC (matches `UpdateInfo` from `package_managers::types`)
+#[derive(Archive, RkyvSerialize, RkyvDeserialize, Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateEntry {
+    pub name: String,
+    pub old_version: String,
+    pub new_version: String,
+    pub repo: String,
 }

@@ -23,8 +23,8 @@ use anyhow::{Context, Result};
 use fst::{IntoStreamer, Map, Streamer};
 use memchr::memmem;
 use memmap2::Mmap;
-use parking_lot::RwLock;
 use rayon::prelude::*;
+use std::sync::RwLock;
 
 use crate::core::paths;
 use crate::core::{Package, PackageSource};
@@ -88,8 +88,7 @@ static DEBIAN_MMAP_INDEX: LazyLock<RwLock<Option<DebianMmapIndex>>> =
 
 /// Global FST index for O(query_len) prefix searches
 /// FST provides logarithmic complexity for prefix matching vs O(n) full scan
-static DEBIAN_FST_INDEX: LazyLock<RwLock<Option<FstIndex>>> =
-    LazyLock::new(|| RwLock::new(None));
+static DEBIAN_FST_INDEX: LazyLock<RwLock<Option<FstIndex>>> = LazyLock::new(|| RwLock::new(None));
 
 /// FST-based search index with TTL-based eviction
 struct FstIndex {
@@ -108,11 +107,10 @@ impl FstIndex {
         // - File opened read-only, no modifications possible
         // - FST validates data integrity on construction
         // - Mmap maintains exclusive file handle ownership
-        #[allow(unsafe_code)]
+        #[expect(unsafe_code)]
         let mmap = unsafe { Mmap::map(&file)? };
 
-        let map = Map::new(mmap)
-            .map_err(|e| anyhow::anyhow!("Corrupted FST index: {e}"))?;
+        let map = Map::new(mmap).map_err(|e| anyhow::anyhow!("Corrupted FST index: {e}"))?;
 
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -168,7 +166,7 @@ impl DebianMmapIndex {
         // - No concurrent mutations possible (read-only file descriptor)
         // Alternative considered: Read entire file into memory would be slower
         // and use more RAM for large Debian package databases (>500MB)
-        #[allow(unsafe_code)]
+        #[expect(unsafe_code)]
         let mmap = unsafe { Mmap::map(&file)? };
 
         // Initialize last_accessed to current time
@@ -319,7 +317,7 @@ pub fn ensure_index_loaded() -> Result<()> {
 
     // Check if we need to update
     let needs_update = {
-        let mut cache = DEBIAN_INDEX_CACHE.write();
+        let mut cache = DEBIAN_INDEX_CACHE.write().expect("lock poisoned");
 
         // Clear cache if TTL expired (safety net for unbounded growth)
         if is_cache_expired(cache.last_accessed) {
@@ -344,7 +342,7 @@ pub fn ensure_index_loaded() -> Result<()> {
 
     // Determine which files changed
     let (changed_files, mut index): (Vec<PathBuf>, Option<DebianPackageIndex>) = {
-        let cache = DEBIAN_INDEX_CACHE.read();
+        let cache = DEBIAN_INDEX_CACHE.read().expect("lock poisoned");
         let mut changed: Vec<PathBuf> = Vec::new();
 
         for (path, mtime) in &current_files {
@@ -373,14 +371,14 @@ pub fn ensure_index_loaded() -> Result<()> {
     // On cold process start, file_mtimes is empty so all files appear "changed".
     // But if the cache file is newer than every Packages file, it's already up-to-date.
     let mut cache_is_fresh = false;
-    if index.is_none()
-        && cache_path.exists()
-    {
+    if index.is_none() && cache_path.exists() {
         // Check if cache file is newer than all Packages files
         if let Ok(cache_meta) = fs::metadata(&cache_path)
             && let Ok(cache_mtime) = cache_meta.modified()
         {
-            cache_is_fresh = current_files.values().all(|pkg_mtime| cache_mtime >= *pkg_mtime);
+            cache_is_fresh = current_files
+                .values()
+                .all(|pkg_mtime| cache_mtime >= *pkg_mtime);
         }
 
         if let Ok(compressed) = fs::read(&cache_path)
@@ -393,7 +391,7 @@ pub fn ensure_index_loaded() -> Result<()> {
 
     // Try to load the mmap index for zero-copy access
     if mmap_path.exists() {
-        let mut mmap_guard = DEBIAN_MMAP_INDEX.write();
+        let mut mmap_guard = DEBIAN_MMAP_INDEX.write().expect("lock poisoned");
 
         // Clear expired mmap (TTL-based cleanup for 500MB+ resource leak)
         if let Some(ref mmap) = *mmap_guard
@@ -420,7 +418,7 @@ pub fn ensure_index_loaded() -> Result<()> {
             current_files.len()
         );
         // Cache is valid - store in memory and return early
-        let mut cache = DEBIAN_INDEX_CACHE.write();
+        let mut cache = DEBIAN_INDEX_CACHE.write().expect("lock poisoned");
         cache.index = Some(index);
         cache.file_mtimes = current_files;
         cache.last_accessed = Some(std::time::SystemTime::now());
@@ -491,7 +489,7 @@ pub fn ensure_index_loaded() -> Result<()> {
 
         // Load the mmap index for zero-copy access
         if let Ok(mmap_index) = DebianMmapIndex::open(&mmap_path) {
-            let mut mmap_guard = DEBIAN_MMAP_INDEX.write();
+            let mut mmap_guard = DEBIAN_MMAP_INDEX.write().expect("lock poisoned");
 
             // Clear existing mmap before loading new one
             if mmap_guard.is_some() {
@@ -546,7 +544,7 @@ pub fn ensure_index_loaded() -> Result<()> {
 
         // Load the FST index
         if let Ok(fst_index) = FstIndex::open(&fst_path) {
-            let mut fst_guard = DEBIAN_FST_INDEX.write();
+            let mut fst_guard = DEBIAN_FST_INDEX.write().expect("lock poisoned");
             if fst_guard.is_some() {
                 tracing::debug!("Replacing existing Debian FST index with updated version");
             }
@@ -586,7 +584,7 @@ pub fn ensure_index_loaded() -> Result<()> {
         .copied()
         .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
 
-    let mut cache = DEBIAN_INDEX_CACHE.write();
+    let mut cache = DEBIAN_INDEX_CACHE.write().expect("lock poisoned");
     cache.index = Some(index);
     cache.last_modified = Some(newest_mtime);
     cache.file_mtimes = current_files;
@@ -603,12 +601,12 @@ pub fn ensure_index_loaded() -> Result<()> {
 fn ensure_fst_loaded() -> Result<()> {
     // Check if already loaded
     {
-        let guard = DEBIAN_FST_INDEX.read();
+        let guard = DEBIAN_FST_INDEX.read().expect("lock poisoned");
         if let Some(ref fst) = *guard {
             // Clear if expired
             if fst.is_expired() {
                 drop(guard);
-                let mut write_guard = DEBIAN_FST_INDEX.write();
+                let mut write_guard = DEBIAN_FST_INDEX.write().expect("lock poisoned");
                 tracing::debug!("Clearing expired FST index (TTL exceeded)");
                 *write_guard = None;
             } else {
@@ -625,7 +623,7 @@ fn ensure_fst_loaded() -> Result<()> {
     }
 
     if let Ok(fst_index) = FstIndex::open(&fst_path) {
-        let mut guard = DEBIAN_FST_INDEX.write();
+        let mut guard = DEBIAN_FST_INDEX.write().expect("lock poisoned");
         *guard = Some(fst_index);
         tracing::debug!("Loaded FST index from disk");
     }
@@ -639,11 +637,11 @@ fn ensure_fst_loaded() -> Result<()> {
 pub fn ensure_mmap_loaded() -> bool {
     // Check if already loaded
     {
-        let guard = DEBIAN_MMAP_INDEX.read();
+        let guard = DEBIAN_MMAP_INDEX.read().expect("lock poisoned");
         if let Some(ref mmap) = *guard {
             if mmap.is_expired() {
                 drop(guard);
-                let mut write_guard = DEBIAN_MMAP_INDEX.write();
+                let mut write_guard = DEBIAN_MMAP_INDEX.write().expect("lock poisoned");
                 *write_guard = None;
             } else {
                 mmap.touch();
@@ -659,7 +657,7 @@ pub fn ensure_mmap_loaded() -> bool {
     }
 
     if let Ok(mmap_index) = DebianMmapIndex::open(&mmap_path) {
-        let mut guard = DEBIAN_MMAP_INDEX.write();
+        let mut guard = DEBIAN_MMAP_INDEX.write().expect("lock poisoned");
         *guard = Some(mmap_index);
         tracing::debug!("Loaded mmap index from disk (zero-copy)");
         true
@@ -843,7 +841,7 @@ pub fn get_detailed_packages() -> Result<Vec<DebianPackage>> {
         }]);
     }
     ensure_index_loaded()?;
-    let guard = DEBIAN_INDEX_CACHE.read();
+    let guard = DEBIAN_INDEX_CACHE.read().expect("lock poisoned");
     let index = guard.index.as_ref().context(
         "Debian package index not loaded. Run 'omg sync' to refresh the package database",
     )?;
@@ -865,12 +863,12 @@ pub fn search_fast(query: &str) -> Result<Vec<Package>> {
     // This path takes ~5ms vs ~90ms for ensure_index_loaded()
     if !query.is_empty() {
         ensure_fst_loaded()?;
-        let fst_guard = DEBIAN_FST_INDEX.read();
+        let fst_guard = DEBIAN_FST_INDEX.read().expect("lock poisoned");
         if fst_guard.is_some() && ensure_mmap_loaded() {
-            let fst_index = fst_guard.as_ref().unwrap();
+            let fst_index = fst_guard.as_ref().expect("checked is_some() above");
             fst_index.touch();
             let query_lower = query.to_lowercase();
-            let mmap_guard = DEBIAN_MMAP_INDEX.read();
+            let mmap_guard = DEBIAN_MMAP_INDEX.read().expect("lock poisoned");
             if let Some(ref mmap) = *mmap_guard {
                 mmap.touch();
                 return fst_mmap_search(&fst_index.map, mmap, &query_lower);
@@ -885,7 +883,7 @@ pub fn search_fast(query: &str) -> Result<Vec<Package>> {
         ensure_fst_loaded()?;
     }
 
-    let guard = DEBIAN_INDEX_CACHE.read();
+    let guard = DEBIAN_INDEX_CACHE.read().expect("lock poisoned");
     let index = guard.index.as_ref().context(
         "Debian package index not loaded. Run 'omg sync' to refresh the package database",
     )?;
@@ -919,7 +917,7 @@ pub fn search_fast(query: &str) -> Result<Vec<Package>> {
     }
 
     // FST search with in-memory index
-    let fst_guard = DEBIAN_FST_INDEX.read();
+    let fst_guard = DEBIAN_FST_INDEX.read().expect("lock poisoned");
     if let Some(ref fst_index) = *fst_guard {
         fst_index.touch();
         return fst_search(&fst_index.map, index, &query_lower, &guard.installed_set);
@@ -927,7 +925,13 @@ pub fn search_fast(query: &str) -> Result<Vec<Package>> {
     drop(fst_guard);
 
     // Fallback: SIMD search
-    simd_search_fallback(index, &query_lower, &guard.search_buffer, &guard.package_offsets, &guard.installed_set)
+    simd_search_fallback(
+        index,
+        &query_lower,
+        &guard.search_buffer,
+        &guard.package_offsets,
+        &guard.installed_set,
+    )
 }
 
 /// FST-based search: O(query_len) prefix matching
@@ -1079,7 +1083,7 @@ fn fst_mmap_search(
 
 /// Get the installed package set from dpkg status cache
 fn get_installed_set() -> AHashSet<String> {
-    let cache = DPKG_STATUS_CACHE.read();
+    let cache = DPKG_STATUS_CACHE.read().expect("lock poisoned");
     if !cache.installed_set.is_empty() {
         return cache.installed_set.clone();
     }
@@ -1087,7 +1091,7 @@ fn get_installed_set() -> AHashSet<String> {
 
     // Populate by loading dpkg status
     if list_installed_fast().is_ok() {
-        let cache = DPKG_STATUS_CACHE.read();
+        let cache = DPKG_STATUS_CACHE.read().expect("lock poisoned");
         return cache.installed_set.clone();
     }
     AHashSet::new()
@@ -1153,7 +1157,7 @@ pub fn get_info_fast(name: &str) -> Result<Option<Package>> {
 
     // ULTRA-FAST PATH: mmap O(1) lookup (no index loading needed)
     if ensure_mmap_loaded() {
-        let mmap_guard = DEBIAN_MMAP_INDEX.read();
+        let mmap_guard = DEBIAN_MMAP_INDEX.read().expect("lock poisoned");
         if let Some(ref mmap) = *mmap_guard {
             mmap.touch();
             if let Ok(Some(pkg)) = mmap.get(name) {
@@ -1173,7 +1177,7 @@ pub fn get_info_fast(name: &str) -> Result<Option<Package>> {
 
     // Fallback: load full index
     ensure_index_loaded()?;
-    let guard = DEBIAN_INDEX_CACHE.read();
+    let guard = DEBIAN_INDEX_CACHE.read().expect("lock poisoned");
     let index = guard.index.as_ref().context(
         "Debian package index not loaded. Run 'omg sync' to refresh the package database",
     )?;
@@ -1259,7 +1263,7 @@ pub fn list_installed_fast() -> Result<Vec<LocalPackage>> {
 
     // Check cache first
     {
-        let mut cache = DPKG_STATUS_CACHE.write();
+        let mut cache = DPKG_STATUS_CACHE.write().expect("lock poisoned");
 
         // Clear cache if TTL expired (safety net for unbounded growth)
         if is_cache_expired(cache.last_accessed) {
@@ -1340,7 +1344,7 @@ pub fn list_installed_fast() -> Result<Vec<LocalPackage>> {
 
     // Update cache
     {
-        let mut cache = DPKG_STATUS_CACHE.write();
+        let mut cache = DPKG_STATUS_CACHE.write().expect("lock poisoned");
         cache.packages.clone_from(&packages);
         cache.installed_set = installed_set;
         cache.status_mtime = status_mtime;
@@ -1367,19 +1371,19 @@ pub fn get_installed_info_fast(name: &str) -> Result<Option<LocalPackage>> {
     // Ensure cache is populated
     list_installed_fast()?;
 
-    let cache = DPKG_STATUS_CACHE.read();
+    let cache = DPKG_STATUS_CACHE.read().expect("lock poisoned");
     Ok(cache.packages.iter().find(|p| p.name == name).cloned())
 }
 
 #[inline]
 pub fn is_installed_fast(name: &str) -> bool {
     if crate::core::paths::test_mode() {
-        return name == "apt" || name == "git";
+        return matches!(name, "apt" | "git");
     }
 
     // Check dpkg status cache first for O(1) lookup
     {
-        let cache = DPKG_STATUS_CACHE.read();
+        let cache = DPKG_STATUS_CACHE.read().expect("lock poisoned");
         if !cache.installed_set.is_empty() {
             return cache.installed_set.contains(name);
         }
@@ -1387,7 +1391,7 @@ pub fn is_installed_fast(name: &str) -> bool {
 
     // Fallback: populate cache by calling list_installed_fast
     if list_installed_fast().is_ok() {
-        let cache = DPKG_STATUS_CACHE.read();
+        let cache = DPKG_STATUS_CACHE.read().expect("lock poisoned");
         return cache.installed_set.contains(name);
     }
 
@@ -1422,7 +1426,7 @@ pub fn get_counts_fast() -> Result<(usize, usize, usize, usize)> {
 /// that haven't been accessed within the TTL window. This is a safety net for
 /// long-running daemons that may accumulate stale mmap resources.
 pub fn cleanup_expired_mmaps() {
-    let mut mmap_guard = DEBIAN_MMAP_INDEX.write();
+    let mut mmap_guard = DEBIAN_MMAP_INDEX.write().expect("lock poisoned");
 
     if let Some(ref mmap) = *mmap_guard
         && mmap.is_expired()
@@ -1438,7 +1442,7 @@ pub fn cleanup_expired_mmaps() {
 
 /// Check if the mmap index is available (avoids loading full index into memory)
 pub fn is_mmap_available() -> bool {
-    let guard = DEBIAN_MMAP_INDEX.read();
+    let guard = DEBIAN_MMAP_INDEX.read().expect("lock poisoned");
     guard.is_some()
 }
 
@@ -1447,7 +1451,7 @@ pub fn is_mmap_available() -> bool {
 pub fn get_updates_from_mmap(
     installed_map: &std::collections::HashMap<&str, &str>,
 ) -> Result<Vec<(String, String, String)>> {
-    let mmap_guard = DEBIAN_MMAP_INDEX.read();
+    let mmap_guard = DEBIAN_MMAP_INDEX.read().expect("lock poisoned");
     let Some(ref mmap) = *mmap_guard else {
         anyhow::bail!("Mmap index not available");
     };
@@ -1516,7 +1520,9 @@ pub fn get_package_dependencies(package_name: &str) -> Result<(Vec<String>, Vec<
             current_pkg = pkg.trim().to_string();
             in_target = current_pkg == package_name;
         } else if line.starts_with("Depends: ") {
-            let deps_str = line.strip_prefix("Depends: ").unwrap();
+            let deps_str = line
+                .strip_prefix("Depends: ")
+                .expect("guarded by starts_with check");
             for dep in deps_str.split(',') {
                 let dep_name = dep.split_whitespace().next().unwrap_or("");
                 if !dep_name.is_empty() {
@@ -1552,7 +1558,7 @@ pub fn get_package_size(package_name: &str) -> Result<i64> {
         } else if in_package && line.starts_with("Installed-Size: ") {
             let size_kb: i64 = line
                 .strip_prefix("Installed-Size: ")
-                .unwrap()
+                .expect("guarded by starts_with check")
                 .trim()
                 .parse()
                 .unwrap_or(0);
@@ -1596,7 +1602,7 @@ pub fn get_all_packages_with_sizes() -> Result<Vec<(String, i64)>> {
         } else if line.starts_with("Installed-Size: ") {
             current_size = line
                 .strip_prefix("Installed-Size: ")
-                .unwrap()
+                .expect("guarded by starts_with check")
                 .trim()
                 .parse::<i64>()
                 .unwrap_or(0)
@@ -1637,7 +1643,12 @@ pub fn get_package_version(package_name: &str) -> Result<Option<String>> {
             in_package = pkg.trim() == package_name;
         } else if in_package {
             if line.starts_with("Version: ") {
-                version = Some(line.strip_prefix("Version: ").unwrap().trim().to_string());
+                version = Some(
+                    line.strip_prefix("Version: ")
+                        .expect("guarded by starts_with check")
+                        .trim()
+                        .to_string(),
+                );
             } else if line.starts_with("Status: ") && line.contains("installed") {
                 is_installed = true;
             }
@@ -1967,7 +1978,7 @@ mod tests {
     fn test_clean_package_cache_test_mode() {
         // Enable test mode
         // SAFETY: Test-only code, no concurrent access to environment
-        #[allow(unsafe_code)]
+        #[expect(unsafe_code)]
         unsafe {
             std::env::set_var("OMG_TEST_MODE", "1");
         }
@@ -1977,7 +1988,7 @@ mod tests {
         assert_eq!(result.1, 50_000_000); // bytes freed
 
         // SAFETY: Test cleanup, no concurrent access
-        #[allow(unsafe_code)]
+        #[expect(unsafe_code)]
         unsafe {
             std::env::remove_var("OMG_TEST_MODE");
         }
@@ -1987,7 +1998,7 @@ mod tests {
     fn test_list_orphans_test_mode() {
         // Enable test mode
         // SAFETY: Test-only code, no concurrent access to environment
-        #[allow(unsafe_code)]
+        #[expect(unsafe_code)]
         unsafe {
             std::env::set_var("OMG_TEST_MODE", "1");
         }
@@ -1997,7 +2008,7 @@ mod tests {
         assert_eq!(orphans[0], "libunused1");
 
         // SAFETY: Test cleanup, no concurrent access
-        #[allow(unsafe_code)]
+        #[expect(unsafe_code)]
         unsafe {
             std::env::remove_var("OMG_TEST_MODE");
         }

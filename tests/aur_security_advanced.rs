@@ -1,5 +1,10 @@
 #![cfg(feature = "arch")]
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::pedantic, clippy::nursery)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::pedantic,
+    clippy::nursery
+)]
 //! Advanced AUR Security Tests
 //!
 //! Deep testing of security features including PGP, checksums, sandboxing,
@@ -166,13 +171,21 @@ async fn test_sandbox_filesystem_isolation() {
         // Try to access file from sandbox (via bubblewrap test)
         let result = Command::new("bwrap")
             .args([
-                "--ro-bind", "/usr", "/usr",
-                "--ro-bind", "/lib", "/lib",
-                "--ro-bind", "/lib64", "/lib64",
-                "--tmpfs", "/tmp",
+                "--ro-bind",
+                "/usr",
+                "/usr",
+                "--ro-bind",
+                "/lib",
+                "/lib",
+                "--ro-bind",
+                "/lib64",
+                "/lib64",
+                "--tmpfs",
+                "/tmp",
                 "--die-with-parent",
                 "--",
-                "sh", "-c",
+                "sh",
+                "-c",
                 &format!("cat {}", test_file.display()),
             ])
             .output()
@@ -221,9 +234,14 @@ async fn test_sandbox_privilege_escalation_prevention() {
         // Test that setuid doesn't work in sandbox
         let result = Command::new("bwrap")
             .args([
-                "--ro-bind", "/usr", "/usr",
-                "--ro-bind", "/lib", "/lib",
-                "--tmpfs", "/tmp",
+                "--ro-bind",
+                "/usr",
+                "/usr",
+                "--ro-bind",
+                "/lib",
+                "/lib",
+                "--tmpfs",
+                "/tmp",
                 "--die-with-parent",
                 "--",
                 "id",
@@ -257,8 +275,8 @@ async fn test_malicious_suspicious_commands_detection() {
         "rm -rf /",
         "curl | bash",
         "wget | sh",
-        ":(){ :|:& };:",  // Fork bomb
-        "chmod +s",        // Setuid
+        ":(){ :|:& };:", // Fork bomb
+        "chmod +s",      // Setuid
     ];
 
     for pattern in suspicious_patterns {
@@ -278,10 +296,10 @@ async fn test_malicious_backdoor_detection() {
 
     // Common backdoor patterns:
     let backdoor_patterns = vec![
-        "nc -e",           // Netcat reverse shell
-        "/dev/tcp/",       // Bash reverse shell
-        "exec 5<>",        // File descriptor manipulation
-        "eval $(base64",   // Obfuscated code execution
+        "nc -e",         // Netcat reverse shell
+        "/dev/tcp/",     // Bash reverse shell
+        "exec 5<>",      // File descriptor manipulation
+        "eval $(base64", // Obfuscated code execution
     ];
 
     for pattern in backdoor_patterns {

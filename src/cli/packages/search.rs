@@ -37,7 +37,7 @@ pub async fn search(query: &str, detailed: bool, interactive: bool, no_aur: bool
     search_internal(query, detailed, interactive, false, no_aur).await
 }
 
-#[allow(clippy::fn_params_excessive_bools)] // API requires distinct boolean flags
+#[expect(clippy::fn_params_excessive_bools)] // API requires distinct boolean flags
 pub async fn search_with_json(
     query: &str,
     detailed: bool,
@@ -48,7 +48,7 @@ pub async fn search_with_json(
     search_internal(query, detailed, interactive, json, no_aur).await
 }
 
-#[allow(clippy::fn_params_excessive_bools)] // Internal function matching public API
+#[expect(clippy::fn_params_excessive_bools)] // Internal function matching public API
 async fn search_internal(
     query: &str,
     _detailed: bool,

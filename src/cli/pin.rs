@@ -248,7 +248,7 @@ fn get_package_version(name: &str) -> Result<Option<String>> {
 }
 
 #[cfg(not(any(feature = "arch", feature = "debian")))]
-#[allow(clippy::unnecessary_wraps)] // Result return required: API compat with feature-gated impls
+#[expect(clippy::unnecessary_wraps)] // Result return required: API compat with feature-gated impls
 fn get_package_version(_name: &str) -> Result<Option<String>> {
     Ok(None)
 }

@@ -25,7 +25,6 @@ pub use super::packages::{
     clean, explicit, explicit_sync, info, info_sync, install, remove, search, sync, update,
 };
 pub use super::runtimes::{list_versions, use_version};
-// pub use super::security::audit;
 
 // Const slices for completion - avoids allocation on every call
 const TOOL_COMMANDS: &[&str] = &["install", "list", "remove"];
@@ -441,11 +440,7 @@ pub fn status_sync() -> Result<()> {
             updates.to_string().yellow().bold()
         );
     } else {
-        println!(
-            "  {} {}",
-            "Updates".bold(),
-            "Up to date".green()
-        );
+        println!("  {} {}", "Updates".bold(), "Up to date".green());
     }
 
     // Orphans (only show if > 0)
@@ -462,14 +457,12 @@ pub fn status_sync() -> Result<()> {
         println!(
             "  {} {}",
             "Security".bold(),
-            format!("{security_vulnerabilities} vulnerabilities").red().bold()
+            format!("{security_vulnerabilities} vulnerabilities")
+                .red()
+                .bold()
         );
     } else {
-        println!(
-            "  {} {}",
-            "Security".bold(),
-            "No known issues".green()
-        );
+        println!("  {} {}", "Security".bold(), "No known issues".green());
     }
 
     // Daemon status
@@ -526,17 +519,23 @@ pub fn status_sync() -> Result<()> {
     // Modern tip styling
     println!();
     if updates > 0 {
-        println!("  {} Run {} to see detailed package changes",
+        println!(
+            "  {} Run {} to see detailed package changes",
             "Tip".dimmed().italic(),
-            "omg update --check".cyan());
+            "omg update --check".cyan()
+        );
     } else if security_vulnerabilities > 0 {
-        println!("  {} Run {} to identify and fix security issues",
+        println!(
+            "  {} Run {} to identify and fix security issues",
             "Tip".dimmed().italic(),
-            "omg audit".cyan());
+            "omg audit".cyan()
+        );
     } else {
-        println!("  {} Your system is healthy! Run {} for an interactive view",
+        println!(
+            "  {} Your system is healthy! Run {} for an interactive view",
             "Tip".dimmed().italic(),
-            "omg dash".cyan());
+            "omg dash".cyan()
+        );
     }
 
     println!();
