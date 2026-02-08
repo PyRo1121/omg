@@ -378,7 +378,7 @@ impl TaskDetector {
 
             // If priorities are different, and the first one is higher than second, prefer it
             if matches[0].ecosystem.priority() > matches[1].ecosystem.priority() {
-                return Ok(vec![matches[0].clone()]);
+                return Ok(vec![matches.swap_remove(0)]);
             }
 
             // Otherwise, interactive selection
@@ -398,7 +398,7 @@ impl TaskDetector {
                 .default(0)
                 .interact()?;
 
-            return Ok(vec![matches[selection].clone()]);
+            return Ok(vec![matches.swap_remove(selection)]);
         }
 
         Ok(matches)
