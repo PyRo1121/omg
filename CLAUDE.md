@@ -175,15 +175,30 @@ Custom agents in `.claude/agents/` are specialized for OMG development:
 |-------|-------|---------|
 | `swarm-lead` | opus | Orchestrate parallel multi-agent tasks |
 
-### Website, Dashboard & Telemetry Agents
+### Website & Dashboard Agents (Project-Specific)
+
+These agents are tightly integrated with OMG's actual infrastructure (D1, KV, R2, SolidStart 1.2.1):
+
 | Agent | Model | Use For |
 |-------|-------|---------|
-| `telemetry-architect` | opus | ClickHouse patterns, OpenTelemetry, privacy-first analytics |
-| `dashboard-engineer` | opus | SolidJS dashboards, real-time data, ApexCharts, WebSockets |
-| `health-score-engineer` | opus | Customer health scoring, churn prediction, ML algorithms |
-| `cloudflare-architect` | opus | Durable Objects, D1, KV, Analytics Engine, edge-first design |
-| `solidstart-expert` | opus | SolidStart 1.0+, query/action patterns, Cloudflare deployment |
-| `analytics-seo-expert` | opus | Core Web Vitals, SEO, conversion tracking, privacy analytics |
+| `omg-frontend` | sonnet | SolidStart routes, createAsync, Kobalte, TanStack Query |
+| `omg-backend` | sonnet | Worker handlers, D1 queries, rate limiting, Stripe |
+| `omg-admin-dashboard` | opus | CRM features, health scoring, admin analytics |
+| `omg-telemetry` | sonnet | Rust client + Worker ingestion, circuit breaker, privacy |
+| `omg-d1-specialist` | sonnet | D1 schema, migrations, query optimization |
+| `omg-site-testing` | haiku | Vitest, SolidJS testing-library, Worker tests |
+| `omg-stripe-billing` | sonnet | Checkout, webhooks, subscription management |
+| `omg-auth-specialist` | sonnet | Better Auth, OAuth, session bridging |
+| `omg-seo` | haiku | Meta tags, sitemap, robots.txt, Core Web Vitals |
+| `omg-realtime` | opus | Durable Objects, WebSockets, live command feed |
+
+**Infrastructure Bindings (from wrangler.toml):**
+```
+Site (omg-site):     DB → omg-auth-db, BETTER_AUTH_KV
+Workers (omg-saas):  DB → omg-licensing, ANALYTICS_DB → omg-analytics
+                     CACHE, SESSIONS, FLAGS (KV), ASSETS (R2)
+                     Rate limiters: ADMIN (100/min), AUTH (10/min), API (100/min)
+```
 
 **Swarm Patterns** for parallel agent teams:
 
@@ -198,7 +213,8 @@ Custom agents in `.claude/agents/` are specialized for OMG development:
 - **Pre-Release Swarm:** `test-runner` + safety swarm + `code-reviewer` + `cross-platform`
 - **Continuous Improvement Swarm:** `github-scout` + `modernizer` + `refactorer` + `crate-scout`
 - **Enterprise QA Swarm:** `e2e-architect` + `enterprise-qa` + `test-runner` + `perf-profiler`
-- **Website/Dashboard Swarm:** `telemetry-architect` + `dashboard-engineer` + `cloudflare-architect` + `solidstart-expert` + `analytics-seo-expert` + `health-score-engineer`
+- **Website Swarm:** `omg-frontend` + `omg-backend` + `omg-admin-dashboard` + `omg-telemetry`
+- **Full Site Audit:** All `omg-*` agents for comprehensive website review
 
 **Hooks:** `cargo fmt` runs automatically after Rust file edits.
 
