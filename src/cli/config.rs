@@ -125,7 +125,12 @@ pub fn set(key: &str, value: &str) -> Result<()> {
             settings.shims_enabled = value.parse().context("Invalid boolean value")?;
         }
         _ => {
-            anyhow::bail!("Unknown or read-only key: {key}");
+            anyhow::bail!(
+                "Unknown config key: '{key}'. \
+                 Writable keys: telemetry.enabled, aur.build_concurrency, aur.enable_ccache, \
+                 aur.enable_sccache, aur.secure_makepkg, aur.makeflags, runtime_backend, \
+                 default_shell, shims.enabled"
+            );
         }
     }
 
