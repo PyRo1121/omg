@@ -10,13 +10,36 @@ use reqwest::Client;
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(15);
 const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+const DEFAULT_READ_TIMEOUT: Duration = Duration::from_secs(30);
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_mins(5);
 const DOWNLOAD_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const DOWNLOAD_READ_TIMEOUT: Duration = Duration::from_secs(60);
 
-static SHARED_CLIENT: LazyLock<Client> =
-    LazyLock::new(|| build_client(DEFAULT_TIMEOUT, DEFAULT_CONNECT_TIMEOUT));
-static DOWNLOAD_CLIENT: LazyLock<Client> =
-    LazyLock::new(|| build_client(DOWNLOAD_TIMEOUT, DOWNLOAD_CONNECT_TIMEOUT));
+static SHARED_CLIENT: LazyLock<Client> = LazyLock::new(|| {
+    build_client(
+        DEFAULT_TIMEOUT,
+        DEFAULT_CONNECT_TIMEOUT,
+        DEFAULT_READ_TIMEOUT,
+    )
+});
+
+/// Download client with extended timeouts and read timeout for stall detection.
+///
+/// Uses `.read_timeout()` to detect stalled downloads - this timeout resets after
+/// each successful read, unlike `.timeout()` which covers the entire request.
+#[expect(clippy::expect_used)] // System misconfiguration or build issue; documented in build_client
+static DOWNLOAD_CLIENT: LazyLock<Client> = LazyLock::new(|| {
+    Client::builder()
+        .user_agent("omg-package-manager")
+        .timeout(DOWNLOAD_TIMEOUT)
+        .connect_timeout(DOWNLOAD_CONNECT_TIMEOUT)
+        .read_timeout(DOWNLOAD_READ_TIMEOUT)
+        .pool_max_idle_per_host(32)
+        .pool_idle_timeout(Duration::from_secs(90))
+        .tcp_nodelay(true)
+        .build()
+        .expect("Failed to build download HTTP client - check TLS configuration")
+});
 
 /// Build HTTP client with standard configuration.
 ///
@@ -31,11 +54,12 @@ static DOWNLOAD_CLIENT: LazyLock<Client> =
 /// - Missing TLS certificates (system misconfiguration)
 /// - Incompatible TLS backend (build issue)
 #[expect(clippy::expect_used)] // System misconfiguration or build issue; panics documented above
-fn build_client(timeout: Duration, connect_timeout: Duration) -> Client {
+fn build_client(timeout: Duration, connect_timeout: Duration, read_timeout: Duration) -> Client {
     Client::builder()
         .user_agent("omg-package-manager")
         .timeout(timeout)
         .connect_timeout(connect_timeout)
+        .read_timeout(read_timeout)
         .pool_max_idle_per_host(32)
         .pool_idle_timeout(Duration::from_secs(90))
         .tcp_nodelay(true)

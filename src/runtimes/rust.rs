@@ -169,8 +169,8 @@ impl RustManager {
             return self.use_version(version);
         }
 
-        let prefix = format!("{}", "OMG".cyan().bold());
-        let toolchain_name = format!("{}", toolchain.name().yellow());
+        let prefix = "OMG".cyan().bold().to_string();
+        let toolchain_name = toolchain.name().yellow().to_string();
         tracing::info!("{prefix} Installing Rust {toolchain_name}...\n");
 
         self.install_with_profile(&toolchain, "default", &[], &[])

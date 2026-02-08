@@ -150,7 +150,7 @@ impl DependencyResolver {
                         || name.contains(k.as_str())
                 })
                 .take(5)
-                .map(|s| s.as_str())
+                .map(String::as_str)
                 .collect();
 
             if !similar.is_empty() {
@@ -597,7 +597,7 @@ impl DependencyResolver {
                 "Circular dependency detected. Unable to determine installation order for: {}",
                 missing
                     .iter()
-                    .map(|s| s.as_str())
+                    .map(String::as_str)
                     .collect::<Vec<_>>()
                     .join(", ")
             );

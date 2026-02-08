@@ -3,10 +3,11 @@
 //! Verifies build provenance and determines SLSA levels (L0-L4) per SLSA v1.0
 //! specification for supply chain security attestation.
 
+use std::path::Path;
+
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::path::Path;
 
 use crate::core::http::shared_client;
 
@@ -158,7 +159,7 @@ pub struct SlsaVerifier {
 impl Default for SlsaVerifier {
     fn default() -> Self {
         Self::new().unwrap_or_else(|_| Self {
-            client: reqwest::Client::new(),
+            client: shared_client().clone(),
             rekor_url: "https://rekor.sigstore.dev".to_string(),
         })
     }
