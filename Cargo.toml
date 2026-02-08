@@ -132,6 +132,9 @@ nix = { version = "0.30", features = ["fs"] }
 # Date & Time
 jiff = { version = "0.2.18", features = ["serde"] }
 
+# Random number generation (for jitter)
+fastrand = "2"
+
 # Database (PURE RUST embedded DB - replaces LMDB)
 redb = "3.1"
 

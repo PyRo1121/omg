@@ -73,6 +73,16 @@ import {
   handleGetAnalyticsOverview,
   cleanupOldAnalytics,
 } from './handlers/site-analytics';
+import {
+  handleCliEvent,
+  handleCliBatch,
+} from './handlers/telemetry';
+import {
+  handleDeleteMyData,
+  handleExportMyData,
+  handleOptOut,
+  handlePrivacyStatus,
+} from './handlers/privacy';
 
 export default Sentry.withSentry(
   (env: Env) => ({
@@ -160,6 +170,40 @@ export default Sentry.withSentry(
       // Analytics events (batch from CLI)
       if (path === '/api/analytics' && request.method === 'POST') {
         return handleAnalytics(request, env);
+      }
+
+      // CLI telemetry: Single event
+      if (path === '/api/cli/event' && request.method === 'POST') {
+        return handleCliEvent(request, env);
+      }
+
+      // CLI telemetry: Batched events
+      if (path === '/api/cli/batch' && request.method === 'POST') {
+        return handleCliBatch(request, env);
+      }
+
+      // ============================================
+      // Privacy endpoints (GDPR/CCPA - available globally)
+      // ============================================
+
+      // Privacy: Get status and policy summary
+      if (path === '/api/privacy/status' && request.method === 'GET') {
+        return handlePrivacyStatus(request, env);
+      }
+
+      // Privacy: Export all user data (Right to Portability)
+      if (path === '/api/privacy/export' && request.method === 'POST') {
+        return handleExportMyData(request, env);
+      }
+
+      // Privacy: Delete all user data (Right to Erasure)
+      if (path === '/api/privacy/delete' && request.method === 'POST') {
+        return handleDeleteMyData(request, env);
+      }
+
+      // Privacy: Opt-out of telemetry
+      if (path === '/api/privacy/opt-out' && request.method === 'POST') {
+        return handleOptOut(request, env);
       }
 
       // Docs analytics (batch from docs site)

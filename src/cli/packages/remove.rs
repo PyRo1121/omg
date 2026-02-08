@@ -1,5 +1,7 @@
 //! Remove functionality for packages
 
+use std::time::Instant;
+
 use anyhow::Result;
 
 use crate::cli::{style, ui};
@@ -108,6 +110,9 @@ fn remove_dry_run(packages: &[String], recursive: bool) -> Result<()> {
 }
 
 async fn remove_fallback(packages: &[String], recursive: bool) -> Result<()> {
+    // Start timing
+    let start_time = Instant::now();
+
     let pm = get_package_manager()?;
     let service = PackageService::new(pm);
 
@@ -118,7 +123,20 @@ async fn remove_fallback(packages: &[String], recursive: bool) -> Result<()> {
     );
     println!();
 
-    service.remove(packages, recursive).await?;
+    let result = service.remove(packages, recursive).await;
+
+    // Track remove with timing
+    let duration_ms = start_time.elapsed().as_millis() as u64;
+    match &result {
+        Ok(()) => {
+            crate::core::usage::track_remove_timed(packages, duration_ms, true, None);
+        }
+        Err(e) => {
+            crate::core::usage::track_remove_timed(packages, duration_ms, false, Some(&e.to_string()));
+        }
+    }
+
+    result?;
 
     ui::print_spacer();
     ui::print_success("Packages removed successfully");

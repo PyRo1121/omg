@@ -213,6 +213,19 @@ echo 'Invoke-Expression (& omg hook powershell)' >> $PROFILE
 
 ---
 
+## 🔒 Privacy & Telemetry
+
+OMG prioritizes your privacy with optional, transparent telemetry:
+
+- **Basic Install Tracking**: Anonymous install counts (no PII collected). Opt-out via `OMG_TELEMETRY=0` at install.
+- **Enhanced Telemetry**: Only when you have a license key. Tracks commands, performance, and features to improve the product.
+- **No Collection**: Never collects passwords, credentials, home paths, or sensitive data.
+- **Always Reversible**: Disable anytime via `omg config set core.telemetry_enabled false`.
+
+**Full details**: [Privacy & Telemetry Guide](docs/security.md#privacy--telemetry)
+
+---
+
 ## 🌍 Platform Support
 
 OMG works seamlessly across all major operating systems with a single universal installer.
