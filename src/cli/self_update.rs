@@ -22,8 +22,7 @@ pub async fn run(force: bool, version: Option<String>) -> Result<()> {
         v
     } else {
         // Fetch latest version
-        let client = reqwest::Client::new();
-        let resp = client
+        let resp = crate::core::http::shared_client()
             .get(format!("{UPDATE_URL}/latest-version"))
             .send()
             .await
@@ -54,8 +53,10 @@ pub async fn run(force: bool, version: Option<String>) -> Result<()> {
     let platform = "x86_64-unknown-linux-gnu"; // Auto-detect in real impl
     let download_url = format!("{UPDATE_URL}/download/omg-{target_version}-{platform}.tar.gz");
 
-    let client = reqwest::Client::new();
-    let response = client.get(&download_url).send().await?;
+    let response = crate::core::http::download_client()
+        .get(&download_url)
+        .send()
+        .await?;
     if !response.status().is_success() {
         anyhow::bail!("Failed to download update: {}", response.status());
     }
@@ -83,25 +84,19 @@ pub async fn run(force: bool, version: Option<String>) -> Result<()> {
     }
     pb.finish_with_message("Download complete");
 
-    let cursor = std::io::Cursor::new(bytes);
-    let decoder = flate2::read::GzDecoder::new(cursor);
-    let mut archive = tar::Archive::new(decoder);
-
-    // Create temp directory for extraction
-    let temp_dir = tempfile::tempdir().context("Failed to create temp directory for update")?;
-    archive
-        .unpack(temp_dir.path())
-        .context("Failed to extract update archive")?;
-
-    // Find the new binary
-    let new_binary = temp_dir.path().join("omg");
-
-    // Perform blocking I/O operations in a separate thread
+    // Perform blocking extraction and binary replacement in a separate thread
+    // to avoid blocking the tokio async runtime
     tokio::task::spawn_blocking(move || -> Result<()> {
+        let cursor = std::io::Cursor::new(bytes);
+        let decoder = flate2::read::GzDecoder::new(cursor);
+        let mut archive = tar::Archive::new(decoder);
+
+        let temp_dir = tempfile::tempdir().context("Failed to create temp directory for update")?;
         archive
             .unpack(temp_dir.path())
-            .context("Failed to extract update archive in temp dir")?;
+            .context("Failed to extract update archive")?;
 
+        let new_binary = temp_dir.path().join("omg");
         if !new_binary.exists() {
             anyhow::bail!("Update archive did not contain 'omg' binary");
         }

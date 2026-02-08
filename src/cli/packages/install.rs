@@ -184,14 +184,14 @@ fn install_dry_run(packages: &[String]) -> Result<()> {
                 total_size += info.download_size.unwrap_or(0);
 
                 table.add_row(vec![
-                    format!("{}", info.name.bold()),
-                    format!("{}", info.version.to_string().cyan()),
+                    info.name.bold().to_string(),
+                    info.version.to_string().cyan().to_string(),
                     format!("{:.2} MB", size_mb),
                     format!("{} Official", "✓".green()),
                 ]);
             } else {
                 table.add_row(vec![
-                    format!("{}", pkg_name.bold()),
+                    pkg_name.bold().to_string(),
                     String::new(),
                     String::new(),
                     format!("{} AUR?", "?".yellow()),
@@ -201,7 +201,7 @@ fn install_dry_run(packages: &[String]) -> Result<()> {
         #[cfg(not(feature = "arch"))]
         {
             table.add_row(vec![
-                format!("{}", pkg_name.bold()),
+                pkg_name.bold().to_string(),
                 String::new(),
                 String::new(),
                 String::new(),

@@ -2,15 +2,16 @@
 //!
 //! Uses `LengthDelimitedCodec` and bitcode for maximum IPC performance.
 
+use std::num::NonZeroU32;
+use std::sync::Arc;
+use std::time::Duration;
+
 use anyhow::Result;
 use futures::sink::SinkExt;
 use futures::stream::StreamExt;
 use governor::{Quota, RateLimiter};
-
-use std::sync::Arc;
-use std::time::Duration;
 use tokio::net::UnixListener;
-use tokio_util::codec::{Framed, LengthDelimitedCodec};
+use tokio_util::codec::LengthDelimitedCodec;
 use tokio_util::sync::CancellationToken;
 
 use super::handlers::{DaemonState, handle_request};
@@ -157,7 +158,7 @@ pub async fn run(listener: UnixListener, state: Arc<DaemonState>) -> Result<()> 
                     let common_queries = ["", "linux", "python", "node", "firefox", "git"];
                     for query in common_queries {
                         let results = state_search.index.search(query, 50);
-                        let results_arc = std::sync::Arc::new(results);
+                        let results_arc = Arc::new(results);
                         state_search
                             .cache
                             .insert_arc(query.to_string(), results_arc);
@@ -180,6 +181,13 @@ pub async fn run(listener: UnixListener, state: Arc<DaemonState>) -> Result<()> 
 
         loop {
             tokio::select! {
+                // biased: always check cancellation first to ensure prompt shutdown
+                biased;
+
+                () = worker_token.cancelled() => {
+                    tracing::info!("Background worker shutting down");
+                    break;
+                }
                 () = tokio::time::sleep(STATUS_REFRESH_INTERVAL) => {
                     tracing::debug!("Refreshing system status cache...");
                     refresh_status(&state_worker).await;
@@ -194,10 +202,6 @@ pub async fn run(listener: UnixListener, state: Arc<DaemonState>) -> Result<()> 
                         last_cleanup = std::time::Instant::now();
                     }
                 }
-                () = worker_token.cancelled() => {
-                    tracing::info!("Background worker shutting down");
-                    break;
-                }
             }
         }
     });
@@ -206,6 +210,16 @@ pub async fn run(listener: UnixListener, state: Arc<DaemonState>) -> Result<()> 
 
     loop {
         tokio::select! {
+            // biased: always check shutdown signal first to avoid accepting
+            // new connections after shutdown was requested
+            biased;
+
+            _ = tokio::signal::ctrl_c() => {
+                tracing::info!("Shutdown signal received, cleaning up...");
+                shutdown_token.cancel();
+                break;
+            }
+
             result = listener.accept() => {
                 let (stream, _addr) = result?;
                 let state = Arc::clone(&state);
@@ -213,22 +227,19 @@ pub async fn run(listener: UnixListener, state: Arc<DaemonState>) -> Result<()> 
 
                 tokio::spawn(async move {
                     tokio::select! {
+                        // biased: check cancellation first for prompt client shutdown
+                        biased;
+
+                        () = client_token.cancelled() => {
+                            tracing::debug!("Client connection closed due to shutdown");
+                        }
                         result = handle_client(stream, state) => {
                             if let Err(e) = result {
                                 tracing::error!("Client error: {}", e);
                             }
                         }
-                        () = client_token.cancelled() => {
-                            tracing::debug!("Client connection closed due to shutdown");
-                        }
                     }
                 });
-            }
-
-            _ = tokio::signal::ctrl_c() => {
-                tracing::info!("Shutdown signal received, cleaning up...");
-                shutdown_token.cancel();
-                break;
             }
         }
     }
@@ -284,19 +295,15 @@ async fn handle_client(stream: tokio::net::UnixStream, state: Arc<DaemonState>) 
     let _guard = ConnectionGuard::new();
 
     // Use length-delimited framing for binary messages with max frame length
-    let mut codec = LengthDelimitedCodec::new();
-    codec.set_max_frame_length(MAX_REQUEST_SIZE);
-    let mut framed = Framed::new(stream, codec);
+    let mut framed = LengthDelimitedCodec::builder()
+        .max_frame_length(MAX_REQUEST_SIZE)
+        .new_framed(stream);
 
     // Rate limit per connection to ensure fairness
-    let quota = Quota::per_second(crate::core::safe_ops::nonzero_u32_or_default(
-        CLIENT_RATE_LIMIT_HZ,
-        1,
-    ))
-    .allow_burst(crate::core::safe_ops::nonzero_u32_or_default(
-        CLIENT_BURST_SIZE,
-        1,
-    ));
+    // SAFETY: Both constants are known non-zero at compile time
+    const RATE_LIMIT_NZ: NonZeroU32 = NonZeroU32::new(CLIENT_RATE_LIMIT_HZ).unwrap();
+    const BURST_SIZE_NZ: NonZeroU32 = NonZeroU32::new(CLIENT_BURST_SIZE).unwrap();
+    let quota = Quota::per_second(RATE_LIMIT_NZ).allow_burst(BURST_SIZE_NZ);
     let rate_limiter = RateLimiter::direct(quota);
 
     tracing::debug!("New binary client connected");

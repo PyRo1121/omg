@@ -140,7 +140,7 @@ impl PackageManager for ArchPackageManager {
     fn update(&self) -> Pin<Box<dyn Future<Output = AnyhowResult<()>> + Send + '_>> {
         Box::pin(async move {
             run_privileged_operation("update", &[], || async {
-                let prefix = format!("{}", "OMG".cyan().bold());
+                let prefix = "OMG".cyan().bold().to_string();
                 tracing::info!("{prefix} Starting full system upgrade...");
                 tokio::task::spawn_blocking(move || {
                     crate::package_managers::execute_transaction(Vec::new(), false, true, None)
@@ -258,7 +258,7 @@ pub async fn remove_orphans() -> AnyhowResult<()> {
         return Ok(());
     }
 
-    let prefix = format!("{}", "OMG".cyan().bold());
+    let prefix = "OMG".cyan().bold().to_string();
     let count = orphans.len();
     tracing::info!("{prefix} Found {count} orphan package(s):");
     for pkg in &orphans {

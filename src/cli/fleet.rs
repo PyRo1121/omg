@@ -161,8 +161,7 @@ pub async fn push(team: Option<&str>, message: Option<&str>, _ctx: &CliContext) 
         String::new()
     };
 
-    let client = reqwest::Client::new();
-    let push_result = client
+    let push_result = crate::core::http::shared_client()
         .post("https://api.pyro1121.com/api/fleet/push")
         .json(&serde_json::json!({
             "team": target,

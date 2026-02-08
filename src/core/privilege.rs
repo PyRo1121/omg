@@ -246,15 +246,29 @@ pub async fn run_self_sudo(args: &[&str]) -> anyhow::Result<()> {
     //
     // CRITICAL: Remove CARGO_* environment variables to prevent elevated process
     // from writing to user's target directory as root (causing permission errors).
+    //
+    // SECURITY: Also remove dangerous environment variables that could be used
+    // to hijack library loading or script execution in elevated context.
     let status = tokio::process::Command::new("sudo")
         .arg("-n")
         .env("OMG_ELEVATED", "1")
+        // Cargo build environment
         .env_remove("CARGO_PRIMARY_PACKAGE")
         .env_remove("CARGO_MANIFEST_DIR")
         .env_remove("CARGO_TARGET_DIR")
         .env_remove("CARGO_PKG_NAME")
         .env_remove("CARGO_PKG_VERSION")
         .env_remove("OUT_DIR")
+        // Security: library injection vectors
+        .env_remove("LD_PRELOAD")
+        .env_remove("LD_LIBRARY_PATH")
+        .env_remove("LD_AUDIT")
+        .env_remove("LD_DEBUG")
+        // Security: script execution vectors
+        .env_remove("PYTHONPATH")
+        .env_remove("RUBYLIB")
+        .env_remove("PERL5LIB")
+        .env_remove("NODE_PATH")
         .arg("--")
         .arg(&exe)
         .args(args)
@@ -316,12 +330,23 @@ pub async fn run_self_sudo(args: &[&str]) -> anyhow::Result<()> {
 
                 let interactive_status = tokio::process::Command::new("sudo")
                     .env("OMG_ELEVATED", "1")
+                    // Cargo build environment
                     .env_remove("CARGO_PRIMARY_PACKAGE")
                     .env_remove("CARGO_MANIFEST_DIR")
                     .env_remove("CARGO_TARGET_DIR")
                     .env_remove("CARGO_PKG_NAME")
                     .env_remove("CARGO_PKG_VERSION")
                     .env_remove("OUT_DIR")
+                    // Security: library injection vectors
+                    .env_remove("LD_PRELOAD")
+                    .env_remove("LD_LIBRARY_PATH")
+                    .env_remove("LD_AUDIT")
+                    .env_remove("LD_DEBUG")
+                    // Security: script execution vectors
+                    .env_remove("PYTHONPATH")
+                    .env_remove("RUBYLIB")
+                    .env_remove("PERL5LIB")
+                    .env_remove("NODE_PATH")
                     .arg("--")
                     .arg(&exe)
                     .args(args)

@@ -1,14 +1,16 @@
-use anyhow::{Context, Result};
 use std::sync::mpsc;
 use std::thread;
+
+use anyhow::{Context, Result};
+use tokio::sync::oneshot;
 
 use super::alpm_ops::get_pkg_info_from_db;
 use super::types::{PackageInfo, UpdateInfo};
 use crate::core::paths;
 
 enum AlpmRequest {
-    Info(String, mpsc::Sender<Result<Option<PackageInfo>>>),
-    ListUpdates(mpsc::Sender<Result<Vec<UpdateInfo>>>),
+    Info(String, oneshot::Sender<Result<Option<PackageInfo>>>),
+    ListUpdates(oneshot::Sender<Result<Vec<UpdateInfo>>>),
 }
 
 pub struct AlpmWorker {
@@ -64,17 +66,11 @@ impl AlpmWorker {
                 match req {
                     AlpmRequest::Info(name, reply) => {
                         let res = get_pkg_info_from_db(&alpm, &name);
-                        if reply.send(res).is_err() {
-                            tracing::debug!(
-                                "ALPM worker: reply channel closed for package '{name}'"
-                            );
-                        }
+                        let _ = reply.send(res);
                     }
                     AlpmRequest::ListUpdates(reply) => {
                         let res = Ok(list_updates_from_handle(&alpm));
-                        if reply.send(res).is_err() {
-                            tracing::debug!("ALPM worker: reply channel closed for list_updates");
-                        }
+                        let _ = reply.send(res);
                     }
                 }
             }
@@ -85,17 +81,17 @@ impl AlpmWorker {
     }
 
     pub async fn get_info(&self, name: String) -> Result<Option<PackageInfo>> {
-        let (tx, rx) = mpsc::channel();
+        let (tx, rx) = oneshot::channel();
         self.tx.send(AlpmRequest::Info(name, tx))?;
 
-        tokio::task::spawn_blocking(move || rx.recv().context("ALPM worker disconnected")?).await?
+        rx.await.context("ALPM worker disconnected")?
     }
 
     pub async fn list_updates(&self) -> Result<Vec<UpdateInfo>> {
-        let (tx, rx) = mpsc::channel();
+        let (tx, rx) = oneshot::channel();
         self.tx.send(AlpmRequest::ListUpdates(tx))?;
 
-        tokio::task::spawn_blocking(move || rx.recv().context("ALPM worker disconnected")?).await?
+        rx.await.context("ALPM worker disconnected")?
     }
 }
 

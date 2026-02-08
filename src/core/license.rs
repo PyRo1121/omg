@@ -529,7 +529,7 @@ pub async fn fetch_team_members() -> Result<Vec<TeamMember>> {
         license.key
     );
 
-    let response = reqwest::Client::new()
+    let response = crate::core::http::shared_client()
         .get(&url)
         .timeout(std::time::Duration::from_secs(10))
         .send()
@@ -565,7 +565,7 @@ pub async fn fetch_policies() -> Result<Vec<PolicyRule>> {
         license.key
     );
 
-    let response = reqwest::Client::new()
+    let response = crate::core::http::shared_client()
         .get(&url)
         .timeout(std::time::Duration::from_secs(10))
         .send()
@@ -598,7 +598,7 @@ pub async fn fetch_audit_logs() -> Result<Vec<AuditLogEntry>> {
         license.key
     );
 
-    let response = reqwest::Client::new()
+    let response = crate::core::http::shared_client()
         .get(&url)
         .timeout(std::time::Duration::from_secs(10))
         .send()
@@ -628,7 +628,7 @@ pub async fn propose_change(message: &str, state: &serde_json::Value) -> Result<
 
     let url = "https://api.pyro1121.com/api/team/propose";
 
-    let response = reqwest::Client::new()
+    let response = crate::core::http::shared_client()
         .post(url)
         .json(&serde_json::json!({
             "key": license.key,
@@ -666,7 +666,7 @@ pub async fn review_proposal(proposal_id: u32, status: &str) -> Result<()> {
 
     let url = "https://api.pyro1121.com/api/team/review";
 
-    let response = reqwest::Client::new()
+    let response = crate::core::http::shared_client()
         .post(url)
         .json(&serde_json::json!({
             "key": license.key,
@@ -700,7 +700,7 @@ pub async fn fetch_proposals() -> Result<Vec<serde_json::Value>> {
         license.key
     );
 
-    let response = reqwest::Client::new()
+    let response = crate::core::http::shared_client()
         .get(&url)
         .timeout(std::time::Duration::from_secs(10))
         .send()

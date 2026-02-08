@@ -421,25 +421,23 @@ pub async fn sync_databases_parallel() -> Result<()> {
         })
         .collect();
 
-    // Run all downloads in parallel using tokio::spawn
+    // Run all downloads in parallel using JoinSet for structured concurrency
     let repos_count = repos_to_sync.len();
-    let mut handles = Vec::with_capacity(repos_count);
+    let mut tasks = tokio::task::JoinSet::new();
 
     for (i, (_, urls, dest)) in repos_to_sync.into_iter().enumerate() {
         let client = client.clone();
         let Some(pb) = progress_bars.get(i).cloned() else {
             continue;
         };
-        let pb = pb;
 
-        let handle = tokio::spawn(async move { download_db(&client, urls, &dest, &pb).await });
-        handles.push(handle);
+        tasks.spawn(async move { download_db(&client, urls, &dest, &pb).await });
     }
 
     // Wait for all downloads
     let mut errors = Vec::with_capacity(repos_count);
-    for handle in handles {
-        match handle.await {
+    while let Some(result) = tasks.join_next().await {
+        match result {
             Ok(Ok(())) => {}
             Ok(Err(e)) => errors.push(e),
             Err(e) => errors.push(anyhow::anyhow!("Task panicked: {e}")),
@@ -578,20 +576,17 @@ pub async fn select_fastest_mirrors(count: usize) -> Result<Vec<String>> {
     let all_mirrors = get_mirrors()?;
     let client = shared_client().clone();
 
-    // Benchmark all mirrors in parallel
-    let handles: Vec<_> = all_mirrors
-        .iter()
-        .take(20) // Only benchmark first 20 mirrors
-        .map(|mirror| {
-            let client = client.clone();
-            let mirror = mirror.clone();
-            tokio::spawn(async move { benchmark_mirror(&client, &mirror).await })
-        })
-        .collect();
+    // Benchmark all mirrors in parallel using JoinSet
+    let mut tasks = tokio::task::JoinSet::new();
+    for mirror in all_mirrors.iter().take(20) {
+        let client = client.clone();
+        let mirror = mirror.clone();
+        tasks.spawn(async move { benchmark_mirror(&client, &mirror).await });
+    }
 
-    let mut results: Vec<(String, Duration)> = Vec::with_capacity(handles.len());
-    for handle in handles {
-        if let Ok(Some(result)) = handle.await {
+    let mut results: Vec<(String, Duration)> = Vec::with_capacity(20);
+    while let Some(outcome) = tasks.join_next().await {
+        if let Ok(Some(result)) = outcome {
             results.push(result);
         }
     }

@@ -397,7 +397,7 @@ impl UsageStats {
             "achievements": self.achievements,
         });
 
-        let client = reqwest::Client::new();
+        let client = crate::core::http::shared_client();
         let _response = client
             .post(USAGE_SYNC_API)
             .json(&payload)

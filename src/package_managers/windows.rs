@@ -851,7 +851,7 @@ impl WindowsPackageManager {
             .get(1..)
             .unwrap_or(&[])
             .iter()
-            .map(|s| s.to_string())
+            .map(ToString::to_string)
             .collect();
 
         tokio::task::spawn_blocking(move || {
