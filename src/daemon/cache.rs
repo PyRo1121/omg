@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use super::protocol::{DetailedPackageInfo, PackageInfo, StatusResult};
 
+/// Static cache keys (avoids String allocation on every cache access)
 const KEY_STATUS: &str = "status";
 const KEY_EXPLICIT: &str = "explicit";
 const KEY_EXPLICIT_COUNT: &str = "explicit_count";
@@ -22,12 +23,12 @@ pub struct PackageCache {
     info_miss_cache: Cache<String, bool>,
     /// Maximum cache size
     max_size: usize,
-    /// System status cache (Arc for cheap cloning)
-    system_status: Cache<String, Arc<StatusResult>>,
-    /// Explicit package list cache (Arc for cheap cloning)
-    explicit_packages: Cache<String, Arc<Vec<String>>>,
-    /// Explicit package count cache
-    explicit_count: Cache<String, usize>,
+    /// System status cache - uses &'static str keys to avoid allocation
+    system_status: Cache<&'static str, Arc<StatusResult>>,
+    /// Explicit package list cache - uses &'static str keys to avoid allocation
+    explicit_packages: Cache<&'static str, Arc<Vec<String>>>,
+    /// Explicit package count cache - uses &'static str keys to avoid allocation
+    explicit_count: Cache<&'static str, usize>,
 }
 
 impl PackageCache {
@@ -90,8 +91,8 @@ impl PackageCache {
     /// Update system status cache (accepts Arc to avoid double-wrapping)
     pub fn update_status(&self, result: Arc<StatusResult>) {
         self.explicit_count
-            .insert(KEY_EXPLICIT_COUNT.to_string(), result.explicit_packages);
-        self.system_status.insert(KEY_STATUS.to_string(), result);
+            .insert(KEY_EXPLICIT_COUNT, result.explicit_packages);
+        self.system_status.insert(KEY_STATUS, result);
     }
 
     /// Get cached explicit packages (Arc clone is cheap - just pointer copy)
@@ -110,23 +111,19 @@ impl PackageCache {
 
     /// Update explicit package cache
     pub fn update_explicit(&self, packages: Vec<String>) {
-        self.explicit_count
-            .insert(KEY_EXPLICIT_COUNT.to_string(), packages.len());
+        self.explicit_count.insert(KEY_EXPLICIT_COUNT, packages.len());
         self.explicit_packages
-            .insert(KEY_EXPLICIT.to_string(), Arc::new(packages));
+            .insert(KEY_EXPLICIT, Arc::new(packages));
     }
 
     pub fn update_explicit_arc(&self, packages: Arc<Vec<String>>) {
-        self.explicit_count
-            .insert(KEY_EXPLICIT_COUNT.to_string(), packages.len());
-        self.explicit_packages
-            .insert(KEY_EXPLICIT.to_string(), packages);
+        self.explicit_count.insert(KEY_EXPLICIT_COUNT, packages.len());
+        self.explicit_packages.insert(KEY_EXPLICIT, packages);
     }
 
     /// Update explicit package count cache
     pub fn update_explicit_count(&self, count: usize) {
-        self.explicit_count
-            .insert(KEY_EXPLICIT_COUNT.to_string(), count);
+        self.explicit_count.insert(KEY_EXPLICIT_COUNT, count);
     }
 
     /// Get cached results for a query (Arc clone is cheap - just pointer copy)

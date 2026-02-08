@@ -4,8 +4,6 @@
 use alpm_types::Version as AlpmVersion;
 #[cfg(feature = "arch")]
 use std::str::FromStr;
-#[cfg(feature = "arch")]
-use std::sync::LazyLock;
 
 /// Version type - uses `alpm_types::Version` on Arch, String on Debian
 #[cfg(feature = "arch")]
@@ -14,22 +12,22 @@ pub type Version = AlpmVersion;
 #[cfg(not(feature = "arch"))]
 pub type Version = String;
 
-/// A cached zero version to avoid repeated parsing.
-#[cfg(feature = "arch")]
-static ZERO_VERSION: LazyLock<AlpmVersion> = LazyLock::new(|| {
-    // "0" is always a valid version string per alpm-types spec
-    #[expect(clippy::expect_used)]
-    // Static initialization; failure is unrecoverable build misconfiguration
-    AlpmVersion::from_str("0").expect("0 is always valid")
-});
-
 /// Parse a version string, returning a zero version on failure.
 /// This is infallible and avoids `expect()/unwrap()` in hot paths.
+///
+/// # Performance
+/// Parsing "0" on failure is O(1) and avoids static synchronization overhead.
+/// Previous `LazyLock` approach had sync overhead + clone allocation anyway.
 #[cfg(feature = "arch")]
 #[must_use]
 #[inline]
 pub fn parse_version_or_zero(s: &str) -> Version {
-    AlpmVersion::from_str(s).unwrap_or_else(|_| ZERO_VERSION.clone())
+    AlpmVersion::from_str(s).unwrap_or_else(|_| {
+        // "0" parsing is trivial (single char) - cheaper than static + clone
+        // SAFETY: "0" is always a valid version string per alpm-types spec
+        #[expect(clippy::expect_used)]
+        AlpmVersion::from_str("0").expect("0 is always valid")
+    })
 }
 
 /// Parse a version string - on non-Arch just returns the string.
@@ -46,7 +44,9 @@ pub fn parse_version_or_zero(s: &str) -> Version {
 #[must_use]
 #[inline]
 pub fn zero_version() -> Version {
-    ZERO_VERSION.clone()
+    // "0" parsing is trivial - avoids static overhead
+    #[expect(clippy::expect_used)]
+    AlpmVersion::from_str("0").expect("0 is always valid")
 }
 
 /// Returns a default zero version - on non-Arch returns "0".

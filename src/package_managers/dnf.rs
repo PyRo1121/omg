@@ -594,8 +594,7 @@ impl DnfPackageManager {
             urlencoding::encode(query)
         );
 
-        let client = reqwest::Client::new();
-        let response = client.get(&url).send().await?;
+        let response = crate::core::http::shared_client().get(&url).send().await?;
 
         if !response.status().is_success() {
             anyhow::bail!("COPR API returned status: {}", response.status());
@@ -879,8 +878,12 @@ impl PackageManager for DnfPackageManager {
 
     fn list_updates(&self) -> Pin<Box<dyn Future<Output = Result<Vec<UpdateInfo>>> + Send + '_>> {
         Box::pin(async move {
-            let installed = self.load_installed_packages().await?;
-            let repo_packages = self.load_repo_metadata().await?;
+            // Optimization: Fetch installed packages and repo metadata in parallel
+            // These are independent I/O operations - ~2x speedup on update checks
+            let (installed, repo_packages) = tokio::try_join!(
+                self.load_installed_packages(),
+                self.load_repo_metadata()
+            )?;
 
             let mut installed_map = HashMap::new();
             for pkg in &installed {
