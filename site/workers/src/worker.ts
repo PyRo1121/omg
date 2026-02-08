@@ -73,6 +73,10 @@ import {
   handleGetAnalyticsOverview,
   cleanupOldAnalytics,
 } from './handlers/site-analytics';
+import {
+  handleCliEvent,
+  handleCliBatch,
+} from './handlers/telemetry';
 
 export default Sentry.withSentry(
   (env: Env) => ({
@@ -160,6 +164,16 @@ export default Sentry.withSentry(
       // Analytics events (batch from CLI)
       if (path === '/api/analytics' && request.method === 'POST') {
         return handleAnalytics(request, env);
+      }
+
+      // CLI telemetry: Single event
+      if (path === '/api/cli/event' && request.method === 'POST') {
+        return handleCliEvent(request, env);
+      }
+
+      // CLI telemetry: Batched events
+      if (path === '/api/cli/batch' && request.method === 'POST') {
+        return handleCliBatch(request, env);
       }
 
       // Docs analytics (batch from docs site)

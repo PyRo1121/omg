@@ -288,6 +288,141 @@ The scanner automatically ignores common placeholders:
 - `<API_KEY>`
 - `${SECRET}`
 
+## Privacy & Telemetry
+
+OMG respects user privacy with a privacy-first telemetry system that is entirely optional and transparent.
+
+### Telemetry Models
+
+OMG offers two telemetry levels:
+
+#### 1. Basic Install Tracking (Always Optional)
+The install telemetry system is **opt-in via environment variable** and sends minimal, anonymous data:
+- **Anonymous Install ID**: A unique UUID generated per installation (not tied to user)
+- **Platform**: OS and architecture (e.g., `linux-x86_64`, `macos-arm64`)
+- **Version**: OMG version at time of install
+- **Backend**: Package manager used (arch, debian, fedora, macos, windows)
+- **Timestamp**: Installation time in ISO 8601 format
+
+This data enables the GitHub badge to show real install counts. No personal information is collected.
+
+**Opt-out:** Set `OMG_TELEMETRY=0` during installation:
+```bash
+OMG_TELEMETRY=0 curl -fsSL https://pyro1121.com/install.sh | bash
+```
+
+Or disable via config:
+```toml
+# ~/.config/omg/omg.toml
+[core]
+telemetry_enabled = false
+```
+
+#### 2. Enhanced Telemetry (License Only)
+Enhanced telemetry is **only activated when a user has a valid license key**. This is explicit opt-in—no license = no data collection.
+
+When enabled, enhanced telemetry collects:
+- **Command Execution**: Command name, subcommand, duration, success/failure
+- **Search Operations**: Query terms, result count, execution time
+- **Updates**: Number of packages updated, duration
+- **Performance Metrics**: CLI startup time, operation latencies
+- **Feature Usage**: Daemon usage, parallel operations, SBOM generation, AUR operations
+- **Session Data**: Session ID, command count, session duration
+- **Session Timing**: Start/end timestamps (ISO 8601)
+
+**No PII Collection**: OMG never collects:
+- User names or home directory paths
+- Package contents or source code
+- System configuration details beyond platform/arch
+- Network information
+- Password or credential data
+- Command output or results
+
+### Data Handling
+
+#### Storage
+- **In-Flight**: Events are queued locally in `~/.local/share/omg/telemetry_queue.json`
+- **Batching**: Events are sent in batches every 60 seconds or when 100 events accumulate
+- **Retry Logic**: Failed batches are queued and retried up to 3 times with exponential backoff
+- **Privacy Isolation**: Each user has isolated storage with standard Unix permissions
+
+#### Transmission
+- **HTTPS Only**: All data sent over TLS 1.3+
+- **Timeout**: Requests timeout after 10 seconds
+- **Silent Failures**: Network errors don't block CLI execution
+- **No Blocking**: Telemetry never interrupts your work
+
+#### Retention
+- **OMG Servers**: Telemetry data is retained for 30 days then purged
+- **Local Queue**: Queued events are deleted after successful transmission
+- **Session Data**: Session info persists in user's local data directory only
+
+### Opting Out
+
+**Complete Opt-Out**:
+```bash
+# Disable all telemetry
+export OMG_TELEMETRY=0
+export OMG_DISABLE_TELEMETRY=1
+
+# Or in config
+echo 'telemetry_enabled = false' >> ~/.config/omg/omg.toml
+```
+
+**After Install**:
+```bash
+# Disable telemetry after installation
+omg config set core.telemetry_enabled false
+```
+
+**Verification**:
+```bash
+# Check current telemetry status
+omg config get core.telemetry_enabled
+```
+
+### Transparency
+
+The telemetry system is fully open-source:
+- Implementation: [`src/core/telemetry.rs`](https://github.com/PyRo1121/omg/blob/main/src/core/telemetry.rs)
+- Client: [`src/core/telemetry_client.rs`](https://github.com/PyRo1121/omg/blob/main/src/core/telemetry_client.rs)
+
+You can:
+- Review the exact data collected by reading the source code
+- Audit network requests using tools like `tcpdump` or Wireshark
+- Verify telemetry is disabled by checking logs: `omg logs --level debug`
+
+### Why Telemetry?
+
+For licensed users, telemetry helps us:
+- **Usage Analytics**: Understand which features are most valuable
+- **Performance Optimization**: Identify performance bottlenecks
+- **Reliability**: Detect errors in real-world usage patterns
+- **Roadmap Priority**: Make data-driven decisions about what to build next
+
+For everyone (install tracking):
+- **Install Metrics**: Display real install counts on GitHub/website badges
+- **Community Size**: Show adoption and growth transparently
+
+### FAQs
+
+**Q: Does OMG collect passwords or credentials?**
+A: No. Telemetry never touches credentials, environment variables, or sensitive data.
+
+**Q: Can I use OMG without telemetry?**
+A: Yes. Set `OMG_TELEMETRY=0` or disable via config. All features work identically.
+
+**Q: Is telemetry data sold?**
+A: No. Telemetry data is used internally only and never shared with third parties.
+
+**Q: Does telemetry slow down OMG?**
+A: No. Events are queued locally and sent asynchronously in the background.
+
+**Q: What if my network is slow?**
+A: Telemetry has a 10-second timeout and will silently fail without blocking your work.
+
+---
+
 ## Audit Logging
 
 OMG maintains tamper-proof audit logs for compliance and forensics.
