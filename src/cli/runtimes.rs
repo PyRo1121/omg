@@ -94,7 +94,10 @@ async fn install_or_use<M: RuntimeInstallUse + Sync>(mgr: &M, version: &str) -> 
 
 pub async fn use_version(runtime: &str, version: Option<&str>) -> Result<()> {
     if !known_runtimes().contains(&runtime.to_string()) {
-        anyhow::bail!("Unknown runtime: {runtime}");
+        anyhow::bail!(
+            "Unknown runtime: '{runtime}'. Available: {}",
+            SUPPORTED_RUNTIMES.join(", ")
+        );
     }
 
     let version = if let Some(v) = version {
