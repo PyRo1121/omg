@@ -68,9 +68,11 @@ jobs:
             if [ "$total" -gt 0 ]; then
               score=$((caught * 100 / total))
               echo "Mutation score: $score% ($caught/$total mutants caught)"
-              # Warn if mutation score is low but don't fail
-              if [ "$score" -lt 60 ]; then
-                echo "::warning::Mutation score is below 60%"
+              # Warn if mutation score is below target (75% industry best practice)
+              if [ "$score" -lt 75 ]; then
+                echo "::warning::Mutation score $score% is below 75% target. Tests may not be catching all bugs."
+              else
+                echo "::notice::Mutation score $score% meets 75% target"
               fi
             fi
           fi

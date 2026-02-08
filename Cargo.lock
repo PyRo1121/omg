@@ -5946,7 +5946,6 @@ dependencies = [
  "ar",
  "assert_cmd",
  "bitcode",
- "bumpalo",
  "cargo-audit",
  "chrono",
  "clap",
@@ -6010,7 +6009,6 @@ dependencies = [
  "serde_json",
  "serial_test",
  "sha2 0.10.9",
- "smallvec",
  "supports-color",
  "tar",
  "temp-env",
@@ -7953,6 +7951,7 @@ dependencies = [
  "sentry-contexts",
  "sentry-core",
  "sentry-debug-images",
+ "sentry-log",
  "sentry-panic",
  "sentry-tracing",
  "tokio",
@@ -8028,6 +8027,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "002561e49ea3a9de316e2efadc40fae553921b8ff41448f02ea85fd135a778d6"
 dependencies = [
  "findshlibs",
+ "sentry-core",
+]
+
+[[package]]
+name = "sentry-log"
+version = "0.46.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e200860daf76e09f9ad111bce25928f96bedbb84bc5934b37f05bb445727c70e"
+dependencies = [
+ "bitflags 2.10.0",
+ "log",
  "sentry-core",
 ]
 

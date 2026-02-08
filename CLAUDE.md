@@ -124,20 +124,70 @@ Profile with `cargo flamegraph` before optimizing.
 
 Custom agents in `.claude/agents/` are specialized for OMG development:
 
+### Core Development Agents
 | Agent | Model | Use For |
 |-------|-------|---------|
 | `Rust-Engineer` | sonnet | Core Rust: ownership, traits, async, FFI, perf |
 | `cli-developer` | sonnet | CLI UX: clap, TUI, output, error messages |
 | `test-runner` | haiku | Run tests, diagnose failures, report results |
 | `security-auditor` | sonnet | Unsafe code, privilege escalation, CVEs |
-| `perf-profiler` | sonnet | Benchmarks, flamegraphs, optimization |
+
+### Quality & Optimization Agents
+| Agent | Model | Use For |
+|-------|-------|---------|
+| `linter` | haiku | Clippy, rustfmt, import order, code standards |
+| `dead-code-hunter` | sonnet | Unused code, deps, features detection |
+| `optimizer` | sonnet | Allocation reduction, zero-copy, binary size |
+| `perf-profiler` | sonnet | Benchmarks, flamegraphs, runtime optimization |
 | `code-reviewer` | sonnet | Review changes, style compliance, quality gates |
+
+### Safety & Security Agents
+| Agent | Model | Use For |
+|-------|-------|---------|
+| `ffi-auditor` | sonnet | libalpm/rust-apt FFI safety, memory safety |
+| `async-inspector` | sonnet | Tokio patterns, blocking detection, cancellation |
+| `dependency-auditor` | sonnet | CVEs, licenses, supply chain security |
+
+### Research & Discovery Agents
+| Agent | Model | Use For |
+|-------|-------|---------|
+| `crate-scout` | sonnet | Find faster/better crate alternatives |
+| `docs-researcher` | sonnet | Rust best practices, ecosystem updates |
+
+### UX & Compatibility Agents
+| Agent | Model | Use For |
+|-------|-------|---------|
+| `api-consistency` | sonnet | PackageManager trait, CLI interface, API design |
+| `error-ux` | haiku | User-facing error message quality |
+| `cross-platform` | sonnet | Feature parity, platform guards, portability |
+
+### Continuous Improvement Agents
+| Agent | Model | Use For |
+|-------|-------|---------|
+| `e2e-architect` | sonnet | E2E test design, coverage, integration scenarios |
+| `github-scout` | sonnet | OSS research, best practices from top projects |
+| `modernizer` | sonnet | Rust evolution, deprecated patterns, new idioms |
+| `enterprise-qa` | sonnet | Coverage, mutation testing, fuzzing, certification |
+| `refactorer` | sonnet | Safe refactoring, dead code removal, structure |
+
+### Orchestration
+| Agent | Model | Use For |
+|-------|-------|---------|
 | `swarm-lead` | opus | Orchestrate parallel multi-agent tasks |
 
-**Swarm mode** is enabled for parallel agent teams. Use for:
-- Refactoring multiple backends simultaneously
-- Running comprehensive test suites in parallel
-- Large features spanning many files
+**Swarm Patterns** for parallel agent teams:
+
+- **Code Quality Swarm:** `linter` + `dead-code-hunter` + `code-reviewer`
+- **Safety Swarm:** `security-auditor` + `ffi-auditor` + `dependency-auditor` + `async-inspector`
+- **Performance Swarm:** `perf-profiler` + `optimizer` + `crate-scout`
+- **Research Swarm:** `docs-researcher` + `crate-scout` + `dead-code-hunter`
+- **UX Swarm:** `error-ux` + `api-consistency` + `cli-developer`
+- **Platform Swarm:** `cross-platform` + multiple backend-specific agents
+- **Test Swarm:** Multiple `test-runner` agents for unit/e2e/property/security tests
+- **Full Audit Swarm:** All agents for comprehensive project review
+- **Pre-Release Swarm:** `test-runner` + safety swarm + `code-reviewer` + `cross-platform`
+- **Continuous Improvement Swarm:** `github-scout` + `modernizer` + `refactorer` + `crate-scout`
+- **Enterprise QA Swarm:** `e2e-architect` + `enterprise-qa` + `test-runner` + `perf-profiler`
 
 **Hooks:** `cargo fmt` runs automatically after Rust file edits.
 
