@@ -30,6 +30,7 @@ pub mod sudoloop;
 pub mod sysinfo;
 pub mod task_runner;
 pub mod telemetry;
+pub mod telemetry_client;
 pub mod testing;
 pub mod transactions;
 mod types;

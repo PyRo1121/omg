@@ -1,4 +1,5 @@
 use std::io::Write;
+use std::time::Instant;
 
 use anyhow::Result;
 use serde::Serialize;
@@ -57,6 +58,9 @@ async fn search_internal(
     json: bool,
     no_aur: bool,
 ) -> Result<()> {
+    // Start timing
+    let start_time = Instant::now();
+
     if query.len() > 100 {
         anyhow::bail!("Search query too long (max 100 characters)");
     }
@@ -125,6 +129,10 @@ async fn search_internal(
 
     let mut display_packages = official_packages;
     display_packages.extend(aur_packages);
+
+    // Track search with timing
+    let duration_ms = start_time.elapsed().as_millis() as u64;
+    crate::core::usage::track_search_timed(query, display_packages.len(), duration_ms, true);
 
     if json {
         let json_str =

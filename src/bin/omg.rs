@@ -441,9 +441,15 @@ fn main() -> Result<()> {
 }
 
 async fn async_main(args: Vec<String>) -> Result<()> {
+    // Record startup time for telemetry
+    omg_lib::core::telemetry::record_startup_time();
+
     omg_lib::cli::style::init_theme();
     let cmd_start = omg_lib::core::analytics::start_timer();
     let cli = Cli::parse_from(&args);
+
+    // Initialize session tracking (will create new session if expired)
+    omg_lib::core::telemetry::track_session_start();
 
     // Set the yes flag globally based on command
     let yes_flag = matches!(
@@ -561,6 +567,9 @@ async fn track_command_analytics(cmd_start: std::time::Instant) {
     omg_lib::core::analytics::maybe_heartbeat();
     omg_lib::core::analytics::maybe_flush().await;
     omg_lib::core::usage::maybe_sync_background();
+
+    // Flush enhanced telemetry events if needed
+    omg_lib::core::telemetry::maybe_flush_background();
 }
 
 fn handle_hooks_command(command: &omg_lib::cli::HooksCommands) -> Result<()> {

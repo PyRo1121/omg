@@ -1,5 +1,7 @@
 //! Update functionality for packages
 
+use std::time::Instant;
+
 use anyhow::Result;
 use dialoguer::Confirm;
 
@@ -65,6 +67,9 @@ pub async fn update_turbo() -> Result<()> {
 
 pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
     use owo_colors::OwoColorize;
+
+    // Start timing
+    let start_time = Instant::now();
 
     let pm = get_package_manager()?;
 
@@ -318,6 +323,21 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
 
     #[cfg(not(feature = "arch"))]
     let _ = &aur_packages;
+
+    // Track update with timing
+    let duration_ms = start_time.elapsed().as_millis() as u64;
+    let success = failed_count == 0;
+    let error_msg = if failed_count > 0 {
+        Some(format!("{failed_count} packages failed to update"))
+    } else {
+        None
+    };
+    crate::core::usage::track_update_timed(
+        installed_count,
+        duration_ms,
+        success,
+        error_msg.as_deref(),
+    );
 
     if failed_count > 0 {
         modern_ui::print_warning(&format!(
