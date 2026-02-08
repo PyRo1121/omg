@@ -249,9 +249,15 @@ pub async fn run_self_sudo(args: &[&str]) -> anyhow::Result<()> {
     //
     // SECURITY: Also remove dangerous environment variables that could be used
     // to hijack library loading or script execution in elevated context.
+    // Try non-interactive sudo first (-n flag fails immediately if password needed)
+    // Remove askpass variables to ensure no GUI prompt even on -n failure
     let status = tokio::process::Command::new("sudo")
         .arg("-n")
         .env("OMG_ELEVATED", "1")
+        // Force terminal-based password prompt, never GUI
+        .env_remove("SUDO_ASKPASS")
+        .env_remove("SSH_ASKPASS")
+        .env_remove("SSH_ASKPASS_REQUIRE")
         // Cargo build environment
         .env_remove("CARGO_PRIMARY_PACKAGE")
         .env_remove("CARGO_MANIFEST_DIR")
@@ -269,6 +275,10 @@ pub async fn run_self_sudo(args: &[&str]) -> anyhow::Result<()> {
         .env_remove("RUBYLIB")
         .env_remove("PERL5LIB")
         .env_remove("NODE_PATH")
+        // Inherit terminal for proper output
+        .stdin(std::process::Stdio::inherit())
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
         .arg("--")
         .arg(&exe)
         .args(args)
@@ -328,8 +338,15 @@ pub async fn run_self_sudo(args: &[&str]) -> anyhow::Result<()> {
             Ok(_) | Err(_) => {
                 tracing::debug!("Password required, running interactive sudo");
 
+                // IMPORTANT: Explicitly inherit stdin/stdout/stderr to keep password
+                // prompt in the terminal. Without this, some desktop environments
+                // detect "no tty" and spawn a GUI askpass dialog instead.
                 let interactive_status = tokio::process::Command::new("sudo")
                     .env("OMG_ELEVATED", "1")
+                    // Force terminal-based password prompt, never GUI
+                    .env_remove("SUDO_ASKPASS")
+                    .env_remove("SSH_ASKPASS")
+                    .env_remove("SSH_ASKPASS_REQUIRE")
                     // Cargo build environment
                     .env_remove("CARGO_PRIMARY_PACKAGE")
                     .env_remove("CARGO_MANIFEST_DIR")
@@ -347,6 +364,10 @@ pub async fn run_self_sudo(args: &[&str]) -> anyhow::Result<()> {
                     .env_remove("RUBYLIB")
                     .env_remove("PERL5LIB")
                     .env_remove("NODE_PATH")
+                    // Inherit terminal for CLI password prompt
+                    .stdin(std::process::Stdio::inherit())
+                    .stdout(std::process::Stdio::inherit())
+                    .stderr(std::process::Stdio::inherit())
                     .arg("--")
                     .arg(&exe)
                     .args(args)
