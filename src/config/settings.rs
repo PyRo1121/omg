@@ -2,9 +2,50 @@
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::core::{RuntimeBackend, paths};
+
+/// Maximum config file size (1MB) to prevent `DoS` via large configs
+const MAX_CONFIG_SIZE: u64 = 1024 * 1024;
+
+/// Maximum metadata cache TTL (7 days in seconds)
+const MAX_CACHE_TTL_SECS: u64 = 7 * 24 * 60 * 60;
+
+/// Validate a path doesn't contain path traversal sequences
+fn validate_config_path(path: &Path, field_name: &str) -> Result<()> {
+    let path_str = path.to_string_lossy();
+
+    // Check for path traversal
+    if path_str.contains("..") {
+        anyhow::bail!(
+            "Config error: {field_name} contains path traversal sequence '..'"
+        );
+    }
+
+    // Check for null bytes
+    if path_str.contains('\0') {
+        anyhow::bail!(
+            "Config error: {field_name} contains null byte"
+        );
+    }
+
+    // Reject absolute paths outside of home/cache directories for safety
+    if path.is_absolute() {
+        let is_safe = path_str.starts_with("/home/")
+            || path_str.starts_with("/tmp/")
+            || path_str.starts_with("/var/cache/")
+            || path_str.starts_with("/var/tmp/");
+
+        if !is_safe {
+            anyhow::bail!(
+                "Config error: {field_name} absolute path must be under /home/, /tmp/, or /var/cache/"
+            );
+        }
+    }
+
+    Ok(())
+}
 
 /// OMG configuration settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -134,13 +175,55 @@ impl Settings {
         let config_path = Self::config_path()?;
 
         if config_path.exists() {
+            // Security: Check file size before reading to prevent DoS
+            let metadata = std::fs::metadata(&config_path)
+                .with_context(|| format!("Failed to stat config: {}", config_path.display()))?;
+            if metadata.len() > MAX_CONFIG_SIZE {
+                anyhow::bail!(
+                    "Config file too large: {} bytes (max {} bytes)",
+                    metadata.len(),
+                    MAX_CONFIG_SIZE
+                );
+            }
+
             let content = std::fs::read_to_string(&config_path)
                 .with_context(|| format!("Failed to read config: {}", config_path.display()))?;
-            Ok(toml::from_str(&content)
-                .with_context(|| format!("Failed to parse config: {}", config_path.display()))?)
+            let settings: Self = toml::from_str(&content)
+                .with_context(|| format!("Failed to parse config: {}", config_path.display()))?;
+
+            // Security: Validate all path fields to prevent path traversal
+            settings.validate_paths()?;
+
+            // Security: Validate TTL bounds
+            if settings.aur.metadata_cache_ttl_secs > MAX_CACHE_TTL_SECS {
+                anyhow::bail!(
+                    "aur.metadata_cache_ttl_secs too large: {} (max {} = 7 days)",
+                    settings.aur.metadata_cache_ttl_secs,
+                    MAX_CACHE_TTL_SECS
+                );
+            }
+
+            Ok(settings)
         } else {
             Ok(Self::default())
         }
+    }
+
+    /// Validate all path fields to prevent path traversal attacks
+    fn validate_paths(&self) -> Result<()> {
+        if let Some(ref path) = self.aur.pkgdest {
+            validate_config_path(path, "aur.pkgdest")?;
+        }
+        if let Some(ref path) = self.aur.srcdest {
+            validate_config_path(path, "aur.srcdest")?;
+        }
+        if let Some(ref path) = self.aur.ccache_dir {
+            validate_config_path(path, "aur.ccache_dir")?;
+        }
+        if let Some(ref path) = self.aur.sccache_dir {
+            validate_config_path(path, "aur.sccache_dir")?;
+        }
+        Ok(())
     }
 
     /// Save settings to config file
