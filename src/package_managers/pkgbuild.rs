@@ -6,8 +6,36 @@
 use alpm_types::Version;
 use anyhow::{Context, Result};
 use std::collections::HashMap;
-use std::fs;
+use std::io::Read;
 use std::path::Path;
+
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
+
+/// Read a file safely, preventing symlink attacks on Unix.
+///
+/// # Security
+/// Uses `O_NOFOLLOW` to reject symlinks, preventing attacks where a malicious
+/// symlink could redirect file reads to arbitrary locations.
+#[cfg(unix)]
+fn safe_read_file(path: &Path) -> std::io::Result<String> {
+    use std::fs::OpenOptions;
+
+    let mut file = OpenOptions::new()
+        .read(true)
+        .custom_flags(nix::libc::O_NOFOLLOW)
+        .open(path)?;
+
+    let mut content = String::new();
+    file.read_to_string(&mut content)?;
+    Ok(content)
+}
+
+/// Read a file (non-Unix fallback).
+#[cfg(not(unix))]
+fn safe_read_file(path: &Path) -> std::io::Result<String> {
+    std::fs::read_to_string(path)
+}
 
 #[derive(Debug, Clone)]
 pub struct PkgBuild {
@@ -46,8 +74,12 @@ impl Default for PkgBuild {
 
 impl PkgBuild {
     /// Parse a PKGBUILD file
+    ///
+    /// # Security
+    /// Uses `O_NOFOLLOW` on Unix to prevent symlink attacks where a malicious
+    /// PKGBUILD symlink could point to sensitive files like /etc/passwd.
     pub fn parse(path: &Path) -> Result<Self> {
-        let content = fs::read_to_string(path)
+        let content = safe_read_file(path)
             .with_context(|| format!("Failed to read PKGBUILD at {}", path.display()))?;
 
         Self::parse_content(&content)

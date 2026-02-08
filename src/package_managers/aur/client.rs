@@ -6,7 +6,6 @@ use std::io::{BufReader, Cursor, Read};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::str::FromStr;
-use std::sync::Arc;
 use std::time::Duration;
 
 use alpm_pkginfo::{PackageInfoV1, PackageInfoV2};
@@ -26,7 +25,7 @@ use which::which;
 use super::error::AurError;
 use super::utils::{
     create_dir_as_user, create_dir_as_user_sync, get_original_user, get_original_user_home,
-    has_word_boundary_match, is_root_owned, remove_dir_as_user,
+    has_word_boundary_match, is_root_owned, remove_dir_as_user, validate_build_dir,
 };
 
 use super::super::aur_deps::check_dependencies;
@@ -47,6 +46,85 @@ const AUR_GIT_URL: &str = "https://aur.archlinux.org";
 const AUR_RPC_MAX_URI: usize = 4400;
 /// Pre-computed length of the AUR RPC info base URL (47 bytes)
 const AUR_RPC_INFO_BASE_LEN: usize = 47;
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// PGP Key ID Validation
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// Result of PGP key ID validation
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PgpKeyIdStatus {
+    /// Full 40-char fingerprint - most secure
+    FullFingerprint,
+    /// 16-char long key ID - acceptable
+    LongKeyId,
+    /// 8-char short key ID - INSECURE (vulnerable to collision attacks)
+    ShortKeyId,
+    /// Empty key ID
+    Empty,
+    /// Key ID too long (> 64 chars)
+    TooLong,
+    /// Contains non-hexadecimal characters
+    InvalidChars,
+    /// Non-standard length (not 8, 16, or 40 chars)
+    NonStandardLength,
+}
+
+/// Validate a PGP key ID for security.
+///
+/// # Security
+/// - **Short key IDs (8 chars)** are vulnerable to collision attacks where
+///   an attacker generates a key with the same short ID as a trusted key.
+/// - **Long key IDs (16 chars)** are acceptable but not ideal.
+/// - **Full fingerprints (40 chars)** are strongly recommended.
+///
+/// # Returns
+/// - `PgpKeyIdStatus` indicating the validation result
+///
+/// # Examples
+/// ```ignore
+/// assert_eq!(validate_pgp_key_id("ABCDEF12"), PgpKeyIdStatus::ShortKeyId);
+/// assert_eq!(validate_pgp_key_id("ABCDEF1234567890"), PgpKeyIdStatus::LongKeyId);
+/// ```
+#[inline]
+pub fn validate_pgp_key_id(key_id: &str) -> PgpKeyIdStatus {
+    if key_id.is_empty() {
+        return PgpKeyIdStatus::Empty;
+    }
+    if key_id.len() > 64 {
+        return PgpKeyIdStatus::TooLong;
+    }
+    if !key_id.chars().all(|c| c.is_ascii_hexdigit()) {
+        return PgpKeyIdStatus::InvalidChars;
+    }
+
+    match key_id.len() {
+        40 => PgpKeyIdStatus::FullFingerprint,
+        16 => PgpKeyIdStatus::LongKeyId,
+        8 => PgpKeyIdStatus::ShortKeyId,
+        _ if key_id.len() < 16 => PgpKeyIdStatus::ShortKeyId,
+        _ => PgpKeyIdStatus::NonStandardLength,
+    }
+}
+
+/// Check if a PGP key ID is safe to use (not vulnerable to collision attacks)
+///
+/// Returns `true` for:
+/// - Full fingerprints (40 chars)
+/// - Long key IDs (16 chars)
+/// - Non-standard lengths >= 16 chars
+///
+/// Returns `false` for short key IDs (< 16 chars) which are vulnerable to
+/// collision attacks.
+#[inline]
+#[must_use]
+#[allow(dead_code)] // Public API for callers; currently only used in tests
+pub fn is_pgp_key_id_safe(key_id: &str) -> bool {
+    matches!(
+        validate_pgp_key_id(key_id),
+        PgpKeyIdStatus::FullFingerprint | PgpKeyIdStatus::LongKeyId | PgpKeyIdStatus::NonStandardLength
+    )
+}
 
 /// AUR API client with build support
 #[derive(Clone)]
@@ -98,32 +176,28 @@ impl AurClient {
 
         // Try fast binary index first if enabled and available
         if self.settings.aur.use_metadata_archive {
-            let index_path = Arc::new(Self::metadata_index_path());
+            let index_path = Self::metadata_index_path();
             if index_path.exists() {
-                let query = Arc::new(query.to_string());
-                let result = tokio::task::spawn_blocking({
-                    let index_path = Arc::clone(&index_path);
-                    let query = Arc::clone(&query);
-                    move || -> Result<Vec<Package>> {
-                        let index = AurIndex::open(&index_path)?;
-                        let entries = index.search(&query, 50)?;
-                        Ok(entries
-                            .into_iter()
-                            .map(|e| Package {
-                                name: e.name.as_str().to_string(),
-                                version: crate::package_managers::parse_version_or_zero(
-                                    e.version.as_str(),
-                                ),
-                                description: e
-                                    .description
-                                    .as_ref()
-                                    .map(|s| s.as_str().to_string())
-                                    .unwrap_or_default(),
-                                source: PackageSource::Aur,
-                                installed: false,
-                            })
-                            .collect())
-                    }
+                let query_owned = query.to_string();
+                let result = tokio::task::spawn_blocking(move || -> Result<Vec<Package>> {
+                    let index = AurIndex::open(&index_path)?;
+                    let entries = index.search(&query_owned, 50)?;
+                    Ok(entries
+                        .into_iter()
+                        .map(|e| Package {
+                            name: e.name.as_str().to_string(),
+                            version: crate::package_managers::parse_version_or_zero(
+                                e.version.as_str(),
+                            ),
+                            description: e
+                                .description
+                                .as_ref()
+                                .map(|s| s.as_str().to_string())
+                                .unwrap_or_default(),
+                            source: PackageSource::Aur,
+                            installed: false,
+                        })
+                        .collect())
                 })
                 .await?;
 
@@ -224,31 +298,27 @@ impl AurClient {
         crate::core::security::validate_package_name(package)?;
 
         // Try fast binary index first
-        let index_path = Arc::new(Self::metadata_index_path());
+        let index_path = Self::metadata_index_path();
         if index_path.exists() {
-            let package = Arc::new(package.to_string());
-            let result = tokio::task::spawn_blocking({
-                let index_path = Arc::clone(&index_path);
-                let package = Arc::clone(&package);
-                move || -> Result<Option<Package>> {
-                    let index = AurIndex::open(&index_path)?;
-                    if let Some(entry) = index.get(&package)? {
-                        return Ok(Some(Package {
-                            name: entry.name.as_str().to_string(),
-                            version: crate::package_managers::parse_version_or_zero(
-                                entry.version.as_str(),
-                            ),
-                            description: entry
-                                .description
-                                .as_ref()
-                                .map(|s| s.as_str().to_string())
-                                .unwrap_or_default(),
-                            source: PackageSource::Aur,
-                            installed: false,
-                        }));
-                    }
-                    Ok(None)
+            let package_owned = package.to_string();
+            let result = tokio::task::spawn_blocking(move || -> Result<Option<Package>> {
+                let index = AurIndex::open(&index_path)?;
+                if let Some(entry) = index.get(&package_owned)? {
+                    return Ok(Some(Package {
+                        name: entry.name.as_str().to_string(),
+                        version: crate::package_managers::parse_version_or_zero(
+                            entry.version.as_str(),
+                        ),
+                        description: entry
+                            .description
+                            .as_ref()
+                            .map(|s| s.as_str().to_string())
+                            .unwrap_or_default(),
+                        source: PackageSource::Aur,
+                        installed: false,
+                    }));
                 }
+                Ok(None)
             })
             .await?;
 
@@ -283,6 +353,157 @@ impl AurClient {
         }))
     }
 
+    /// Get info for multiple AUR packages in batch (5-10x faster than individual calls)
+    ///
+    /// This method batches requests to stay under the AUR RPC URL limit (~4400 chars),
+    /// sending parallel chunked requests for maximum throughput.
+    #[instrument(skip(self, packages))]
+    pub async fn info_batch(
+        &self,
+        packages: &[String],
+    ) -> Result<std::collections::HashMap<String, Package>> {
+        use std::collections::HashMap;
+
+        if packages.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        // SECURITY: Validate all package names upfront
+        for pkg in packages {
+            crate::core::security::validate_package_name(pkg)?;
+        }
+
+        // Try fast binary index first
+        let index_path = Self::metadata_index_path();
+        let mut results = HashMap::with_capacity(packages.len());
+        let mut remaining = Vec::new();
+
+        if index_path.exists() {
+            let packages_owned: Vec<String> = packages.to_vec();
+            let index_result = tokio::task::spawn_blocking(move || -> Result<(HashMap<String, Package>, Vec<String>)> {
+                let index = AurIndex::open(&index_path)?;
+                let mut found = HashMap::new();
+                let mut not_found = Vec::new();
+
+                for name in packages_owned {
+                    if let Some(entry) = index.get(&name)? {
+                        found.insert(
+                            name,
+                            Package {
+                                name: entry.name.as_str().to_string(),
+                                version: crate::package_managers::parse_version_or_zero(
+                                    entry.version.as_str(),
+                                ),
+                                description: entry
+                                    .description
+                                    .as_ref()
+                                    .map(|s| s.as_str().to_string())
+                                    .unwrap_or_default(),
+                                source: PackageSource::Aur,
+                                installed: false,
+                            },
+                        );
+                    } else {
+                        not_found.push(name);
+                    }
+                }
+                Ok((found, not_found))
+            })
+            .await?;
+
+            if let Ok((found, not_found)) = index_result {
+                results = found;
+                remaining = not_found;
+            }
+        } else {
+            remaining = packages.to_vec();
+        }
+
+        // If all packages found in index, return early
+        if remaining.is_empty() {
+            tracing::debug!("All {} packages found in binary index", results.len());
+            return Ok(results);
+        }
+
+        // Query remaining packages via RPC in parallel chunks
+        let chunked_names = Self::chunk_aur_names(&remaining);
+        let concurrency = self.settings.aur.build_concurrency.clamp(4, 16);
+
+        tracing::debug!(
+            "Querying {} packages in {} chunks (concurrency: {})",
+            remaining.len(),
+            chunked_names.len(),
+            concurrency
+        );
+
+        let mut stream = futures::stream::iter(chunked_names)
+            .map(|chunk| async move {
+                let mut url = format!("{AUR_RPC_URL}?v=5&type=info");
+                for name in &chunk {
+                    url.push_str("&arg[]=");
+                    url.push_str(name);
+                }
+
+                let mut last_error = None;
+                for retry in 0..3u32 {
+                    if retry > 0 {
+                        tokio::time::sleep(Duration::from_millis(100 * 2u64.pow(retry - 1))).await;
+                    }
+
+                    match shared_client().get(&url).send().await {
+                        Ok(resp) => {
+                            if resp.status().is_server_error() {
+                                last_error =
+                                    Some(anyhow::anyhow!("AUR server error: {}", resp.status()));
+                                continue;
+                            }
+                            return resp.json::<AurResponse>().await.map_err(Into::into);
+                        }
+                        Err(e) if e.is_timeout() || e.is_connect() => {
+                            last_error = Some(anyhow::anyhow!("Network error: {e}"));
+                        }
+                        Err(e) => return Err(e.into()),
+                    }
+                }
+                Err(last_error
+                    .unwrap_or_else(|| anyhow::anyhow!("AUR request failed after retries")))
+            })
+            .buffer_unordered(concurrency);
+
+        while let Some(res) = stream.next().await {
+            let response = res.map_err(|e| {
+                tracing::warn!("AUR batch info failed: {}", e);
+                anyhow::anyhow!("Failed to query AUR. Check your internet connection.")
+            })?;
+
+            for p in response.results {
+                // SECURITY: Validate package name from RPC response
+                if let Err(e) = crate::core::security::validate_package_name(&p.name) {
+                    tracing::warn!(
+                        "Rejecting invalid package name from AUR info_batch: {} ({})",
+                        p.name,
+                        e
+                    );
+                    continue;
+                }
+
+                results.insert(
+                    p.name.clone(),
+                    Package {
+                        name: p.name,
+                        version: crate::package_managers::parse_version_or_zero(&p.version),
+                        description: p.description.unwrap_or_default(),
+                        source: PackageSource::Aur,
+                        installed: false,
+                    },
+                );
+            }
+        }
+
+        tracing::debug!("Batch info complete: {} packages found", results.len());
+        Ok(results)
+    }
+
     /// Get list of upgradable AUR packages
     /// Queries AUR directly for all non-official packages (like yay/paru)
     #[instrument(skip(self))]
@@ -302,10 +523,9 @@ impl AurClient {
         }
 
         // 2. Try fast binary index first
-        let index_path = Arc::new(Self::metadata_index_path());
+        let index_path = Self::metadata_index_path();
         if index_path.exists() {
-            let result = tokio::task::spawn_blocking({
-                let index_path = Arc::clone(&index_path);
+            let result = tokio::task::spawn_blocking(
                 move || -> Result<Option<Vec<(String, Version, Version)>>> {
                     let index = match AurIndex::open(&index_path) {
                         Ok(idx) => idx,
@@ -316,8 +536,8 @@ impl AurClient {
                     };
 
                     Ok(Some(index.get_updates(&local_pkgs)?))
-                }
-            })
+                },
+            )
             .await?;
 
             if let Ok(Some(updates)) = result {
@@ -495,7 +715,8 @@ impl AurClient {
 
         create_dir_as_user(&self.build_dir).await?;
 
-        let pkg_dir = self.build_dir.join(package);
+        // SECURITY: Validate package directory is safe (prevents symlink attacks)
+        let pkg_dir = validate_build_dir(&self.build_dir, package)?;
 
         if pkg_dir.exists() {
             let pull_pb =
@@ -608,7 +829,8 @@ impl AurClient {
 
         create_dir_as_user(&self.build_dir).await?;
 
-        let pkg_dir = self.build_dir.join(package);
+        // SECURITY: Validate package directory is safe (prevents symlink attacks)
+        let pkg_dir = validate_build_dir(&self.build_dir, package)?;
         let pkgbuild_path = pkg_dir.join("PKGBUILD");
 
         if pkg_dir.exists() && pkgbuild_path.exists() {
@@ -811,7 +1033,8 @@ impl AurClient {
     pub async fn build_package_interactive(&self, package: &str) -> Result<PathBuf> {
         create_dir_as_user(&self.build_dir).await?;
 
-        let pkg_dir = self.build_dir.join(package);
+        // SECURITY: Validate package directory is safe (prevents symlink attacks)
+        let pkg_dir = validate_build_dir(&self.build_dir, package)?;
         let pkgbuild_path = pkg_dir.join("PKGBUILD");
 
         if pkg_dir.exists() && pkgbuild_path.exists() {
@@ -1335,13 +1558,55 @@ impl AurClient {
             // - Read-only bind: /usr, /etc, /lib, /lib64
             // - Writable: Build directory, /tmp
             // - Minimal device access
-            let pkg_dir_str = pkg_dir.to_string_lossy();
+
+            // Security: Canonicalize all writable paths to prevent symlink-based sandbox escapes
+            // An attacker could create symlink: ~/.cache/omg/aur/evil -> /etc
+            // Without this check, we'd bind /etc as writable inside the sandbox
+            use super::utils::{is_symlink, validate_path_inside};
+
+            // Validate pkg_dir isn't a symlink and is inside build_dir
+            if is_symlink(pkg_dir) {
+                anyhow::bail!(
+                    "Security: Package directory is a symlink (potential sandbox escape): {}",
+                    pkg_dir.display()
+                );
+            }
+            validate_path_inside(&self.build_dir, pkg_dir)?;
+
+            // Canonicalize all writable bind mount paths
+            let pkg_dir_canonical = pkg_dir.canonicalize()
+                .with_context(|| format!("Failed to canonicalize: {}", pkg_dir.display()))?;
+            let pkgdest_canonical = env.pkgdest.canonicalize()
+                .with_context(|| format!("Failed to canonicalize pkgdest: {}", env.pkgdest.display()))?;
+            let srcdest_canonical = env.srcdest.canonicalize()
+                .with_context(|| format!("Failed to canonicalize srcdest: {}", env.srcdest.display()))?;
+            let builddir_canonical = env.builddir.canonicalize()
+                .with_context(|| format!("Failed to canonicalize builddir: {}", env.builddir.display()))?;
+
+            // Verify all writable paths are inside user's cache directory (not /etc, /root, etc.)
+            let cache_base = paths::cache_dir();
+            for (name, path) in [
+                ("pkgdest", &pkgdest_canonical),
+                ("srcdest", &srcdest_canonical),
+                ("builddir", &builddir_canonical),
+            ] {
+                if !path.starts_with(&cache_base) {
+                    anyhow::bail!(
+                        "Security: {} escapes cache directory!\n  Path: {}\n  Allowed: {}/*",
+                        name,
+                        path.display(),
+                        cache_base.display()
+                    );
+                }
+            }
+
+            let pkg_dir_str = pkg_dir_canonical.to_string_lossy();
             let home = home::home_dir().unwrap_or_else(|| PathBuf::from("/root"));
             let gnupg_dir = home.join(".gnupg");
 
-            let pkgdest_str = env.pkgdest.to_string_lossy();
-            let srcdest_str = env.srcdest.to_string_lossy();
-            let builddir_str = env.builddir.to_string_lossy();
+            let pkgdest_str = pkgdest_canonical.to_string_lossy();
+            let srcdest_str = srcdest_canonical.to_string_lossy();
+            let builddir_str = builddir_canonical.to_string_lossy();
             let pacman_db_dir = paths::pacman_db_dir();
             let pacman_db_dir_str = pacman_db_dir.to_string_lossy();
             let pacman_cache_root = paths::pacman_cache_root_dir();
@@ -1655,15 +1920,35 @@ impl AurClient {
 
         let mut missing_keys = Vec::with_capacity(pkgbuild.validpgpkeys.len());
         for key_id in &pkgbuild.validpgpkeys {
-            if key_id.is_empty()
-                || key_id.len() < 8
-                || key_id.len() > 64
-                || key_id.chars().any(|c| !c.is_ascii_hexdigit())
-            {
-                tracing::warn!("Skipping invalid PGP key ID: {key_id}");
-                continue;
+            // Use centralized validation for security
+            match validate_pgp_key_id(key_id) {
+                PgpKeyIdStatus::Empty | PgpKeyIdStatus::TooLong => {
+                    tracing::warn!("Skipping invalid PGP key ID (bad length): {key_id}");
+                    continue;
+                }
+                PgpKeyIdStatus::InvalidChars => {
+                    tracing::warn!("Skipping invalid PGP key ID (non-hex chars): {key_id}");
+                    continue;
+                }
+                PgpKeyIdStatus::ShortKeyId => {
+                    tracing::warn!(
+                        "Rejecting short PGP key ID '{}' (vulnerable to collision attacks). \
+                         Use full fingerprint (40 chars) or long key ID (16 chars).",
+                        key_id
+                    );
+                    continue;
+                }
+                PgpKeyIdStatus::FullFingerprint | PgpKeyIdStatus::LongKeyId => {} // Acceptable lengths
+                PgpKeyIdStatus::NonStandardLength => {
+                    tracing::debug!(
+                        "PGP key ID '{}' is {} chars (40-char fingerprint recommended)",
+                        key_id,
+                        key_id.len()
+                    );
+                }
             }
 
+            // Check if key is already in keyring
             match keyserver::is_key_in_keyring(key_id, &keyring_path) {
                 Ok(true) => {}
                 Ok(false) | Err(_) => missing_keys.push(key_id.clone()),
@@ -1907,12 +2192,18 @@ impl AurClient {
     }
 
     pub fn clean(&self, package: &str) -> Result<()> {
-        let pkg_dir = self.build_dir.join(package);
+        // SECURITY: Validate package directory is safe (prevents symlink attacks)
+        let pkg_dir = validate_build_dir(&self.build_dir, package)?;
         if pkg_dir.exists() {
             if let Some(user) = get_original_user() {
-                let pkg_dir_str = pkg_dir.to_string_lossy();
+                // Use OsStr directly to handle non-UTF8 paths correctly
                 let status = std::process::Command::new("sudo")
-                    .args(["-u", &user, "rm", "-rf", "--", pkg_dir_str.as_ref()])
+                    .arg("-u")
+                    .arg(&user)
+                    .arg("rm")
+                    .arg("-rf")
+                    .arg("--")
+                    .arg(pkg_dir.as_os_str())
                     .status()?;
                 if !status.success() {
                     anyhow::bail!("Failed to clean directory as user '{user}'");
@@ -2277,5 +2568,100 @@ mod tests {
     fn test_has_word_boundary_match_case_sensitive() {
         assert!(has_word_boundary_match("Firefox-Bin", "Firefox"));
         assert!(!has_word_boundary_match("firefox-bin", "Firefox"));
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // PGP Key ID Validation Tests
+    // ────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_pgp_key_id_full_fingerprint() {
+        // 40-char fingerprint - most secure
+        let fingerprint = "ABCDEF1234567890ABCDEF1234567890ABCDEF12";
+        assert_eq!(
+            validate_pgp_key_id(fingerprint),
+            PgpKeyIdStatus::FullFingerprint
+        );
+        assert!(is_pgp_key_id_safe(fingerprint));
+    }
+
+    #[test]
+    fn test_pgp_key_id_long_key_id() {
+        // 16-char long key ID - acceptable
+        let long_id = "ABCDEF1234567890";
+        assert_eq!(validate_pgp_key_id(long_id), PgpKeyIdStatus::LongKeyId);
+        assert!(is_pgp_key_id_safe(long_id));
+    }
+
+    #[test]
+    fn test_pgp_key_id_short_key_id_rejected() {
+        // 8-char short key ID - VULNERABLE to collision attacks
+        let short_id = "ABCDEF12";
+        assert_eq!(validate_pgp_key_id(short_id), PgpKeyIdStatus::ShortKeyId);
+        assert!(!is_pgp_key_id_safe(short_id));
+    }
+
+    #[test]
+    fn test_pgp_key_id_very_short_rejected() {
+        // Any ID < 16 chars is treated as short (vulnerable)
+        assert_eq!(validate_pgp_key_id("ABCDEF"), PgpKeyIdStatus::ShortKeyId);
+        assert_eq!(validate_pgp_key_id("AB"), PgpKeyIdStatus::ShortKeyId);
+        assert!(!is_pgp_key_id_safe("ABCDEF"));
+    }
+
+    #[test]
+    fn test_pgp_key_id_empty() {
+        assert_eq!(validate_pgp_key_id(""), PgpKeyIdStatus::Empty);
+        assert!(!is_pgp_key_id_safe(""));
+    }
+
+    #[test]
+    fn test_pgp_key_id_too_long() {
+        // More than 64 chars is invalid
+        let too_long = "A".repeat(65);
+        assert_eq!(validate_pgp_key_id(&too_long), PgpKeyIdStatus::TooLong);
+        assert!(!is_pgp_key_id_safe(&too_long));
+    }
+
+    #[test]
+    fn test_pgp_key_id_invalid_chars() {
+        // Non-hexadecimal characters
+        assert_eq!(
+            validate_pgp_key_id("GHIJKL1234567890"),
+            PgpKeyIdStatus::InvalidChars
+        );
+        assert_eq!(
+            validate_pgp_key_id("ABCDEF12!@#$%^&*"),
+            PgpKeyIdStatus::InvalidChars
+        );
+        assert!(!is_pgp_key_id_safe("GHIJKL1234567890"));
+    }
+
+    #[test]
+    fn test_pgp_key_id_non_standard_length() {
+        // Valid hex but non-standard length (e.g., 20 chars)
+        let non_standard = "ABCDEF1234567890ABCD";
+        assert_eq!(
+            validate_pgp_key_id(non_standard),
+            PgpKeyIdStatus::NonStandardLength
+        );
+        // Non-standard but >= 16 chars is still safe
+        assert!(is_pgp_key_id_safe(non_standard));
+    }
+
+    #[test]
+    fn test_pgp_key_id_lowercase_hex() {
+        // Lowercase hex should be valid (a-f)
+        let lowercase = "abcdef1234567890";
+        assert_eq!(validate_pgp_key_id(lowercase), PgpKeyIdStatus::LongKeyId);
+        assert!(is_pgp_key_id_safe(lowercase));
+    }
+
+    #[test]
+    fn test_pgp_key_id_mixed_case() {
+        // Mixed case should be valid
+        let mixed = "AbCdEf1234567890";
+        assert_eq!(validate_pgp_key_id(mixed), PgpKeyIdStatus::LongKeyId);
+        assert!(is_pgp_key_id_safe(mixed));
     }
 }

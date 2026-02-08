@@ -51,7 +51,19 @@ pub fn set(key: &str, value: &str) -> Result<()> {
             settings.telemetry_enabled = value.parse().context("Invalid boolean value")?;
         }
         "aur.build_concurrency" => {
-            settings.aur.build_concurrency = value.parse().context("Invalid number")?;
+            let concurrency: usize = value.parse().context("Invalid number")?;
+            // Security: Prevent resource exhaustion with reasonable bounds
+            const MAX_CONCURRENCY: usize = 128;
+            if concurrency == 0 {
+                anyhow::bail!("aur.build_concurrency must be at least 1");
+            }
+            if concurrency > MAX_CONCURRENCY {
+                anyhow::bail!(
+                    "aur.build_concurrency exceeds maximum of {MAX_CONCURRENCY}. \
+                     Use a value between 1 and {MAX_CONCURRENCY}."
+                );
+            }
+            settings.aur.build_concurrency = concurrency;
         }
         "aur.enable_ccache" => {
             settings.aur.enable_ccache = value.parse().context("Invalid boolean value")?;
@@ -66,6 +78,30 @@ pub fn set(key: &str, value: &str) -> Result<()> {
             settings.aur.makeflags = if value.is_empty() {
                 None
             } else {
+                // Security: Validate MAKEFLAGS to prevent command injection
+                // Only allow safe characters: alphanumeric, -, =, spaces
+                let is_safe = value.chars().all(|c| {
+                    c.is_ascii_alphanumeric()
+                        || c == '-'
+                        || c == '='
+                        || c == ' '
+                        || c == ','
+                        || c == '.'
+                });
+                if !is_safe {
+                    anyhow::bail!(
+                        "Invalid MAKEFLAGS: contains unsafe characters. \
+                         Only alphanumeric, -, =, space, comma, period allowed."
+                    );
+                }
+                // Block shell metacharacters explicitly for defense-in-depth
+                const FORBIDDEN: &[char] = &[';', '|', '&', '$', '`', '(', ')', '{', '}', '<', '>', '\\', '\n', '\r', '\'', '"'];
+                if value.chars().any(|c| FORBIDDEN.contains(&c)) {
+                    anyhow::bail!(
+                        "Invalid MAKEFLAGS: contains shell metacharacters. \
+                         Example safe value: '-j8' or '-j$(nproc)' is NOT allowed."
+                    );
+                }
                 Some(value.to_string())
             };
         }

@@ -43,6 +43,23 @@ const NEW_TEMPLATES: &[&str] = &[
 ];
 const SHELL_COMPLETIONS: &[&str] = &["bash", "zsh", "fish", "powershell", "elvish"];
 
+/// Convert runtime internal name to human-readable display label.
+///
+/// Maps short names like "node" to proper branding like "Node.js".
+#[inline]
+pub fn runtime_display_name(name: &str) -> &str {
+    match name {
+        "node" => "Node.js",
+        "python" => "Python",
+        "rust" => "Rust",
+        "go" => "Go",
+        "bun" => "Bun",
+        "java" => "Java",
+        "ruby" => "Ruby",
+        _ => name,
+    }
+}
+
 pub async fn complete(_shell: &str, current: &str, last: &str, full: Option<&str>) -> Result<()> {
     let db = crate::core::Database::open(crate::core::Database::default_path()?)?;
     let engine = crate::core::completion::CompletionEngine::new(db);
@@ -484,32 +501,14 @@ pub fn status_sync() -> Result<()> {
 
         if let Some(versions) = cached_runtimes {
             for (rt_name, v) in &versions {
-                let label: &str = match rt_name.as_str() {
-                    "node" => "Node.js",
-                    "python" => "Python",
-                    "rust" => "Rust",
-                    "go" => "Go",
-                    "bun" => "Bun",
-                    "java" => "Java",
-                    "ruby" => "Ruby",
-                    _ => rt_name.as_str(),
-                };
+                let label = runtime_display_name(rt_name);
                 println!("    {} {} {}", "·".cyan(), label, v.dimmed());
             }
         } else {
             // Fallback to local probing if daemon is down
             for rt_name in &["node", "python", "rust", "go", "bun", "java", "ruby"] {
                 if let Some(v) = crate::runtimes::probe_version(rt_name) {
-                    let label = match *rt_name {
-                        "node" => "Node.js",
-                        "python" => "Python",
-                        "rust" => "Rust",
-                        "go" => "Go",
-                        "bun" => "Bun",
-                        "java" => "Java",
-                        "ruby" => "Ruby",
-                        _ => rt_name,
-                    };
+                    let label = runtime_display_name(rt_name);
                     println!("    {} {} {}", "·".cyan(), label, v.dimmed());
                 }
             }
@@ -848,7 +847,7 @@ pub fn history(
             status,
             style::dim(&timestamp.to_string()),
             style::info(&entry.id[..8]),
-            style::warning(&format!("{}", entry.transaction_type)),
+            style::warning(&entry.transaction_type.to_string()),
             style::dim(&format!("({} changes)", entry.changes.len()))
         );
 
