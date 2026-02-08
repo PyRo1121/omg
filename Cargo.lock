@@ -2789,7 +2789,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "843fba2746e448b37e26a819579957415c8cef339bf08564fe8b7ddbd959573c"
 dependencies = [
  "crc32fast",
- "libz-sys",
  "miniz_oxide",
  "zlib-rs 0.6.0",
 ]
@@ -5935,7 +5934,6 @@ name = "omg"
 version = "0.1.208"
 dependencies = [
  "ahash",
- "aho-corasick",
  "alpm",
  "alpm-db",
  "alpm-pkginfo",

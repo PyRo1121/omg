@@ -68,14 +68,14 @@ reqwest = { version = "0.13.1", features = ["json", "stream", "gzip", "brotli", 
 httpdate = "1.0.3"
 
 # Version Control
-git2 = "0.19"
+git2 = "0.19"  # Pinned: libscoop requires git2 0.19 (libgit2-sys links conflict with 0.20)
 
 # Filesystem
 tokio-util = { version = "0.7.18", features = ["io", "codec", "rt"] }
 
-# Archives + compression (zlib backend for stability, rust_backend has bugs in 1.1.8)
+# Archives + compression (zlib-rs = pure Rust SIMD-accelerated zlib, ~2x faster than miniz_oxide)
 tar = "0.4.44"
-flate2 = { version = "1.0", default-features = false, features = ["zlib"] }
+flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
 lz4_flex = { version = "0.12", default-features = false, features = [
     "frame",
 ] }
@@ -95,7 +95,7 @@ dashmap = "6.1.0"
 moka = { version = "0.12", features = ["sync"] }
 memchr = "2.7"                                   # SIMD-accelerated string search
 memmap2 = "0.9"
-mimalloc = { version = "0.1", default-features = false }  # 10-20% faster allocator
+mimalloc = { version = "0.1", default-features = false, features = ["v3"] }  # v3: lock-free, lower memory
 rustc-hash = "2.1"                                        # FxHash - faster non-cryptographic hashing
 fst = "0.4"                                               # Finite State Transducer for O(1) search
 
@@ -180,7 +180,7 @@ ar = { version = "0.9", optional = true }                # Pure Rust .ar archive
 rkyv = { version = "0.8", features = ["bytecheck", "little_endian", "aligned"] }  # Zero-copy deserialization
 whoami = "2.0.2"
 governor = "0.10.4"
-jsonwebtoken = { version = "10.2.0", default-features = false, features = ["rust_crypto"] }
+jsonwebtoken = { version = "10.3.0", default-features = false, features = ["rust_crypto"] }  # >=10.3.0 required: CVE-2026-25537 fix
 sentry = { version = "0.46.1", features = ["anyhow", "tracing", "logs"] }
 sentry-tracing = "0.46.1"
 
@@ -206,7 +206,7 @@ serde_json = "1.0"                                           # JSON parsing for 
 serial_test = "3.2"                                          # Serialize tests that modify global state
 scopeguard = "1.2"
 tar = "0.4"
-flate2 = { version = "1.0", default-features = false, features = ["zlib"] }
+flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
 chrono = "0.4"
 temp-env = "0.3"
 zstd = "0.13"                                                # For decompression benchmarks
