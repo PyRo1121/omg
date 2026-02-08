@@ -9,3 +9,26 @@ dist
 .wrangler
 .worktrees
 pagefind
+# Generated documentation (not for repo)
+ADVANCED_TESTING_STRATEGY.md
+ALPM_TEST_DESIGN.md
+ALPM_TRANSACTION_TESTING.md
+ALPM_TRANSACTION_TESTS_SUMMARY.md
+ARCH_E2E_*.md
+AUR_E2E_TEST_DESIGN.md
+AUR_TEST_EXAMPLES.md
+AUR_TEST_QUICKSTART.md
+BENCHMARK_QUICKSTART.md
+CLOUDFLARE_WORKER_*.md
+DAEMON_E2E_TEST_DESIGN.md
+DEBIAN_PURE_INFO_FIX.md
+PRIVACY.md
+SECURITY_TEST*.md
+S_TIER_E2E_ROADMAP.md
+TELEMETRY_*.md
+TESTING_*.md
+
+# Build artifacts
+omg-binary
+benchmark_ubuntu.sh
+test_*.sh

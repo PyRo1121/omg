@@ -286,6 +286,12 @@ pub enum Commands {
         command: Option<ConfigCommands>,
     },
 
+    /// Manage your privacy settings and data (GDPR/CCPA)
+    Privacy {
+        #[command(subcommand)]
+        command: Option<PrivacyCommands>,
+    },
+
     /// Generate man pages for OMG commands
     GenerateMan {
         /// Output directory for man pages (default: ~/.local/share/man/man1)
@@ -610,6 +616,30 @@ pub enum ConfigCommands {
     },
     /// Show configuration file path
     Path,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum PrivacyCommands {
+    /// Show privacy policy summary and your current settings
+    Status,
+    /// Export all your data (Right to Portability)
+    Export {
+        /// Output file path (default: omg-data-export-YYYY-MM-DD.json)
+        #[arg(short, long)]
+        output: Option<String>,
+    },
+    /// Request deletion of all your data (Right to Erasure)
+    Delete {
+        /// Confirm data deletion (required for destructive action)
+        #[arg(long)]
+        confirm: bool,
+    },
+    /// Disable telemetry collection (keeps license functional)
+    #[command(name = "opt-out")]
+    OptOut,
+    /// Re-enable telemetry collection
+    #[command(name = "opt-in")]
+    OptIn,
 }
 
 #[derive(Subcommand, Debug)]

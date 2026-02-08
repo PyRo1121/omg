@@ -43,6 +43,7 @@ pub mod style;
 pub mod tables;
 pub mod tea;
 pub mod team;
+pub mod telemetry;
 pub mod tool;
 pub mod tui;
 pub mod ui;
@@ -54,8 +55,8 @@ pub use args::LicenseCommands;
 pub use args::{
     AuditCommands, CiCommands, Cli, Commands, ConfigCommands, ContainerCommands,
     EnterpriseCommands, EnterprisePolicyCommands, EnvCommands, FleetCommands, GoldenPathCommands,
-    HooksCommands, MigrateCommands, NotifyCommands, ServerCommands, SnapshotCommands, TeamCommands,
-    TeamRoleCommands, ToolCommands, WorkspaceCommands,
+    HooksCommands, MigrateCommands, NotifyCommands, PrivacyCommands, ServerCommands,
+    SnapshotCommands, TeamCommands, TeamRoleCommands, ToolCommands, WorkspaceCommands,
 };
 
 /// Global context for CLI command execution

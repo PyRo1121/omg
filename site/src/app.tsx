@@ -4,7 +4,7 @@ import { Suspense, onMount } from "solid-js";
 import { MetaProvider } from "@solidjs/meta";
 import { QueryClientProvider } from "@tanstack/solid-query";
 import { queryClient } from "./lib/query";
-import { initAnalytics } from "./lib/analytics-tracker";
+import { initAnalytics } from "./lib/analytics-client";
 import "./app.css";
 
 export default function App() {

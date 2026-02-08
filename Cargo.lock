@@ -5958,6 +5958,7 @@ dependencies = [
  "debian-packaging",
  "dialoguer",
  "dirs 6.0.0",
+ "fastrand",
  "flate2",
  "fst",
  "futures",

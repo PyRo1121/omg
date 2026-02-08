@@ -374,27 +374,28 @@ pub fn get_machine_id() -> String {
     // Combine multiple system identifiers for a stable fingerprint
     let mut components = Vec::new();
 
-    // Machine ID (Linux)
+    // Machine ID (Linux) - primary stable identifier
     if let Ok(id) = std::fs::read_to_string("/etc/machine-id") {
         components.push(id.trim().to_string());
     }
 
-    // Hostname
-    if let Ok(hostname) = std::env::var("HOSTNAME") {
-        components.push(hostname);
-    } else if let Ok(hostname) = std::fs::read_to_string("/etc/hostname") {
-        components.push(hostname.trim().to_string());
+    // Hardware UUID (fallback for systems without /etc/machine-id)
+    if let Ok(uuid) = std::fs::read_to_string("/sys/class/dmi/id/product_uuid") {
+        components.push(uuid.trim().to_string());
     }
 
-    // Username
-    if let Ok(user) = std::env::var("USER") {
-        components.push(user);
+    // Fallback: If no system IDs available, use a generated stable ID
+    if components.is_empty() {
+        // Use a combination of hostname and a marker file
+        if let Ok(hostname) = std::fs::read_to_string("/etc/hostname") {
+            components.push(hostname.trim().to_string());
+        }
     }
 
     // Hash the combined components
     let combined = components.join(":");
     let hash = sha256_hex(combined.as_bytes());
-    // Only log the hash, never the source components (PII)
+    // Only log the hash, never the source components (no PII)
     tracing::debug!("Generated machine ID fingerprint: {}", &hash[..16]);
     hash[..16].to_string() // First 16 chars of hash
 }
