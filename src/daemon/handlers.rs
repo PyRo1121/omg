@@ -119,6 +119,7 @@ impl DaemonState {
 // Use DaemonState::new() which returns Result<Self, anyhow::Error> to handle errors properly.
 
 /// Handle an incoming request
+#[tracing::instrument(skip(state), fields(request_type = %request.variant_name()))]
 pub async fn handle_request(state: Arc<DaemonState>, request: Request) -> Response {
     // METRICS: Track total requests handled
     GLOBAL_METRICS.inc_requests_total();
@@ -181,6 +182,7 @@ pub async fn handle_request(state: Arc<DaemonState>, request: Request) -> Respon
 }
 
 /// Handle Debian search request
+#[tracing::instrument(skip(state), fields(query_len = query.len()))]
 async fn handle_debian_search(
     state: Arc<DaemonState>,
     id: RequestId,
@@ -401,7 +403,7 @@ async fn handle_batch(state: Arc<DaemonState>, id: RequestId, requests: Vec<Requ
 }
 
 /// Handle search request
-#[inline]
+#[tracing::instrument(skip(state), fields(query_len = query.len()))]
 async fn handle_search(
     state: Arc<DaemonState>,
     id: RequestId,
@@ -470,7 +472,7 @@ async fn handle_search(
 }
 
 /// Handle info request
-#[inline]
+#[tracing::instrument(skip(state))]
 async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) -> Response {
     // METRICS: Track info requests
     GLOBAL_METRICS.inc_info_requests();
@@ -566,6 +568,7 @@ async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) ->
 }
 
 /// Handle status request
+#[tracing::instrument(skip(state))]
 async fn handle_status(state: Arc<DaemonState>, id: RequestId) -> Response {
     // METRICS: Track status requests
     GLOBAL_METRICS.inc_status_requests();
