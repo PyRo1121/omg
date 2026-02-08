@@ -32,3 +32,5 @@ TESTING_*.md
 omg-binary
 benchmark_ubuntu.sh
 test_*.sh
+# Agent definitions (local only)
+.claude/agents/*.md
