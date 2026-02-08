@@ -94,6 +94,28 @@ impl Request {
             | Self::ListUpdates { id } => *id,
         }
     }
+
+    /// Returns the variant name as a static string for tracing/logging
+    #[must_use]
+    pub const fn variant_name(&self) -> &'static str {
+        match self {
+            Self::Search { .. } => "search",
+            Self::Info { .. } => "info",
+            Self::Status { .. } => "status",
+            Self::Explicit { .. } => "explicit",
+            Self::ExplicitCount { .. } => "explicit_count",
+            Self::SecurityAudit { .. } => "security_audit",
+            Self::Ping { .. } => "ping",
+            Self::CacheStats { .. } => "cache_stats",
+            Self::CacheClear { .. } => "cache_clear",
+            Self::Metrics { .. } => "metrics",
+            Self::Suggest { .. } => "suggest",
+            Self::Batch { .. } => "batch",
+            Self::DebianSearch { .. } => "debian_search",
+            Self::Health { .. } => "health",
+            Self::ListUpdates { .. } => "list_updates",
+        }
+    }
 }
 
 /// Unified Response Enum
