@@ -96,7 +96,6 @@ moka = { version = "0.12", features = ["sync"] }
 memchr = "2.7"                                   # SIMD-accelerated string search
 memmap2 = "0.9"
 mimalloc = { version = "0.1", default-features = false }  # 10-20% faster allocator
-aho-corasick = "1.1"                                      # Multi-pattern SIMD search
 rustc-hash = "2.1"                                        # FxHash - faster non-cryptographic hashing
 fst = "0.4"                                               # Finite State Transducer for O(1) search
 
