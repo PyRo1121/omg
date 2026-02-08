@@ -7,6 +7,7 @@ use futures::future::BoxFuture;
 use crate::cli::{modern_ui, ui};
 #[cfg(unix)]
 use crate::core::client::DaemonClient;
+use crate::core::usage::OperationTimer;
 #[cfg(feature = "arch")]
 use crate::package_managers::AurClient;
 use crate::package_managers::get_package_manager;
@@ -38,6 +39,9 @@ pub async fn install(packages: &[String], yes: bool, dry_run: bool) -> Result<()
     if dry_run {
         return install_dry_run(packages);
     }
+
+    // Start timing the operation
+    let timer = OperationTimer::start_with_packages("install", packages);
 
     let pm = get_package_manager()?;
 
@@ -153,7 +157,8 @@ pub async fn install(packages: &[String], yes: bool, dry_run: bool) -> Result<()
         packages,
     );
 
-    crate::core::usage::track_install(packages);
+    // Track with timing telemetry
+    crate::core::usage::track_install_timed(packages, timer.elapsed_ms(), true, None);
     Ok(())
 }
 
