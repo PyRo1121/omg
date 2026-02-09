@@ -164,7 +164,7 @@ fn bench_version_comparison(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(5));
     group.sample_size(200);
 
-    let version_pairs = vec![
+    let version_pairs = [
         ("1.0", "2.0"),
         ("1:1.0", "2.0"),
         ("1.0-1", "1.0-2"),

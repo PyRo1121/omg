@@ -6,7 +6,6 @@
 #![cfg(any(feature = "debian", feature = "debian-pure"))]
 
 use std::fs;
-use std::path::Path;
 use tempfile::TempDir;
 
 // ============================================================================
@@ -19,7 +18,7 @@ fn test_parse_ubuntu_specific_packages() {
     let status_path = temp_dir.path().join("status");
 
     // Ubuntu-specific packages with common naming patterns
-    let content = r#"
+    let content = r"
 Package: ubuntu-desktop
 Status: install ok installed
 Priority: optional
@@ -66,7 +65,7 @@ Architecture: amd64
 Version: 2.63+24.04
 Description: Daemon and tooling that enable snap packages
  Install, configure, refresh and remove snap packages.
-"#;
+";
 
     fs::write(&status_path, content).unwrap();
 
@@ -96,11 +95,10 @@ fn test_ubuntu_version_formats() {
 
     for (version, description) in versions {
         // Just verify the format is valid
-        assert!(!version.is_empty(), "{} should not be empty", description);
+        assert!(!version.is_empty(), "{description} should not be empty");
         assert!(
             version.chars().any(|c| c.is_ascii_digit()),
-            "{} should contain digits",
-            description
+            "{description} should contain digits"
         );
     }
 }
@@ -115,7 +113,7 @@ fn test_ubuntu_multiarch_packages() {
     let status_path = temp_dir.path().join("status");
 
     // Ubuntu supports multi-arch packages
-    let content = r#"
+    let content = r"
 Package: libc6
 Status: install ok installed
 Priority: required
@@ -141,7 +139,7 @@ Version: 2.39-0ubuntu8.3
 Description: GNU C Library: Shared libraries
  Contains the standard libraries that are used by nearly all programs on
  the system.
-"#;
+";
 
     fs::write(&status_path, content).unwrap();
 
@@ -162,7 +160,7 @@ fn test_ubuntu_snap_packages() {
     let temp_dir = TempDir::new().unwrap();
     let status_path = temp_dir.path().join("status");
 
-    let content = r#"
+    let content = r"
 Package: snapd
 Status: install ok installed
 Priority: optional
@@ -175,7 +173,7 @@ Depends: libc6, systemd
 Description: Daemon and tooling that enable snap packages
  Install, configure, refresh and remove snap packages. Snaps are
  'universal' packages that work across many different Linux systems.
-"#;
+";
 
     fs::write(&status_path, content).unwrap();
 
@@ -194,7 +192,7 @@ fn test_ubuntu_ppa_package_versions() {
     let status_path = temp_dir.path().join("status");
 
     // Packages from PPAs often have unique versioning
-    let content = r#"
+    let content = r"
 Package: python3.12
 Status: install ok installed
 Priority: optional
@@ -208,7 +206,7 @@ Description: Interactive high-level object-oriented language (version 3.12)
  Python is a high-level, interactive, object-oriented language.
  .
  This package built from deadsnakes PPA.
-"#;
+";
 
     fs::write(&status_path, content).unwrap();
 
@@ -234,8 +232,7 @@ fn test_ubuntu_security_package_versions() {
     for version in versions {
         assert!(
             version.contains("ubuntu"),
-            "Security versions should contain 'ubuntu': {}",
-            version
+            "Security versions should contain 'ubuntu': {version}"
         );
     }
 }
@@ -250,7 +247,7 @@ fn test_ubuntu_transitional_packages() {
     let status_path = temp_dir.path().join("status");
 
     // Ubuntu uses transitional packages for smooth upgrades
-    let content = r#"
+    let content = r"
 Package: python
 Status: install ok installed
 Priority: optional
@@ -262,7 +259,7 @@ Version: 2.7.18-3
 Depends: python2 (>= 2.7.18-2)
 Description: interactive high-level object-oriented language (Python2 version)
  This is a transitional package to ease upgrades to Python 3.
-"#;
+";
 
     fs::write(&status_path, content).unwrap();
 
@@ -279,7 +276,7 @@ fn test_ubuntu_package_priorities() {
     let temp_dir = TempDir::new().unwrap();
     let status_path = temp_dir.path().join("status");
 
-    let content = r#"
+    let content = r"
 Package: base-files
 Status: install ok installed
 Priority: required
@@ -312,7 +309,7 @@ Architecture: amd64
 Version: 1.481
 Description: The Ubuntu standard system
  This package depends on all of the packages in the Ubuntu standard system.
-"#;
+";
 
     fs::write(&status_path, content).unwrap();
 
@@ -365,7 +362,7 @@ fn test_ubuntu_extended_states_format() {
     let extended_states_path = temp_dir.path().join("extended_states");
 
     // Ubuntu's extended_states file tracks auto-installed packages
-    let content = r#"
+    let content = r"
 Package: libfoo-dev
 Architecture: amd64
 Auto-Installed: 1
@@ -377,7 +374,7 @@ Auto-Installed: 0
 Package: libbar2
 Architecture: amd64
 Auto-Installed: 1
-"#;
+";
 
     fs::write(&extended_states_path, content).unwrap();
 

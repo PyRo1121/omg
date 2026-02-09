@@ -20,11 +20,11 @@ use omg_lib::package_managers::debian_db::{
 #[test]
 fn test_parse_ubuntu_ppa_format() {
     // Ubuntu PPAs use a specific sources.list format
-    let content = r#"
+    let content = r"
 # Traditional PPA format (converted by add-apt-repository)
 deb http://ppa.launchpad.net/deadsnakes/ppa/ubuntu noble main
 deb-src http://ppa.launchpad.net/deadsnakes/ppa/ubuntu noble main
-"#;
+";
 
     let repos = parse_sources_list_content(
         content,
@@ -45,9 +45,9 @@ deb-src http://ppa.launchpad.net/deadsnakes/ppa/ubuntu noble main
 #[test]
 fn test_parse_ubuntu_ppa_with_signed_by() {
     // Modern PPAs with GPG key
-    let content = r#"
+    let content = r"
 deb [signed-by=/etc/apt/keyrings/deadsnakes-ubuntu-ppa.gpg] https://ppa.launchpadcontent.net/deadsnakes/ppa/ubuntu noble main
-"#;
+";
 
     let repos = parse_sources_list_content(content, Path::new("/test")).unwrap();
 
@@ -75,12 +75,11 @@ fn test_ubuntu_release_names() {
 
     for release in releases {
         let content = format!(
-            r#"
-deb http://archive.ubuntu.com/ubuntu {} main restricted universe multiverse
-deb http://archive.ubuntu.com/ubuntu {}-updates main restricted universe multiverse
-deb http://archive.ubuntu.com/ubuntu {}-security main restricted universe multiverse
-"#,
-            release, release, release
+            "
+deb http://archive.ubuntu.com/ubuntu {release} main restricted universe multiverse
+deb http://archive.ubuntu.com/ubuntu {release}-updates main restricted universe multiverse
+deb http://archive.ubuntu.com/ubuntu {release}-security main restricted universe multiverse
+"
         );
 
         let repos = parse_sources_list_content(&content, Path::new("/test")).unwrap();
@@ -88,21 +87,20 @@ deb http://archive.ubuntu.com/ubuntu {}-security main restricted universe multiv
         assert_eq!(
             repos.len(),
             3,
-            "Should parse all Ubuntu repos for {}",
-            release
+            "Should parse all Ubuntu repos for {release}"
         );
         assert_eq!(repos[0].suite, release);
-        assert_eq!(repos[1].suite, format!("{}-updates", release));
-        assert_eq!(repos[2].suite, format!("{}-security", release));
+        assert_eq!(repos[1].suite, format!("{release}-updates"));
+        assert_eq!(repos[2].suite, format!("{release}-security"));
     }
 }
 
 #[test]
 fn test_ubuntu_components() {
     // Ubuntu has 4 main components vs Debian's 3
-    let content = r#"
+    let content = r"
 deb http://archive.ubuntu.com/ubuntu noble main restricted universe multiverse
-"#;
+";
 
     let repos = parse_sources_list_content(content, Path::new("/test")).unwrap();
 
@@ -175,10 +173,9 @@ fn test_ubuntu_mirrors() {
 
     for mirror in mirrors {
         let content = format!(
-            r#"
-deb {} noble main
-"#,
-            mirror
+            "
+deb {mirror} noble main
+"
         );
 
         let repos = parse_sources_list_content(&content, Path::new("/test")).unwrap();
@@ -193,9 +190,9 @@ deb {} noble main
 
 #[test]
 fn test_ubuntu_backports() {
-    let content = r#"
+    let content = r"
 deb http://archive.ubuntu.com/ubuntu noble-backports main restricted universe multiverse
-"#;
+";
 
     let repos = parse_sources_list_content(content, Path::new("/test")).unwrap();
 
@@ -210,10 +207,10 @@ deb http://archive.ubuntu.com/ubuntu noble-backports main restricted universe mu
 
 #[test]
 fn test_ubuntu_proposed_repo() {
-    let content = r#"
+    let content = r"
 # Uncommented for testing
 deb http://archive.ubuntu.com/ubuntu noble-proposed main restricted universe multiverse
-"#;
+";
 
     let repos = parse_sources_list_content(content, Path::new("/test")).unwrap();
 
@@ -228,13 +225,13 @@ deb http://archive.ubuntu.com/ubuntu noble-proposed main restricted universe mul
 #[test]
 fn test_ubuntu_deb822_format() {
     // Ubuntu 24.04 (Noble) introduced deb822 format by default
-    let content = r#"
+    let content = r"
 Types: deb
 URIs: http://archive.ubuntu.com/ubuntu
 Suites: noble noble-updates noble-security
 Components: main restricted universe multiverse
 Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
-"#;
+";
 
     let repos =
         parse_deb822_content(content, Path::new("/etc/apt/sources.list.d/ubuntu.sources")).unwrap();
@@ -257,13 +254,13 @@ Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
 #[test]
 fn test_ubuntu_ppa_deb822() {
     // PPAs can also use deb822 format
-    let content = r#"
+    let content = r"
 Types: deb
 URIs: https://ppa.launchpadcontent.net/deadsnakes/ppa/ubuntu
 Suites: noble
 Components: main
 Signed-By: /etc/apt/keyrings/deadsnakes-ubuntu-ppa.gpg
-"#;
+";
 
     let repos = parse_deb822_content(
         content,
@@ -286,11 +283,11 @@ Signed-By: /etc/apt/keyrings/deadsnakes-ubuntu-ppa.gpg
 #[test]
 fn test_ubuntu_multiarch() {
     // Ubuntu supports multiple architectures
-    let content = r#"
+    let content = r"
 deb [arch=amd64] http://archive.ubuntu.com/ubuntu noble main
 deb [arch=i386] http://archive.ubuntu.com/ubuntu noble main
 deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble main
-"#;
+";
 
     let repos = parse_sources_list_content(content, Path::new("/test")).unwrap();
 
@@ -306,10 +303,10 @@ deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble main
 
 #[test]
 fn test_ubuntu_ports() {
-    let content = r#"
+    let content = r"
 deb http://ports.ubuntu.com/ubuntu-ports noble main restricted universe multiverse
 deb http://ports.ubuntu.com/ubuntu-ports noble-updates main restricted universe multiverse
-"#;
+";
 
     let repos = parse_sources_list_content(content, Path::new("/test")).unwrap();
 
@@ -324,10 +321,10 @@ deb http://ports.ubuntu.com/ubuntu-ports noble-updates main restricted universe 
 #[test]
 fn test_mixed_debian_ubuntu_sources() {
     // Some users might mix Debian and Ubuntu sources (not recommended but we should handle it)
-    let content = r#"
+    let content = r"
 deb http://archive.ubuntu.com/ubuntu noble main
 deb http://deb.debian.org/debian bookworm main
-"#;
+";
 
     let repos = parse_sources_list_content(content, Path::new("/test")).unwrap();
 
@@ -338,9 +335,9 @@ deb http://deb.debian.org/debian bookworm main
 
 #[test]
 fn test_ubuntu_sources_with_trailing_slash() {
-    let content = r#"
+    let content = r"
 deb http://archive.ubuntu.com/ubuntu/ noble main
-"#;
+";
 
     let repos = parse_sources_list_content(content, Path::new("/test")).unwrap();
 
@@ -352,7 +349,7 @@ deb http://archive.ubuntu.com/ubuntu/ noble main
 
 #[test]
 fn test_ubuntu_sources_with_comments() {
-    let content = r#"
+    let content = r"
 # Noble main repositories
 deb http://archive.ubuntu.com/ubuntu noble main restricted
 
@@ -361,7 +358,7 @@ deb http://archive.ubuntu.com/ubuntu noble universe multiverse
 
 # Updates
 deb http://archive.ubuntu.com/ubuntu noble-updates main restricted universe multiverse
-"#;
+";
 
     let repos = parse_sources_list_content(content, Path::new("/test")).unwrap();
 
@@ -375,7 +372,7 @@ deb http://archive.ubuntu.com/ubuntu noble-updates main restricted universe mult
 #[test]
 fn test_default_ubuntu_2404_sources() {
     // Typical Ubuntu 24.04 (Noble) default configuration
-    let content = r#"
+    let content = r"
 Types: deb
 URIs: http://archive.ubuntu.com/ubuntu
 Suites: noble noble-updates noble-backports
@@ -387,7 +384,7 @@ URIs: http://security.ubuntu.com/ubuntu
 Suites: noble-security
 Components: main restricted universe multiverse
 Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
-"#;
+";
 
     let repos =
         parse_deb822_content(content, Path::new("/etc/apt/sources.list.d/ubuntu.sources")).unwrap();
@@ -410,7 +407,7 @@ Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
 #[test]
 fn test_default_ubuntu_2204_sources() {
     // Ubuntu 22.04 (Jammy) still uses legacy format by default
-    let content = r#"
+    let content = r"
 deb http://archive.ubuntu.com/ubuntu jammy main restricted
 deb http://archive.ubuntu.com/ubuntu jammy-updates main restricted
 deb http://archive.ubuntu.com/ubuntu jammy universe
@@ -421,7 +418,7 @@ deb http://archive.ubuntu.com/ubuntu jammy-backports main restricted universe mu
 deb http://security.ubuntu.com/ubuntu jammy-security main restricted
 deb http://security.ubuntu.com/ubuntu jammy-security universe
 deb http://security.ubuntu.com/ubuntu jammy-security multiverse
-"#;
+";
 
     let repos = parse_sources_list_content(content, Path::new("/etc/apt/sources.list")).unwrap();
 
@@ -452,10 +449,7 @@ fn test_ubuntu_package_url_all_components() {
         let url = repo.packages_url("amd64");
         assert_eq!(
             url,
-            format!(
-                "http://archive.ubuntu.com/ubuntu/dists/noble/{}/binary-amd64/Packages",
-                component
-            )
+            format!("http://archive.ubuntu.com/ubuntu/dists/noble/{component}/binary-amd64/Packages")
         );
     }
 }
