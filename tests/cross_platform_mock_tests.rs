@@ -354,6 +354,9 @@ mod status_reporting {
         ];
 
         for pm in platforms {
+            // Ensure at least one package is installed so status has data
+            pm.install(&["git".to_string()]).await?;
+
             let (total, explicit, _orphans, _updates) = pm.get_status(false).await?;
 
             assert!(total > 0, "{} should have packages", pm.name());

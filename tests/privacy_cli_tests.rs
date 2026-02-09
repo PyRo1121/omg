@@ -396,9 +396,7 @@ fn test_privacy_opt_in() {
     // Should succeed
     let output = result.combined_output();
     assert!(
-        output.contains("enabled")
-            || output.contains("telemetry")
-            || result.success,
+        output.contains("enabled") || output.contains("telemetry") || result.success,
         "Opt-in should work and confirm telemetry enabled: {}",
         output
     );
@@ -416,9 +414,7 @@ fn test_privacy_opt_in_updates_config() {
     // Should succeed and update config
     let output = result.combined_output();
     assert!(
-        result.success
-            || output.contains("enabled")
-            || output.contains("telemetry"),
+        result.success || output.contains("enabled") || output.contains("telemetry"),
         "Opt-in should succeed: {}",
         output
     );
@@ -531,10 +527,7 @@ fn test_privacy_opt_out_with_env_override() {
 
     // ===== ACT =====
     // Set environment variable that forces telemetry on
-    let result = project.run_with_env(
-        &["privacy", "opt-out"],
-        &[("OMG_TELEMETRY", "1")],
-    );
+    let result = project.run_with_env(&["privacy", "opt-out"], &[("OMG_TELEMETRY", "1")]);
 
     // ===== ASSERT =====
     // Should still process opt-out command (may show license warning)
@@ -559,10 +552,7 @@ fn test_privacy_status_shows_env_override() {
     let project = TestProject::new();
 
     // ===== ACT =====
-    let result = project.run_with_env(
-        &["privacy", "status"],
-        &[("OMG_TELEMETRY", "0")],
-    );
+    let result = project.run_with_env(&["privacy", "status"], &[("OMG_TELEMETRY", "0")]);
 
     // ===== ASSERT =====
     let output = result.combined_output();
@@ -638,7 +628,12 @@ fn test_privacy_export_invalid_output_path() {
 
     // ===== ACT =====
     // Use invalid path (directory that doesn't exist)
-    let result = run_omg(&["privacy", "export", "--output", "/nonexistent/path/export.json"]);
+    let result = run_omg(&[
+        "privacy",
+        "export",
+        "--output",
+        "/nonexistent/path/export.json",
+    ]);
 
     // ===== ASSERT =====
     // Should fail (either due to no license or invalid path)
@@ -670,9 +665,7 @@ fn test_privacy_delete_confirm_flag_variations() {
         // All should attempt to process the deletion (will fail without license)
         let output = result.combined_output();
         assert!(
-            output.contains("delete")
-                || output.contains("license")
-                || output.contains("activate"),
+            output.contains("delete") || output.contains("license") || output.contains("activate"),
             "Should process delete with confirm flag: {:?} -> {}",
             args,
             output

@@ -40,10 +40,12 @@ mod privilege_escalation {
     }
 
     #[test]
+    #[allow(unsafe_code)]
     fn test_elevation_whitelist_allowed_operations() {
         use omg_lib::core::privilege::elevate_for_operation;
 
         // Set test mode to prevent actual sudo execution
+        // SAFETY: Setting env var in single-threaded test context
         unsafe {
             std::env::set_var("OMG_TEST_MODE", "1");
         }
@@ -76,6 +78,7 @@ mod privilege_escalation {
             }
         }
 
+        // SAFETY: Cleaning up test env var after test completion
         unsafe {
             std::env::remove_var("OMG_TEST_MODE");
         }
@@ -430,9 +433,11 @@ mod sbom_audit {
     use std::io::Write;
 
     #[test]
+    #[allow(unsafe_code)]
     fn test_audit_logger_creation() {
         // Should create in temp directory
         let temp_dir = TempDir::new().unwrap();
+        // SAFETY: Setting test-specific data directory; test isolation ensures no conflicts
         unsafe {
             std::env::set_var("OMG_DATA_DIR", temp_dir.path());
         }
@@ -493,8 +498,10 @@ mod sbom_audit {
     }
 
     #[test]
+    #[allow(unsafe_code)]
     fn test_audit_chain_integrity() {
         let temp_dir = TempDir::new().unwrap();
+        // SAFETY: Setting test-specific data directory; test isolation ensures no conflicts
         unsafe {
             std::env::set_var("OMG_DATA_DIR", temp_dir.path());
         }
@@ -538,6 +545,7 @@ mod sbom_audit {
     }
 
     #[test]
+    #[allow(unsafe_code)]
     fn test_audit_tamper_detection() {
         use omg_lib::core::security::audit::AuditEntry;
         use std::io::Write;
@@ -584,6 +592,7 @@ mod sbom_audit {
         drop(file);
 
         // Verify should detect tampering
+        // SAFETY: Setting test-specific data directory; test isolation ensures no conflicts
         unsafe {
             std::env::set_var("OMG_DATA_DIR", temp_dir.path());
         }
@@ -910,8 +919,10 @@ mod integration {
     }
 
     #[test]
+    #[allow(unsafe_code)]
     fn test_audit_log_security_events() {
         let temp_dir = TempDir::new().unwrap();
+        // SAFETY: Setting test-specific data directory; test isolation ensures no conflicts
         unsafe {
             std::env::set_var("OMG_DATA_DIR", temp_dir.path());
         }
@@ -953,9 +964,11 @@ mod integration {
     }
 
     #[test]
+    #[allow(unsafe_code)]
     fn test_end_to_end_security_workflow() {
         // Simulate complete security workflow
         let temp_dir = TempDir::new().unwrap();
+        // SAFETY: Setting test-specific data directory; test isolation ensures no conflicts
         unsafe {
             std::env::set_var("OMG_DATA_DIR", temp_dir.path());
         }

@@ -880,10 +880,8 @@ impl PackageManager for DnfPackageManager {
         Box::pin(async move {
             // Optimization: Fetch installed packages and repo metadata in parallel
             // These are independent I/O operations - ~2x speedup on update checks
-            let (installed, repo_packages) = tokio::try_join!(
-                self.load_installed_packages(),
-                self.load_repo_metadata()
-            )?;
+            let (installed, repo_packages) =
+                tokio::try_join!(self.load_installed_packages(), self.load_repo_metadata())?;
 
             let mut installed_map = HashMap::new();
             for pkg in &installed {

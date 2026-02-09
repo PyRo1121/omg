@@ -615,17 +615,13 @@ fn handle_config_command(command: Option<&omg_lib::cli::ConfigCommands>) -> Resu
     }
 }
 
-async fn handle_privacy_command(
-    command: Option<&omg_lib::cli::PrivacyCommands>,
-) -> Result<()> {
+async fn handle_privacy_command(command: Option<&omg_lib::cli::PrivacyCommands>) -> Result<()> {
     use omg_lib::cli::PrivacyCommands;
     use omg_lib::cli::telemetry;
 
     match command {
         Some(PrivacyCommands::Status) | None => telemetry::privacy_status().await,
-        Some(PrivacyCommands::Export { output }) => {
-            telemetry::export_data(output.as_deref()).await
-        }
+        Some(PrivacyCommands::Export { output }) => telemetry::export_data(output.as_deref()).await,
         Some(PrivacyCommands::Delete { confirm }) => telemetry::delete_data(*confirm).await,
         Some(PrivacyCommands::OptOut) => telemetry::opt_out_api().await,
         Some(PrivacyCommands::OptIn) => telemetry::opt_in_api().await,

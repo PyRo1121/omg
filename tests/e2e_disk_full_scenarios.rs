@@ -300,9 +300,9 @@ fn test_graceful_shutdown_on_disk_error() -> Result<()> {
 /// Test parallel write coordination (prevent corruption)
 #[tokio::test]
 async fn test_parallel_write_safety() -> Result<()> {
+    use std::sync::Arc;
     use tokio::fs;
     use tokio::sync::Semaphore;
-    use std::sync::Arc;
 
     let temp_dir = TempDir::new()?;
     let target_file = temp_dir.path().join("shared.txt");
@@ -393,10 +393,7 @@ fn test_readonly_filesystem_handling() -> Result<()> {
 
     // Attempt to write should fail
     let write_result = fs::write(&file_path, "new content");
-    assert!(
-        write_result.is_err(),
-        "Write to read-only file should fail"
-    );
+    assert!(write_result.is_err(), "Write to read-only file should fail");
 
     // Restore permissions for cleanup
     let mut perms = fs::metadata(&file_path)?.permissions();

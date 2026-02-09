@@ -382,15 +382,16 @@ impl UsageStats {
         let machine_id = crate::core::license::get_machine_id();
 
         // Hash hostname for privacy (SHA-256) - do not send in plaintext
-        let hostname_hash = if let Ok(hostname_raw) = tokio::fs::read_to_string("/etc/hostname").await {
-            use sha2::{Digest, Sha256};
-            let mut hasher = Sha256::new();
-            hasher.update(hostname_raw.trim().as_bytes());
-            let result = hasher.finalize();
-            Some(hex::encode(result)[..16].to_string()) // First 16 chars of hash
-        } else {
-            None
-        };
+        let hostname_hash =
+            if let Ok(hostname_raw) = tokio::fs::read_to_string("/etc/hostname").await {
+                use sha2::{Digest, Sha256};
+                let mut hasher = Sha256::new();
+                hasher.update(hostname_raw.trim().as_bytes());
+                let result = hasher.finalize();
+                Some(hex::encode(result)[..16].to_string()) // First 16 chars of hash
+            } else {
+                None
+            };
 
         // Calculate incremental usage since last sync
         let payload = serde_json::json!({
@@ -555,7 +556,12 @@ impl OperationTimer {
 }
 
 /// Track install command with timing
-pub fn track_install_timed(packages: &[String], duration_ms: u64, success: bool, error: Option<&str>) {
+pub fn track_install_timed(
+    packages: &[String],
+    duration_ms: u64,
+    success: bool,
+    error: Option<&str>,
+) {
     // Record to usage stats
     if success {
         track_install(packages);
@@ -588,7 +594,12 @@ pub fn track_search_timed(query: &str, result_count: usize, duration_ms: u64, su
 }
 
 /// Track update command with timing
-pub fn track_update_timed(updated_count: usize, duration_ms: u64, success: bool, error: Option<&str>) {
+pub fn track_update_timed(
+    updated_count: usize,
+    duration_ms: u64,
+    success: bool,
+    error: Option<&str>,
+) {
     // Record to usage stats
     if success {
         track("update", time_saved::INSTALL_MS * updated_count as u64);
@@ -601,7 +612,12 @@ pub fn track_update_timed(updated_count: usize, duration_ms: u64, success: bool,
 }
 
 /// Track remove command with timing
-pub fn track_remove_timed(packages: &[String], duration_ms: u64, success: bool, error: Option<&str>) {
+pub fn track_remove_timed(
+    packages: &[String],
+    duration_ms: u64,
+    success: bool,
+    error: Option<&str>,
+) {
     // Record to usage stats
     if success {
         track("remove", time_saved::INSTALL_MS);
@@ -626,7 +642,11 @@ pub fn track_feature_usage(feature: &str, enabled: bool) {
 }
 
 /// Track feature usage with metadata
-pub fn track_feature_usage_with_metadata(feature: &str, enabled: bool, metadata: serde_json::Value) {
+pub fn track_feature_usage_with_metadata(
+    feature: &str,
+    enabled: bool,
+    metadata: serde_json::Value,
+) {
     crate::core::telemetry::track_feature_event(feature, enabled, Some(metadata));
 }
 

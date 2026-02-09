@@ -132,7 +132,12 @@ async fn remove_fallback(packages: &[String], recursive: bool) -> Result<()> {
             crate::core::usage::track_remove_timed(packages, duration_ms, true, None);
         }
         Err(e) => {
-            crate::core::usage::track_remove_timed(packages, duration_ms, false, Some(&e.to_string()));
+            crate::core::usage::track_remove_timed(
+                packages,
+                duration_ms,
+                false,
+                Some(&e.to_string()),
+            );
         }
     }
 

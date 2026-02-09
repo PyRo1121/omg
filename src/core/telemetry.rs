@@ -239,8 +239,7 @@ impl EventQueue {
 
     fn needs_flush(&self) -> bool {
         let now = jiff::Timestamp::now().as_second();
-        now - self.last_flush >= BATCH_FLUSH_INTERVAL_SECS
-            || self.events.len() >= MAX_QUEUED_EVENTS
+        now - self.last_flush >= BATCH_FLUSH_INTERVAL_SECS || self.events.len() >= MAX_QUEUED_EVENTS
     }
 
     fn needs_persist(&self) -> bool {
@@ -287,7 +286,8 @@ impl EventQueue {
 
         // Reset persist tracking
         self.events_since_persist.store(0, Ordering::Relaxed);
-        self.last_persist.store(jiff::Timestamp::now().as_second(), Ordering::Relaxed);
+        self.last_persist
+            .store(jiff::Timestamp::now().as_second(), Ordering::Relaxed);
 
         Ok(())
     }
@@ -329,7 +329,9 @@ impl TelemetrySession {
         let now = jiff::Timestamp::now().as_second();
         Self {
             session_id: uuid::Uuid::new_v4().to_string(),
-            started_at: jiff::Timestamp::now().strftime("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+            started_at: jiff::Timestamp::now()
+                .strftime("%Y-%m-%dT%H:%M:%S%.3fZ")
+                .to_string(),
             commands_run: AtomicU32::new(0),
             last_activity: AtomicI64::new(now),
             persist_counter: AtomicU32::new(0),
@@ -375,7 +377,8 @@ impl TelemetrySession {
 
         // Reset persist tracking
         self.persist_counter.store(0, Ordering::Relaxed);
-        self.last_persist.store(jiff::Timestamp::now().as_second(), Ordering::Relaxed);
+        self.last_persist
+            .store(jiff::Timestamp::now().as_second(), Ordering::Relaxed);
 
         Ok(())
     }
@@ -383,7 +386,8 @@ impl TelemetrySession {
     /// Increment command counter and update activity (non-blocking)
     fn record_activity(&self) {
         self.commands_run.fetch_add(1, Ordering::Relaxed);
-        self.last_activity.store(jiff::Timestamp::now().as_second(), Ordering::Relaxed);
+        self.last_activity
+            .store(jiff::Timestamp::now().as_second(), Ordering::Relaxed);
         self.persist_counter.fetch_add(1, Ordering::Relaxed);
     }
 
@@ -448,7 +452,9 @@ pub fn record_startup_time() {
 /// Get CLI startup duration in milliseconds
 #[must_use]
 pub fn get_startup_duration_ms() -> Option<u64> {
-    CLI_START_TIME.get().map(|start| start.elapsed().as_millis() as u64)
+    CLI_START_TIME
+        .get()
+        .map(|start| start.elapsed().as_millis() as u64)
 }
 
 /// Get current session ID
@@ -545,7 +551,12 @@ pub fn track_search_event(query: &str, result_count: usize, duration_ms: u64, su
 }
 
 /// Track update command with updated count
-pub fn track_update_event(updated_count: usize, duration_ms: u64, success: bool, error: Option<&str>) {
+pub fn track_update_event(
+    updated_count: usize,
+    duration_ms: u64,
+    success: bool,
+    error: Option<&str>,
+) {
     if !is_enhanced_telemetry_enabled() {
         return;
     }
@@ -613,7 +624,11 @@ pub fn track_session_start() {
     let event = TelemetryEvent::Session(SessionEvent {
         session_id: get_session_id(),
         event_type: "start".to_string(),
-        start_time: Some(jiff::Timestamp::now().strftime("%Y-%m-%dT%H:%M:%S%.3fZ").to_string()),
+        start_time: Some(
+            jiff::Timestamp::now()
+                .strftime("%Y-%m-%dT%H:%M:%S%.3fZ")
+                .to_string(),
+        ),
         end_time: None,
         commands_run: None,
         duration_secs: None,
@@ -704,7 +719,11 @@ pub async fn end_session_and_flush() {
         session_id,
         event_type: "end".to_string(),
         start_time: None,
-        end_time: Some(jiff::Timestamp::now().strftime("%Y-%m-%dT%H:%M:%S%.3fZ").to_string()),
+        end_time: Some(
+            jiff::Timestamp::now()
+                .strftime("%Y-%m-%dT%H:%M:%S%.3fZ")
+                .to_string(),
+        ),
         commands_run: Some(commands_run),
         duration_secs: Some(duration_secs),
     });
@@ -777,7 +796,9 @@ mod tests {
         assert!(!session.is_expired());
 
         // Set last activity to 31 minutes ago
-        session.last_activity.store(jiff::Timestamp::now().as_second() - 1860, Ordering::Relaxed);
+        session
+            .last_activity
+            .store(jiff::Timestamp::now().as_second() - 1860, Ordering::Relaxed);
         assert!(session.is_expired());
     }
 

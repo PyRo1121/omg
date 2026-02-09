@@ -10,8 +10,8 @@
 //! - Only sends when user has opted in (license key exists)
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::Duration;
 
 use anyhow::Result;
@@ -167,7 +167,9 @@ impl TelemetryPayload {
 
         Self {
             event,
-            timestamp: jiff::Timestamp::now().strftime("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+            timestamp: jiff::Timestamp::now()
+                .strftime("%Y-%m-%dT%H:%M:%S%.3fZ")
+                .to_string(),
             machine_id: get_machine_id(),
             version: env!("CARGO_PKG_VERSION").to_string(),
             platform: format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
@@ -256,7 +258,9 @@ fn calculate_backoff_delay(attempt: u32) -> Duration {
 
     let final_delay = capped_delay.saturating_add(jitter_offset as u64);
 
-    tracing::debug!("Backoff attempt {attempt}: {final_delay}ms (base={capped_delay}ms, jitter=±{jitter_range}ms)");
+    tracing::debug!(
+        "Backoff attempt {attempt}: {final_delay}ms (base={capped_delay}ms, jitter=±{jitter_range}ms)"
+    );
     Duration::from_millis(final_delay)
 }
 
@@ -365,21 +369,23 @@ pub async fn send_batch(events: Vec<TelemetryEvent>) -> Result<()> {
     let circuit_state = check_circuit_breaker();
 
     if circuit_state == CircuitState::Open {
-        tracing::debug!("Circuit breaker is open, queuing {} events locally", events.len());
+        tracing::debug!(
+            "Circuit breaker is open, queuing {} events locally",
+            events.len()
+        );
         for event in events {
             queue_for_retry(TelemetryPayload::new(event));
         }
         return Ok(());
     }
 
-    let payloads: Vec<TelemetryPayload> = events
-        .into_iter()
-        .map(TelemetryPayload::new)
-        .collect();
+    let payloads: Vec<TelemetryPayload> = events.into_iter().map(TelemetryPayload::new).collect();
 
     let batch = BatchPayload {
         events: payloads,
-        batch_timestamp: jiff::Timestamp::now().strftime("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+        batch_timestamp: jiff::Timestamp::now()
+            .strftime("%Y-%m-%dT%H:%M:%S%.3fZ")
+            .to_string(),
         machine_id: get_machine_id(),
     };
 
@@ -394,7 +400,10 @@ pub async fn send_batch(events: Vec<TelemetryEvent>) -> Result<()> {
 
     match response {
         Ok(resp) if resp.status().is_success() => {
-            tracing::debug!("Telemetry batch sent successfully ({} events)", batch.events.len());
+            tracing::debug!(
+                "Telemetry batch sent successfully ({} events)",
+                batch.events.len()
+            );
             record_success();
             Ok(())
         }
@@ -487,7 +496,12 @@ pub async fn track_search(query: &str, result_count: usize, duration_ms: u64, su
 
 /// Send update telemetry event
 #[inline]
-pub async fn track_update(updated_count: usize, duration_ms: u64, success: bool, error: Option<&str>) {
+pub async fn track_update(
+    updated_count: usize,
+    duration_ms: u64,
+    success: bool,
+    error: Option<&str>,
+) {
     let event = TelemetryEvent::Command(CommandEvent {
         command: "update".to_string(),
         subcommand: None,
@@ -537,7 +551,11 @@ pub async fn track_session_start(session_id: &str) {
     let event = TelemetryEvent::Session(SessionEvent {
         session_id: session_id.to_string(),
         event_type: "start".to_string(),
-        start_time: Some(jiff::Timestamp::now().strftime("%Y-%m-%dT%H:%M:%S%.3fZ").to_string()),
+        start_time: Some(
+            jiff::Timestamp::now()
+                .strftime("%Y-%m-%dT%H:%M:%S%.3fZ")
+                .to_string(),
+        ),
         end_time: None,
         commands_run: None,
         duration_secs: None,
@@ -554,7 +572,11 @@ pub async fn track_session_end(session_id: &str, commands_run: u32, duration_sec
         session_id: session_id.to_string(),
         event_type: "end".to_string(),
         start_time: None,
-        end_time: Some(jiff::Timestamp::now().strftime("%Y-%m-%dT%H:%M:%S%.3fZ").to_string()),
+        end_time: Some(
+            jiff::Timestamp::now()
+                .strftime("%Y-%m-%dT%H:%M:%S%.3fZ")
+                .to_string(),
+        ),
         commands_run: Some(commands_run),
         duration_secs: Some(duration_secs),
     });

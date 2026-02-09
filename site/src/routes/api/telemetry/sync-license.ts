@@ -1,6 +1,6 @@
 import { APIEvent } from "@solidjs/start/server";
 import { drizzle } from "drizzle-orm/d1";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import * as schema from "~/db/auth-schema";
 import { createAuth, CloudflareEnv } from "~/lib/auth";
 
@@ -114,11 +114,15 @@ export async function POST(event: APIEvent) {
 
       console.log('[Sync License] Database updated successfully');
 
-      return new Response(JSON.stringify({ 
+      // Sync machines from external API to auth-db
+      const machinesSynced = await syncMachines(db, license.id, externalData.machines);
+
+      return new Response(JSON.stringify({
         synced: true,
         old_tier: license.tier,
         new_tier: newTier,
-        max_machines: maxMachines
+        max_machines: maxMachines,
+        machines_synced: machinesSynced,
       }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -127,10 +131,14 @@ export async function POST(event: APIEvent) {
 
     console.log('[Sync License] No update needed - tiers match');
 
-    return new Response(JSON.stringify({ 
+    // Sync machines from external API to auth-db
+    const machinesSynced = await syncMachines(db, license.id, externalData.machines);
+
+    return new Response(JSON.stringify({
       synced: true,
       message: "Already up to date",
-      tier: newTier
+      tier: newTier,
+      machines_synced: machinesSynced,
     }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
@@ -138,7 +146,7 @@ export async function POST(event: APIEvent) {
   } catch (error) {
     console.error("[Sync License] Error:", error);
     return new Response(
-      JSON.stringify({ 
+      JSON.stringify({
         error: "Internal server error",
         message: error instanceof Error ? error.message : "Unknown error",
         synced: false
@@ -149,4 +157,87 @@ export async function POST(event: APIEvent) {
       }
     );
   }
+}
+
+/**
+ * Sync machines from the external API (omg-licensing) to auth-db
+ * Uses upsert logic: insert new machines, update existing ones
+ */
+async function syncMachines(
+  db: ReturnType<typeof drizzle>,
+  licenseId: string,
+  machines?: Array<{
+    machine_id: string;
+    hostname?: string;
+    os?: string;
+    arch?: string;
+    omg_version?: string;
+    is_active: number;
+    first_seen_at?: string;
+    last_seen_at?: string;
+  }>
+): Promise<number> {
+  if (!machines || machines.length === 0) return 0;
+
+  let synced = 0;
+
+  for (const m of machines) {
+    try {
+      // Check if machine already exists in auth-db
+      const existing = await db
+        .select({ id: schema.machine.id })
+        .from(schema.machine)
+        .where(
+          and(
+            eq(schema.machine.licenseId, licenseId),
+            eq(schema.machine.machineId, m.machine_id)
+          )
+        )
+        .limit(1)
+        .get();
+
+      const now = new Date();
+      const firstSeen = m.first_seen_at ? new Date(m.first_seen_at) : now;
+      const lastSeen = m.last_seen_at ? new Date(m.last_seen_at) : now;
+
+      if (existing) {
+        // Update existing machine
+        await db
+          .update(schema.machine)
+          .set({
+            hostname: m.hostname || null,
+            os: m.os || null,
+            arch: m.arch || null,
+            omgVersion: m.omg_version || null,
+            isActive: m.is_active === 1,
+            lastSeenAt: lastSeen,
+          })
+          .where(eq(schema.machine.id, existing.id))
+          .run();
+      } else {
+        // Insert new machine
+        await db
+          .insert(schema.machine)
+          .values({
+            id: crypto.randomUUID(),
+            licenseId,
+            machineId: m.machine_id,
+            hostname: m.hostname || null,
+            os: m.os || null,
+            arch: m.arch || null,
+            omgVersion: m.omg_version || null,
+            isActive: m.is_active === 1,
+            firstSeenAt: firstSeen,
+            lastSeenAt: lastSeen,
+          })
+          .run();
+      }
+      synced++;
+    } catch (err) {
+      console.error(`[Sync Machines] Error syncing machine ${m.machine_id}:`, err);
+    }
+  }
+
+  console.log(`[Sync Machines] Synced ${synced}/${machines.length} machines`);
+  return synced;
 }
