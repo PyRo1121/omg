@@ -153,27 +153,24 @@ impl DependencyResolver {
                 .map(String::as_str)
                 .collect();
 
-            if !similar.is_empty() {
-                anyhow::bail!(
-                    "Package '{}' not found in repositories.\n\
-                    💡 Did you mean one of these?\n  - {}\n\
-                    Try: omg search {} to find more options",
-                    name,
-                    similar.join("\n  - "),
-                    name
-                );
-            } else {
-                anyhow::bail!(
-                    "Package '{}' not found in repositories.\n\
+            let error_message = if similar.is_empty() {
+                format!(
+                    "Package '{name}' not found in repositories.\n\
                     💡 Make sure you have:\n\
                     - Run 'omg sync' to refresh package database\n\
                     - Enabled the correct repositories\n\
                     - Spelled the package name correctly\n\
-                    Try: omg search {} to find available packages",
-                    name,
-                    name
-                );
-            }
+                    Try: omg search {name} to find available packages"
+                )
+            } else {
+                format!(
+                    "Package '{name}' not found in repositories.\n\
+                    💡 Did you mean one of these?\n  - {}\n\
+                    Try: omg search {name} to find more options",
+                    similar.join("\n  - ")
+                )
+            };
+            anyhow::bail!(error_message);
         }
         self.selected.insert(name.to_string());
         Ok(())
@@ -431,16 +428,24 @@ impl DependencyResolver {
         }
 
         // Build helpful error message
+        use std::fmt::Write;
         let mut error_msg = format!("Cannot satisfy dependency: {}", dep.name);
         if !dep.alternatives.is_empty() {
             let alt_names: Vec<_> = dep.alternatives.iter().map(|a| a.name.as_str()).collect();
-            error_msg.push_str(&format!("\n  Tried alternatives: {}", alt_names.join(", ")));
+            write!(
+                &mut error_msg,
+                "\n  Tried alternatives: {}",
+                alt_names.join(", ")
+            )
+            .unwrap();
         }
         if let Some(constraint) = &dep.version_constraint {
-            error_msg.push_str(&format!(
+            write!(
+                &mut error_msg,
                 " (version: {:?} {})",
                 constraint.op, constraint.version
-            ));
+            )
+            .unwrap();
         }
         error_msg.push_str(
             "\n💡 This dependency is not available in any enabled repository.\n\
@@ -508,16 +513,24 @@ impl DependencyResolver {
         }
 
         // Build helpful error message
+        use std::fmt::Write;
         let mut error_msg = format!("Cannot satisfy dependency: {}", dep.name);
         if !dep.alternatives.is_empty() {
             let alt_names: Vec<_> = dep.alternatives.iter().map(|a| a.name.as_str()).collect();
-            error_msg.push_str(&format!("\n  Tried alternatives: {}", alt_names.join(", ")));
+            write!(
+                &mut error_msg,
+                "\n  Tried alternatives: {}",
+                alt_names.join(", ")
+            )
+            .unwrap();
         }
         if let Some(constraint) = &dep.version_constraint {
-            error_msg.push_str(&format!(
+            write!(
+                &mut error_msg,
                 " (version: {:?} {})",
                 constraint.op, constraint.version
-            ));
+            )
+            .unwrap();
         }
         error_msg.push_str(
             "\n💡 This dependency is not available in any enabled repository.\n\
@@ -642,8 +655,8 @@ fn parse_dependency(s: &str) -> Dependency {
 
 /// Parse a single dependency without alternatives
 /// Strip architecture qualifier from package name (e.g., "perl:any" -> "perl")
-/// Debian multi-arch qualifiers: :any, :native, :amd64, :i386, etc.
-#[inline(always)]
+/// Debian multi-arch qualifiers: `:any`, `:native`, `:amd64`, `:i386`, etc.
+#[inline]
 fn strip_arch_qualifier(name: &str) -> &str {
     // OPTIMIZATION: Use memchr for faster colon search (SIMD-accelerated)
     if let Some(colon_pos) = memchr::memchr(b':', name.as_bytes()) {
@@ -683,9 +696,9 @@ fn parse_single_dep(s: &str) -> Dependency {
     }
 }
 
-/// Parse a version constraint like ">= 2.38"
+/// Parse a version constraint like `">= 2.38"`
 /// OPTIMIZATION: Inline and use byte comparisons for faster parsing
-#[inline(always)]
+#[inline]
 fn parse_version_constraint(s: &str) -> Option<VersionConstraint> {
     let s = s.trim();
     let bytes = s.as_bytes();

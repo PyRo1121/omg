@@ -489,13 +489,13 @@ mod tests {
 
     #[test]
     fn test_parse_deb822_stanza() {
-        let content = r#"
+        let content = r"
 Types: deb deb-src
 URIs: http://deb.debian.org/debian
 Suites: bookworm bookworm-updates
 Components: main contrib non-free
 Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
-"#;
+";
 
         let repos = parse_deb822_content(content, Path::new("/test.sources")).unwrap();
 
@@ -512,13 +512,13 @@ Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
 
     #[test]
     fn test_parse_disabled_repo() {
-        let content = r#"
+        let content = r"
 Types: deb
 URIs: http://example.com/repo
 Suites: stable
 Components: main
 Enabled: no
-"#;
+";
 
         let repos = parse_deb822_content(content, Path::new("/test.sources")).unwrap();
         assert_eq!(repos.len(), 1);
@@ -567,14 +567,14 @@ Enabled: no
 
     #[test]
     fn test_parse_sources_list_content() {
-        let content = r#"
+        let content = r"
 # Main Debian repos
 deb http://deb.debian.org/debian bookworm main
 deb-src http://deb.debian.org/debian bookworm main
 
 # Security updates
 deb http://security.debian.org/debian-security bookworm-security main
-"#;
+";
 
         let repos =
             parse_sources_list_content(content, Path::new("/etc/apt/sources.list")).unwrap();
@@ -587,11 +587,11 @@ deb http://security.debian.org/debian-security bookworm-security main
 
     #[test]
     fn test_skip_invalid_lines() {
-        let content = r#"
+        let content = r"
 not a valid line
 deb http://example.com/repo stable main
 random text here
-"#;
+";
 
         let repos = parse_sources_list_content(content, Path::new("/test")).unwrap();
         assert_eq!(repos.len(), 1);

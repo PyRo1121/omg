@@ -68,11 +68,10 @@ fn is_apt_cache_fresh() -> bool {
     if let Ok(meta) = fs::metadata(apt_lists)
         && let Ok(mtime) = meta.modified()
         && let Ok(elapsed) = SystemTime::now().duration_since(mtime)
+        && elapsed.as_secs() < FRESH_THRESHOLD_SECS
     {
-        if elapsed.as_secs() < FRESH_THRESHOLD_SECS {
-            tracing::debug!("apt lists directory is fresh ({}s old)", elapsed.as_secs());
-            return true;
-        }
+        tracing::debug!("apt lists directory is fresh ({}s old)", elapsed.as_secs());
+        return true;
     }
 
     // Fallback: check if any _Packages file was modified recently
@@ -81,21 +80,18 @@ fn is_apt_cache_fresh() -> bool {
             let path = entry.path();
             if let Some(name) = path.file_name().and_then(|n| n.to_str())
                 && name.contains("_Packages")
-                && !name.ends_with(".diff")
+                && !name.to_lowercase().ends_with(".diff")
+                && let Ok(meta) = entry.metadata()
+                && let Ok(mtime) = meta.modified()
+                && let Ok(elapsed) = SystemTime::now().duration_since(mtime)
+                && elapsed.as_secs() < FRESH_THRESHOLD_SECS
             {
-                if let Ok(meta) = entry.metadata()
-                    && let Ok(mtime) = meta.modified()
-                    && let Ok(elapsed) = SystemTime::now().duration_since(mtime)
-                {
-                    if elapsed.as_secs() < FRESH_THRESHOLD_SECS {
-                        tracing::debug!(
-                            "Found fresh apt cache file: {} ({}s old)",
-                            name,
-                            elapsed.as_secs()
-                        );
-                        return true;
-                    }
-                }
+                tracing::debug!(
+                    "Found fresh apt cache file: {} ({}s old)",
+                    name,
+                    elapsed.as_secs()
+                );
+                return true;
             }
         }
     }
@@ -502,7 +498,7 @@ async fn conditional_download_with_retry(
 async fn download_bytes_with_retry(client: &Client, url: &str) -> Result<Vec<u8>> {
     download_bytes_conditional(client, url, None)
         .await
-        .map(|opt| opt.unwrap_or_default())
+        .map(Option::unwrap_or_default)
 }
 
 /// Download bytes with optional If-Modified-Since header
@@ -577,13 +573,13 @@ async fn download_bytes_conditional(
 
 /// Get stored Last-Modified header for a URL (from metadata file)
 fn get_cached_last_modified(cache_dir: &Path, filename: &str) -> Option<String> {
-    let meta_path = cache_dir.join(format!("{}.meta", filename));
+    let meta_path = cache_dir.join(format!("{filename}.meta"));
     fs::read_to_string(meta_path).ok()
 }
 
 /// Store Last-Modified header for a URL
 fn store_last_modified(cache_dir: &Path, filename: &str, last_modified: &str) -> Result<()> {
-    let meta_path = cache_dir.join(format!("{}.meta", filename));
+    let meta_path = cache_dir.join(format!("{filename}.meta"));
     fs::write(&meta_path, last_modified).context("Failed to store Last-Modified metadata")
 }
 
@@ -723,7 +719,7 @@ fn decompress_xz(data: &[u8]) -> Result<Vec<u8>> {
 
 // LZ4 compression format - not currently used by Debian/Ubuntu repos
 // but kept for potential future support
-#[expect(dead_code)]
+#[allow(dead_code)]
 fn decompress_lz4(data: &[u8]) -> Result<Vec<u8>> {
     lz4_flex::decompress_size_prepended(data)
         .map_err(|e| anyhow::anyhow!("LZ4 decompression failed: {e}"))
@@ -731,8 +727,8 @@ fn decompress_lz4(data: &[u8]) -> Result<Vec<u8>> {
 
 // No-op decompression for uncompressed Packages files
 // Not currently used but kept as part of the decompression function pointer pattern
-#[expect(dead_code)]
-#[expect(clippy::unnecessary_wraps)] // Used as function pointer with other decompression functions
+#[allow(dead_code)]
+#[allow(clippy::unnecessary_wraps)] // Used as function pointer with other decompression functions
 fn decompress_none(data: &[u8]) -> Result<Vec<u8>> {
     Ok(data.to_vec())
 }

@@ -297,17 +297,17 @@ impl Transaction {
 
         // OPTIMIZATION: Pre-warm connections to the mirror (fire and forget)
         // Extract unique hosts and make HEAD requests to establish connections
-        if let Some((_, _, _, first_url, _)) = packages_to_download.first() {
-            if let Ok(url) = reqwest::Url::parse(first_url) {
-                let warm_url = format!("{}://{}/", url.scheme(), url.host_str().unwrap_or(""));
-                // Fire off HEAD requests to warm up connection pool (no waiting)
-                for _ in 0..2 {
-                    let client = client.clone();
-                    let warm_url = warm_url.clone();
-                    tokio::spawn(async move {
-                        let _ = client.head(&warm_url).send().await;
-                    });
-                }
+        if let Some((_, _, _, first_url, _)) = packages_to_download.first()
+            && let Ok(url) = reqwest::Url::parse(first_url)
+        {
+            let warm_url = format!("{}://{}/", url.scheme(), url.host_str().unwrap_or(""));
+            // Fire off HEAD requests to warm up connection pool (no waiting)
+            for _ in 0..2 {
+                let client = client.clone();
+                let warm_url = warm_url.clone();
+                tokio::spawn(async move {
+                    let _ = client.head(&warm_url).send().await;
+                });
             }
         }
 
@@ -403,30 +403,25 @@ impl Transaction {
 
             // OPTIMIZATION: Process packages immediately instead of batching
             // This reduces memory pressure from holding multiple .deb files in memory
-            loop {
-                match rt.block_on(rx.recv()) {
-                    Some((deb_path, name)) => {
-                        tracing::debug!("Unpacking {} immediately", name);
-                        match unpack_deb_standalone(&deb_path, &name, &temp_dir_unpack) {
-                            Ok(files) => {
-                                let mut guard = installed_files.lock().expect("lock poisoned");
-                                guard.extend(files);
-                                tracing::debug!("Unpacked {} successfully", name);
-                            }
-                            Err(e) => {
-                                tracing::error!("Failed to unpack {}: {}", name, e);
-                                let mut guard = unpack_errors.lock().expect("lock poisoned");
-                                guard.push((name.clone(), e));
-                            }
-                        }
-
-                        // OPTIMIZATION: Delete .deb file immediately after unpacking
-                        // This reduces disk I/O and frees up temp space quickly
-                        if let Err(e) = std::fs::remove_file(&deb_path) {
-                            tracing::warn!("Failed to delete {}: {}", deb_path.display(), e);
-                        }
+            while let Some((deb_path, name)) = rt.block_on(rx.recv()) {
+                tracing::debug!("Unpacking {} immediately", name);
+                match unpack_deb_standalone(&deb_path, &name, &temp_dir_unpack) {
+                    Ok(files) => {
+                        let mut guard = installed_files.lock().expect("lock poisoned");
+                        guard.extend(files);
+                        tracing::debug!("Unpacked {} successfully", name);
                     }
-                    None => break,
+                    Err(e) => {
+                        tracing::error!("Failed to unpack {}: {}", name, e);
+                        let mut guard = unpack_errors.lock().expect("lock poisoned");
+                        guard.push((name.clone(), e));
+                    }
+                }
+
+                // OPTIMIZATION: Delete .deb file immediately after unpacking
+                // This reduces disk I/O and frees up temp space quickly
+                if let Err(e) = std::fs::remove_file(&deb_path) {
+                    tracing::warn!("Failed to delete {}: {}", deb_path.display(), e);
                 }
             }
 
@@ -695,7 +690,7 @@ impl Transaction {
 
     /// Unpack a single .deb file
     /// NOTE: Kept for potential fallback; pipelined version is now preferred
-    #[expect(dead_code)]
+    #[allow(dead_code)]
     fn unpack_deb(&mut self, deb_path: &Path, package_name: &str) -> Result<()> {
         tracing::debug!("Unpacking .deb: {} ({})", package_name, deb_path.display());
 
@@ -788,10 +783,10 @@ impl Transaction {
 
             // Prepare dpkg status entry for batched write
             let control_file = control_dir.join("control");
-            if control_file.exists() {
-                if let Ok(entry) = prepare_status_entry(&control_file) {
-                    status_entries.push(entry);
-                }
+            if control_file.exists()
+                && let Ok(entry) = prepare_status_entry(&control_file)
+            {
+                status_entries.push(entry);
             }
 
             // Collect conffiles for batched copy
@@ -891,6 +886,7 @@ impl Transaction {
     }
 
     /// Execute package removal
+    #[allow(clippy::unused_async)]
     pub async fn execute_removal(&mut self) -> Result<()> {
         if self.to_remove.is_empty() {
             return Ok(());
@@ -944,11 +940,8 @@ impl Transaction {
                 pb.set_message(format!("prerm failed: {e}").red().to_string());
                 pb.finish();
                 overall.inc(1);
-                tracing::error!("Failed to run prerm script for {}: {}", package_name, e);
-                anyhow::bail!(
-                    "Package removal failed during prerm script for {}",
-                    package_name
-                );
+                tracing::error!("Failed to run prerm script for {package_name}: {e}");
+                anyhow::bail!("Package removal failed during prerm script for {package_name}");
             }
 
             // Remove package files
@@ -958,11 +951,8 @@ impl Transaction {
                 pb.set_message(format!("file removal failed: {e}").red().to_string());
                 pb.finish();
                 overall.inc(1);
-                tracing::error!("Failed to remove files for {}: {}", package_name, e);
-                anyhow::bail!(
-                    "Package removal failed during file removal for {}",
-                    package_name
-                );
+                tracing::error!("Failed to remove files for {package_name}: {e}");
+                anyhow::bail!("Package removal failed during file removal for {package_name}");
             }
 
             // Run postrm script
@@ -972,11 +962,8 @@ impl Transaction {
                 pb.set_message(format!("postrm failed: {e}").red().to_string());
                 pb.finish();
                 overall.inc(1);
-                tracing::error!("Failed to run postrm script for {}: {}", package_name, e);
-                anyhow::bail!(
-                    "Package removal failed during postrm script for {}",
-                    package_name
-                );
+                tracing::error!("Failed to run postrm script for {package_name}: {e}");
+                anyhow::bail!("Package removal failed during postrm script for {package_name}");
             }
 
             // Update dpkg status
@@ -986,23 +973,14 @@ impl Transaction {
                 pb.set_message(format!("status update failed: {e}").red().to_string());
                 pb.finish();
                 overall.inc(1);
-                tracing::error!("Failed to update dpkg status for {}: {}", package_name, e);
-                anyhow::bail!(
-                    "Package removal failed during status update for {}",
-                    package_name
-                );
+                tracing::error!("Failed to update dpkg status for {package_name}: {e}");
+                anyhow::bail!("Package removal failed during status update for {package_name}");
             }
 
             // Clean up dpkg info files
             pb.set_message("cleanup");
             pb.inc(1);
-            if let Err(e) = cleanup_dpkg_info_files(package_name) {
-                pb.set_message(format!("cleanup failed: {e}").red().to_string());
-                pb.finish();
-                overall.inc(1);
-                tracing::warn!("Failed to clean up info files for {}: {}", package_name, e);
-                // Non-fatal - continue
-            }
+            cleanup_dpkg_info_files(package_name);
 
             pb.set_message("✓".green().to_string());
             pb.finish();
@@ -1278,18 +1256,13 @@ fn prepare_status_entry(control_file: &Path) -> Result<String> {
     let control_content = fs::read_to_string(control_file)?;
 
     // Parse control file and add Status field
-    let mut found_status = false;
+    let found_status = control_content
+        .lines()
+        .any(|line| line.starts_with("Status:"));
 
-    for line in control_content.lines() {
-        if line.starts_with("Status:") {
-            found_status = true;
-            break;
-        }
-    }
-
+    let mut result = String::new();
     if found_status {
         // Replace existing Status line
-        let mut result = String::new();
         for line in control_content.lines() {
             if line.starts_with("Status:") {
                 result.push_str("Status: install ok installed\n");
@@ -1298,10 +1271,8 @@ fn prepare_status_entry(control_file: &Path) -> Result<String> {
                 result.push('\n');
             }
         }
-        Ok(result)
     } else {
         // Insert Status field after Package field
-        let mut result = String::new();
         for line in control_content.lines() {
             result.push_str(line);
             result.push('\n');
@@ -1309,8 +1280,8 @@ fn prepare_status_entry(control_file: &Path) -> Result<String> {
                 result.push_str("Status: install ok installed\n");
             }
         }
-        Ok(result)
     }
+    Ok(result)
 }
 
 /// Update /var/lib/dpkg/status with package info
@@ -1778,15 +1749,13 @@ fn remove_package_files(package_name: &str) -> Result<()> {
     // Try to remove empty directories (bottom-up)
     dirs_to_remove.reverse();
     for dir_path in &dirs_to_remove {
-        if dir_path.exists() && dir_path.is_dir() {
-            // Only remove if empty
-            if let Ok(mut entries) = fs::read_dir(dir_path) {
-                if entries.next().is_none() {
-                    if let Err(e) = fs::remove_dir(dir_path) {
-                        tracing::trace!("Could not remove directory {}: {}", dir_path.display(), e);
-                    }
-                }
-            }
+        if dir_path.exists()
+            && dir_path.is_dir()
+            && let Ok(mut entries) = fs::read_dir(dir_path)
+            && entries.next().is_none()
+            && let Err(e) = fs::remove_dir(dir_path)
+        {
+            tracing::trace!("Could not remove directory {}: {}", dir_path.display(), e);
         }
     }
 
@@ -1862,7 +1831,7 @@ fn update_dpkg_status_for_removal(package_name: &str) -> Result<()> {
     }
 
     if !found_package {
-        anyhow::bail!("Package {} not found in dpkg status", package_name);
+        anyhow::bail!("Package {package_name} not found in dpkg status");
     }
 
     // Atomic write using temp file + rename
@@ -1888,7 +1857,7 @@ fn update_dpkg_status_for_removal(package_name: &str) -> Result<()> {
 }
 
 /// Clean up dpkg info files after removal
-fn cleanup_dpkg_info_files(package_name: &str) -> Result<()> {
+fn cleanup_dpkg_info_files(package_name: &str) {
     let arch = std::env::consts::ARCH;
 
     // Files to remove
@@ -1924,8 +1893,6 @@ fn cleanup_dpkg_info_files(package_name: &str) -> Result<()> {
         removed_count,
         package_name
     );
-
-    Ok(())
 }
 
 /// Dry-run a transaction (show what would be done)
@@ -2007,8 +1974,8 @@ mod tests {
     #[test]
     fn test_transaction_sizes() {
         let mut tx = Transaction::new();
-        tx.add_install("pkg1".to_string(), "1.0".to_string(), "".to_string(), 1000);
-        tx.add_install("pkg2".to_string(), "1.0".to_string(), "".to_string(), 2000);
+        tx.add_install("pkg1".to_string(), "1.0".to_string(), String::new(), 1000);
+        tx.add_install("pkg2".to_string(), "1.0".to_string(), String::new(), 2000);
         assert_eq!(tx.total_download_size(), 3000);
         assert_eq!(tx.package_count(), 2);
     }

@@ -53,12 +53,11 @@ impl PackageManager for PureDebianPackageManager {
             for pkg in &packages {
                 resolver.add_package(pkg).with_context(|| {
                     format!(
-                        "Package '{}' not found in repositories.\n\
+                        "Package '{pkg}' not found in repositories.\n\
                         \u{1f4a1} Try:\n\
-                        - omg search {} (find similar packages)\n\
+                        - omg search {pkg} (find similar packages)\n\
                         - omg sync (refresh package database)\n\
-                        - Check package name spelling",
-                        pkg, pkg
+                        - Check package name spelling"
                     )
                 })?;
             }
@@ -141,9 +140,8 @@ impl PackageManager for PureDebianPackageManager {
             for pkg in &packages {
                 if !debian_db::is_installed_fast(pkg) {
                     anyhow::bail!(
-                        "Package '{}' is not installed.\n\
-                        \u{1f4a1} Use 'omg list' to see installed packages",
-                        pkg
+                        "Package '{pkg}' is not installed.\n\
+                        \u{1f4a1} Use 'omg list' to see installed packages"
                     );
                 }
             }
@@ -326,18 +324,18 @@ impl PackageManager for PureDebianPackageManager {
             // ULTRA-FAST PATH: Use mmap index if available (zero-copy, no full index load)
             // ensure_mmap_loaded() loads from disk if not yet in memory (nearly instant)
             debian_db::ensure_mmap_loaded();
-            if debian_db::is_mmap_available() {
-                if let Ok(updates) = debian_db::get_updates_from_mmap(&installed_map) {
-                    return Ok(updates
-                        .into_iter()
-                        .map(|(name, old_version, new_version)| UpdateInfo {
-                            name,
-                            old_version,
-                            new_version,
-                            repo: "official".to_string(),
-                        })
-                        .collect());
-                }
+            if debian_db::is_mmap_available()
+                && let Ok(updates) = debian_db::get_updates_from_mmap(&installed_map)
+            {
+                return Ok(updates
+                    .into_iter()
+                    .map(|(name, old_version, new_version)| UpdateInfo {
+                        name,
+                        old_version,
+                        new_version,
+                        repo: "official".to_string(),
+                    })
+                    .collect());
             }
 
             // Fallback: Load full index and use parallel comparison

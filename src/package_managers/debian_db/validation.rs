@@ -20,27 +20,26 @@ pub fn check_disk_space(download_size: u64, installed_size: u64, temp_dir: &Path
     use std::fs;
 
     // Check temp directory space (for downloads)
-    if let Ok(_metadata) = fs::metadata(temp_dir) {
-        if let Some(parent) = temp_dir.parent() {
-            if let Ok(stat) = nix::sys::statvfs::statvfs(parent) {
-                let available = stat.blocks_available() * stat.block_size();
-                // Add 10% safety margin for metadata and overhead
-                let required = download_size + (download_size / 10);
+    if let Ok(_metadata) = fs::metadata(temp_dir)
+        && let Some(parent) = temp_dir.parent()
+        && let Ok(stat) = nix::sys::statvfs::statvfs(parent)
+    {
+        let available = stat.blocks_available() * stat.block_size();
+        // Add 10% safety margin for metadata and overhead
+        let required = download_size + (download_size / 10);
 
-                if available < required {
-                    anyhow::bail!(
-                        "Insufficient disk space in {}: {} MB available, {} MB required\n\
-                        💡 Free up space with:\n\
-                        - omg clean (remove cached packages)\n\
-                        - sudo apt-get autoclean (Debian/Ubuntu)\n\
-                        - Check: df -h {}",
-                        parent.display(),
-                        available / 1_048_576,
-                        required / 1_048_576,
-                        parent.display()
-                    );
-                }
-            }
+        if available < required {
+            anyhow::bail!(
+                "Insufficient disk space in {}: {} MB available, {} MB required\n\
+                💡 Free up space with:\n\
+                - omg clean (remove cached packages)\n\
+                - sudo apt-get autoclean (Debian/Ubuntu)\n\
+                - Check: df -h {}",
+                parent.display(),
+                available / 1_048_576,
+                required / 1_048_576,
+                parent.display()
+            );
         }
     }
 
@@ -142,12 +141,11 @@ pub async fn check_mirror_availability(mirror_url: &str) -> Result<()> {
 
     let response = client.head(mirror_url).send().await.with_context(|| {
         format!(
-            "Mirror unreachable: {}\n\
+            "Mirror unreachable: {mirror_url}\n\
                 💡 Troubleshooting:\n\
-                - Check network: ping $(echo {} | cut -d'/' -f3)\n\
+                - Check network: ping $(echo {mirror_url} | cut -d'/' -f3)\n\
                 - Try different mirror in /etc/apt/sources.list\n\
-                - Check firewall/proxy settings",
-            mirror_url, mirror_url
+                - Check firewall/proxy settings"
         )
     })?;
 
@@ -235,15 +233,15 @@ pub fn estimate_time_remaining(downloaded: u64, total: u64, elapsed_secs: f64) -
     if remaining_secs < 5.0 {
         "< 5s".to_string()
     } else if remaining_secs < 60.0 {
-        format!("{}s", remaining_secs as u64)
+        format!("{remaining_secs}s", remaining_secs = remaining_secs as u64)
     } else if remaining_secs < 3600.0 {
         let mins = (remaining_secs / 60.0) as u64;
         let secs = (remaining_secs % 60.0) as u64;
-        format!("{}m {}s", mins, secs)
+        format!("{mins}m {secs}s")
     } else {
         let hours = (remaining_secs / 3600.0) as u64;
         let mins = ((remaining_secs % 3600.0) / 60.0) as u64;
-        format!("{}h {}m", hours, mins)
+        format!("{hours}h {mins}m")
     }
 }
 
@@ -261,7 +259,7 @@ pub fn format_bytes(bytes: u64) -> String {
     } else if bytes >= KB {
         format!("{:.2} KB", bytes as f64 / KB as f64)
     } else {
-        format!("{} B", bytes)
+        format!("{bytes} B")
     }
 }
 
@@ -276,7 +274,7 @@ pub fn format_speed(bytes_per_sec: f64) -> String {
     } else if bytes_per_sec >= KB {
         format!("{:.1} KB/s", bytes_per_sec / KB)
     } else {
-        format!("{:.0} B/s", bytes_per_sec)
+        format!("{bytes_per_sec:.0} B/s")
     }
 }
 
