@@ -1,6 +1,6 @@
 //! S-Tier E2E Tests for ALPM Transaction Handling
 //!
-//! Uses AlpmHarness for isolated transaction testing (no root needed)
+//! Uses `AlpmHarness` for isolated transaction testing (no root needed)
 //! and real system database for read-only validation.
 
 #![cfg(feature = "arch")]

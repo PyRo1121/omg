@@ -1,3 +1,9 @@
+//! Integration tests for error recovery in package operations.
+//!
+//! Tests transaction rollback, retry logic, and error handling.
+
+#![cfg(feature = "arch")]
+
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 

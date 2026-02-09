@@ -488,7 +488,7 @@ macro_rules! impl_runtime_common {
 }
 
 #[cfg(test)]
-#[expect(clippy::unwrap_used, clippy::expect_used)] // Idiomatic in tests: panics on failure with clear error context
+#[allow(clippy::unwrap_used, clippy::expect_used)] // Idiomatic in tests: panics on failure with clear error context
 mod tests {
     use super::*;
     use tempfile::TempDir;

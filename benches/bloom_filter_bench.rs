@@ -3,13 +3,14 @@
 //! Tests the impact of bloom filter optimization on info and search operations
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use std::hint::black_box;
 
 #[cfg(feature = "arch")]
 use omg_lib::daemon::index::PackageIndex;
 
 #[cfg(feature = "arch")]
 fn bench_package_lookups(c: &mut Criterion) {
+    use std::hint::black_box;
+
     // Build index once for all benchmarks
     let index = match PackageIndex::new() {
         Ok(idx) => idx,

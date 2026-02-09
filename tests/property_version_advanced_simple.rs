@@ -1,6 +1,6 @@
 //! Simplified property-based testing for version comparison
 //!
-//! Run: cargo test --test property_version_advanced_simple --features arch
+//! Run: `cargo test --test property_version_advanced_simple --features arch`
 
 #![cfg(feature = "arch")]
 #![allow(clippy::unwrap_used)]

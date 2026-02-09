@@ -2,7 +2,7 @@
 //!
 //! Verifies performance claims by comparing OMG against pacman for common operations.
 //!
-//! Run with: cargo bench --features arch --bench pacman_comparison
+//! Run with: `cargo bench --features arch --bench pacman_comparison`
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
@@ -49,7 +49,7 @@ fn bench_search(c: &mut Criterion) {
             b.iter(|| {
                 let (success, _duration) = run_omg(&["search", q]);
                 assert!(success, "OMG search should succeed");
-                black_box(())
+                black_box(());
             });
         });
 
@@ -58,7 +58,7 @@ fn bench_search(c: &mut Criterion) {
             b.iter(|| {
                 let (success, _duration) = run_pacman(&["-Ss", q]);
                 assert!(success, "Pacman search should succeed");
-                black_box(())
+                black_box(());
             });
         });
     }
@@ -79,7 +79,7 @@ fn bench_info(c: &mut Criterion) {
             b.iter(|| {
                 let (success, _duration) = run_omg(&["info", p]);
                 assert!(success, "OMG info should succeed");
-                black_box(())
+                black_box(());
             });
         });
 
@@ -88,7 +88,7 @@ fn bench_info(c: &mut Criterion) {
             b.iter(|| {
                 let (success, _duration) = run_pacman(&["-Si", p]);
                 assert!(success, "Pacman info should succeed");
-                black_box(())
+                black_box(());
             });
         });
     }
@@ -106,7 +106,7 @@ fn bench_list(c: &mut Criterion) {
         b.iter(|| {
             let (success, _duration) = run_omg(&["explicit"]);
             assert!(success, "OMG explicit should succeed");
-            black_box(())
+            black_box(());
         });
     });
 
@@ -115,7 +115,7 @@ fn bench_list(c: &mut Criterion) {
         b.iter(|| {
             let (success, _duration) = run_pacman(&["-Qe"]);
             assert!(success, "Pacman -Qe should succeed");
-            black_box(())
+            black_box(());
         });
     });
 
@@ -132,7 +132,7 @@ fn bench_status(c: &mut Criterion) {
         b.iter(|| {
             let (success, _duration) = run_omg(&["status"]);
             assert!(success, "OMG status should succeed");
-            black_box(())
+            black_box(());
         });
     });
 
@@ -141,7 +141,7 @@ fn bench_status(c: &mut Criterion) {
         b.iter(|| {
             let (success, _duration) = run_pacman(&["-Q"]);
             assert!(success, "Pacman -Q should succeed");
-            black_box(())
+            black_box(());
         });
     });
 
@@ -158,7 +158,7 @@ fn bench_update_check(c: &mut Criterion) {
         b.iter(|| {
             let (success, _duration) = run_omg(&["update", "--check"]);
             assert!(success, "OMG update check should succeed");
-            black_box(())
+            black_box(());
         });
     });
 
@@ -188,7 +188,7 @@ fn bench_comprehensive_comparison(c: &mut Criterion) {
             run_omg(&["search", "firefox"]);
             run_omg(&["info", "bash"]);
             run_omg(&["status"]);
-            black_box(())
+            black_box(());
         });
     });
 
@@ -197,7 +197,7 @@ fn bench_comprehensive_comparison(c: &mut Criterion) {
             run_pacman(&["-Ss", "firefox"]);
             run_pacman(&["-Si", "bash"]);
             run_pacman(&["-Q"]);
-            black_box(())
+            black_box(());
         });
     });
 
