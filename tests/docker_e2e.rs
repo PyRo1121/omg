@@ -176,9 +176,8 @@ fn test_docker_real_remove() {
     assert!(ensure_docker_image(), "Docker image not ready");
 
     // Install, remove, and verify in a single container
-    let (success, stdout, stderr) = run_script_in_docker(
-        "sudo omg install -y tree && sudo omg remove -y tree && ! which tree",
-    );
+    let (success, stdout, stderr) =
+        run_script_in_docker("sudo omg install -y tree && sudo omg remove -y tree && ! which tree");
 
     if !success {
         eprintln!("STDOUT: {stdout}");
