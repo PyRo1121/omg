@@ -88,7 +88,7 @@ jobs:
               - '.github/workflows/**'
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@1.92.0
+        uses: dtolnay/rust-toolchain@1.93.0
         with:
           components: rustfmt, clippy
 
@@ -134,7 +134,7 @@ jobs:
             setup: |
               pacman -Syu --noconfirm
               pacman -S --noconfirm --needed base-devel git pkgconf openssl libarchive clang cmake curl
-              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.92.0
+              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.93.0
               echo "$HOME/.cargo/bin" >> $GITHUB_PATH
               "$HOME/.cargo/bin/rustup" component add clippy rustfmt
 
@@ -146,7 +146,7 @@ jobs:
               DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
                 ca-certificates curl git build-essential pkg-config \
                 libssl-dev libapt-pkg-dev clang cmake zlib1g-dev liblzma-dev libbz2-dev
-              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.92.0
+              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.93.0
               echo "$HOME/.cargo/bin" >> $GITHUB_PATH
               "$HOME/.cargo/bin/rustup" component add clippy
 
@@ -159,7 +159,7 @@ jobs:
                 rpm dnf sqlite yum-utils fedora-release
               rpm --initdb
               dnf makecache --refresh
-              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.92.0
+              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.93.0
               echo "$HOME/.cargo/bin" >> $GITHUB_PATH
               "$HOME/.cargo/bin/rustup" component add clippy rustfmt
 
@@ -355,10 +355,10 @@ jobs:
             setup: |
               pacman -Syu --noconfirm
               pacman -S --noconfirm --needed base-devel git pkgconf openssl libarchive clang cmake curl
-              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.92.0 --component llvm-tools-preview
+              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.93.0 --component llvm-tools-preview
               echo "$HOME/.cargo/bin" >> $GITHUB_PATH
             test_args: "--lib --test arch_tests --test cross_platform_mock_tests"
-            
+
           - platform: debian
             os: ubuntu-latest
             container: debian:bookworm
@@ -368,10 +368,10 @@ jobs:
               DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
                 ca-certificates curl git build-essential pkg-config \
                 libssl-dev libapt-pkg-dev clang cmake zlib1g-dev liblzma-dev libbz2-dev
-              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.92.0 --component llvm-tools-preview
+              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.93.0 --component llvm-tools-preview
               echo "$HOME/.cargo/bin" >> $GITHUB_PATH
             test_args: "--lib --test debian_tests --test cross_platform_mock_tests"
-            
+
           - platform: fedora
             os: ubuntu-latest
             container: fedora:latest
@@ -382,7 +382,7 @@ jobs:
                 rpm dnf sqlite yum-utils fedora-release
               rpm --initdb
               dnf makecache --refresh
-              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.92.0 --component llvm-tools-preview
+              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.93.0 --component llvm-tools-preview
               echo "$HOME/.cargo/bin" >> $GITHUB_PATH
             test_args: "--lib --test fedora_tests --test cross_platform_mock_tests"
             
