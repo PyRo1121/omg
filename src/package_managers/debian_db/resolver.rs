@@ -597,7 +597,7 @@ impl DependencyResolver {
                 "Circular dependency detected. Unable to determine installation order for: {}",
                 missing
                     .iter()
-                    .map(String::as_str)
+                    .map(|s| s.as_str())
                     .collect::<Vec<_>>()
                     .join(", ")
             );
