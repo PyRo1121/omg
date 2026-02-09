@@ -51,6 +51,9 @@ jobs:
               cargo build --release --features arch --locked
             '
 
+      - name: Fix target directory permissions
+        run: sudo chown -R $(id -u):$(id -g) target/
+
       - name: Run Docker E2E Tests
         run: OMG_RUN_DOCKER_TESTS=1 cargo test --no-default-features --features pgp,license --test docker_e2e -- --test-threads=1
         env:
