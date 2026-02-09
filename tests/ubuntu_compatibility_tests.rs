@@ -449,7 +449,9 @@ fn test_ubuntu_package_url_all_components() {
         let url = repo.packages_url("amd64");
         assert_eq!(
             url,
-            format!("http://archive.ubuntu.com/ubuntu/dists/noble/{component}/binary-amd64/Packages")
+            format!(
+                "http://archive.ubuntu.com/ubuntu/dists/noble/{component}/binary-amd64/Packages"
+            )
         );
     }
 }

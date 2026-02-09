@@ -16,8 +16,7 @@ use std::time::Duration;
 
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
 use omg_lib::package_managers::debian_db::{
-    compare_versions, get_info_fast, get_package_dependencies,
-    list_installed_fast, search_fast,
+    compare_versions, get_info_fast, get_package_dependencies, list_installed_fast, search_fast,
 };
 
 /// Benchmark the search_fast function with various query patterns
@@ -214,7 +213,10 @@ fn bench_list_installed_variants(c: &mut Criterion) {
     group.bench_function("list_and_filter", |b| {
         b.iter(|| {
             let packages = list_installed_fast().expect("list should succeed");
-            let count = packages.iter().filter(|p| p.name.starts_with("lib")).count();
+            let count = packages
+                .iter()
+                .filter(|p| p.name.starts_with("lib"))
+                .count();
             std::hint::black_box(count)
         });
     });

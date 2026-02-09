@@ -667,7 +667,10 @@ fn bench_sources_parsing() {
     use std::fmt::Write;
     let mut large_sources = String::new();
     for i in 0..1000 {
-        let _ = writeln!(large_sources, "deb http://example.com/repo{i} bookworm main contrib non-free");
+        let _ = writeln!(
+            large_sources,
+            "deb http://example.com/repo{i} bookworm main contrib non-free"
+        );
     }
 
     let start = std::time::Instant::now();
