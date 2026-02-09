@@ -28,6 +28,24 @@ instead of failing, while still uploading benchmark results as artifacts.
 
 ### 🐛 Bug Fixes
 
+- Resolve 67 clippy errors in Debian test/bench targets
+
+  - Remove unnecessary raw string hashes (r#"..."# → r"...") across 4 files
+
+  - Inline format args in test assertions and bench code
+
+  - Add #[allow(clippy::cast_precision_loss)] for intentional f64 casts
+
+  - Move use-imports to top of function blocks (items_after_statements)
+
+  - Replace useless vec![] with array literals
+
+  - Fix unresolved imports (check_updates_available, smallvec)
+
+  - Add reasons to #[ignore] attributes
+
+  - Fix statement-with-no-effect and borrowed-expression lint
+
 - Docker E2E test ordering and root-skip readonly test
 
   - Use OnceLock to lazily build Docker image on first use, fixing
