@@ -11,6 +11,13 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ---
 
 ## [Unreleased]
+### Merge
+
+- Incorporate remote changelog update
+## [0.1.209] - 2026-02-09
+### Merge
+
+- Reconcile diverged telemetry branches (local is source of truth)
 ### ♻️  Refactoring
 
 - Code quality improvements and import cleanup
@@ -91,6 +98,58 @@ CLI integration:
 
   - license.rs: telemetry session management
 
+- Add admin dashboard and SEO infrastructure
+
+Dashboard Components:
+
+  - ActiveSessionsMap: Real-time user session visualization
+
+  - HealthScoreGauge: Customer health scoring display
+
+  - RealTimeCommandFeed: Live command activity feed
+
+  - User dashboard components
+
+Admin APIs:
+
+  - Analytics endpoints for usage metrics
+
+  - CRM endpoints for customer management
+
+  - Export endpoints for data reports
+
+  - Dashboard data aggregation
+
+- Production-grade telemetry with privacy controls
+
+Telemetry Core:
+
+  - AtomicU32/AtomicI64 for lock-free session tracking
+
+  - Circuit breaker pattern (5 failures → 5-min cooldown)
+
+  - Exponential backoff with ±25% jitter
+
+  - Bounded event queue with LRU eviction (5000 max)
+
+  - Periodic persistence (every 10 events or 30 seconds)
+
+Privacy & Compliance:
+
+  - GDPR/CCPA data deletion and export endpoints
+
+  - Privacy CLI: `omg telemetry status|opt-out|delete-data`
+
+  - Consent tracking with granular controls
+
+Worker Security:
+
+  - Rate limiting (100 events/min per license)
+
+  - Payload validation (100KB/event, 1MB/batch, 500 max)
+
+  - Request sanitization and input validation
+
 - Add tracing instrumentation to daemon handlers
 
   - Add #[instrument] to handle_request, handle_search, handle_info,
@@ -140,6 +199,52 @@ Multi-wave optimization across 70K lines using 12+ parallel agents:
   - 363 tests passing, clippy clean, fmt clean
 
 ### 🐛 Bug Fixes
+
+- License validation, machine sync, and code quality sweep
+
+License & Dashboard Fixes:
+
+  - Fix license activation "Machine limit reached (1)" by reading max_seats
+
+column (the actual column in omg-licensing DB) instead of max_machines
+
+  - Add machines array to validate-license API response for dashboard sync
+
+  - Add syncMachines() to sync-license endpoint: upserts machines from
+
+omg-licensing → omg-auth-db using drizzle ORM with conflict resolution
+
+  - Rename session → cli_session in migration 003 to avoid collision with
+
+Better Auth's own session table
+
+Clippy & Formatting:
+
+  - Fix 14+ clippy warnings in telemetry CLI: inline format args,
+
+replace redundant closures with method references, remove unnecessary
+
+borrows, collapse nested if-let chains
+
+  - Apply cargo fmt across 15+ files (telemetry, AUR client, daemon cache,
+
+config, DNF backend, usage tracking)
+
+Test Reliability:
+
+  - Add #[allow(unsafe_code)] and SAFETY comments to 6 tests using
+
+unsafe env::set_var for test isolation
+
+  - Fix flaky test_check_mode_never_prompts_for_password: match
+
+"Password:" and "password for" instead of any colon character
+
+  - Fix test_get_status_all_platforms: install a package before asserting
+
+package count > 0
+
+  - Relax daemon cache thresholds (1ms→10ms, 50%→25%) for CI stability
 
 - Force CLI password prompt, prevent GUI sudo dialogs
 
