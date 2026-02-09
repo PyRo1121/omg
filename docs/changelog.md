@@ -28,6 +28,20 @@ instead of failing, while still uploading benchmark results as artifacts.
 
 ### 🐛 Bug Fixes
 
+- Docker E2E stateless container and ANSI output issues
+
+  - Use run_script_in_docker() for install/remove tests to chain commands
+
+in a single container (each docker run --rm is ephemeral)
+
+  - Add strip_ansi() helper for reliable string matching against styled output
+
+  - Fix nonexistent package test: check output text instead of exit code
+
+(omg info exits 0 even for not-found packages)
+
+  - Add run_script_in_docker() helper using sh -c for multi-step tests
+
 - Resolve 67 clippy errors in Debian test/bench targets
 
   - Remove unnecessary raw string hashes (r#"..."# → r"...") across 4 files
