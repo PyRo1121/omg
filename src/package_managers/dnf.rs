@@ -571,7 +571,7 @@ impl DnfPackageManager {
     }
 
     /// Fetch packages from a repository
-    #[expect(clippy::unused_async)] // Reserved for future async HTTP fetching
+    #[allow(clippy::unused_async)] // Reserved for future async HTTP fetching
     async fn fetch_repo_packages(&self, repo: &RepoConfig) -> Result<Vec<RepoPackage>> {
         // This is a simplified implementation
         // Full implementation would:
@@ -623,7 +623,7 @@ impl DnfPackageManager {
     }
 
     /// Execute DNF command with privilege escalation if needed
-    #[expect(clippy::unused_async)] // May add async operations in future
+    #[allow(clippy::unused_async)] // May add async operations in future
     fn run_dnf(&self, args: &[&str]) -> Result<()> {
         let mut cmd = if is_root() {
             Command::new("dnf")
