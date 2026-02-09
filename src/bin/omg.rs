@@ -566,10 +566,10 @@ async fn track_command_analytics(cmd_start: std::time::Instant) {
     );
     omg_lib::core::analytics::maybe_heartbeat();
     omg_lib::core::analytics::maybe_flush().await;
-    omg_lib::core::usage::maybe_sync_background();
+    omg_lib::core::usage::sync_usage_now().await;
 
-    // Flush enhanced telemetry events if needed
-    omg_lib::core::telemetry::maybe_flush_background();
+    // Flush enhanced telemetry events
+    omg_lib::core::analytics::flush_events().await.ok();
 }
 
 fn handle_hooks_command(command: &omg_lib::cli::HooksCommands) -> Result<()> {
