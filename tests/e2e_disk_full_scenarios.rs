@@ -381,6 +381,21 @@ fn test_file_lock_protection() -> Result<()> {
 /// Test handling of read-only filesystem scenarios
 #[test]
 fn test_readonly_filesystem_handling() -> Result<()> {
+    // Root bypasses POSIX file permission checks on Linux, so this test
+    // is meaningless when running as root (e.g., in CI Docker containers)
+    #[cfg(unix)]
+    {
+        if std::process::Command::new("id")
+            .arg("-u")
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "0")
+            .unwrap_or(false)
+        {
+            eprintln!("Skipping: root bypasses read-only file permissions");
+            return Ok(());
+        }
+    }
+
     let temp_dir = TempDir::new()?;
     let file_path = temp_dir.path().join("readonly.txt");
 

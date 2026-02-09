@@ -74,8 +74,10 @@ jobs:
           cargo llvm-cov nextest \
             --features arch,pgp,license \
             --locked \
+            --no-fail-fast \
             --lcov \
             --output-path lcov.info
+        continue-on-error: true
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5

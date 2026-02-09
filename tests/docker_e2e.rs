@@ -6,6 +6,7 @@
 //! Run with: `OMG_RUN_DOCKER_TESTS=1 cargo test --test docker_e2e`
 
 use std::process::Command;
+use std::sync::OnceLock;
 use std::thread;
 
 fn require_docker_tests() {
@@ -51,6 +52,17 @@ fn build_docker_image() -> bool {
     status.success()
 }
 
+/// Lazily build the Docker image exactly once, regardless of test ordering.
+/// Tests run alphabetically, so we can't rely on `test_docker_setup` running first.
+static DOCKER_IMAGE_READY: OnceLock<bool> = OnceLock::new();
+
+fn ensure_docker_image() -> bool {
+    *DOCKER_IMAGE_READY.get_or_init(|| {
+        assert!(docker_available(), "Docker not available");
+        build_docker_image()
+    })
+}
+
 fn run_in_docker(cmd: &[&str]) -> (bool, String, String) {
     let output = Command::new("docker")
         .args(["run", "--rm", "omg-arch-e2e"])
@@ -69,13 +81,13 @@ fn run_in_docker(cmd: &[&str]) -> (bool, String, String) {
 fn test_docker_setup() {
     require_docker_tests();
 
-    assert!(docker_available(), "Docker not available");
-    assert!(build_docker_image(), "Failed to build Docker image");
+    assert!(ensure_docker_image(), "Failed to build Docker image");
 }
 
 #[test]
 fn test_docker_omg_search() {
     require_docker_tests();
+    assert!(ensure_docker_image(), "Docker image not ready");
 
     let (success, stdout, _stderr) = run_in_docker(&["omg", "search", "vim"]);
 
@@ -86,6 +98,7 @@ fn test_docker_omg_search() {
 #[test]
 fn test_docker_omg_info() {
     require_docker_tests();
+    assert!(ensure_docker_image(), "Docker image not ready");
 
     let (success, stdout, _stderr) = run_in_docker(&["omg", "info", "bash"]);
 
@@ -100,6 +113,7 @@ fn test_docker_omg_info() {
 #[test]
 fn test_docker_real_install() {
     require_docker_tests();
+    assert!(ensure_docker_image(), "Docker image not ready");
 
     // Install a small package (ripgrep is ~2MB)
     let (success, stdout, stderr) = run_in_docker(&["sudo", "omg", "install", "-y", "ripgrep"]);
@@ -124,6 +138,7 @@ fn test_docker_real_install() {
 #[test]
 fn test_docker_real_remove() {
     require_docker_tests();
+    assert!(ensure_docker_image(), "Docker image not ready");
 
     // Install first
     run_in_docker(&["sudo", "omg", "install", "-y", "which"]);
@@ -142,6 +157,7 @@ fn test_docker_real_remove() {
 #[test]
 fn test_docker_update_check() {
     require_docker_tests();
+    assert!(ensure_docker_image(), "Docker image not ready");
 
     // Update check should work without sudo
     let (success, _stdout, _stderr) = run_in_docker(&["omg", "update", "--check"]);
@@ -152,6 +168,7 @@ fn test_docker_update_check() {
 #[test]
 fn test_docker_explicit_packages() {
     require_docker_tests();
+    assert!(ensure_docker_image(), "Docker image not ready");
 
     let (success, stdout, _stderr) = run_in_docker(&["omg", "explicit"]);
 
@@ -166,6 +183,7 @@ fn test_docker_explicit_packages() {
 #[test]
 fn test_docker_status() {
     require_docker_tests();
+    assert!(ensure_docker_image(), "Docker image not ready");
 
     let (success, _stdout, _stderr) = run_in_docker(&["omg", "status"]);
 
@@ -175,6 +193,7 @@ fn test_docker_status() {
 #[test]
 fn test_docker_performance_vs_pacman() {
     require_docker_tests();
+    assert!(ensure_docker_image(), "Docker image not ready");
 
     // Compare search performance
     let start = std::time::Instant::now();
@@ -198,6 +217,7 @@ fn test_docker_performance_vs_pacman() {
 #[test]
 fn test_docker_concurrent_operations() {
     require_docker_tests();
+    assert!(ensure_docker_image(), "Docker image not ready");
 
     // Run multiple search operations concurrently
     let handles: Vec<_> = (0..4)
@@ -223,6 +243,7 @@ fn test_docker_concurrent_operations() {
 #[test]
 fn test_docker_nonexistent_package() {
     require_docker_tests();
+    assert!(ensure_docker_image(), "Docker image not ready");
 
     let (success, _stdout, stderr) = run_in_docker(&["omg", "info", "package-does-not-exist-xyz"]);
 
@@ -236,6 +257,7 @@ fn test_docker_nonexistent_package() {
 #[test]
 fn test_docker_install_removes_work_together() {
     require_docker_tests();
+    assert!(ensure_docker_image(), "Docker image not ready");
 
     // Install
     let (install_success, _, _) = run_in_docker(&["sudo", "omg", "install", "-y", "tree"]);
