@@ -133,6 +133,7 @@ jobs:
           cat benchmark-badge.json
 
       - name: Upload Benchmark Report
+        continue-on-error: true
         uses: actions/upload-artifact@v6
         with:
           name: benchmark-report
