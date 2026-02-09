@@ -15,7 +15,7 @@ OMG is the unified dev tool you've been waiting for. **One command** replaces `p
 **Getting Started:** [Install](docs/installation.md) • [Quick Start](docs/quickstart.md) • [FAQ](docs/faq.md)  
 **Reference:** [CLI](docs/cli.md) • [Config](docs/configuration.md) • [Runtimes](docs/runtimes.md)  
 **Advanced:** [Security](docs/security.md) • [Team](docs/team.md) • [CI/CD](docs/ci-cd-best-practices-2025.md)  
-**Performance:** [Benchmark Results](BENCHMARK-RESULTS.md) • [Optimization Guide](SESSION-SUMMARY.md)  
+**Performance:** [Benchmarks](#-benchmarks) • [Architecture](#️-architecture)
 **Help:** [Troubleshooting](docs/troubleshooting.md) • [Changelog](docs/changelog.md)
 
 ## The Numbers That Matter
@@ -358,8 +358,8 @@ Want to reproduce these numbers?
 curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/benchmark.sh | bash
 ```
 
-**📊 Detailed Analysis**  
-For comprehensive benchmark methodology, statistical analysis, and optimization breakdown, see **[BENCHMARK-RESULTS.md](BENCHMARK-RESULTS.md)** (latest hyperfine benchmarks with 400+ iterations).
+**📊 Detailed Analysis**
+See the [latest benchmark report](benchmarks/latest.md) for comprehensive methodology and statistical analysis.
 
 ---
 
@@ -522,7 +522,7 @@ See [NOTICE](NOTICE) and [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md) for 
 ### Files
 
 - [`LICENSE`](LICENSE) - Full license terms
-- [`COMMERCIAL-LICENSE`](COMMERCIAL-LICENSE.md) - Pricing and purchasing
+- [`COMMERCIAL-LICENSE.md`](COMMERCIAL-LICENSE.md) - Pricing and purchasing
 - [`NOTICE`](NOTICE) - Copyright and third-party notices
 - [`THIRD-PARTY-LICENSES.md`](THIRD-PARTY-LICENSES.md) - Third-party licenses
 
