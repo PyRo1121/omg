@@ -28,6 +28,20 @@ instead of failing, while still uploading benchmark results as artifacts.
 
 ### 🐛 Bug Fixes
 
+- **Clippy**: Resolve all pedantic warnings across platform builds
+
+  - Use #[allow] instead of #[expect] for feature-gated lints that may
+
+or may not fire depending on platform/feature flags
+
+  - Add #[cfg(unix)]/#[cfg(not(unix))] guards to daemon IPC code
+
+  - Fix uninlined_format_args, useless_vec, redundant_clone, collapsible_if,
+
+boolean_simplification across 13 test files
+
+  - Add #[allow(clippy::unused_async)] to #[cfg(not(feature = "pgp"))] stub
+
 - **Fedora**: Use #[allow] instead of #[expect] for conditional async lint
 
 When the fedora feature is enabled, these functions may contain real async
