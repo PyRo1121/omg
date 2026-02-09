@@ -162,13 +162,17 @@ fn bench_compression_formats_comparison(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(10));
 
     // Report compression ratios
+    #[allow(clippy::cast_precision_loss)]
+    let xz_ratio = test_data.len() as f64 / xz_compressed.len() as f64;
+    #[allow(clippy::cast_precision_loss)]
+    let zstd_ratio = test_data.len() as f64 / zstd_compressed.len() as f64;
+    #[allow(clippy::cast_precision_loss)]
+    let gzip_ratio = test_data.len() as f64 / gzip_compressed.len() as f64;
+
     println!(
-        "\nCompression ratios (1MB test data):\n  XZ:   {:.2}x ({} bytes)\n  Zstd: {:.2}x ({} bytes)\n  Gzip: {:.2}x ({} bytes)",
-        test_data.len() as f64 / xz_compressed.len() as f64,
+        "\nCompression ratios (1MB test data):\n  XZ:   {xz_ratio:.2}x ({} bytes)\n  Zstd: {zstd_ratio:.2}x ({} bytes)\n  Gzip: {gzip_ratio:.2}x ({} bytes)",
         xz_compressed.len(),
-        test_data.len() as f64 / zstd_compressed.len() as f64,
         zstd_compressed.len(),
-        test_data.len() as f64 / gzip_compressed.len() as f64,
         gzip_compressed.len()
     );
 

@@ -27,14 +27,14 @@ use omg_lib::package_managers::debian_db::{
 
 #[test]
 fn test_parse_simple_sources_list() {
-    let content = r#"
+    let content = r"
 # Main repository
 deb http://deb.debian.org/debian bookworm main contrib non-free non-free-firmware
 deb-src http://deb.debian.org/debian bookworm main
 
 # Security updates
 deb http://security.debian.org/debian-security bookworm-security main contrib non-free
-"#;
+";
 
     let repos = parse_sources_list_content(content, Path::new("/etc/apt/sources.list")).unwrap();
 
@@ -59,10 +59,10 @@ deb http://security.debian.org/debian-security bookworm-security main contrib no
 
 #[test]
 fn test_parse_sources_with_options() {
-    let content = r#"
+    let content = r"
 deb [arch=amd64 signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] http://deb.debian.org/debian bookworm main
 deb [arch=arm64,armhf] https://example.com/repo stable main
-"#;
+";
 
     let repos = parse_sources_list_content(content, Path::new("/test")).unwrap();
 
@@ -85,10 +85,10 @@ deb [arch=arm64,armhf] https://example.com/repo stable main
 
 #[test]
 fn test_parse_disabled_source() {
-    let content = r#"
+    let content = r"
 deb http://example.com/enabled stable main
 # deb http://example.com/disabled unstable main
-"#;
+";
 
     let repos = parse_sources_list_content(content, Path::new("/test")).unwrap();
 
@@ -98,13 +98,13 @@ deb http://example.com/enabled stable main
 
 #[test]
 fn test_parse_deb822_format() {
-    let content = r#"
+    let content = r"
 Types: deb deb-src
 URIs: http://deb.debian.org/debian
 Suites: bookworm bookworm-updates
 Components: main contrib non-free
 Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
-"#;
+";
 
     let repos = parse_deb822_content(content, Path::new("/test.sources")).unwrap();
 
@@ -125,13 +125,13 @@ Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
 
 #[test]
 fn test_parse_deb822_disabled() {
-    let content = r#"
+    let content = r"
 Types: deb
 URIs: http://example.com/repo
 Suites: stable
 Components: main
 Enabled: no
-"#;
+";
 
     let repos = parse_deb822_content(content, Path::new("/test.sources")).unwrap();
 
@@ -141,7 +141,7 @@ Enabled: no
 
 #[test]
 fn test_parse_deb822_multiple_stanzas() {
-    let content = r#"
+    let content = r"
 Types: deb
 URIs: http://deb.debian.org/debian
 Suites: bookworm
@@ -151,7 +151,7 @@ Types: deb
 URIs: http://security.debian.org/debian-security
 Suites: bookworm-security
 Components: main
-"#;
+";
 
     let repos = parse_deb822_content(content, Path::new("/test.sources")).unwrap();
 
@@ -163,7 +163,7 @@ Components: main
 #[test]
 fn test_parse_mixed_format_sources() {
     // Test that we handle edge cases like empty lines, comments, malformed lines
-    let content = r#"
+    let content = r"
 
 # Comment at the start
 deb http://example.com/repo stable main
@@ -176,7 +176,7 @@ deb-src http://example.com/repo stable main
    # Indented comment
 deb [arch=amd64] http://example.com/special testing main
 
-"#;
+";
 
     let repos = parse_sources_list_content(content, Path::new("/test")).unwrap();
 
@@ -542,10 +542,10 @@ fn test_end_to_end_sources_to_resolver() {
     let temp_dir = TempDir::new().unwrap();
     let sources_file = temp_dir.path().join("sources.list");
 
-    let content = r#"
+    let content = r"
 deb http://deb.debian.org/debian bookworm main
 deb http://security.debian.org/debian-security bookworm-security main
-"#;
+";
 
     fs::write(&sources_file, content).unwrap();
 
@@ -607,11 +607,11 @@ fn test_full_workflow_search_resolve_transaction() {
 
 #[test]
 fn test_sources_parser_handles_malformed_input() {
-    let malformed = r#"
+    let malformed = r"
 This is not a valid sources.list file
 It has random text
 And no valid entries
-"#;
+";
 
     let repos = parse_sources_list_content(malformed, Path::new("/test")).unwrap();
     assert_eq!(repos.len(), 0, "Should handle malformed input gracefully");
@@ -619,11 +619,11 @@ And no valid entries
 
 #[test]
 fn test_deb822_parser_handles_incomplete_stanza() {
-    let incomplete = r#"
+    let incomplete = r"
 Types: deb
 URIs: http://example.com/repo
 # Missing Suites and Components
-"#;
+";
 
     let repos = parse_deb822_content(incomplete, Path::new("/test.sources")).unwrap();
     assert_eq!(repos.len(), 0, "Should skip incomplete stanzas");
@@ -643,7 +643,7 @@ fn test_version_comparison_handles_invalid_input() {
 // ============================================================================
 
 #[test]
-#[ignore] // Run with --ignored flag
+#[ignore = "manual benchmark - run with --ignored flag"]
 #[cfg(feature = "docker_tests")]
 fn bench_version_comparison() {
     let start = std::time::Instant::now();
@@ -654,37 +654,31 @@ fn bench_version_comparison() {
     }
 
     let elapsed = start.elapsed();
+    #[allow(clippy::cast_precision_loss)]
+    let ns_per_iter = elapsed.as_nanos() as f64 / iterations as f64;
     println!(
-        "Version comparisons: {} iterations in {:?} ({:.2} ns/iter)",
-        iterations,
-        elapsed,
-        elapsed.as_nanos() as f64 / iterations as f64
+        "Version comparisons: {iterations} iterations in {elapsed:?} ({ns_per_iter:.2} ns/iter)"
     );
 }
 
 #[test]
-#[ignore]
+#[ignore = "manual benchmark - run with --ignored flag"]
 fn bench_sources_parsing() {
-    let large_sources = (0..1000)
-        .map(|i| {
-            format!(
-                "deb http://example.com/repo{} bookworm main contrib non-free\n",
-                i
-            )
-        })
-        .collect::<String>();
+    use std::fmt::Write;
+    let mut large_sources = String::new();
+    for i in 0..1000 {
+        let _ = writeln!(large_sources, "deb http://example.com/repo{i} bookworm main contrib non-free");
+    }
 
     let start = std::time::Instant::now();
 
     let repos = parse_sources_list_content(&large_sources, Path::new("/test")).unwrap();
 
     let elapsed = start.elapsed();
-    println!(
-        "Parsed {} repositories in {:?} ({:.2} µs/repo)",
-        repos.len(),
-        elapsed,
-        elapsed.as_micros() as f64 / repos.len() as f64
-    );
+    #[allow(clippy::cast_precision_loss)]
+    let us_per_repo = elapsed.as_micros() as f64 / repos.len() as f64;
+    let len = repos.len();
+    println!("Parsed {len} repositories in {elapsed:?} ({us_per_repo:.2} µs/repo)");
 }
 
 // ============================================================================
@@ -737,7 +731,8 @@ fn test_cli_search_on_debian() {
     }
 
     let result = run_omg_cli(&["search", "curl"]);
-    result.success; // May or may not succeed depending on setup
+    // May or may not succeed depending on setup - just check it doesn't panic
+    let _ = result.success;
 
     let combined = format!("{}{}", result.stdout, result.stderr);
     assert!(
@@ -1041,8 +1036,7 @@ fn test_cli_debian_performance_search() {
     // Search should be reasonably fast
     assert!(
         elapsed.as_secs() < 15,
-        "Search should complete in under 15s, took {:?}",
-        elapsed
+        "Search should complete in under 15s, took {elapsed:?}"
     );
 }
 
@@ -1106,13 +1100,12 @@ fn test_cli_debian_error_recovery() {
 
     // Test error recovery by running multiple failing commands
     for i in 0..5 {
-        let result = run_omg_cli(&["install", "-y", &format!("fake-pkg-{}", i)]);
+        let result = run_omg_cli(&["install", "-y", &format!("fake-pkg-{i}")]);
         let combined = format!("{}{}", result.stdout, result.stderr);
 
         assert!(
             !combined.contains("panicked"),
-            "Should recover from errors gracefully on iteration {}",
-            i
+            "Should recover from errors gracefully on iteration {i}"
         );
     }
 }
@@ -1139,24 +1132,23 @@ fn test_cli_debian_full_workflow() {
 
         assert!(
             !combined.contains("panicked"),
-            "Command {:?} should not panic",
-            cmd
+            "Command {cmd:?} should not panic"
         );
     }
 }
 
 #[test]
 fn test_cli_debian_concurrent_operations() {
+    use std::thread;
+
     if !is_debian_or_ubuntu() {
         eprintln!("Skipping: not on Debian/Ubuntu");
         return;
     }
 
-    use std::thread;
-
     // Test concurrent CLI invocations
     let handles: Vec<_> = (0..3)
-        .map(|i| thread::spawn(move || run_omg_cli(&["search", &format!("pkg-{}", i)])))
+        .map(|i| thread::spawn(move || run_omg_cli(&["search", &format!("pkg-{i}")])))
         .collect();
 
     for handle in handles {
@@ -1202,7 +1194,7 @@ fn test_cli_debian_respects_ci_mode() {
     }
 
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_omg"));
-    cmd.args(&["install", "curl"])
+    cmd.args(["install", "curl"])
         .env("OMG_TEST_MODE", "1")
         .env("OMG_DISABLE_DAEMON", "1")
         .env("CI", "1")
@@ -1238,8 +1230,7 @@ fn test_cli_debian_package_name_validation() {
 
         assert!(
             !combined.contains("panicked"),
-            "Should handle package name: {}",
-            name
+            "Should handle package name: {name}"
         );
     }
 }

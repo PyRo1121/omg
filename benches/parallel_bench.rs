@@ -29,6 +29,7 @@ fn bench_parallel_stream_buffering(c: &mut Criterion) {
     let item_count = 100;
 
     for concurrency in concurrency_levels {
+        #[allow(clippy::cast_possible_truncation)]
         group.throughput(Throughput::Elements(item_count as u64));
         group.bench_with_input(
             BenchmarkId::new("buffer_unordered", concurrency),
@@ -70,6 +71,7 @@ fn bench_parallel_rayon_processing(c: &mut Criterion) {
     let item_counts = vec![10, 50, 100, 500, 1000];
 
     for count in item_counts {
+        #[allow(clippy::cast_possible_truncation)]
         group.throughput(Throughput::Elements(count as u64));
         group.bench_with_input(BenchmarkId::new("par_iter_map", count), &count, |b, &n| {
             b.iter(|| {
@@ -130,6 +132,7 @@ fn bench_parallel_batch_sizes(c: &mut Criterion) {
     let total_items = 256;
 
     for batch_size in batch_sizes {
+        #[allow(clippy::cast_possible_truncation)]
         group.throughput(Throughput::Elements(total_items as u64));
         group.bench_with_input(
             BenchmarkId::new("batched_processing", batch_size),
@@ -169,6 +172,7 @@ fn bench_parallel_channel_throughput(c: &mut Criterion) {
     let message_count = 1000;
 
     for buffer_size in buffer_sizes {
+        #[allow(clippy::cast_possible_truncation)]
         group.throughput(Throughput::Elements(message_count as u64));
         group.bench_with_input(
             BenchmarkId::new("mpsc_channel", buffer_size),
@@ -207,14 +211,13 @@ fn bench_parallel_channel_throughput(c: &mut Criterion) {
 
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
 fn bench_parallel_concurrent_downloads(c: &mut Criterion) {
+    use futures::stream::{self, StreamExt};
+
     let rt = tokio::runtime::Runtime::new().unwrap();
 
     let mut group = c.benchmark_group("concurrent_downloads");
     group.measurement_time(Duration::from_secs(20));
     group.sample_size(20);
-
-    // Simulate concurrent download operations
-    use futures::stream::{self, StreamExt};
 
     let concurrency_levels = vec![8, 16, 24, 32, 48, 64];
     let download_count = 50;
@@ -283,6 +286,7 @@ fn bench_parallel_decompression_workers(c: &mut Criterion) {
                                     // Simulate decompression work (CPU-intensive)
                                     let mut data = Vec::with_capacity(1024);
                                     for j in 0..1024 {
+                                        #[allow(clippy::cast_possible_truncation)]
                                         let value = ((i * 31) + j) as u8;
                                         data.push(value);
                                     }

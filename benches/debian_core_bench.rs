@@ -16,7 +16,7 @@ use std::time::Duration;
 
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
 use omg_lib::package_managers::debian_db::{
-    check_updates_available, compare_versions, get_info_fast, get_package_dependencies,
+    compare_versions, get_info_fast, get_package_dependencies,
     list_installed_fast, search_fast,
 };
 
@@ -214,29 +214,21 @@ fn bench_list_installed_variants(c: &mut Criterion) {
     group.bench_function("list_and_filter", |b| {
         b.iter(|| {
             let packages = list_installed_fast().expect("list should succeed");
-            let filtered: Vec<_> = packages.iter().filter(|p| p.starts_with("lib")).collect();
-            std::hint::black_box(filtered)
+            let count = packages.iter().filter(|p| p.name.starts_with("lib")).count();
+            std::hint::black_box(count)
         });
     });
 
     group.finish();
 }
 
-/// Benchmark check_updates_available with realistic scenarios
+/// Benchmark update checks with realistic scenarios
+/// Note: check_updates_available is not yet implemented in debian_db
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
-fn bench_update_check(c: &mut Criterion) {
-    let mut group = c.benchmark_group("debian_update_check");
-    group.measurement_time(Duration::from_secs(20));
-    group.sample_size(30);
-
-    group.bench_function("check_all_updates", |b| {
-        b.iter(|| {
-            let updates = check_updates_available().expect("update check should succeed");
-            std::hint::black_box(updates)
-        });
-    });
-
-    group.finish();
+#[allow(clippy::missing_const_for_fn)]
+fn bench_update_check(_c: &mut Criterion) {
+    // TODO: Implement when check_updates_available is added to debian_db
+    // For now, this benchmark is a no-op
 }
 
 /// Benchmark FST index operations if available
@@ -353,20 +345,6 @@ fn bench_memory_patterns(c: &mut Criterion) {
             b.iter(|| {
                 let mut packages = Vec::new();
                 for i in 0..n {
-                    packages.push(format!("package-{i}"));
-                }
-                std::hint::black_box(packages)
-            });
-        });
-
-        // SmallVec (for small collections)
-        use smallvec::SmallVec;
-
-        group.bench_with_input(BenchmarkId::new("smallvec_8", size), &size, |b, &n| {
-            b.iter(|| {
-                let mut packages: SmallVec<[String; 8]> = SmallVec::new();
-                for i in 0..n.min(20) {
-                    // Limit to avoid excessive stack usage
                     packages.push(format!("package-{i}"));
                 }
                 std::hint::black_box(packages)

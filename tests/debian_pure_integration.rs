@@ -48,5 +48,5 @@ fn test_pure_debian_search_mock() {
     let pm = omg_lib::package_managers::debian_pure::PureDebianPackageManager::new();
 
     // This will likely return empty list on non-Debian systems but should not panic
-    let _ = pm.search("bash");
+    let _result = pm.search("bash");
 }

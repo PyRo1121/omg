@@ -106,7 +106,7 @@ fn bench_install_transaction_creation(c: &mut Criterion) {
                         DependencyResolver::new().expect("resolver creation should succeed");
 
                     // Add n packages
-                    let packages = vec!["vim", "curl", "git", "htop", "tmux"];
+                    let packages = ["vim", "curl", "git", "htop", "tmux"];
                     for pkg in packages.iter().take(n) {
                         let _ = resolver.add_package(pkg);
                     }
@@ -153,16 +153,16 @@ fn bench_install_dependency_graph_sizes(c: &mut Criterion) {
 
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
 fn bench_install_batch_processing(c: &mut Criterion) {
+    use std::collections::HashSet;
+
     let mut group = c.benchmark_group("batch_processing");
     group.measurement_time(Duration::from_secs(15));
     group.sample_size(30);
 
-    // Simulate batch processing of package actions
-    use std::collections::HashSet;
-
     let batch_sizes = vec![1, 5, 10, 20, 50];
 
     for size in batch_sizes {
+        #[allow(clippy::cast_sign_loss)]
         group.throughput(Throughput::Elements(size as u64));
         group.bench_with_input(BenchmarkId::new("batch_collect", size), &size, |b, &n| {
             b.iter(|| {
@@ -200,7 +200,7 @@ fn bench_install_conflict_detection(c: &mut Criterion) {
                     let mut resolver =
                         DependencyResolver::new().expect("resolver creation should succeed");
 
-                    let packages = vec!["vim", "curl", "git", "htop", "tmux"];
+                    let packages = ["vim", "curl", "git", "htop", "tmux"];
                     for pkg in packages.iter().take(n) {
                         let _ = resolver.add_package(pkg);
                     }
