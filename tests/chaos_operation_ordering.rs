@@ -5,7 +5,12 @@
 //!
 //! Run: `cargo test --test chaos_operation_ordering`
 
-#![allow(clippy::unwrap_used, clippy::cast_precision_loss, clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_truncation
+)]
 
 use proptest::prelude::*;
 use std::collections::HashSet;
