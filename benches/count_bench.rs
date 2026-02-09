@@ -3,10 +3,11 @@
 //! Tests the performance of optimized counting functions
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use std::hint::black_box;
 
 #[cfg(feature = "arch")]
 fn bench_count_operations(c: &mut Criterion) {
+    use std::hint::black_box;
+
     let mut group = c.benchmark_group("count_operations");
     group.measurement_time(std::time::Duration::from_secs(10));
 

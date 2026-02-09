@@ -3,7 +3,7 @@
 //! Tests algebraic properties of version ordering that must hold
 //! for correct dependency resolution and update detection.
 //!
-//! Run: cargo test --test property_version_advanced --features arch
+//! Run: `cargo test --test property_version_advanced --features arch`
 
 #![cfg(feature = "arch")]
 #![allow(clippy::unwrap_used)]

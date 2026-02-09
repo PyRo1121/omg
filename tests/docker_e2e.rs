@@ -3,9 +3,10 @@
 //! These tests run actual install/remove operations in Docker containers
 //! to verify real system integration without modifying the host.
 //!
-//! Run with: OMG_RUN_DOCKER_TESTS=1 cargo test --test docker_e2e
+//! Run with: `OMG_RUN_DOCKER_TESTS=1 cargo test --test docker_e2e`
 
 use std::process::Command;
+use std::thread;
 
 fn require_docker_tests() {
     if std::env::var("OMG_RUN_DOCKER_TESTS") != Ok("1".to_string()) {
@@ -199,8 +200,6 @@ fn test_docker_concurrent_operations() {
     require_docker_tests();
 
     // Run multiple search operations concurrently
-    use std::thread;
-
     let handles: Vec<_> = (0..4)
         .map(|i| {
             thread::spawn(move || {

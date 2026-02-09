@@ -696,6 +696,6 @@ mod tests {
     fn test_backoff_max_delay_cap() {
         // Very high attempt number should be capped at MAX_DELAY_MS
         let delay = calculate_backoff_delay(20);
-        assert!(delay.as_millis() <= MAX_DELAY_MS as u128 * 125 / 100); // Max + 25% jitter
+        assert!(delay.as_millis() <= u128::from(MAX_DELAY_MS) * 125 / 100); // Max + 25% jitter
     }
 }

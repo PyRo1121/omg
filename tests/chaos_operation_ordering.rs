@@ -3,9 +3,9 @@
 //! Tests that OMG handles arbitrary operation sequences without crashes,
 //! corruption, or inconsistent state.
 //!
-//! Run: cargo test --test chaos_operation_ordering
+//! Run: `cargo test --test chaos_operation_ordering`
 
-#![allow(clippy::unwrap_used)]
+#![allow(clippy::unwrap_used, clippy::cast_precision_loss, clippy::cast_sign_loss, clippy::cast_possible_truncation)]
 
 use proptest::prelude::*;
 use std::collections::HashSet;
@@ -147,7 +147,7 @@ proptest! {
 
     #[test]
     fn prop_install_remove_idempotent(
-        pkg in prop::sample::select(vec!["firefox", "rust", "python", "git"]).prop_map(|s| s.to_string())
+        pkg in prop::sample::select(vec!["firefox", "rust", "python", "git"]).prop_map(std::string::ToString::to_string)
     ) {
         let mut state = SystemState::new();
 
@@ -196,17 +196,15 @@ proptest! {
         let max_len = ops1.len().max(ops2.len());
 
         for i in 0..max_len {
-            if i < ops1.len() {
-                if let Operation::Install(pkg) = &ops1[i] {
+            if i < ops1.len()
+                && let Operation::Install(pkg) = &ops1[i] {
                     state.install(pkg);
                 }
-            }
 
-            if i < ops2.len() {
-                if let Operation::Remove(pkg) = &ops2[i] {
+            if i < ops2.len()
+                && let Operation::Remove(pkg) = &ops2[i] {
                     state.remove(pkg);
                 }
-            }
 
             // Invariant: no duplicates
             let unique = state.installed.iter().collect::<HashSet<_>>().len();
@@ -227,7 +225,7 @@ struct SystemState {
 }
 
 impl SystemState {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self {
             installed: Vec::new(),
             operation_count: 0,
@@ -290,14 +288,13 @@ impl SystemState {
         self.operation_count += 1;
 
         // Mock: "update" 10% of installed packages
-        let update_count = (self.installed.len() as f64 * 0.1).ceil() as usize;
-        update_count
+        (self.installed.len() as f64 * 0.1).ceil() as usize
     }
 
-    fn info(&mut self, _pkg: &str) -> Option<String> {
+    fn info(&mut self, _pkg: &str) -> String {
         self.operation_count += 1;
         // Mock: return some info
-        Some("Package info".to_string())
+        "Package info".to_string()
     }
 
     fn list_installed(&mut self) -> Vec<String> {
@@ -366,7 +363,7 @@ fn test_many_packages() {
 
     // Install many packages
     for i in 0..1000 {
-        let pkg_name = format!("pkg-{}", i);
+        let pkg_name = format!("pkg-{i}");
         assert!(state.install(&pkg_name));
     }
 
@@ -374,7 +371,7 @@ fn test_many_packages() {
 
     // Remove all
     for i in 0..1000 {
-        let pkg_name = format!("pkg-{}", i);
+        let pkg_name = format!("pkg-{i}");
         assert!(state.remove(&pkg_name));
     }
 

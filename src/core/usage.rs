@@ -167,7 +167,7 @@ pub struct UsageStats {
     /// First use date
     #[serde(default)]
     pub first_use_date: String,
-    /// Daily installs (resets daily, same as queries_today)
+    /// Daily installs (resets daily, same as `queries_today`)
     #[serde(default)]
     pub installs_today: u64,
     /// Daily searches (resets daily)

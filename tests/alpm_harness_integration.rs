@@ -1,6 +1,6 @@
 //! ALPM Integration Tests Using Harness
 //!
-//! These tests use the AlpmHarness to test real ALPM operations
+//! These tests use the `AlpmHarness` to test real ALPM operations
 //! in an isolated environment without modifying the system.
 
 #![cfg(feature = "arch")]

@@ -224,7 +224,7 @@ impl MockPackageManager {
     }
 
     // Used only when arch feature is disabled
-    #[expect(dead_code)] // Mock implementation field; used in test fixtures
+    #[allow(dead_code)] // Mock implementation field; used in test fixtures
     fn is_newer(old: &str, new: &str) -> bool {
         matches!(old.cmp(new), std::cmp::Ordering::Less)
     }

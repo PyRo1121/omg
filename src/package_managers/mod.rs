@@ -211,7 +211,7 @@ pub fn get_package_manager() -> anyhow::Result<Arc<dyn PackageManager>> {
                 feature = "windows"
             )))]
             #[cfg(not(target_os = "macos"))]
-            #[expect(unreachable_code)]
+            #[allow(unreachable_code)]
             {
                 anyhow::bail!(
                     "No package manager backend enabled! Build with --features arch, debian, fedora, or windows"

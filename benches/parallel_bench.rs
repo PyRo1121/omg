@@ -1,7 +1,7 @@
 //! Debian Parallel Operations Benchmarks
 //!
 //! Tests different concurrency levels for downloads and unpacking to determine
-//! optimal settings for MAX_CONCURRENT values.
+//! optimal settings for `MAX_CONCURRENT` values.
 //!
 //! Run with: `cargo bench --features debian-pure --bench parallel_bench`
 

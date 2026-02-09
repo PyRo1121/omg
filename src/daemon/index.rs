@@ -21,6 +21,7 @@ struct PackageBloomFilter {
     num_bits: usize,
 }
 
+#[allow(dead_code)]
 impl PackageBloomFilter {
     /// Create bloom filter with optimal size for expected package count
     fn new(expected_items: usize) -> Self {
@@ -72,12 +73,14 @@ impl PackageBloomFilter {
 /// Each interned string is stored once in a contiguous byte buffer; the
 /// returned handle packs both the byte offset and length into a single u64.
 #[derive(Default)]
+#[allow(dead_code)]
 struct StringPool {
     pool: Vec<u8>,
     offsets: AHashMap<String, u64>,
 }
 
 /// Pack a 32-bit offset and 32-bit length into a single u64 handle.
+#[allow(dead_code)]
 const fn pack(offset: u32, len: u32) -> u64 {
     (offset as u64) | ((len as u64) << 32)
 }
@@ -87,6 +90,7 @@ const fn unpack(handle: u64) -> (u32, u32) {
     (handle as u32, (handle >> 32) as u32)
 }
 
+#[allow(dead_code)]
 impl StringPool {
     fn intern(&mut self, s: &str) -> u64 {
         if let Some(&handle) = self.offsets.get(s) {

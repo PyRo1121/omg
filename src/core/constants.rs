@@ -149,6 +149,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::cast_possible_wrap)]
     fn test_session_timeout_consistency() {
         assert_eq!(session::TIMEOUT.as_secs() as i64, session::timeout_secs());
     }

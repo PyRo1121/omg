@@ -215,6 +215,7 @@ impl Transaction {
     }
 
     #[cfg(not(feature = "arch"))]
+    #[allow(clippy::unused_async)]
     async fn remove_package(&self, package: &str) -> Result<()> {
         tracing::warn!(
             "Rollback remove not implemented for this platform: {}",
@@ -242,6 +243,7 @@ impl Transaction {
     }
 
     #[cfg(not(feature = "arch"))]
+    #[allow(clippy::unused_async)]
     async fn install_package(&self, package: &str, version: &Version) -> Result<()> {
         tracing::warn!(
             "Rollback install not implemented for this platform: {}-{}",
@@ -273,6 +275,7 @@ impl Transaction {
 
     #[cfg(not(feature = "arch"))]
     #[expect(dead_code)] // Only called from arch-specific code path
+    #[allow(clippy::unused_async)]
     async fn install_local_package(&self, _path: &std::path::Path) -> Result<()> {
         tracing::warn!("Rollback install_local not implemented for this platform");
         Ok(())

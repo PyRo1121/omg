@@ -85,6 +85,7 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
     #[cfg(not(feature = "arch"))]
     let skip_sync = check_only || dry_run;
     #[cfg(not(feature = "arch"))]
+    #[allow(unused_variables)]
     let needs_deferred_sync = false;
 
     if check_only || dry_run {
