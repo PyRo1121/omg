@@ -33,8 +33,7 @@ fn test_privacy_status_default() {
     let output = result.combined_output();
     assert!(
         output.contains("privacy") || output.contains("Privacy"),
-        "Output should mention privacy: {}",
-        output
+        "Output should mention privacy: {output}"
     );
 }
 
@@ -61,8 +60,7 @@ fn test_privacy_status_explicit() {
             || output.contains("data")
             || output.contains("telemetry")
             || output.contains("rights"),
-        "Status should show privacy information: {}",
-        output
+        "Status should show privacy information: {output}"
     );
 }
 
@@ -85,8 +83,7 @@ fn test_privacy_status_shows_commands() {
 
     assert!(
         has_commands,
-        "Status should show available privacy commands: {}",
-        output
+        "Status should show available privacy commands: {output}"
     );
 }
 
@@ -134,8 +131,7 @@ fn test_privacy_export_without_license() {
     let output = result.combined_output();
     assert!(
         !result.success || output.contains("license") || output.contains("activate"),
-        "Export without license should fail or request activation: {}",
-        output
+        "Export without license should fail or request activation: {output}"
     );
 }
 
@@ -160,8 +156,7 @@ fn test_privacy_export_with_output_flag() {
     let output = result.combined_output();
     assert!(
         output.contains("export") || output.contains("license") || output.contains("activate"),
-        "Should process export command: {}",
-        output
+        "Should process export command: {output}"
     );
 }
 
@@ -211,8 +206,7 @@ fn test_privacy_delete_without_confirm() {
             || output.contains("permanently")
             || output.contains("delete")
             || output.contains("license"),
-        "Should warn about deletion or license requirement: {}",
-        output
+        "Should warn about deletion or license requirement: {output}"
     );
 }
 
@@ -237,8 +231,7 @@ fn test_privacy_delete_shows_warning_details() {
 
     assert!(
         has_details,
-        "Should show delete-related output or license requirement: {}",
-        output
+        "Should show delete-related output or license requirement: {output}"
     );
 }
 
@@ -256,8 +249,7 @@ fn test_privacy_delete_with_confirm_no_license() {
     let output = result.combined_output();
     assert!(
         !result.success || output.contains("license") || output.contains("activate"),
-        "Delete should require license: {}",
-        output
+        "Delete should require license: {output}"
     );
 }
 
@@ -303,8 +295,7 @@ fn test_privacy_opt_out() {
             || output.contains("opt")
             || output.contains("telemetry")
             || result.success,
-        "Opt-out should work and confirm telemetry disabled: {}",
-        output
+        "Opt-out should work and confirm telemetry disabled: {output}"
     );
 }
 
@@ -325,8 +316,7 @@ fn test_privacy_opt_out_updates_config() {
             || output.contains("telemetry")
             || output.contains("local")
             || output.contains("opt-out"),
-        "Opt-out should process (local or server-synced): {}",
-        output
+        "Opt-out should process (local or server-synced): {output}"
     );
 
     // Check that config file was created/updated
@@ -357,8 +347,7 @@ fn test_privacy_opt_out_without_license_local_only() {
             || output.contains("local")
             || output.contains("telemetry")
             || result.success,
-        "Opt-out should work locally without license: {}",
-        output
+        "Opt-out should work locally without license: {output}"
     );
 }
 
@@ -397,8 +386,7 @@ fn test_privacy_opt_in() {
     let output = result.combined_output();
     assert!(
         output.contains("enabled") || output.contains("telemetry") || result.success,
-        "Opt-in should work and confirm telemetry enabled: {}",
-        output
+        "Opt-in should work and confirm telemetry enabled: {output}"
     );
 }
 
@@ -415,8 +403,7 @@ fn test_privacy_opt_in_updates_config() {
     let output = result.combined_output();
     assert!(
         result.success || output.contains("enabled") || output.contains("telemetry"),
-        "Opt-in should succeed: {}",
-        output
+        "Opt-in should succeed: {output}"
     );
 
     // Check that config file was created/updated
@@ -467,8 +454,7 @@ fn test_privacy_toggle_opt_out_then_opt_in() {
             || output1.contains("local")
             || output1.contains("opt-out")
             || result1.success,
-        "First opt-out should process: {}",
-        output1
+        "First opt-out should process: {output1}"
     );
 
     // Then opt-in
@@ -479,8 +465,7 @@ fn test_privacy_toggle_opt_out_then_opt_in() {
             || output2.contains("telemetry")
             || output2.contains("opt-in")
             || result2.success,
-        "Opt-in after opt-out should process: {}",
-        output2
+        "Opt-in after opt-out should process: {output2}"
     );
 }
 
@@ -498,8 +483,7 @@ fn test_privacy_toggle_opt_in_then_opt_out() {
             || output1.contains("telemetry")
             || output1.contains("opt-in")
             || result1.success,
-        "Opt-in should process: {}",
-        output1
+        "Opt-in should process: {output1}"
     );
 
     // Then opt-out
@@ -511,8 +495,7 @@ fn test_privacy_toggle_opt_in_then_opt_out() {
             || output2.contains("local")
             || output2.contains("opt-out")
             || result2.success,
-        "Opt-out after opt-in should process: {}",
-        output2
+        "Opt-out after opt-in should process: {output2}"
     );
 }
 
@@ -541,8 +524,7 @@ fn test_privacy_opt_out_with_env_override() {
             || output.contains("local")
             || output.contains("opt-out")
             || result.success,
-        "Should process opt-out command: {}",
-        output
+        "Should process opt-out command: {output}"
     );
 }
 
@@ -562,8 +544,7 @@ fn test_privacy_status_shows_env_override() {
             || output.contains("env")
             || output.contains("OMG_TELEMETRY")
             || result.success,
-        "Status should show environment variable override: {}",
-        output
+        "Status should show environment variable override: {output}"
     );
 }
 
@@ -587,8 +568,7 @@ fn test_privacy_status_json_output() {
             let parse_result = serde_json::from_str::<serde_json::Value>(&output);
             assert!(
                 parse_result.is_ok(),
-                "JSON output should be valid JSON: {}",
-                output
+                "JSON output should be valid JSON: {output}"
             );
         }
     }
@@ -615,8 +595,7 @@ fn test_privacy_invalid_subcommand() {
             || output.contains("invalid")
             || output.contains("unrecognized")
             || output.contains("help"),
-        "Should show error for invalid subcommand: {}",
-        output
+        "Should show error for invalid subcommand: {output}"
     );
 }
 
@@ -640,8 +619,7 @@ fn test_privacy_export_invalid_output_path() {
     let output = result.combined_output();
     assert!(
         !result.success,
-        "Should fail with invalid output path or no license: {}",
-        output
+        "Should fail with invalid output path or no license: {output}"
     );
 }
 
@@ -666,9 +644,7 @@ fn test_privacy_delete_confirm_flag_variations() {
         let output = result.combined_output();
         assert!(
             output.contains("delete") || output.contains("license") || output.contains("activate"),
-            "Should process delete with confirm flag: {:?} -> {}",
-            args,
-            output
+            "Should process delete with confirm flag: {args:?} -> {output}"
         );
     }
 }
@@ -692,8 +668,7 @@ fn test_privacy_commands_work_offline() {
     let output = result.combined_output();
     assert!(
         result.success || output.contains("privacy") || output.contains("telemetry"),
-        "Status should work offline: {}",
-        output
+        "Status should work offline: {output}"
     );
 
     // Opt-out should work offline (local config change, may show license warning)
@@ -705,8 +680,7 @@ fn test_privacy_commands_work_offline() {
             || output.contains("telemetry")
             || output.contains("local")
             || output.contains("opt-out"),
-        "Opt-out should work offline (locally): {}",
-        output
+        "Opt-out should work offline (locally): {output}"
     );
 
     // Opt-in should work offline (local config change)
@@ -717,8 +691,7 @@ fn test_privacy_commands_work_offline() {
             || output.contains("enabled")
             || output.contains("telemetry")
             || output.contains("opt-in"),
-        "Opt-in should work offline: {}",
-        output
+        "Opt-in should work offline: {output}"
     );
 }
 
@@ -739,8 +712,7 @@ fn test_privacy_status_verbose() {
     let output = result.combined_output();
     assert!(
         result.success || output.contains("privacy") || output.contains("Privacy"),
-        "Verbose mode should work: {}",
-        output
+        "Verbose mode should work: {output}"
     );
 }
 
@@ -758,8 +730,7 @@ fn test_privacy_status_quiet() {
     let output = result.combined_output();
     assert!(
         result.success || !output.is_empty(),
-        "Quiet mode should execute without crashing: {}",
-        output
+        "Quiet mode should execute without crashing: {output}"
     );
 }
 
@@ -769,6 +740,8 @@ fn test_privacy_status_quiet() {
 
 #[test]
 fn test_privacy_status_performance() {
+    use std::time::Duration;
+
     // ===== ARRANGE =====
     init_test_env();
 
@@ -777,12 +750,13 @@ fn test_privacy_status_performance() {
 
     // ===== ASSERT =====
     // Privacy status should be fast (< 2 seconds even with network timeout)
-    use std::time::Duration;
     result.assert_duration_under(Duration::from_secs(2));
 }
 
 #[test]
 fn test_privacy_opt_out_performance() {
+    use std::time::Duration;
+
     // ===== ARRANGE =====
     let project = TestProject::new();
 
@@ -791,7 +765,6 @@ fn test_privacy_opt_out_performance() {
 
     // ===== ASSERT =====
     // Local opt-out should be very fast (< 1 second)
-    use std::time::Duration;
     result.assert_duration_under(Duration::from_secs(1));
 }
 
@@ -816,8 +789,7 @@ fn test_privacy_all_subcommands_have_help() {
         let output = result.combined_output();
         assert!(
             !output.is_empty(),
-            "Help for '{}' should produce output",
-            subcmd
+            "Help for '{subcmd}' should produce output"
         );
     }
 }

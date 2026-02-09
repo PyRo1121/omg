@@ -110,7 +110,7 @@ async fn test_concurrent_search_requests() -> Result<()> {
 async fn test_concurrent_info_requests() -> Result<()> {
     let fixture = ConcurrencyTestFixture::new().await?;
 
-    let packages = vec!["bash", "coreutils", "grep", "sed", "awk"];
+    let packages = ["bash", "coreutils", "grep", "sed", "awk"];
 
     // Request info for multiple packages concurrently
     let mut handles = vec![];
@@ -243,7 +243,7 @@ async fn test_concurrent_cache_updates() -> Result<()> {
     let fixture = ConcurrencyTestFixture::new().await?;
 
     // Multiple threads updating cache with different queries
-    let queries = vec!["query1", "query2", "query3", "query4", "query5"];
+    let queries = ["query1", "query2", "query3", "query4", "query5"];
 
     let mut handles = vec![];
     for (i, query) in queries.iter().enumerate() {

@@ -40,7 +40,7 @@ fn test_cache_write_graceful_degradation() -> Result<()> {
     // Simulate cache write
     let cache_data = serde_json::json!({
         "packages": ["firefox", "vim", "git"],
-        "timestamp": 1234567890
+        "timestamp": 1_234_567_890
     });
 
     // Normal write should succeed
@@ -124,8 +124,8 @@ fn test_temp_file_cleanup_on_error() -> Result<()> {
     // Create some temporary files
     let temp_files: Vec<PathBuf> = (0..5)
         .map(|i| {
-            let path = temp_dir.path().join(format!("temp_{}.tmp", i));
-            fs::write(&path, format!("temp data {}", i)).unwrap();
+            let path = temp_dir.path().join(format!("temp_{i}.tmp"));
+            fs::write(&path, format!("temp data {i}")).unwrap();
             path
         })
         .collect();
@@ -195,7 +195,10 @@ fn test_download_resume_after_failure() -> Result<()> {
 
     // Verify partial file exists with correct size
     let meta = fs::metadata(&partial_path)?;
-    assert_eq!(meta.len() as usize, partial_size);
+    #[allow(clippy::cast_possible_truncation)]
+    {
+        assert_eq!(meta.len() as usize, partial_size);
+    }
 
     // Simulate resume: append remaining data
     let remaining_data = vec![0xCDu8; total_size - partial_size];
@@ -221,15 +224,16 @@ fn test_download_resume_after_failure() -> Result<()> {
 
 /// Test cache eviction under memory pressure
 #[test]
-fn test_cache_eviction_policy() -> Result<()> {
+fn test_cache_eviction_policy() {
     use std::collections::HashMap;
 
     let max_entries = 5;
     let mut cache: HashMap<String, (i64, String)> = HashMap::new(); // (timestamp, value)
 
     // Fill cache to capacity
+    #[allow(clippy::cast_possible_wrap)]
     for i in 0..max_entries {
-        cache.insert(format!("key{}", i), (i as i64, format!("value{}", i)));
+        cache.insert(format!("key{i}"), (i as i64, format!("value{i}")));
     }
     assert_eq!(cache.len(), max_entries);
 
@@ -258,8 +262,6 @@ fn test_cache_eviction_policy() -> Result<()> {
         !cache.contains_key("key0"),
         "Oldest entry should be evicted"
     );
-
-    Ok(())
 }
 
 /// Test graceful shutdown when disk operations fail
@@ -289,7 +291,7 @@ fn test_graceful_shutdown_on_disk_error() -> Result<()> {
         }
         Err(e) => {
             // Graceful degradation: log error but don't crash
-            eprintln!("Warning: Could not save state: {}", e);
+            eprintln!("Warning: Could not save state: {e}");
             // Continue shutdown without saved state
         }
     }
@@ -321,7 +323,7 @@ async fn test_parallel_write_safety() -> Result<()> {
             let _permit = sem.acquire().await.unwrap();
 
             // Append to file
-            let content = format!("write {}\n", i);
+            let content = format!("write {i}\n");
             fs::OpenOptions::new()
                 .create(true)
                 .append(true)
@@ -341,8 +343,7 @@ async fn test_parallel_write_safety() -> Result<()> {
 
     // Verify file is not corrupted (all writes present)
     let content = std::fs::read_to_string(&target_file)?;
-    let lines: Vec<_> = content.lines().collect();
-    assert_eq!(lines.len(), 10, "All writes should be present");
+    assert_eq!(content.lines().count(), 10, "All writes should be present");
 
     Ok(())
 }
@@ -396,9 +397,19 @@ fn test_readonly_filesystem_handling() -> Result<()> {
     assert!(write_result.is_err(), "Write to read-only file should fail");
 
     // Restore permissions for cleanup
-    let mut perms = fs::metadata(&file_path)?.permissions();
-    perms.set_readonly(false);
-    fs::set_permissions(&file_path, perms)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(&file_path)?.permissions();
+        perms.set_mode(0o644);
+        fs::set_permissions(&file_path, perms)?;
+    }
+    #[cfg(not(unix))]
+    {
+        let mut perms = fs::metadata(&file_path)?.permissions();
+        perms.set_readonly(false);
+        fs::set_permissions(&file_path, perms)?;
+    }
 
     Ok(())
 }
@@ -438,7 +449,7 @@ mod unit_tests {
         const MAX_LOG_SIZE: u64 = 100 * 1024 * 1024; // 100MB
         const MAX_CACHE_SIZE: u64 = 500 * 1024 * 1024; // 500MB
 
-        assert!(MAX_PACKAGE_SIZE > MAX_CACHE_SIZE);
-        assert!(MAX_CACHE_SIZE > MAX_LOG_SIZE);
+        const { assert!(MAX_PACKAGE_SIZE > MAX_CACHE_SIZE) };
+        const { assert!(MAX_CACHE_SIZE > MAX_LOG_SIZE) };
     }
 }

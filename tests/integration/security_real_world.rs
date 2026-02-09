@@ -265,7 +265,7 @@ fn test_hash_verification_test_vectors() {
 /// Attempts to verify signatures on real packages from /var/cache/pacman
 /// if available. Skips gracefully if cache is empty or not on Arch Linux.
 #[test]
-#[cfg(feature = "arch")]
+#[cfg(all(feature = "arch", feature = "pgp"))]
 fn test_pgp_verification_real_packages() {
     use omg_lib::core::security::pgp::PgpVerifier;
     use std::fs;

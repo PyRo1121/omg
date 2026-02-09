@@ -38,7 +38,7 @@ use rusqlite::{Connection, OpenFlags};
 const RPM_HEADER_MAGIC: [u8; 8] = [0x8e, 0xad, 0xe8, 0x01, 0x00, 0x00, 0x00, 0x00];
 
 /// RPM tag constants for parsing header entries
-#[expect(dead_code)]
+#[allow(dead_code)]
 mod rpm_tags {
     pub const NAME: u32 = 1000;
     pub const VERSION: u32 = 1001;
@@ -56,7 +56,7 @@ mod rpm_tags {
 }
 
 /// RPM header data types
-#[expect(dead_code)]
+#[allow(dead_code)]
 mod rpm_types {
     pub const STRING: u32 = 6;
     pub const STRING_ARRAY: u32 = 8;
@@ -88,7 +88,7 @@ struct RepoIndex {
 
 /// COPR repository package
 #[derive(Debug, Deserialize)]
-#[expect(dead_code)] // Reserved for future COPR integration
+#[allow(dead_code)] // Reserved for future COPR integration
 struct CoprPackage {
     name: String,
     #[serde(default)]
@@ -113,7 +113,7 @@ pub struct DnfPackageManager {
 
 /// Installed package information from RPM database
 #[derive(Debug, Clone)]
-#[expect(dead_code)] // Fields used for future RPM database implementation
+#[allow(dead_code)] // Fields used for future RPM database implementation
 struct InstalledPackage {
     name: String,
     version: String,
@@ -258,7 +258,7 @@ impl DnfPackageManager {
     /// RPM headers use a binary format:
     /// - Magic: 0x8eade801 00000000
     /// - Index entries: tag(u32), type(u32), offset(i32), count(u32)
-    #[expect(dead_code)]
+    #[allow(dead_code)]
     fn parse_rpm_header(blob: &[u8]) -> Result<HashMap<u32, Vec<u8>>> {
         if blob.len() < 16 {
             anyhow::bail!("RPM header too short");
@@ -587,7 +587,7 @@ impl DnfPackageManager {
     }
 
     /// Search COPR repositories
-    #[expect(dead_code)] // Reserved for future COPR integration
+    #[allow(dead_code)] // Reserved for future COPR integration
     async fn search_copr(&self, query: &str) -> Result<Vec<Package>> {
         let url = format!(
             "https://copr.fedorainfracloud.org/api_3/project/search?query={}",

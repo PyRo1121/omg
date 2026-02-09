@@ -1990,6 +1990,7 @@ impl AurClient {
     }
 
     #[cfg(not(feature = "pgp"))]
+    #[allow(clippy::unused_async)]
     async fn fetch_missing_pgp_keys(_pkgbuild_path: &Path) {
         tracing::debug!("PGP feature disabled, skipping key fetch");
     }

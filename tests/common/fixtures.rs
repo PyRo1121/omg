@@ -23,7 +23,7 @@ impl PackageFixtureExt for PackageFixture {
             // Cross-platform type handling: On Arch, Version is AlpmVersion (struct) where
             // .to_string() is Display impl. On Debian/Fedora, Version is String where .to_string()
             // is technically a clone. Clippy suggests .clone() but .to_string() works universally.
-            #[expect(clippy::implicit_clone)]
+            #[allow(clippy::implicit_clone)]
             version: pkg.version.to_string(),
             description: pkg.description,
             repo: "test".to_owned(),

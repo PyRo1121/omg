@@ -243,12 +243,11 @@ fn test_alpm_log_callback() {
     require_arch!();
 
     let log_count = Arc::new(AtomicU64::new(0));
-    let log_count_clone = log_count.clone();
 
     let harness = AlpmHarness::new().expect("Failed to create harness");
     let mut alpm = harness.alpm().expect("Failed to get handle");
 
-    alpm.set_log_cb(log_count_clone, |_level, _msg, counter| {
+    alpm.set_log_cb(Arc::clone(&log_count), |_level, _msg, counter| {
         counter.fetch_add(1, Ordering::Relaxed);
     });
 
@@ -262,13 +261,12 @@ fn test_alpm_progress_callback() {
     require_arch!();
 
     let counter = Arc::new(AtomicU64::new(0));
-    let counter_clone = counter.clone();
 
     let harness = AlpmHarness::new().expect("Failed to create harness");
     let mut alpm = harness.alpm().expect("Failed to get handle");
 
     alpm.set_progress_cb(
-        counter_clone,
+        Arc::clone(&counter),
         |_op, _name, _percent, _n, _total, counter| {
             counter.fetch_add(1, Ordering::Relaxed);
         },

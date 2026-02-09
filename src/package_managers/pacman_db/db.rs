@@ -1342,7 +1342,7 @@ pub fn get_explicit_count() -> Result<usize> {
 }
 
 #[cfg(test)]
-#[expect(clippy::unwrap_used, clippy::expect_used)] // Idiomatic in tests: panics on failure with clear error context
+#[allow(clippy::unwrap_used, clippy::expect_used)] // Idiomatic in tests: panics on failure with clear error context
 mod tests {
     use super::*;
 

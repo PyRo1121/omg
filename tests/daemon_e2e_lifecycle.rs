@@ -186,12 +186,12 @@ impl DaemonProcess {
                 .status();
 
             // Ignore errors if process already exited
-            if let Ok(status) = kill_result {
-                if !status.success() {
-                    // Process might have exited already, check once more
-                    if let Ok(Some(_)) = self.child.try_wait() {
-                        return Ok(());
-                    }
+            if let Ok(status) = kill_result
+                && !status.success()
+            {
+                // Process might have exited already, check once more
+                if let Ok(Some(_)) = self.child.try_wait() {
+                    return Ok(());
                 }
             }
         }

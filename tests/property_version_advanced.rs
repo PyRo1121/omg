@@ -32,7 +32,7 @@ proptest! {
         patch in 0u32..1000u32,
         pkgrel in 1u32..100u32
     ) {
-        let version_str = format!("{}.{}.{}-{}", major, minor, patch, pkgrel);
+        let version_str = format!("{major}.{minor}.{patch}-{pkgrel}");
 
         if let Ok(v) = AlpmVersion::from_str(&version_str) {
             // Reflexivity: v == v
@@ -66,7 +66,7 @@ proptest! {
         pkgrel in 1u32..10u32
     ) {
         // Sort to ensure v1 <= v2 <= v3
-        let mut versions = vec![v1_major, v2_major, v3_major];
+        let mut versions = [v1_major, v2_major, v3_major];
         versions.sort_unstable();
 
         let v1_str = format!("{}.{}.{}-{}", versions[0], minor, patch, pkgrel);
@@ -109,8 +109,8 @@ proptest! {
         minor in 0u32..100u32,
         patch in 0u32..100u32
     ) {
-        let v1_str = format!("{}.{}.{}", major1, minor, patch);
-        let v2_str = format!("{}.{}.{}", major2, minor, patch);
+        let v1_str = format!("{major1}.{minor}.{patch}");
+        let v2_str = format!("{major2}.{minor}.{patch}");
 
         if let (Ok(v1), Ok(v2)) = (
             AlpmVersion::from_str(&v1_str),
@@ -157,8 +157,8 @@ proptest! {
         v2_major in 0u32..100u32,
         v2_minor in 0u32..100u32
     ) {
-        let v1_str = format!("{}.{}.0", v1_major, v1_minor);
-        let v2_str = format!("{}.{}.0", v2_major, v2_minor);
+        let v1_str = format!("{v1_major}.{v1_minor}.0");
+        let v2_str = format!("{v2_major}.{v2_minor}.0");
 
         if let (Ok(v1), Ok(v2)) = (
             AlpmVersion::from_str(&v1_str),
@@ -175,17 +175,17 @@ proptest! {
             match ordering {
                 Ordering::Less => {
                     prop_assert!(v1 < v2);
-                    prop_assert!(!(v1 == v2));
-                    prop_assert!(!(v1 > v2));
+                    prop_assert!(v1 != v2);
+                    prop_assert!(v1 <= v2);
                 }
                 Ordering::Equal => {
-                    prop_assert!(!(v1 < v2));
+                    prop_assert!(v1 >= v2);
                     prop_assert!(v1 == v2);
-                    prop_assert!(!(v1 > v2));
+                    prop_assert!(v1 <= v2);
                 }
                 Ordering::Greater => {
-                    prop_assert!(!(v1 < v2));
-                    prop_assert!(!(v1 == v2));
+                    prop_assert!(v1 >= v2);
+                    prop_assert!(v1 != v2);
                     prop_assert!(v1 > v2);
                 }
             }
@@ -214,8 +214,8 @@ proptest! {
         patch1 in 0u32..100u32,
         patch2 in 0u32..100u32
     ) {
-        let v1_str = format!("{}:{}.{}.{}", epoch1, major1, minor1, patch1);
-        let v2_str = format!("{}:{}.{}.{}", epoch2, major2, minor2, patch2);
+        let v1_str = format!("{epoch1}:{major1}.{minor1}.{patch1}");
+        let v2_str = format!("{epoch2}:{major2}.{minor2}.{patch2}");
 
         if let (Ok(v1), Ok(v2)) = (
             AlpmVersion::from_str(&v1_str),
@@ -262,8 +262,8 @@ proptest! {
         pkgrel1 in 1u32..50u32,
         pkgrel2 in 1u32..50u32
     ) {
-        let v1_str = format!("{}.{}.{}-{}", major, minor, patch, pkgrel1);
-        let v2_str = format!("{}.{}.{}-{}", major, minor, patch, pkgrel2);
+        let v1_str = format!("{major}.{minor}.{patch}-{pkgrel1}");
+        let v2_str = format!("{major}.{minor}.{patch}-{pkgrel2}");
 
         if let (Ok(v1), Ok(v2)) = (
             AlpmVersion::from_str(&v1_str),
@@ -309,7 +309,7 @@ proptest! {
         prefix in "[a-z]{0,5}",
         suffix in "[a-z0-9.\\-]{0,20}"
     ) {
-        let version_str = format!("{}{}.{}.{}-{}{}", prefix, major, minor, patch, pkgrel, suffix);
+        let version_str = format!("{prefix}{major}.{minor}.{patch}-{pkgrel}{suffix}");
 
         // Should never panic, even on malformed input
         let _ = AlpmVersion::from_str(&version_str);
@@ -333,11 +333,11 @@ proptest! {
         patch in 0u32..1000u32,
         pkgrel in 1u32..100u32
     ) {
-        let version_str = format!("{}.{}.{}-{}", major, minor, patch, pkgrel);
+        let version_str = format!("{major}.{minor}.{patch}-{pkgrel}");
 
         if let Ok(v) = AlpmVersion::from_str(&version_str) {
             // Display should not panic
-            let displayed = format!("{}", v);
+            let displayed = format!("{v}");
             prop_assert!(!displayed.is_empty(), "Display produced empty string");
 
             // Display should be parseable (though format may differ)
@@ -362,8 +362,8 @@ proptest! {
         v2_major in 0u32..100u32,
         minor in 0u32..100u32
     ) {
-        let v1_str = format!("{}.{}.0", v1_major, minor);
-        let v2_str = format!("{}.{}.0", v2_major, minor);
+        let v1_str = format!("{v1_major}.{minor}.0");
+        let v2_str = format!("{v2_major}.{minor}.0");
 
         if let (Ok(v1), Ok(v2)) = (
             AlpmVersion::from_str(&v1_str),
@@ -403,7 +403,7 @@ proptest! {
         )
     ) {
         let version_strs: Vec<String> = versions.iter()
-            .map(|(major, minor, patch)| format!("{}.{}.{}", major, minor, patch))
+            .map(|(major, minor, patch)| format!("{major}.{minor}.{patch}"))
             .collect();
 
         let parsed_versions: Vec<AlpmVersion> = version_strs.iter()
@@ -412,7 +412,7 @@ proptest! {
 
         if !parsed_versions.is_empty() {
             let mut sorted1 = parsed_versions.clone();
-            let mut sorted2 = parsed_versions.clone();
+            let mut sorted2 = parsed_versions;
 
             // Sort twice - results should be identical
             sorted1.sort();
