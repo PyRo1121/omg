@@ -28,6 +28,16 @@ instead of failing, while still uploading benchmark results as artifacts.
 
 ### 🐛 Bug Fixes
 
+- Docker E2E use tree instead of which, accept compact info format
+
+  - test_docker_real_remove: change from `which` package (may not exist
+
+in Arch repos) to `tree` with error output logging
+
+  - test_docker_omg_info: accept compact version format (digits) since
+
+output may be "bash 5.3.9-1" instead of "Version: 5.3.9-1"
+
 - Unwrap Result in debian logic test assertions
 
 get_package_manager() returns Result but .name() was called directly
