@@ -28,6 +28,12 @@ instead of failing, while still uploading benchmark results as artifacts.
 
 ### 🐛 Bug Fixes
 
+- **Debian**: Resolve String::as_str trait bound error in resolver
+
+Vec<&String>.iter() yields &&String, which doesn't match String::as_str's
+
+fn(&String) -> &str signature. Use closure for proper auto-deref.
+
 - Resolve clippy pedantic warnings in portable build
 
 Fix 40+ clippy::pedantic warnings that surface when building with
