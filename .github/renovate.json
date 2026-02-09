@@ -1,8 +1,7 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "config:base",
-    ":dependencyDashboard",
+    "config:recommended",
     ":semanticCommits",
     ":automergeDigest"
   ],
@@ -35,20 +34,20 @@
       "minimumReleaseAge": "3 days"
     },
     {
-      "matchPackagePatterns": [
-        "^serde"
+      "matchPackageNames": [
+        "/^serde/"
       ],
       "groupName": "serde ecosystem"
     },
     {
-      "matchPackagePatterns": [
-        "^tokio"
+      "matchPackageNames": [
+        "/^tokio/"
       ],
       "groupName": "tokio ecosystem"
     },
     {
-      "matchPackagePatterns": [
-        "^clap"
+      "matchPackageNames": [
+        "/^clap/"
       ],
       "groupName": "clap CLI ecosystem"
     },

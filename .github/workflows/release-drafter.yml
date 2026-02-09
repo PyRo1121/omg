@@ -5,11 +5,16 @@ on:
     branches:
       - main
 
+concurrency:
+  group: release-drafter
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
 jobs:
   update_release_draft:
+    timeout-minutes: 10
     permissions:
       # write permission is required to create a github release
       contents: write
