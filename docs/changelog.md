@@ -60,6 +60,26 @@ refactor/rust-2026-phase2-async)
 
   - Update .gitignore to prevent re-tracking
 
+### 🔧 Maintenance
+
+- Comprehensive repo cleanup for professional GitHub presence
+
+  - Remove 16 root-level dev scripts, logs, debug output, and screenshots
+
+  - Remove 39 old timestamped benchmark reports (keep latest.md + summary.json)
+
+  - Remove duplicate COMMERCIAL-LICENSE (keep .md version)
+
+  - Remove JS lockfiles and root package.json from tracking
+
+  - Rewrite .gitignore with organized sections and pattern-based rules
+
+  - Fix broken README links to deleted files (BENCHMARK-RESULTS.md, SESSION-SUMMARY.md)
+
+  - Root directory: from 45+ files down to clean professional set
+
+  - Total tracked files: 1041 → 871 (170 removed across cleanup sessions)
+
 ## [0.1.209] - 2026-02-09
 ### Merge
 
