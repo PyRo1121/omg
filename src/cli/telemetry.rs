@@ -315,7 +315,9 @@ pub async fn delete_data(confirm: bool) -> Result<()> {
     if let Some(deleted) = result["deleted"].as_object() {
         println!("  Deleted records:");
         for (table, count) in deleted {
-            if let Some(n) = count.as_u64() && n > 0 {
+            if let Some(n) = count.as_u64()
+                && n > 0
+            {
                 println!("    • {}: {n} records", table.replace('_', " "));
             }
         }

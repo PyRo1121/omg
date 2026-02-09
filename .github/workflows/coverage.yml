@@ -13,8 +13,11 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ${{'{{'}} github.workflow {{'}}'}}-${{'{{'}} github.ref {{'}}'}}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
+
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -25,6 +28,7 @@ jobs:
   coverage:
     name: Generate Coverage Report
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     container:
       image: archlinux:latest
 
@@ -53,16 +57,16 @@ jobs:
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-          key: coverage-registry-${{'{{'}} hashFiles('**/Cargo.lock') {{'}}'}}
+          key: coverage-registry-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: coverage-registry-
 
       - name: Cache target directory
         uses: actions/cache@v5
         with:
           path: target
-          key: coverage-target-${{'{{'}} hashFiles('**/Cargo.lock') {{'}}'}}-${{'{{'}} hashFiles('src/**/*.rs') {{'}}'}}
+          key: coverage-target-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('src/**/*.rs') }}
           restore-keys: |
-            coverage-target-${{'{{'}} hashFiles('**/Cargo.lock') {{'}}'}}-
+            coverage-target-${{ hashFiles('**/Cargo.lock') }}-
             coverage-target-
 
       - name: Generate coverage report
@@ -74,10 +78,10 @@ jobs:
             --output-path lcov.info
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v5
         with:
           files: lcov.info
-          token: ${{'{{'}} secrets.CODECOV_TOKEN {{'}}'}}
+          token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
           flags: unittests
           name: codecov-umbrella
@@ -101,7 +105,7 @@ jobs:
 
       - name: Coverage summary
         run: |
-          echo "## 📊 Coverage Report" >> $GITHUB_STEP_SUMMARY
+          echo "## Coverage Report" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           cargo llvm-cov nextest \
             --features arch,pgp,license \
