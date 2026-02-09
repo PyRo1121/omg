@@ -152,9 +152,8 @@ fn test_docker_real_install() {
     assert!(ensure_docker_image(), "Docker image not ready");
 
     // Install and verify in a single container (state persists within one docker run)
-    let (success, stdout, stderr) = run_script_in_docker(
-        "sudo omg install -y ripgrep && pacman -Qi ripgrep",
-    );
+    let (success, stdout, stderr) =
+        run_script_in_docker("sudo omg install -y ripgrep && pacman -Qi ripgrep");
 
     if !success {
         eprintln!("STDOUT: {stdout}");
@@ -178,7 +177,10 @@ fn test_docker_real_remove() {
         "sudo omg install -y which && sudo omg remove -y which && ! which which",
     );
 
-    assert!(success, "Install, remove, and verify should succeed in single container");
+    assert!(
+        success,
+        "Install, remove, and verify should succeed in single container"
+    );
 }
 
 #[test]
@@ -296,5 +298,8 @@ fn test_docker_install_removes_work_together() {
          && ! which tree",
     );
 
-    assert!(success, "Install, verify, remove, and verify-removed should all succeed");
+    assert!(
+        success,
+        "Install, verify, remove, and verify-removed should all succeed"
+    );
 }
