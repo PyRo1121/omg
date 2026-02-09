@@ -28,7 +28,6 @@ cargo_tree_*.txt
 screenshot-*.png
 
 # ---- Dev scripts (organized versions live in scripts/) ----
-benchmark-hyperfine.sh
 benchmark_ubuntu.sh
 build-pgo.sh
 deploy.sh

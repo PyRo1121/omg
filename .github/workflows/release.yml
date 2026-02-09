@@ -169,7 +169,7 @@ jobs:
             rpm dnf sqlite yum-utils fedora-release
           rpm --initdb
           dnf makecache --refresh
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.92.0
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.93.0
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
       - uses: actions/checkout@v4
