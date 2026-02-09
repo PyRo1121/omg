@@ -16,6 +16,18 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - Incorporate remote changelog update
 ### 🐛 Bug Fixes
 
+- **Ci**: Update Rust toolchain 1.92.0 → 1.93.0 to match Cargo.toml MSRV
+
+  - rust-toolchain.toml: 1.92.0 → 1.93.0 (matches rust-version = "1.93")
+
+  - ci.yml: Update 7 hardcoded --default-toolchain references in container setups
+
+  - release.yml: Update Fedora build toolchain reference
+
+  - Re-track benchmark-hyperfine.sh (was gitignored, needed by benchmark CI)
+
+Fixes CI, Docker E2E, Coverage, CodeQL, and Benchmark workflow failures.
+
 - Prevent usage metric inflation from repeated syncs
 
 Root cause: CLI sent cumulative all-time totals (packages_installed,
