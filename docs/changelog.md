@@ -28,6 +28,22 @@ instead of failing, while still uploading benchmark results as artifacts.
 
 ### 🐛 Bug Fixes
 
+- **Clippy**: Resolve all pedantic warnings in Debian backend
+
+  - Fix 72+ clippy warnings across 10 files in debian_db/ and debian_pure
+
+  - Inline format args, collapse nested ifs, fix doc backticks
+
+  - Remove unnecessary Result wrappers, raw string hashes, redundant clones
+
+  - Use case-insensitive file extension comparison for .deb files
+
+  - Replace format! append with write! macro, simplify boolean expressions
+
+  - Change #[expect] to #[allow] for feature-conditional lints
+
+  - Add #[allow] for excessive bool params in clean handler
+
 - **Ci**: Resolve Docker E2E permissions and benchmark upload resilience
 
   - Add chown step after Docker build to fix target/ root ownership
