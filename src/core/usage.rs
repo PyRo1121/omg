@@ -167,6 +167,18 @@ pub struct UsageStats {
     /// First use date
     #[serde(default)]
     pub first_use_date: String,
+    /// Daily installs (resets daily, same as queries_today)
+    #[serde(default)]
+    pub installs_today: u64,
+    /// Daily searches (resets daily)
+    #[serde(default)]
+    pub searches_today: u64,
+    /// Daily runtime switches (resets daily)
+    #[serde(default)]
+    pub runtimes_today: u64,
+    /// Daily time saved in ms (resets daily)
+    #[serde(default)]
+    pub time_saved_today_ms: u64,
 }
 
 impl UsageStats {
@@ -232,10 +244,16 @@ impl UsageStats {
                 self.longest_streak = self.current_streak;
             }
 
+            // Reset all daily counters
             self.queries_today = 0;
+            self.installs_today = 0;
+            self.searches_today = 0;
+            self.runtimes_today = 0;
+            self.time_saved_today_ms = 0;
             self.last_query_date = today;
         }
         self.queries_today += 1;
+        self.time_saved_today_ms += time_saved_ms;
 
         if self.last_month != month {
             self.queries_this_month = 0;
@@ -393,7 +411,7 @@ impl UsageStats {
                 None
             };
 
-        // Calculate incremental usage since last sync
+        // Send TODAY's values only (server replaces, not adds)
         let payload = serde_json::json!({
             "license_key": license_key,
             "machine_id": machine_id,
@@ -402,14 +420,14 @@ impl UsageStats {
             "arch": std::env::consts::ARCH,
             "omg_version": env!("CARGO_PKG_VERSION"),
             "commands_run": self.queries_today,
-            "packages_installed": self.commands.get("install").copied().unwrap_or(0),
-            "packages_searched": self.commands.get("search").copied().unwrap_or(0),
-            "runtimes_switched": self.commands.get("runtime_switch").copied().unwrap_or(0),
+            "packages_installed": self.installs_today,
+            "packages_searched": self.searches_today,
+            "runtimes_switched": self.runtimes_today,
             "installed_packages": self.installed_packages,
             "runtime_usage_counts": self.runtime_usage_counts,
             "sbom_generated": self.sbom_generated,
             "vulnerabilities_found": self.vulnerabilities_found,
-            "time_saved_ms": self.time_saved_ms,
+            "time_saved_ms": self.time_saved_today_ms,
             "current_streak": self.current_streak,
             "achievements": self.achievements,
         });
@@ -437,7 +455,9 @@ pub fn track(command: &str, time_saved_ms: u64) {
 
 /// Track search command
 pub fn track_search() {
-    track("search", time_saved::SEARCH_MS);
+    let mut stats = UsageStats::load();
+    stats.searches_today += 1;
+    stats.record_command("search", time_saved::SEARCH_MS);
 }
 
 /// Track info command
@@ -463,6 +483,7 @@ pub fn track_install(packages: &[String]) {
         *stats.installed_packages.entry(pkg.clone()).or_insert(0) += 1;
     }
 
+    stats.installs_today += 1;
     stats.record_command("install", time_saved::INSTALL_MS);
 }
 
@@ -477,6 +498,7 @@ pub fn track_runtime_switch(runtime: &str) {
 
     stats.record_runtime(runtime);
 
+    stats.runtimes_today += 1;
     stats.record_command("runtime_switch", time_saved::RUNTIME_SWITCH_MS);
 }
 

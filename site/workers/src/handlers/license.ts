@@ -267,13 +267,13 @@ export async function handleReportUsage(request: Request, env: Env): Promise<Res
     INSERT INTO usage_daily (id, license_id, date, commands_run, packages_installed, packages_searched, runtimes_switched, sbom_generated, vulnerabilities_found, time_saved_ms)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(license_id, date) DO UPDATE SET
-      commands_run = commands_run + excluded.commands_run,
-      packages_installed = packages_installed + excluded.packages_installed,
-      packages_searched = packages_searched + excluded.packages_searched,
-      runtimes_switched = runtimes_switched + excluded.runtimes_switched,
-      sbom_generated = sbom_generated + excluded.sbom_generated,
-      vulnerabilities_found = vulnerabilities_found + excluded.vulnerabilities_found,
-      time_saved_ms = time_saved_ms + excluded.time_saved_ms
+      commands_run = MAX(usage_daily.commands_run, excluded.commands_run),
+      packages_installed = MAX(usage_daily.packages_installed, excluded.packages_installed),
+      packages_searched = MAX(usage_daily.packages_searched, excluded.packages_searched),
+      runtimes_switched = MAX(usage_daily.runtimes_switched, excluded.runtimes_switched),
+      sbom_generated = MAX(usage_daily.sbom_generated, excluded.sbom_generated),
+      vulnerabilities_found = MAX(usage_daily.vulnerabilities_found, excluded.vulnerabilities_found),
+      time_saved_ms = MAX(usage_daily.time_saved_ms, excluded.time_saved_ms)
   `
   )
     .bind(
@@ -297,10 +297,10 @@ export async function handleReportUsage(request: Request, env: Env): Promise<Res
       INSERT INTO usage_member_daily (id, license_id, machine_id, date, commands_run, packages_installed, runtimes_switched, time_saved_ms)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(license_id, machine_id, date) DO UPDATE SET
-        commands_run = commands_run + excluded.commands_run,
-        packages_installed = packages_installed + excluded.packages_installed,
-        runtimes_switched = runtimes_switched + excluded.runtimes_switched,
-        time_saved_ms = time_saved_ms + excluded.time_saved_ms
+        commands_run = MAX(usage_member_daily.commands_run, excluded.commands_run),
+        packages_installed = MAX(usage_member_daily.packages_installed, excluded.packages_installed),
+        runtimes_switched = MAX(usage_member_daily.runtimes_switched, excluded.runtimes_switched),
+        time_saved_ms = MAX(usage_member_daily.time_saved_ms, excluded.time_saved_ms)
     `
     )
       .bind(
