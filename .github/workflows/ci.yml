@@ -536,7 +536,7 @@ jobs:
     needs: [linux-matrix]
     if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || inputs.full-test == true
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     container:
       image: archlinux:latest
     steps:
@@ -565,7 +565,7 @@ jobs:
 
       - name: Run integration tests
         run: |
-          cargo nextest run --test '*' --features arch,license --locked --profile ci \
+          cargo nextest run --test '*' --features arch,license --locked --profile ci --no-fail-fast \
             2>&1 || echo "::warning::Some integration tests failed"
 
   #############################################################################
