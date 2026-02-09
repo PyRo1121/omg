@@ -114,8 +114,9 @@ export async function POST(event: APIEvent) {
 
       console.log('[Sync License] Database updated successfully');
 
-      // Sync machines from external API to auth-db
+      // Sync machines and usage from external API to auth-db
       const machinesSynced = await syncMachines(db, license.id, externalData.machines);
+      const usageSynced = await syncUsage(db, license.id, externalData.usage);
 
       return new Response(JSON.stringify({
         synced: true,
@@ -123,6 +124,7 @@ export async function POST(event: APIEvent) {
         new_tier: newTier,
         max_machines: maxMachines,
         machines_synced: machinesSynced,
+        usage_synced: usageSynced,
       }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -131,14 +133,16 @@ export async function POST(event: APIEvent) {
 
     console.log('[Sync License] No update needed - tiers match');
 
-    // Sync machines from external API to auth-db
+    // Sync machines and usage from external API to auth-db
     const machinesSynced = await syncMachines(db, license.id, externalData.machines);
+    const usageSynced = await syncUsage(db, license.id, externalData.usage);
 
     return new Response(JSON.stringify({
       synced: true,
       message: "Already up to date",
       tier: newTier,
       machines_synced: machinesSynced,
+      usage_synced: usageSynced,
     }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
@@ -239,5 +243,85 @@ async function syncMachines(
   }
 
   console.log(`[Sync Machines] Synced ${synced}/${machines.length} machines`);
+  return synced;
+}
+
+/**
+ * Sync usage data from the external API (omg-licensing) to auth-db
+ * Uses upsert logic: insert new days, replace existing ones
+ */
+async function syncUsage(
+  db: ReturnType<typeof drizzle>,
+  licenseId: string,
+  usage?: Array<{
+    date: string;
+    commands_run: number;
+    packages_installed: number;
+    packages_searched: number;
+    runtimes_switched: number;
+    sbom_generated: number;
+    vulnerabilities_found: number;
+    time_saved_ms: number;
+  }>
+): Promise<number> {
+  if (!usage || usage.length === 0) return 0;
+
+  let synced = 0;
+
+  for (const day of usage) {
+    try {
+      // Check if usage record already exists for this date
+      const existing = await db
+        .select({ id: schema.usageDaily.id })
+        .from(schema.usageDaily)
+        .where(
+          and(
+            eq(schema.usageDaily.licenseId, licenseId),
+            eq(schema.usageDaily.date, day.date)
+          )
+        )
+        .limit(1)
+        .get();
+
+      if (existing) {
+        // Update with latest values from licensing DB (source of truth)
+        await db
+          .update(schema.usageDaily)
+          .set({
+            commandsRun: day.commands_run || 0,
+            packagesInstalled: day.packages_installed || 0,
+            packagesSearched: day.packages_searched || 0,
+            runtimesSwitched: day.runtimes_switched || 0,
+            sbomGenerated: day.sbom_generated || 0,
+            vulnerabilitiesFound: day.vulnerabilities_found || 0,
+            timeSavedMs: day.time_saved_ms || 0,
+          })
+          .where(eq(schema.usageDaily.id, existing.id))
+          .run();
+      } else {
+        // Insert new usage record
+        await db
+          .insert(schema.usageDaily)
+          .values({
+            id: crypto.randomUUID(),
+            licenseId,
+            date: day.date,
+            commandsRun: day.commands_run || 0,
+            packagesInstalled: day.packages_installed || 0,
+            packagesSearched: day.packages_searched || 0,
+            runtimesSwitched: day.runtimes_switched || 0,
+            sbomGenerated: day.sbom_generated || 0,
+            vulnerabilitiesFound: day.vulnerabilities_found || 0,
+            timeSavedMs: day.time_saved_ms || 0,
+          })
+          .run();
+      }
+      synced++;
+    } catch (err) {
+      console.error(`[Sync Usage] Error syncing date ${day.date}:`, err);
+    }
+  }
+
+  console.log(`[Sync Usage] Synced ${synced}/${usage.length} usage days`);
   return synced;
 }

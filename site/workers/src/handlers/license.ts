@@ -146,6 +146,14 @@ export async function handleValidateLicense(request: Request, env: Env): Promise
      FROM machines WHERE license_id = ?`
   ).bind(license.id).all();
 
+  // Fetch recent usage data for dashboard sync (last 30 days)
+  const recentUsage = await env.DB.prepare(
+    `SELECT date, commands_run, packages_installed, packages_searched, runtimes_switched,
+            sbom_generated, vulnerabilities_found, time_saved_ms
+     FROM usage_daily WHERE license_id = ? AND date >= date('now', '-30 days')
+     ORDER BY date DESC`
+  ).bind(license.id).all();
+
   return jsonResponse({
     valid: true,
     tier: license.tier,
@@ -155,6 +163,7 @@ export async function handleValidateLicense(request: Request, env: Env): Promise
     expires_at: license.expires_at,
     token,
     machines: activeMachines.results || [],
+    usage: recentUsage.results || [],
   });
 }
 
