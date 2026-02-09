@@ -16,6 +16,36 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - Incorporate remote changelog update
 ### 🐛 Bug Fixes
 
+- Prevent usage metric inflation from repeated syncs
+
+Root cause: CLI sent cumulative all-time totals (packages_installed,
+
+packages_searched, time_saved_ms) but worker used ON CONFLICT DO UPDATE
+
+SET col = col + excluded.col, re-adding the full total on every sync.
+
+With 30-second sync intervals, this inflated numbers ~2,880x per day.
+
+Client-side fix:
+
+  - Add daily counters (installs_today, searches_today, runtimes_today,
+
+time_saved_today_ms) that reset at midnight
+
+  - Send daily values instead of cumulative totals in sync payload
+
+Server-side fix:
+
+  - Change ON CONFLICT from additive (col + excluded.col) to
+
+MAX(col, excluded.col) — idempotent, monotonic, multi-machine safe
+
+Data fix:
+
+  - Reset inflated Jan 19-20 rows in both omg-licensing and omg-auth-db
+
+(89,553 fake commands → realistic 80)
+
 - **Ci**: Modernize all GitHub Actions workflows to current standards
 
 Breaking fixes:
