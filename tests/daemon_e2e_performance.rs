@@ -522,7 +522,7 @@ async fn bench_cache_hit_rate() -> Result<()> {
     fixture.state.cache.clear();
 
     // Simulate realistic workload: 20% unique queries, 80% repeated
-    let unique_queries = vec!["query1", "query2", "query3", "query4", "query5"];
+    let unique_queries = ["query1", "query2", "query3", "query4", "query5"];
 
     for i in 0..100 {
         let query = if i < 20 {
@@ -589,7 +589,7 @@ async fn bench_index_search_performance() -> Result<()> {
     let mut stats = PerfStats::new();
 
     // Test various query patterns
-    let queries = vec![
+    let queries = [
         "a",                       // Very short (many matches)
         "lib",                     // Common prefix
         "python",                  // Specific package
@@ -638,7 +638,7 @@ async fn bench_index_lookup_performance() -> Result<()> {
     let fixture = PerformanceTestFixture::new().await?;
     fixture.state.cache.clear();
 
-    let packages = vec!["bash", "coreutils", "grep", "sed", "awk"];
+    let packages = ["bash", "coreutils", "grep", "sed", "awk"];
     let mut stats = PerfStats::new();
 
     for (i, pkg) in packages.iter().enumerate() {

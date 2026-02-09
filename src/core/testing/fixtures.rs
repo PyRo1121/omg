@@ -541,7 +541,7 @@ mod tests {
     use super::*;
 
     #[test]
-    #[expect(clippy::implicit_clone, clippy::redundant_clone)] // Version is feature-gated type alias; .to_string() is the required conversion
+    #[allow(clippy::implicit_clone, clippy::redundant_clone)] // Version is feature-gated type alias; .to_string() is the required conversion
     fn test_package_fixture_builder() {
         let pkg = PackageFixture::new()
             .name("test")
@@ -557,7 +557,7 @@ mod tests {
     }
 
     #[test]
-    #[expect(clippy::implicit_clone, clippy::redundant_clone)] // Version is feature-gated type alias; .to_string() is the required conversion
+    #[allow(clippy::implicit_clone, clippy::redundant_clone)] // Version is feature-gated type alias; .to_string() is the required conversion
     fn test_package_fixture_defaults() {
         let pkg = PackageFixture::new().build();
         assert_eq!(pkg.name, "test-package");
@@ -565,7 +565,7 @@ mod tests {
     }
 
     #[test]
-    #[expect(clippy::implicit_clone, clippy::redundant_clone)] // Version is feature-gated type alias; .to_string() is the required conversion
+    #[allow(clippy::implicit_clone, clippy::redundant_clone)] // Version is feature-gated type alias; .to_string() is the required conversion
     fn test_package_fixture_firefox_preset() {
         let firefox = PackageFixture::firefox().build();
         assert_eq!(firefox.name, "firefox");
@@ -573,7 +573,7 @@ mod tests {
     }
 
     #[test]
-    #[expect(clippy::redundant_clone, clippy::implicit_clone)] // Version is feature-gated type; to_string() required for assertion
+    #[allow(clippy::redundant_clone, clippy::implicit_clone)] // Version is feature-gated type; to_string() required for assertion
     fn test_package_fixture_custom() {
         let pkg = PackageFixture::new()
             .name("test")

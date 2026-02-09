@@ -24,7 +24,7 @@ fn test_corrupted_database_detection() -> Result<()> {
     // Verify the file exists but is not a valid database
     assert!(db_path.exists());
     let content = fs::read(&db_path)?;
-    assert!(content.len() > 0);
+    assert!(!content.is_empty());
 
     // A proper database should fail to open this
     // We simulate the detection logic here
@@ -86,7 +86,7 @@ fn test_database_lock_contention() -> Result<()> {
     fs::write(&db_path, b"initial state")?;
 
     let barrier = Arc::new(Barrier::new(3));
-    let path = Arc::new(db_path.clone());
+    let path = Arc::new(db_path);
     let results = Arc::new(std::sync::Mutex::new(Vec::new()));
 
     // Spawn multiple threads trying to access the "database"
@@ -140,11 +140,7 @@ fn test_cache_poisoning_detection() -> Result<()> {
 
     for key in malicious_keys {
         let is_valid = validate_cache_key(key);
-        assert!(
-            !is_valid,
-            "Malicious cache key should be rejected: {:?}",
-            key
-        );
+        assert!(!is_valid, "Malicious cache key should be rejected: {key:?}");
     }
 
     // Valid cache keys should pass
@@ -157,7 +153,7 @@ fn test_cache_poisoning_detection() -> Result<()> {
 
     for key in valid_keys {
         let is_valid = validate_cache_key(key);
-        assert!(is_valid, "Valid cache key should be accepted: {:?}", key);
+        assert!(is_valid, "Valid cache key should be accepted: {key:?}");
     }
 
     Ok(())
@@ -283,8 +279,8 @@ fn test_cache_unavailable_fallback() -> Result<()> {
     } else {
         // Fallback: operate without cache
         // This should succeed but be slower
-        let result = simulate_operation_without_cache();
-        assert!(result.is_ok(), "Operation should succeed without cache");
+        simulate_operation_without_cache();
+        // Operation completed successfully
     }
 
     Ok(())
@@ -344,7 +340,7 @@ fn test_database_migration() -> Result<()> {
 
     let version = old_data
         .get("version")
-        .and_then(|v| v.as_u64())
+        .and_then(serde_json::Value::as_u64)
         .unwrap_or(0);
 
     if version < 2 {
@@ -361,9 +357,14 @@ fn test_database_migration() -> Result<()> {
 
     // Verify migration
     let migrated: serde_json::Value = serde_json::from_str(&fs::read_to_string(&new_db)?)?;
-    assert_eq!(migrated.get("version").and_then(|v| v.as_u64()), Some(2));
     assert_eq!(
-        migrated.get("migrated_from").and_then(|v| v.as_u64()),
+        migrated.get("version").and_then(serde_json::Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        migrated
+            .get("migrated_from")
+            .and_then(serde_json::Value::as_u64),
         Some(1)
     );
 
@@ -443,10 +444,9 @@ fn validate_cache_key(key: &str) -> bool {
         .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
 }
 
-fn simulate_operation_without_cache() -> Result<()> {
+const fn simulate_operation_without_cache() {
     // Simulate an operation that would normally use cache
     // but gracefully works without it
-    Ok(())
 }
 
 fn is_process_running(pid: u32) -> bool {

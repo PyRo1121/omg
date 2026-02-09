@@ -418,6 +418,7 @@ fn update_dry_run(updates: &[UpdateInfo]) -> Result<()> {
 }
 
 /// Try to get update list from daemon IPC (fast path, ~5ms with hot ALPM worker)
+#[cfg(unix)]
 async fn try_daemon_list_updates() -> Option<Vec<UpdateInfo>> {
     let mut client = crate::core::client::DaemonClient::connect().await.ok()?;
     let entries = client.list_updates().await.ok()?;
@@ -432,4 +433,11 @@ async fn try_daemon_list_updates() -> Option<Vec<UpdateInfo>> {
             })
             .collect(),
     )
+}
+
+/// Daemon IPC not available on non-Unix platforms
+#[cfg(not(unix))]
+#[allow(clippy::unused_async)]
+async fn try_daemon_list_updates() -> Option<Vec<UpdateInfo>> {
+    None
 }

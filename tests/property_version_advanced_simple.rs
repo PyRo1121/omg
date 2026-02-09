@@ -19,7 +19,7 @@ proptest! {
         patch in 0u32..1000u32,
         pkgrel in 1u32..100u32
     ) {
-        let version_str = format!("{}.{}.{}-{}", major, minor, patch, pkgrel);
+        let version_str = format!("{major}.{minor}.{patch}-{pkgrel}");
         // Should never panic
         let _ = AlpmVersion::from_str(&version_str);
     }
@@ -29,7 +29,7 @@ proptest! {
         major in 0u32..1000u32,
         minor in 0u32..1000u32
     ) {
-        let v_str = format!("{}.{}.0", major, minor);
+        let v_str = format!("{major}.{minor}.0");
         if let Ok(v) = AlpmVersion::from_str(&v_str) {
             // v should equal itself
             prop_assert_eq!(v.cmp(&v), Ordering::Equal);
@@ -42,7 +42,8 @@ proptest! {
         v2_major in 0u32..100u32,
         v3_major in 0u32..100u32
     ) {
-        let mut versions = vec![v1_major, v2_major, v3_major];
+        #[allow(clippy::tuple_array_conversions)]
+        let mut versions = [v1_major, v2_major, v3_major];
         versions.sort_unstable();
 
         let v1_str = format!("{}.0.0", versions[0]);
@@ -67,8 +68,8 @@ proptest! {
         epoch2 in 0u32..10u32,
         major in 0u32..100u32
     ) {
-        let v1_str = format!("{}:{}.0.0", epoch1, major);
-        let v2_str = format!("{}:{}.0.0", epoch2, major);
+        let v1_str = format!("{epoch1}:{major}.0.0");
+        let v2_str = format!("{epoch2}:{major}.0.0");
 
         if let (Ok(v1), Ok(v2)) = (
             AlpmVersion::from_str(&v1_str),

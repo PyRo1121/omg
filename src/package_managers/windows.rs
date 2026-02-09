@@ -126,7 +126,7 @@ struct ScoopArchVariant {
 
 /// Windows registry entry for installed software (for future registry enumeration)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[expect(dead_code)]
+#[allow(dead_code)]
 struct RegistryPackage {
     name: String,
     version: String,
@@ -323,7 +323,7 @@ impl WindowsMmapIndex {
         self.archive().map(|a| a.packages.len()).unwrap_or(0)
     }
 
-    #[expect(dead_code)]
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.is_empty()
     }
@@ -347,7 +347,7 @@ pub struct WindowsPackageManager {
     /// In-memory package index (name -> package)
     package_index: Arc<DashMap<String, Package>>,
     /// Installed packages cache (written on install/remove for future read optimization)
-    #[expect(dead_code)]
+    #[allow(dead_code)]
     installed_cache: Arc<RwLock<Vec<String>>>,
     /// Initialization guard to prevent race conditions
     init_guard: OnceCell<()>,
@@ -885,7 +885,7 @@ impl WindowsPackageManager {
 
     #[cfg(not(target_os = "windows"))]
     #[expect(clippy::unused_async)]
-    #[expect(dead_code)]
+    #[allow(dead_code)]
     async fn run_scoop_operation(&self, _args: &[&str]) -> Result<()> {
         bail!("Scoop is only available on Windows");
     }

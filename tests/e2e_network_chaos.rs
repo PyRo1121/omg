@@ -26,8 +26,7 @@ async fn test_connection_timeout_handling() -> Result<()> {
     let err = result.unwrap_err();
     assert!(
         err.is_timeout() || err.is_connect(),
-        "Error should be timeout or connect: {:?}",
-        err
+        "Error should be timeout or connect: {err:?}"
     );
 
     Ok(())
@@ -68,18 +67,17 @@ async fn test_redirect_loop_protection() -> Result<()> {
         Ok(resp) => {
             // If we got a response, it should indicate redirect issue
             // This might succeed if redirect policy stops it
+            let status = resp.status();
             assert!(
-                resp.status().is_redirection() || resp.status().is_success(),
-                "Got unexpected status: {}",
-                resp.status()
+                status.is_redirection() || status.is_success(),
+                "Got unexpected status: {status}"
             );
         }
         Err(e) => {
             // Expected: redirect limit exceeded or network error
             assert!(
                 e.is_redirect() || e.is_timeout() || e.is_connect(),
-                "Error should be redirect-related: {:?}",
-                e
+                "Error should be redirect-related: {e:?}"
             );
         }
     }
@@ -109,7 +107,7 @@ async fn test_server_error_handling() -> Result<()> {
             eprintln!("Skipping test: httpbin.org not reachable");
         }
         Err(e) => {
-            panic!("Unexpected error: {:?}", e);
+            panic!("Unexpected error: {e:?}");
         }
     }
 
@@ -142,7 +140,7 @@ async fn test_content_length_mismatch_detection() -> Result<()> {
             eprintln!("Skipping test: httpbin.org not reachable");
         }
         Err(e) => {
-            panic!("Unexpected error: {:?}", e);
+            panic!("Unexpected error: {e:?}");
         }
     }
 
@@ -170,9 +168,7 @@ async fn test_retry_with_exponential_backoff() -> Result<()> {
         if retry > 0 {
             assert!(
                 delay > last_delay,
-                "Delay should increase: {:?} > {:?}",
-                delay,
-                last_delay
+                "Delay should increase: {delay:?} > {last_delay:?}"
             );
         }
         last_delay = delay;
@@ -181,8 +177,7 @@ async fn test_retry_with_exponential_backoff() -> Result<()> {
     assert_eq!(
         attempt_count.load(Ordering::SeqCst),
         max_retries,
-        "Should have made {} attempts",
-        max_retries
+        "Should have made {max_retries} attempts"
     );
 
     Ok(())
@@ -212,8 +207,7 @@ async fn test_tls_certificate_validation() -> Result<()> {
             // This is the expected behavior - TLS error
             assert!(
                 e.is_request() || e.is_connect(),
-                "Should fail with TLS/certificate error: {:?}",
-                e
+                "Should fail with TLS/certificate error: {e:?}"
             );
         }
     }
@@ -234,7 +228,7 @@ async fn test_slow_response_timeout() -> Result<()> {
             panic!("Should have timed out waiting for slow response");
         }
         Err(e) => {
-            assert!(e.is_timeout(), "Error should be timeout: {:?}", e);
+            assert!(e.is_timeout(), "Error should be timeout: {e:?}");
         }
     }
 
@@ -256,10 +250,12 @@ async fn test_concurrent_request_handling() -> Result<()> {
         .map(|_| {
             let client = client.clone();
             async move {
-                match client.get("https://httpbin.org/get").send().await {
-                    Ok(resp) => Some(resp.status().is_success()),
-                    Err(_) => None,
-                }
+                client
+                    .get("https://httpbin.org/get")
+                    .send()
+                    .await
+                    .ok()
+                    .map(|resp| resp.status().is_success())
             }
         })
         .buffer_unordered(10)
@@ -270,11 +266,8 @@ async fn test_concurrent_request_handling() -> Result<()> {
     let successes = results.iter().filter(|r| **r == Some(true)).count();
 
     // Allow for network variability - just verify we don't crash
-    eprintln!(
-        "Concurrent requests: {}/{} succeeded",
-        successes,
-        results.len()
-    );
+    let total = results.len();
+    eprintln!("Concurrent requests: {successes}/{total} succeeded");
 
     Ok(())
 }
@@ -302,24 +295,22 @@ async fn test_mirror_failover_simulation() -> Result<()> {
         match client.get(*mirror).send().await {
             Ok(resp) if resp.status().is_success() => {
                 success = true;
-                eprintln!("Mirror {} succeeded after {} attempts", mirror, attempts);
+                eprintln!("Mirror {mirror} succeeded after {attempts} attempts");
                 break;
             }
             Ok(resp) => {
-                eprintln!("Mirror {} returned non-success: {}", mirror, resp.status());
+                let status = resp.status();
+                eprintln!("Mirror {mirror} returned non-success: {status}");
             }
             Err(e) => {
-                eprintln!("Mirror {} failed: {:?}", mirror, e);
+                eprintln!("Mirror {mirror} failed: {e:?}");
             }
         }
     }
 
     // The third mirror should succeed (network permitting)
     // We don't assert success because external network may be unavailable in CI
-    eprintln!(
-        "Mirror failover test: success={}, attempts={}",
-        success, attempts
-    );
+    eprintln!("Mirror failover test: success={success}, attempts={attempts}");
 
     Ok(())
 }
@@ -351,10 +342,7 @@ async fn test_connection_pool_reuse() -> Result<()> {
     let time2 = start2.elapsed();
 
     if result2.is_ok() {
-        eprintln!(
-            "Connection pool test: first={:?}, second={:?}",
-            time1, time2
-        );
+        eprintln!("Connection pool test: first={time1:?}, second={time2:?}");
         // Second request is often faster due to connection reuse
         // But we don't assert this as it depends on network conditions
     }
@@ -383,7 +371,7 @@ async fn test_http2_support() -> Result<()> {
             eprintln!("Skipping HTTP/2 test: network unavailable");
         }
         Err(e) => {
-            panic!("Unexpected error: {:?}", e);
+            panic!("Unexpected error: {e:?}");
         }
     }
 
@@ -413,8 +401,7 @@ mod offline_tests {
             if let Ok(parsed) = result {
                 assert!(
                     parsed.scheme() != "http" && parsed.scheme() != "https" || url.is_empty(),
-                    "Should not accept dangerous URL: {}",
-                    url
+                    "Should not accept dangerous URL: {url}"
                 );
             }
         }
