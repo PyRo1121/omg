@@ -49,7 +49,7 @@ fn test_distro_override_debian() {
     }
 
     // ===== ACT =====
-    let pm = get_package_manager();
+    let pm = get_package_manager().expect("should get debian package manager");
 
     // ===== ASSERT =====
     assert_eq!(pm.name(), "apt");
@@ -67,7 +67,7 @@ fn test_distro_override_ubuntu() {
     }
 
     // ===== ACT =====
-    let pm = get_package_manager();
+    let pm = get_package_manager().expect("should get ubuntu package manager");
 
     // ===== ASSERT =====
     assert_eq!(pm.name(), "apt");
