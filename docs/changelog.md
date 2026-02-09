@@ -28,6 +28,12 @@ instead of failing, while still uploading benchmark results as artifacts.
 
 ### 🐛 Bug Fixes
 
+- Unwrap Result in debian logic test assertions
+
+get_package_manager() returns Result but .name() was called directly
+
+on the Result, causing E0599 on Debian CI builds.
+
 - Docker E2E stateless container and ANSI output issues
 
   - Use run_script_in_docker() for install/remove tests to chain commands
