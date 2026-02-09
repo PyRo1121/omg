@@ -103,7 +103,7 @@ export async function handleValidateLicense(request: Request, env: Env): Promise
         .bind(license.id)
         .first();
 
-      const maxMachines = (license.max_machines as number) || 1;
+      const maxMachines = (license.max_seats as number) || (license.max_machines as number) || 1;
       if ((machineCount?.count as number) >= maxMachines) {
         return jsonResponse({
           valid: false,
@@ -138,13 +138,23 @@ export async function handleValidateLicense(request: Request, env: Env): Promise
   const tier = license.tier as keyof typeof TIER_FEATURES;
   const tierConfig = TIER_FEATURES[tier] || TIER_FEATURES.free;
 
+  const maxMachines = (license.max_seats as number) || (license.max_machines as number) || 1;
+
+  // Fetch active machines for this license (for dashboard sync)
+  const activeMachines = await env.DB.prepare(
+    `SELECT machine_id, hostname, os, arch, omg_version, is_active, first_seen_at, last_seen_at, user_name, user_email
+     FROM machines WHERE license_id = ?`
+  ).bind(license.id).all();
+
   return jsonResponse({
     valid: true,
     tier: license.tier,
+    max_machines: maxMachines,
     features: tierConfig.features,
     customer: license.customer_name || license.email,
     expires_at: license.expires_at,
     token,
+    machines: activeMachines.results || [],
   });
 }
 

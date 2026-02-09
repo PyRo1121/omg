@@ -95,7 +95,10 @@ pub fn set(key: &str, value: &str) -> Result<()> {
                     );
                 }
                 // Block shell metacharacters explicitly for defense-in-depth
-                const FORBIDDEN: &[char] = &[';', '|', '&', '$', '`', '(', ')', '{', '}', '<', '>', '\\', '\n', '\r', '\'', '"'];
+                const FORBIDDEN: &[char] = &[
+                    ';', '|', '&', '$', '`', '(', ')', '{', '}', '<', '>', '\\', '\n', '\r', '\'',
+                    '"',
+                ];
                 if value.chars().any(|c| FORBIDDEN.contains(&c)) {
                     anyhow::bail!(
                         "Invalid MAKEFLAGS: contains shell metacharacters. \

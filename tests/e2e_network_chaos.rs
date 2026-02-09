@@ -152,8 +152,8 @@ async fn test_content_length_mismatch_detection() -> Result<()> {
 /// Test retry logic behavior (validates exponential backoff concept)
 #[tokio::test]
 async fn test_retry_with_exponential_backoff() -> Result<()> {
-    use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, Ordering};
 
     let attempt_count = Arc::new(AtomicU32::new(0));
     let max_retries = 3u32;
@@ -197,7 +197,10 @@ async fn test_tls_certificate_validation() -> Result<()> {
         .build()?;
 
     // expired.badssl.com has an expired certificate
-    let result = strict_client.get("https://expired.badssl.com/").send().await;
+    let result = strict_client
+        .get("https://expired.badssl.com/")
+        .send()
+        .await;
 
     // Should fail due to certificate validation
     match result {
@@ -267,7 +270,11 @@ async fn test_concurrent_request_handling() -> Result<()> {
     let successes = results.iter().filter(|r| **r == Some(true)).count();
 
     // Allow for network variability - just verify we don't crash
-    eprintln!("Concurrent requests: {}/{} succeeded", successes, results.len());
+    eprintln!(
+        "Concurrent requests: {}/{} succeeded",
+        successes,
+        results.len()
+    );
 
     Ok(())
 }
@@ -277,8 +284,8 @@ async fn test_concurrent_request_handling() -> Result<()> {
 async fn test_mirror_failover_simulation() -> Result<()> {
     // Simulate a list of mirrors where some are unreachable
     let mirrors = vec![
-        "http://10.255.255.1/", // Non-routable (will timeout)
-        "http://10.255.255.2/", // Non-routable (will timeout)
+        "http://10.255.255.1/",    // Non-routable (will timeout)
+        "http://10.255.255.2/",    // Non-routable (will timeout)
         "https://httpbin.org/get", // Should work
     ];
 
@@ -295,18 +302,11 @@ async fn test_mirror_failover_simulation() -> Result<()> {
         match client.get(*mirror).send().await {
             Ok(resp) if resp.status().is_success() => {
                 success = true;
-                eprintln!(
-                    "Mirror {} succeeded after {} attempts",
-                    mirror, attempts
-                );
+                eprintln!("Mirror {} succeeded after {} attempts", mirror, attempts);
                 break;
             }
             Ok(resp) => {
-                eprintln!(
-                    "Mirror {} returned non-success: {}",
-                    mirror,
-                    resp.status()
-                );
+                eprintln!("Mirror {} returned non-success: {}", mirror, resp.status());
             }
             Err(e) => {
                 eprintln!("Mirror {} failed: {:?}", mirror, e);
@@ -412,8 +412,7 @@ mod offline_tests {
             // Some may parse but shouldn't be usable for HTTP
             if let Ok(parsed) = result {
                 assert!(
-                    parsed.scheme() != "http" && parsed.scheme() != "https"
-                        || url.is_empty(),
+                    parsed.scheme() != "http" && parsed.scheme() != "https" || url.is_empty(),
                     "Should not accept dangerous URL: {}",
                     url
                 );
@@ -447,6 +446,9 @@ mod offline_tests {
 
         // Total backoff time should be reasonable
         let total_ms: u64 = delays.iter().sum();
-        assert!(total_ms < 10_000, "Total backoff should be under 10 seconds");
+        assert!(
+            total_ms < 10_000,
+            "Total backoff should be under 10 seconds"
+        );
     }
 }

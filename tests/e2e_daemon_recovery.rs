@@ -342,7 +342,10 @@ fn test_database_migration() -> Result<()> {
     let content = fs::read_to_string(&old_db)?;
     let old_data: serde_json::Value = serde_json::from_str(&content)?;
 
-    let version = old_data.get("version").and_then(|v| v.as_u64()).unwrap_or(0);
+    let version = old_data
+        .get("version")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
 
     if version < 2 {
         // Migrate to new format
@@ -359,7 +362,10 @@ fn test_database_migration() -> Result<()> {
     // Verify migration
     let migrated: serde_json::Value = serde_json::from_str(&fs::read_to_string(&new_db)?)?;
     assert_eq!(migrated.get("version").and_then(|v| v.as_u64()), Some(2));
-    assert_eq!(migrated.get("migrated_from").and_then(|v| v.as_u64()), Some(1));
+    assert_eq!(
+        migrated.get("migrated_from").and_then(|v| v.as_u64()),
+        Some(1)
+    );
 
     Ok(())
 }
@@ -381,10 +387,7 @@ fn test_stale_socket_recovery() -> Result<()> {
         fs::remove_file(&socket_path)?;
     }
 
-    assert!(
-        !socket_path.exists(),
-        "Stale socket file should be removed"
-    );
+    assert!(!socket_path.exists(), "Stale socket file should be removed");
 
     Ok(())
 }
@@ -497,6 +500,9 @@ mod unit_tests {
     fn test_valid_index_structure() {
         let index = create_valid_test_index();
         assert!(index.len() >= 1024, "Index should meet minimum size");
-        assert!(index.starts_with(b"OMGIDX"), "Index should have valid header");
+        assert!(
+            index.starts_with(b"OMGIDX"),
+            "Index should have valid header"
+        );
     }
 }

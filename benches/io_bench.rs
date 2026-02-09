@@ -187,6 +187,8 @@ fn bench_read_strategies(c: &mut Criterion) {
             |b, path| {
                 b.iter(|| {
                     let file = File::open(path).unwrap();
+                    // SAFETY: File is opened read-only and mmap lifetime is bounded by this closure
+                    #[allow(unsafe_code)]
                     let mmap = unsafe { memmap2::Mmap::map(&file).unwrap() };
                     let len = mmap.len();
                     std::hint::black_box(len)

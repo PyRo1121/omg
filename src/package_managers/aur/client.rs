@@ -122,7 +122,9 @@ pub fn validate_pgp_key_id(key_id: &str) -> PgpKeyIdStatus {
 pub fn is_pgp_key_id_safe(key_id: &str) -> bool {
     matches!(
         validate_pgp_key_id(key_id),
-        PgpKeyIdStatus::FullFingerprint | PgpKeyIdStatus::LongKeyId | PgpKeyIdStatus::NonStandardLength
+        PgpKeyIdStatus::FullFingerprint
+            | PgpKeyIdStatus::LongKeyId
+            | PgpKeyIdStatus::NonStandardLength
     )
 }
 
@@ -380,35 +382,37 @@ impl AurClient {
 
         if index_path.exists() {
             let packages_owned: Vec<String> = packages.to_vec();
-            let index_result = tokio::task::spawn_blocking(move || -> Result<(HashMap<String, Package>, Vec<String>)> {
-                let index = AurIndex::open(&index_path)?;
-                let mut found = HashMap::new();
-                let mut not_found = Vec::new();
+            let index_result = tokio::task::spawn_blocking(
+                move || -> Result<(HashMap<String, Package>, Vec<String>)> {
+                    let index = AurIndex::open(&index_path)?;
+                    let mut found = HashMap::new();
+                    let mut not_found = Vec::new();
 
-                for name in packages_owned {
-                    if let Some(entry) = index.get(&name)? {
-                        found.insert(
-                            name,
-                            Package {
-                                name: entry.name.as_str().to_string(),
-                                version: crate::package_managers::parse_version_or_zero(
-                                    entry.version.as_str(),
-                                ),
-                                description: entry
-                                    .description
-                                    .as_ref()
-                                    .map(|s| s.as_str().to_string())
-                                    .unwrap_or_default(),
-                                source: PackageSource::Aur,
-                                installed: false,
-                            },
-                        );
-                    } else {
-                        not_found.push(name);
+                    for name in packages_owned {
+                        if let Some(entry) = index.get(&name)? {
+                            found.insert(
+                                name,
+                                Package {
+                                    name: entry.name.as_str().to_string(),
+                                    version: crate::package_managers::parse_version_or_zero(
+                                        entry.version.as_str(),
+                                    ),
+                                    description: entry
+                                        .description
+                                        .as_ref()
+                                        .map(|s| s.as_str().to_string())
+                                        .unwrap_or_default(),
+                                    source: PackageSource::Aur,
+                                    installed: false,
+                                },
+                            );
+                        } else {
+                            not_found.push(name);
+                        }
                     }
-                }
-                Ok((found, not_found))
-            })
+                    Ok((found, not_found))
+                },
+            )
             .await?;
 
             if let Ok((found, not_found)) = index_result {
@@ -1574,14 +1578,21 @@ impl AurClient {
             validate_path_inside(&self.build_dir, pkg_dir)?;
 
             // Canonicalize all writable bind mount paths
-            let pkg_dir_canonical = pkg_dir.canonicalize()
+            let pkg_dir_canonical = pkg_dir
+                .canonicalize()
                 .with_context(|| format!("Failed to canonicalize: {}", pkg_dir.display()))?;
-            let pkgdest_canonical = env.pkgdest.canonicalize()
-                .with_context(|| format!("Failed to canonicalize pkgdest: {}", env.pkgdest.display()))?;
-            let srcdest_canonical = env.srcdest.canonicalize()
-                .with_context(|| format!("Failed to canonicalize srcdest: {}", env.srcdest.display()))?;
-            let builddir_canonical = env.builddir.canonicalize()
-                .with_context(|| format!("Failed to canonicalize builddir: {}", env.builddir.display()))?;
+            let pkgdest_canonical = env.pkgdest.canonicalize().with_context(|| {
+                format!("Failed to canonicalize pkgdest: {}", env.pkgdest.display())
+            })?;
+            let srcdest_canonical = env.srcdest.canonicalize().with_context(|| {
+                format!("Failed to canonicalize srcdest: {}", env.srcdest.display())
+            })?;
+            let builddir_canonical = env.builddir.canonicalize().with_context(|| {
+                format!(
+                    "Failed to canonicalize builddir: {}",
+                    env.builddir.display()
+                )
+            })?;
 
             // Verify all writable paths are inside user's cache directory (not /etc, /root, etc.)
             let cache_base = paths::cache_dir();

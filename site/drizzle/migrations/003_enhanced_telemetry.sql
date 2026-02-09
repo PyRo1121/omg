@@ -1,5 +1,5 @@
 -- Migration: Enhanced Telemetry Schema
--- Description: Adds command_event, session, performance_metric, health_score, feature_usage, admin_note, and customer_tag tables
+-- Description: Adds command_event, cli_session, performance_metric, health_score, feature_usage, admin_note, and customer_tag tables
 -- Date: 2026-02-07
 
 -- Command Event table: Granular command-level telemetry
@@ -19,8 +19,8 @@ CREATE INDEX IF NOT EXISTS command_event_licenseId_timestamp_idx ON command_even
 CREATE INDEX IF NOT EXISTS command_event_command_timestamp_idx ON command_event(command, timestamp);
 CREATE INDEX IF NOT EXISTS command_event_machineId_timestamp_idx ON command_event(machine_id, timestamp);
 
--- Session table: Track user sessions
-CREATE TABLE IF NOT EXISTS session (
+-- CLI Session table: Track CLI user sessions (named cli_session to avoid collision with better-auth session table)
+CREATE TABLE IF NOT EXISTS cli_session (
   id TEXT PRIMARY KEY NOT NULL,
   license_id TEXT NOT NULL REFERENCES license(id) ON DELETE CASCADE,
   machine_id TEXT NOT NULL REFERENCES machine(id) ON DELETE CASCADE,
@@ -31,8 +31,8 @@ CREATE TABLE IF NOT EXISTS session (
   created_at INTEGER NOT NULL DEFAULT (cast(unixepoch('subsecond') * 1000 as integer))
 );
 
-CREATE INDEX IF NOT EXISTS session_licenseId_sessionStart_idx ON session(license_id, session_start);
-CREATE INDEX IF NOT EXISTS session_machineId_idx ON session(machine_id);
+CREATE INDEX IF NOT EXISTS cli_session_licenseId_sessionStart_idx ON cli_session(license_id, session_start);
+CREATE INDEX IF NOT EXISTS cli_session_machineId_idx ON cli_session(machine_id);
 
 -- Performance Metric table: Track CLI performance
 CREATE TABLE IF NOT EXISTS performance_metric (

@@ -111,13 +111,15 @@ impl PackageCache {
 
     /// Update explicit package cache
     pub fn update_explicit(&self, packages: Vec<String>) {
-        self.explicit_count.insert(KEY_EXPLICIT_COUNT, packages.len());
+        self.explicit_count
+            .insert(KEY_EXPLICIT_COUNT, packages.len());
         self.explicit_packages
             .insert(KEY_EXPLICIT, Arc::new(packages));
     }
 
     pub fn update_explicit_arc(&self, packages: Arc<Vec<String>>) {
-        self.explicit_count.insert(KEY_EXPLICIT_COUNT, packages.len());
+        self.explicit_count
+            .insert(KEY_EXPLICIT_COUNT, packages.len());
         self.explicit_packages.insert(KEY_EXPLICIT, packages);
     }
 

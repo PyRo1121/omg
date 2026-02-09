@@ -20,9 +20,7 @@
 //! For full integration testing with network mocking, run with OMG_TEST_MODE=0.
 
 use anyhow::Result;
-use omg_lib::core::telemetry::{
-    get_session_id, record_startup_time, TelemetrySession, Timer,
-};
+use omg_lib::core::telemetry::{TelemetrySession, Timer, get_session_id, record_startup_time};
 use omg_lib::core::telemetry_client::{
     BatchPayload, CommandEvent, FeatureEvent, PerformanceEvent, SessionEvent, TelemetryEvent,
     TelemetryPayload,
@@ -309,14 +307,13 @@ async fn test_batch_payload_structure() -> Result<()> {
         }),
     ];
 
-    let payloads: Vec<TelemetryPayload> = events
-        .into_iter()
-        .map(TelemetryPayload::new)
-        .collect();
+    let payloads: Vec<TelemetryPayload> = events.into_iter().map(TelemetryPayload::new).collect();
 
     let batch = BatchPayload {
         events: payloads,
-        batch_timestamp: jiff::Timestamp::now().strftime("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+        batch_timestamp: jiff::Timestamp::now()
+            .strftime("%Y-%m-%dT%H:%M:%S%.3fZ")
+            .to_string(),
         machine_id: "test-machine".to_string(),
     };
 
@@ -337,7 +334,9 @@ async fn test_batch_payload_structure() -> Result<()> {
 async fn test_empty_batch_payload() -> Result<()> {
     let batch = BatchPayload {
         events: Vec::new(),
-        batch_timestamp: jiff::Timestamp::now().strftime("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+        batch_timestamp: jiff::Timestamp::now()
+            .strftime("%Y-%m-%dT%H:%M:%S%.3fZ")
+            .to_string(),
         machine_id: "test-machine".to_string(),
     };
 
@@ -360,9 +359,16 @@ async fn test_session_creation() -> Result<()> {
 
     let session = TelemetrySession::default();
 
-    assert!(!session.session_id.is_empty(), "Session ID should be generated");
+    assert!(
+        !session.session_id.is_empty(),
+        "Session ID should be generated"
+    );
     assert!(!session.started_at.is_empty(), "Start time should be set");
-    assert_eq!(session.commands_run.load(Ordering::Relaxed), 0, "Initial command count should be 0");
+    assert_eq!(
+        session.commands_run.load(Ordering::Relaxed),
+        0,
+        "Initial command count should be 0"
+    );
 
     Ok(())
 }
@@ -392,8 +398,16 @@ async fn test_timer_basic_usage() -> Result<()> {
     sleep(Duration::from_millis(50)).await;
 
     let elapsed = timer.elapsed_ms();
-    assert!(elapsed >= 50, "Timer should track at least 50ms, got {}", elapsed);
-    assert!(elapsed < 200, "Timer should not be wildly inaccurate, got {}", elapsed);
+    assert!(
+        elapsed >= 50,
+        "Timer should track at least 50ms, got {}",
+        elapsed
+    );
+    assert!(
+        elapsed < 200,
+        "Timer should not be wildly inaccurate, got {}",
+        elapsed
+    );
 
     Ok(())
 }
@@ -427,7 +441,10 @@ async fn test_startup_time_recording() -> Result<()> {
     assert!(duration.is_some(), "Startup duration should be recorded");
 
     let duration_value = duration.unwrap();
-    assert!(duration_value >= 50, "Startup duration should be at least 50ms");
+    assert!(
+        duration_value >= 50,
+        "Startup duration should be at least 50ms"
+    );
 
     Ok(())
 }
@@ -499,8 +516,14 @@ async fn test_optional_fields_omitted_when_none() -> Result<()> {
     assert!(!json.contains("subcommand"), "subcommand should be omitted");
     assert!(!json.contains("packages"), "packages should be omitted");
     assert!(!json.contains("error"), "error should be omitted");
-    assert!(!json.contains("result_count"), "result_count should be omitted");
-    assert!(!json.contains("updated_count"), "updated_count should be omitted");
+    assert!(
+        !json.contains("result_count"),
+        "result_count should be omitted"
+    );
+    assert!(
+        !json.contains("updated_count"),
+        "updated_count should be omitted"
+    );
 
     Ok(())
 }
@@ -594,7 +617,9 @@ async fn test_platform_string_format() -> Result<()> {
 
     // Second part should be architecture
     assert!(
-        ["x86_64", "aarch64", "arm"].iter().any(|&arch| parts[1].contains(arch)),
+        ["x86_64", "aarch64", "arm"]
+            .iter()
+            .any(|&arch| parts[1].contains(arch)),
         "Invalid architecture: {}",
         parts[1]
     );

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # 🚀 OMG Installer
-# The fastest unified package manager for Arch Linux
+# The fastest unified package manager for all platforms
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/PyRo1121/omg/main/install.sh | bash
@@ -96,6 +96,96 @@ check_runtime_dependencies() {
     return 0
 }
 
+# 🌍 OS/Distro/Arch Detection Functions
+
+detect_os() {
+    local os
+    os="$(uname -s)"
+    case "$os" in
+        Linux*)
+            # Check for WSL
+            if grep -qi microsoft /proc/version 2>/dev/null; then
+                echo "windows"
+            else
+                echo "linux"
+            fi
+            ;;
+        Darwin*) echo "darwin" ;;
+        MINGW*|MSYS*|CYGWIN*) echo "windows" ;;
+        *) echo "unknown" ;;
+    esac
+}
+
+detect_distro() {
+    local distro="unknown"
+    
+    if [[ -f /etc/os-release ]]; then
+        # Source the file and extract ID
+        # shellcheck disable=SC1091
+        . /etc/os-release
+        distro="${ID:-unknown}"
+        
+        # Normalize common distro names
+        case "$distro" in
+            ubuntu) distro="ubuntu" ;;
+            debian) distro="debian" ;;
+            arch) distro="arch" ;;
+            fedora) distro="fedora" ;;
+            rhel|centos) distro="fedora" ;; # Use Fedora binary for RHEL/CentOS
+            *) distro="unknown" ;;
+        esac
+    fi
+    
+    echo "$distro"
+}
+
+detect_arch() {
+    local machine
+    machine="$(uname -m)"
+    case "$machine" in
+        x86_64|amd64) echo "x86_64" ;;
+        aarch64) echo "aarch64" ;;
+        arm64) echo "aarch64" ;; # macOS uses arm64, normalize to aarch64
+        i686|i386) echo "i686" ;;
+        armv7l) echo "armv7l" ;;
+        *) echo "$machine" ;;
+    esac
+}
+
+select_artifact() {
+    local version="$1"
+    local os="$2"
+    local distro="$3"
+    local arch="$4"
+    local asset_name=""
+    
+    case "$os" in
+        linux)
+            case "$distro" in
+                arch|debian|ubuntu|fedora)
+                    asset_name="omg-${version}-${arch}-linux-${distro}.tar.gz"
+                    ;;
+                *)
+                    # Fallback to Fedora binary for unknown distros
+                    warn "Unknown Linux distro '${distro}', using Fedora binary (pure Rust, most portable)"
+                    asset_name="omg-${version}-${arch}-linux-fedora.tar.gz"
+                    ;;
+            esac
+            ;;
+        darwin)
+            asset_name="omg-${version}-${arch}-darwin.tar.gz"
+            ;;
+        windows)
+            asset_name="omg-${version}-${arch}-windows.zip"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+    
+    echo "$asset_name"
+}
+
 fetch_release_json() {
     local api_base="https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases"
 
@@ -111,12 +201,13 @@ install_from_release() {
         return 1
     fi
 
-    local arch
-    case "$(uname -m)" in
-        x86_64) arch="x86_64-unknown-linux-gnu" ;;
-        aarch64) arch="aarch64-unknown-linux-gnu" ;;
-        *) warn "No prebuilt binaries for architecture: $(uname -m)"; return 1 ;;
-    esac
+    # Detect system info
+    local detected_os
+    local detected_distro
+    local detected_arch
+    detected_os=$(detect_os)
+    detected_distro=$(detect_distro)
+    detected_arch=$(detect_arch)
 
     # Use GitHub releases (always up-to-date)
     local release_json
@@ -125,24 +216,50 @@ install_from_release() {
         return 1
     fi
 
+    # Extract actual version tag from release JSON
+    local actual_version
+    actual_version=$(printf "%s" "$release_json" | grep -Eo '"tag_name"\s*:\s*"[^"]+"' | head -n1 | cut -d'"' -f4)
+    if [[ -z "$actual_version" ]]; then
+        warn "Unable to parse version from release metadata"
+        return 1
+    fi
+
+    # Select correct artifact name
+    local artifact_name
+    artifact_name=$(select_artifact "$actual_version" "$detected_os" "$detected_distro" "$detected_arch")
+    
+    if [[ -z "$artifact_name" ]]; then
+        warn "Unable to determine artifact name for ${detected_os}/${detected_distro}/${detected_arch}"
+        return 1
+    fi
+
+    # Find download URL for the artifact
     local asset_url
     asset_url=$(printf "%s" "$release_json" \
         | grep -Eo '"browser_download_url"\s*:\s*"[^"]+"' \
         | cut -d '"' -f4 \
-        | grep -E "omg.*${arch}.*\\.tar\\.gz$" \
+        | grep -F "$artifact_name" \
         | head -n1)
 
     if [[ -z "$asset_url" ]]; then
-        warn "No prebuilt binary found for ${arch} (falling back to source build)"
+        warn "No prebuilt binary found for ${detected_os}/${detected_distro}/${detected_arch} (artifact: ${artifact_name})"
         return 1
     fi
 
     header "Installing Prebuilt OMG"
+    info "Platform: ${detected_os}/${detected_distro}/${detected_arch}"
     tmp_dir=$(mktemp -d)
     trap 'cleanup_tmp_dir' RETURN
 
     start_spinner "Downloading prebuilt binary"
-    if curl -fsSL "$asset_url" -o "$tmp_dir/omg.tar.gz" >/dev/null 2>&1; then
+    local download_file="$tmp_dir/omg-release"
+    if [[ "$artifact_name" == *.zip ]]; then
+        download_file="$tmp_dir/omg-release.zip"
+    else
+        download_file="$tmp_dir/omg-release.tar.gz"
+    fi
+    
+    if curl -fsSL "$asset_url" -o "$download_file" >/dev/null 2>&1; then
         stop_spinner "Download complete"
     else
         fail_spinner "Download failed"
@@ -150,11 +267,27 @@ install_from_release() {
     fi
 
     start_spinner "Extracting binaries"
-    if tar -xzf "$tmp_dir/omg.tar.gz" -C "$tmp_dir" >/dev/null 2>&1; then
-        stop_spinner "Extraction complete"
+    if [[ "$artifact_name" == *.zip ]]; then
+        # Handle Windows .zip files
+        if command -v unzip >/dev/null 2>&1; then
+            if unzip -q "$download_file" -d "$tmp_dir" >/dev/null 2>&1; then
+                stop_spinner "Extraction complete"
+            else
+                fail_spinner "Extraction failed"
+                return 1
+            fi
+        else
+            fail_spinner "unzip not found (required for Windows binaries)"
+            return 1
+        fi
     else
-        fail_spinner "Extraction failed"
-        return 1
+        # Handle .tar.gz files
+        if tar -xzf "$download_file" -C "$tmp_dir" >/dev/null 2>&1; then
+            stop_spinner "Extraction complete"
+        else
+            fail_spinner "Extraction failed"
+            return 1
+        fi
     fi
 
     local omg_path
@@ -177,6 +310,7 @@ install_from_release() {
     success "Installed prebuilt binaries to $INSTALL_DIR"
     return 0
 }
+
 trap cleanup EXIT
 
 info() {
@@ -241,24 +375,55 @@ print_banner() {
     clear
     printf "${MAGENTA}${BOLD}"
     cat << 'EOF'
-   ____  __  __  ____ 
-  / __ \|  \/  |/ ___|
- | |  | | |\/| | |  _ 
- | |__| | |  | | |_| |
-  \____/|_|  |_|\____|
+    ____  __  __  ____ 
+   / __ \|  \/  |/ ___|
+  | |  | | |\/| | |  _ 
+  | |__| | |  | | |_| |
+   \____/|_|  |_|\____|
 EOF
     printf "${RESET}\n"
-    printf "  ${DIM}The unified DevOps platform for Arch Linux${RESET}\n\n"
+    printf "  ${DIM}The unified package manager for all platforms${RESET}\n\n"
 }
 
 # 🛡️ System Checks
-check_arch() {
+check_platform() {
     header "Checking System"
     
-    if [[ ! -f /etc/arch-release ]]; then
-        error "OMG requires Arch Linux."
-    fi
-    success "Arch Linux detected"
+    local detected_os
+    local detected_distro
+    local detected_arch
+    detected_os=$(detect_os)
+    detected_distro=$(detect_distro)
+    detected_arch=$(detect_arch)
+    
+    info "Detected OS: ${detected_os}"
+    info "Detected Distro: ${detected_distro}"
+    info "Detected Architecture: ${detected_arch}"
+    
+    case "$detected_os" in
+        linux)
+            case "$detected_distro" in
+                arch|debian|ubuntu|fedora)
+                    success "Supported platform detected"
+                    ;;
+                unknown)
+                    warn "Unknown Linux distro detected - will use Fedora binary (pure Rust, most portable)"
+                    ;;
+                *)
+                    warn "Untested platform - attempting installation with Fedora binary"
+                    ;;
+            esac
+            ;;
+        darwin)
+            success "macOS detected"
+            ;;
+        windows)
+            success "Windows/WSL detected"
+            ;;
+        *)
+            error "Unsupported platform: ${detected_os}. Please file an issue at https://github.com/PyRo1121/omg/issues"
+            ;;
+    esac
 }
 
 check_dependencies() {
@@ -273,7 +438,6 @@ check_dependencies() {
 
     if ! pkg-config --exists libarchive 2>/dev/null; then missing+=("libarchive"); fi
     if ! pkg-config --exists openssl 2>/dev/null; then missing+=("openssl"); fi
-    if [[ ! -f /usr/lib/libalpm.so ]]; then missing+=("pacman"); fi
 
     if [[ ${#missing[@]} -gt 0 ]]; then
         warn "Missing dependencies: ${missing[*]}"
@@ -282,12 +446,63 @@ check_dependencies() {
         echo
         if [[ ! $REPLY =~ ^[Nn]$ ]]; then
             start_spinner "Installing dependencies"
-            if sudo pacman -S --needed --noconfirm "${missing[@]}" base-devel >/dev/null 2>&1; then
-                stop_spinner "Dependencies installed"
-            else
-                fail_spinner "Failed to install dependencies"
-                error "Please install manually: sudo pacman -S ${missing[*]} base-devel"
-            fi
+            
+            local detected_os
+            detected_os=$(detect_os)
+            
+            case "$detected_os" in
+                linux)
+                    local detected_distro
+                    detected_distro=$(detect_distro)
+                    case "$detected_distro" in
+                        arch)
+                            if sudo pacman -S --needed --noconfirm "${missing[@]}" base-devel >/dev/null 2>&1; then
+                                stop_spinner "Dependencies installed"
+                            else
+                                fail_spinner "Failed to install dependencies"
+                                error "Please install manually: sudo pacman -S ${missing[*]} base-devel"
+                            fi
+                            ;;
+                        debian|ubuntu)
+                            if sudo apt-get update >/dev/null 2>&1 && sudo apt-get install -y "${missing[@]}" >/dev/null 2>&1; then
+                                stop_spinner "Dependencies installed"
+                            else
+                                fail_spinner "Failed to install dependencies"
+                                error "Please install manually: sudo apt-get install ${missing[*]}"
+                            fi
+                            ;;
+                        fedora)
+                            if sudo dnf install -y "${missing[@]}" >/dev/null 2>&1; then
+                                stop_spinner "Dependencies installed"
+                            else
+                                fail_spinner "Failed to install dependencies"
+                                error "Please install manually: sudo dnf install ${missing[*]}"
+                            fi
+                            ;;
+                        *)
+                            fail_spinner "Unknown package manager"
+                            error "Please install dependencies manually: ${missing[*]}"
+                            ;;
+                    esac
+                    ;;
+                darwin)
+                    if command -v brew >/dev/null 2>&1; then
+                        if brew install "${missing[@]}" >/dev/null 2>&1; then
+                            stop_spinner "Dependencies installed"
+                        else
+                            fail_spinner "Failed to install dependencies"
+                            error "Please install manually: brew install ${missing[*]}"
+                        fi
+                    else
+                        fail_spinner "Homebrew not found"
+                        error "Please install Homebrew first: https://brew.sh"
+                    fi
+                    ;;
+                *)
+                    fail_spinner "Unknown OS"
+                    error "Please install dependencies manually: ${missing[*]}"
+                    ;;
+            esac
         else
             error "Dependencies required to proceed."
         fi
@@ -479,6 +694,43 @@ setup_shell() {
     "$INSTALL_DIR/omg" completions "$shell_type" >/dev/null 2>&1 || true
 }
 
+setup_turbo() {
+    local detected_os
+    detected_os=$(detect_os)
+    
+    if [[ "$detected_os" != "linux" ]]; then
+        return
+    fi
+
+    header "Turbo Mode (Recommended)"
+    
+    printf "\\n${BOLD}What is Turbo Mode?${RESET}\\n"
+    printf "  Turbo mode enables instant package operations without sudo prompts.\\n"
+    printf "  It uses Linux capabilities to grant omg permission to manage packages.\\n"
+    printf "\\n"
+    printf "  ${DIM}Benefits:${RESET}\\n"
+    printf "  • No sudo password prompts for install/update/remove\\n"
+    printf "  • 40x faster privilege elevation (5ms vs 200ms)\\n"
+    printf "  • Works in scripts and automation without NOPASSWD\\n"
+    printf "\\n"
+
+    read -p "$(printf "${BOLD}Enable turbo mode now?${RESET} [Y/n] ")" -n 1 -r
+    echo
+    
+    if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+        start_spinner "Enabling turbo mode"
+        if sudo setcap 'cap_dac_override,cap_fowner,cap_chown+ep' "$INSTALL_DIR/omg" >/dev/null 2>&1; then
+            stop_spinner "Turbo mode enabled"
+            success "Package operations now work without sudo!"
+        else
+            fail_spinner "Failed to enable turbo mode"
+            warn "You can enable it later with: omg doctor --turbo"
+        fi
+    else
+        info "Skipped. Enable later with: omg doctor --turbo"
+    fi
+}
+
 finish() {
     printf "\n"
     printf "${GREEN}${BOLD}Installation Complete! 🚀${RESET}\n"
@@ -486,7 +738,7 @@ finish() {
     printf "${BOLD}Next Steps:${RESET}\n"
     printf "  1. Restart your terminal\n"
     printf "  2. Run ${CYAN}omg doctor${RESET} to verify setup\n"
-    printf "  3. Try ${CYAN}omg run build${RESET} in a project\n"
+    printf "  3. Try ${CYAN}omg search firefox${RESET} to test\n"
     printf "\n"
 }
 
@@ -494,13 +746,14 @@ finish() {
 main() {
     print_banner
     if ! install_from_release; then
-        check_arch
+        check_platform
         check_dependencies
         build_omg
     fi
     setup_config
     setup_telemetry
     setup_shell
+    setup_turbo
     finish
 }
 

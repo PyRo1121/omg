@@ -18,16 +18,12 @@ fn validate_config_path(path: &Path, field_name: &str) -> Result<()> {
 
     // Check for path traversal
     if path_str.contains("..") {
-        anyhow::bail!(
-            "Config error: {field_name} contains path traversal sequence '..'"
-        );
+        anyhow::bail!("Config error: {field_name} contains path traversal sequence '..'");
     }
 
     // Check for null bytes
     if path_str.contains('\0') {
-        anyhow::bail!(
-            "Config error: {field_name} contains null byte"
-        );
+        anyhow::bail!("Config error: {field_name} contains null byte");
     }
 
     // Reject absolute paths outside of home/cache directories for safety

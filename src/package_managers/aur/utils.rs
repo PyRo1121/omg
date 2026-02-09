@@ -18,21 +18,26 @@ use tokio::process::Command;
 /// - Directory traversal (`build_dir/../../../etc`)
 pub fn validate_path_inside(base: &Path, target: &Path) -> Result<PathBuf> {
     // Canonicalize base - must exist
-    let base_canonical = base.canonicalize()
+    let base_canonical = base
+        .canonicalize()
         .with_context(|| format!("Base directory does not exist: {}", base.display()))?;
 
     // For target, if it exists, canonicalize it. If not, canonicalize parent and append filename.
     let target_canonical = if target.exists() {
-        target.canonicalize()
+        target
+            .canonicalize()
             .with_context(|| format!("Failed to canonicalize: {}", target.display()))?
     } else {
         // Path doesn't exist yet - canonicalize parent and append leaf
-        let parent = target.parent()
+        let parent = target
+            .parent()
             .ok_or_else(|| anyhow::anyhow!("Path has no parent: {}", target.display()))?;
-        let leaf = target.file_name()
+        let leaf = target
+            .file_name()
             .ok_or_else(|| anyhow::anyhow!("Path has no filename: {}", target.display()))?;
 
-        let parent_canonical = parent.canonicalize()
+        let parent_canonical = parent
+            .canonicalize()
             .with_context(|| format!("Parent directory does not exist: {}", parent.display()))?;
 
         parent_canonical.join(leaf)
@@ -121,7 +126,12 @@ pub async fn create_dir_as_user(path: &Path) -> Result<()> {
             .arg(path.as_os_str())
             .status()
             .await
-            .with_context(|| format!("Failed to create directory as user '{user}': {}", path.display()))?;
+            .with_context(|| {
+                format!(
+                    "Failed to create directory as user '{user}': {}",
+                    path.display()
+                )
+            })?;
 
         if !status.success() {
             anyhow::bail!(
@@ -154,7 +164,12 @@ pub async fn remove_dir_as_user(path: &Path) -> Result<()> {
             .arg(path.as_os_str())
             .status()
             .await
-            .with_context(|| format!("Failed to remove directory as user '{user}': {}", path.display()))?;
+            .with_context(|| {
+                format!(
+                    "Failed to remove directory as user '{user}': {}",
+                    path.display()
+                )
+            })?;
 
         if !status.success() {
             anyhow::bail!(
@@ -182,7 +197,12 @@ pub fn create_dir_as_user_sync(path: &Path) -> Result<()> {
             .arg("--")
             .arg(path.as_os_str())
             .status()
-            .with_context(|| format!("Failed to create directory as user '{user}': {}", path.display()))?;
+            .with_context(|| {
+                format!(
+                    "Failed to create directory as user '{user}': {}",
+                    path.display()
+                )
+            })?;
 
         if !status.success() {
             anyhow::bail!(

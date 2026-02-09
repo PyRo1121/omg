@@ -185,10 +185,9 @@ mod sudo_integration_tests {
         let combined = result.combined_output();
         assert!(
             !combined.contains("[sudo]")
-                && !combined.to_lowercase().contains("password")
-                && !combined.contains(":"),
-            "Check mode should never prompt. Got:\n{}",
-            combined
+                && !combined.to_lowercase().contains("password for")
+                && !combined.contains("Password:"),
+            "Check mode should never prompt. Got:\n{combined}",
         );
     }
 

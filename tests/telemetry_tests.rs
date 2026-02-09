@@ -27,9 +27,7 @@ use std::path::PathBuf;
 use tempfile::TempDir;
 use tokio::time::Duration;
 
-use omg_lib::core::telemetry::{
-    TelemetrySession, Timer,
-};
+use omg_lib::core::telemetry::{TelemetrySession, Timer};
 
 // =============================================================================
 // Test Fixtures and Helpers
@@ -151,7 +149,10 @@ async fn test_session_expiry_30_minutes() -> Result<()> {
     let now = jiff::Timestamp::now().as_second();
     session.last_activity.store(now - 1860, Ordering::Relaxed); // 31 minutes in seconds
 
-    assert!(session.is_expired(), "Session should be expired after 30 min");
+    assert!(
+        session.is_expired(),
+        "Session should be expired after 30 min"
+    );
 
     Ok(())
 }
@@ -222,7 +223,10 @@ async fn test_session_persistence() -> Result<()> {
 
     // Read it back
     let loaded_session_json = fixture.read_session()?.expect("Session should exist");
-    assert_eq!(loaded_session_json["session_id"].as_str(), Some(original_id.as_str()));
+    assert_eq!(
+        loaded_session_json["session_id"].as_str(),
+        Some(original_id.as_str())
+    );
 
     Ok(())
 }
@@ -387,7 +391,7 @@ async fn test_feature_event_serialization() -> Result<()> {
 
 #[tokio::test]
 async fn test_telemetry_payload_creation() -> Result<()> {
-    use omg_lib::core::telemetry_client::{TelemetryPayload, TelemetryEvent, CommandEvent};
+    use omg_lib::core::telemetry_client::{CommandEvent, TelemetryEvent, TelemetryPayload};
 
     let event = TelemetryEvent::Command(CommandEvent {
         command: "search".to_string(),
@@ -414,7 +418,7 @@ async fn test_telemetry_payload_creation() -> Result<()> {
 #[tokio::test]
 async fn test_batch_payload_structure() -> Result<()> {
     use omg_lib::core::telemetry_client::{
-        BatchPayload, TelemetryPayload, TelemetryEvent, PerformanceEvent
+        BatchPayload, PerformanceEvent, TelemetryEvent, TelemetryPayload,
     };
 
     let events = vec![
@@ -433,7 +437,9 @@ async fn test_batch_payload_structure() -> Result<()> {
     let machine_id = omg_lib::core::license::get_machine_id();
     let batch = BatchPayload {
         events,
-        batch_timestamp: jiff::Timestamp::now().strftime("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+        batch_timestamp: jiff::Timestamp::now()
+            .strftime("%Y-%m-%dT%H:%M:%S%.3fZ")
+            .to_string(),
         machine_id,
     };
 
@@ -483,7 +489,7 @@ async fn test_timer_multiple_operations() -> Result<()> {
 
 #[tokio::test]
 async fn test_special_characters_in_events() -> Result<()> {
-    use omg_lib::core::telemetry_client::{TelemetryEvent, CommandEvent};
+    use omg_lib::core::telemetry_client::{CommandEvent, TelemetryEvent};
 
     let packages = vec!["lib++".to_string(), "g++".to_string()];
     let event = TelemetryEvent::Command(CommandEvent {
@@ -507,7 +513,7 @@ async fn test_special_characters_in_events() -> Result<()> {
 
 #[tokio::test]
 async fn test_error_message_in_event() -> Result<()> {
-    use omg_lib::core::telemetry_client::{TelemetryEvent, CommandEvent};
+    use omg_lib::core::telemetry_client::{CommandEvent, TelemetryEvent};
 
     let event = TelemetryEvent::Command(CommandEvent {
         command: "install".to_string(),
@@ -530,7 +536,7 @@ async fn test_error_message_in_event() -> Result<()> {
 
 #[tokio::test]
 async fn test_search_with_result_count() -> Result<()> {
-    use omg_lib::core::telemetry_client::{TelemetryEvent, CommandEvent};
+    use omg_lib::core::telemetry_client::{CommandEvent, TelemetryEvent};
 
     let event = TelemetryEvent::Command(CommandEvent {
         command: "search".to_string(),
@@ -553,7 +559,7 @@ async fn test_search_with_result_count() -> Result<()> {
 
 #[tokio::test]
 async fn test_update_with_count() -> Result<()> {
-    use omg_lib::core::telemetry_client::{TelemetryEvent, CommandEvent};
+    use omg_lib::core::telemetry_client::{CommandEvent, TelemetryEvent};
 
     let event = TelemetryEvent::Command(CommandEvent {
         command: "update".to_string(),
@@ -609,7 +615,7 @@ async fn test_session_id_format() -> Result<()> {
 
 #[tokio::test]
 async fn test_timestamp_format() -> Result<()> {
-    use omg_lib::core::telemetry_client::{TelemetryPayload, TelemetryEvent, PerformanceEvent};
+    use omg_lib::core::telemetry_client::{PerformanceEvent, TelemetryEvent, TelemetryPayload};
 
     let event = TelemetryEvent::Performance(PerformanceEvent {
         metric_type: "test".to_string(),
@@ -629,7 +635,7 @@ async fn test_timestamp_format() -> Result<()> {
 
 #[tokio::test]
 async fn test_platform_string_format() -> Result<()> {
-    use omg_lib::core::telemetry_client::{TelemetryPayload, TelemetryEvent, PerformanceEvent};
+    use omg_lib::core::telemetry_client::{PerformanceEvent, TelemetryEvent, TelemetryPayload};
 
     let event = TelemetryEvent::Performance(PerformanceEvent {
         metric_type: "test".to_string(),
