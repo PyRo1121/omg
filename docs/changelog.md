@@ -14,6 +14,18 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ### Merge
 
 - Incorporate remote changelog update
+### ⚡ Performance
+
+- **Ci**: Make benchmark regression gate non-blocking
+
+The performance baseline in benchmarks/summary.json was recorded on
+
+local hardware (17.8ms). CI runners are ~10-15x slower for I/O-bound
+
+benchmarks (246ms), causing false regression alerts. The gate now warns
+
+instead of failing, while still uploading benchmark results as artifacts.
+
 ### 🐛 Bug Fixes
 
 - Resolve clippy pedantic warnings in portable build
