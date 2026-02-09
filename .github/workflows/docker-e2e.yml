@@ -37,11 +37,22 @@ jobs:
           key: ${{ runner.os }}-cargo-docker-e2e-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-docker-e2e-
 
-      - name: Build OMG binary
-        run: cargo build --release --features arch
+      - name: Build OMG binary in Arch container
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            archlinux:latest \
+            bash -c '
+              pacman -Syu --noconfirm
+              pacman -S --noconfirm --needed base-devel git pkgconf openssl libarchive clang cmake curl
+              curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.93.0
+              export PATH="$HOME/.cargo/bin:$PATH"
+              cargo build --release --features arch --locked
+            '
 
       - name: Run Docker E2E Tests
-        run: OMG_RUN_DOCKER_TESTS=1 cargo test --features arch --test docker_e2e -- --test-threads=1
+        run: OMG_RUN_DOCKER_TESTS=1 cargo test --no-default-features --features pgp,license --test docker_e2e -- --test-threads=1
         env:
           RUST_BACKTRACE: 1
 

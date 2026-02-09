@@ -3,9 +3,7 @@
 //! These tests run actual install/remove operations in Docker containers
 //! to verify real system integration without modifying the host.
 //!
-//! Run with: OMG_RUN_DOCKER_TESTS=1 cargo test --features arch --test docker_e2e
-
-#![cfg(feature = "arch")]
+//! Run with: OMG_RUN_DOCKER_TESTS=1 cargo test --test docker_e2e
 
 use std::process::Command;
 
