@@ -28,6 +28,12 @@ instead of failing, while still uploading benchmark results as artifacts.
 
 ### 🐛 Bug Fixes
 
+- **Ci**: Resolve Docker E2E permissions and benchmark upload resilience
+
+  - Add chown step after Docker build to fix target/ root ownership
+
+  - Add continue-on-error to benchmark artifact upload (transient GitHub API)
+
 - **Clippy**: Resolve all pedantic warnings across platform builds
 
   - Use #[allow] instead of #[expect] for feature-gated lints that may
