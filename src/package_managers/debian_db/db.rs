@@ -86,7 +86,7 @@ struct DpkgStatusCache {
 static DEBIAN_MMAP_INDEX: LazyLock<RwLock<Option<DebianMmapIndex>>> =
     LazyLock::new(|| RwLock::new(None));
 
-/// Global FST index for O(query_len) prefix searches
+/// Global FST index for `O(query_len)` prefix searches
 /// FST provides logarithmic complexity for prefix matching vs O(n) full scan
 static DEBIAN_FST_INDEX: LazyLock<RwLock<Option<FstIndex>>> = LazyLock::new(|| RwLock::new(None));
 
@@ -597,8 +597,8 @@ pub fn ensure_index_loaded() -> Result<()> {
 }
 
 /// Ensure FST index is loaded (if available on disk)
-/// Returns Ok(()) whether FST is available or not - FST is optional optimization
-fn ensure_fst_loaded() -> Result<()> {
+/// Returns `Ok(())` whether FST is available or not - FST is optional optimization
+fn ensure_fst_loaded() {
     // Check if already loaded
     {
         let guard = DEBIAN_FST_INDEX.read().expect("lock poisoned");
@@ -611,7 +611,7 @@ fn ensure_fst_loaded() -> Result<()> {
                 *write_guard = None;
             } else {
                 fst.touch();
-                return Ok(());
+                return;
             }
         }
     }
@@ -619,7 +619,7 @@ fn ensure_fst_loaded() -> Result<()> {
     // Try to load from disk
     let fst_path = paths::cache_dir().join("debian_index_v5.fst");
     if !fst_path.exists() {
-        return Ok(()); // FST not available yet, will fall back to SIMD search
+        return; // FST not available yet, will fall back to SIMD search
     }
 
     if let Ok(fst_index) = FstIndex::open(&fst_path) {
@@ -627,12 +627,11 @@ fn ensure_fst_loaded() -> Result<()> {
         *guard = Some(fst_index);
         tracing::debug!("Loaded FST index from disk");
     }
-
-    Ok(())
 }
 
 /// Ensure the mmap index is loaded from disk (if available).
-/// This is nearly instant (just a syscall, no decompression) unlike ensure_index_loaded().
+///
+/// This is nearly instant (just a syscall, no decompression) unlike `ensure_index_loaded()`.
 /// Used by the ultra-fast search and update paths to avoid loading the full index.
 pub fn ensure_mmap_loaded() -> bool {
     // Check if already loaded
@@ -860,9 +859,9 @@ pub fn search_fast(query: &str) -> Result<Vec<Package>> {
     }
 
     // ULTRA-FAST PATH: FST + mmap (no index loading, no decompression)
-    // This path takes ~5ms vs ~90ms for ensure_index_loaded()
+    // This path takes ~5ms vs ~90ms for `ensure_index_loaded()`
     if !query.is_empty() {
-        ensure_fst_loaded()?;
+        ensure_fst_loaded();
         let fst_guard = DEBIAN_FST_INDEX.read().expect("lock poisoned");
         if fst_guard.is_some() && ensure_mmap_loaded() {
             let fst_index = fst_guard.as_ref().expect("checked is_some() above");
@@ -871,7 +870,7 @@ pub fn search_fast(query: &str) -> Result<Vec<Package>> {
             let mmap_guard = DEBIAN_MMAP_INDEX.read().expect("lock poisoned");
             if let Some(ref mmap) = *mmap_guard {
                 mmap.touch();
-                return fst_mmap_search(&fst_index.map, mmap, &query_lower);
+                return Ok(fst_mmap_search(&fst_index.map, mmap, &query_lower));
             }
         }
         drop(fst_guard);
@@ -880,7 +879,7 @@ pub fn search_fast(query: &str) -> Result<Vec<Package>> {
     // Fallback: load full index (needed for empty queries or when FST/mmap unavailable)
     ensure_index_loaded()?;
     if query.is_empty() {
-        ensure_fst_loaded()?;
+        ensure_fst_loaded();
     }
 
     let guard = DEBIAN_INDEX_CACHE.read().expect("lock poisoned");
@@ -920,21 +919,26 @@ pub fn search_fast(query: &str) -> Result<Vec<Package>> {
     let fst_guard = DEBIAN_FST_INDEX.read().expect("lock poisoned");
     if let Some(ref fst_index) = *fst_guard {
         fst_index.touch();
-        return fst_search(&fst_index.map, index, &query_lower, &guard.installed_set);
+        return Ok(fst_search(
+            &fst_index.map,
+            index,
+            &query_lower,
+            &guard.installed_set,
+        ));
     }
     drop(fst_guard);
 
     // Fallback: SIMD search
-    simd_search_fallback(
+    Ok(simd_search_fallback(
         index,
         &query_lower,
         &guard.search_buffer,
         &guard.package_offsets,
         &guard.installed_set,
-    )
+    ))
 }
 
-/// FST-based search: O(query_len) prefix matching
+/// FST-based search: `O(query_len)` prefix matching
 /// Much faster than full buffer scan for common queries
 #[inline]
 fn fst_search(
@@ -942,16 +946,16 @@ fn fst_search(
     index: &DebianPackageIndex,
     query_lower: &str,
     installed_set: &AHashSet<String>,
-) -> Result<Vec<Package>> {
+) -> Vec<Package> {
     let query_bytes = query_lower.as_bytes();
 
     // 1. Try exact match first (fastest - single lookup)
-    if let Some(idx) = fst_map.get(query_bytes) {
-        if let Some(pkg) = index.packages.get(idx as usize) {
-            let mut p = pkg.to_package();
-            p.installed = installed_set.contains(&p.name);
-            return Ok(vec![p]);
-        }
+    if let Some(idx) = fst_map.get(query_bytes)
+        && let Some(pkg) = index.packages.get(idx as usize)
+    {
+        let mut p = pkg.to_package();
+        p.installed = installed_set.contains(&p.name);
+        return vec![p];
     }
 
     // 2. Prefix search (very fast - early termination)
@@ -977,7 +981,7 @@ fn fst_search(
 
     // If we found prefix matches, return them
     if !prefix_matches.is_empty() {
-        return Ok(prefix_matches);
+        return prefix_matches;
     }
 
     // 3. Substring search fallback (slower but comprehensive)
@@ -1001,31 +1005,27 @@ fn fst_search(
         }
     }
 
-    Ok(substring_matches)
+    substring_matches
 }
 
-/// FST+mmap search: completely bypasses ensure_index_loaded()
+/// FST+mmap search: completely bypasses `ensure_index_loaded()`
 /// Uses FST for name matching and mmap for zero-copy package details
 #[inline]
-fn fst_mmap_search(
-    fst_map: &Map<Mmap>,
-    mmap: &DebianMmapIndex,
-    query_lower: &str,
-) -> Result<Vec<Package>> {
+fn fst_mmap_search(fst_map: &Map<Mmap>, mmap: &DebianMmapIndex, query_lower: &str) -> Vec<Package> {
     let query_bytes = query_lower.as_bytes();
     let installed_set = get_installed_set();
 
     // 1. Try exact match first
-    if let Some(_idx) = fst_map.get(query_bytes) {
-        if let Ok(Some(pkg)) = mmap.get(query_lower) {
-            return Ok(vec![Package {
-                name: pkg.name.to_string(),
-                version: parse_version_or_zero(pkg.version.as_str()),
-                description: pkg.description.to_string(),
-                source: PackageSource::Official,
-                installed: installed_set.contains(pkg.name.as_str()),
-            }]);
-        }
+    if let Some(_idx) = fst_map.get(query_bytes)
+        && let Ok(Some(pkg)) = mmap.get(query_lower)
+    {
+        return vec![Package {
+            name: pkg.name.to_string(),
+            version: parse_version_or_zero(pkg.version.as_str()),
+            description: pkg.description.to_string(),
+            source: PackageSource::Official,
+            installed: installed_set.contains(pkg.name.as_str()),
+        }];
     }
 
     // 2. Prefix search
@@ -1036,16 +1036,16 @@ fn fst_mmap_search(
         if !name_bytes.starts_with(query_bytes) {
             break;
         }
-        if let Ok(name_str) = std::str::from_utf8(name_bytes) {
-            if let Ok(Some(pkg)) = mmap.get(name_str) {
-                results.push(Package {
-                    name: pkg.name.to_string(),
-                    version: parse_version_or_zero(pkg.version.as_str()),
-                    description: pkg.description.to_string(),
-                    source: PackageSource::Official,
-                    installed: installed_set.contains(pkg.name.as_str()),
-                });
-            }
+        if let Ok(name_str) = std::str::from_utf8(name_bytes)
+            && let Ok(Some(pkg)) = mmap.get(name_str)
+        {
+            results.push(Package {
+                name: pkg.name.to_string(),
+                version: parse_version_or_zero(pkg.version.as_str()),
+                description: pkg.description.to_string(),
+                source: PackageSource::Official,
+                installed: installed_set.contains(pkg.name.as_str()),
+            });
         }
         if results.len() >= 100 {
             break;
@@ -1053,32 +1053,31 @@ fn fst_mmap_search(
     }
 
     if !results.is_empty() {
-        return Ok(results);
+        return results;
     }
 
     // 3. Substring search fallback
     let finder = memmem::Finder::new(query_bytes);
     let mut stream = fst_map.stream().into_stream();
     while let Some((name_bytes, _idx)) = stream.next() {
-        if finder.find(name_bytes).is_some() {
-            if let Ok(name_str) = std::str::from_utf8(name_bytes) {
-                if let Ok(Some(pkg)) = mmap.get(name_str) {
-                    results.push(Package {
-                        name: pkg.name.to_string(),
-                        version: parse_version_or_zero(pkg.version.as_str()),
-                        description: pkg.description.to_string(),
-                        source: PackageSource::Official,
-                        installed: installed_set.contains(pkg.name.as_str()),
-                    });
-                }
-            }
-            if results.len() >= 100 {
-                break;
-            }
+        if finder.find(name_bytes).is_some()
+            && let Ok(name_str) = std::str::from_utf8(name_bytes)
+            && let Ok(Some(pkg)) = mmap.get(name_str)
+        {
+            results.push(Package {
+                name: pkg.name.to_string(),
+                version: parse_version_or_zero(pkg.version.as_str()),
+                description: pkg.description.to_string(),
+                source: PackageSource::Official,
+                installed: installed_set.contains(pkg.name.as_str()),
+            });
+        }
+        if results.len() >= 100 {
+            break;
         }
     }
 
-    Ok(results)
+    results
 }
 
 /// Get the installed package set from dpkg status cache
@@ -1105,7 +1104,7 @@ fn simd_search_fallback(
     search_buffer: &[u8],
     package_offsets: &[usize],
     installed_set: &AHashSet<String>,
-) -> Result<Vec<Package>> {
+) -> Vec<Package> {
     let finder = memmem::Finder::new(query_lower.as_bytes());
     let mut exact_matches = Vec::with_capacity(4);
     let mut prefix_matches = Vec::with_capacity(32);
@@ -1141,7 +1140,7 @@ fn simd_search_fallback(
     // Return results in relevance order: exact > prefix > substring
     exact_matches.extend(prefix_matches);
     exact_matches.extend(substring_matches);
-    Ok(exact_matches)
+    exact_matches
 }
 
 pub fn get_info_fast(name: &str) -> Result<Option<Package>> {
@@ -1448,6 +1447,7 @@ pub fn is_mmap_available() -> bool {
 
 /// Get updates using the mmap index with parallel version comparison
 /// This is the ULTRA-FAST path that avoids loading the entire index into memory
+#[allow(clippy::implicit_hasher)]
 pub fn get_updates_from_mmap(
     installed_map: &std::collections::HashMap<&str, &str>,
 ) -> Result<Vec<(String, String, String)>> {
@@ -1718,7 +1718,7 @@ pub fn list_orphans_fast() -> Result<Vec<String>> {
 
     // Build the set of all packages required (directly or transitively) by manual packages
     let mut required_set = AHashSet::new();
-    let mut to_visit = manual_packages.clone();
+    let mut to_visit = manual_packages;
 
     // Parse dpkg/status once to build a dependency map
     let dep_map = build_dependency_map()?;
@@ -1748,7 +1748,7 @@ pub fn list_orphans_fast() -> Result<Vec<String>> {
 }
 
 /// Build a dependency map from all installed packages
-/// Returns HashMap<package_name, Vec<dependency_names>>
+/// Returns `HashMap<package_name, Vec<dependency_names>>`
 fn build_dependency_map() -> Result<HashMap<String, Vec<String>>> {
     let status_path = Path::new("/var/lib/dpkg/status");
     if !status_path.exists() {
@@ -1834,7 +1834,7 @@ pub fn clean_package_cache() -> Result<(usize, u64)> {
             let path = entry.path();
 
             if let Some(filename) = path.file_name().and_then(|n| n.to_str())
-                && filename.ends_with(".deb")
+                && filename.to_ascii_lowercase().ends_with(".deb")
                 && path.is_file()
             {
                 if let Ok(meta) = fs::metadata(&path) {
@@ -1854,7 +1854,7 @@ pub fn clean_package_cache() -> Result<(usize, u64)> {
             let path = entry.path();
 
             if let Some(filename) = path.file_name().and_then(|n| n.to_str())
-                && filename.ends_with(".deb")
+                && filename.to_ascii_lowercase().ends_with(".deb")
                 && path.is_file()
             {
                 if let Ok(meta) = fs::metadata(&path) {

@@ -192,6 +192,7 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bo
 
 /// Handle clean operations for debian-pure backend
 #[cfg(feature = "debian-pure")]
+#[allow(clippy::fn_params_excessive_bools)]
 async fn handle_debian_pure_clean(
     orphans: bool,
     cache: bool,

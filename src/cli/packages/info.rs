@@ -67,7 +67,7 @@ pub fn info_sync(package: &str) -> Result<bool> {
                 .flatten()
             {
                 ui::print_kv("Name", &style::package(&pkg.name));
-                ui::print_kv("Version", &style::version(&pkg.version.to_string()));
+                ui::print_kv("Version", &style::version(&pkg.version));
                 ui::print_kv("Description", &pkg.description);
                 ui::print_kv(
                     "Status",
