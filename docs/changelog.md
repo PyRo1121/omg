@@ -16,6 +16,20 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - Incorporate remote changelog update
 ### 🐛 Bug Fixes
 
+- **Ci**: Use explicit toolchain param and fix Docker E2E build
+
+  - ci.yml: Use dtolnay/rust-toolchain@stable with toolchain: "1.93.0"
+
+instead of @1.93.0 tag (which resolved to wrong version)
+
+  - docker-e2e.yml: Build OMG binary inside Arch container (ubuntu-latest
+
+lacks libalpm headers needed for --features arch)
+
+  - docker_e2e.rs: Remove #![cfg(feature = "arch")] since test only
+
+shells out to Docker commands, doesn't import arch-specific code
+
 - **Ci**: Update Rust toolchain 1.92.0 → 1.93.0 to match Cargo.toml MSRV
 
   - rust-toolchain.toml: 1.92.0 → 1.93.0 (matches rust-version = "1.93")
