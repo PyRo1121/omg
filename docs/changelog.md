@@ -28,6 +28,12 @@ instead of failing, while still uploading benchmark results as artifacts.
 
 ### 🐛 Bug Fixes
 
+- **Fedora**: Use #[allow] instead of #[expect] for conditional async lint
+
+When the fedora feature is enabled, these functions may contain real async
+
+operations, making clippy::unused_async unfired and #[expect] unfulfilled.
+
 - **Debian**: Resolve String::as_str trait bound error in resolver
 
 Vec<&String>.iter() yields &&String, which doesn't match String::as_str's
