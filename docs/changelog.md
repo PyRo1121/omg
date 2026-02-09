@@ -28,6 +28,14 @@ instead of failing, while still uploading benchmark results as artifacts.
 
 ### 🐛 Bug Fixes
 
+- Don't cancel long-running CI jobs on main branch pushes
+
+Only cancel-in-progress on PRs, not on main branch pushes. Long-running
+
+workflows (Coverage ~30min, Docker E2E ~19min, CodeQL ~20min) were being
+
+cancelled by rapid successive pushes to main, causing perpetual failures.
+
 - Docker E2E use tree instead of which, accept compact info format
 
   - test_docker_real_remove: change from `which` package (may not exist
