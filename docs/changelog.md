@@ -16,6 +16,42 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - Incorporate remote changelog update
 ### 🐛 Bug Fixes
 
+- **Ci**: Modernize all GitHub Actions workflows to current standards
+
+Breaking fixes:
+
+  - Replace archived actions-rs/toolchain@v1 (Node.js 16) with dtolnay/rust-toolchain@stable
+
+  - Replace actions/cache@v3 (Node.js 16 EOL) with actions/cache@v5
+
+  - Replace actions/upload-artifact@v3 with @v6
+
+  - Fix coverage.yml broken ${{ }} expressions (were double-escaped, producing literal text)
+
+Version bumps:
+
+  - codecov/codecov-action@v4 → @v5
+
+  - actions/download-artifact@v4 → @v7
+
+  - github/codeql-action/*@v3 → @v4
+
+  - Pin trufflehog to @v3.93.1 (was @main, non-reproducible)
+
+Security hardening (all 13 workflows):
+
+  - Add permissions: contents: read where missing
+
+  - Add concurrency groups to prevent duplicate runs
+
+  - Add timeout-minutes to all jobs
+
+Renovate config:
+
+  - config:base → config:recommended (deprecated since v36)
+
+  - matchPackagePatterns → matchPackageNames with regex (deprecated since v38)
+
 - Telemetry sync pipeline, repo cleanup (-361MB)
 
 Telemetry Pipeline Fix:
