@@ -28,7 +28,7 @@ jobs:
   coverage:
     name: Generate Coverage Report
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     container:
       image: archlinux:latest
 
@@ -69,17 +69,28 @@ jobs:
             coverage-target-${{ hashFiles('**/Cargo.lock') }}-
             coverage-target-
 
-      - name: Generate coverage report
+      # Run tests once with --no-report, then generate reports separately
+      # This avoids running the full test suite 3 times
+      - name: Run tests with coverage instrumentation
         run: |
           cargo llvm-cov nextest \
             --features arch,pgp,license \
             --locked \
             --no-fail-fast \
+            --no-report
+        continue-on-error: true
+
+      - name: Generate LCOV report
+        if: always()
+        run: |
+          cargo llvm-cov report \
+            --features arch,pgp,license \
             --lcov \
             --output-path lcov.info
         continue-on-error: true
 
       - name: Upload coverage to Codecov
+        if: always()
         uses: codecov/codecov-action@v5
         with:
           files: lcov.info
@@ -92,10 +103,10 @@ jobs:
       - name: Generate HTML report
         if: always()
         run: |
-          cargo llvm-cov nextest \
+          cargo llvm-cov report \
             --features arch,pgp,license \
-            --locked \
             --html
+        continue-on-error: true
 
       - name: Upload HTML coverage report
         if: always()
@@ -106,11 +117,12 @@ jobs:
           retention-days: 30
 
       - name: Coverage summary
+        if: always()
         run: |
           echo "## Coverage Report" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          cargo llvm-cov nextest \
+          cargo llvm-cov report \
             --features arch,pgp,license \
-            --locked \
             --summary-only \
             | tee -a $GITHUB_STEP_SUMMARY
+        continue-on-error: true
