@@ -14,6 +14,52 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ### Merge
 
 - Incorporate remote changelog update
+### 🐛 Bug Fixes
+
+- Telemetry sync pipeline, repo cleanup (-361MB)
+
+Telemetry Pipeline Fix:
+
+  - Change `maybe_sync_background()` to `sync_usage_now().await` in CLI
+
+exit path — the spawned task was dying before HTTP completed, leaving
+
+`last_sync: 0` forever
+
+  - Change `maybe_flush_background()` to `flush_events().await` for same
+
+reason
+
+  - Add usage[] array to validate-license API response (last 30 days)
+
+  - Add syncUsage() to sync-license endpoint: bridges usage_daily from
+
+omg-licensing → omg-auth-db so dashboard can display command counts
+
+  - Data flow now: CLI → report-usage → omg-licensing → validate-license
+
+→ sync-license → omg-auth-db → dashboard
+
+Repository Cleanup:
+
+  - Remove 80 release binaries from git tracking (dist/, 361MB)
+
+These belong on GitHub Releases, not in the repo
+
+  - Remove editor state directories (.windsurf/, .sisyphus/, .ui-design/)
+
+  - Remove internal state (.omg/)
+
+  - Remove 22 stale documentation files (SESSION-SUMMARY.md,
+
+TELEMETRY_CODE_REVIEW.md, LIBSCOOP_*.md, AGENTS.md, etc.)
+
+  - Delete 3 stale remote branches (claude/testing, feat/world-class-ci,
+
+refactor/rust-2026-phase2-async)
+
+  - Update .gitignore to prevent re-tracking
+
 ## [0.1.209] - 2026-02-09
 ### Merge
 
