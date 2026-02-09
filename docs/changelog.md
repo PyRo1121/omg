@@ -28,6 +28,20 @@ instead of failing, while still uploading benchmark results as artifacts.
 
 ### 🐛 Bug Fixes
 
+- Docker E2E test ordering and root-skip readonly test
+
+  - Use OnceLock to lazily build Docker image on first use, fixing
+
+alphabetical test ordering bug where tests ran before setup
+
+  - Skip readonly filesystem test when running as root (root bypasses
+
+POSIX file permissions in CI Docker containers)
+
+  - Add --no-fail-fast to coverage workflow so one failure doesn't
+
+cancel 953 remaining tests
+
 - **Clippy**: Resolve all pedantic warnings in Debian backend
 
   - Fix 72+ clippy warnings across 10 files in debian_db/ and debian_pure
