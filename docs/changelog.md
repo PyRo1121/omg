@@ -16,6 +16,30 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - Incorporate remote changelog update
 ### 🐛 Bug Fixes
 
+- Resolve clippy pedantic warnings in portable build
+
+Fix 40+ clippy::pedantic warnings that surface when building with
+
+--no-default-features --features pgp,license (the CI Quick Gate config).
+
+Changes across 23 files:
+
+  - Add #[allow(dead_code/unused_async)] for platform-gated code
+
+  - Fix uninlined format args (use {var} syntax)
+
+  - Add trailing semicolons for consistent formatting
+
+  - Fix doc comments with missing backticks
+
+  - Remove unused imports in bench files
+
+  - Add #[allow] for casting lints in bench/test code
+
+  - Use From trait instead of as-casts where applicable
+
+  - Move use statements before let bindings
+
 - **Ci**: Use explicit toolchain param and fix Docker E2E build
 
   - ci.yml: Use dtolnay/rust-toolchain@stable with toolchain: "1.93.0"
