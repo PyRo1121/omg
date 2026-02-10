@@ -26,6 +26,48 @@ benchmarks (246ms), causing false regression alerts. The gate now warns
 
 instead of failing, while still uploading benchmark results as artifacts.
 
+### ✨ New Features
+
+- Fix AUR second auth prompt, add daemon socket self-healing
+
+AUR Install Auth Fixes:
+
+  - Use `sudo pacman -U` directly instead of `run_self_sudo` which
+
+re-executed the entire omg binary (root cause of second prompt)
+
+  - Pre-acquire sudo credentials before AUR build starts so SudoLoop
+
+has a timestamp to refresh
+
+  - SudoLoop refresh interval 60s -> 30s for more aggressive keepalive
+
+  - Added `refresh_now()` for immediate credential refresh before install
+
+  - Retry install up to 2 times on sudo auth failure with re-prompt
+
+  - Shared SudoLoop across parallel AUR builds (one loop, not N)
+
+Daemon Socket Self-Healing:
+
+  - Hardened accept loop: transient errors (ECONNABORTED, EINTR) log
+
+and continue instead of killing the server; EMFILE/ENFILE backoff
+
+100ms instead of crashing
+
+  - Client connect retry: 2 retries with 25-100ms backoff on
+
+ECONNREFUSED/EAGAIN; no retry on ENOENT/EACCES
+
+  - Auto-spawn daemon: new `connect_or_spawn()` method starts omgd
+
+automatically if not running, polls up to 2s for readiness
+
+  - Socket health monitor: background check every 60s verifies socket
+
+file still exists, triggers graceful shutdown if deleted externally
+
 ### 🐛 Bug Fixes
 
 - Increase integration test timeout, optimize coverage workflow
