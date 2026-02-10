@@ -28,6 +28,18 @@ instead of failing, while still uploading benchmark results as artifacts.
 
 ### 🐛 Bug Fixes
 
+- Increase integration test timeout, optimize coverage workflow
+
+  - Integration tests: 20min -> 30min timeout, add --no-fail-fast
+
+  - Coverage workflow: run tests ONCE with --no-report, then generate
+
+LCOV/HTML/summary reports separately via `cargo llvm-cov report`.
+
+Previous approach ran the full test suite 3 times (>30min timeout).
+
+  - Increase coverage timeout to 45min for safety
+
 - Don't cancel long-running CI jobs on main branch pushes
 
 Only cancel-in-progress on PRs, not on main branch pushes. Long-running
