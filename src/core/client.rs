@@ -66,24 +66,138 @@ impl DaemonClient {
         Self::connect_to(default_socket_path()).await
     }
 
-    /// Connect to daemon at specific socket path
+    /// Connect to daemon at specific socket path with fast retry on transient errors.
+    ///
+    /// Retries up to 2 times on `ECONNREFUSED` (daemon restarting) and `EAGAIN`
+    /// (temporary resource exhaustion). Does NOT retry on `ENOENT` (socket missing)
+    /// or `EACCES` (permission denied).
     pub async fn connect_to(socket_path: PathBuf) -> Result<Self> {
         if Self::daemon_disabled() {
             anyhow::bail!("Daemon disabled by environment");
         }
         tracing::debug!("Connecting to daemon at {:?}", socket_path);
-        let stream = UnixStream::connect(&socket_path)
-            .await
-            .with_context(|| format!("Failed to connect to daemon at {}", socket_path.display()))?;
 
-        tracing::debug!("Connected to daemon");
-        let framed = Framed::new(stream, LengthDelimitedCodec::new());
+        const MAX_CONNECT_RETRIES: u32 = 2;
+        const CONNECT_BACKOFF_MS: &[u64] = &[25, 50, 100];
 
-        Ok(Self {
-            framed: Some(framed),
-            sync_stream: None,
-            request_id: AtomicU64::new(1),
-        })
+        let mut last_err = None;
+        for attempt in 0..=MAX_CONNECT_RETRIES {
+            match UnixStream::connect(&socket_path).await {
+                Ok(stream) => {
+                    if attempt > 0 {
+                        tracing::debug!("Connected to daemon after {} retries", attempt);
+                    } else {
+                        tracing::debug!("Connected to daemon");
+                    }
+                    let framed = Framed::new(stream, LengthDelimitedCodec::new());
+                    return Ok(Self {
+                        framed: Some(framed),
+                        sync_stream: None,
+                        request_id: AtomicU64::new(1),
+                    });
+                }
+                Err(e) => {
+                    let retryable = matches!(
+                        e.kind(),
+                        std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::WouldBlock
+                    );
+
+                    if !retryable || attempt == MAX_CONNECT_RETRIES {
+                        return Err(anyhow::Error::new(e).context(format!(
+                            "Failed to connect to daemon at {}",
+                            socket_path.display()
+                        )));
+                    }
+
+                    let backoff_ms = CONNECT_BACKOFF_MS
+                        .get(attempt as usize)
+                        .copied()
+                        .unwrap_or(100);
+                    tracing::debug!(
+                        "Connect attempt {} failed ({}), retrying in {}ms",
+                        attempt + 1,
+                        e,
+                        backoff_ms
+                    );
+                    tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
+                    last_err = Some(e);
+                }
+            }
+        }
+
+        Err(anyhow::Error::new(last_err.expect("loop must have run"))
+            .context(format!(
+                "Failed to connect to daemon at {} after retries",
+                socket_path.display()
+            )))
+    }
+
+    /// Connect to the daemon, auto-spawning it if not running.
+    ///
+    /// 1. Tries `connect()` first (fast path).
+    /// 2. If that fails and `OMG_NO_AUTO_DAEMON` is not set, spawns the daemon.
+    /// 3. Polls up to 2 seconds (20 x 100ms) for the daemon to become ready.
+    pub async fn connect_or_spawn() -> Result<Self> {
+        // Fast path: try connecting directly
+        if let Ok(client) = Self::connect().await {
+            return Ok(client);
+        }
+
+        // Check if auto-spawn is disabled
+        if matches!(
+            std::env::var("OMG_NO_AUTO_DAEMON").as_deref(),
+            Ok("1" | "true" | "TRUE")
+        ) {
+            anyhow::bail!("Daemon is not running and auto-spawn is disabled (OMG_NO_AUTO_DAEMON)");
+        }
+
+        tracing::info!("Daemon not running, auto-spawning...");
+
+        let socket_path = default_socket_path();
+
+        // Remove stale socket file if present
+        if let Err(e) = std::fs::remove_file(&socket_path)
+            && e.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!("Failed to remove stale socket: {e}");
+        }
+
+        // Find the omgd binary (prefer sibling of current executable for version consistency)
+        let omgd_path = if let Ok(exe) = std::env::current_exe()
+            && let Some(dir) = exe.parent()
+        {
+            let local_omgd = dir.join("omgd");
+            if local_omgd.exists() {
+                local_omgd
+            } else {
+                PathBuf::from("omgd")
+            }
+        } else {
+            PathBuf::from("omgd")
+        };
+
+        // Spawn the daemon in background
+        std::process::Command::new(&omgd_path)
+            .arg("--")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .with_context(|| format!("Failed to spawn daemon: {}", omgd_path.display()))?;
+
+        // Poll for daemon readiness: 20 attempts x 100ms = 2 seconds max
+        for attempt in 1..=20u32 {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+            if let Ok(client) = Self::connect().await {
+                tracing::info!("Daemon ready after {}ms", attempt * 100);
+                return Ok(client);
+            }
+        }
+
+        anyhow::bail!(
+            "Daemon was spawned but did not become ready within 2 seconds (socket: {})",
+            socket_path.display()
+        )
     }
 
     /// Connect to the daemon synchronously (sub-millisecond)

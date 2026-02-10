@@ -39,6 +39,17 @@ impl ParallelBuilder {
             return Ok(());
         }
 
+        // Start a shared sudoloop for the entire parallel build session.
+        // This keeps credentials alive across all waves and prevents
+        // individual builds from each trying to prompt for sudo.
+        #[cfg(unix)]
+        let _sudoloop = if crate::core::sudoloop::can_use_sudoloop() {
+            tracing::debug!("Starting shared sudoloop for parallel AUR builds");
+            Some(crate::core::sudoloop::SudoLoop::start())
+        } else {
+            None
+        };
+
         let dep_graph = Self::build_dependency_graph(&jobs);
         let build_levels = Self::topological_levels(&dep_graph)?;
 
@@ -53,6 +64,7 @@ impl ParallelBuilder {
                 .await?;
         }
 
+        // _sudoloop is dropped here after all waves complete
         Ok(())
     }
 

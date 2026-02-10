@@ -5,10 +5,11 @@
 //!
 //! ## How it works
 //!
-//! 1. When started, the loop waits 60 seconds before the first refresh
+//! 1. When started, the loop waits 30 seconds before the first refresh
 //!    (since sudo timestamp is typically 5 minutes by default)
-//! 2. Every 60 seconds thereafter, it runs `sudo -v` to extend the timestamp
+//! 2. Every 30 seconds thereafter, it runs `sudo -v` to extend the timestamp
 //! 3. The loop automatically stops when dropped (RAII pattern)
+//! 4. `refresh_now()` can be called for an immediate refresh before critical operations
 //!
 //! ## Example
 //!
@@ -28,8 +29,12 @@ use std::time::Duration;
 use tokio::process::Command;
 use tokio::time::sleep;
 
-/// Interval between sudo credential refreshes (60 seconds)
-const REFRESH_INTERVAL_SECS: u64 = 60;
+/// Interval between sudo credential refreshes (30 seconds)
+///
+/// We use an aggressive 30s interval because AUR builds can take many minutes
+/// and the default sudo timestamp is 5 minutes. Refreshing every 30s ensures
+/// credentials never expire during long build+install cycles.
+const REFRESH_INTERVAL_SECS: u64 = 30;
 
 /// Handle for a running sudoloop
 ///
@@ -43,8 +48,8 @@ pub struct SudoLoop {
 impl SudoLoop {
     /// Start a sudoloop that refreshes sudo credentials periodically
     ///
-    /// The loop waits 60 seconds before the first refresh, then runs
-    /// `sudo -v` every 60 seconds to keep credentials alive.
+    /// The loop waits 30 seconds before the first refresh, then runs
+    /// `sudo -v` every 30 seconds to keep credentials alive.
     pub fn start() -> Self {
         let running = Arc::new(AtomicBool::new(true));
         let running_clone = running.clone();
@@ -106,6 +111,47 @@ impl SudoLoop {
     #[must_use]
     pub fn is_running(&self) -> bool {
         self.running.load(Ordering::SeqCst)
+    }
+
+    /// Immediately refresh sudo credentials
+    ///
+    /// Call this before operations that require sudo (e.g., package install)
+    /// to ensure credentials are fresh, regardless of the periodic loop timing.
+    /// Returns `true` if credentials were successfully refreshed, `false` if
+    /// the refresh failed or the sudoloop was stopped. Callers can use this
+    /// to detect expired credentials and re-prompt the user.
+    pub async fn refresh_now(&self) -> bool {
+        if !self.is_running() {
+            return false;
+        }
+
+        tracing::debug!("Sudoloop: immediate credential refresh requested");
+
+        let result = Command::new("sudo")
+            .arg("-v")
+            .stdin(std::process::Stdio::inherit())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::inherit())
+            .status()
+            .await;
+
+        match result {
+            Ok(status) if status.success() => {
+                tracing::debug!("Sudoloop: credentials refreshed (immediate)");
+                true
+            }
+            Ok(status) => {
+                tracing::warn!(
+                    "Sudoloop: immediate refresh failed with exit code {:?}",
+                    status.code()
+                );
+                false
+            }
+            Err(e) => {
+                tracing::warn!("Sudoloop: error during immediate refresh: {e}");
+                false
+            }
+        }
     }
 }
 

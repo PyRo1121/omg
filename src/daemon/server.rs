@@ -3,6 +3,7 @@
 //! Uses `LengthDelimitedCodec` and bitcode for maximum IPC performance.
 
 use std::num::NonZeroU32;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -31,18 +32,28 @@ const STATUS_REFRESH_INTERVAL: Duration = Duration::from_mins(5);
 /// Memory cleanup interval (30 minutes) - matches mmap TTL
 const MEMORY_CLEANUP_INTERVAL: Duration = Duration::from_mins(30);
 
+/// Socket health check interval (60 seconds) - detect deleted socket files
+const SOCKET_HEALTH_CHECK_INTERVAL: Duration = Duration::from_secs(60);
+
 /// Per-connection rate limit (requests per second)
 const CLIENT_RATE_LIMIT_HZ: u32 = 50;
 /// Per-connection burst size
 const CLIENT_BURST_SIZE: u32 = 100;
 
 /// Run the daemon server
-pub async fn run(listener: UnixListener, state: Arc<DaemonState>) -> Result<()> {
+pub async fn run(
+    listener: UnixListener,
+    state: Arc<DaemonState>,
+    socket_path: PathBuf,
+) -> Result<()> {
     let shutdown_token = CancellationToken::new();
 
     // START BACKGROUND WORKER
     let state_worker = Arc::clone(&state);
     let worker_token = shutdown_token.child_token();
+    let socket_path_worker = socket_path;
+    // Clone the parent token so the health check can trigger a full shutdown
+    let shutdown_trigger = shutdown_token.clone();
 
     tokio::spawn(async move {
         tracing::info!("Background status worker started");
@@ -178,6 +189,7 @@ pub async fn run(listener: UnixListener, state: Arc<DaemonState>) -> Result<()> 
 
         // Track last cleanup time for periodic mmap cleanup
         let mut last_cleanup = std::time::Instant::now();
+        let mut last_socket_check = std::time::Instant::now();
 
         loop {
             tokio::select! {
@@ -201,6 +213,20 @@ pub async fn run(listener: UnixListener, state: Arc<DaemonState>) -> Result<()> 
                         }
                         last_cleanup = std::time::Instant::now();
                     }
+
+                    // Socket health check: verify socket file still exists
+                    if last_socket_check.elapsed() >= SOCKET_HEALTH_CHECK_INTERVAL {
+                        if !socket_path_worker.exists() {
+                            tracing::error!(
+                                "Socket file {} has been removed externally! Initiating shutdown.",
+                                socket_path_worker.display()
+                            );
+                            // Cancel the parent shutdown token to stop the accept loop
+                            shutdown_trigger.cancel();
+                            break;
+                        }
+                        last_socket_check = std::time::Instant::now();
+                    }
                 }
             }
         }
@@ -220,8 +246,40 @@ pub async fn run(listener: UnixListener, state: Arc<DaemonState>) -> Result<()> 
                 break;
             }
 
+            () = shutdown_token.cancelled() => {
+                tracing::info!("Shutdown triggered by health monitor, cleaning up...");
+                break;
+            }
+
             result = listener.accept() => {
-                let (stream, _addr) = result?;
+                let (stream, _addr) = match result {
+                    Ok(conn) => conn,
+                    Err(e) => {
+                        // Classify the error: transient errors should not kill the server
+                        let raw_os_error = e.raw_os_error();
+                        match e.kind() {
+                            // Transient: client disconnected before accept completed, or signal
+                            std::io::ErrorKind::ConnectionAborted
+                            | std::io::ErrorKind::Interrupted => {
+                                tracing::warn!("Transient accept error (continuing): {e}");
+                                continue;
+                            }
+                            _ if raw_os_error == Some(24) || raw_os_error == Some(23) => {
+                                // EMFILE (24) = per-process fd limit, ENFILE (23) = system-wide
+                                tracing::error!(
+                                    "File descriptor limit reached (errno {}), backing off: {e}",
+                                    raw_os_error.unwrap_or(0)
+                                );
+                                tokio::time::sleep(Duration::from_millis(100)).await;
+                                continue;
+                            }
+                            _ => {
+                                // Truly fatal: propagate to shut down the server
+                                return Err(e.into());
+                            }
+                        }
+                    }
+                };
                 let state = Arc::clone(&state);
                 let client_token = shutdown_token.child_token();
 

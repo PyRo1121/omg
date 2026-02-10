@@ -708,9 +708,26 @@ impl AurClient {
     pub async fn install(&self, package: &str) -> Result<()> {
         crate::core::security::validate_package_name(package)?;
 
-        // Start sudoloop for long build operations
+        // Pre-acquire sudo credentials before starting the build.
+        // This ensures the sudoloop has a valid timestamp to refresh,
+        // and the user is prompted for their password upfront rather
+        // than mid-build when it would be confusing.
         #[cfg(unix)]
-        let _sudoloop = if crate::core::sudoloop::can_use_sudoloop() {
+        if !crate::core::caps::can_write_pacman_db() && !crate::core::is_root() {
+            let _ = tokio::process::Command::new("sudo")
+                .arg("-v")
+                .stdin(std::process::Stdio::inherit())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::inherit())
+                .status()
+                .await;
+        }
+
+        // Start sudoloop for long build operations.
+        // Now that credentials are pre-acquired, the loop will keep
+        // them alive throughout the entire build+install cycle.
+        #[cfg(unix)]
+        let sudoloop = if crate::core::sudoloop::can_use_sudoloop() {
             tracing::debug!("Starting sudoloop for AUR build");
             Some(crate::core::sudoloop::SudoLoop::start())
         } else {
@@ -821,7 +838,12 @@ impl AurClient {
 
         println!();
         let install_pb = crate::cli::modern_ui::modern_spinner("Installing", package);
-        Self::install_built_package(&pkg_file).await?;
+        Self::install_built_package(
+            &pkg_file,
+            #[cfg(unix)]
+            sudoloop.as_ref(),
+        )
+        .await?;
         crate::cli::modern_ui::finish_success(&install_pb, "Installed", package);
 
         Ok(())
@@ -2181,14 +2203,26 @@ impl AurClient {
         Ok(())
     }
 
-    /// Install the built package via direct ALPM or sudo omg install <path>
-    async fn install_built_package(pkg_path: &Path) -> Result<()> {
+    /// Install the built package via direct ALPM or `sudo pacman -U`
+    ///
+    /// Uses direct `sudo pacman -U` instead of re-executing the omg binary
+    /// via `run_self_sudo`. This is critical because `run_self_sudo` spawns
+    /// a new sudo session that may not share the parent's cached credentials,
+    /// causing a second password prompt. Direct `pacman -U` reuses the same
+    /// sudo timestamp that the sudoloop is maintaining (matching yay/paru behavior).
+    ///
+    /// If a `SudoLoop` is active, refreshes credentials immediately before
+    /// the install attempt. Retries once on failure in case credentials
+    /// expired during a long build.
+    async fn install_built_package(
+        pkg_path: &Path,
+        #[cfg(unix)] sudoloop: Option<&crate::core::sudoloop::SudoLoop>,
+    ) -> Result<()> {
         println!("{} Installing built package...", "→".blue());
-
-        let pkg_path_str = pkg_path.to_string_lossy();
 
         // Use direct ALPM if we have capabilities (turbo mode) or running as root
         if crate::core::caps::can_write_pacman_db() {
+            let pkg_path_str = pkg_path.to_string_lossy();
             crate::package_managers::execute_transaction(
                 vec![pkg_path_str.into_owned()],
                 false,
@@ -2196,8 +2230,58 @@ impl AurClient {
                 None,
             )?;
         } else {
-            crate::core::privilege::run_self_sudo(&["install", "--", pkg_path_str.as_ref()])
-                .await?;
+            // Refresh sudo credentials right before install to prevent timeout
+            #[cfg(unix)]
+            if let Some(sl) = sudoloop {
+                sl.refresh_now().await;
+            }
+
+            // Use direct `sudo pacman -U` instead of re-executing omg.
+            // This stays in the same sudo session the sudoloop is refreshing,
+            // avoiding a second authentication prompt.
+            const MAX_INSTALL_RETRIES: u32 = 1;
+
+            for attempt in 0..=MAX_INSTALL_RETRIES {
+                if attempt > 0 {
+                    tracing::warn!(
+                        "Retrying package install (attempt {}/{})",
+                        attempt + 1,
+                        MAX_INSTALL_RETRIES + 1
+                    );
+                    // Refresh credentials before retry
+                    #[cfg(unix)]
+                    if let Some(sl) = sudoloop {
+                        sl.refresh_now().await;
+                    }
+                }
+
+                let result = tokio::process::Command::new("sudo")
+                    .args(["pacman", "-U", "--noconfirm", "--"])
+                    .arg(pkg_path)
+                    .stdin(std::process::Stdio::inherit())
+                    .stdout(std::process::Stdio::inherit())
+                    .stderr(std::process::Stdio::inherit())
+                    .status()
+                    .await
+                    .context("Failed to run sudo pacman -U")?;
+
+                if result.success() {
+                    return Ok(());
+                }
+
+                // On last attempt, report failure
+                if attempt == MAX_INSTALL_RETRIES {
+                    anyhow::bail!(
+                        "pacman -U failed with exit code {:?}",
+                        result.code()
+                    );
+                }
+
+                tracing::warn!(
+                    "pacman -U failed with exit code {:?}, will retry",
+                    result.code()
+                );
+            }
         }
 
         Ok(())
