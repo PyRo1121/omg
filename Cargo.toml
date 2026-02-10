@@ -127,7 +127,7 @@ sha2 = "0.10.9"
 hex = "0.4.3"
 
 # System calls (for disk space checks, etc.)
-nix = { version = "0.30", features = ["fs"] }
+nix = { version = "0.31", features = ["fs"] }
 
 # Date & Time
 jiff = { version = "0.2.18", features = ["serde"] }
@@ -156,7 +156,7 @@ which = "8.0"
 semver = "1.0.27"
 
 # Tempfile handling
-tempfile = "3.24.0"
+tempfile = "3.25.0"
 
 # URL encoding (for DNF/COPR API)
 urlencoding = "2.1"
@@ -188,8 +188,8 @@ sentry = { version = "0.46.1", features = ["anyhow", "tracing", "logs"] }
 sentry-tracing = "0.46.1"
 
 # Cross-platform package manager support
-rusqlite = { version = "0.33", features = ["bundled"], optional = true }  # SQLite for RPM db
-quick-xml = { version = "0.37", features = ["serialize"], optional = true }  # Fast XML parsing
+rusqlite = { version = "0.38", features = ["bundled"], optional = true }  # SQLite for RPM db
+quick-xml = { version = "0.39", features = ["serialize"], optional = true }  # Fast XML parsing
 
 # Windows-specific (conditional) - only compiled on Windows
 [target.'cfg(target_os = "windows")'.dependencies]
@@ -199,12 +199,12 @@ openssl-sys = { version = "0.9", features = ["vendored"] }  # Build OpenSSL from
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
-tempfile = "3.24.0"
+tempfile = "3.25.0"
 assert_cmd = "2.1"
 predicates = "3.1"
 cargo-audit = "0.22"                                         # Security vulnerability auditing
 proptest = "1.4"                                             # Property-based testing
-rand = "0.9"                                                 # Random generation for fuzz tests
+rand = "0.10"                                                 # Random generation for fuzz tests
 serde_json = "1.0"                                           # JSON parsing for test assertions
 serial_test = "3.2"                                          # Serialize tests that modify global state
 scopeguard = "1.2"
