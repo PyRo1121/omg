@@ -33,11 +33,7 @@ pub mod debian_db;
 pub mod debian_pure;
 #[cfg(feature = "fedora")]
 pub mod dnf;
-#[cfg(any(feature = "debian", feature = "debian-pure"))]
-pub mod file_watcher;
 // macOS Homebrew support - can be enabled via feature or auto-detected on macOS
-#[cfg(feature = "arch")]
-pub mod bloom_check;
 #[cfg(any(feature = "macos", target_os = "macos"))]
 pub mod homebrew;
 pub mod mock;

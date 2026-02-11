@@ -62,7 +62,7 @@ pub async fn install(packages: &[String], yes: bool, dry_run: bool) -> Result<()
 
     // Show resolution phase for user feedback
     let pb = modern_ui::modern_spinner("Resolving", "package sources");
-    std::thread::sleep(std::time::Duration::from_millis(50)); // Brief visual feedback
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await; // Brief visual feedback
 
     // Check if all packages exist in official repos BEFORE calling install
     // This avoids unnecessary sudo prompt for packages that don't exist

@@ -94,7 +94,10 @@ impl MockPrivilegeChecker {
     }
 
     pub fn get_elevation_log(&self) -> Vec<(String, Vec<String>)> {
-        self.elevation_log.lock().expect("lock poisoned").clone()
+        self.elevation_log
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 }
 
@@ -107,7 +110,7 @@ impl PrivilegeChecker for MockPrivilegeChecker {
     fn elevate(&self, operation: &str, args: &[String]) -> std::io::Result<()> {
         self.elevation_log
             .lock()
-            .expect("lock poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .push((operation.to_string(), args.to_vec()));
 
         if self.should_elevate {
@@ -174,7 +177,9 @@ pub fn elevate_if_needed(args: &[String]) -> anyhow::Result<()> {
     #[cfg(not(test))]
     {
         // Acquire lock before elevation to prevent concurrent sudo attempts
-        let _guard = ELEVATION_MUTEX.lock().expect("lock poisoned");
+        let _guard = ELEVATION_MUTEX
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
 
         let yes_mode = YES_FLAG.load(Ordering::Relaxed);
         tracing::debug!(

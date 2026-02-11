@@ -125,21 +125,10 @@ impl Model for InfoModel {
                 Cmd::Exec(Box::new(move || {
                     let pkg_name = pkg;
 
-                    // Create runtime once, reuse for async operation
-                    let Ok(rt) = tokio::runtime::Runtime::new() else {
-                        return InfoMsg::Error("Failed to create async runtime".to_string());
-                    };
-
-                    // Logic mirrors src/cli/packages/info.rs
-                    if tokio::runtime::Handle::try_current().is_ok() {
-                        std::thread::spawn(move || {
-                            rt.block_on(async { fetch_info(&pkg_name).await })
-                        })
-                        .join()
-                        .unwrap_or_else(|_| InfoMsg::Error("Thread panicked".to_string()))
-                    } else {
-                        rt.block_on(async { fetch_info(&pkg_name).await })
-                    }
+                    crate::cli::tea::async_bridge::run_blocking_future(
+                        async move { fetch_info(&pkg_name).await },
+                    )
+                    .unwrap_or_else(|err| InfoMsg::Error(err.to_string()))
                 }))
             }
             InfoMsg::InfoReceived(info) => {

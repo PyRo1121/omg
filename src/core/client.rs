@@ -4,6 +4,7 @@
 //! Only available on Unix platforms (uses Unix domain sockets).
 
 use anyhow::{Context, Result};
+use std::fs::{File, OpenOptions};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -138,6 +139,37 @@ impl DaemonClient {
     /// 2. If that fails and `OMG_NO_AUTO_DAEMON` is not set, spawns the daemon.
     /// 3. Polls up to 2 seconds (20 x 100ms) for the daemon to become ready.
     pub async fn connect_or_spawn() -> Result<Self> {
+        struct SpawnLockGuard {
+            path: PathBuf,
+            _file: File,
+        }
+
+        impl SpawnLockGuard {
+            fn acquire(path: PathBuf) -> Result<Self> {
+                let file = OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&path)
+                    .with_context(|| format!("Failed to create daemon spawn lock: {}", path.display()))?;
+
+                Ok(Self { path, _file: file })
+            }
+        }
+
+        impl Drop for SpawnLockGuard {
+            fn drop(&mut self) {
+                if let Err(err) = std::fs::remove_file(&self.path)
+                    && err.kind() != std::io::ErrorKind::NotFound
+                {
+                    tracing::warn!(
+                        "Failed to remove daemon spawn lock {}: {}",
+                        self.path.display(),
+                        err
+                    );
+                }
+            }
+        }
+
         // Fast path: try connecting directly
         if let Ok(client) = Self::connect().await {
             return Ok(client);
@@ -154,6 +186,33 @@ impl DaemonClient {
         tracing::info!("Daemon not running, auto-spawning...");
 
         let socket_path = default_socket_path();
+        let lock_path = socket_path.with_extension("lock");
+
+        let _spawn_lock = match SpawnLockGuard::acquire(lock_path.clone()) {
+            Ok(lock) => lock,
+            Err(err) if err.downcast_ref::<std::io::Error>().is_some_and(|io| {
+                io.kind() == std::io::ErrorKind::AlreadyExists
+            }) => {
+                tracing::debug!(
+                    "Daemon spawn lock exists, waiting for peer process to finish spawning"
+                );
+
+                for attempt in 1..=20u32 {
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+                    if let Ok(client) = Self::connect().await {
+                        tracing::info!("Daemon ready after {}ms", attempt * 100);
+                        return Ok(client);
+                    }
+                }
+
+                anyhow::bail!(
+                    "Another omg process is spawning the daemon, but it did not become ready within 2 seconds (socket: {})",
+                    socket_path.display()
+                )
+            }
+            Err(err) => return Err(err),
+        };
 
         // Remove stale socket file if present
         if let Err(e) = std::fs::remove_file(&socket_path)

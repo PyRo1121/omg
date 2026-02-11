@@ -392,6 +392,21 @@ fn try_fast_hooks(args: &[String]) -> bool {
     false
 }
 
+fn try_fast_paths(args: &[String]) -> Result<bool> {
+    if try_fast_explicit_count(args)
+        || try_fast_search(args)
+        || try_fast_info(args)
+        || try_fast_which(args)
+        || try_fast_list(args)
+        || try_fast_status(args)
+        || try_fast_hooks(args)
+    {
+        return Ok(true);
+    }
+
+    try_fast_completions(args)
+}
+
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
 
@@ -401,28 +416,7 @@ fn main() -> Result<()> {
         return result;
     }
 
-    if try_fast_explicit_count(&args) {
-        return Ok(());
-    }
-    if try_fast_search(&args) {
-        return Ok(());
-    }
-    if try_fast_info(&args) {
-        return Ok(());
-    }
-    if try_fast_completions(&args)? {
-        return Ok(());
-    }
-    if try_fast_which(&args) {
-        return Ok(());
-    }
-    if try_fast_list(&args) {
-        return Ok(());
-    }
-    if try_fast_status(&args) {
-        return Ok(());
-    }
-    if try_fast_hooks(&args) {
+    if try_fast_paths(&args)? {
         return Ok(());
     }
 
