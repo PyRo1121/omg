@@ -173,7 +173,12 @@ impl PackageManager for ArchPackageManager {
             crate::core::security::validate_package_name(&package)?;
 
             // Try direct ALPM info
-            if let Ok(Some(info)) = crate::package_managers::get_package_info(&package) {
+            let info = tokio::task::spawn_blocking(move || {
+                crate::package_managers::get_package_info(&package)
+            })
+            .await??;
+
+            if let Some(info) = info {
                 return Ok(Some(Package {
                     name: info.name,
                     version: info.version,

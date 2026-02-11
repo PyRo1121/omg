@@ -140,38 +140,12 @@ impl Model for UpdateModel {
 
     fn init(&self) -> Cmd<Self::Msg> {
         Cmd::Exec(Box::new(|| {
-            // Check if a runtime already exists (e.g., in tests)
-            let updates_result: Result<
-                Vec<crate::package_managers::types::UpdateInfo>,
-                anyhow::Error,
-            > = if tokio::runtime::Handle::try_current().is_ok() {
-                // Runtime exists: use a thread to avoid nesting
-                match std::thread::spawn(|| {
-                    let Ok(rt) = tokio::runtime::Runtime::new() else {
-                        return Err(anyhow::anyhow!("Failed to create async runtime"));
-                    };
-                    let pm = get_package_manager()?;
-                    let service = PackageService::new(pm);
-                    rt.block_on(async { service.list_updates().await })
-                })
-                .join()
-                {
-                    Ok(result) => result,
-                    Err(_) => Err(anyhow::anyhow!(
-                        "Background thread panicked while checking for updates"
-                    )),
-                }
-            } else {
-                // No runtime: create one (production case)
-                (|| {
-                    let Ok(rt) = tokio::runtime::Runtime::new() else {
-                        return Err(anyhow::anyhow!("Failed to create async runtime"));
-                    };
-                    let pm = get_package_manager()?;
-                    let service = PackageService::new(pm);
-                    rt.block_on(async { service.list_updates().await })
-                })()
-            };
+            let updates_result = crate::cli::tea::async_bridge::run_blocking_future(async {
+                let pm = get_package_manager()?;
+                let service = PackageService::new(pm);
+                service.list_updates().await
+            })
+            .and_then(std::convert::identity);
 
             match updates_result {
                 Ok(updates_list) => {

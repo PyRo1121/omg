@@ -142,35 +142,24 @@ impl Model for InstallModel {
                 Cmd::batch([
                     Cmd::info("Installing packages..."),
                     Cmd::Exec(Box::new(move || {
-                        let packages_task = packages.clone();
-                        let result = if tokio::runtime::Handle::try_current().is_ok() {
-                            std::thread::spawn(move || {
-                                let Ok(rt) = tokio::runtime::Runtime::new() else {
-                                    return Err(anyhow::anyhow!("Failed to create async runtime"));
-                                };
+                        let packages_for_error = packages.clone();
+                        let packages_task = packages;
+                        let result = crate::cli::tea::async_bridge::run_blocking_future(
+                            async move {
                                 let pm = get_package_manager()?;
                                 let service = PackageService::new(pm);
-                                rt.block_on(async { service.install(&packages_task, yes).await })
-                            })
-                            .join()
-                            .unwrap_or_else(|_| Err(anyhow::anyhow!("Thread panicked")))
-                        } else {
-                            (|| {
-                                let Ok(rt) = tokio::runtime::Runtime::new() else {
-                                    return Err(anyhow::anyhow!("Failed to create async runtime"));
-                                };
-                                let pm = get_package_manager()?;
-                                let service = PackageService::new(pm);
-                                rt.block_on(async { service.install(&packages, yes).await })
-                            })()
-                        };
+                                service.install(&packages_task, yes).await
+                            },
+                        )
+                        .and_then(std::convert::identity);
 
                         match result {
                             Ok(()) => InstallMsg::Complete,
                             Err(e) => {
                                 let msg = e.to_string();
                                 if msg.contains("not found")
-                                    && let Some(pkg) = packages.iter().find(|p| msg.contains(*p))
+                                    && let Some(pkg) =
+                                        packages_for_error.iter().find(|p| msg.contains(*p))
                                 {
                                     return InstallMsg::PackageNotFound {
                                         package: pkg.clone(),

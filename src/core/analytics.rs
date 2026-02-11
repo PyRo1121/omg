@@ -145,7 +145,7 @@ impl SessionState {
         SESSION_CACHE
             .get_or_init(|| RwLock::new(Self::load_from_disk()))
             .read()
-            .expect("lock poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
     }
 
@@ -159,7 +159,9 @@ impl SessionState {
 
     pub fn save(&self) -> Result<()> {
         if let Some(cache) = SESSION_CACHE.get() {
-            let mut writer = cache.write().expect("lock poisoned");
+            let mut writer = cache
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             *writer = self.clone();
         }
 
@@ -219,7 +221,7 @@ impl EventQueue {
         QUEUE_CACHE
             .get_or_init(|| RwLock::new(Self::load_from_disk()))
             .read()
-            .expect("lock poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
     }
 
@@ -233,7 +235,9 @@ impl EventQueue {
 
     pub fn save(&self) -> Result<()> {
         if let Some(cache) = QUEUE_CACHE.get() {
-            let mut writer = cache.write().expect("lock poisoned");
+            let mut writer = cache
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             *writer = self.clone();
         }
 
