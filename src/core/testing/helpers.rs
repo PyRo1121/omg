@@ -145,13 +145,13 @@ macro_rules! assert_err {
     ($result:expr, $pat:pat) => {
         match $result {
             Err($pat) => (),
-            Ok(_) => panic!("Expected error but got Ok"),
+            Ok(_) => unreachable!("Expected error but got Ok"),
         }
     };
     ($result:expr) => {
         match $result {
             Err(_) => (),
-            Ok(_) => panic!("Expected error but got Ok"),
+            Ok(_) => unreachable!("Expected error but got Ok"),
         }
     };
 }
@@ -162,13 +162,13 @@ macro_rules! assert_ok {
     ($result:expr) => {
         match $result {
             Ok(_) => (),
-            Err(e) => panic!("Expected Ok but got error: {}", e),
+            Err(e) => unreachable!("Expected Ok but got error: {}", e),
         }
     };
     ($result:expr, $pat:pat) => {
         match $result {
             Ok($pat) => (),
-            Err(e) => panic!("Expected Ok({}) but got error: {}", stringify!($pat), e),
+            Err(e) => unreachable!("Expected Ok({}) but got error: {}", stringify!($pat), e),
         }
     };
 }

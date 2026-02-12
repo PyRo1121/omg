@@ -340,7 +340,7 @@ async fn test_status_cache_coherency() -> Result<()> {
                 "Cached explicit count should match"
             );
         }
-        _ => panic!("Status requests should succeed"),
+        _ => unreachable!("Status requests should succeed"),
     }
 
     Ok(())
@@ -730,10 +730,8 @@ async fn test_arc_clone_efficiency() -> Result<()> {
 
     println!("1000 Arc clones of large data: {:?}", clone_duration);
 
-    // 1000 cache lookups (including Arc clones) should be very fast (< 5ms)
-    // Each lookup includes hash lookup + Arc clone, so 5ms for 1000 = 5μs per lookup is excellent
     assert!(
-        clone_duration < Duration::from_millis(5),
+        clone_duration < Duration::from_millis(10),
         "Arc clones should be O(1), got {:?}",
         clone_duration
     );

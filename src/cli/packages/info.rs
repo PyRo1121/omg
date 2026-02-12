@@ -1,6 +1,7 @@
 //! Info/display functionality for packages
 
 use anyhow::Result;
+use std::time::Duration;
 
 use crate::cli::tea::run_info_elm;
 use crate::cli::{style, ui};
@@ -11,6 +12,9 @@ use crate::package_managers::get_package_manager;
 
 #[cfg(feature = "arch")]
 use crate::package_managers::{AurClient, search_detailed};
+
+const DAEMON_INFO_TIMEOUT: Duration = Duration::from_secs(3);
+const AUR_INFO_TIMEOUT: Duration = Duration::from_secs(8);
 
 /// Show package information (Synchronous fast-path)
 /// Alias for CLI fast path
@@ -25,8 +29,48 @@ pub fn info_sync(package: &str) -> Result<bool> {
         anyhow::bail!("Invalid package name: {e}");
     }
 
-    let pm = get_package_manager()?;
-    let pm_name = pm.name();
+    if use_debian_backend() {
+        #[cfg(any(feature = "debian", feature = "debian-pure"))]
+        {
+            if let Some(pkg) = crate::package_managers::debian_db::get_info_fast(package)
+                .ok()
+                .flatten()
+            {
+                let version = pkg.version.clone();
+                ui::print_kv("Name", &style::package(&pkg.name));
+                ui::print_kv("Version", &style::version(&version));
+                ui::print_kv("Description", &pkg.description);
+                ui::print_kv(
+                    "Status",
+                    if pkg.installed {
+                        "installed"
+                    } else {
+                        "not installed"
+                    },
+                );
+                ui::print_kv(
+                    "Source",
+                    &format!("Official repository ({})", style::info("apt")),
+                );
+                return Ok(true);
+            }
+        }
+        #[cfg(feature = "debian")]
+        {
+            if let Some(info) = crate::package_managers::apt_get_sync_pkg_info(package)
+                .ok()
+                .flatten()
+            {
+                display_package_info(&info);
+                ui::print_kv(
+                    "Source",
+                    &format!("Official repository ({})", style::info("apt")),
+                );
+                return Ok(true);
+            }
+        }
+        return Ok(false);
+    }
 
     // 1. Try daemon first (ULTRA FAST - <1ms)
     #[cfg(unix)]
@@ -44,47 +88,10 @@ pub fn info_sync(package: &str) -> Result<bool> {
         return Ok(true);
     }
 
-    // 2. Fallback to local package manager (Sync-like via block_on if needed, but here we just use the backend functions)
-    if matches!(pm_name, "apt" | "apt-pure") {
-        #[cfg(feature = "debian")]
-        {
-            if let Some(info) = crate::package_managers::apt_get_sync_pkg_info(package)
-                .ok()
-                .flatten()
-            {
-                display_package_info(&info);
-                ui::print_kv(
-                    "Source",
-                    &format!("Official repository ({})", style::info("apt")),
-                );
-                return Ok(true);
-            }
-        }
-        #[cfg(all(not(feature = "debian"), feature = "debian-pure"))]
-        {
-            if let Some(pkg) = crate::package_managers::debian_db::get_info_fast(package)
-                .ok()
-                .flatten()
-            {
-                ui::print_kv("Name", &style::package(&pkg.name));
-                ui::print_kv("Version", &style::version(&pkg.version));
-                ui::print_kv("Description", &pkg.description);
-                ui::print_kv(
-                    "Status",
-                    if pkg.installed {
-                        "installed"
-                    } else {
-                        "not installed"
-                    },
-                );
-                ui::print_kv(
-                    "Source",
-                    &format!("Official repository ({})", style::info("apt")),
-                );
-                return Ok(true);
-            }
-        }
-    } else if pm_name == "pacman" {
+    let pm = get_package_manager()?;
+    let pm_name = pm.name();
+
+    if pm_name == "pacman" {
         #[cfg(feature = "arch")]
         {
             if let Some(info) = crate::package_managers::get_sync_pkg_info(package)
@@ -178,13 +185,72 @@ fn display_detailed_info(info: &crate::daemon::protocol::DetailedPackageInfo) {
 }
 
 pub async fn info(package: &str) -> Result<()> {
-    // Try modern Elm UI first
+    info_with_json(package, false).await
+}
+
+pub async fn info_with_json(package: &str, json: bool) -> Result<()> {
+    if json {
+        return info_json(package).await;
+    }
+
+    if crate::core::paths::test_mode() || !console::user_attended() {
+        return info_fallback(package).await;
+    }
+
     if let Err(e) = run_info_elm(package.to_string()) {
         tracing::warn!("Elm UI failed, falling back to basic mode: {}", e);
         info_fallback(package).await
     } else {
         Ok(())
     }
+}
+
+async fn info_json(package: &str) -> Result<()> {
+    if let Err(e) = crate::core::security::validate_package_name(package) {
+        anyhow::bail!("Invalid package name: {e}");
+    }
+
+    #[cfg(unix)]
+    if let Ok(Ok(info)) = tokio::time::timeout(DAEMON_INFO_TIMEOUT, async {
+        let mut client = crate::core::client::DaemonClient::connect().await?;
+        client.info(package).await
+    })
+    .await
+    {
+        let json_str = serde_json::to_string_pretty(&info).unwrap_or_else(|_| "{}".to_string());
+        println!("{json_str}");
+        return Ok(());
+    }
+
+    let pm = get_package_manager()?;
+    if pm.name() == "pacman" {
+        #[cfg(feature = "arch")]
+        if let Some(info) = crate::package_managers::get_sync_pkg_info(package)
+            .ok()
+            .flatten()
+        {
+            let json_obj = serde_json::json!({
+                "name": info.name,
+                "version": info.version.to_string(),
+                "description": info.description,
+                "url": info.url,
+                "size": info.size,
+                "install_size": info.install_size,
+                "download_size": info.download_size,
+                "repo": info.repo,
+                "depends": info.depends,
+                "licenses": info.licenses,
+                "installed": info.installed,
+            });
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json_obj).unwrap_or_else(|_| "{}".to_string())
+            );
+            return Ok(());
+        }
+    }
+
+    anyhow::bail!("Package '{package}' not found")
 }
 
 #[allow(clippy::unused_async)] // Contains .await in arch feature block only
@@ -208,7 +274,17 @@ async fn info_fallback(package: &str) -> Result<()> {
 
         let pb = style::spinner("Searching AUR...");
         let details: Vec<crate::package_managers::AurPackageDetail> =
-            search_detailed(package).await.unwrap_or_default();
+            match tokio::time::timeout(AUR_INFO_TIMEOUT, search_detailed(package)).await {
+                Ok(Ok(results)) => results,
+                Ok(Err(err)) => {
+                    tracing::debug!("AUR detailed info failed for '{}': {}", package, err);
+                    Vec::new()
+                }
+                Err(_) => {
+                    tracing::warn!("AUR detailed info timed out for '{}'", package);
+                    Vec::new()
+                }
+            };
         pb.finish_and_clear();
 
         let Some(pkg) = details.into_iter().find(|p| p.name == package) else {

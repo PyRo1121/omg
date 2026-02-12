@@ -151,7 +151,7 @@ pub fn assert_valid_completions(result: &CommandResult, shell: &str) {
             result.stdout_contains("complete") || result.stdout_contains("omg"),
             "Fish completions should contain 'complete'"
         ),
-        _ => panic!("Unknown shell: {shell}"),
+        _ => unreachable!("Unknown shell: {shell}"),
     }
 }
 

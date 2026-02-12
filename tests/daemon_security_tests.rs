@@ -105,7 +105,7 @@ async fn test_input_validation_audit() {
             "Should reject invalid package name"
         );
     } else {
-        panic!("Should have returned error response");
+        unreachable!("Should have returned error response");
     }
 
     // Verify audit log entry
@@ -127,7 +127,7 @@ async fn test_input_validation_audit() {
             "Log should contain error details"
         );
     } else {
-        panic!("Audit log file not found at {audit_file:?}");
+        unreachable!("Audit log file not found at {audit_file:?}");
     }
 }
 
@@ -177,7 +177,7 @@ async fn test_batch_size_limit_audit() {
             "Should reject oversized batch"
         );
     } else {
-        panic!("Should have returned error response");
+        unreachable!("Should have returned error response");
     }
 
     // Verify audit log
@@ -235,10 +235,10 @@ async fn test_health_endpoint_returns_status() {
                     "Cache size should be reasonable"
                 );
             } else {
-                panic!("Expected Health response result");
+                unreachable!("Expected Health response result");
             }
         }
-        Response::Error { message, .. } => panic!("Health endpoint failed: {}", message),
+        Response::Error { message, .. } => unreachable!("Health endpoint failed: {}", message),
     }
 }
 
@@ -274,10 +274,10 @@ async fn test_ping_returns_pong() {
             if let omg_lib::daemon::protocol::ResponseResult::Ping(msg) = result {
                 assert_eq!(msg, "pong");
             } else {
-                panic!("Expected Ping response");
+                unreachable!("Expected Ping response");
             }
         }
-        Response::Error { message, .. } => panic!("Ping failed: {}", message),
+        Response::Error { message, .. } => unreachable!("Ping failed: {}", message),
     }
 }
 
@@ -315,10 +315,10 @@ async fn test_cache_stats_handler() {
                 assert!(size <= max_size, "Cache size should not exceed max");
                 assert!(max_size > 0, "Max cache size should be positive");
             } else {
-                panic!("Expected CacheStats response");
+                unreachable!("Expected CacheStats response");
             }
         }
-        Response::Error { message, .. } => panic!("CacheStats failed: {}", message),
+        Response::Error { message, .. } => unreachable!("CacheStats failed: {}", message),
     }
 }
 
@@ -354,10 +354,10 @@ async fn test_cache_clear_handler() {
             if let omg_lib::daemon::protocol::ResponseResult::Message(msg) = result {
                 assert_eq!(msg, "cleared");
             } else {
-                panic!("Expected Message response");
+                unreachable!("Expected Message response");
             }
         }
-        Response::Error { message, .. } => panic!("CacheClear failed: {}", message),
+        Response::Error { message, .. } => unreachable!("CacheClear failed: {}", message),
     }
 }
 
@@ -393,9 +393,9 @@ async fn test_explicit_count_handler() {
             if let omg_lib::daemon::protocol::ResponseResult::ExplicitCount(count) = result {
                 assert!(count < 100_000, "Explicit count should be reasonable");
             } else {
-                panic!("Expected ExplicitCount response");
+                unreachable!("Expected ExplicitCount response");
             }
         }
-        Response::Error { message, .. } => panic!("ExplicitCount failed: {}", message),
+        Response::Error { message, .. } => unreachable!("ExplicitCount failed: {}", message),
     }
 }

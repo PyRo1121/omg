@@ -18,10 +18,19 @@
 #![allow(clippy::doc_markdown)]
 
 mod common;
+mod platform_semantics;
 
 use common::assertions::*;
 use common::fixtures::*;
 use common::*;
+use platform_semantics::{assert_no_debian_terms, assert_no_fedora_terms, assert_no_macos_terms};
+
+fn assert_arch_platform_purity(result: &CommandResult, context: &str) {
+    let output = result.combined_output();
+    assert_no_debian_terms(&output, context);
+    assert_no_fedora_terms(&output, context);
+    assert_no_macos_terms(&output, context);
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // PACMAN INTEGRATION TESTS
@@ -38,6 +47,7 @@ mod pacman_integration {
         let result = run_omg(&["search", "firefox"]);
         result.assert_success();
         assert_search_results(&result, &["firefox"]);
+        assert_arch_platform_purity(&result, "Arch search official repos");
     }
 
     #[test]
@@ -50,6 +60,7 @@ mod pacman_integration {
             let result = run_omg(&["search", pkg]);
             result.assert_success();
             assert!(result.stdout_contains(pkg), "Should find {pkg}");
+            assert_arch_platform_purity(&result, "Arch search core packages");
         }
     }
 
@@ -61,6 +72,7 @@ mod pacman_integration {
         for pkg in &["git", "vim", "python", "nodejs"] {
             let result = run_omg(&["search", pkg]);
             result.assert_success();
+            assert_arch_platform_purity(&result, "Arch search extra packages");
         }
     }
 
@@ -75,6 +87,7 @@ mod pacman_integration {
             !result.stderr_contains("panicked at"),
             "Should not panic on regex"
         );
+        assert_arch_platform_purity(&result, "Arch search regex");
     }
 
     #[test]
@@ -89,6 +102,7 @@ mod pacman_integration {
             result.stdout_contains("core") || result.stdout_contains("Repository"),
             "Should show repository"
         );
+        assert_arch_platform_purity(&result, "Arch info installed package");
     }
 
     #[test]
@@ -104,6 +118,9 @@ mod pacman_integration {
 
     #[test]
     fn test_info_nonexistent_package() {
+        require_system_tests!();
+        require_arch!();
+
         let result = run_omg(&["info", "this-package-definitely-does-not-exist-12345"]);
         // Should fail gracefully
         assert!(
@@ -124,6 +141,7 @@ mod pacman_integration {
             !result.stdout.trim().is_empty() || result.stdout_contains("0"),
             "Should list packages or count"
         );
+        assert_arch_platform_purity(&result, "Arch explicit list");
     }
 
     #[test]
@@ -136,6 +154,7 @@ mod pacman_integration {
         // Should output a number
         let count: Result<u32, _> = result.stdout.trim().parse();
         assert!(count.is_ok(), "Should output a valid number");
+        assert_arch_platform_purity(&result, "Arch explicit count");
     }
 
     #[test]
@@ -162,6 +181,7 @@ mod pacman_integration {
         let result = run_omg(&["update", "--check"]);
         result.assert_success();
         assert!(!result.stderr_contains("panicked at"), "Should not panic");
+        assert_arch_platform_purity(&result, "Arch update check");
     }
 
     #[test]
@@ -179,6 +199,7 @@ mod pacman_integration {
             "Should report up to date or show firefox in updates"
         );
         assert!(!result.stderr_contains("panicked at"), "Should not panic");
+        assert_arch_platform_purity(&result, "Arch mock update check");
     }
 
     #[test]
@@ -194,6 +215,7 @@ mod pacman_integration {
 
         result.assert_stdout_contains("up to date");
         assert!(!result.stderr_contains("panicked at"), "Should not panic");
+        assert_arch_platform_purity(&result, "Arch mock up-to-date check");
     }
 
     #[test]
@@ -208,6 +230,7 @@ mod pacman_integration {
             "Should have orphans option"
         );
         assert!(result.stdout_contains("cache"), "Should have cache option");
+        assert_arch_platform_purity(&result, "Arch clean help");
     }
 }
 
@@ -259,6 +282,7 @@ mod aur_integration {
         let result = run_omg(&["status"]);
         result.assert_success();
         // Status should work regardless of AUR helper presence
+        assert_arch_platform_purity(&result, "Arch AUR helper detection");
     }
 }
 
@@ -277,6 +301,7 @@ mod alpm_direct {
         // Status uses ALPM directly for speed
         let result = run_omg(&["status"]);
         result.assert_success();
+        assert_arch_platform_purity(&result, "Arch ALPM database access");
     }
 
     #[test]
@@ -287,6 +312,7 @@ mod alpm_direct {
         // Explicit uses ALPM local database
         let result = run_omg(&["explicit", "--count"]);
         result.assert_success();
+        assert_arch_platform_purity(&result, "Arch ALPM local db query");
     }
 
     #[test]
@@ -298,6 +324,7 @@ mod alpm_direct {
         let result = run_omg(&["search", "pacman"]);
         result.assert_success();
         assert!(result.stdout_contains("pacman"), "Should find pacman");
+        assert_arch_platform_purity(&result, "Arch ALPM sync db query");
     }
 
     #[test]
@@ -325,6 +352,7 @@ mod alpm_direct {
                 || result.stdout_contains("KiB"),
             "Should show sizes"
         );
+        assert_arch_platform_purity(&result, "Arch ALPM size calculation");
     }
 }
 
@@ -414,6 +442,7 @@ mod new_features {
             result.stdout_contains("MB") || result.stdout_contains("GB"),
             "Should show disk usage"
         );
+        assert_arch_platform_purity(&result, "Arch size command");
     }
 
     #[test]
@@ -423,6 +452,7 @@ mod new_features {
 
         let result = run_omg(&["size", "--limit", "10"]);
         result.assert_success();
+        assert_arch_platform_purity(&result, "Arch size with limit");
     }
 
     #[test]

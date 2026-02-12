@@ -30,6 +30,9 @@ const SOURCE_OFFICIAL: &str = "official";
 const SOURCE_AUR: &str = "aur";
 const PING_RESPONSE: &str = "pong";
 const CACHE_CLEARED_MSG: &str = "cleared";
+const DAEMON_INFO_BACKEND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+#[cfg(feature = "arch")]
+const DAEMON_INFO_AUR_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
 
 /// Daemon state shared across handlers
 pub struct DaemonState {
@@ -511,7 +514,12 @@ async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) ->
     }
 
     // 3. Try Package Manager Backend
-    if let Ok(Some(info)) = state.package_manager.info(&package).await {
+    if let Ok(Ok(Some(info))) = tokio::time::timeout(
+        DAEMON_INFO_BACKEND_TIMEOUT,
+        state.package_manager.info(&package),
+    )
+    .await
+    {
         let detailed = Arc::new(DetailedPackageInfo {
             name: info.name,
             #[allow(clippy::implicit_clone)] // Version is feature-gated type alias; .to_string() is the required conversion
@@ -535,7 +543,8 @@ async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) ->
     // 4. Try AUR (arch only)
     #[cfg(feature = "arch")]
     if state.package_manager.name() == "pacman"
-        && let Ok(details) = search_detailed(&package).await
+        && let Ok(Ok(details)) =
+            tokio::time::timeout(DAEMON_INFO_AUR_TIMEOUT, search_detailed(&package)).await
         && let Some(pkg) = details.into_iter().find(|p| p.name == package)
     {
         let detailed = Arc::new(DetailedPackageInfo {

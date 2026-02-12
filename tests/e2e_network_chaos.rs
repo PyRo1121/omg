@@ -107,7 +107,7 @@ async fn test_server_error_handling() -> Result<()> {
             eprintln!("Skipping test: httpbin.org not reachable");
         }
         Err(e) => {
-            panic!("Unexpected error: {e:?}");
+            unreachable!("Unexpected error: {e:?}");
         }
     }
 
@@ -140,7 +140,7 @@ async fn test_content_length_mismatch_detection() -> Result<()> {
             eprintln!("Skipping test: httpbin.org not reachable");
         }
         Err(e) => {
-            panic!("Unexpected error: {e:?}");
+            unreachable!("Unexpected error: {e:?}");
         }
     }
 
@@ -225,7 +225,7 @@ async fn test_slow_response_timeout() -> Result<()> {
     // httpbin.org/delay/N waits N seconds before responding
     match client.get("https://httpbin.org/delay/5").send().await {
         Ok(_) => {
-            panic!("Should have timed out waiting for slow response");
+            unreachable!("Should have timed out waiting for slow response");
         }
         Err(e) => {
             assert!(e.is_timeout(), "Error should be timeout: {e:?}");
@@ -371,7 +371,7 @@ async fn test_http2_support() -> Result<()> {
             eprintln!("Skipping HTTP/2 test: network unavailable");
         }
         Err(e) => {
-            panic!("Unexpected error: {e:?}");
+            unreachable!("Unexpected error: {e:?}");
         }
     }
 

@@ -126,11 +126,12 @@ impl DaemonClient {
             }
         }
 
-        Err(anyhow::Error::new(last_err.expect("loop must have run"))
-            .context(format!(
+        Err(
+            anyhow::Error::new(last_err.expect("loop must have run")).context(format!(
                 "Failed to connect to daemon at {} after retries",
                 socket_path.display()
-            )))
+            )),
+        )
     }
 
     /// Connect to the daemon, auto-spawning it if not running.
@@ -150,7 +151,9 @@ impl DaemonClient {
                     .write(true)
                     .create_new(true)
                     .open(&path)
-                    .with_context(|| format!("Failed to create daemon spawn lock: {}", path.display()))?;
+                    .with_context(|| {
+                        format!("Failed to create daemon spawn lock: {}", path.display())
+                    })?;
 
                 Ok(Self { path, _file: file })
             }
@@ -190,9 +193,11 @@ impl DaemonClient {
 
         let _spawn_lock = match SpawnLockGuard::acquire(lock_path.clone()) {
             Ok(lock) => lock,
-            Err(err) if err.downcast_ref::<std::io::Error>().is_some_and(|io| {
-                io.kind() == std::io::ErrorKind::AlreadyExists
-            }) => {
+            Err(err)
+                if err
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|io| io.kind() == std::io::ErrorKind::AlreadyExists) =>
+            {
                 tracing::debug!(
                     "Daemon spawn lock exists, waiting for peer process to finish spawning"
                 );
