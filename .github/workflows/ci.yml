@@ -107,10 +107,15 @@ jobs:
       - name: Clippy (portable)
         run: |
           cargo clippy --all-targets --no-default-features --features pgp,license \
-            -- -D warnings -D clippy::pedantic -A clippy::module_name_repetitions
+            --locked -- -D warnings -D clippy::pedantic -A clippy::module_name_repetitions
 
       - name: Compile check
         run: cargo check --all-targets --no-default-features --features pgp,license --locked
+
+      - name: Debian feature isolation check
+        run: |
+          cargo check --all-targets --no-default-features \
+            --features debian-pure,debian-deb822-backend,debian-resolvo --locked
 
       - name: Run portable tests
         run: cargo test --lib --no-default-features --features pgp,license --locked
@@ -124,6 +129,7 @@ jobs:
     needs: quick-gate
     if: needs.quick-gate.outputs.should-build == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group'
     runs-on: ubuntu-latest
+    continue-on-error: ${{ matrix.experimental || false }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -142,6 +148,20 @@ jobs:
           - platform: debian
             image: debian:bookworm
             features: debian
+            experimental: false
+            setup: |
+              apt-get update
+              DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+                ca-certificates curl git build-essential pkg-config \
+                libssl-dev libapt-pkg-dev clang cmake zlib1g-dev liblzma-dev libbz2-dev
+              curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.93.0
+              echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+              "$HOME/.cargo/bin/rustup" component add clippy
+
+          - platform: debian-trixie
+            image: debian:trixie
+            features: debian
+            experimental: true
             setup: |
               apt-get update
               DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
@@ -205,7 +225,7 @@ jobs:
       - name: Platform clippy
         run: |
           cargo clippy --all-targets --no-default-features --features ${{ matrix.features }} \
-            -- -D warnings
+            --locked -- -D warnings
 
       - name: Install nextest
         uses: taiki-e/install-action@nextest
@@ -221,6 +241,35 @@ jobs:
             cargo nextest run --test fedora_tests --no-default-features --features ${{ matrix.features }} \
               --locked --profile ci --no-fail-fast || echo "::warning::Some Fedora tests failed"
           fi
+
+      - name: Debian deterministic benchmark regression check
+        if: matrix.platform == 'debian'
+        env:
+          OMG_BENCH_WRITE_JSON: "1"
+          OMG_BENCH_JSON_OUT: target/bench/debian-matrix.json
+          OMG_BENCH_BASELINE_JSON: benchmarks/baselines/debian-matrix-baseline.json
+          OMG_BENCH_REGRESSION_MULTIPLIER: "2.0"
+        run: |
+          cargo test --test bench_debian --no-default-features --features ${{ matrix.features }} --locked \
+            bench_debian_deterministic_matrix -- --nocapture
+
+      - name: Upload Debian benchmark artifact
+        if: matrix.platform == 'debian'
+        uses: actions/upload-artifact@v6
+        with:
+          name: bench-debian-matrix
+          path: target/bench/debian-matrix.json
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Publish Debian benchmark summary
+        if: matrix.platform == 'debian'
+        run: |
+          echo "## Debian Deterministic Benchmark" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '```json' >> $GITHUB_STEP_SUMMARY
+          cat target/bench/debian-matrix.json >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
 
       - name: Verify binary
         run: |

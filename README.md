@@ -6,7 +6,7 @@
 [![Benchmark](https://img.shields.io/badge/search-5--11ms%20(12--24x%20faster)-brightgreen?style=flat-square)](benchmark.sh)
 [![codecov](https://codecov.io/gh/pyro1121/omg/branch/main/graph/badge.svg?style=flat-square)](https://codecov.io/gh/pyro1121/omg)
 [![License](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue?style=flat-square)](LICENSE)
-[![Rust](https://img.shields.io/badge/rust-1.92%2B-orange?style=flat-square)](https://www.rust-lang.org)
+[![Rust](https://img.shields.io/badge/rust-1.93%2B-orange?style=flat-square)](https://www.rust-lang.org)
 
 OMG is the unified dev tool you've been waiting for. **One command** replaces `pacman`, `yay`, `nvm`, `pyenv`, `rustup`, `rbenv`, and `jenv`.
 
@@ -16,7 +16,7 @@ OMG is the unified dev tool you've been waiting for. **One command** replaces `p
 **Reference:** [CLI](docs/cli.md) • [Config](docs/configuration.md) • [Runtimes](docs/runtimes.md)  
 **Advanced:** [Security](docs/security.md) • [Team](docs/team.md) • [CI/CD](docs/ci-cd-best-practices-2025.md)  
 **Performance:** [Benchmarks](#-benchmarks) • [Architecture](#️-architecture)
-**Help:** [Troubleshooting](docs/troubleshooting.md) • [Changelog](docs/changelog.md)
+**Help:** [Troubleshooting](docs/troubleshooting.md) • [Changelog](docs/changelog.md) • [Release Readiness](docs/release-readiness.md)
 
 ## The Numbers That Matter
 
@@ -167,7 +167,7 @@ curl -fsSL https://pyro1121.com/install.sh | bash
 cargo install omg-cli
 ```
 
-Requires: Rust 1.92+, platform build tools
+Requires: Rust 1.93+, platform build tools
 
 </td>
 </tr>

@@ -8,7 +8,7 @@ Thank you for your interest in contributing to OMG! This guide will help you get
 
 ### Prerequisites
 
-- **Rust:** 1.92 or later (uses Rust Edition 2024)
+- **Rust:** 1.93 or later (uses Rust Edition 2024)
 - **Platform-specific dependencies:**
   - **Arch Linux:** `base-devel`, `libalpm` (installed by default)
   - **Debian/Ubuntu:** `build-essential`, `libapt-pkg-dev`
@@ -102,7 +102,7 @@ omg/
 ### Rust Edition & Version
 
 - **Edition:** `2024` (latest stable Rust edition)
-- **MSRV:** `1.92+`
+- **MSRV:** `1.93+`
 - **Target:** Follow Rust 2024 idioms and zero-cost abstractions
 
 ### Formatting
@@ -128,6 +128,21 @@ cargo clippy --features arch -- -D warnings -W clippy::pedantic
 # Fix auto-fixable warnings
 cargo clippy --features arch --fix
 ```
+
+For cross-platform coverage, run feature-scoped checks locally (matches CI strategy):
+
+```bash
+# Portable baseline (no system package manager bindings)
+cargo clippy --all-targets --no-default-features --features pgp,license -- -D warnings
+
+# Debian native bindings (requires libapt-pkg-dev)
+cargo clippy --all-targets --no-default-features --features debian -- -D warnings
+
+# Arch native bindings (requires libalpm)
+cargo clippy --all-targets --no-default-features --features arch,license -- -D warnings
+```
+
+`cargo clippy --all-targets --all-features` will compile Debian FFI bindings and requires APT development headers (`libapt-pkg-dev`) to be installed.
 
 **Key clippy rules we follow:**
 - `-W clippy::pedantic` - Pedantic lints enabled
@@ -460,7 +475,7 @@ What actually happened.
 **Environment:**
 - OS: [e.g., Arch Linux]
 - OMG version: [e.g., 0.1.204]
-- Rust version: [e.g., 1.92]
+- Rust version: [e.g., 1.93]
 
 **Logs**
 ```
