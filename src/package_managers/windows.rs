@@ -139,7 +139,6 @@ struct RegistryPackage {
 struct InstalledPackage {
     name: String,
     version: String,
-    source: String,
     description: String,
 }
 
@@ -189,7 +188,6 @@ fn enumerate_registry_packages() -> Result<Vec<InstalledPackage>> {
             packages.push(InstalledPackage {
                 name,
                 version,
-                source: "registry".to_string(),
                 description: publisher,
             });
         }
@@ -199,6 +197,7 @@ fn enumerate_registry_packages() -> Result<Vec<InstalledPackage>> {
 }
 
 #[cfg(not(target_os = "windows"))]
+#[allow(clippy::unnecessary_wraps)]
 fn enumerate_registry_packages() -> Result<Vec<InstalledPackage>> {
     Ok(Vec::new())
 }
@@ -251,6 +250,7 @@ pub struct WindowsMmapIndex {
 }
 
 impl WindowsMmapIndex {
+    #[allow(unsafe_code)]
     pub fn open(path: &Path) -> Result<Self> {
         let file = File::open(path)
             .with_context(|| format!("Failed to open mmap index at {}", path.display()))?;
@@ -325,7 +325,7 @@ impl WindowsMmapIndex {
 
     #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
-        self.is_empty()
+        self.len() == 0
     }
 }
 
@@ -412,13 +412,13 @@ impl WindowsPackageManager {
                 .as_secs(),
         };
 
-        for entry in packages.iter() {
+        for entry in packages {
             let pkg = entry.value();
             let idx = index.packages.len() as u32;
             index.name_to_idx.insert(pkg.name.clone(), idx);
             index.packages.push(RkyvWindowsPackage {
                 name: pkg.name.clone(),
-                version: pkg.version.to_string(),
+                version: pkg.version.clone(),
                 description: pkg.description.clone(),
                 source: "scoop".to_string(),
                 installed: pkg.installed,
@@ -460,7 +460,7 @@ impl WindowsPackageManager {
         }
     }
 
-    fn search_mmap(&self, query: &str) -> Option<Vec<Package>> {
+    fn search_mmap(query: &str) -> Option<Vec<Package>> {
         let mmap_guard = WINDOWS_MMAP_INDEX.read().expect("lock poisoned");
 
         if let Some(ref mmap) = *mmap_guard
@@ -468,17 +468,14 @@ impl WindowsPackageManager {
         {
             mmap.touch();
             if let Ok(results) = mmap.search(query) {
-                return Some(self.convert_rkyv_packages(results));
+                return Some(Self::convert_rkyv_packages(results));
             }
         }
 
         drop(mmap_guard);
 
         if let Some(mmap) = Self::try_load_mmap_index() {
-            let result = mmap
-                .search(query)
-                .ok()
-                .map(|results| self.convert_rkyv_packages(results));
+            let result = mmap.search(query).ok().map(Self::convert_rkyv_packages);
             let mut mmap_guard = WINDOWS_MMAP_INDEX.write().expect("lock poisoned");
             *mmap_guard = Some(mmap);
             return result;
@@ -487,10 +484,7 @@ impl WindowsPackageManager {
         None
     }
 
-    fn convert_rkyv_packages(
-        &self,
-        results: Vec<&rkyv::Archived<RkyvWindowsPackage>>,
-    ) -> Vec<Package> {
+    fn convert_rkyv_packages(results: Vec<&rkyv::Archived<RkyvWindowsPackage>>) -> Vec<Package> {
         results
             .into_iter()
             .map(|p| Package {
@@ -498,7 +492,7 @@ impl WindowsPackageManager {
                 version: crate::package_managers::types::parse_version_or_zero(&p.version),
                 description: p.description.to_string(),
                 source: PackageSource::Official,
-                installed: p.installed.into(),
+                installed: p.installed,
             })
             .collect()
     }
@@ -680,7 +674,6 @@ impl WindowsPackageManager {
             packages.push(InstalledPackage {
                 name,
                 version,
-                source: "scoop".to_string(),
                 description,
             });
         }
@@ -813,7 +806,7 @@ impl WindowsPackageManager {
             let pkg = entry.value();
             let cached = CachedPackage {
                 name: pkg.name.clone(),
-                version: pkg.version.to_string(),
+                version: pkg.version.clone(),
                 description: pkg.description.clone(),
                 installed: pkg.installed,
                 source: "scoop".to_string(),
@@ -908,7 +901,7 @@ impl PackageManager for WindowsPackageManager {
     ) -> Pin<Box<dyn Future<Output = Result<Vec<Package>>> + Send + '_>> {
         let query = query.to_string();
         Box::pin(async move {
-            if let Some(results) = self.search_mmap(&query) {
+            if let Some(results) = Self::search_mmap(&query) {
                 return Ok(results);
             }
 

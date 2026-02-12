@@ -215,21 +215,74 @@ fn try_fast_explicit_count(args: &[String]) -> bool {
 }
 
 /// Ultra-fast path for simple search
+///
+/// Handles: `omg search <query>`, `omg s <query>`, `omg search <query> --no-aur`
+/// Falls through to the async path for `--detailed`, `--interactive`, or `--json`.
 fn try_fast_search(args: &[String]) -> bool {
     if has_help_flag(args) {
         return false;
     }
 
-    if args.len() == 3 && (args[1] == "search" || args[1] == "s") {
-        let query = &args[2];
-        if query.starts_with('-') {
-            return false;
-        }
-        if packages::search_sync_cli(query, false, false, true).unwrap_or_default() {
-            return true;
-        }
+    // Need at least: ["omg", "search", "<query>"]
+    if args.len() < 3 {
+        return false;
     }
-    false
+
+    let cmd = &args[1];
+    if cmd != "search" && cmd != "s" {
+        return false;
+    }
+
+    // Find query (first non-flag arg after the command) and parse flags
+    let mut query: Option<&str> = None;
+    let mut no_aur = false;
+    let mut limit: usize = 50;
+    let mut i = 2usize;
+    while i < args.len() {
+        let arg = &args[i];
+        match arg.as_str() {
+            "--no-aur" => no_aur = true,
+            "--limit" => {
+                i += 1;
+                if i >= args.len() {
+                    return false;
+                }
+                let Ok(parsed) = args[i].parse::<usize>() else {
+                    return false;
+                };
+                if parsed == 0 {
+                    return false;
+                }
+                limit = parsed;
+            }
+            s if s.starts_with("--limit=") => {
+                let value = &s[8..];
+                let Ok(parsed) = value.parse::<usize>() else {
+                    return false;
+                };
+                if parsed == 0 {
+                    return false;
+                }
+                limit = parsed;
+            }
+            // Any other flag means this search needs the full async path
+            s if s.starts_with('-') => return false,
+            s => {
+                if query.is_some() {
+                    // Multiple positional args — not a simple search
+                    return false;
+                }
+                query = Some(s);
+            }
+        }
+        i += 1;
+    }
+
+    let Some(query) = query else {
+        return false;
+    };
+
+    packages::search_sync_cli_with_limit(query, false, false, no_aur, limit).unwrap_or_default()
 }
 
 /// Ultra-fast path for simple info
@@ -248,6 +301,39 @@ fn try_fast_info(args: &[String]) -> bool {
         }
     }
     false
+}
+
+fn try_fast_install_dry_run(args: &[String]) -> bool {
+    if has_help_flag(args) || args.len() < 4 {
+        return false;
+    }
+
+    let cmd = &args[1];
+    if cmd != "install" && cmd != "i" {
+        return false;
+    }
+
+    let mut dry_run = false;
+    let mut packages = Vec::new();
+
+    for arg in &args[2..] {
+        match arg.as_str() {
+            "--dry-run" => dry_run = true,
+            "--yes" | "-y" => {}
+            s if s.starts_with('-') => return false,
+            s => packages.push(s.to_string()),
+        }
+    }
+
+    if !dry_run || packages.is_empty() {
+        return false;
+    }
+
+    if omg_lib::core::security::validate_package_names_or_files(&packages).is_err() {
+        return false;
+    }
+
+    packages::install_dry_run_cli(&packages).unwrap_or_default()
 }
 
 /// Ultra-fast path for completions
@@ -396,6 +482,7 @@ fn try_fast_paths(args: &[String]) -> Result<bool> {
     if try_fast_explicit_count(args)
         || try_fast_search(args)
         || try_fast_info(args)
+        || try_fast_install_dry_run(args)
         || try_fast_which(args)
         || try_fast_list(args)
         || try_fast_status(args)
@@ -766,11 +853,8 @@ async fn handle_migrate_command(command: &MigrateCommands) -> Result<()> {
     }
 }
 
-async fn handle_info_command(package: &str) -> Result<()> {
-    if !packages::info_sync(package)? {
-        packages::info_aur(package).await?;
-    }
-    Ok(())
+async fn handle_info_command(package: &str, json: bool) -> Result<()> {
+    packages::info_with_json(package, json).await
 }
 
 #[expect(clippy::fn_params_excessive_bools)] // Maps directly to CLI flags: --detailed, --interactive, --json, --no-aur
@@ -780,8 +864,9 @@ async fn handle_search_command(
     interactive: bool,
     json_flag: bool,
     no_aur: bool,
+    limit: usize,
 ) -> Result<()> {
-    packages::search_with_json(query, detailed, interactive, json_flag, no_aur).await
+    packages::search_with_json(query, detailed, interactive, json_flag, no_aur, limit).await
 }
 
 async fn handle_install_command(packages: &[String], yes: bool, dry_run: bool) -> Result<()> {
@@ -848,8 +933,10 @@ async fn dispatch_command(
             detailed,
             interactive,
             no_aur,
+            limit,
         } => {
-            handle_search_command(query, *detailed, *interactive, json_flag, *no_aur).await?;
+            handle_search_command(query, *detailed, *interactive, json_flag, *no_aur, *limit)
+                .await?;
         }
         Commands::Install {
             packages,
@@ -875,7 +962,7 @@ async fn dispatch_command(
         } => {
             handle_update_command(*check, *yes, *dry_run, *fast, *turbo).await?;
         }
-        Commands::Info { package } => handle_info_command(package).await?,
+        Commands::Info { package } => handle_info_command(package, json_flag).await?,
         Commands::Clean {
             orphans,
             cache,

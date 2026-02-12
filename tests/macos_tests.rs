@@ -3,6 +3,10 @@
 use anyhow::Result;
 use omg_lib::package_managers::{HomebrewPackageManager, PackageManager};
 
+mod platform_semantics;
+
+use platform_semantics::{assert_no_arch_terms, assert_no_debian_terms, assert_no_fedora_terms};
+
 mod homebrew_integration {
     use super::*;
 
@@ -10,6 +14,10 @@ mod homebrew_integration {
     async fn test_homebrew_package_manager_creation() {
         let pm = HomebrewPackageManager::new();
         assert_eq!(pm.name(), "brew");
+        let identity = pm.name().to_string();
+        assert_no_arch_terms(&identity, "macOS package manager identity");
+        assert_no_debian_terms(&identity, "macOS package manager identity");
+        assert_no_fedora_terms(&identity, "macOS package manager identity");
     }
 
     #[tokio::test]

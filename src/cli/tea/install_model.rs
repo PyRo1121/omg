@@ -144,14 +144,13 @@ impl Model for InstallModel {
                     Cmd::Exec(Box::new(move || {
                         let packages_for_error = packages.clone();
                         let packages_task = packages;
-                        let result = crate::cli::tea::async_bridge::run_blocking_future(
-                            async move {
+                        let result =
+                            crate::cli::tea::async_bridge::run_blocking_future(async move {
                                 let pm = get_package_manager()?;
                                 let service = PackageService::new(pm);
                                 service.install(&packages_task, yes).await
-                            },
-                        )
-                        .and_then(std::convert::identity);
+                            })
+                            .and_then(std::convert::identity);
 
                         match result {
                             Ok(()) => InstallMsg::Complete,

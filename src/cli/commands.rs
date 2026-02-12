@@ -649,19 +649,28 @@ pub fn daemon(foreground: bool) -> Result<()> {
 
         match status {
             Ok(_) => {
-                // Wait briefly and verify daemon actually started
-                std::thread::sleep(std::time::Duration::from_millis(500));
-                if socket_path.exists() {
-                    if let Ok(mut client) = crate::core::client::DaemonClient::connect_sync()
+                // Poll for daemon readiness: 30 attempts × 100ms = 3 seconds max.
+                // The daemon needs time to build its in-memory index and bind the socket,
+                // which can take >500ms on large package databases.
+                let mut started = false;
+                for _ in 0..30 {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                    if socket_path.exists()
+                        && let Ok(mut client) = crate::core::client::DaemonClient::connect_sync()
                         && client.ping_sync().is_ok()
                     {
-                        println!("{} Daemon started", style::success("✓"));
-                    } else {
-                        println!(
-                            "{} Daemon started but not responding (check logs)",
-                            style::warning("⚠")
-                        );
+                        started = true;
+                        break;
                     }
+                }
+
+                if started {
+                    println!("{} Daemon started", style::success("✓"));
+                } else if socket_path.exists() {
+                    println!(
+                        "{} Daemon started but not responding (check logs)",
+                        style::warning("⚠")
+                    );
                 } else {
                     println!(
                         "{} Daemon started but socket not created (check logs)",

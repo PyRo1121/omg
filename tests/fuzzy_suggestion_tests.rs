@@ -89,6 +89,6 @@ async fn test_fuzzy_suggestions() {
                 "Suggestions for '{typo}' should contain '{target_pkg}'"
             );
         }
-        _ => panic!("Expected Suggest response"),
+        _ => unreachable!("Expected Suggest response"),
     }
 }

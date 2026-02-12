@@ -4,6 +4,9 @@ use anyhow::Result;
 use omg_lib::package_managers::{DnfPackageManager, PackageManager};
 
 mod common;
+mod platform_semantics;
+
+use platform_semantics::{assert_no_arch_terms, assert_no_debian_terms, assert_no_macos_terms};
 
 mod dnf_integration {
     use super::*;
@@ -12,6 +15,10 @@ mod dnf_integration {
     async fn test_dnf_package_manager_creation() {
         let pm = DnfPackageManager::new();
         assert_eq!(pm.name(), "dnf");
+        let identity = pm.name().to_string();
+        assert_no_debian_terms(&identity, "Fedora package manager identity");
+        assert_no_arch_terms(&identity, "Fedora package manager identity");
+        assert_no_macos_terms(&identity, "Fedora package manager identity");
     }
 
     #[tokio::test]

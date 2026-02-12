@@ -273,7 +273,7 @@ impl HomebrewPackageManager {
         None
     }
 
-    /// Build FormulaCache from raw formula and cask lists
+    /// Build `FormulaCache` from raw formula and cask lists
     fn build_cache(formulas: Vec<FormulaInfo>, casks: Vec<CaskInfo>) -> FormulaCache {
         let formula_map = formulas
             .iter()
@@ -671,15 +671,13 @@ impl HomebrewPackageManager {
             cache.cellar_mtime != cellar_mtime || cache.packages.is_empty()
         };
 
-        if needs_refresh {
-            if let Ok(names) = self.list_installed_sync() {
-                let set: AHashSet<String> = names.into_iter().collect();
+        if needs_refresh && let Ok(names) = self.list_installed_sync() {
+            let set: AHashSet<String> = names.into_iter().collect();
 
-                let mut cache = INSTALLED_CACHE.write().expect("lock poisoned");
-                cache.packages = set;
-                cache.cellar_mtime = cellar_mtime;
-                cache.last_refreshed = Some(Instant::now());
-            }
+            let mut cache = INSTALLED_CACHE.write().expect("lock poisoned");
+            cache.packages = set;
+            cache.cellar_mtime = cellar_mtime;
+            cache.last_refreshed = Some(Instant::now());
         }
     }
 
@@ -687,10 +685,10 @@ impl HomebrewPackageManager {
     pub fn is_installed_fast(&self, package: &str) -> bool {
         {
             let cache = INSTALLED_CACHE.read().expect("lock poisoned");
-            if let Some(last) = cache.last_refreshed {
-                if last.elapsed().as_secs() < INSTALLED_CACHE_TTL_SECS {
-                    return cache.packages.contains(package);
-                }
+            if let Some(last) = cache.last_refreshed
+                && last.elapsed().as_secs() < INSTALLED_CACHE_TTL_SECS
+            {
+                return cache.packages.contains(package);
             }
         }
 
@@ -925,8 +923,8 @@ mod tests {
     async fn test_detect_prefix() {
         let prefix = HomebrewPackageManager::detect_prefix();
         assert!(
-            prefix == PathBuf::from(HOMEBREW_PREFIX_ARM)
-                || prefix == PathBuf::from(HOMEBREW_PREFIX_INTEL)
+            prefix == std::path::Path::new(HOMEBREW_PREFIX_ARM)
+                || prefix == std::path::Path::new(HOMEBREW_PREFIX_INTEL)
         );
     }
 
@@ -940,7 +938,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Only run on macOS with Homebrew installed
+    #[ignore = "Only run on macOS with Homebrew installed"]
     async fn test_list_installed() {
         let pm = HomebrewPackageManager::new();
         let packages = pm.list_installed().await;
@@ -948,7 +946,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Requires network access
+    #[ignore = "Requires network access"]
     async fn test_search() {
         let pm = HomebrewPackageManager::new();
         let results = pm.search("wget").await;

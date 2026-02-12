@@ -29,7 +29,7 @@ use omg_lib::package_managers::parse_version_or_zero;
 /// Helper to parse version string or panic with clear error
 #[cfg(feature = "arch")]
 fn parse_version_or_panic(s: &str) -> AlpmVersion {
-    AlpmVersion::from_str(s).unwrap_or_else(|e| panic!("Failed to parse version '{s}': {e}"))
+    AlpmVersion::from_str(s).expect("Failed to parse test version")
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

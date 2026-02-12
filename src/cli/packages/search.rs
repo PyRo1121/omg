@@ -4,6 +4,7 @@ use std::time::Instant;
 use anyhow::Result;
 use serde::Serialize;
 
+use crate::cli::packages::common::{description_width, validate_search_query};
 use crate::cli::style;
 use crate::core::Package;
 use crate::package_managers::get_package_manager;
@@ -20,6 +21,14 @@ struct DisplayPackage {
     version: String,
     description: String,
     source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    votes: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    popularity: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    maintainer: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    out_of_date: Option<bool>,
 }
 
 impl DisplayPackage {
@@ -30,13 +39,31 @@ impl DisplayPackage {
             version: p.version.to_string(),
             description: p.description,
             source: p.source.to_string(),
+            votes: None,
+            popularity: None,
+            maintainer: None,
+            out_of_date: None,
+        }
+    }
+
+    #[cfg(feature = "arch")]
+    fn from_aur_detail(p: crate::package_managers::AurPackageDetail) -> Self {
+        Self {
+            name: p.name,
+            version: p.version,
+            description: p.description.unwrap_or_default(),
+            source: "AUR".to_string(),
+            votes: Some(p.num_votes),
+            popularity: Some(p.popularity),
+            maintainer: p.maintainer.clone(),
+            out_of_date: Some(p.out_of_date.is_some()),
         }
     }
 }
 
 #[allow(clippy::fn_params_excessive_bools)] // API requires distinct boolean flags
 pub async fn search(query: &str, detailed: bool, interactive: bool, no_aur: bool) -> Result<()> {
-    search_internal(query, detailed, interactive, false, no_aur).await
+    search_internal(query, detailed, interactive, false, no_aur, 50).await
 }
 
 #[expect(clippy::fn_params_excessive_bools)] // API requires distinct boolean flags
@@ -46,33 +73,24 @@ pub async fn search_with_json(
     interactive: bool,
     json: bool,
     no_aur: bool,
+    limit: usize,
 ) -> Result<()> {
-    search_internal(query, detailed, interactive, json, no_aur).await
+    search_internal(query, detailed, interactive, json, no_aur, limit).await
 }
 
 #[expect(clippy::fn_params_excessive_bools)] // Internal function matching public API
 async fn search_internal(
     query: &str,
-    _detailed: bool,
+    detailed: bool,
     _interactive: bool,
     json: bool,
     no_aur: bool,
+    limit: usize,
 ) -> Result<()> {
-    // Start timing
+    let _ = detailed;
     let start_time = Instant::now();
 
-    if query.len() > 100 {
-        anyhow::bail!("Search query too long (max 100 characters)");
-    }
-    if query.chars().any(char::is_control) {
-        anyhow::bail!("Search query contains invalid characters");
-    }
-    if query.contains('/') || query.contains('\\') || query.contains("..") {
-        anyhow::bail!("Invalid search query: path traversal detected");
-    }
-    if query.chars().any(|c| ";|&><$".contains(c)) {
-        anyhow::bail!("Invalid search query: shell metacharacters detected");
-    }
+    validate_search_query(query)?;
 
     let official_search = async {
         let mut results = Vec::with_capacity(50); // Pre-allocate for typical search results
@@ -86,6 +104,10 @@ async fn search_internal(
                     version: pkg.version,
                     description: pkg.description,
                     source: pkg.source,
+                    votes: None,
+                    popularity: None,
+                    maintainer: None,
+                    out_of_date: None,
                 });
             }
         }
@@ -112,15 +134,26 @@ async fn search_internal(
         }
         #[cfg(feature = "arch")]
         {
-            let aur = AurClient::new();
-            aur.search(query)
-                .await
-                .map(|pkgs| pkgs.into_iter().map(DisplayPackage::from_package).collect())
-                .unwrap_or_default()
+            if detailed {
+                crate::package_managers::search_detailed(query)
+                    .await
+                    .map(|pkgs| {
+                        pkgs.into_iter()
+                            .map(DisplayPackage::from_aur_detail)
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            } else {
+                let aur = AurClient::new();
+                aur.search(query)
+                    .await
+                    .map(|pkgs| pkgs.into_iter().map(DisplayPackage::from_package).collect())
+                    .unwrap_or_default()
+            }
         }
         #[cfg(not(feature = "arch"))]
         {
-            Vec::new()
+            Vec::<DisplayPackage>::new()
         }
     };
 
@@ -128,7 +161,14 @@ async fn search_internal(
     let (official_packages, aur_packages) = tokio::join!(official_search, aur_search);
 
     let mut display_packages = official_packages;
-    display_packages.extend(aur_packages);
+    // Deduplicate: skip AUR packages already present in official results
+    let official_names: std::collections::HashSet<String> =
+        display_packages.iter().map(|p| p.name.clone()).collect();
+    let deduped_aur: Vec<DisplayPackage> = aur_packages
+        .into_iter()
+        .filter(|p: &DisplayPackage| !official_names.contains(&p.name))
+        .collect();
+    display_packages.extend(deduped_aur);
 
     // Track search with timing
     let duration_ms = start_time.elapsed().as_millis() as u64;
@@ -149,20 +189,21 @@ async fn search_internal(
     }
 
     let mut stdout = std::io::BufWriter::new(std::io::stdout());
+    let desc_width = description_width();
     // Modern search header - no extra blank line
     writeln!(stdout, "{}", style::header("Search Results"))?;
 
-    for pkg in display_packages.iter().take(50) {
-        write_package(&mut stdout, pkg)?;
+    for pkg in display_packages.iter().take(limit) {
+        write_package_cached(&mut stdout, pkg, desc_width)?;
     }
 
-    if display_packages.len() > 50 {
+    if display_packages.len() > limit {
         writeln!(
             stdout,
             "  {}",
             style::dim(&format!(
                 "(+{} more packages...)",
-                display_packages.len() - 50
+                display_packages.len() - limit
             ))
         )?;
     }
@@ -175,24 +216,27 @@ async fn search_internal(
 
 pub fn search_sync_cli(
     query: &str,
-    _detailed: bool,
-    _interactive: bool,
+    detailed: bool,
+    interactive: bool,
     no_aur: bool,
 ) -> Result<bool> {
-    if query.len() > 100 || query.chars().any(char::is_control) {
-        return Ok(false);
-    }
-    if query.contains('/') || query.contains('\\') || query.contains("..") {
-        return Ok(false);
-    }
-    if query.chars().any(|c| ";|&><$".contains(c)) {
+    search_sync_cli_with_limit(query, detailed, interactive, no_aur, 50)
+}
+
+pub fn search_sync_cli_with_limit(
+    query: &str,
+    detailed: bool,
+    interactive: bool,
+    no_aur: bool,
+    limit: usize,
+) -> Result<bool> {
+    if !crate::cli::packages::common::is_valid_search_query(query) {
         return Ok(false);
     }
 
     // Fast path: official-only search via sync client (zero runtime overhead).
-    // When AUR is needed, fall back to the async path which requires a runtime.
-    if no_aur {
-        return search_sync_official_only(query);
+    if no_aur || cfg!(not(feature = "arch")) {
+        return search_sync_official_only(query, limit);
     }
 
     // AUR path requires async — create a minimal runtime only when necessary
@@ -203,12 +247,19 @@ pub fn search_sync_cli(
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    rt.block_on(search(query, false, false, no_aur))?;
+    rt.block_on(search_internal(
+        query,
+        detailed,
+        interactive,
+        false,
+        no_aur,
+        limit,
+    ))?;
     Ok(true)
 }
 
 /// Sync-only search: daemon IPC via `PooledSyncClient`, no tokio runtime.
-fn search_sync_official_only(query: &str) -> Result<bool> {
+fn search_sync_official_only(query: &str, limit: usize) -> Result<bool> {
     #[cfg(not(unix))]
     {
         return Ok(false); // Daemon not supported on Windows
@@ -220,7 +271,7 @@ fn search_sync_official_only(query: &str) -> Result<bool> {
             return Ok(false); // Daemon not running; caller falls back to async
         };
 
-        let Ok(res) = client.search(query, Some(50)) else {
+        let Ok(res) = client.search(query, Some(limit)) else {
             return Ok(false);
         };
 
@@ -232,32 +283,18 @@ fn search_sync_official_only(query: &str) -> Result<bool> {
         }
 
         let mut stdout = std::io::BufWriter::new(std::io::stdout());
+        let desc_width = description_width();
         writeln!(stdout, "{}", style::header("Search Results"))?;
 
-        for pkg in res.packages.iter().take(50) {
-            let source_style = if pkg.source == "AUR" {
-                style::warning(&pkg.source)
-            } else {
-                style::info(&pkg.source)
-            };
-            writeln!(
-                stdout,
-                "  {} {} ({}) - {}",
-                style::package(&pkg.name),
-                style::version(&pkg.version),
-                source_style,
-                style::dim(&crate::cli::packages::common::truncate(
-                    &pkg.description,
-                    50
-                ))
-            )?;
+        for pkg in res.packages.iter().take(limit) {
+            write_daemon_package(&mut stdout, pkg, desc_width)?;
         }
 
-        if res.total > 50 {
+        if res.total > limit {
             writeln!(
                 stdout,
                 "  {}",
-                style::dim(&format!("(+{} more packages...)", res.total - 50))
+                style::dim(&format!("(+{} more packages...)", res.total - limit))
             )?;
         }
 
@@ -267,9 +304,51 @@ fn search_sync_official_only(query: &str) -> Result<bool> {
     }
 }
 
-/// Write package info directly to output (avoids intermediate String allocation)
 #[inline]
-fn write_package<W: Write>(w: &mut W, pkg: &DisplayPackage) -> std::io::Result<()> {
+fn write_package_cached<W: Write>(
+    w: &mut W,
+    pkg: &DisplayPackage,
+    desc_width: usize,
+) -> std::io::Result<()> {
+    let source_style = match pkg.source.as_str() {
+        "AUR" => style::warning(&pkg.source),
+        _ => style::info(&pkg.source),
+    };
+
+    write!(
+        w,
+        "  {} {} ({}) - {}",
+        style::package(&pkg.name),
+        style::version(&pkg.version),
+        source_style,
+        style::dim(&crate::cli::packages::common::truncate(
+            &pkg.description,
+            desc_width
+        ))
+    )?;
+
+    if let Some(votes) = pkg.votes {
+        write!(
+            w,
+            " {} {}",
+            style::info(&format!("↑{votes}")),
+            style::info(&format!("{:.1}%", pkg.popularity.unwrap_or(0.0)))
+        )?;
+    }
+    if pkg.out_of_date == Some(true) {
+        write!(w, " {}", style::error("[OUT OF DATE]"))?;
+    }
+
+    writeln!(w)
+}
+
+#[cfg(unix)]
+#[inline]
+fn write_daemon_package<W: Write>(
+    w: &mut W,
+    pkg: &crate::daemon::protocol::PackageInfo,
+    desc_width: usize,
+) -> std::io::Result<()> {
     let source_style = match pkg.source.as_str() {
         "AUR" => style::warning(&pkg.source),
         _ => style::info(&pkg.source),
@@ -283,7 +362,7 @@ fn write_package<W: Write>(w: &mut W, pkg: &DisplayPackage) -> std::io::Result<(
         source_style,
         style::dim(&crate::cli::packages::common::truncate(
             &pkg.description,
-            50
+            desc_width
         ))
     )
 }
@@ -336,6 +415,10 @@ mod tests {
             version: "12.0.0".to_string(),
             description: "AUR helper".to_string(),
             source: "AUR".to_string(),
+            votes: None,
+            popularity: None,
+            maintainer: None,
+            out_of_date: None,
         };
 
         let formatted = format_package(&pkg);
@@ -351,6 +434,10 @@ mod tests {
             version: "6.0.0".to_string(),
             description: "Package manager".to_string(),
             source: "core".to_string(),
+            votes: None,
+            popularity: None,
+            maintainer: None,
+            out_of_date: None,
         };
 
         let formatted = format_package(&pkg);
@@ -362,7 +449,7 @@ mod tests {
     #[tokio::test]
     async fn test_search_query_too_long() {
         let long_query = "a".repeat(101);
-        let result = search_internal(&long_query, false, false, false, false).await;
+        let result = search_internal(&long_query, false, false, false, false, 50).await;
         assert!(result.is_err());
         assert!(
             result
@@ -374,7 +461,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_query_control_chars() {
-        let result = search_internal("test\x00query", false, false, false, false).await;
+        let result = search_internal("test\x00query", false, false, false, false, 50).await;
         assert!(result.is_err());
         assert!(
             result
@@ -386,14 +473,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_query_path_traversal() {
-        let result = search_internal("../etc/passwd", false, false, false, false).await;
+        let result = search_internal("../etc/passwd", false, false, false, false, 50).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("path traversal"));
     }
 
     #[tokio::test]
     async fn test_search_query_shell_metacharacters() {
-        let result = search_internal("test;rm -rf", false, false, false, false).await;
+        let result = search_internal("test;rm -rf", false, false, false, false, 50).await;
         assert!(result.is_err());
         assert!(
             result

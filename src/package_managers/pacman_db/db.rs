@@ -1413,7 +1413,7 @@ mod tests {
         {
             match check_updates_fast() {
                 Ok(updates) => tracing::debug!("Found {} updates", updates.len()),
-                Err(e) => panic!("Failed to check updates: {e}"),
+                Err(e) => unreachable!("Failed to check updates: {e}"),
             }
         }
     }
@@ -1434,7 +1434,7 @@ mod tests {
         if crate::core::paths::pacman_local_dir().exists() {
             let (total, explicit, deps) = match get_counts_fast() {
                 Ok(counts) => counts,
-                Err(e) => panic!("Failed to get counts: {e}"),
+                Err(e) => unreachable!("Failed to get counts: {e}"),
             };
             assert!(total > 0);
             assert_eq!(total, explicit + deps);

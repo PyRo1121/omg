@@ -375,7 +375,7 @@ proptest! {
                 (true, false, false) => Ordering::Less,
                 (false, true, false) => Ordering::Equal,
                 (false, false, true) => Ordering::Greater,
-                _ => panic!("Inconsistent Ord trait implementation"),
+                _ => unreachable!("Inconsistent Ord trait implementation"),
             };
 
             prop_assert_eq!(cmp_result, ord_result,
