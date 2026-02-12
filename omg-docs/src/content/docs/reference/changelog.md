@@ -18,6 +18,24 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ---
 
 ## [Unreleased]
+### ♻️  Refactoring
+
+- Split package lifecycle commands by platform and harden semantic isolation tests
+
+Install, remove, and update flows are now dispatched into platform-specific
+modules (`arch`, `debian`, `generic`) to reduce cross-platform leakage and keep
+replacement logic native to each ecosystem. Added deterministic semantic
+contracts in test suites to ensure Debian paths do not emit Arch/AUR terms and
+Arch paths do not emit Debian/Homebrew terms.
+
+### ⚡ Performance
+
+- Add deterministic Debian benchmark regression artifact + CI summary
+
+Added `bench_debian_deterministic_matrix` with cold/warm metrics for search,
+info, and install dry-run resolution, plus JSON artifact output and baseline
+regression checks in CI for Debian lanes.
+
 ### Build
 
 - Add benchmark targets to Makefile
