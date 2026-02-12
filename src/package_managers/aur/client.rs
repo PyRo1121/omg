@@ -2271,10 +2271,7 @@ impl AurClient {
 
                 // On last attempt, report failure
                 if attempt == MAX_INSTALL_RETRIES {
-                    anyhow::bail!(
-                        "pacman -U failed with exit code {:?}",
-                        result.code()
-                    );
+                    anyhow::bail!("pacman -U failed with exit code {:?}", result.code());
                 }
 
                 tracing::warn!(

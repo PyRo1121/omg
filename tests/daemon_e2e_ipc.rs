@@ -147,7 +147,7 @@ async fn test_basic_ping_request() -> Result<()> {
             assert_eq!(id, 1);
             assert!(matches!(result, ResponseResult::Ping(_)));
         }
-        Response::Error { message, .. } => panic!("Ping failed: {}", message),
+        Response::Error { message, .. } => unreachable!("Ping failed: {}", message),
     }
 
     Ok(())
@@ -220,7 +220,7 @@ async fn test_oversized_query_rejection() -> Result<()> {
             );
         }
         Response::Success { .. } => {
-            panic!("Oversized query should be rejected");
+            unreachable!("Oversized query should be rejected");
         }
     }
 
@@ -330,7 +330,7 @@ async fn test_sequential_requests_on_single_connection() -> Result<()> {
                 assert_eq!(id, i, "Response ID should match request ID");
             }
             Response::Error { message, .. } => {
-                panic!("Request {} failed: {}", i, message);
+                unreachable!("Request {} failed: {}", i, message);
             }
         }
     }
@@ -488,7 +488,7 @@ async fn test_invalid_package_name_injection() -> Result<()> {
             );
         }
         Response::Success { .. } => {
-            panic!("Injection attempt should be rejected");
+            unreachable!("Injection attempt should be rejected");
         }
     }
 
@@ -536,11 +536,11 @@ async fn test_batch_request_single_roundtrip() -> Result<()> {
                     assert!(matches!(resp, Response::Success { .. }));
                 }
             } else {
-                panic!("Expected Batch response");
+                unreachable!("Expected Batch response");
             }
         }
         Response::Error { message, .. } => {
-            panic!("Batch request failed: {}", message);
+            unreachable!("Batch request failed: {}", message);
         }
     }
 
@@ -577,7 +577,7 @@ async fn test_oversized_batch_rejection() -> Result<()> {
             );
         }
         Response::Success { .. } => {
-            panic!("Oversized batch should be rejected");
+            unreachable!("Oversized batch should be rejected");
         }
     }
 
@@ -614,7 +614,7 @@ async fn test_nested_batch_rejection() -> Result<()> {
             );
         }
         Response::Success { .. } => {
-            panic!("Nested batch should be rejected");
+            unreachable!("Nested batch should be rejected");
         }
     }
 

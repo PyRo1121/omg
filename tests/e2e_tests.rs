@@ -1093,7 +1093,7 @@ mod daemon_tests {
                 assert_eq!(query, "firefox");
                 assert_eq!(limit, Some(10));
             }
-            _ => panic!("Wrong request type after deserialization"),
+            _ => unreachable!("Wrong request type after deserialization"),
         }
 
         Ok(())
@@ -1132,10 +1132,10 @@ mod daemon_tests {
                         assert_eq!(sr.packages.len(), 1);
                         assert_eq!(sr.packages[0].name, "firefox");
                     }
-                    _ => panic!("Wrong result type"),
+                    _ => unreachable!("Wrong result type"),
                 }
             }
-            Response::Error { .. } => panic!("Expected success response"),
+            Response::Error { .. } => unreachable!("Expected success response"),
         }
 
         Ok(())
@@ -1164,7 +1164,7 @@ mod daemon_tests {
                 assert_eq!(code, error_codes::PACKAGE_NOT_FOUND);
                 assert!(message.contains("nonexistent"));
             }
-            Response::Success { .. } => panic!("Expected error response"),
+            Response::Success { .. } => unreachable!("Expected error response"),
         }
 
         Ok(())
@@ -1285,7 +1285,7 @@ mod daemon_tests {
                 assert_eq!(id, 1);
                 assert_eq!(requests.len(), 2);
             }
-            _ => panic!("Expected batch request"),
+            _ => unreachable!("Expected batch request"),
         }
 
         Ok(())

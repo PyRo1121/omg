@@ -9,9 +9,13 @@ use crate::core::client::DaemonClient;
 use crate::package_managers::get_package_manager;
 use owo_colors::OwoColorize;
 use std::fmt::Write;
+use std::time::Duration;
 
 #[cfg(feature = "arch")]
 use crate::package_managers::{AurClient, search_detailed};
+
+const DAEMON_INFO_TIMEOUT: Duration = Duration::from_secs(3);
+const AUR_INFO_TIMEOUT: Duration = Duration::from_secs(8);
 
 /// Source of package information
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -125,9 +129,9 @@ impl Model for InfoModel {
                 Cmd::Exec(Box::new(move || {
                     let pkg_name = pkg;
 
-                    crate::cli::tea::async_bridge::run_blocking_future(
-                        async move { fetch_info(&pkg_name).await },
-                    )
+                    crate::cli::tea::async_bridge::run_blocking_future(async move {
+                        fetch_info(&pkg_name).await
+                    })
                     .unwrap_or_else(|err| InfoMsg::Error(err.to_string()))
                 }))
             }
@@ -262,8 +266,11 @@ impl Model for InfoModel {
 async fn fetch_info(package: &str) -> InfoMsg {
     // 1. Try Daemon first
     #[cfg(unix)]
-    if let Ok(mut client) = DaemonClient::connect().await
-        && let Ok(info) = client.info(package).await
+    if let Ok(Ok(info)) = tokio::time::timeout(DAEMON_INFO_TIMEOUT, async {
+        let mut client = DaemonClient::connect().await?;
+        client.info(package).await
+    })
+    .await
     {
         return InfoMsg::InfoReceived(PackageInfo {
             name: info.name,
@@ -363,7 +370,8 @@ async fn fetch_info(package: &str) -> InfoMsg {
     #[cfg(feature = "arch")]
     {
         let aur = AurClient::new();
-        if let Ok(Some(info)) = aur.info(package).await {
+        let aur_info = tokio::time::timeout(AUR_INFO_TIMEOUT, aur.info(package)).await;
+        if let Ok(Ok(Some(info))) = aur_info {
             // Get more details if possible
             let mut popularity = None;
             let mut maintainer = None;
@@ -372,7 +380,8 @@ async fn fetch_info(package: &str) -> InfoMsg {
             let mut licenses = vec![];
 
             // Try detailed search to enrich
-            if let Ok(detailed) = search_detailed(package).await
+            if let Ok(Ok(detailed)) =
+                tokio::time::timeout(AUR_INFO_TIMEOUT, search_detailed(package)).await
                 && let Some(d) = detailed.into_iter().find(|p| p.name == info.name)
             {
                 popularity = Some(d.popularity);

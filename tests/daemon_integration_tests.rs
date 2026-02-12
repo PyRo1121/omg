@@ -33,7 +33,7 @@ fn setup_test_env() -> (TempDir, Arc<DaemonState>) {
 
     let state = match DaemonState::new() {
         Ok(s) => Arc::new(s),
-        Err(e) => panic!("Failed to create DaemonState: {}", e),
+        Err(e) => unreachable!("Failed to create DaemonState: {}", e),
     };
 
     (temp_dir, state)
@@ -61,10 +61,10 @@ async fn test_metrics_endpoint_returns_valid_data() {
                 let _ = metrics.cache_hits;
                 let _ = metrics.cache_misses;
             } else {
-                panic!("Expected Metrics response");
+                unreachable!("Expected Metrics response");
             }
         }
-        Response::Error { message, .. } => panic!("Metrics failed: {}", message),
+        Response::Error { message, .. } => unreachable!("Metrics failed: {}", message),
     }
 }
 
@@ -90,7 +90,7 @@ async fn test_suggest_endpoint_handles_empty_query() {
                     "Empty query should return empty suggestions"
                 );
             } else {
-                panic!("Expected Suggest response");
+                unreachable!("Expected Suggest response");
             }
         }
         Response::Error { .. } => {
@@ -118,7 +118,7 @@ async fn test_suggest_endpoint_respects_limit() {
             if let ResponseResult::Suggest(suggestions) = result {
                 assert!(suggestions.len() <= 5, "Should respect limit parameter");
             } else {
-                panic!("Expected Suggest response");
+                unreachable!("Expected Suggest response");
             }
         }
         Response::Error { .. } => {
@@ -181,14 +181,14 @@ async fn test_batch_request_executes_all_subcommands() {
                         Response::Success { result, .. } => {
                             assert!(matches!(result, ResponseResult::Ping(_)));
                         }
-                        Response::Error { .. } => panic!("Batch subrequest failed"),
+                        Response::Error { .. } => unreachable!("Batch subrequest failed"),
                     }
                 }
             } else {
-                panic!("Expected Batch response");
+                unreachable!("Expected Batch response");
             }
         }
-        Response::Error { message, .. } => panic!("Batch request failed: {}", message),
+        Response::Error { message, .. } => unreachable!("Batch request failed: {}", message),
     }
 }
 
@@ -228,10 +228,10 @@ async fn test_batch_request_handles_mixed_success_and_failure() {
                 assert!(has_success, "Should have some successful responses");
                 assert!(has_error, "Should have some error responses");
             } else {
-                panic!("Expected Batch response");
+                unreachable!("Expected Batch response");
             }
         }
-        Response::Error { message, .. } => panic!("Batch request failed: {}", message),
+        Response::Error { message, .. } => unreachable!("Batch request failed: {}", message),
     }
 }
 
@@ -311,10 +311,10 @@ async fn test_cache_respects_max_size_limit() {
                 assert!(size <= max_size, "Cache size should never exceed max");
                 assert!(max_size > 0, "Max size should be configured");
             } else {
-                panic!("Expected CacheStats response");
+                unreachable!("Expected CacheStats response");
             }
         }
-        Response::Error { message, .. } => panic!("CacheStats failed: {}", message),
+        Response::Error { message, .. } => unreachable!("CacheStats failed: {}", message),
     }
 }
 
@@ -346,7 +346,7 @@ async fn test_concurrent_ping_requests() {
             Response::Success { result, .. } => {
                 assert!(matches!(result, ResponseResult::Ping(_)));
             }
-            Response::Error { message, .. } => panic!("Concurrent ping failed: {}", message),
+            Response::Error { message, .. } => unreachable!("Concurrent ping failed: {}", message),
         }
     }
 }
@@ -442,7 +442,9 @@ async fn test_invalid_package_name_returns_helpful_error() {
                     "Error should mention invalid name"
                 );
             }
-            Response::Success { .. } => panic!("Should reject invalid package name: {}", invalid),
+            Response::Success { .. } => {
+                unreachable!("Should reject invalid package name: {}", invalid)
+            }
         }
     }
 }
@@ -470,7 +472,7 @@ async fn test_oversized_query_is_rejected() {
                 "Error should mention query length"
             );
         }
-        Response::Success { .. } => panic!("Should reject oversized query"),
+        Response::Success { .. } => unreachable!("Should reject oversized query"),
     }
 }
 
@@ -498,7 +500,7 @@ async fn test_state_recovery_after_error() {
                 "Daemon should recover after error"
             );
         }
-        Response::Error { message, .. } => panic!(
+        Response::Error { message, .. } => unreachable!(
             "Daemon should be operational after previous error: {}",
             message
         ),
@@ -538,10 +540,10 @@ async fn test_health_status_reflects_cache_size() {
                     );
                 }
             } else {
-                panic!("Expected Health response");
+                unreachable!("Expected Health response");
             }
         }
-        Response::Error { message, .. } => panic!("Health check failed: {}", message),
+        Response::Error { message, .. } => unreachable!("Health check failed: {}", message),
     }
 }
 

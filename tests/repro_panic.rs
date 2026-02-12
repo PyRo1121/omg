@@ -22,9 +22,9 @@ fn repro_node_latest_panic() {
 
     if !output.status.success() {
         if stderr.contains("panicked at") {
-            panic!("Panic detected in omg binary!");
+            unreachable!("Panic detected in omg binary!");
         } else {
-            panic!("Command failed without panic: {}", output.status);
+            unreachable!("Command failed without panic: {}", output.status);
         }
     }
 }

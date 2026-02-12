@@ -1,5 +1,6 @@
 //! In-memory package cache with LRU eviction
 
+use moka::policy::EvictionPolicy;
 use moka::sync::Cache;
 use std::sync::Arc;
 use std::time::Duration;
@@ -45,26 +46,32 @@ impl PackageCache {
         let status_ttl = Duration::from_secs(status_ttl_secs);
         let cache = Cache::builder()
             .max_capacity(max_size as u64)
+            .eviction_policy(EvictionPolicy::lru())
             .time_to_live(ttl)
             .build();
         let debian_cache = Cache::builder()
             .max_capacity(max_size as u64)
+            .eviction_policy(EvictionPolicy::lru())
             .time_to_live(ttl)
             .build();
         let detailed_cache = Cache::builder()
             .max_capacity(max_size as u64)
+            .eviction_policy(EvictionPolicy::lru())
             .time_to_live(ttl)
             .build();
         let info_miss_cache = Cache::builder()
             .max_capacity(max_size as u64)
+            .eviction_policy(EvictionPolicy::lru())
             .time_to_live(ttl)
             .build();
         let system_status = Cache::builder()
             .max_capacity(1)
+            .eviction_policy(EvictionPolicy::lru())
             .time_to_live(status_ttl)
             .build();
         let explicit_packages = Cache::builder()
             .max_capacity(1)
+            .eviction_policy(EvictionPolicy::lru())
             .time_to_live(status_ttl)
             .build();
 
@@ -76,7 +83,11 @@ impl PackageCache {
             max_size,
             system_status,
             explicit_packages,
-            explicit_count: Cache::builder().max_capacity(1).time_to_live(ttl).build(),
+            explicit_count: Cache::builder()
+                .max_capacity(1)
+                .eviction_policy(EvictionPolicy::lru())
+                .time_to_live(ttl)
+                .build(),
         }
     }
 

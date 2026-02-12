@@ -12,6 +12,7 @@ pub mod runners;
 
 use anyhow::Result;
 use std::env;
+use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -246,6 +247,11 @@ pub fn run_omg_with_options(
     env_vars: &[(&str, &str)],
 ) -> CommandResult {
     let start = Instant::now();
+    let command_timeout = env::var("OMG_TEST_COMMAND_TIMEOUT_SECS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|seconds| *seconds > 0)
+        .map_or(Duration::from_secs(30), Duration::from_secs);
 
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_omg"));
     cmd.args(args)
@@ -277,14 +283,48 @@ pub fn run_omg_with_options(
         cmd.env(key, value);
     }
 
-    let output = cmd.output().expect("Failed to execute omg");
+    let mut child = cmd.spawn().expect("Failed to execute omg");
+    let mut timed_out = false;
+
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) => {
+                if start.elapsed() >= command_timeout {
+                    timed_out = true;
+                    let _ = child.kill();
+                    break;
+                }
+
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            Err(error) => panic!("Failed waiting for omg process: {error}"),
+        }
+    }
+
+    let output = child
+        .wait_with_output()
+        .expect("Failed to collect omg output");
     let duration = start.elapsed();
+
+    let mut stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    if timed_out {
+        if !stderr.ends_with('\n') && !stderr.is_empty() {
+            stderr.push('\n');
+        }
+        let _ = write!(
+            stderr,
+            "[test harness timeout] command exceeded {:?}: omg {}",
+            command_timeout,
+            args.join(" ")
+        );
+    }
 
     CommandResult {
         success: output.status.success(),
         exit_code: output.status.code().unwrap_or(-1),
         stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+        stderr,
         duration,
     }
 }

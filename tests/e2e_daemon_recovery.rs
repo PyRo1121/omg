@@ -114,8 +114,7 @@ fn test_database_lock_contention() -> Result<()> {
     }
 
     // At least one thread should succeed
-    let results = results.lock().unwrap();
-    let successes = results.iter().filter(|(_, ok)| *ok).count();
+    let successes = results.lock().unwrap().iter().filter(|(_, ok)| *ok).count();
     assert!(successes > 0, "At least one access should succeed");
 
     Ok(())
@@ -275,7 +274,7 @@ fn test_cache_unavailable_fallback() -> Result<()> {
 
     if cache_available {
         // Use cache
-        panic!("Cache should not be available in this test");
+        unreachable!("Cache should not be available in this test");
     } else {
         // Fallback: operate without cache
         // This should succeed but be slower
