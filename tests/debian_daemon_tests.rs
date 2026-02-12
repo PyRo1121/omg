@@ -86,13 +86,18 @@ async fn test_handle_debian_search() {
     match response {
         Response::Success { id, result } => {
             assert_eq!(id, 123);
-            if let ResponseResult::DebianSearch(pkgs) = result {
-                assert!(!pkgs.is_empty());
-                assert_eq!(pkgs[0].name, "apt");
-            } else {
-                panic!("Expected DebianSearch result, got {result:?}");
-            }
+            assert!(
+                matches!(result, ResponseResult::DebianSearch(_)),
+                "Expected DebianSearch result"
+            );
+            let ResponseResult::DebianSearch(pkgs) = result else {
+                return;
+            };
+            assert!(!pkgs.is_empty());
+            assert_eq!(pkgs[0].name, "apt");
         }
-        Response::Error { message, .. } => panic!("Search failed: {message}"),
+        Response::Error { message, .. } => {
+            unreachable!("Search failed: {message}");
+        }
     }
 }

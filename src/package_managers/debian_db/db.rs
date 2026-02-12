@@ -252,6 +252,7 @@ pub struct DebianPackage {
     pub size: u64,
     pub sha256: String,
     pub homepage: String,
+    pub component: String,
 }
 
 use crate::package_managers::types::parse_version_or_zero;
@@ -274,6 +275,8 @@ pub struct DebianPackageIndex {
     /// Note: Uses std `HashMap` for rkyv serialization compatibility
     /// Converted to `AHashMap` at runtime for faster lookups
     pub name_to_idx: HashMap<String, usize>,
+    pub name_arch_to_idx: HashMap<String, usize>,
+    pub name_arch_component_to_idx: HashMap<String, usize>,
     pub updated_at: i64,
 }
 
@@ -283,12 +286,118 @@ impl DebianPackageIndex {
     }
     pub fn add_package(&mut self, pkg: DebianPackage) {
         let idx = self.packages.len();
-        self.name_to_idx.insert(pkg.name.clone(), idx);
+        let name = pkg.name.clone();
+        let arch = pkg.architecture.clone();
+        let component = pkg.component.clone();
+
+        if let Some(existing_idx) = self.name_to_idx.get(&name).copied() {
+            if let Some(existing_pkg) = self.packages.get(existing_idx)
+                && is_better_name_candidate(&pkg, existing_pkg)
+            {
+                self.name_to_idx.insert(name.clone(), idx);
+            }
+        } else {
+            self.name_to_idx.insert(name.clone(), idx);
+        }
+
+        let name_arch_key = format!("{name}:{arch}");
+        if let Some(existing_idx) = self.name_arch_to_idx.get(&name_arch_key).copied() {
+            if let Some(existing_pkg) = self.packages.get(existing_idx)
+                && is_better_arch_candidate(&pkg, existing_pkg)
+            {
+                self.name_arch_to_idx.insert(name_arch_key.clone(), idx);
+            }
+        } else {
+            self.name_arch_to_idx.insert(name_arch_key, idx);
+        }
+
+        let name_arch_component_key = format!("{name}:{arch}:{component}");
+        self.name_arch_component_to_idx
+            .insert(name_arch_component_key, idx);
         self.packages.push(pkg);
     }
+
     pub fn get(&self, name: &str) -> Option<&DebianPackage> {
         self.name_to_idx.get(name).map(|&idx| &self.packages[idx])
     }
+
+    pub fn get_name_arch(&self, name: &str, arch: &str) -> Option<&DebianPackage> {
+        let key = format!("{name}:{arch}");
+        self.name_arch_to_idx
+            .get(&key)
+            .map(|&idx| &self.packages[idx])
+    }
+
+    pub fn get_name_arch_component(
+        &self,
+        name: &str,
+        arch: &str,
+        component: &str,
+    ) -> Option<&DebianPackage> {
+        let key = format!("{name}:{arch}:{component}");
+        self.name_arch_component_to_idx
+            .get(&key)
+            .map(|&idx| &self.packages[idx])
+    }
+
+    pub fn get_query(&self, query: &str) -> Option<&DebianPackage> {
+        if let Some((name, rest)) = query.split_once(':') {
+            if let Some((arch, component)) = rest.split_once(':') {
+                return self
+                    .get_name_arch_component(name, arch, component)
+                    .or_else(|| self.get_name_arch(name, arch))
+                    .or_else(|| self.get(name));
+            }
+
+            return self.get_name_arch(name, rest).or_else(|| self.get(name));
+        }
+
+        self.get(query)
+    }
+}
+
+fn native_debian_arch() -> &'static str {
+    match std::env::consts::ARCH {
+        "x86_64" => "amd64",
+        "aarch64" => "arm64",
+        "x86" => "i386",
+        "arm" => "armhf",
+        other => other,
+    }
+}
+
+fn name_candidate_score(pkg: &DebianPackage) -> u8 {
+    let mut score = 0u8;
+    if pkg.architecture == native_debian_arch() {
+        score += 4;
+    } else if pkg.architecture == "all" {
+        score += 2;
+    }
+    if pkg.component == "main" {
+        score += 1;
+    }
+    score
+}
+
+fn is_better_name_candidate(new_pkg: &DebianPackage, existing_pkg: &DebianPackage) -> bool {
+    let new_score = name_candidate_score(new_pkg);
+    let existing_score = name_candidate_score(existing_pkg);
+    if new_score != existing_score {
+        return new_score > existing_score;
+    }
+
+    parse_version_or_zero(&new_pkg.version) > parse_version_or_zero(&existing_pkg.version)
+}
+
+fn is_better_arch_candidate(new_pkg: &DebianPackage, existing_pkg: &DebianPackage) -> bool {
+    if new_pkg.component == "main" && existing_pkg.component != "main" {
+        return true;
+    }
+    if new_pkg.component != "main" && existing_pkg.component == "main" {
+        return false;
+    }
+
+    parse_version_or_zero(&new_pkg.version) > parse_version_or_zero(&existing_pkg.version)
 }
 
 pub fn ensure_index_loaded() -> Result<()> {
@@ -364,8 +473,8 @@ pub fn ensure_index_loaded() -> Result<()> {
     };
 
     // Load or create index (with LZ4 compression support)
-    let cache_path = paths::cache_dir().join("debian_index_v5.lz4");
-    let mmap_path = paths::cache_dir().join("debian_index_v5.mmap");
+    let cache_path = paths::cache_dir().join("debian_index_v6.lz4");
+    let mmap_path = paths::cache_dir().join("debian_index_v6.mmap");
 
     // Check if LZ4 cache is fresher than all Packages files.
     // On cold process start, file_mtimes is empty so all files appear "changed".
@@ -442,6 +551,8 @@ pub fn ensure_index_loaded() -> Result<()> {
         // Clear and rebuild - simpler and correct
         index.packages.clear();
         index.name_to_idx.clear();
+        index.name_arch_to_idx.clear();
+        index.name_arch_component_to_idx.clear();
 
         // Add all packages
         for pkg in new_packages {
@@ -474,7 +585,7 @@ pub fn ensure_index_loaded() -> Result<()> {
             .context("Failed to persist compressed cache file")?;
 
         // Also save uncompressed version for zero-copy mmap access
-        let mmap_path = paths::cache_dir().join("debian_index_v5.mmap");
+        let mmap_path = paths::cache_dir().join("debian_index_v6.mmap");
 
         // Atomic write for mmap index
         // CRITICAL: Must use atomic rename to avoid crashing readers holding an mmap
@@ -501,16 +612,24 @@ pub fn ensure_index_loaded() -> Result<()> {
 
         // Build FST index for O(query_len) prefix searches
         // FST requires sorted input, so we need to sort packages by name
-        let fst_path = paths::cache_dir().join("debian_index_v5.fst");
+        let fst_path = paths::cache_dir().join("debian_index_v6.fst");
         let fst_build_start = std::time::Instant::now();
 
-        // Sort packages by name for FST (required by FST builder)
-        let mut sorted_packages: Vec<(String, usize)> = index
-            .packages
-            .iter()
-            .enumerate()
-            .map(|(idx, pkg)| (pkg.name.to_lowercase(), idx))
-            .collect();
+        let mut lower_name_to_idx: HashMap<String, usize> =
+            HashMap::with_capacity(index.name_to_idx.len());
+        for (name, idx) in &index.name_to_idx {
+            let lower = name.to_lowercase();
+            lower_name_to_idx
+                .entry(lower)
+                .and_modify(|existing_idx| {
+                    if *idx > *existing_idx {
+                        *existing_idx = *idx;
+                    }
+                })
+                .or_insert(*idx);
+        }
+
+        let mut sorted_packages: Vec<(String, usize)> = lower_name_to_idx.into_iter().collect();
         sorted_packages.sort_by(|a, b| a.0.cmp(&b.0));
 
         // Build FST map: lowercased package name -> package index
@@ -617,7 +736,7 @@ fn ensure_fst_loaded() {
     }
 
     // Try to load from disk
-    let fst_path = paths::cache_dir().join("debian_index_v5.fst");
+    let fst_path = paths::cache_dir().join("debian_index_v6.fst");
     if !fst_path.exists() {
         return; // FST not available yet, will fall back to SIMD search
     }
@@ -650,7 +769,7 @@ pub fn ensure_mmap_loaded() -> bool {
     }
 
     // Try to load from disk
-    let mmap_path = paths::cache_dir().join("debian_index_v5.mmap");
+    let mmap_path = paths::cache_dir().join("debian_index_v6.mmap");
     if !mmap_path.exists() {
         return false;
     }
@@ -666,32 +785,8 @@ pub fn ensure_mmap_loaded() -> bool {
 }
 
 fn parse_packages_file_sync(path: &Path) -> Result<Vec<DebianPackage>> {
-    let file = fs::File::open(path)?;
-    // Use 64KB buffer instead of default 8KB for fewer syscalls
-    let reader = BufReader::with_capacity(64 * 1024, file);
-
-    let content = if path
-        .extension()
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("lz4"))
-    {
-        let mut decoder = lz4_flex::frame::FrameDecoder::new(reader);
-        let mut buf = String::new();
-        decoder.read_to_string(&mut buf)?;
-        buf
-    } else if path
-        .extension()
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("gz"))
-    {
-        let mut decoder = flate2::read::GzDecoder::new(reader);
-        let mut buf = String::new();
-        decoder.read_to_string(&mut buf)?;
-        buf
-    } else {
-        // Use the already-opened buffered reader
-        let mut buf = String::new();
-        reader.into_inner().read_to_string(&mut buf)?;
-        buf
-    };
+    let component = extract_component_from_path(path);
+    let content = read_packages_file_content(path)?;
 
     // Collect paragraph byte ranges first
     let double_newline_iter = memmem::find_iter(content.as_bytes(), b"\n\n");
@@ -719,7 +814,7 @@ fn parse_packages_file_sync(path: &Path) -> Result<Vec<DebianPackage>> {
                 if paragraph.trim().is_empty() {
                     None
                 } else {
-                    parse_paragraph_str(paragraph).ok()
+                    parse_paragraph_str(paragraph, &component).ok()
                 }
             })
             .collect()
@@ -731,7 +826,7 @@ fn parse_packages_file_sync(path: &Path) -> Result<Vec<DebianPackage>> {
                 if paragraph.trim().is_empty() {
                     None
                 } else {
-                    parse_paragraph_str(paragraph).ok()
+                    parse_paragraph_str(paragraph, &component).ok()
                 }
             })
             .collect()
@@ -740,8 +835,198 @@ fn parse_packages_file_sync(path: &Path) -> Result<Vec<DebianPackage>> {
     Ok(packages)
 }
 
+fn read_packages_file_content(path: &Path) -> Result<String> {
+    let file = fs::File::open(path)?;
+    let mut reader = BufReader::with_capacity(64 * 1024, file);
+
+    let mut buf = String::new();
+    if path
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("lz4"))
+    {
+        let mut decoder = lz4_flex::frame::FrameDecoder::new(reader);
+        decoder.read_to_string(&mut buf)?;
+    } else if path
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("gz"))
+    {
+        let mut decoder = flate2::read::GzDecoder::new(reader);
+        decoder.read_to_string(&mut buf)?;
+    } else if path
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("xz"))
+    {
+        let mut decompressed = Vec::new();
+        lzma_rs::xz_decompress(&mut reader, &mut decompressed)?;
+        buf = String::from_utf8(decompressed)
+            .map_err(|e| anyhow::anyhow!("Invalid UTF-8 in xz-compressed Packages file: {e}"))?;
+    } else {
+        reader.read_to_string(&mut buf)?;
+    }
+
+    Ok(buf)
+}
+
+fn parse_minimal_package_info(paragraph: &str, expected_name: &str) -> Option<(String, String)> {
+    let mut name_matches = false;
+    let mut version = String::new();
+    let mut description = String::new();
+    let mut collecting_description = false;
+
+    for line in paragraph.lines() {
+        if line.starts_with(' ') || line.starts_with('\t') {
+            if collecting_description {
+                if !description.is_empty() {
+                    description.push('\n');
+                }
+                description.push_str(line.trim_start());
+            }
+            continue;
+        }
+
+        let Some(colon_pos) = memchr::memchr(b':', line.as_bytes()) else {
+            continue;
+        };
+
+        collecting_description = false;
+        let key = &line[..colon_pos];
+        let value = line[colon_pos + 1..].trim_start();
+
+        match key.as_bytes() {
+            b"Package" => {
+                if value != expected_name {
+                    return None;
+                }
+                name_matches = true;
+            }
+            b"Version" => version = value.to_string(),
+            b"Description" => {
+                description = value.to_string();
+                collecting_description = true;
+            }
+            _ => {}
+        }
+    }
+
+    if name_matches && !version.is_empty() {
+        Some((version, description))
+    } else {
+        None
+    }
+}
+
+fn extract_component_from_path(path: &Path) -> String {
+    let filename = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_default();
+
+    if let Some(binary_pos) = filename.find("_binary-") {
+        let prefix = &filename[..binary_pos];
+        if let Some(component) = prefix.rsplit('_').next()
+            && !component.is_empty()
+        {
+            return component.to_string();
+        }
+    }
+
+    if let Some(stripped) = filename.strip_suffix("_Packages")
+        && let Some((component, _)) = stripped.split_once('_')
+        && !component.is_empty()
+    {
+        return component.to_string();
+    }
+
+    String::from("main")
+}
+
+#[allow(clippy::unnecessary_wraps)]
+fn find_info_from_apt_lists_fast(name: &str) -> Result<Option<Package>> {
+    let lists_dir = Path::new("/var/lib/apt/lists");
+    if !lists_dir.exists() {
+        return Ok(None);
+    }
+
+    let start_pattern = format!("Package: {name}\n");
+    let mid_pattern = format!("\nPackage: {name}\n");
+
+    let Ok(entries) = fs::read_dir(lists_dir) else {
+        return Ok(None);
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(filename) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+
+        if !filename.contains("_Packages")
+            || path
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("diff"))
+        {
+            continue;
+        }
+
+        let Ok(content) = read_packages_file_content(&path) else {
+            continue;
+        };
+        let bytes = content.as_bytes();
+
+        let match_pos = if bytes.starts_with(start_pattern.as_bytes()) {
+            Some(0usize)
+        } else {
+            memmem::find(bytes, mid_pattern.as_bytes()).map(|pos| pos + 1)
+        };
+
+        let Some(match_pos) = match_pos else {
+            continue;
+        };
+
+        let mut paragraph_start = match_pos;
+        while paragraph_start >= 2 {
+            if bytes[paragraph_start - 2] == b'\n' && bytes[paragraph_start - 1] == b'\n' {
+                break;
+            }
+            paragraph_start -= 1;
+        }
+        if paragraph_start < 2 {
+            paragraph_start = 0;
+        }
+
+        let paragraph_end =
+            memmem::find(&bytes[match_pos..], b"\n\n").map_or(bytes.len(), |rel| match_pos + rel);
+
+        let paragraph = &content[paragraph_start..paragraph_end];
+        if let Some((version, description)) = parse_minimal_package_info(paragraph, name) {
+            return Ok(Some(Package {
+                name: name.to_string(),
+                version: parse_version_or_zero(&version),
+                description,
+                source: PackageSource::Official,
+                installed: is_installed_fast(name),
+            }));
+        }
+    }
+
+    Ok(None)
+}
+
+#[cfg(feature = "debian-deb822-backend")]
 #[inline]
-fn parse_paragraph_str(paragraph: &str) -> Result<DebianPackage> {
+fn parse_paragraph_str(paragraph: &str, component: &str) -> Result<DebianPackage> {
+    parse_paragraph_str_deb822(paragraph, component)
+}
+
+#[cfg(not(feature = "debian-deb822-backend"))]
+#[inline]
+fn parse_paragraph_str(paragraph: &str, component: &str) -> Result<DebianPackage> {
+    parse_paragraph_str_manual(paragraph, component)
+}
+
+#[inline]
+#[cfg_attr(feature = "debian-deb822-backend", allow(dead_code))]
+fn parse_paragraph_str_manual(paragraph: &str, component: &str) -> Result<DebianPackage> {
     let mut name = String::new();
     let mut version = String::new();
     let mut description = String::with_capacity(128); // Pre-allocate for description
@@ -818,6 +1103,79 @@ fn parse_paragraph_str(paragraph: &str) -> Result<DebianPackage> {
         size,
         sha256,
         homepage,
+        component: component.to_string(),
+    })
+}
+
+#[cfg(feature = "debian-deb822-backend")]
+#[inline]
+fn parse_paragraph_str_deb822(paragraph: &str, component: &str) -> Result<DebianPackage> {
+    use std::io::Cursor;
+
+    use debian_packaging::control::ControlParagraphReader;
+
+    let mut reader = ControlParagraphReader::new(Cursor::new(paragraph.as_bytes()));
+    let parsed = reader
+        .next()
+        .transpose()?
+        .context("Invalid package entry: failed to parse deb822 paragraph")?;
+
+    let name = parsed.required_field_str("Package")?.to_string();
+    let version = parsed
+        .field_str("Version")
+        .map_or_else(String::new, ToString::to_string);
+    let description = parsed
+        .field_str("Description")
+        .map_or_else(String::new, ToString::to_string);
+    let section = parsed
+        .field_str("Section")
+        .map_or_else(String::new, ToString::to_string);
+    let priority = parsed
+        .field_str("Priority")
+        .map_or_else(String::new, ToString::to_string);
+    let installed_size = parsed.field_u64("Installed-Size").transpose()?.unwrap_or(0);
+    let maintainer = parsed
+        .field_str("Maintainer")
+        .map_or_else(String::new, ToString::to_string);
+    let architecture = parsed
+        .field_str("Architecture")
+        .map_or_else(String::new, ToString::to_string);
+    let filename = parsed
+        .field_str("Filename")
+        .map_or_else(String::new, ToString::to_string);
+    let size = parsed.field_u64("Size").transpose()?.unwrap_or(0);
+    let sha256 = parsed
+        .field_str("SHA256")
+        .map_or_else(String::new, ToString::to_string);
+    let homepage = parsed
+        .field_str("Homepage")
+        .map_or_else(String::new, ToString::to_string);
+
+    let depends = parsed.field_str("Depends").map_or_else(Vec::new, |value| {
+        let mut deps = Vec::with_capacity(value.matches(',').count() + 1);
+        for dep in value.split(',') {
+            if let Some(pkg) = dep.split_whitespace().next() {
+                deps.push(pkg.to_string());
+            }
+        }
+        deps
+    });
+
+    Ok(DebianPackage {
+        name,
+        version,
+        description,
+        section,
+        priority,
+        installed_size,
+        maintainer,
+        architecture,
+        depends,
+        filename,
+        size,
+        sha256,
+        homepage,
+        component: component.to_string(),
     })
 }
 
@@ -837,6 +1195,7 @@ pub fn get_detailed_packages() -> Result<Vec<DebianPackage>> {
             size: 500,
             sha256: "hash".to_string(),
             homepage: "https://debian.org".to_string(),
+            component: "main".to_string(),
         }]);
     }
     ensure_index_loaded()?;
@@ -860,7 +1219,7 @@ pub fn search_fast(query: &str) -> Result<Vec<Package>> {
 
     // ULTRA-FAST PATH: FST + mmap (no index loading, no decompression)
     // This path takes ~5ms vs ~90ms for `ensure_index_loaded()`
-    if !query.is_empty() {
+    if !query.is_empty() && !query.contains(':') {
         ensure_fst_loaded();
         let fst_guard = DEBIAN_FST_INDEX.read().expect("lock poisoned");
         if fst_guard.is_some() && ensure_mmap_loaded() {
@@ -900,7 +1259,7 @@ pub fn search_fast(query: &str) -> Result<Vec<Package>> {
     }
 
     // Fast path: check for exact package name match first
-    if let Some(exact_pkg) = index.get(query) {
+    if let Some(exact_pkg) = index.get_query(query) {
         let mut p = exact_pkg.to_package();
         p.installed = guard.installed_set.contains(&p.name);
         return Ok(vec![p]);
@@ -908,7 +1267,7 @@ pub fn search_fast(query: &str) -> Result<Vec<Package>> {
 
     let query_lower = query.to_lowercase();
     if query_lower != query
-        && let Some(exact_pkg) = index.get(&query_lower)
+        && let Some(exact_pkg) = index.get_query(&query_lower)
     {
         let mut p = exact_pkg.to_package();
         p.installed = guard.installed_set.contains(&p.name);
@@ -934,7 +1293,6 @@ pub fn search_fast(query: &str) -> Result<Vec<Package>> {
         &query_lower,
         &guard.search_buffer,
         &guard.package_offsets,
-        &guard.installed_set,
     ))
 }
 
@@ -1013,7 +1371,6 @@ fn fst_search(
 #[inline]
 fn fst_mmap_search(fst_map: &Map<Mmap>, mmap: &DebianMmapIndex, query_lower: &str) -> Vec<Package> {
     let query_bytes = query_lower.as_bytes();
-    let installed_set = get_installed_set();
 
     // 1. Try exact match first
     if let Some(_idx) = fst_map.get(query_bytes)
@@ -1024,7 +1381,7 @@ fn fst_mmap_search(fst_map: &Map<Mmap>, mmap: &DebianMmapIndex, query_lower: &st
             version: parse_version_or_zero(pkg.version.as_str()),
             description: pkg.description.to_string(),
             source: PackageSource::Official,
-            installed: installed_set.contains(pkg.name.as_str()),
+            installed: false,
         }];
     }
 
@@ -1044,7 +1401,7 @@ fn fst_mmap_search(fst_map: &Map<Mmap>, mmap: &DebianMmapIndex, query_lower: &st
                 version: parse_version_or_zero(pkg.version.as_str()),
                 description: pkg.description.to_string(),
                 source: PackageSource::Official,
-                installed: installed_set.contains(pkg.name.as_str()),
+                installed: false,
             });
         }
         if results.len() >= 100 {
@@ -1069,7 +1426,7 @@ fn fst_mmap_search(fst_map: &Map<Mmap>, mmap: &DebianMmapIndex, query_lower: &st
                 version: parse_version_or_zero(pkg.version.as_str()),
                 description: pkg.description.to_string(),
                 source: PackageSource::Official,
-                installed: installed_set.contains(pkg.name.as_str()),
+                installed: false,
             });
         }
         if results.len() >= 100 {
@@ -1080,20 +1437,47 @@ fn fst_mmap_search(fst_map: &Map<Mmap>, mmap: &DebianMmapIndex, query_lower: &st
     results
 }
 
-/// Get the installed package set from dpkg status cache
-fn get_installed_set() -> AHashSet<String> {
-    let cache = DPKG_STATUS_CACHE.read().expect("lock poisoned");
-    if !cache.installed_set.is_empty() {
-        return cache.installed_set.clone();
+fn is_package_installed_scan(name: &str) -> Result<bool> {
+    let status_path = Path::new("/var/lib/dpkg/status");
+    if !status_path.exists() {
+        return Ok(false);
     }
-    drop(cache);
 
-    // Populate by loading dpkg status
-    if list_installed_fast().is_ok() {
-        let cache = DPKG_STATUS_CACHE.read().expect("lock poisoned");
-        return cache.installed_set.clone();
+    let status_content = fs::read_to_string(status_path)?;
+    let start_pattern = format!("Package: {name}\n");
+    let mid_pattern = format!("\nPackage: {name}\n");
+    let bytes = status_content.as_bytes();
+
+    let mut start_positions = Vec::with_capacity(2);
+    if bytes.starts_with(start_pattern.as_bytes()) {
+        start_positions.push(0usize);
     }
-    AHashSet::new()
+    for pos in memmem::find_iter(bytes, mid_pattern.as_bytes()) {
+        start_positions.push(pos + 1);
+    }
+
+    for match_pos in start_positions {
+        let mut paragraph_start = match_pos;
+        while paragraph_start >= 2 {
+            if bytes[paragraph_start - 2] == b'\n' && bytes[paragraph_start - 1] == b'\n' {
+                break;
+            }
+            paragraph_start -= 1;
+        }
+        if paragraph_start < 2 {
+            paragraph_start = 0;
+        }
+
+        let paragraph_end =
+            memmem::find(&bytes[match_pos..], b"\n\n").map_or(bytes.len(), |rel| match_pos + rel);
+        let paragraph = &bytes[paragraph_start..paragraph_end];
+
+        if STATUS_INSTALLED_FINDER.find(paragraph).is_some() {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
 }
 
 /// SIMD-based search fallback (used when FST not available)
@@ -1103,7 +1487,6 @@ fn simd_search_fallback(
     query_lower: &str,
     search_buffer: &[u8],
     package_offsets: &[usize],
-    installed_set: &AHashSet<String>,
 ) -> Vec<Package> {
     let finder = memmem::Finder::new(query_lower.as_bytes());
     let mut exact_matches = Vec::with_capacity(4);
@@ -1120,7 +1503,7 @@ fn simd_search_fallback(
             && let Some(pkg) = index.packages.get(pkg_idx)
         {
             let mut p = pkg.to_package();
-            p.installed = installed_set.contains(&p.name);
+            p.installed = false;
 
             // Categorize by match type for better relevance
             let name_lower = p.name.to_lowercase();
@@ -1175,14 +1558,21 @@ pub fn get_info_fast(name: &str) -> Result<Option<Package>> {
     }
 
     // Fallback: load full index
+    if !name.contains(':')
+        && let Some(pkg) = find_info_from_apt_lists_fast(name)?
+    {
+        return Ok(Some(pkg));
+    }
+
+    // Fallback: load full index
     ensure_index_loaded()?;
     let guard = DEBIAN_INDEX_CACHE.read().expect("lock poisoned");
     let index = guard.index.as_ref().context(
         "Debian package index not loaded. Run 'omg sync' to refresh the package database",
     )?;
-    if let Some(pkg) = index.get(name) {
+    if let Some(pkg) = index.get_query(name) {
         let mut p = pkg.to_package();
-        p.installed = guard.installed_set.contains(name);
+        p.installed = guard.installed_set.contains(&p.name);
         Ok(Some(p))
     } else {
         Ok(None)
@@ -1388,7 +1778,15 @@ pub fn is_installed_fast(name: &str) -> bool {
         }
     }
 
-    // Fallback: populate cache by calling list_installed_fast
+    if let Ok(installed) = is_package_installed_scan(name) {
+        if installed {
+            let mut cache = DPKG_STATUS_CACHE.write().expect("lock poisoned");
+            cache.installed_set.insert(name.to_string());
+            cache.last_accessed = Some(std::time::SystemTime::now());
+        }
+        return installed;
+    }
+
     if list_installed_fast().is_ok() {
         let cache = DPKG_STATUS_CACHE.read().expect("lock poisoned");
         return cache.installed_set.contains(name);
@@ -1880,7 +2278,7 @@ mod tests {
     fn test_parse_paragraph_basic() {
         let para = "Package: vim\nVersion: 2:9.1.0-1\nDescription: Vi IMproved - enhanced vi editor\nSection: editors\nPriority: optional\nInstalled-Size: 3500\n";
 
-        let pkg = parse_paragraph_str(para).unwrap();
+        let pkg = parse_paragraph_str(para, "main").unwrap();
 
         assert_eq!(pkg.name, "vim");
 
@@ -1896,7 +2294,7 @@ mod tests {
     fn test_parse_paragraph_multiline_desc() {
         let para = "Package: curl\nVersion: 8.5.0-1\nDescription: command line tool for transferring data\n curl is a tool to transfer data from or to a server\n using one of the supported protocols.\nSection: net\n";
 
-        let pkg = parse_paragraph_str(para).unwrap();
+        let pkg = parse_paragraph_str(para, "main").unwrap();
 
         assert_eq!(pkg.name, "curl");
 
@@ -1910,7 +2308,7 @@ mod tests {
     fn test_parse_paragraph_invalid() {
         let para = "Version: 1.0\n"; // Missing name
 
-        assert!(parse_paragraph_str(para).is_err());
+        assert!(parse_paragraph_str(para, "main").is_err());
     }
 
     #[test]
@@ -1918,7 +2316,7 @@ mod tests {
     fn test_parse_paragraph_with_depends() {
         let para = "Package: bash\nDepends: libc6 (>= 2.38), libreadline8 (>= 8.1)\n";
 
-        let pkg = parse_paragraph_str(para).unwrap();
+        let pkg = parse_paragraph_str(para, "main").unwrap();
 
         assert_eq!(pkg.name, "bash");
 
@@ -2023,5 +2421,87 @@ mod tests {
             // Should return empty map if file doesn't exist or is empty
             assert!(map.is_empty() || !map.is_empty()); // Either is valid
         }
+    }
+
+    #[test]
+    fn test_extract_component_from_path_binary_pattern() {
+        let p = Path::new(
+            "/var/lib/apt/lists/deb.debian.org_debian_dists_bookworm_main_binary-amd64_Packages",
+        );
+        assert_eq!(extract_component_from_path(p), "main");
+    }
+
+    #[test]
+    fn test_extract_component_from_path_simple_pattern() {
+        let p = Path::new("/tmp/contrib_amd64_Packages");
+        assert_eq!(extract_component_from_path(p), "contrib");
+    }
+
+    #[test]
+    fn test_index_get_query_name_arch_component() {
+        let mut idx = DebianPackageIndex::new();
+
+        idx.add_package(DebianPackage {
+            name: "bash".to_string(),
+            version: "5.2.15-2".to_string(),
+            description: "GNU shell".to_string(),
+            section: "shells".to_string(),
+            priority: "required".to_string(),
+            installed_size: 100,
+            maintainer: "Debian".to_string(),
+            architecture: "amd64".to_string(),
+            depends: vec![],
+            filename: "pool/main/b/bash/bash_amd64.deb".to_string(),
+            size: 100,
+            sha256: "x".to_string(),
+            homepage: "https://example.org".to_string(),
+            component: "main".to_string(),
+        });
+
+        idx.add_package(DebianPackage {
+            name: "bash".to_string(),
+            version: "5.2.15-1".to_string(),
+            description: "GNU shell".to_string(),
+            section: "shells".to_string(),
+            priority: "required".to_string(),
+            installed_size: 100,
+            maintainer: "Debian".to_string(),
+            architecture: "amd64".to_string(),
+            depends: vec![],
+            filename: "pool/contrib/b/bash/bash_amd64.deb".to_string(),
+            size: 100,
+            sha256: "x".to_string(),
+            homepage: "https://example.org".to_string(),
+            component: "contrib".to_string(),
+        });
+
+        idx.add_package(DebianPackage {
+            name: "bash".to_string(),
+            version: "5.2.14-1".to_string(),
+            description: "GNU shell".to_string(),
+            section: "shells".to_string(),
+            priority: "required".to_string(),
+            installed_size: 100,
+            maintainer: "Debian".to_string(),
+            architecture: "i386".to_string(),
+            depends: vec![],
+            filename: "pool/main/b/bash/bash_i386.deb".to_string(),
+            size: 100,
+            sha256: "x".to_string(),
+            homepage: "https://example.org".to_string(),
+            component: "main".to_string(),
+        });
+
+        let by_name = idx.get_query("bash").expect("name lookup");
+        assert_eq!(by_name.architecture, "amd64");
+        assert_eq!(by_name.component, "main");
+
+        let by_arch = idx.get_query("bash:i386").expect("arch lookup");
+        assert_eq!(by_arch.architecture, "i386");
+
+        let by_arch_component = idx
+            .get_query("bash:amd64:contrib")
+            .expect("arch+component lookup");
+        assert_eq!(by_arch_component.component, "contrib");
     }
 }

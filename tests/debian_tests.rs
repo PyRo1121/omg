@@ -18,10 +18,19 @@
 #![cfg(any(feature = "debian", feature = "debian-pure"))]
 
 mod common;
+mod platform_semantics;
 
 use common::assertions::*;
 use common::fixtures::*;
 use common::*;
+use platform_semantics::{assert_no_arch_terms, assert_no_fedora_terms, assert_no_macos_terms};
+
+fn assert_debian_platform_purity(result: &CommandResult, context: &str) {
+    let output = result.combined_output();
+    assert_no_arch_terms(&output, context);
+    assert_no_fedora_terms(&output, context);
+    assert_no_macos_terms(&output, context);
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // DOCKER INTEGRATION
@@ -64,6 +73,7 @@ mod apt_integration {
             result.stdout_contains("bash") || result.stdout_contains("Bash"),
             "Should find bash"
         );
+        assert_no_arch_terms(&result.combined_output(), "Debian search main repo");
     }
 
     #[test]
@@ -74,6 +84,7 @@ mod apt_integration {
             let result = run_omg(&["search", pkg]);
             result.assert_success();
             assert!(result.stdout_contains(pkg), "Should find {pkg}");
+            assert_debian_platform_purity(&result, "Debian search essential packages");
         }
     }
 
@@ -84,6 +95,7 @@ mod apt_integration {
         for pkg in &["build-essential", "git", "curl", "wget"] {
             let result = run_omg(&["search", pkg]);
             result.assert_success();
+            assert_debian_platform_purity(&result, "Debian search development packages");
         }
     }
 
@@ -94,6 +106,7 @@ mod apt_integration {
         // Debian packages can have architecture suffixes
         let result = run_omg(&["search", "libc6"]);
         result.assert_success();
+        assert_debian_platform_purity(&result, "Debian search architecture handling");
     }
 
     #[test]
@@ -103,6 +116,7 @@ mod apt_integration {
         let result = run_omg(&["info", "apt"]);
         result.assert_success();
         assert_package_info(&result, "apt");
+        assert_debian_platform_purity(&result, "Debian info installed package");
     }
 
     #[test]
@@ -116,6 +130,7 @@ mod apt_integration {
             result.stdout_contains("Version") || result.stdout.contains('.'),
             "Should show version info"
         );
+        assert_debian_platform_purity(&result, "Debian info package details");
     }
 
     #[test]
@@ -136,6 +151,7 @@ mod apt_integration {
         let result = run_omg(&["explicit"]);
         result.assert_success();
         // Should list manually installed packages
+        assert_debian_platform_purity(&result, "Debian explicit list");
     }
 
     #[test]
@@ -144,6 +160,7 @@ mod apt_integration {
 
         let result = run_omg(&["explicit", "--count"]);
         result.assert_success();
+        assert_debian_platform_purity(&result, "Debian explicit count");
         // Should output a number
         let stdout = result.stdout.trim();
         if !stdout.is_empty() {
@@ -158,6 +175,7 @@ mod apt_integration {
         let result = run_omg(&["update", "--check"]);
         result.assert_success();
         assert!(!result.stderr_contains("panicked at"), "Should not panic");
+        assert_debian_platform_purity(&result, "Debian update check");
     }
 
     #[test]
@@ -175,6 +193,7 @@ mod apt_integration {
             "Should report up to date or show firefox-esr in updates"
         );
         assert!(!result.stderr_contains("panicked at"), "Should not panic");
+        assert_debian_platform_purity(&result, "Debian mock update check");
     }
 
     #[test]
@@ -192,6 +211,7 @@ mod apt_integration {
             "Should report up to date"
         );
         assert!(!result.stderr_contains("panicked at"), "Should not panic");
+        assert_debian_platform_purity(&result, "Debian mock up-to-date check");
     }
 
     #[test]
@@ -597,6 +617,7 @@ mod performance {
         let result = run_omg(&["status"]);
         result.assert_success();
         assert_performance(&result, perf::STATUS_MAX_MS, "status");
+        assert_debian_platform_purity(&result, "Debian status performance");
     }
 
     #[test]
@@ -606,6 +627,7 @@ mod performance {
         let result = run_omg(&["search", "firefox"]);
         result.assert_success();
         assert_performance(&result, perf::SEARCH_MAX_MS, "search");
+        assert_debian_platform_purity(&result, "Debian search performance");
     }
 
     #[test]
@@ -615,6 +637,7 @@ mod performance {
         let result = run_omg(&["info", "apt"]);
         result.assert_success();
         assert_performance(&result, 1000, "info");
+        assert_debian_platform_purity(&result, "Debian info performance");
     }
 
     #[test]
@@ -622,6 +645,7 @@ mod performance {
         let result = run_omg(&["which", "node"]);
         result.assert_success();
         assert_performance(&result, perf::WHICH_MAX_MS, "which");
+        assert_debian_platform_purity(&result, "Debian which performance");
     }
 
     #[test]
@@ -629,6 +653,7 @@ mod performance {
         let result = run_omg(&["list"]);
         result.assert_success();
         assert_performance(&result, perf::LIST_MAX_MS, "list");
+        assert_debian_platform_purity(&result, "Debian list performance");
     }
 
     #[test]
@@ -636,6 +661,7 @@ mod performance {
         let result = run_omg(&["--help"]);
         result.assert_success();
         assert_performance(&result, perf::HELP_MAX_MS, "help");
+        assert_debian_platform_purity(&result, "Debian help performance");
     }
 
     #[test]
@@ -643,6 +669,7 @@ mod performance {
         let result = run_omg(&["completions", "bash", "--stdout"]);
         result.assert_success();
         assert_performance(&result, perf::COMPLETIONS_MAX_MS, "completions");
+        assert_debian_platform_purity(&result, "Debian completions performance");
     }
 }
 
@@ -659,6 +686,7 @@ mod security {
 
         let result = run_omg(&["audit", "scan"]);
         assert_audit_output(&result);
+        assert_debian_platform_purity(&result, "Debian audit scan");
     }
 
     #[test]
@@ -691,6 +719,7 @@ mod security {
                 !result.stdout_contains("/etc/passwd"),
                 "Should prevent path traversal"
             );
+            assert_debian_platform_purity(&result, "Debian injection prevention search");
         }
     }
 
@@ -699,6 +728,7 @@ mod security {
         for input in validation::INJECTION_ATTEMPTS {
             let result = run_omg(&["info", input]);
             assert!(!result.stdout_contains("pwned"), "Should prevent injection");
+            assert_debian_platform_purity(&result, "Debian injection prevention info");
         }
     }
 
@@ -707,6 +737,7 @@ mod security {
         // OMG should validate APT sources
         let result = run_omg(&["status"]);
         result.assert_success();
+        assert_debian_platform_purity(&result, "Debian apt source validation");
     }
 
     #[test]
@@ -716,6 +747,7 @@ mod security {
         // OMG should respect GPG verification
         let result = run_omg(&["audit", "policy"]);
         assert!(!result.stderr_contains("panicked at"), "Should not panic");
+        assert_debian_platform_purity(&result, "Debian gpg verification awareness");
     }
 }
 

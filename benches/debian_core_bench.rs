@@ -19,7 +19,7 @@ use omg_lib::package_managers::debian_db::{
     compare_versions, get_info_fast, get_package_dependencies, list_installed_fast, search_fast,
 };
 
-/// Benchmark the search_fast function with various query patterns
+/// Benchmark the `search_fast` function with various query patterns.
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
 fn bench_search_patterns(c: &mut Criterion) {
     let mut group = c.benchmark_group("debian_search_patterns");
@@ -65,7 +65,7 @@ fn bench_search_patterns(c: &mut Criterion) {
     group.finish();
 }
 
-/// Benchmark get_info_fast for different package types
+/// Benchmark `get_info_fast` for different package types.
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
 fn bench_info_package_types(c: &mut Criterion) {
     let mut group = c.benchmark_group("debian_info_types");
@@ -185,7 +185,7 @@ fn bench_dependencies_complexity(c: &mut Criterion) {
     group.finish();
 }
 
-/// Benchmark list_installed_fast
+/// Benchmark `list_installed_fast`.
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
 fn bench_list_installed_variants(c: &mut Criterion) {
     let mut group = c.benchmark_group("debian_list_installed");
@@ -224,8 +224,8 @@ fn bench_list_installed_variants(c: &mut Criterion) {
     group.finish();
 }
 
-/// Benchmark update checks with realistic scenarios
-/// Note: check_updates_available is not yet implemented in debian_db
+/// Benchmark update checks with realistic scenarios.
+/// Note: `check_updates_available` is not yet implemented in `debian_db`.
 #[cfg(any(feature = "debian", feature = "debian-pure"))]
 #[allow(clippy::missing_const_for_fn)]
 fn bench_update_check(_c: &mut Criterion) {

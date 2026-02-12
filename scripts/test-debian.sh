@@ -33,7 +33,23 @@ fi
 
 # Parse arguments
 DISTRO="${1:-both}"
-INTERACTIVE="${2:-}"
+
+get_base_image() {
+    case "$1" in
+        debian)
+            printf '%s' "debian:bookworm"
+            ;;
+        ubuntu)
+            printf '%s' "ubuntu:24.04"
+            ;;
+        trixie)
+            printf '%s' "debian:trixie"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
 
 case "$DISTRO" in
     debian|d)
@@ -42,24 +58,32 @@ case "$DISTRO" in
     ubuntu|u)
         DISTROS="ubuntu"
         ;;
+    trixie|t)
+        DISTROS="trixie"
+        ;;
     both|all|"")
         DISTROS="debian ubuntu"
         ;;
     shell)
         # Interactive shell mode
         SHELL_DISTRO="${2:-debian}"
-        echo "Starting interactive shell in $SHELL_DISTRO container..."
-        docker build -f "Dockerfile.$SHELL_DISTRO" -t "omg-$SHELL_DISTRO" .
+        BASE_IMAGE="$(get_base_image "$SHELL_DISTRO")" || {
+            echo "ERROR: Unsupported shell distro '$SHELL_DISTRO'"
+            exit 1
+        }
+        echo "Starting interactive shell in $SHELL_DISTRO container ($BASE_IMAGE)..."
+        docker build --target final --build-arg "BASE_IMAGE=$BASE_IMAGE" -f Dockerfile.apt -t "omg-$SHELL_DISTRO" .
         docker run --rm -it "omg-$SHELL_DISTRO" /bin/bash
         exit 0
         ;;
     *)
-        echo "Usage: $0 [debian|ubuntu|both|shell] [distro-for-shell]"
+        echo "Usage: $0 [debian|ubuntu|trixie|both|shell] [distro-for-shell]"
         echo ""
         echo "Examples:"
         echo "  $0              # Test both Debian and Ubuntu"
         echo "  $0 debian       # Test only Debian"
         echo "  $0 ubuntu       # Test only Ubuntu"
+        echo "  $0 trixie       # Test Debian trixie"
         echo "  $0 shell debian # Interactive shell in Debian container"
         exit 1
         ;;
@@ -74,17 +98,15 @@ for distro in $DISTROS; do
     echo "════════════════════════════════════════════════════════════════"
     echo ""
 
-    DOCKERFILE="Dockerfile.$distro"
-    IMAGE_NAME="omg-$distro"
-
-    if [ ! -f "$DOCKERFILE" ]; then
-        echo "ERROR: $DOCKERFILE not found"
+    BASE_IMAGE="$(get_base_image "$distro")" || {
+        echo "ERROR: Unsupported distro '$distro'"
         FAILED=1
         continue
-    fi
+    }
+    IMAGE_NAME="omg-$distro"
 
     echo "[1/3] Building Docker image (forcing rebuild)..."
-    if ! docker build --no-cache -f "$DOCKERFILE" -t "$IMAGE_NAME" .; then
+    if ! docker build --no-cache --target final --build-arg "BASE_IMAGE=$BASE_IMAGE" -f Dockerfile.apt -t "$IMAGE_NAME" .; then
         echo "ERROR: Docker build failed for $distro"
         FAILED=1
         continue
