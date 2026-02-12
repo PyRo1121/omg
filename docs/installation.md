@@ -167,9 +167,10 @@ wsl -- curl -fsSL https://pyro1121.com/install.sh | bash
 ### 🦀 Build from Source
 
 **Prerequisites:**
-- Rust 1.92+ (`rustup`)
+- Rust 1.93+ (`rustup`)
 - Platform build tools:
   - Linux: `gcc`, `pkg-config`, `libssl-dev`
+  - Debian/Ubuntu builds (`--features debian`): `libapt-pkg-dev`, `clang`, `cmake`
   - macOS: Xcode Command Line Tools
   - Windows: Visual Studio Build Tools
 

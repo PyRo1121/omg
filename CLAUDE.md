@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-OMG is a unified package manager and runtime manager written in Rust (Edition 2024, MSRV 1.92+). It replaces multiple package managers (pacman, apt, dnf, homebrew, scoop) and runtime managers (nvm, pyenv, etc.) with a single CLI tool.
+OMG is a unified package manager and runtime manager written in Rust (Edition 2024, MSRV 1.93+). It replaces multiple package managers (pacman, apt, dnf, homebrew, scoop) and runtime managers (nvm, pyenv, etc.) with a single CLI tool.
 
 **Architecture:** Daemon-client model with Unix socket IPC. The `omgd` daemon handles caching, indexing, and persistence while `omg` CLI communicates via bitcode-serialized messages.
 

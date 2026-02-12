@@ -1,7 +1,7 @@
 # Technology Stack - OMG
 
 ## Core Systems
-- **Language:** Rust (Edition 2024, v1.92+) - Selected for memory safety, performance, and zero-cost abstractions.
+- **Language:** Rust (Edition 2024, v1.93+) - Selected for memory safety, performance, and zero-cost abstractions.
 - **Async Runtime:** [Tokio](https://tokio.rs/) (v1.49) - Powering the persistent daemon and high-concurrency operations.
 - **CLI Framework:** [Clap](https://docs.rs/clap/latest/clap/) (v4.5) - For robust command-line argument parsing and help generation.
 - **TUI Framework:** [Ratatui](https://ratatui.rs/) (v0.28) & [Crossterm](https://docs.rs/crossterm/latest/crossterm/) - For rich, interactive terminal dashboards.
