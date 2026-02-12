@@ -1,0 +1,57 @@
+ARG BASE_IMAGE=debian:bookworm
+
+FROM ${BASE_IMAGE} AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+WORKDIR /workspace
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    git \
+    build-essential \
+    pkg-config \
+    libssl-dev \
+    libapt-pkg-dev \
+    clang \
+    cmake \
+    zlib1g-dev \
+    liblzma-dev \
+    libbz2-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.93.0
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+COPY . .
+RUN cargo build --release --no-default-features --features debian --locked
+
+FROM ${BASE_IMAGE} AS final
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    libapt-pkg-dev
+
+COPY --from=builder /workspace/target/release/omg /usr/local/bin/omg
+COPY --from=builder /workspace/target/release/omgd /usr/local/bin/omgd
+
+CMD ["/bin/bash", "-lc", "omg --version && omg search bash"]
+
+FROM ${BASE_IMAGE} AS benchmark
+
+ENV DEBIAN_FRONTEND=noninteractive
+WORKDIR /benchmark
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    hyperfine \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /workspace/target/release/omg /usr/local/bin/omg
+COPY --from=builder /workspace/target/release/omgd /usr/local/bin/omgd
+COPY --from=builder /workspace/scripts/benchmark-debian.sh /benchmark/benchmark-debian.sh
+
+RUN chmod +x /benchmark/benchmark-debian.sh && apt-get update
+
+CMD ["/benchmark/benchmark-debian.sh"]

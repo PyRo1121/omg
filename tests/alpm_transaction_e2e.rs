@@ -143,11 +143,10 @@ fn test_alpm_transaction_init_release_cycle() {
     let harness = AlpmHarness::new().expect("Failed to create harness");
     let mut alpm = harness.alpm().expect("Failed to get handle");
 
-    for i in 0..10 {
+    for _ in 0..10 {
         alpm.trans_init(alpm::TransFlag::empty())
-            .unwrap_or_else(|e| panic!("Init failed on cycle {i}: {e}"));
-        alpm.trans_release()
-            .unwrap_or_else(|e| panic!("Release failed on cycle {i}: {e}"));
+            .expect("Init failed in cycle");
+        alpm.trans_release().expect("Release failed in cycle");
     }
 }
 

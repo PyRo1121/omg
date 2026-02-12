@@ -180,6 +180,7 @@ rustix = { version = "1.1", features = ["fs", "process", "thread"] }
 debian-packaging = { version = "0.18", optional = true } # Pure Rust apt reimplementation
 winnow = { version = "0.7", optional = true }            # Zero-copy parser combinators
 ar = { version = "0.9", optional = true }                # Pure Rust .ar archive parsing
+resolvo = { version = "0.10.2", optional = true }
 rkyv = { version = "0.8", features = ["bytecheck", "little_endian", "aligned"] }  # Zero-copy deserialization
 whoami = "2.0.2"
 governor = "0.10.4"
@@ -301,6 +302,9 @@ debian = ["debian-packaging", "winnow", "ar", "rust-apt"]
 
 # Pure Rust Debian support (no FFI, no system dependencies) - for testing/indexing
 debian-pure = ["debian-packaging", "winnow", "ar"]
+
+debian-deb822-backend = ["debian-packaging"]
+debian-resolvo = ["resolvo"]
 
 # Fedora/RHEL support (DNF/RPM) - Pure Rust, no system dependencies
 fedora = ["rusqlite", "quick-xml"]

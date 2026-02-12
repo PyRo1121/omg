@@ -10,9 +10,12 @@
 
 #![cfg(any(feature = "debian", feature = "debian-pure"))]
 
+mod platform_semantics;
+
 use std::fs;
 use std::path::Path;
 
+use platform_semantics::assert_no_arch_terms;
 use tempfile::TempDir;
 
 // Import modules under test
@@ -781,6 +784,7 @@ fn test_cli_install_debian_package_dry_run() {
         !combined.contains("panicked"),
         "Install dry-run should work on Debian"
     );
+    assert_no_arch_terms(&combined, "Debian dry-run");
 }
 
 #[test]
@@ -797,6 +801,7 @@ fn test_cli_update_check_debian() {
         !combined.contains("panicked"),
         "Update check should work on Debian"
     );
+    assert_no_arch_terms(&combined, "Debian update check");
 
     // Should not require password for check
     assert!(
@@ -853,6 +858,7 @@ fn test_cli_install_multiple_debian_packages() {
         !combined.contains("panicked"),
         "Multi-package install should work"
     );
+    assert_no_arch_terms(&combined, "Debian multi-package install dry-run");
 }
 
 #[test]
@@ -947,6 +953,7 @@ fn test_cli_debian_security_updates() {
         !combined.contains("panicked"),
         "Should handle security updates"
     );
+    assert_no_arch_terms(&combined, "Debian security update path");
 
     // Check should complete reasonably fast
     assert!(
@@ -969,6 +976,7 @@ fn test_cli_debian_remove_dry_run() {
         !combined.contains("panicked"),
         "Remove should work in dry-run"
     );
+    assert_no_arch_terms(&combined, "Debian remove dry-run");
 }
 
 #[test]
@@ -986,6 +994,7 @@ fn test_cli_debian_handles_held_packages() {
         !combined.contains("panicked"),
         "Should handle held packages"
     );
+    assert_no_arch_terms(&combined, "Debian held-package update path");
 }
 
 #[test]
@@ -1016,6 +1025,7 @@ fn test_cli_debian_package_not_found() {
 
     let combined = format!("{}{}", result.stdout, result.stderr);
     assert!(!result.success, "Should fail for nonexistent package");
+    assert_no_arch_terms(&combined, "Debian install failure path");
     assert!(
         combined.contains("not found") || combined.contains("Unable"),
         "Should show helpful error message"
@@ -1110,6 +1120,7 @@ fn test_cli_debian_error_recovery() {
             !combined.contains("panicked"),
             "Should recover from errors gracefully on iteration {i}"
         );
+        assert_no_arch_terms(&combined, "Debian error recovery path");
     }
 }
 
@@ -1137,6 +1148,7 @@ fn test_cli_debian_full_workflow() {
             !combined.contains("panicked"),
             "Command {cmd:?} should not panic"
         );
+        assert_no_arch_terms(&combined, "Debian full workflow command");
     }
 }
 
@@ -1162,6 +1174,7 @@ fn test_cli_debian_concurrent_operations() {
             !combined.contains("panicked"),
             "Concurrent operations should not panic"
         );
+        assert_no_arch_terms(&combined, "Debian concurrent operation");
     }
 }
 
@@ -1187,6 +1200,7 @@ fn test_cli_debian_handles_slow_mirrors() {
         !combined.contains("panicked"),
         "Should handle slow mirrors gracefully"
     );
+    assert_no_arch_terms(&combined, "Debian slow mirror update path");
 }
 
 #[test]

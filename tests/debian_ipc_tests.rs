@@ -29,7 +29,7 @@ fn test_debian_search_request_serialization() {
             assert_eq!(query, "vim");
             assert_eq!(limit, Some(10));
         }
-        _ => panic!("Wrong variant deserialized"),
+        _ => unreachable!("Wrong variant deserialized"),
     }
 }
 
@@ -60,6 +60,6 @@ fn test_debian_search_result_serialization() {
         assert_eq!(pkgs.len(), 2);
         assert_eq!(pkgs[0].name, "vim");
     } else {
-        panic!("Wrong variant deserialized");
+        unreachable!("Wrong variant deserialized");
     }
 }

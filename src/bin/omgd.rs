@@ -124,10 +124,11 @@ async fn main() -> Result<()> {
 
     // Run server
     // Capture panics in Sentry
-    let result =
-        std::panic::AssertUnwindSafe(async { server::run(listener, state, socket_path.clone()).await })
-        .catch_unwind()
-        .await;
+    let result = std::panic::AssertUnwindSafe(async {
+        server::run(listener, state, socket_path.clone()).await
+    })
+    .catch_unwind()
+    .await;
 
     match result {
         Ok(run_result) => run_result?,
