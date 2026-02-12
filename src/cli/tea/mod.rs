@@ -71,9 +71,9 @@
 //! Program::new(model).run();
 //! ```
 
+mod async_bridge;
 mod cmd;
 mod renderer;
-mod async_bridge;
 
 // Model implementations
 mod info_model;

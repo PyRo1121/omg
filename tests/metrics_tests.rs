@@ -87,7 +87,7 @@ async fn test_metrics_collection() {
         // Note: It might count the metrics request itself depending on ordering
         assert!(snapshot.requests_total >= after_invalid.requests_total);
     } else {
-        panic!("Expected Metrics response");
+        unreachable!("Expected Metrics response");
     }
 }
 

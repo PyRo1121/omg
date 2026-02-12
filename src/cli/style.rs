@@ -9,6 +9,8 @@
 //! - **Accessibility**: WCAG AA compliant contrast ratios
 
 use std::env;
+#[cfg(not(test))]
+use std::sync::OnceLock;
 
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use owo_colors::OwoColorize;
@@ -97,6 +99,10 @@ const THEME_GRUVBOX: u8 = 2;
 const THEME_DRACULA: u8 = 3;
 
 static CURRENT_THEME: AtomicU8 = AtomicU8::new(THEME_CATPPUCCIN);
+#[cfg(not(test))]
+static COLORS_ENABLED_CACHE: OnceLock<bool> = OnceLock::new();
+#[cfg(not(test))]
+static USE_UNICODE_CACHE: OnceLock<bool> = OnceLock::new();
 
 /// Get the current color theme
 #[must_use]
@@ -118,7 +124,18 @@ fn set_theme_id(id: u8) {
 /// Follows the [NO_COLOR standard](https://no-color.org/) and detects TTY support.
 #[must_use]
 pub fn colors_enabled() -> bool {
-    // 1. Check NO_COLOR standard (https://no-color.org/)
+    #[cfg(test)]
+    {
+        detect_colors_enabled()
+    }
+
+    #[cfg(not(test))]
+    {
+        *COLORS_ENABLED_CACHE.get_or_init(detect_colors_enabled)
+    }
+}
+
+fn detect_colors_enabled() -> bool {
     if env::var("NO_COLOR").is_ok() {
         return false;
     }
@@ -146,12 +163,22 @@ pub fn is_tty() -> bool {
 /// Check if unicode icons should be used
 #[must_use]
 pub fn use_unicode() -> bool {
-    // Check OMG_UNICODE env var
+    #[cfg(test)]
+    {
+        detect_use_unicode()
+    }
+
+    #[cfg(not(test))]
+    {
+        *USE_UNICODE_CACHE.get_or_init(detect_use_unicode)
+    }
+}
+
+fn detect_use_unicode() -> bool {
     if let Ok(val) = env::var("OMG_UNICODE") {
         return val != "0" && val != "false";
     }
 
-    // Default to true if we have colors (likely a modern terminal)
     colors_enabled()
 }
 

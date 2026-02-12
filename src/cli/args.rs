@@ -54,6 +54,9 @@ pub enum Commands {
         /// Search official repositories only (skip AUR)
         #[arg(long)]
         no_aur: bool,
+        /// Maximum number of results to display
+        #[arg(short, long, default_value = "50")]
+        limit: usize,
     },
 
     /// Install packages with security grading and auto-AUR detection

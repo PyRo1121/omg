@@ -143,7 +143,7 @@ impl SearchModel {
             style::version(&result.version),
             result.source.styled_label(),
             installed_mark,
-            style::dim(&truncate(&result.description, 50)),
+            style::dim(&truncate(&result.description, desc_width())),
             aur_info,
             if result.repo == "official" {
                 String::new()
@@ -171,10 +171,11 @@ impl Model for SearchModel {
     type Msg = SearchMsg;
 
     fn init(&self) -> Cmd<Self::Msg> {
-        Cmd::Exec(Box::new(|| {
-            // Return immediately - search is triggered by user
-            SearchMsg::Search(String::new())
-        }))
+        let query = self.query.clone();
+        if query.is_empty() {
+            return Cmd::none();
+        }
+        Cmd::Exec(Box::new(move || SearchMsg::Search(query)))
     }
 
     fn update(&mut self, msg: Self::Msg) -> Cmd<Self::Msg> {
@@ -188,9 +189,13 @@ impl Model for SearchModel {
                     return Cmd::Info("Enter a search query".to_string());
                 }
 
-                // In production, this would trigger actual search
-                // For now, return no-op
-                Cmd::none()
+                let q = query;
+                Cmd::Exec(Box::new(move || {
+                    crate::cli::tea::async_bridge::run_blocking_future(async move {
+                        fetch_search_results(&q).await
+                    })
+                    .unwrap_or_else(|err| SearchMsg::Error(err.to_string()))
+                }))
             }
             SearchMsg::ResultsFound(results) => {
                 self.official_count = results
@@ -316,8 +321,72 @@ impl Model for SearchModel {
 
 /// Helper function to truncate text
 fn truncate(text: &str, max_len: usize) -> String {
-    // Delegate to shared implementation
     crate::cli::packages::common::truncate(text, max_len)
+}
+
+fn desc_width() -> usize {
+    crate::cli::packages::common::description_width()
+}
+
+async fn fetch_search_results(query: &str) -> SearchMsg {
+    let mut results: Vec<SearchResult> = Vec::new();
+
+    // 1. Try daemon IPC
+    #[cfg(unix)]
+    if let Ok(mut client) = crate::core::client::DaemonClient::connect().await
+        && let Ok(res) = client.search(query, Some(50)).await
+    {
+        for pkg in res.packages {
+            results.push(SearchResult {
+                name: pkg.name,
+                version: pkg.version,
+                description: pkg.description,
+                source: if pkg.source == "AUR" {
+                    PackageSource::Aur
+                } else {
+                    PackageSource::Official
+                },
+                repo: pkg.source,
+                installed: false,
+                #[cfg(feature = "arch")]
+                votes: None,
+                #[cfg(feature = "arch")]
+                popularity: None,
+                #[cfg(feature = "arch")]
+                out_of_date: false,
+            });
+        }
+    }
+
+    // 2. Fallback to direct package manager if daemon returned nothing
+    if results.is_empty()
+        && let Ok(pm) = crate::package_managers::get_package_manager()
+        && let Ok(packages) = pm.search(query).await
+    {
+        results.extend(packages.into_iter().map(SearchResult::from));
+    }
+
+    // 3. AUR search
+    #[cfg(feature = "arch")]
+    {
+        let official_names: std::collections::HashSet<String> =
+            results.iter().map(|r| r.name.clone()).collect();
+        let aur = crate::package_managers::AurClient::new();
+        if let Ok(aur_pkgs) = aur.search(query).await {
+            results.extend(
+                aur_pkgs
+                    .into_iter()
+                    .filter(|p| !official_names.contains(&p.name))
+                    .map(SearchResult::from),
+            );
+        }
+    }
+
+    if results.is_empty() {
+        SearchMsg::NoResults
+    } else {
+        SearchMsg::ResultsFound(results)
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

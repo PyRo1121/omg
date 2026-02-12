@@ -99,23 +99,24 @@ impl Model for StatusModel {
 
                     // 1. Try Daemon (Hot Path)
                     #[cfg(unix)]
-                    let daemon_result = crate::cli::tea::async_bridge::run_blocking_future(async move {
-                        if let Ok(mut client) = DaemonClient::connect().await
-                            && let Ok(ResponseResult::Status(status)) =
-                                client.call(Request::Status { id: 0 }).await
-                        {
-                            return Some(StatusData {
-                                total_packages: status.total_packages,
-                                explicit_packages: status.explicit_packages,
-                                orphan_packages: status.orphan_packages,
-                                updates_available: status.updates_available,
-                                duration_ms: start.elapsed().as_secs_f64() * 1000.0,
-                                fast_mode: fast,
-                            });
-                        }
-                        None
-                    })
-                    .unwrap_or(None);
+                    let daemon_result =
+                        crate::cli::tea::async_bridge::run_blocking_future(async move {
+                            if let Ok(mut client) = DaemonClient::connect().await
+                                && let Ok(ResponseResult::Status(status)) =
+                                    client.call(Request::Status { id: 0 }).await
+                            {
+                                return Some(StatusData {
+                                    total_packages: status.total_packages,
+                                    explicit_packages: status.explicit_packages,
+                                    orphan_packages: status.orphan_packages,
+                                    updates_available: status.updates_available,
+                                    duration_ms: start.elapsed().as_secs_f64() * 1000.0,
+                                    fast_mode: fast,
+                                });
+                            }
+                            None
+                        })
+                        .unwrap_or(None);
 
                     #[cfg(not(unix))]
                     let daemon_result: Option<StatusData> = None;
@@ -125,13 +126,12 @@ impl Model for StatusModel {
                     }
 
                     // 2. Fallback to direct path
-                    let fallback_result = crate::cli::tea::async_bridge::run_blocking_future(
-                        async move {
+                    let fallback_result =
+                        crate::cli::tea::async_bridge::run_blocking_future(async move {
                             let pm = get_package_manager()?;
                             pm.get_status(fast).await
-                        },
-                    )
-                    .and_then(std::convert::identity);
+                        })
+                        .and_then(std::convert::identity);
 
                     match fallback_result {
                         Ok((total, explicit, orphans, updates)) => StatusMsg::Loaded(StatusData {
