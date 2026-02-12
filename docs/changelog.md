@@ -11,28 +11,16 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ---
 
 ## [Unreleased]
-### ♻️  Refactoring
-
-- Split package lifecycle commands by platform and harden semantic isolation tests
-
-Install, remove, and update flows are now dispatched into platform-specific
-modules (`arch`, `debian`, `generic`) to reduce cross-platform leakage and keep
-replacement logic native to each ecosystem. Added deterministic semantic
-contracts in test suites to ensure Debian paths do not emit Arch/AUR terms and
-Arch paths do not emit Debian/Homebrew terms.
-
-### ⚡ Performance
-
-- Add deterministic Debian benchmark regression artifact + CI summary
-
-Added `bench_debian_deterministic_matrix` with cold/warm metrics for search,
-info, and install dry-run resolution, plus JSON artifact output and baseline
-regression checks in CI for Debian lanes.
-
 ### Merge
 
 - Incorporate remote changelog update
 ### ♻️  Refactoring
+
+- **Cli**: Split package ops by platform semantics
+
+Break install/remove/update flows into platform-specific handlers and tighten command dispatch so behavior stays consistent across Arch, Debian, Fedora, macOS, and Windows paths.
+
+Update search/index integration and platform semantics coverage to lock in deterministic UX and reduce regressions as package-manager backends evolve.
 
 - Harden daemon startup and unify async CLI execution
 
@@ -51,6 +39,12 @@ benchmarks (246ms), causing false regression alerts. The gate now warns
 instead of failing, while still uploading benchmark results as artifacts.
 
 ### ✨ New Features
+
+- **Debian**: Add resolvo adapter and deterministic benchmark baseline
+
+Introduce the Debian resolvo-backed dependency path and expand daemon/package-manager integration so Debian behavior is measurable and stable under real-world workloads.
+
+Add repeatable benchmark baselines plus Debian-focused test and container scripts to make performance regressions and packaging breakages visible before release.
 
 - Fix AUR second auth prompt, add daemon socket self-healing
 
@@ -93,6 +87,12 @@ automatically if not running, polls up to 2s for readiness
 file still exists, triggers graceful shutdown if deleted externally
 
 ### 🐛 Bug Fixes
+
+- **Info**: Bound daemon/AUR info latency and harden test timeouts
+
+Add explicit timeout handling across info lookup paths and daemon request handling so missing packages fail fast instead of hanging under degraded network or IPC conditions.
+
+Harden the test harness process lifecycle to enforce deterministic command timeouts and improve diagnostics, reducing flaky end-to-end failures in production-like CI runs.
 
 - Increase integration test timeout, optimize coverage workflow
 
@@ -384,6 +384,13 @@ refactor/rust-2026-phase2-async)
 
   - Update .gitignore to prevent re-tracking
 
+### 📚 Documentation
+
+- **Changelog**: Record production hardening and Debian improvements
+
+Capture the reliability hardening, platform-semantic CLI refactor, and Debian resolver/benchmark work so release notes match what was validated in this production-readiness pass.
+
+- Harden CI reproducibility and release-readiness checklist
 ### 🔧 Maintenance
 
 - Comprehensive repo cleanup for professional GitHub presence
