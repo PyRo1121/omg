@@ -20,35 +20,7 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 
 Break install/remove/update flows into platform-specific handlers and tighten command dispatch so behavior stays consistent across Arch, Debian, Fedora, macOS, and Windows paths.
 
-- **Cli**: Split package ops by platform semantics
-
-Break install/remove/update flows into platform-specific handlers and tighten command dispatch so behavior stays consistent across Arch, Debian, Fedora, macOS, and Windows paths.
-
 Update search/index integration and platform semantics coverage to lock in deterministic UX and reduce regressions as package-manager backends evolve.
-
-### ⚡ Performance
-
-- Add deterministic Debian benchmark regression artifact + CI summary
-
-Added `bench_debian_deterministic_matrix` with cold/warm metrics for search,
-info, and install dry-run resolution, plus JSON artifact output and baseline
-regression checks in CI for Debian lanes.
-
-### ✨ New Features
-
-- **debian**: Add resolvo dependency resolver adapter for deterministic resolution
-- **info**: Bound daemon/AUR info latency with `tokio::time::timeout` (3s daemon, 8s AUR) to prevent CLI hangs
-
-### 📦 Build & CI
-
-- Harden CI reproducibility: add `--locked` to clippy jobs, update MSRV references to 1.93+
-- Add release readiness checklist (`docs/release-readiness.md`)
-- Update installation docs with Debian build prerequisites
-
-### 📝 Documentation
-
-- Update README install version example to v0.1.214
-- Record production hardening and Debian improvements in changelog
 
 - Harden daemon startup and unify async CLI execution
 
@@ -119,12 +91,17 @@ file still exists, triggers graceful shutdown if deleted externally
 - **Daemon**: Replace panic-on-poison with recovery and safe client fallback
 
   - handlers.rs, server.rs: Replace `expect("lock poisoned")` with
+
 `PoisonError::into_inner` so the daemon recovers from thread panics
+
 instead of crashing the entire process.
 
   - client.rs: Replace `expect("loop must have run")` with a safe
+
 fallback error message when the retry loop exits without capturing
+
 an error, preventing a panic in edge-case connection failures.
+
 - **Info**: Bound daemon/AUR info latency and harden test timeouts
 
 Add explicit timeout handling across info lookup paths and daemon request handling so missing packages fail fast instead of hanging under degraded network or IPC conditions.
@@ -428,13 +405,111 @@ refactor/rust-2026-phase2-async)
 Capture the reliability hardening, platform-semantic CLI refactor, and Debian resolver/benchmark work so release notes match what was validated in this production-readiness pass.
 
 - Harden CI reproducibility and release-readiness checklist
-
 ### 📦 Dependencies
 
 - **Deps**: Bump @isaacs/brace-expansion ([#26](https://github.com/PyRo1121/omg/issues/26))
+
+Bumps the npm_and_yarn group with 1 update in the /site directory: @isaacs/brace-expansion.
+
+Updates `@isaacs/brace-expansion` from 5.0.0 to 5.0.1
+
+---
+
+updated-dependencies:
+
+  - dependency-name: "@isaacs/brace-expansion"
+
+dependency-version: 5.0.1
+
+dependency-type: indirect
+
+dependency-group: npm_and_yarn
+
+...
+
 - **Deps**: Bump the dependencies group across 1 directory with 4 updates ([#29](https://github.com/PyRo1121/omg/issues/29))
+
+Bumps the dependencies group with 4 updates in the / directory: [nix](https://github.com/nix-rust/nix), [rusqlite](https://github.com/rusqlite/rusqlite), [quick-xml](https://github.com/tafia/quick-xml) and [rand](https://github.com/rust-random/rand).
+
+Updates `nix` from 0.30.1 to 0.31.1
+
+  - [Changelog](https://github.com/nix-rust/nix/blob/master/CHANGELOG.md)
+
+  - [Commits](https://github.com/nix-rust/nix/compare/v0.30.1...v0.31.1)
+
+Updates `rusqlite` from 0.33.0 to 0.38.0
+
+  - [Release notes](https://github.com/rusqlite/rusqlite/releases)
+
+  - [Changelog](https://github.com/rusqlite/rusqlite/blob/master/Changelog.md)
+
+  - [Commits](https://github.com/rusqlite/rusqlite/compare/v0.33.0...v0.38.0)
+
+Updates `quick-xml` from 0.37.5 to 0.39.0
+
+  - [Release notes](https://github.com/tafia/quick-xml/releases)
+
+  - [Changelog](https://github.com/tafia/quick-xml/blob/master/Changelog.md)
+
+  - [Commits](https://github.com/tafia/quick-xml/compare/v0.37.5...v0.39.0)
+
+Updates `rand` from 0.9.2 to 0.10.0
+
+  - [Release notes](https://github.com/rust-random/rand/releases)
+
+  - [Changelog](https://github.com/rust-random/rand/blob/master/CHANGELOG.md)
+
+  - [Commits](https://github.com/rust-random/rand/compare/rand_core-0.9.2...0.10.0)
+
+---
+
+updated-dependencies:
+
+  - dependency-name: nix
+
+dependency-version: 0.31.1
+
+dependency-type: direct:production
+
+update-type: version-update:semver-minor
+
+dependency-group: dependencies
+
+  - dependency-name: rusqlite
+
+dependency-version: 0.38.0
+
+dependency-type: direct:production
+
+update-type: version-update:semver-minor
+
+dependency-group: dependencies
+
+  - dependency-name: quick-xml
+
+dependency-version: 0.39.0
+
+dependency-type: direct:production
+
+update-type: version-update:semver-minor
+
+dependency-group: dependencies
+
+  - dependency-name: rand
+
+dependency-version: 0.10.0
+
+dependency-type: direct:production
+
+update-type: version-update:semver-minor
+
+dependency-group: dependencies
+
+...
+
 ### 🔧 Maintenance
 
+- Sync Cargo.lock version to 0.1.214
 - **Deps**: Bump the dependencies group across 1 directory with 11 updates ([#31](https://github.com/PyRo1121/omg/issues/31))
 
 Bumps the dependencies group with 11 updates in the / directory:
@@ -829,7 +904,7 @@ This enables proper request flow tracing in production debugging.
 
 Multi-wave optimization across 70K lines using 12+ parallel agents:
 
-  - Remove Box<Vec<T>> double indirection in daemon protocol
+  - Remove Box<Vec`<T>`> double indirection in daemon protocol
 
   - Expand AHashMap to 6 hot-path files (15-20% faster hashing)
 
@@ -992,7 +1067,7 @@ Added convenient Makefile targets for all benchmark workflows:
 
   - Fix init_logging() unnecessary Result return type
 
-  - Replace &Option<T> with Option<&T> anti-pattern (2 functions)
+  - Replace &Option`<T>` with Option<&T> anti-pattern (2 functions)
 
   - Merge duplicate match arms in handle_config_command
 
@@ -2026,9 +2101,9 @@ All ignored advisories are:
 
 - Remove explicit auto-deref for Arc paths (clippy)
 
-Clippy detected unnecessary explicit dereferences (&*) on Arc<PathBuf> and
+Clippy detected unnecessary explicit dereferences (&*) on Arc`<PathBuf>` and
 
-Arc<String> that would be handled automatically by auto-deref.
+Arc`<String>` that would be handled automatically by auto-deref.
 
 ### 📚 Documentation
 
@@ -2845,7 +2920,7 @@ Fixes 18 clippy errors found in platform builds.
 
   - Expected speedup: 20-30x cold start, 10x is_installed checks
 
-  - Maintains thread-safe access via LazyLock<RwLock>
+  - Maintains thread-safe access via LazyLock`<RwLock>`
 
 - **Dnf**: Add direct SQLite access for 50-100x faster package queries
 
@@ -4960,7 +5035,7 @@ ARCHITECTURAL CHANGE   - Remove over-engineering from Components module
 
 ## Problem (HIGH PRIORITY from audit)
 
-Components had 23 functions with unnecessary <M> generics. Most were
+Components had 23 functions with unnecessary `<M>` generics. Most were
 
 simple delegators to Cmd:: methods with zero added value.
 
@@ -5231,7 +5306,7 @@ let search_str = buf.to_ascii_lowercase();
 
 ### 3. Const Slices for Static Strings
 
-  - Convert Vec<String> allocations to const &[&str] slices in commands.rs
+  - Convert Vec`<String>` allocations to const &[&str] slices in commands.rs
 
   - Eliminates heap allocations for static completion data
 
@@ -5259,7 +5334,7 @@ let search_str = buf.to_ascii_lowercase();
 
 ### 2. Optimize Arc Usage in Daemon Cache
 
-  - Refactor cache.update_status() to accept Arc<StatusResult> parameter
+  - Refactor cache.update_status() to accept Arc`<StatusResult>` parameter
 
   - Eliminates 50% of heap allocations by avoiding double Arc wrapping
 
@@ -5404,15 +5479,15 @@ Updated core filesystem operations dependency to latest major version.
 
 Convert expensive Vec/String clones to Arc patterns:
 
-  - Cache keys: LazyLock<String> optimized (no repeated .clone() calls)
+  - Cache keys: LazyLock`<String>` optimized (no repeated .clone() calls)
 
-  - Cache values: Vec<PackageInfo> → Arc<Vec<PackageInfo>>
+  - Cache values: Vec`<PackageInfo>` → Arc<Vec`<PackageInfo>`>
 
-  - Cache values: DetailedPackageInfo → Arc<DetailedPackageInfo>>
+  - Cache values: DetailedPackageInfo → Arc`<DetailedPackageInfo>`>
 
-  - Cache values: StatusResult → Arc<StatusResult>
+  - Cache values: StatusResult → Arc`<StatusResult>`
 
-  - Cache values: Vec<String> → Arc<Vec<String>>
+  - Cache values: Vec`<String>` → Arc<Vec`<String>`>
 
 Performance improvements:
 
@@ -5502,7 +5577,7 @@ Key findings:
 
   - RuntimeManager trait has ZERO implementations (pure dead code)
 
-  - Components module has 23 functions with unnecessary <M> generics
+  - Components module has 23 functions with unnecessary `<M>` generics
 
   - 5 other traits are legitimate (PrivilegeChecker, PackageManager, etc.)
 
@@ -5570,7 +5645,7 @@ Part of Phase 3: Architecture & Consistency.
 
 - Document generic parameter rationale in Components module
 
-Analyzed the <M> generic parameters in src/cli/components/mod.rs (Task 3).
+Analyzed the `<M>` generic parameters in src/cli/components/mod.rs (Task 3).
 
 After thorough investigation, determined these generics are NECESSARY and
 
@@ -5578,11 +5653,11 @@ framework-required, not a code smell.
 
 Key findings:
 
-  - Generic <M> is required for Bubble Tea/Elm Architecture correctness
+  - Generic `<M>` is required for Bubble Tea/Elm Architecture correctness
 
   - Enables batching of output commands with message-producing commands
 
-  - Supports dual usage: Cmd<()> standalone and Cmd<ModelMsg> in Models
+  - Supports dual usage: Cmd<()> standalone and Cmd`<ModelMsg>` in Models
 
   - Zero runtime cost (phantom type resolved at compile time)
 
@@ -5779,7 +5854,7 @@ lowercase keys before sort (decorate-sort-undecorate pattern)
 
 searchability and debugging
 
-  - Wrap mirrors in Arc to avoid Vec<String> clone for each download job
+  - Wrap mirrors in Arc to avoid Vec`<String>` clone for each download job
 
   - Enable typo suggestions for mistyped commands via clap
 
@@ -6028,7 +6103,7 @@ web analytics vs OMG CLI product telemetry.
 
   - Add Docusaurus frontmatter to changelog
 
-  - Escape HTML-like tags in MDX (Vec<PackageInfo>, <A> component)
+  - Escape HTML-like tags in MDX (Vec`<PackageInfo>`, `<A>` component)
 
   - Silence analytics errors in production (only log in dev mode)
 
@@ -6393,7 +6468,7 @@ Implemented staggered fade-in-up entrance animations for the Hero section elemen
 - Remove `display_daemon_results` function from search module
 - Update Header navigation for SPA compatibility
 
-Updated Header to use Solid Router's <A> component for the documentation
+Updated Header to use Solid Router's `<A>` component for the documentation
 
 and home links to ensure smooth client-side transitions.
 
@@ -6702,7 +6777,7 @@ Add comprehensive task detection across 10+ ecosystems (Node, Rust, Python, Go, 
 - **Enterprise**: Implement remaining stubs for mirror, fleet, and golden path
 - **Debian**: Enrich daemon search with full package info
 
-  - Update IPC protocol to return Vec<PackageInfo> for Debian searches
+  - Update IPC protocol to return Vec`<PackageInfo>` for Debian searches
 
   - Update daemon handlers and cache to support enriched package data
 
