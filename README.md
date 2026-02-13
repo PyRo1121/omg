@@ -79,7 +79,7 @@ OMG_NO_TELEMETRY=1 curl -fsSL https://pyro1121.com/install.sh | bash
 OMG_SKIP_SHELL=1 curl -fsSL https://pyro1121.com/install.sh | bash
 
 # Install specific version
-OMG_VERSION=v0.1.204 curl -fsSL https://pyro1121.com/install.sh | bash
+OMG_VERSION=v0.1.214 curl -fsSL https://pyro1121.com/install.sh | bash
 ```
 </details>
 

@@ -18,6 +18,16 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ---
 
 ## [Unreleased]
+
+---
+
+## [0.1.214] - 2026-02-13
+
+### 🐛 Bug Fixes
+
+- **daemon**: Replace `expect("lock poisoned")` with `PoisonError::into_inner` recovery in `handlers.rs` and `server.rs`, preventing daemon panics after thread poisoning
+- **client**: Replace `expect("loop must have run")` with safe fallback error in `client.rs` connection retry path
+
 ### ♻️  Refactoring
 
 - Split package lifecycle commands by platform and harden semantic isolation tests
@@ -35,6 +45,22 @@ Arch paths do not emit Debian/Homebrew terms.
 Added `bench_debian_deterministic_matrix` with cold/warm metrics for search,
 info, and install dry-run resolution, plus JSON artifact output and baseline
 regression checks in CI for Debian lanes.
+
+### ✨ New Features
+
+- **debian**: Add resolvo dependency resolver adapter for deterministic resolution
+- **info**: Bound daemon/AUR info latency with `tokio::time::timeout` (3s daemon, 8s AUR) to prevent CLI hangs
+
+### 📦 Build & CI
+
+- Harden CI reproducibility: add `--locked` to clippy jobs, update MSRV references to 1.93+
+- Add release readiness checklist (`docs/release-readiness.md`)
+- Update installation docs with Debian build prerequisites
+
+### 📝 Documentation
+
+- Update README install version example to v0.1.214
+- Record production hardening and Debian improvements in changelog
 
 ### Build
 
