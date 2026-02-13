@@ -126,12 +126,14 @@ impl DaemonClient {
             }
         }
 
-        Err(
-            anyhow::Error::new(last_err.expect("loop must have run")).context(format!(
-                "Failed to connect to daemon at {} after retries",
-                socket_path.display()
-            )),
-        )
+        let final_err = last_err.unwrap_or_else(|| {
+            std::io::Error::other("daemon connection retries exhausted with no captured error")
+        });
+
+        Err(anyhow::Error::new(final_err).context(format!(
+            "Failed to connect to daemon at {} after retries",
+            socket_path.display()
+        )))
     }
 
     /// Connect to the daemon, auto-spawning it if not running.

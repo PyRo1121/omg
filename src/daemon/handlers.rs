@@ -653,7 +653,7 @@ async fn handle_status(state: Arc<DaemonState>, id: RequestId) -> Response {
                 runtime_versions: state
                     .runtime_versions
                     .read()
-                    .expect("lock poisoned")
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .clone(),
             };
 

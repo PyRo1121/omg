@@ -112,7 +112,7 @@ pub async fn run(
                 state
                     .runtime_versions
                     .write()
-                    .expect("lock poisoned")
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .clone_from(&versions);
 
                 if let Ok((total, explicit, orphans, updates)) = status {
