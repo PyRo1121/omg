@@ -33,7 +33,7 @@ path = "src/bin/omg-fast.rs"
 [dependencies]
 
 # CLI Framework
-clap = { version = "4.5.58", features = ["derive", "env", "wrap_help"] }
+clap = { version = "4.5.59", features = ["derive", "env", "wrap_help"] }
 clap_complete = "4.5"
 clap_mangen = "0.2"  # Man page generation
 
@@ -55,12 +55,12 @@ tokio = { version = "1.49", features = [
     "signal",
     "time",
 ] }
-futures = "0.3.31"
+futures = "0.3.32"
 
 # Serialization
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
-toml = "1.0.0"
+toml = "1.0.2"
 bitcode = { version = "0.6", features = ["serde"] }
 
 # HTTP client (zstd for faster compressed downloads, read_timeout for reliability)
@@ -79,7 +79,7 @@ flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
 lz4_flex = { version = "0.12", default-features = false, features = [
     "frame",
 ] }
-zip = { version = "7.1.0", default-features = false, features = [
+zip = { version = "8.1.0", default-features = false, features = [
     "deflate",
     "time",
 ] }
@@ -104,7 +104,7 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter", "json"] }
 
 # Progress bars
-indicatif = "0.18.3"
+indicatif = "0.18.4"
 
 # Colors/TTY
 owo-colors = "4.2.3"
@@ -170,7 +170,7 @@ sequoia-net = { version = "0.31.0-pqc.1", optional = true }
 nucleo-matcher = "0.3.1"
 dirs = "6.0.0"
 ahash = "0.8.12"
-uuid = { version = "1.19", features = ["v4"] }
+uuid = { version = "1.21", features = ["v4"] }
 ratatui = "0.30"
 crossterm = "0.29"
 rust-apt = { version = "0.9.0", optional = true }
