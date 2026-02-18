@@ -15,6 +15,7 @@ use std::time::Duration;
 use crate::package_managers::{AurClient, search_detailed};
 
 const DAEMON_INFO_TIMEOUT: Duration = Duration::from_secs(3);
+#[cfg(feature = "arch")]
 const AUR_INFO_TIMEOUT: Duration = Duration::from_secs(8);
 
 /// Source of package information
