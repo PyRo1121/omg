@@ -171,7 +171,9 @@ impl DaemonClient {
                         return Ok(client);
                     }
                     Err(err) => {
-                        last_error_kind = err.downcast_ref::<std::io::Error>().map(std::io::Error::kind);
+                        last_error_kind = err
+                            .downcast_ref::<std::io::Error>()
+                            .map(std::io::Error::kind);
                     }
                 }
 
