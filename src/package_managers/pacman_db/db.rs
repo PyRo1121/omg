@@ -819,16 +819,27 @@ fn is_cache_expired(last_accessed: Option<SystemTime>) -> bool {
     false
 }
 
+fn is_cache_reusable(
+    cache_mtime: Option<SystemTime>,
+    current_mtime: SystemTime,
+    has_packages: bool,
+    last_accessed: Option<SystemTime>,
+) -> bool {
+    cache_mtime == Some(current_mtime) && has_packages && !is_cache_expired(last_accessed)
+}
+
 /// Ensure sync cache is loaded (fast if already loaded)
 fn ensure_sync_cache_loaded(sync_dir: &Path) -> Result<()> {
     let current_mtime = get_newest_db_mtime(sync_dir);
 
     {
         let mut cache = SYNC_DB_CACHE.write().expect("lock poisoned");
-        if cache.last_modified == Some(current_mtime)
-            && !cache.packages.is_empty()
-            && !is_cache_expired(cache.last_accessed)
-        {
+        if is_cache_reusable(
+            cache.last_modified,
+            current_mtime,
+            !cache.packages.is_empty(),
+            cache.last_accessed,
+        ) {
             // Update last accessed time on cache hit
             cache.last_accessed = Some(SystemTime::now());
             return Ok(());
@@ -844,12 +855,22 @@ fn ensure_sync_cache_loaded(sync_dir: &Path) -> Result<()> {
 
     // Try to load from disk cache first (FAST < 5ms)
     if let Ok(disk_cache) = load_cache_from_disk::<DbCache>("sync_db")
-        && disk_cache.last_modified == Some(current_mtime)
+        && is_cache_reusable(
+            disk_cache.last_modified,
+            current_mtime,
+            !disk_cache.packages.is_empty(),
+            disk_cache.last_accessed,
+        )
     {
         let mut cache = SYNC_DB_CACHE.write().expect("lock poisoned");
 
         // Double-check: another thread may have loaded while we were waiting
-        if cache.last_modified == Some(current_mtime) && !cache.packages.is_empty() {
+        if is_cache_reusable(
+            cache.last_modified,
+            current_mtime,
+            !cache.packages.is_empty(),
+            cache.last_accessed,
+        ) {
             cache.last_accessed = Some(SystemTime::now());
             return Ok(());
         }
@@ -866,7 +887,12 @@ fn ensure_sync_cache_loaded(sync_dir: &Path) -> Result<()> {
     let mut cache = SYNC_DB_CACHE.write().expect("lock poisoned");
 
     // Re-check: another thread may have loaded while we were parsing
-    if cache.last_modified == Some(current_mtime) && !cache.packages.is_empty() {
+    if is_cache_reusable(
+        cache.last_modified,
+        current_mtime,
+        !cache.packages.is_empty(),
+        cache.last_accessed,
+    ) {
         cache.last_accessed = Some(SystemTime::now());
         return Ok(());
     }
@@ -896,10 +922,12 @@ fn ensure_local_cache_loaded(local_dir: &Path) -> Result<()> {
 
     {
         let mut cache = LOCAL_DB_CACHE.write().expect("lock poisoned");
-        if cache.last_modified == Some(current_mtime)
-            && !cache.packages.is_empty()
-            && !is_cache_expired(cache.last_accessed)
-        {
+        if is_cache_reusable(
+            cache.last_modified,
+            current_mtime,
+            !cache.packages.is_empty(),
+            cache.last_accessed,
+        ) {
             // Update last accessed time on cache hit
             cache.last_accessed = Some(SystemTime::now());
             return Ok(());
@@ -915,12 +943,22 @@ fn ensure_local_cache_loaded(local_dir: &Path) -> Result<()> {
 
     // Try to load from disk cache first
     if let Ok(disk_cache) = load_cache_from_disk::<LocalDbCache>("local_db")
-        && disk_cache.last_modified == Some(current_mtime)
+        && is_cache_reusable(
+            disk_cache.last_modified,
+            current_mtime,
+            !disk_cache.packages.is_empty(),
+            disk_cache.last_accessed,
+        )
     {
         let mut cache = LOCAL_DB_CACHE.write().expect("lock poisoned");
 
         // Double-check: another thread may have loaded while we were waiting
-        if cache.last_modified == Some(current_mtime) && !cache.packages.is_empty() {
+        if is_cache_reusable(
+            cache.last_modified,
+            current_mtime,
+            !cache.packages.is_empty(),
+            cache.last_accessed,
+        ) {
             cache.last_accessed = Some(SystemTime::now());
             return Ok(());
         }
@@ -937,7 +975,12 @@ fn ensure_local_cache_loaded(local_dir: &Path) -> Result<()> {
     let mut cache = LOCAL_DB_CACHE.write().expect("lock poisoned");
 
     // Double-check: another thread may have loaded while we were parsing
-    if cache.last_modified == Some(current_mtime) && !cache.packages.is_empty() {
+    if is_cache_reusable(
+        cache.last_modified,
+        current_mtime,
+        !cache.packages.is_empty(),
+        cache.last_accessed,
+    ) {
         cache.last_accessed = Some(SystemTime::now());
         return Ok(());
     }
@@ -1509,5 +1552,29 @@ mod tests {
             result.unwrap_err().to_string().contains("rkyv validation"),
             "Should fail validation"
         );
+    }
+
+    #[test]
+    fn test_is_cache_reusable_rejects_expired_entries() {
+        let now = SystemTime::now();
+        let expired = now - std::time::Duration::from_secs(CACHE_TTL_SECS + 5);
+
+        assert!(!is_cache_reusable(Some(now), now, true, Some(expired)));
+    }
+
+    #[test]
+    fn test_is_cache_reusable_rejects_empty_entries() {
+        let now = SystemTime::now();
+        let fresh = now - std::time::Duration::from_secs(1);
+
+        assert!(!is_cache_reusable(Some(now), now, false, Some(fresh)));
+    }
+
+    #[test]
+    fn test_is_cache_reusable_accepts_fresh_matching_cache() {
+        let now = SystemTime::now();
+        let fresh = now - std::time::Duration::from_secs(2);
+
+        assert!(is_cache_reusable(Some(now), now, true, Some(fresh)));
     }
 }
