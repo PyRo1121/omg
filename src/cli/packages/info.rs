@@ -14,6 +14,7 @@ use crate::package_managers::get_package_manager;
 use crate::package_managers::{AurClient, search_detailed};
 
 const DAEMON_INFO_TIMEOUT: Duration = Duration::from_secs(3);
+#[cfg(feature = "arch")]
 const AUR_INFO_TIMEOUT: Duration = Duration::from_secs(8);
 
 /// Show package information (Synchronous fast-path)
