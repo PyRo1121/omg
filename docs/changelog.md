@@ -88,6 +88,7 @@ file still exists, triggers graceful shutdown if deleted externally
 
 ### 🐛 Bug Fixes
 
+- **Ci**: Remove Arch-specific terms from global help text
 - **Ci**: Guard AUR timeout constants behind arch feature
 
 Prevent dead-code errors in no-default-features clippy jobs by compiling AUR-only timeout constants only when the arch feature is enabled.
