@@ -88,6 +88,12 @@ file still exists, triggers graceful shutdown if deleted externally
 
 ### 🐛 Bug Fixes
 
+- **Ci**: Guard AUR timeout constants behind arch feature
+
+Prevent dead-code errors in no-default-features clippy jobs by compiling AUR-only timeout constants only when the arch feature is enabled.
+
+Ultraworked with [Sisyphus](https://github.com/code-yeongyu/oh-my-opencode)
+
 - **Ci**: Apply rustfmt for daemon client changes
 
 Align the new daemon readiness logic with rustfmt so the CI formatting gate passes on GitHub Actions.
