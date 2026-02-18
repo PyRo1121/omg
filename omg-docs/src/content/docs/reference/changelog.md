@@ -412,7 +412,332 @@ refactor/rust-2026-phase2-async)
 Capture the reliability hardening, platform-semantic CLI refactor, and Debian resolver/benchmark work so release notes match what was validated in this production-readiness pass.
 
 - Harden CI reproducibility and release-readiness checklist
+### 📦 Dependencies
+
+- **Deps**: Bump @isaacs/brace-expansion ([#26](https://github.com/PyRo1121/omg/issues/26))
+
+Bumps the npm_and_yarn group with 1 update in the /site directory: @isaacs/brace-expansion.
+
+Updates `@isaacs/brace-expansion` from 5.0.0 to 5.0.1
+
+---
+
+updated-dependencies:
+
+  - dependency-name: "@isaacs/brace-expansion"
+
+dependency-version: 5.0.1
+
+dependency-type: indirect
+
+dependency-group: npm_and_yarn
+
+...
+
+- **Deps**: Bump the dependencies group across 1 directory with 4 updates ([#29](https://github.com/PyRo1121/omg/issues/29))
+
+Bumps the dependencies group with 4 updates in the / directory: [nix](https://github.com/nix-rust/nix), [rusqlite](https://github.com/rusqlite/rusqlite), [quick-xml](https://github.com/tafia/quick-xml) and [rand](https://github.com/rust-random/rand).
+
+Updates `nix` from 0.30.1 to 0.31.1
+
+  - [Changelog](https://github.com/nix-rust/nix/blob/master/CHANGELOG.md)
+
+  - [Commits](https://github.com/nix-rust/nix/compare/v0.30.1...v0.31.1)
+
+Updates `rusqlite` from 0.33.0 to 0.38.0
+
+  - [Release notes](https://github.com/rusqlite/rusqlite/releases)
+
+  - [Changelog](https://github.com/rusqlite/rusqlite/blob/master/Changelog.md)
+
+  - [Commits](https://github.com/rusqlite/rusqlite/compare/v0.33.0...v0.38.0)
+
+Updates `quick-xml` from 0.37.5 to 0.39.0
+
+  - [Release notes](https://github.com/tafia/quick-xml/releases)
+
+  - [Changelog](https://github.com/tafia/quick-xml/blob/master/Changelog.md)
+
+  - [Commits](https://github.com/tafia/quick-xml/compare/v0.37.5...v0.39.0)
+
+Updates `rand` from 0.9.2 to 0.10.0
+
+  - [Release notes](https://github.com/rust-random/rand/releases)
+
+  - [Changelog](https://github.com/rust-random/rand/blob/master/CHANGELOG.md)
+
+  - [Commits](https://github.com/rust-random/rand/compare/rand_core-0.9.2...0.10.0)
+
+---
+
+updated-dependencies:
+
+  - dependency-name: nix
+
+dependency-version: 0.31.1
+
+dependency-type: direct:production
+
+update-type: version-update:semver-minor
+
+dependency-group: dependencies
+
+  - dependency-name: rusqlite
+
+dependency-version: 0.38.0
+
+dependency-type: direct:production
+
+update-type: version-update:semver-minor
+
+dependency-group: dependencies
+
+  - dependency-name: quick-xml
+
+dependency-version: 0.39.0
+
+dependency-type: direct:production
+
+update-type: version-update:semver-minor
+
+dependency-group: dependencies
+
+  - dependency-name: rand
+
+dependency-version: 0.10.0
+
+dependency-type: direct:production
+
+update-type: version-update:semver-minor
+
+dependency-group: dependencies
+
+...
+
 ### 🔧 Maintenance
+
+- Sync Cargo.lock version to 0.1.214
+- **Deps**: Bump the dependencies group across 1 directory with 11 updates ([#31](https://github.com/PyRo1121/omg/issues/31))
+
+Bumps the dependencies group with 11 updates in the / directory:
+
+| Package | From | To |
+
+| --  - | --  - | --  - |
+
+| [clap](https://github.com/clap-rs/clap) | `4.5.57` | `4.5.58` |
+
+| [clap_complete](https://github.com/clap-rs/clap) | `4.5.65` | `4.5.66` |
+
+| [toml](https://github.com/toml-rs/toml) | `0.9.11+spec-1.1.0` | `1.0.0+spec-1.1.0` |
+
+| [nix](https://github.com/nix-rust/nix) | `0.30.1` | `0.31.1` |
+
+| [jiff](https://github.com/BurntSushi/jiff) | `0.2.19` | `0.2.20` |
+
+| [tempfile](https://github.com/Stebalien/tempfile) | `3.24.0` | `3.25.0` |
+
+| [rkyv](https://github.com/rkyv/rkyv) | `0.8.14` | `0.8.15` |
+
+| [rusqlite](https://github.com/rusqlite/rusqlite) | `0.33.0` | `0.38.0` |
+
+| [quick-xml](https://github.com/tafia/quick-xml) | `0.37.5` | `0.39.0` |
+
+| [predicates](https://github.com/assert-rs/predicates-rs) | `3.1.3` | `3.1.4` |
+
+| [rand](https://github.com/rust-random/rand) | `0.9.2` | `0.10.0` |
+
+Updates `clap` from 4.5.57 to 4.5.58
+
+  - [Release notes](https://github.com/clap-rs/clap/releases)
+
+  - [Changelog](https://github.com/clap-rs/clap/blob/master/CHANGELOG.md)
+
+  - [Commits](https://github.com/clap-rs/clap/compare/clap_complete-v4.5.57...clap_complete-v4.5.58)
+
+Updates `clap_complete` from 4.5.65 to 4.5.66
+
+  - [Release notes](https://github.com/clap-rs/clap/releases)
+
+  - [Changelog](https://github.com/clap-rs/clap/blob/master/CHANGELOG.md)
+
+  - [Commits](https://github.com/clap-rs/clap/compare/clap_complete-v4.5.65...clap_complete-v4.5.66)
+
+Updates `toml` from 0.9.11+spec-1.1.0 to 1.0.0+spec-1.1.0
+
+  - [Commits](https://github.com/toml-rs/toml/compare/toml-v0.9.11...toml-v1.0.0)
+
+Updates `nix` from 0.30.1 to 0.31.1
+
+  - [Changelog](https://github.com/nix-rust/nix/blob/master/CHANGELOG.md)
+
+  - [Commits](https://github.com/nix-rust/nix/compare/v0.30.1...v0.31.1)
+
+Updates `jiff` from 0.2.19 to 0.2.20
+
+  - [Release notes](https://github.com/BurntSushi/jiff/releases)
+
+  - [Changelog](https://github.com/BurntSushi/jiff/blob/master/CHANGELOG.md)
+
+  - [Commits](https://github.com/BurntSushi/jiff/commits)
+
+Updates `tempfile` from 3.24.0 to 3.25.0
+
+  - [Changelog](https://github.com/Stebalien/tempfile/blob/master/CHANGELOG.md)
+
+  - [Commits](https://github.com/Stebalien/tempfile/commits)
+
+Updates `rkyv` from 0.8.14 to 0.8.15
+
+  - [Release notes](https://github.com/rkyv/rkyv/releases)
+
+  - [Commits](https://github.com/rkyv/rkyv/commits)
+
+Updates `rusqlite` from 0.33.0 to 0.38.0
+
+  - [Release notes](https://github.com/rusqlite/rusqlite/releases)
+
+  - [Changelog](https://github.com/rusqlite/rusqlite/blob/master/Changelog.md)
+
+  - [Commits](https://github.com/rusqlite/rusqlite/compare/v0.33.0...v0.38.0)
+
+Updates `quick-xml` from 0.37.5 to 0.39.0
+
+  - [Release notes](https://github.com/tafia/quick-xml/releases)
+
+  - [Changelog](https://github.com/tafia/quick-xml/blob/master/Changelog.md)
+
+  - [Commits](https://github.com/tafia/quick-xml/compare/v0.37.5...v0.39.0)
+
+Updates `predicates` from 3.1.3 to 3.1.4
+
+  - [Changelog](https://github.com/assert-rs/predicates-rs/blob/master/CHANGELOG.md)
+
+  - [Commits](https://github.com/assert-rs/predicates-rs/compare/v3.1.3...v3.1.4)
+
+Updates `rand` from 0.9.2 to 0.10.0
+
+  - [Release notes](https://github.com/rust-random/rand/releases)
+
+  - [Changelog](https://github.com/rust-random/rand/blob/master/CHANGELOG.md)
+
+  - [Commits](https://github.com/rust-random/rand/compare/rand_core-0.9.2...0.10.0)
+
+---
+
+updated-dependencies:
+
+  - dependency-name: clap
+
+dependency-version: 4.5.58
+
+dependency-type: direct:production
+
+update-type: version-update:semver-patch
+
+dependency-group: dependencies
+
+  - dependency-name: clap_complete
+
+dependency-version: 4.5.66
+
+dependency-type: direct:production
+
+update-type: version-update:semver-patch
+
+dependency-group: dependencies
+
+  - dependency-name: toml
+
+dependency-version: 1.0.0+spec-1.1.0
+
+dependency-type: direct:production
+
+update-type: version-update:semver-major
+
+dependency-group: dependencies
+
+  - dependency-name: nix
+
+dependency-version: 0.31.1
+
+dependency-type: direct:production
+
+update-type: version-update:semver-minor
+
+dependency-group: dependencies
+
+  - dependency-name: jiff
+
+dependency-version: 0.2.20
+
+dependency-type: direct:production
+
+update-type: version-update:semver-patch
+
+dependency-group: dependencies
+
+  - dependency-name: tempfile
+
+dependency-version: 3.25.0
+
+dependency-type: direct:production
+
+update-type: version-update:semver-minor
+
+dependency-group: dependencies
+
+  - dependency-name: rkyv
+
+dependency-version: 0.8.15
+
+dependency-type: direct:production
+
+update-type: version-update:semver-patch
+
+dependency-group: dependencies
+
+  - dependency-name: rusqlite
+
+dependency-version: 0.38.0
+
+dependency-type: direct:production
+
+update-type: version-update:semver-minor
+
+dependency-group: dependencies
+
+  - dependency-name: quick-xml
+
+dependency-version: 0.39.0
+
+dependency-type: direct:production
+
+update-type: version-update:semver-minor
+
+dependency-group: dependencies
+
+  - dependency-name: predicates
+
+dependency-version: 3.1.4
+
+dependency-type: direct:production
+
+update-type: version-update:semver-patch
+
+dependency-group: dependencies
+
+  - dependency-name: rand
+
+dependency-version: 0.10.0
+
+dependency-type: direct:production
+
+update-type: version-update:semver-minor
+
+dependency-group: dependencies
+
+...
 
 - Comprehensive repo cleanup for professional GitHub presence
 
