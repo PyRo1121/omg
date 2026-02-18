@@ -2,15 +2,15 @@
 
 use clap::{Parser, Subcommand};
 
-/// OMG - The Fastest Unified Package Manager for Arch Linux + All Language Runtimes
+/// OMG - The fastest unified package manager + runtime manager
 ///
-/// 50-200x faster than nvm, pyenv, yay, and pacman combined.
-/// Manages system packages (pacman/AUR) and all 7 major language runtimes.
+/// 50-200x faster than traditional multi-tool workflows.
+/// Manages system packages and major language runtimes in one CLI.
 #[derive(Parser, Debug)]
 #[command(name = "omg")]
 #[command(author = "OMG Team")]
 #[command(version)]
-#[command(about = "The Fastest Unified Package Manager for Arch Linux + All Language Runtimes", long_about = None)]
+#[command(about = "The fastest unified package manager + runtime manager", long_about = None)]
 #[command(propagate_version = true)]
 #[command(subcommand_required = true)]
 #[command(arg_required_else_help = true)]
@@ -38,20 +38,20 @@ pub struct Cli {
 #[derive(Subcommand, Debug)]
 pub enum Commands {
     // ═══════════════════════════════════════════════════════════════════════
-    // PACKAGE MANAGEMENT (Arch + AUR)
+    // PACKAGE MANAGEMENT
     // ═══════════════════════════════════════════════════════════════════════
-    /// Search for packages across system repositories and AUR (12-24x faster)
+    /// Search for packages across configured repositories (12-24x faster)
     #[command(visible_alias = "s", next_help_heading = "Package Management")]
     Search {
         /// Package name or keyword to search for (e.g., firefox)
         query: String,
-        /// Show detailed AUR info (votes, popularity)
+        /// Show detailed source metadata (votes, popularity where available)
         #[arg(short, long)]
         detailed: bool,
         /// Interactive mode: select packages to install from results
         #[arg(short, long)]
         interactive: bool,
-        /// Search official repositories only (skip AUR)
+        /// Search official repositories only (skip community sources)
         #[arg(long)]
         no_aur: bool,
         /// Maximum number of results to display
@@ -59,7 +59,7 @@ pub enum Commands {
         limit: usize,
     },
 
-    /// Install packages with security grading and auto-AUR detection
+    /// Install packages with security grading and source auto-detection
     #[command(visible_alias = "i")]
     Install {
         /// Package names to install
@@ -195,7 +195,7 @@ pub enum Commands {
         /// Clear package cache
         #[arg(short, long)]
         cache: bool,
-        /// Clear AUR build directories
+        /// Clear build directories for source-based installs
         #[arg(long)]
         aur: bool,
         /// Remove all (orphans + cache + aur)
