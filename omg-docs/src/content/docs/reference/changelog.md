@@ -95,6 +95,18 @@ file still exists, triggers graceful shutdown if deleted externally
 
 ### 🐛 Bug Fixes
 
+- **Pacman-db**: Enforce TTL-safe cache reuse checks
+
+Centralize cache reuse predicates so stale or empty entries are rejected during disk-load and double-check paths. Add regression tests for fresh/expired reuse behavior.
+
+Ultraworked with [Sisyphus](https://github.com/code-yeongyu/oh-my-opencode)
+
+- **Daemon**: Harden client spawn readiness and IPC timeouts
+
+Bound daemon readiness polling with clearer failure categories and unify wait behavior across spawn paths. Add framed and sync socket read/write timeout protections to prevent indefinite hangs.
+
+Ultraworked with [Sisyphus](https://github.com/code-yeongyu/oh-my-opencode)
+
 - **Daemon**: Replace panic-on-poison with recovery and safe client fallback
 
   - handlers.rs, server.rs: Replace `expect("lock poisoned")` with
