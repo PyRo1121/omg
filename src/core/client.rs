@@ -7,6 +7,7 @@ use anyhow::{Context, Result};
 use std::fs::{File, OpenOptions};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use crate::core::paths;
 
@@ -34,8 +35,17 @@ fn connect_sync_stream() -> Result<SyncUnixStream> {
     tracing::debug!("Connecting to daemon...");
 
     let socket_path = default_socket_path();
-    SyncUnixStream::connect(&socket_path)
-        .with_context(|| format!("Failed to connect to daemon at {}", socket_path.display()))
+    let stream = SyncUnixStream::connect(&socket_path)
+        .with_context(|| format!("Failed to connect to daemon at {}", socket_path.display()))?;
+
+    stream
+        .set_read_timeout(Some(Duration::from_secs(30)))
+        .context("Failed to set daemon read timeout")?;
+    stream
+        .set_write_timeout(Some(Duration::from_secs(30)))
+        .context("Failed to set daemon write timeout")?;
+
+    Ok(stream)
 }
 
 /// Get the default socket path
@@ -52,6 +62,9 @@ pub struct DaemonClient {
 }
 
 impl DaemonClient {
+    const SPAWN_POLL_INTERVAL: Duration = Duration::from_millis(100);
+    const SPAWN_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
+
     fn daemon_disabled() -> bool {
         matches!(
             std::env::var("OMG_DISABLE_DAEMON").as_deref(),
@@ -90,7 +103,12 @@ impl DaemonClient {
                     } else {
                         tracing::debug!("Connected to daemon");
                     }
-                    let framed = Framed::new(stream, LengthDelimitedCodec::new());
+                    let framed = Framed::new(
+                        stream,
+                        LengthDelimitedCodec::builder()
+                            .max_frame_length(10 * 1024 * 1024)
+                            .new_codec(),
+                    );
                     return Ok(Self {
                         framed: Some(framed),
                         sync_stream: None,
@@ -140,8 +158,46 @@ impl DaemonClient {
     ///
     /// 1. Tries `connect()` first (fast path).
     /// 2. If that fails and `OMG_NO_AUTO_DAEMON` is not set, spawns the daemon.
-    /// 3. Polls up to 2 seconds (20 x 100ms) for the daemon to become ready.
+    /// 3. Polls up to 5 seconds for the daemon to become ready.
     pub async fn connect_or_spawn() -> Result<Self> {
+        async fn wait_for_daemon_ready(socket_path: &std::path::Path) -> Result<DaemonClient> {
+            let start = tokio::time::Instant::now();
+            let mut last_error_kind = None;
+
+            while start.elapsed() < DaemonClient::SPAWN_WAIT_TIMEOUT {
+                match DaemonClient::connect().await {
+                    Ok(client) => {
+                        tracing::info!("Daemon ready after {}ms", start.elapsed().as_millis());
+                        return Ok(client);
+                    }
+                    Err(err) => {
+                        last_error_kind = err.downcast_ref::<std::io::Error>().map(std::io::Error::kind);
+                    }
+                }
+
+                tokio::time::sleep(DaemonClient::SPAWN_POLL_INTERVAL).await;
+            }
+
+            let category = match last_error_kind {
+                Some(std::io::ErrorKind::PermissionDenied) => {
+                    "permission denied connecting to daemon socket"
+                }
+                Some(std::io::ErrorKind::ConnectionRefused) => {
+                    "daemon process not accepting connections yet"
+                }
+                Some(std::io::ErrorKind::NotFound) => "daemon socket missing",
+                Some(std::io::ErrorKind::TimedOut) => "daemon connect timed out",
+                Some(_) => "daemon did not become ready",
+                None => "daemon readiness check timed out",
+            };
+
+            anyhow::bail!(
+                "Daemon was not ready within {}ms ({category}, socket: {})",
+                DaemonClient::SPAWN_WAIT_TIMEOUT.as_millis(),
+                socket_path.display()
+            )
+        }
+
         struct SpawnLockGuard {
             path: PathBuf,
             _file: File,
@@ -203,20 +259,9 @@ impl DaemonClient {
                 tracing::debug!(
                     "Daemon spawn lock exists, waiting for peer process to finish spawning"
                 );
-
-                for attempt in 1..=20u32 {
-                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-
-                    if let Ok(client) = Self::connect().await {
-                        tracing::info!("Daemon ready after {}ms", attempt * 100);
-                        return Ok(client);
-                    }
-                }
-
-                anyhow::bail!(
-                    "Another omg process is spawning the daemon, but it did not become ready within 2 seconds (socket: {})",
-                    socket_path.display()
-                )
+                return wait_for_daemon_ready(&socket_path).await.context(
+                    "Another omg process appears to be spawning the daemon, but readiness checks timed out",
+                );
             }
             Err(err) => return Err(err),
         };
@@ -250,20 +295,9 @@ impl DaemonClient {
             .spawn()
             .with_context(|| format!("Failed to spawn daemon: {}", omgd_path.display()))?;
 
-        // Poll for daemon readiness: 20 attempts x 100ms = 2 seconds max
-        for attempt in 1..=20u32 {
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-
-            if let Ok(client) = Self::connect().await {
-                tracing::info!("Daemon ready after {}ms", attempt * 100);
-                return Ok(client);
-            }
-        }
-
-        anyhow::bail!(
-            "Daemon was spawned but did not become ready within 2 seconds (socket: {})",
-            socket_path.display()
-        )
+        wait_for_daemon_ready(&socket_path)
+            .await
+            .context("Daemon was spawned but did not become ready in time")
     }
 
     /// Connect to the daemon synchronously (sub-millisecond)
@@ -295,9 +329,9 @@ impl DaemonClient {
         framed.send(request_bytes.into()).await?;
 
         // Read and decode response
-        let response_bytes = framed
-            .next()
+        let response_bytes = tokio::time::timeout(Duration::from_secs(30), framed.next())
             .await
+            .context("Timed out waiting for daemon response")?
             .ok_or_else(|| anyhow::anyhow!("Daemon disconnected"))??;
 
         let response: Response = bitcode::deserialize(&response_bytes)?;
