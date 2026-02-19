@@ -517,6 +517,7 @@ Documentation lives in `docs/`:
 - **User guides:** `docs/*.md`
 - **API docs:** Inline `///` rustdoc comments
 - **Architecture:** `AGENTS.md` (for AI agents working on codebase)
+- **AI policy precedence:** `AGENTS.md` "AI Instruction Governance (Canonical)"
 
 **Updating docs:**
 ```bash

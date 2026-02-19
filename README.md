@@ -10,6 +10,14 @@
 
 OMG is the unified dev tool you've been waiting for. **One command** replaces `pacman`, `yay`, `nvm`, `pyenv`, `rustup`, `rbenv`, and `jenv`.
 
+## Repository Scope
+
+Core Rust CLI/daemon development lives in this repository.
+
+Website, docs site, and web workers now live in:
+
+- `https://github.com/PyRo1121/omg-web`
+
 ## 📚 Documentation Quick Links
 
 **Getting Started:** [Install](docs/installation.md) • [Quick Start](docs/quickstart.md) • [FAQ](docs/faq.md)  

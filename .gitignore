@@ -109,3 +109,11 @@ pagefind/
 # ---- Agent definitions (local only) ----
 .claude/agents/*.md
 .claude/teams/
+
+# ---- Website split (moved to separate repository) ----
+site/
+omg-docs/
+workers/
+
+# ---- Local orchestration working files ----
+tasks/
