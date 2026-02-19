@@ -106,10 +106,6 @@ site/docs/plans/
 # ---- Search index ----
 pagefind/
 
-# ---- Agent definitions (local only) ----
-.claude/agents/*.md
-.claude/teams/
-
 # ---- Website split (moved to separate repository) ----
 site/
 omg-docs/
