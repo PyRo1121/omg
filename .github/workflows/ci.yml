@@ -121,9 +121,7 @@ jobs:
             --features debian-pure,debian-deb822-backend,debian-resolvo --locked
 
       - name: Run portable tests
-        run: |
-          cargo nextest run --lib --no-default-features --features pgp,license \
-            --locked --profile ci
+        run: cargo nextest run --lib --no-default-features --features pgp,license --locked --profile ci
 
   #############################################################################
   # STAGE 2: Platform Matrix (Linux containers)
@@ -320,9 +318,7 @@ jobs:
         uses: taiki-e/install-action@nextest
 
       - name: Run unit tests
-        run: |
-          cargo nextest run --lib --no-default-features --features macos,license \
-            --locked --profile ci
+        run: cargo nextest run --lib --no-default-features --features macos,license --locked --profile ci
 
       - name: Install Homebrew test packages
         run: |
@@ -371,9 +367,7 @@ jobs:
         uses: taiki-e/install-action@nextest
 
       - name: Run unit tests
-        run: |
-          cargo nextest run --lib --no-default-features --features windows,license \
-            --locked --profile ci
+        run: cargo nextest run --lib --no-default-features --features windows,license --locked --profile ci
 
       - name: Install Scoop
         shell: pwsh
