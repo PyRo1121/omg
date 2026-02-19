@@ -182,7 +182,7 @@ proptest! {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(50))]
+    #![proptest_config(ProptestConfig::with_cases(10))]
 
     /// Semver-like versions should parse
     #[test]

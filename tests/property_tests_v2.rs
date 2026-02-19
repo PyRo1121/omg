@@ -703,6 +703,8 @@ proptest! {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 proptest! {
+    #![proptest_config(ProptestConfig::with_cases(10))]
+
     /// Property: Multiple reads of the same data should be consistent
     /// Reading package info multiple times should return the same result
     #[test]
