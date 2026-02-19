@@ -534,6 +534,7 @@ dependency-group: dependencies
 
 ### 🔧 Maintenance
 
+- **Repo**: Drop tracked editor-local VS Code files
 - **Repo**: Remove remaining AI tooling config from main
 - **Repo**: Split web assets into dedicated omg-web repository
 - Sync Cargo.lock version to 0.1.214
