@@ -622,6 +622,8 @@ jobs:
         uses: taiki-e/install-action@nextest
 
       - name: Run integration tests
+        env:
+          OMG_TEST_COMMAND_TIMEOUT_SECS: "10"
         run: |
           cargo nextest run --test '*' --features arch,license --locked --profile ci --no-fail-fast \
             2>&1 || echo "::warning::Some integration tests failed"
