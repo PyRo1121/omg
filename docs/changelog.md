@@ -778,6 +778,9 @@ dependency-group: dependencies
 
   - Total tracked files: 1041 → 871 (170 removed across cleanup sessions)
 
+### 🧪 Testing
+
+- **Ci**: Standardize nextest usage and add flaky retry policy
 ## [0.1.209] - 2026-02-09
 ### Merge
 
