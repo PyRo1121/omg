@@ -88,6 +88,7 @@ file still exists, triggers graceful shutdown if deleted externally
 
 ### 🐛 Bug Fixes
 
+- **Ci**: Use shell-safe nextest command syntax on Windows
 - **Ci**: Remove Arch-specific terms from global help text
 - **Ci**: Guard AUR timeout constants behind arch feature
 
