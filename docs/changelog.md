@@ -88,6 +88,16 @@ file still exists, triggers graceful shutdown if deleted externally
 
 ### 🐛 Bug Fixes
 
+- **Ci**: Prevent property test timeouts in integration job
+
+  - Reduce proptest case count for subprocess-spawning tests (50→10, unlimited→10)
+
+  - Add OMG_TEST_COMMAND_TIMEOUT_SECS=10 for integration test step
+
+  - Fixes prop_version_aliases and prop_concurrent_reads_consistent hanging
+
+for 3+ minutes per attempt (180s slow-timeout × 3 retries = 9 min each)
+
 - **Ci**: Use shell-safe nextest command syntax on Windows
 - **Ci**: Remove Arch-specific terms from global help text
 - **Ci**: Guard AUR timeout constants behind arch feature
