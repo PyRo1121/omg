@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+Instruction precedence note: `AGENTS.md` is the canonical repository policy for AI behavior, mode-gating, and conflict resolution.
+
 ## Project Overview
 
 OMG is a unified package manager and runtime manager written in Rust (Edition 2024, MSRV 1.93+). It replaces multiple package managers (pacman, apt, dnf, homebrew, scoop) and runtime managers (nvm, pyenv, etc.) with a single CLI tool.
@@ -120,101 +122,13 @@ Profile with `cargo flamegraph` before optimizing.
 - **Fedora/RHEL:** Pure Rust DNF/RPM implementation
 - Feature flags control which backends are compiled
 
-## Agent Ecosystem
+## Agent Guidance (Lean)
 
-Custom agents in `.claude/agents/` are specialized for OMG development:
+This file provides environment/context for Claude Code.
+Behavior and policy precedence are defined in `AGENTS.md`.
 
-### Core Development Agents
-| Agent | Model | Use For |
-|-------|-------|---------|
-| `Rust-Engineer` | sonnet | Core Rust: ownership, traits, async, FFI, perf |
-| `cli-developer` | sonnet | CLI UX: clap, TUI, output, error messages |
-| `test-runner` | haiku | Run tests, diagnose failures, report results |
-| `security-auditor` | sonnet | Unsafe code, privilege escalation, CVEs |
-
-### Quality & Optimization Agents
-| Agent | Model | Use For |
-|-------|-------|---------|
-| `linter` | haiku | Clippy, rustfmt, import order, code standards |
-| `dead-code-hunter` | sonnet | Unused code, deps, features detection |
-| `optimizer` | sonnet | Allocation reduction, zero-copy, binary size |
-| `perf-profiler` | sonnet | Benchmarks, flamegraphs, runtime optimization |
-| `code-reviewer` | sonnet | Review changes, style compliance, quality gates |
-
-### Safety & Security Agents
-| Agent | Model | Use For |
-|-------|-------|---------|
-| `ffi-auditor` | sonnet | libalpm/rust-apt FFI safety, memory safety |
-| `async-inspector` | sonnet | Tokio patterns, blocking detection, cancellation |
-| `dependency-auditor` | sonnet | CVEs, licenses, supply chain security |
-
-### Research & Discovery Agents
-| Agent | Model | Use For |
-|-------|-------|---------|
-| `crate-scout` | sonnet | Find faster/better crate alternatives |
-| `docs-researcher` | sonnet | Rust best practices, ecosystem updates |
-
-### UX & Compatibility Agents
-| Agent | Model | Use For |
-|-------|-------|---------|
-| `api-consistency` | sonnet | PackageManager trait, CLI interface, API design |
-| `error-ux` | haiku | User-facing error message quality |
-| `cross-platform` | sonnet | Feature parity, platform guards, portability |
-
-### Continuous Improvement Agents
-| Agent | Model | Use For |
-|-------|-------|---------|
-| `e2e-architect` | sonnet | E2E test design, coverage, integration scenarios |
-| `github-scout` | sonnet | OSS research, best practices from top projects |
-| `modernizer` | sonnet | Rust evolution, deprecated patterns, new idioms |
-| `enterprise-qa` | sonnet | Coverage, mutation testing, fuzzing, certification |
-| `refactorer` | sonnet | Safe refactoring, dead code removal, structure |
-
-### Orchestration
-| Agent | Model | Use For |
-|-------|-------|---------|
-| `swarm-lead` | opus | Orchestrate parallel multi-agent tasks |
-
-### Website & Dashboard Agents (Project-Specific)
-
-These agents are tightly integrated with OMG's actual infrastructure (D1, KV, R2, SolidStart 1.2.1):
-
-| Agent | Model | Use For |
-|-------|-------|---------|
-| `omg-frontend` | sonnet | SolidStart routes, createAsync, Kobalte, TanStack Query |
-| `omg-backend` | sonnet | Worker handlers, D1 queries, rate limiting, Stripe |
-| `omg-admin-dashboard` | opus | CRM features, health scoring, admin analytics |
-| `omg-telemetry` | sonnet | Rust client + Worker ingestion, circuit breaker, privacy |
-| `omg-d1-specialist` | sonnet | D1 schema, migrations, query optimization |
-| `omg-site-testing` | haiku | Vitest, SolidJS testing-library, Worker tests |
-| `omg-stripe-billing` | sonnet | Checkout, webhooks, subscription management |
-| `omg-auth-specialist` | sonnet | Better Auth, OAuth, session bridging |
-| `omg-seo` | haiku | Meta tags, sitemap, robots.txt, Core Web Vitals |
-| `omg-realtime` | opus | Durable Objects, WebSockets, live command feed |
-
-**Infrastructure Bindings (from wrangler.toml):**
-```
-Site (omg-site):     DB → omg-auth-db, BETTER_AUTH_KV
-Workers (omg-saas):  DB → omg-licensing, ANALYTICS_DB → omg-analytics
-                     CACHE, SESSIONS, FLAGS (KV), ASSETS (R2)
-                     Rate limiters: ADMIN (100/min), AUTH (10/min), API (100/min)
-```
-
-**Swarm Patterns** for parallel agent teams:
-
-- **Code Quality Swarm:** `linter` + `dead-code-hunter` + `code-reviewer`
-- **Safety Swarm:** `security-auditor` + `ffi-auditor` + `dependency-auditor` + `async-inspector`
-- **Performance Swarm:** `perf-profiler` + `optimizer` + `crate-scout`
-- **Research Swarm:** `docs-researcher` + `crate-scout` + `dead-code-hunter`
-- **UX Swarm:** `error-ux` + `api-consistency` + `cli-developer`
-- **Platform Swarm:** `cross-platform` + multiple backend-specific agents
-- **Test Swarm:** Multiple `test-runner` agents for unit/e2e/property/security tests
-- **Full Audit Swarm:** All agents for comprehensive project review
-- **Pre-Release Swarm:** `test-runner` + safety swarm + `code-reviewer` + `cross-platform`
-- **Continuous Improvement Swarm:** `github-scout` + `modernizer` + `refactorer` + `crate-scout`
-- **Enterprise QA Swarm:** `e2e-architect` + `enterprise-qa` + `test-runner` + `perf-profiler`
-- **Website Swarm:** `omg-frontend` + `omg-backend` + `omg-admin-dashboard` + `omg-telemetry`
-- **Full Site Audit:** All `omg-*` agents for comprehensive website review
+Use focused specialist agents only when they materially improve quality or speed.
+Prefer a single execution path with targeted delegation for discovery/review.
 
 **Hooks:** `cargo fmt` runs automatically after Rust file edits.
 
