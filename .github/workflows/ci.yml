@@ -112,13 +112,18 @@ jobs:
       - name: Compile check
         run: cargo check --all-targets --no-default-features --features pgp,license --locked
 
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+
       - name: Debian feature isolation check
         run: |
           cargo check --all-targets --no-default-features \
             --features debian-pure,debian-deb822-backend,debian-resolvo --locked
 
       - name: Run portable tests
-        run: cargo test --lib --no-default-features --features pgp,license --locked
+        run: |
+          cargo nextest run --lib --no-default-features --features pgp,license \
+            --locked --profile ci
 
   #############################################################################
   # STAGE 2: Platform Matrix (Linux containers)
@@ -311,8 +316,13 @@ jobs:
       - name: Build
         run: cargo build --release --no-default-features --features macos,license --locked
 
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+
       - name: Run unit tests
-        run: cargo test --lib --no-default-features --features macos,license --locked
+        run: |
+          cargo nextest run --lib --no-default-features --features macos,license \
+            --locked --profile ci
 
       - name: Install Homebrew test packages
         run: |
@@ -357,8 +367,13 @@ jobs:
       - name: Build
         run: cargo build --release --no-default-features --features windows,license --locked
 
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+
       - name: Run unit tests
-        run: cargo test --lib --no-default-features --features windows,license --locked
+        run: |
+          cargo nextest run --lib --no-default-features --features windows,license \
+            --locked --profile ci
 
       - name: Install Scoop
         shell: pwsh
