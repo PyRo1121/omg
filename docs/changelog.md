@@ -432,6 +432,170 @@ Capture the reliability hardening, platform-semantic CLI refactor, and Debian re
 - Harden CI reproducibility and release-readiness checklist
 ### 📦 Dependencies
 
+- **Deps**: Bump the dependencies group with 8 updates ([#32](https://github.com/PyRo1121/omg/issues/32))
+
+Bumps the dependencies group with 8 updates:
+
+| Package | From | To |
+
+| --  - | --  - | --  - |
+
+| [clap](https://github.com/clap-rs/clap) | `4.5.58` | `4.5.59` |
+
+| [futures](https://github.com/rust-lang/futures-rs) | `0.3.31` | `0.3.32` |
+
+| [toml](https://github.com/toml-rs/toml) | `1.0.0+spec-1.1.0` | `1.0.2+spec-1.1.0` |
+
+| [zip](https://github.com/zip-rs/zip2) | `7.4.0` | `8.1.0` |
+
+| [memmap2](https://github.com/RazrFalcon/memmap2-rs) | `0.9.9` | `0.9.10` |
+
+| [indicatif](https://github.com/console-rs/indicatif) | `0.18.3` | `0.18.4` |
+
+| [uuid](https://github.com/uuid-rs/uuid) | `1.20.0` | `1.21.0` |
+
+| [quick-xml](https://github.com/tafia/quick-xml) | `0.39.0` | `0.39.1` |
+
+Updates `clap` from 4.5.58 to 4.5.59
+
+  - [Release notes](https://github.com/clap-rs/clap/releases)
+
+  - [Changelog](https://github.com/clap-rs/clap/blob/master/CHANGELOG.md)
+
+  - [Commits](https://github.com/clap-rs/clap/compare/clap_complete-v4.5.58...clap_complete-v4.5.59)
+
+Updates `futures` from 0.3.31 to 0.3.32
+
+  - [Release notes](https://github.com/rust-lang/futures-rs/releases)
+
+  - [Changelog](https://github.com/rust-lang/futures-rs/blob/master/CHANGELOG.md)
+
+  - [Commits](https://github.com/rust-lang/futures-rs/compare/0.3.31...0.3.32)
+
+Updates `toml` from 1.0.0+spec-1.1.0 to 1.0.2+spec-1.1.0
+
+  - [Commits](https://github.com/toml-rs/toml/compare/toml-v1.0.0...toml-v1.0.2)
+
+Updates `zip` from 7.4.0 to 8.1.0
+
+  - [Release notes](https://github.com/zip-rs/zip2/releases)
+
+  - [Changelog](https://github.com/zip-rs/zip2/blob/master/CHANGELOG.md)
+
+  - [Commits](https://github.com/zip-rs/zip2/compare/v7.4.0...v8.1.0)
+
+Updates `memmap2` from 0.9.9 to 0.9.10
+
+  - [Changelog](https://github.com/RazrFalcon/memmap2-rs/blob/master/CHANGELOG.md)
+
+  - [Commits](https://github.com/RazrFalcon/memmap2-rs/compare/v0.9.9...v0.9.10)
+
+Updates `indicatif` from 0.18.3 to 0.18.4
+
+  - [Release notes](https://github.com/console-rs/indicatif/releases)
+
+  - [Commits](https://github.com/console-rs/indicatif/compare/0.18.3...0.18.4)
+
+Updates `uuid` from 1.20.0 to 1.21.0
+
+  - [Release notes](https://github.com/uuid-rs/uuid/releases)
+
+  - [Commits](https://github.com/uuid-rs/uuid/compare/v1.20.0...v1.21.0)
+
+Updates `quick-xml` from 0.39.0 to 0.39.1
+
+  - [Release notes](https://github.com/tafia/quick-xml/releases)
+
+  - [Changelog](https://github.com/tafia/quick-xml/blob/master/Changelog.md)
+
+  - [Commits](https://github.com/tafia/quick-xml/compare/v0.39.0...v0.39.1)
+
+---
+
+updated-dependencies:
+
+  - dependency-name: clap
+
+dependency-version: 4.5.59
+
+dependency-type: direct:production
+
+update-type: version-update:semver-patch
+
+dependency-group: dependencies
+
+  - dependency-name: futures
+
+dependency-version: 0.3.32
+
+dependency-type: direct:production
+
+update-type: version-update:semver-patch
+
+dependency-group: dependencies
+
+  - dependency-name: toml
+
+dependency-version: 1.0.2+spec-1.1.0
+
+dependency-type: direct:production
+
+update-type: version-update:semver-patch
+
+dependency-group: dependencies
+
+  - dependency-name: zip
+
+dependency-version: 8.1.0
+
+dependency-type: direct:production
+
+update-type: version-update:semver-major
+
+dependency-group: dependencies
+
+  - dependency-name: memmap2
+
+dependency-version: 0.9.10
+
+dependency-type: direct:production
+
+update-type: version-update:semver-patch
+
+dependency-group: dependencies
+
+  - dependency-name: indicatif
+
+dependency-version: 0.18.4
+
+dependency-type: direct:production
+
+update-type: version-update:semver-patch
+
+dependency-group: dependencies
+
+  - dependency-name: uuid
+
+dependency-version: 1.21.0
+
+dependency-type: direct:production
+
+update-type: version-update:semver-minor
+
+dependency-group: dependencies
+
+  - dependency-name: quick-xml
+
+dependency-version: 0.39.1
+
+dependency-type: direct:production
+
+update-type: version-update:semver-patch
+
+dependency-group: dependencies
+
+...
+
 - **Deps**: Bump @isaacs/brace-expansion ([#26](https://github.com/PyRo1121/omg/issues/26))
 
 Bumps the npm_and_yarn group with 1 update in the /site directory: @isaacs/brace-expansion.
