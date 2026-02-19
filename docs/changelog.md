@@ -534,6 +534,7 @@ dependency-group: dependencies
 
 ### 🔧 Maintenance
 
+- **Repo**: Split web assets into dedicated omg-web repository
 - Sync Cargo.lock version to 0.1.214
 - **Deps**: Bump the dependencies group across 1 directory with 11 updates ([#31](https://github.com/PyRo1121/omg/issues/31))
 
