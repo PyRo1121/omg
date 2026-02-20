@@ -326,11 +326,11 @@ async fn test_error_git_clone_failure() {
 }
 
 #[tokio::test]
-async fn test_error_git_pull_conflict() {
+async fn test_error_git_pull_failure_recovers_by_reclone() {
     require_system_tests!();
     require_arch!();
 
-    println!("\n=== Test: Git Pull Conflict ===");
+    println!("\n=== Test: Git Pull Failure Recovery via Reclone ===");
 
     let package = "yay-bin";
 
@@ -342,18 +342,24 @@ async fn test_error_git_pull_conflict() {
 
     let cache_dir = get_aur_cache_dir().join(package);
 
-    // Modify local PKGBUILD to create conflict
-    let pkgbuild = cache_dir.join("PKGBUILD");
-    if pkgbuild.exists() {
-        let mut content = fs::read_to_string(&pkgbuild).unwrap_or_default();
-        content.push_str("\n# Local modification that will conflict\n");
-        fs::write(&pkgbuild, content).ok();
-
-        // Try to update - may fail or auto-resolve
-        let _ = run_omg(&["install", package]);
+    let git_dir = cache_dir.join(".git");
+    if git_dir.exists() {
+        fs::remove_dir_all(&git_dir).expect("Failed to remove .git to simulate pull failure");
     }
 
-    println!("✓ Git conflict handling tested");
+    let recovery = run_omg(&["install", package]);
+    recovery.assert_success();
+
+    assert!(
+        cache_dir.join(".git").exists(),
+        "AUR cache should be recloned after git pull failure"
+    );
+    assert!(
+        cache_dir.join("PKGBUILD").exists(),
+        "Recovered checkout should contain PKGBUILD"
+    );
+
+    println!("✓ Git pull failure recovered by automatic reclone");
 }
 
 #[tokio::test]

@@ -348,10 +348,17 @@ pub fn execute_transaction(
         ]
     });
 
+    let mut registered_syncdbs = 0usize;
     for db_name in &repos {
         if let Err(e) = alpm.register_syncdb(db_name.as_str(), alpm::SigLevel::USE_DEFAULT) {
             tracing::warn!("Failed to register sync database '{db_name}': {e}");
+        } else {
+            registered_syncdbs += 1;
         }
+    }
+
+    if registered_syncdbs == 0 {
+        anyhow::bail!(format_no_syncdb_error());
     }
 
     configure_mirrors(&mut alpm)?;
@@ -570,14 +577,8 @@ fn prepare_alpm_transaction(
 fn commit_alpm_transaction(alpm: &mut alpm::Alpm, main_pb: &indicatif::ProgressBar) -> Result<()> {
     main_pb.set_message("Preparing transaction...");
 
-    alpm.trans_prepare().map_err(|e| {
-        anyhow::anyhow!(
-            "✗ Transaction preparation failed: {e}\n  \
-             → This may be due to conflicting packages or missing dependencies.\n  \
-             → Try running: omg update && omg install <package>\n  \
-             → For more details: omg info <package>"
-        )
-    })?;
+    alpm.trans_prepare()
+        .map_err(|e| anyhow::anyhow!(format_trans_prepare_error(&e.to_string())))?;
 
     #[cfg(feature = "pgp")]
     {
@@ -649,6 +650,78 @@ fn commit_alpm_transaction(alpm: &mut alpm::Alpm, main_pb: &indicatif::ProgressB
     main_pb.finish_and_clear();
 
     Ok(())
+}
+
+fn is_keyring_related_error(err: &str) -> bool {
+    let lower = err.to_ascii_lowercase();
+    lower.contains("keyring")
+        || lower.contains("signature")
+        || lower.contains("pgp")
+        || lower.contains("corrupt")
+}
+
+fn format_no_syncdb_error() -> String {
+    "✗ Failed to register any package repositories.\n  \
+     → This is commonly caused by an uninitialized Arch keyring or broken pacman configuration.\n  \
+     → Try: sudo pacman -Sy archlinux-keyring\n  \
+     → Then: sudo pacman-key --init && sudo pacman-key --populate archlinux\n  \
+     → Finally retry: omg sync && omg install <package>"
+        .to_string()
+}
+
+fn format_trans_prepare_error(err: &str) -> String {
+    if is_keyring_related_error(err) {
+        return format!(
+            "✗ Transaction preparation failed: {err}\n  \
+             → Arch keyring/signature validation appears unhealthy.\n  \
+             → Repair: sudo pacman -Sy archlinux-keyring\n  \
+             → Reinitialize keys: sudo pacman-key --init && sudo pacman-key --populate archlinux\n  \
+             → Retry: omg sync && omg install <package>"
+        );
+    }
+
+    format!(
+        "✗ Transaction preparation failed: {err}\n  \
+         → This may be due to conflicting packages or missing dependencies.\n  \
+         → Try running: omg update && omg install <package>\n  \
+         → For more details: omg info <package>"
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{format_no_syncdb_error, format_trans_prepare_error, is_keyring_related_error};
+
+    #[test]
+    fn keyring_error_detection_matches_expected_keywords() {
+        assert!(is_keyring_related_error(
+            "invalid or corrupted package (PGP signature)"
+        ));
+        assert!(is_keyring_related_error("keyring is not writable"));
+        assert!(!is_keyring_related_error("conflicting dependencies"));
+    }
+
+    #[test]
+    fn keyring_prepare_errors_include_repair_commands() {
+        let msg = format_trans_prepare_error("invalid or corrupted package");
+        assert!(msg.contains("archlinux-keyring"));
+        assert!(msg.contains("pacman-key --init"));
+        assert!(msg.contains("omg sync && omg install <package>"));
+    }
+
+    #[test]
+    fn generic_prepare_errors_keep_dependency_guidance() {
+        let msg = format_trans_prepare_error("unresolvable package conflicts detected");
+        assert!(msg.contains("conflicting packages or missing dependencies"));
+        assert!(msg.contains("omg update && omg install <package>"));
+    }
+
+    #[test]
+    fn no_syncdb_error_includes_keyring_recovery_hint() {
+        let msg = format_no_syncdb_error();
+        assert!(msg.contains("Failed to register any package repositories"));
+        assert!(msg.contains("sudo pacman -Sy archlinux-keyring"));
+    }
 }
 
 /// Configure ALPM servers for all repos (official + custom)
