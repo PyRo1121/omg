@@ -242,7 +242,7 @@ jobs:
         run: |
           if [[ "${{ matrix.platform }}" == "fedora" ]]; then
             cargo nextest run --test fedora_tests --no-default-features --features ${{ matrix.features }} \
-              --locked --profile ci --no-fail-fast || echo "::warning::Some Fedora tests failed"
+              --locked --profile ci --no-fail-fast
           fi
 
       - name: Debian deterministic benchmark regression check
@@ -591,8 +591,8 @@ jobs:
   #############################################################################
   integration:
     name: "Integration Tests"
-    needs: [linux-matrix]
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || inputs.full-test == true
+    needs: [quick-gate, linux-matrix]
+    if: needs.quick-gate.outputs.should-build == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     container:
@@ -626,14 +626,24 @@ jobs:
           OMG_TEST_COMMAND_TIMEOUT_SECS: "10"
         run: |
           cargo nextest run --test '*' --features arch,license --locked --profile ci --no-fail-fast \
-            2>&1 || echo "::warning::Some integration tests failed"
+            2>&1
+
+      - name: Run Arch AUR canary tests (blocking)
+        env:
+          OMG_RUN_SYSTEM_TESTS: "1"
+          OMG_TEST_COMMAND_TIMEOUT_SECS: "20"
+        run: |
+          cargo test --test aur_error_recovery --features arch,license --locked \
+            test_error_git_pull_failure_recovers_by_reclone -- --exact --nocapture
+          cargo test --test aur_error_recovery --features arch,license --locked \
+            test_canary_ladybird_git_dry_run_detects_aur_source -- --exact --nocapture
 
   #############################################################################
   # STAGE 4: Final Status Gate
   #############################################################################
   ci-success:
     name: "CI Success"
-    needs: [quick-gate, linux-matrix, macos, windows, coverage-aggregate]
+    needs: [quick-gate, linux-matrix, macos, windows, coverage-aggregate, integration]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -645,6 +655,7 @@ jobs:
           MACOS: ${{ needs.macos.result }}
           WINDOWS: ${{ needs.windows.result }}
           COVERAGE: ${{ needs.coverage-aggregate.result }}
+          INTEGRATION: ${{ needs.integration.result }}
         run: |
           echo "## CI Results Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -654,6 +665,7 @@ jobs:
           echo "| Linux Matrix | $LINUX_MATRIX |" >> $GITHUB_STEP_SUMMARY
           echo "| macOS | $MACOS |" >> $GITHUB_STEP_SUMMARY
           echo "| Windows | $WINDOWS |" >> $GITHUB_STEP_SUMMARY
+          echo "| Integration | $INTEGRATION |" >> $GITHUB_STEP_SUMMARY
           echo "| Coverage | $COVERAGE |" >> $GITHUB_STEP_SUMMARY
 
           if [[ "$QUICK_GATE" != "success" ]]; then
@@ -661,7 +673,7 @@ jobs:
             exit 1
           fi
 
-          for result in "$LINUX_MATRIX" "$MACOS" "$WINDOWS"; do
+          for result in "$LINUX_MATRIX" "$MACOS" "$WINDOWS" "$INTEGRATION"; do
             if [[ "$result" == "failure" ]]; then
               echo "::error::Platform build failed"
               exit 1
