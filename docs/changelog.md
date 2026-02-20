@@ -11,6 +11,16 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ---
 
 ## [Unreleased]
+### 🐛 Bug Fixes
+
+- **Clippy**: Move configure_mirrors before test module
+
+Fixes clippy::items_after_test_module on Arch (Rust 1.93+).
+
+The configure_mirrors function was placed after #[cfg(test)] mod tests,
+
+which newer clippy versions flag as an error with -D warnings.
+
 ### 🧪 Testing
 
 - **Ci**: Make integration gating strict with Arch AUR canaries
