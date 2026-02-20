@@ -322,15 +322,16 @@ async fn test_parallel_write_safety() -> Result<()> {
             // Acquire exclusive access
             let _permit = sem.acquire().await.unwrap();
 
-            // Append to file
-            let content = format!("write {i}\n");
-            fs::OpenOptions::new()
+            // Append to file with explicit flush to ensure data is written
+            // before the semaphore permit is released
+            let mut file = fs::OpenOptions::new()
                 .create(true)
                 .append(true)
                 .open(&path)
-                .await?
-                .write_all(content.as_bytes())
                 .await?;
+            let content = format!("write {i}\n");
+            file.write_all(content.as_bytes()).await?;
+            file.flush().await?;
 
             Ok::<_, anyhow::Error>(())
         }));
