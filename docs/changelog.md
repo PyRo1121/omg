@@ -11,6 +11,13 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ---
 
 ## [Unreleased]
+### 🧪 Testing
+
+- **Ci**: Make integration gating strict with Arch AUR canaries
+
+Remove failure-masking patterns from CI, make integration a required status in the final gate, and add blocking Arch AUR canary tests including ladybird-git dry-run resolution. Also harden git pull recovery canary to auto-skip only when non-interactive sudo is unavailable.
+
+## [0.1.214] - 2026-02-20
 ### Merge
 
 - Incorporate remote changelog update
