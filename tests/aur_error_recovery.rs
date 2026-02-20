@@ -330,6 +330,12 @@ async fn test_error_git_pull_failure_recovers_by_reclone() {
     require_system_tests!();
     require_arch!();
 
+    // makepkg refuses to run as root — skip in root CI containers
+    if rustix::process::geteuid().is_root() {
+        eprintln!("⏭️  Skipping: makepkg cannot run as root (CI Docker container)");
+        return;
+    }
+
     println!("\n=== Test: Git Pull Failure Recovery via Reclone ===");
 
     let package = "yay-bin";
