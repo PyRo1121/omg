@@ -688,42 +688,6 @@ fn format_trans_prepare_error(err: &str) -> String {
     )
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{format_no_syncdb_error, format_trans_prepare_error, is_keyring_related_error};
-
-    #[test]
-    fn keyring_error_detection_matches_expected_keywords() {
-        assert!(is_keyring_related_error(
-            "invalid or corrupted package (PGP signature)"
-        ));
-        assert!(is_keyring_related_error("keyring is not writable"));
-        assert!(!is_keyring_related_error("conflicting dependencies"));
-    }
-
-    #[test]
-    fn keyring_prepare_errors_include_repair_commands() {
-        let msg = format_trans_prepare_error("invalid or corrupted package");
-        assert!(msg.contains("archlinux-keyring"));
-        assert!(msg.contains("pacman-key --init"));
-        assert!(msg.contains("omg sync && omg install <package>"));
-    }
-
-    #[test]
-    fn generic_prepare_errors_keep_dependency_guidance() {
-        let msg = format_trans_prepare_error("unresolvable package conflicts detected");
-        assert!(msg.contains("conflicting packages or missing dependencies"));
-        assert!(msg.contains("omg update && omg install <package>"));
-    }
-
-    #[test]
-    fn no_syncdb_error_includes_keyring_recovery_hint() {
-        let msg = format_no_syncdb_error();
-        assert!(msg.contains("Failed to register any package repositories"));
-        assert!(msg.contains("sudo pacman -Sy archlinux-keyring"));
-    }
-}
-
 /// Configure ALPM servers for all repos (official + custom)
 fn configure_mirrors(alpm: &mut alpm::Alpm) -> Result<()> {
     let conf_path = paths::pacman_conf_path();
@@ -775,4 +739,40 @@ fn configure_mirrors(alpm: &mut alpm::Alpm) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{format_no_syncdb_error, format_trans_prepare_error, is_keyring_related_error};
+
+    #[test]
+    fn keyring_error_detection_matches_expected_keywords() {
+        assert!(is_keyring_related_error(
+            "invalid or corrupted package (PGP signature)"
+        ));
+        assert!(is_keyring_related_error("keyring is not writable"));
+        assert!(!is_keyring_related_error("conflicting dependencies"));
+    }
+
+    #[test]
+    fn keyring_prepare_errors_include_repair_commands() {
+        let msg = format_trans_prepare_error("invalid or corrupted package");
+        assert!(msg.contains("archlinux-keyring"));
+        assert!(msg.contains("pacman-key --init"));
+        assert!(msg.contains("omg sync && omg install <package>"));
+    }
+
+    #[test]
+    fn generic_prepare_errors_keep_dependency_guidance() {
+        let msg = format_trans_prepare_error("unresolvable package conflicts detected");
+        assert!(msg.contains("conflicting packages or missing dependencies"));
+        assert!(msg.contains("omg update && omg install <package>"));
+    }
+
+    #[test]
+    fn no_syncdb_error_includes_keyring_recovery_hint() {
+        let msg = format_no_syncdb_error();
+        assert!(msg.contains("Failed to register any package repositories"));
+        assert!(msg.contains("sudo pacman -Sy archlinux-keyring"));
+    }
 }
