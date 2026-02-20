@@ -88,6 +88,10 @@ file still exists, triggers graceful shutdown if deleted externally
 
 ### 🐛 Bug Fixes
 
+- **Aur**: Harden -git install recovery and dependency flow
+
+Auto-recover stale AUR checkouts by recloning on git pull failures, detect AUR-only missing deps before building, and fail fast with actionable guidance when sudo is unavailable in non-interactive runs. Also improve ALPM keyring/repo error hints and add regression coverage.
+
 - **Ci**: Prevent property test timeouts in integration job
 
   - Reduce proptest case count for subprocess-spawning tests (50→10, unlimited→10)
