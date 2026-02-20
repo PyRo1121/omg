@@ -337,7 +337,14 @@ async fn test_error_git_pull_failure_recovers_by_reclone() {
     cleanup_package(package);
 
     // First install
-    let result = run_omg(&["install", package]);
+    let result = run_omg(&["install", "--yes", package]);
+    if !result.success {
+        let output = result.combined_output();
+        if output.contains("non-interactive session without passwordless sudo") {
+            eprintln!("⏭️  Skipping: sudo not available in non-interactive test environment");
+            return;
+        }
+    }
     result.assert_success();
 
     let cache_dir = get_aur_cache_dir().join(package);
@@ -347,7 +354,14 @@ async fn test_error_git_pull_failure_recovers_by_reclone() {
         fs::remove_dir_all(&git_dir).expect("Failed to remove .git to simulate pull failure");
     }
 
-    let recovery = run_omg(&["install", package]);
+    let recovery = run_omg(&["install", "--yes", package]);
+    if !recovery.success {
+        let output = recovery.combined_output();
+        if output.contains("non-interactive session without passwordless sudo") {
+            eprintln!("⏭️  Skipping: sudo not available in non-interactive test environment");
+            return;
+        }
+    }
     recovery.assert_success();
 
     assert!(
@@ -360,6 +374,29 @@ async fn test_error_git_pull_failure_recovers_by_reclone() {
     );
 
     println!("✓ Git pull failure recovered by automatic reclone");
+}
+
+#[tokio::test]
+async fn test_canary_ladybird_git_dry_run_detects_aur_source() {
+    require_system_tests!();
+    require_arch!();
+
+    println!("\n=== Canary: ladybird-git dry-run resolution ===");
+
+    let result = run_omg(&["install", "--yes", "--dry-run", "ladybird-git"]);
+    result.assert_success();
+
+    let output = result.combined_output();
+    assert!(
+        output.contains("ladybird-git"),
+        "dry-run output should include ladybird-git"
+    );
+    assert!(
+        output.contains("AUR") || output.contains("AUR?") || output.contains("User-submitted"),
+        "dry-run should classify ladybird-git as AUR package"
+    );
+
+    println!("✓ ladybird-git canary resolves through AUR dry-run path");
 }
 
 #[tokio::test]
