@@ -114,3 +114,4 @@ workers/
 # ---- Local orchestration working files ----
 tasks/
 .opencode/
+.tmp/

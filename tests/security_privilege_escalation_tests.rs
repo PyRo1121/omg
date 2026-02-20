@@ -52,16 +52,25 @@ mod privilege_escalation {
 
         let empty_args = Vec::new();
 
-        // Allowed operations - should fail with test mode message (not whitelist rejection)
-        // The whitelist check happens before elevation, so these pass the whitelist check
-        // but fail during actual elevation with the test mode message
+        // Allowed operations - should either:
+        // 1. Fail with test mode message (not whitelist rejection) — when NOT root
+        // 2. Succeed (Ok(())) — when already running as root (e.g., CI Docker containers)
+        //    because elevate_if_needed() sees is_root()==true and skips elevation.
         let result = elevate_for_operation("install", &empty_args);
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(
-            err.contains("not supported in development mode") || err.contains("OMG_TEST_MODE"),
-            "Expected test mode error, got: {err}",
-        );
+        match &result {
+            Ok(()) => {
+                // Running as root — elevation was not needed, which is correct.
+                // This happens in CI Docker containers.
+            }
+            Err(err) => {
+                let err_str = err.to_string();
+                assert!(
+                    err_str.contains("not supported in development mode")
+                        || err_str.contains("OMG_TEST_MODE"),
+                    "Expected test mode error, got: {err_str}",
+                );
+            }
+        }
 
         // For the rest, just verify they don't panic and the error is not about whitelist
         for op in ["remove", "upgrade", "update", "sync", "clean"] {

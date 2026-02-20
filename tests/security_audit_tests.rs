@@ -220,8 +220,13 @@ mod unsafe_code_tests {
         use omg_lib::core::privilege::is_root;
         let is_root_val = is_root();
 
-        // In tests, we're typically not root
-        assert!(!is_root_val || cfg!(feature = "docker_tests"));
+        // In tests, we're typically not root — UNLESS running in CI Docker
+        // containers (which run as root by default) or with docker_tests feature.
+        let in_ci = std::env::var("CI").is_ok() || std::env::var("GITHUB_ACTIONS").is_ok();
+        assert!(
+            !is_root_val || cfg!(feature = "docker_tests") || in_ci,
+            "Expected non-root outside of Docker/CI environments"
+        );
     }
 
     /// Validate unsafe transmute in `core/fast_status.rs`
