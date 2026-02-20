@@ -714,13 +714,39 @@ impl AurClient {
         // than mid-build when it would be confusing.
         #[cfg(unix)]
         if !crate::core::caps::can_write_pacman_db() && !crate::core::is_root() {
-            let _ = tokio::process::Command::new("sudo")
+            if !console::user_attended() {
+                let status = tokio::process::Command::new("sudo")
+                    .args(["-n", "true"])
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()
+                    .await
+                    .context("Failed to check non-interactive sudo availability")?;
+                if !status.success() {
+                    anyhow::bail!(
+                        "AUR builds need sudo to install build dependencies, but this is a non-interactive session without passwordless sudo.\n  \
+                         → Run from a real terminal, or configure sudo NOPASSWD for build operations.\n  \
+                         → Then retry: omg install {package}"
+                    );
+                }
+            }
+
+            let status = tokio::process::Command::new("sudo")
                 .arg("-v")
                 .stdin(std::process::Stdio::inherit())
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::inherit())
                 .status()
-                .await;
+                .await
+                .context("Failed to acquire sudo credentials for AUR build")?;
+            if !status.success() {
+                anyhow::bail!(
+                    "Failed to acquire sudo credentials required for AUR dependency installation.\n  \
+                     → Re-run in an interactive terminal and authenticate when prompted.\n  \
+                     → Then retry: omg install {package}"
+                );
+            }
         }
 
         // Start sudoloop for long build operations.
@@ -742,12 +768,36 @@ impl AurClient {
         if pkg_dir.exists() {
             let pull_pb =
                 crate::cli::modern_ui::modern_spinner("Updating", &format!("{package} source"));
-            self.git_pull(&pkg_dir).await.map_err(|e| {
+            if let Err(e) = self.git_pull(&pkg_dir).await {
                 crate::cli::modern_ui::finish_clear(&pull_pb);
-                tracing::warn!("Git pull failed for {}: {}", package, e);
-                AurError::GitPullFailed(package.to_string())
-            })?;
-            crate::cli::modern_ui::finish_success(&pull_pb, "Updated", "source from AUR");
+                tracing::warn!(
+                    "Git pull failed for {}: {}. Recovering by recloning package repository.",
+                    package,
+                    e
+                );
+
+                remove_dir_as_user(&pkg_dir).await.map_err(|cleanup_err| {
+                    tracing::warn!(
+                        "Failed to remove stale AUR cache for {}: {}",
+                        package,
+                        cleanup_err
+                    );
+                    AurError::GitPullFailed(package.to_string())
+                })?;
+
+                let recover_pb = crate::cli::modern_ui::modern_spinner(
+                    "Recovering",
+                    &format!("{package} source checkout"),
+                );
+                self.git_clone(package).await.map_err(|clone_err| {
+                    crate::cli::modern_ui::finish_clear(&recover_pb);
+                    tracing::warn!("Recovery clone failed for {}: {}", package, clone_err);
+                    AurError::GitPullFailed(package.to_string())
+                })?;
+                crate::cli::modern_ui::finish_success(&recover_pb, "Recovered", "source checkout");
+            } else {
+                crate::cli::modern_ui::finish_success(&pull_pb, "Updated", "source from AUR");
+            }
         } else {
             let clone_pb =
                 crate::cli::modern_ui::modern_spinner("Cloning", &format!("{package} from AUR"));
@@ -777,6 +827,21 @@ impl AurClient {
         Self::fetch_missing_pgp_keys(&pkgbuild_path).await;
 
         let env = self.makepkg_env(&pkg_dir)?;
+
+        let aur_deps = self.missing_aur_dependencies(&pkg_dir, package).await?;
+        for dep in aur_deps {
+            crate::cli::modern_ui::print_info(&format!(
+                "Installing AUR dependency for {package}: {dep}"
+            ));
+            let dep_pkg = self.build_only(&dep).await?;
+            Self::install_built_package(
+                &dep_pkg,
+                #[cfg(unix)]
+                sudoloop.as_ref(),
+            )
+            .await?;
+            crate::cli::modern_ui::print_success(&format!("Installed dependency: {dep}"));
+        }
 
         // Parse and download sources in parallel
         let sources = parse_sources(&pkg_dir).unwrap_or_default();
@@ -860,10 +925,25 @@ impl AurClient {
         let pkgbuild_path = pkg_dir.join("PKGBUILD");
 
         if pkg_dir.exists() && pkgbuild_path.exists() {
-            self.git_pull(&pkg_dir).await.map_err(|e| {
-                tracing::warn!("Git pull failed for {}: {}", package, e);
-                AurError::GitPullFailed(package.to_string())
-            })?;
+            if let Err(e) = self.git_pull(&pkg_dir).await {
+                tracing::warn!(
+                    "Git pull failed for {}: {}. Recovering by recloning package repository.",
+                    package,
+                    e
+                );
+                remove_dir_as_user(&pkg_dir).await.map_err(|cleanup_err| {
+                    tracing::warn!(
+                        "Failed to remove stale AUR cache for {}: {}",
+                        package,
+                        cleanup_err
+                    );
+                    AurError::GitPullFailed(package.to_string())
+                })?;
+                self.git_clone(package).await.map_err(|clone_err| {
+                    tracing::warn!("Recovery clone failed for {}: {}", package, clone_err);
+                    AurError::GitPullFailed(package.to_string())
+                })?;
+            }
         } else {
             if pkg_dir.exists() {
                 remove_dir_as_user(&pkg_dir).await.ok();
@@ -1043,6 +1123,50 @@ impl AurClient {
             .map(|info| info.pkgname.to_string())
             .or_else(|_| PackageInfoV1::from_str(content).map(|info| info.pkgname.to_string()))
             .ok()
+    }
+
+    async fn missing_aur_dependencies(&self, pkg_dir: &Path, package: &str) -> Result<Vec<String>> {
+        let dep_info = check_dependencies(pkg_dir).unwrap_or_else(|e| {
+            tracing::warn!("Unable to inspect dependencies for {}: {}", package, e);
+            crate::package_managers::aur_deps::DependencyInfo {
+                missing: Vec::new(),
+                satisfied: Vec::new(),
+                total: 0,
+            }
+        });
+
+        if dep_info.missing.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut aur_deps = Vec::new();
+        for dep in dep_info.missing {
+            let dep_name = dependency_name(&dep);
+            if dep_name.is_empty() || dep_name == package {
+                continue;
+            }
+
+            if crate::package_managers::get_sync_pkg_info(dep_name)
+                .ok()
+                .flatten()
+                .is_some()
+            {
+                continue;
+            }
+
+            let is_aur = self
+                .search(dep_name)
+                .await
+                .map(|results| results.iter().any(|pkg| pkg.name == dep_name))
+                .unwrap_or(false);
+            if is_aur {
+                aur_deps.push(dep_name.to_string());
+            }
+        }
+
+        aur_deps.sort();
+        aur_deps.dedup();
+        Ok(aur_deps)
     }
 
     /// Clone package from AUR (public for batch operations)
@@ -1232,13 +1356,11 @@ impl AurClient {
                 cmd.env("HOME", home_path);
             }
 
-            // Optimized clone: shallow + partial clone (skip blobs) + sparse checkout
             cmd.args([
                 "git",
                 "clone",
                 "--depth=1",
                 "--filter=blob:none", // Partial clone: download only needed blobs on demand
-                "--sparse",           // Enable sparse checkout for minimal working tree
                 "--",
                 &url,
                 dest_str.as_ref(),
@@ -1256,30 +1378,6 @@ impl AurClient {
             if !status.success() {
                 anyhow::bail!("git clone failed for {url}");
             }
-
-            // Configure sparse checkout to only materialize PKGBUILD and .SRCINFO
-            let mut sparse_cmd = Command::new("sudo");
-            sparse_cmd.args(["-u", &user]);
-            if let Some(ref home_path) = home {
-                sparse_cmd.arg("-H");
-                sparse_cmd.env("HOME", home_path);
-            }
-            sparse_cmd
-                .current_dir(&dest)
-                .env("GIT_TERMINAL_PROMPT", "0")
-                .stdin(std::process::Stdio::null())
-                .args([
-                    "git",
-                    "sparse-checkout",
-                    "set",
-                    "PKGBUILD",
-                    ".SRCINFO",
-                    "*.patch",
-                    "*.install",
-                ]);
-
-            // Run sparse-checkout (non-fatal if it fails - full clone still works)
-            let _ = sparse_cmd.status().await;
 
             spinner.finish_and_clear();
         } else {
@@ -2355,6 +2453,16 @@ fn create_spinner(msg: &str) -> ProgressBar {
     pb
 }
 
+fn dependency_name(dep: &str) -> &str {
+    for (idx, ch) in dep.char_indices() {
+        if matches!(ch, '>' | '<' | '=') {
+            return &dep[..idx];
+        }
+    }
+
+    dep
+}
+
 /// Search AUR with detailed info
 pub async fn search_detailed(query: &str) -> Result<Vec<AurPackageDetail>> {
     // SECURITY: Basic validation for search query
@@ -2756,5 +2864,13 @@ mod tests {
         let mixed = "AbCdEf1234567890";
         assert_eq!(validate_pgp_key_id(mixed), PgpKeyIdStatus::LongKeyId);
         assert!(is_pgp_key_id_safe(mixed));
+    }
+
+    #[test]
+    fn test_dependency_name_parses_constraints() {
+        assert_eq!(dependency_name("simdutf-git"), "simdutf-git");
+        assert_eq!(dependency_name("fast_float>=7.0"), "fast_float");
+        assert_eq!(dependency_name("foo<2.0"), "foo");
+        assert_eq!(dependency_name("bar=1.2.3"), "bar");
     }
 }
