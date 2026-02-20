@@ -13,6 +13,14 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ## [Unreleased]
 ### 🐛 Bug Fixes
 
+- **Tests**: Skip AUR install test when running as root
+
+makepkg refuses to run as root, so AUR install tests that actually
+
+build packages cannot work in CI Docker containers (which run as root).
+
+The dry-run canary test still runs since it only queries AUR metadata.
+
 - **Tests**: Harden integration tests for CI Docker containers
 
   - test_conflicting_flags: accept timeout/error as graceful handling
