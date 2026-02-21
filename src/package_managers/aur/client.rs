@@ -545,8 +545,13 @@ impl AurClient {
             .await?;
 
             if let Ok(Some(updates)) = result {
-                tracing::debug!("AUR update check completed via binary index");
-                return Ok(updates);
+                // Only return early if we actually found updates
+                // If index is stale and returned empty, continue to fallback
+                if !updates.is_empty() {
+                    tracing::debug!("AUR update check completed via binary index");
+                    return Ok(updates);
+                }
+                tracing::debug!("Binary index returned empty, falling back to RPC");
             }
         }
 
