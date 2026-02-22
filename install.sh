@@ -535,14 +535,47 @@ build_omg() {
 
     cd "$work_dir"
     
+    # Select features based on platform
+    # Linux: use distro-specific package manager + runtimes
+    # macOS/Windows: runtimes only (+ optional system PM integration)
+    local cargo_features=""
+    local detected_os
+    detected_os=$(detect_os)
+    local detected_distro
+    detected_distro=$(detect_distro)
+    
+    case "$detected_os" in
+        linux)
+            case "$detected_distro" in
+                arch)   cargo_features="--features arch,license,pgp" ;;
+                debian|ubuntu) cargo_features="--no-default-features --features debian,license" ;;
+                fedora) cargo_features="--no-default-features --features fedora,license,pgp" ;;
+                *)      cargo_features="--no-default-features --features fedora,license,pgp" ;;
+            esac
+            ;;
+        darwin)
+            cargo_features="--no-default-features --features macos,license,pgp"
+            ;;
+        windows)
+            cargo_features="--no-default-features --features windows,license"
+            ;;
+        *)
+            # Runtimes only — no system package manager
+            cargo_features="--no-default-features --features license"
+            ;;
+    esac
+    
+    info "Build features: ${cargo_features}"
     export RUSTFLAGS="-C target-cpu=native"
     start_spinner "Compiling binary (release)"
-    if cargo build --release --quiet >/dev/null 2>&1; then
+    # shellcheck disable=SC2086
+    if cargo build --release --quiet ${cargo_features} >/dev/null 2>&1; then
         stop_spinner "Build successful"
     else
         fail_spinner "Build failed"
         printf "\n${RED}Build output:${RESET}\n"
-        cargo build --release
+        # shellcheck disable=SC2086
+        cargo build --release ${cargo_features}
         exit 1
     fi
 
