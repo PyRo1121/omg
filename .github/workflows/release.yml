@@ -376,3 +376,64 @@ jobs:
           generate_release_notes: false
           draft: false
           prerelease: ${{ contains(github.ref, '-rc') || contains(github.ref, '-beta') || contains(github.ref, '-alpha') }}
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # SYNC TO CLOUDFLARE R2 (releases.pyro1121.com)
+  # ════════════════════════════════════════════════════════════════════════════
+
+  sync-r2:
+    name: "Sync to Cloudflare R2"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [release]
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'false')
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          path: artifacts
+
+      - name: Collect Files
+        run: |
+          mkdir release
+          find artifacts -name "*.tar.gz*" -exec cp {} release/ \;
+          find artifacts -name "*.zip*" -exec cp {} release/ \;
+          ls -la release/
+
+      - name: Install Wrangler
+        run: npm install -g wrangler
+
+      - name: Upload latest-version marker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          echo -n "$VERSION" > release/latest-version
+          wrangler r2 object put "omg-releases/latest-version" \
+            --file=release/latest-version \
+            --content-type="text/plain"
+          echo "✓ Updated latest-version → $VERSION"
+
+      - name: Upload release artifacts to R2
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          for artifact in release/omg-v*.tar.gz release/omg-v*.zip; do
+            [ -f "$artifact" ] || continue
+            basename=$(basename "$artifact")
+            content_type="application/octet-stream"
+            wrangler r2 object put "omg-releases/$basename" \
+              --file="$artifact" \
+              --content-type="$content_type"
+            echo "✓ Uploaded $basename"
+          done
+          
+          for checksum in release/omg-v*.sha256; do
+            [ -f "$checksum" ] || continue
+            basename=$(basename "$checksum")
+            wrangler r2 object put "omg-releases/$basename" \
+              --file="$checksum" \
+              --content-type="text/plain"
+            echo "✓ Uploaded $basename"
+          done
