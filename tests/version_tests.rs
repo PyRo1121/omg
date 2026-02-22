@@ -1,10 +1,5 @@
 #![cfg(feature = "arch")]
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::pedantic,
-    clippy::nursery
-)]
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! Production-Ready Version Tests
 //!
 //! Tests REAL version parsing and comparison logic from alpm_types::Version.
@@ -18,16 +13,12 @@
 #![allow(clippy::missing_panics_doc)]
 #![allow(clippy::missing_errors_doc)]
 
-#[cfg(feature = "arch")]
 use alpm_types::Version as AlpmVersion;
-#[cfg(feature = "arch")]
 use std::str::FromStr;
 
-#[cfg(feature = "arch")]
 use omg_lib::package_managers::parse_version_or_zero;
 
 /// Helper to parse version string or panic with clear error
-#[cfg(feature = "arch")]
 fn parse_version_or_panic(s: &str) -> AlpmVersion {
     AlpmVersion::from_str(s).expect("Failed to parse test version")
 }
@@ -36,8 +27,8 @@ fn parse_version_or_panic(s: &str) -> AlpmVersion {
 // REAL WORLD VERSION PARSING TESTS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-#[cfg(feature = "arch")]
 mod real_world_parsing {
+    #![allow(clippy::pedantic, clippy::nursery)]
     use super::*;
 
     /// Test actual version strings from Arch Linux packages
@@ -124,8 +115,8 @@ mod real_world_parsing {
 // REAL WORLD VERSION COMPARISON TESTS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-#[cfg(feature = "arch")]
 mod version_comparison {
+    #![allow(clippy::pedantic, clippy::nursery)]
     use super::*;
 
     /// Test basic version comparison
@@ -178,18 +169,22 @@ mod version_comparison {
     /// Test comparison with pre-release markers
     #[test]
     fn test_prerelease_comparison() {
-        // Stable vs pre-release
-        let _v1 = parse_version_or_panic("1.0.0");
-        let _v2 = parse_version_or_panic("1.0.0alpha");
-        // Stable should be greater than pre-release
+        // Stable vs pre-release: ALPM vercmp treats a version that ends in digits
+        // as newer than one with a trailing alphabetic suffix.  When "0" is consumed
+        // from both sides, the side with a remaining alpha run ("alpha") loses.
+        let v1 = parse_version_or_panic("1.0.0");
+        let v2 = parse_version_or_panic("1.0.0alpha");
+        assert!(v1 > v2, "stable (1.0.0) should be greater than pre-release (1.0.0alpha)");
 
-        let _v1 = parse_version_or_panic("1.0.0alpha");
-        let _v2 = parse_version_or_panic("1.0.0beta");
-        // Beta should be greater than alpha
+        // Beta > alpha: lexicographic order on the alphabetic suffix ("beta" > "alpha").
+        let v1 = parse_version_or_panic("1.0.0alpha");
+        let v2 = parse_version_or_panic("1.0.0beta");
+        assert!(v2 > v1, "beta (1.0.0beta) should be greater than alpha (1.0.0alpha)");
 
-        let _v1 = parse_version_or_panic("1.0.0beta");
-        let _v2 = parse_version_or_panic("1.0.0rc1");
-        // RC should be greater than beta
+        // RC > beta: lexicographic order on the alphabetic suffix ("rc" > "beta").
+        let v1 = parse_version_or_panic("1.0.0beta");
+        let v2 = parse_version_or_panic("1.0.0rc1");
+        assert!(v2 > v1, "rc (1.0.0rc1) should be greater than beta (1.0.0beta)");
     }
 
     /// Test comparison with git versions
@@ -237,8 +232,8 @@ mod version_comparison {
 // UPDATE DETECTION TESTS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-#[cfg(feature = "arch")]
 mod update_detection {
+    #![allow(clippy::pedantic, clippy::nursery)]
     use super::*;
 
     /// Test that update detection logic works with real version strings
@@ -336,8 +331,8 @@ mod update_detection {
 // PARSE_VERSION_OR_ZERO HELPER TESTS
 // ═══════════════════════════════════════════════════════════════════════════════
 
-#[cfg(feature = "arch")]
 mod parse_version_or_zero_tests {
+    #![allow(clippy::pedantic, clippy::nursery)]
     use super::*;
 
     /// Test that parse_version_or_zero never panics
@@ -377,8 +372,6 @@ mod parse_version_or_zero_tests {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// NON-ARCH SYSTEM TESTS
-// ═══════════════════════════════════════════════════════════════════════════════════════
 // NON-ARCH SYSTEM TESTS
 // ═══════════════════════════════════════════════════════════════════════════════
 

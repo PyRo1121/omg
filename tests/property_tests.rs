@@ -2,7 +2,8 @@
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::pedantic,
-    clippy::nursery
+    clippy::nursery,
+    clippy::doc_markdown
 )]
 //! Property-Based and Fuzz Testing for OMG
 //!
@@ -10,8 +11,6 @@
 //!
 //! Run: cargo test --test property_tests
 //! Run fuzz: OMG_RUN_FUZZ_TESTS=1 cargo test --test property_tests
-
-#![allow(clippy::doc_markdown)]
 
 mod common;
 
@@ -24,7 +23,7 @@ use std::time::Duration;
 // ═══════════════════════════════════════════════════════════════════════════════
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(20))]
+    #![proptest_config(ProptestConfig::with_cases(100))]
 
     /// Any string input to search should not crash (excluding null bytes which Command rejects)
     #[test]
