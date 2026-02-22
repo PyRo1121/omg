@@ -194,6 +194,12 @@ impl MockRuntimeManager {
 }
 
 /// Mock network client for testing without real network access
+///
+/// TODO: Wire to an injectable `HttpClient` trait so this mock can actually
+/// intercept requests.  The real HTTP client in `core/http.rs` uses a global
+/// `LazyLock<Client>` with no injection point, so `MockNetworkClient::get()`
+/// currently cannot intercept real requests.  Network tests therefore require
+/// real connectivity.
 pub struct MockNetworkClient {
     responses: HashMap<String, MockResponse>,
     request_log: Arc<Mutex<Vec<String>>>,

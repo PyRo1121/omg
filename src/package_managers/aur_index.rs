@@ -244,4 +244,112 @@ mod tests {
 
         Ok(())
     }
+
+    /// Regression test for the AUR update fallback bug (fixed in v0.1.215).
+    /// When `get_updates()` returns an empty vec (packages not in the index),
+    /// the caller (`AurClient::get_update_list`) must NOT treat this as
+    /// "no updates available" — it must fall through to the RPC fallback.
+    /// This test validates that `get_updates()` correctly returns empty
+    /// when queried packages aren't present in the index.
+    #[test]
+    fn test_get_updates_returns_empty_for_missing_packages() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let json_path = temp_dir.path().join("metadata.json.gz");
+        let index_path = temp_dir.path().join("metadata.rkyv");
+
+        // Index contains only pkg-a and pkg-b
+        let data = r#"[
+            {"Name": "pkg-a", "Version": "1.0", "Maintainer": "user1", "LastModified": 100, "Description": "desc a", "NumVotes": 10, "Popularity": 0.5},
+            {"Name": "pkg-b", "Version": "2.0", "Maintainer": null, "LastModified": 200, "Description": null, "NumVotes": 5, "Popularity": 0.1}
+        ]"#;
+
+        let file = File::create(&json_path)?;
+        let mut encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+        std::io::Write::write_all(&mut encoder, data.as_bytes())?;
+        encoder.finish()?;
+        build_index(&json_path, &index_path)?;
+
+        let index = AurIndex::open(&index_path)?;
+
+        // Query for packages NOT in the index — simulates a stale index
+        // that doesn't contain the user's installed AUR packages
+        let local_pkgs = vec![
+            ("my-custom-pkg".to_string(), parse_version_or_zero("1.0")),
+            ("another-missing".to_string(), parse_version_or_zero("0.5")),
+        ];
+
+        let updates = index.get_updates(&local_pkgs)?;
+        assert!(
+            updates.is_empty(),
+            "get_updates must return empty for packages not in the index, \
+             so the caller can fall through to RPC. Got {} update(s).",
+            updates.len()
+        );
+
+        Ok(())
+    }
+
+    /// Verify that `get_updates()` correctly detects when the remote version
+    /// is newer than the local version.
+    #[test]
+    fn test_get_updates_detects_newer_version() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let json_path = temp_dir.path().join("metadata.json.gz");
+        let index_path = temp_dir.path().join("metadata.rkyv");
+
+        let data = r#"[
+            {"Name": "pkg-a", "Version": "2.0", "Maintainer": "user1", "LastModified": 100, "Description": "desc a", "NumVotes": 10, "Popularity": 0.5},
+            {"Name": "pkg-b", "Version": "1.0", "Maintainer": null, "LastModified": 200, "Description": null, "NumVotes": 5, "Popularity": 0.1}
+        ]"#;
+
+        let file = File::create(&json_path)?;
+        let mut encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+        std::io::Write::write_all(&mut encoder, data.as_bytes())?;
+        encoder.finish()?;
+        build_index(&json_path, &index_path)?;
+
+        let index = AurIndex::open(&index_path)?;
+
+        let local_pkgs = vec![
+            ("pkg-a".to_string(), parse_version_or_zero("1.0")),  // remote 2.0 > local 1.0
+            ("pkg-b".to_string(), parse_version_or_zero("1.0")),  // remote 1.0 == local 1.0
+        ];
+
+        let updates = index.get_updates(&local_pkgs)?;
+        assert_eq!(updates.len(), 1, "Only pkg-a should have an update");
+        assert_eq!(updates[0].0, "pkg-a");
+
+        Ok(())
+    }
+
+    /// Verify that `get_updates()` returns empty when local versions are
+    /// already at or ahead of the index versions (no updates available).
+    #[test]
+    fn test_get_updates_no_updates_when_current() -> Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let json_path = temp_dir.path().join("metadata.json.gz");
+        let index_path = temp_dir.path().join("metadata.rkyv");
+
+        let data = r#"[
+            {"Name": "pkg-a", "Version": "1.0", "Maintainer": "user1", "LastModified": 100, "Description": "desc a", "NumVotes": 10, "Popularity": 0.5}
+        ]"#;
+
+        let file = File::create(&json_path)?;
+        let mut encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+        std::io::Write::write_all(&mut encoder, data.as_bytes())?;
+        encoder.finish()?;
+        build_index(&json_path, &index_path)?;
+
+        let index = AurIndex::open(&index_path)?;
+
+        // Local version matches remote — no update
+        let local_same = vec![("pkg-a".to_string(), parse_version_or_zero("1.0"))];
+        assert!(index.get_updates(&local_same)?.is_empty());
+
+        // Local version ahead of remote — no update
+        let local_ahead = vec![("pkg-a".to_string(), parse_version_or_zero("2.0"))];
+        assert!(index.get_updates(&local_ahead)?.is_empty());
+
+        Ok(())
+    }
 }

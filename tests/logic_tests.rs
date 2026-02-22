@@ -1,9 +1,4 @@
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::pedantic,
-    clippy::nursery
-)]
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! Logic tests for package manager abstraction
 //!
 //! These tests verify that the package manager abstraction works across
@@ -11,7 +6,7 @@
 
 mod common;
 
-use crate::common::*;
+use crate::common::init_test_env;
 use omg_lib::package_managers::get_package_manager;
 
 use std::sync::Mutex;
@@ -56,6 +51,26 @@ fn test_distro_override_debian() {
 }
 
 #[test]
+#[cfg(feature = "debian-pure")]
+#[expect(unsafe_code)] // Test requires env var modification
+fn test_distro_override_debian_pure() {
+    // ===== ARRANGE =====
+    init_test_env();
+    let _guard = ENV_LOCK.lock().unwrap();
+    // SAFETY: Test setup - modifying environment variable for isolated test execution.
+    // Protected by mutex guard to prevent concurrent access.
+    unsafe {
+        std::env::set_var("OMG_TEST_DISTRO", "debian");
+    }
+
+    // ===== ACT =====
+    let pm = get_package_manager().expect("should get debian package manager (debian-pure)");
+
+    // ===== ASSERT =====
+    assert_eq!(pm.name(), "apt");
+}
+
+#[test]
 #[cfg(feature = "debian")]
 #[expect(unsafe_code)] // Test requires env var modification
 fn test_distro_override_ubuntu() {
@@ -74,7 +89,6 @@ fn test_distro_override_ubuntu() {
 }
 
 #[tokio::test]
-#[allow(unsafe_code)] // Test setup requires env var modification
 async fn test_mock_package_manager_search() {
     use crate::common::fixtures::{PackageFixture, PackageFixtureExt};
     use crate::common::mocks::{MockPackageDb, MockPackageManager};
@@ -99,7 +113,6 @@ async fn test_mock_package_manager_search() {
 }
 
 #[tokio::test]
-#[allow(unsafe_code)] // Test setup requires env var modification
 async fn test_mock_package_manager_install() {
     use crate::common::fixtures::{PackageFixture, PackageFixtureExt};
     use crate::common::mocks::{MockPackageDb, MockPackageManager};
@@ -126,7 +139,6 @@ async fn test_mock_package_manager_install() {
 }
 
 #[tokio::test]
-#[allow(unsafe_code)] // Test setup requires env var modification
 async fn test_mock_package_manager_info() {
     use crate::common::fixtures::{PackageFixture, PackageFixtureExt};
     use crate::common::mocks::{MockPackageDb, MockPackageManager};

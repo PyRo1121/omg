@@ -1,7 +1,6 @@
 //! Custom assertions for OMG tests
 
 #![allow(dead_code)]
-#![allow(clippy::expect_fun_call)]
 
 use super::CommandResult;
 use std::time::Duration;
@@ -62,7 +61,7 @@ pub fn assert_output_excludes(result: &CommandResult, patterns: &[&str]) {
 /// Assert JSON output is valid and contains expected keys
 pub fn assert_valid_json(result: &CommandResult, expected_keys: &[&str]) {
     let json: serde_json::Value = serde_json::from_str(&result.stdout)
-        .expect(&format!("Invalid JSON output:\n{}", result.stdout));
+        .unwrap_or_else(|e| panic!("Invalid JSON: {e}\n{}", result.stdout));
 
     for key in expected_keys {
         assert!(
