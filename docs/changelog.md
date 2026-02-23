@@ -11,7 +11,26 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ---
 
 ## [Unreleased]
+### ✨ New Features
+
+- **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
+
+- **Aur**: Fallback to RPC when binary index returns empty
+
+The AUR update check was returning 'no updates' even when packages
+
+had newer versions available. This happened because:
+
+  - The binary index lookup uses binary_search which silently skips
+
+packages not found in the index
+
+  - If ALL foreign packages were missing from a stale index, it
+
+returned an empty vector and returned early
+
+  - This skipped the RPC fallback which would have found the updates
 
 - **Tests**: Skip AUR install test when running as root
 
@@ -56,6 +75,24 @@ The configure_mirrors function was placed after #[cfg(test)] mod tests,
 which newer clippy versions flag as an error with -D warnings.
 
 ### 🧪 Testing
+
+- AUR fallback regression tests and test harness improvements
+
+Add 3 regression tests for the AUR update fallback bug (v0.1.215):
+
+  - get_updates returns empty for missing packages (triggers RPC fallback)
+
+  - get_updates detects newer versions correctly
+
+  - get_updates returns empty when local versions are current
+
+Test harness: fix clippy warnings (expect_fun_call, redundant cfg gates,
+
+broad allow attributes), add actual assertions to pre-release comparison
+
+tests, document MockNetworkClient and clear_license limitations, add
+
+debian-pure feature test, increase proptest cases 20→100.
 
 - **Ci**: Make integration gating strict with Arch AUR canaries
 
