@@ -74,6 +74,26 @@ The configure_mirrors function was placed after #[cfg(test)] mod tests,
 
 which newer clippy versions flag as an error with -D warnings.
 
+### 📦 Dependencies
+
+- **Deps**: Bump keccak from 0.1.5 to 0.1.6 ([#33](https://github.com/PyRo1121/omg/issues/33))
+
+Bumps [keccak](https://github.com/RustCrypto/sponges) from 0.1.5 to 0.1.6.
+
+  - [Commits](https://github.com/RustCrypto/sponges/compare/keccak-v0.1.5...keccak-v0.1.6)
+
+---
+
+updated-dependencies:
+
+  - dependency-name: keccak
+
+dependency-version: 0.1.6
+
+dependency-type: indirect
+
+...
+
 ### 🧪 Testing
 
 - AUR fallback regression tests and test harness improvements
