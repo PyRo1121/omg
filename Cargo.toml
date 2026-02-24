@@ -33,12 +33,12 @@ path = "src/bin/omg-fast.rs"
 [dependencies]
 
 # CLI Framework
-clap = { version = "4.5.59", features = ["derive", "env", "wrap_help"] }
+clap = { version = "4.5.60", features = ["derive", "env", "wrap_help"] }
 clap_complete = "4.5"
 clap_mangen = "0.2"  # Man page generation
 
 # Error handling
-anyhow = "1.0.100"
+anyhow = "1.0.102"
 thiserror = "2.0.17"
 trait-variant = "0.1"
 
@@ -60,7 +60,7 @@ futures = "0.3.32"
 # Serialization
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
-toml = "1.0.2"
+toml = "1.0.3"
 bitcode = { version = "0.6", features = ["serde"] }
 
 # HTTP client (zstd for faster compressed downloads, read_timeout for reliability)
@@ -107,7 +107,7 @@ tracing-subscriber = { version = "0.3.22", features = ["env-filter", "json"] }
 indicatif = "0.18.4"
 
 # Colors/TTY
-owo-colors = "4.2.3"
+owo-colors = "4.3.0"
 console = "0.16.2"
 supports-color = "3.0.0"
 
@@ -130,7 +130,7 @@ hex = "0.4.3"
 nix = { version = "0.31", features = ["fs"] }
 
 # Date & Time
-jiff = { version = "0.2.20", features = ["serde"] }
+jiff = { version = "0.2.21", features = ["serde"] }
 
 # Random number generation (for jitter)
 fastrand = "2"
@@ -207,7 +207,7 @@ cargo-audit = "0.22"                                         # Security vulnerab
 proptest = "1.4"                                             # Property-based testing
 rand = "0.10"                                                 # Random generation for fuzz tests
 serde_json = "1.0"                                           # JSON parsing for test assertions
-serial_test = "3.2"                                          # Serialize tests that modify global state
+serial_test = "3.4"                                          # Serialize tests that modify global state
 scopeguard = "1.2"
 tar = "0.4"
 flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
