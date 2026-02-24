@@ -102,6 +102,172 @@ which newer clippy versions flag as an error with -D warnings.
 
 ### 📦 Dependencies
 
+- **Deps**: Bump the dependencies group with 8 updates
+
+Bumps the dependencies group with 8 updates:
+
+| Package | From | To |
+
+| --  - | --  - | --  - |
+
+| [clap](https://github.com/clap-rs/clap) | `4.5.59` | `4.5.60` |
+
+| [anyhow](https://github.com/dtolnay/anyhow) | `1.0.101` | `1.0.102` |
+
+| [toml](https://github.com/toml-rs/toml) | `1.0.2+spec-1.1.0` | `1.0.3+spec-1.1.0` |
+
+| [owo-colors](https://github.com/owo-colors/owo-colors) | `4.2.3` | `4.3.0` |
+
+| [jiff](https://github.com/BurntSushi/jiff) | `0.2.20` | `0.2.21` |
+
+| [quick-xml](https://github.com/tafia/quick-xml) | `0.39.1` | `0.39.2` |
+
+| [serial_test](https://github.com/palfrey/serial_test) | `3.3.1` | `3.4.0` |
+
+| [chrono](https://github.com/chronotope/chrono) | `0.4.43` | `0.4.44` |
+
+Updates `clap` from 4.5.59 to 4.5.60
+
+  - [Release notes](https://github.com/clap-rs/clap/releases)
+
+  - [Changelog](https://github.com/clap-rs/clap/blob/master/CHANGELOG.md)
+
+  - [Commits](https://github.com/clap-rs/clap/compare/clap_complete-v4.5.59...clap_complete-v4.5.60)
+
+Updates `anyhow` from 1.0.101 to 1.0.102
+
+  - [Release notes](https://github.com/dtolnay/anyhow/releases)
+
+  - [Commits](https://github.com/dtolnay/anyhow/compare/1.0.101...1.0.102)
+
+Updates `toml` from 1.0.2+spec-1.1.0 to 1.0.3+spec-1.1.0
+
+  - [Commits](https://github.com/toml-rs/toml/compare/toml-v1.0.2...toml-v1.0.3)
+
+Updates `owo-colors` from 4.2.3 to 4.3.0
+
+  - [Release notes](https://github.com/owo-colors/owo-colors/releases)
+
+  - [Changelog](https://github.com/owo-colors/owo-colors/blob/main/CHANGELOG.md)
+
+  - [Commits](https://github.com/owo-colors/owo-colors/compare/v4.2.3...v4.3.0)
+
+Updates `jiff` from 0.2.20 to 0.2.21
+
+  - [Release notes](https://github.com/BurntSushi/jiff/releases)
+
+  - [Changelog](https://github.com/BurntSushi/jiff/blob/master/CHANGELOG.md)
+
+  - [Commits](https://github.com/BurntSushi/jiff/compare/jiff-static-0.2.20...jiff-static-0.2.21)
+
+Updates `quick-xml` from 0.39.1 to 0.39.2
+
+  - [Release notes](https://github.com/tafia/quick-xml/releases)
+
+  - [Changelog](https://github.com/tafia/quick-xml/blob/master/Changelog.md)
+
+  - [Commits](https://github.com/tafia/quick-xml/compare/v0.39.1...v0.39.2)
+
+Updates `serial_test` from 3.3.1 to 3.4.0
+
+  - [Release notes](https://github.com/palfrey/serial_test/releases)
+
+  - [Commits](https://github.com/palfrey/serial_test/compare/v3.3.1...v3.4.0)
+
+Updates `chrono` from 0.4.43 to 0.4.44
+
+  - [Release notes](https://github.com/chronotope/chrono/releases)
+
+  - [Changelog](https://github.com/chronotope/chrono/blob/main/CHANGELOG.md)
+
+  - [Commits](https://github.com/chronotope/chrono/compare/v0.4.43...v0.4.44)
+
+---
+
+updated-dependencies:
+
+  - dependency-name: clap
+
+dependency-version: 4.5.60
+
+dependency-type: direct:production
+
+update-type: version-update:semver-patch
+
+dependency-group: dependencies
+
+  - dependency-name: anyhow
+
+dependency-version: 1.0.102
+
+dependency-type: direct:production
+
+update-type: version-update:semver-patch
+
+dependency-group: dependencies
+
+  - dependency-name: toml
+
+dependency-version: 1.0.3+spec-1.1.0
+
+dependency-type: direct:production
+
+update-type: version-update:semver-patch
+
+dependency-group: dependencies
+
+  - dependency-name: owo-colors
+
+dependency-version: 4.3.0
+
+dependency-type: direct:production
+
+update-type: version-update:semver-minor
+
+dependency-group: dependencies
+
+  - dependency-name: jiff
+
+dependency-version: 0.2.21
+
+dependency-type: direct:production
+
+update-type: version-update:semver-patch
+
+dependency-group: dependencies
+
+  - dependency-name: quick-xml
+
+dependency-version: 0.39.2
+
+dependency-type: direct:production
+
+update-type: version-update:semver-patch
+
+dependency-group: dependencies
+
+  - dependency-name: serial_test
+
+dependency-version: 3.4.0
+
+dependency-type: direct:production
+
+update-type: version-update:semver-minor
+
+dependency-group: dependencies
+
+  - dependency-name: chrono
+
+dependency-version: 0.4.44
+
+dependency-type: direct:production
+
+update-type: version-update:semver-patch
+
+dependency-group: dependencies
+
+...
+
 - **Deps**: Bump keccak from 0.1.5 to 0.1.6 ([#33](https://github.com/PyRo1121/omg/issues/33))
 
 Bumps [keccak](https://github.com/RustCrypto/sponges) from 0.1.5 to 0.1.6.
