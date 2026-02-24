@@ -16,6 +16,20 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- **Init**: Cross-platform TUI rendering in raw mode
+
+In raw mode, \n only moves the cursor down without returning to column 0.
+
+Linux terminals auto-translate LF→CRLF, but macOS Terminal.app does not,
+
+causing menu options to scatter across the screen during omg init.
+
+Extract write_menu_line() helper that uses MoveToColumn(0), Clear, and
+
+\r\n for correct rendering on all platforms. Refactor all 5 select
+
+functions to use it.
+
 - **Aur**: Fallback to RPC when binary index returns empty
 
 The AUR update check was returning 'no updates' even when packages
