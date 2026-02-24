@@ -13,6 +13,28 @@ use crossterm::{
 use std::io::{self, IsTerminal, Write};
 use std::process::Command;
 
+/// Write a single menu option line in raw mode.
+///
+/// In raw mode, `\n` only moves the cursor down — it does NOT carriage-return
+/// to column 0. macOS Terminal.app strictly follows this, causing menu options
+/// to scatter across the screen. This helper uses `\r\n` and clears each line
+/// before writing to ensure correct cross-platform rendering.
+fn write_menu_line(stdout: &mut io::Stdout, text: &str, highlighted: bool) -> Result<()> {
+    execute!(stdout, cursor::MoveToColumn(0), terminal::Clear(ClearType::CurrentLine))?;
+    if highlighted {
+        execute!(
+            stdout,
+            SetForegroundColor(Color::Green),
+            Print(text),
+            Print("\r\n"),
+            ResetColor
+        )?;
+    } else {
+        execute!(stdout, Print(text), Print("\r\n"))?;
+    }
+    Ok(())
+}
+
 use crate::config::Settings;
 use crate::core::sysinfo::{BuildRecommendation, SystemInfo};
 
@@ -222,16 +244,7 @@ fn select_telemetry_consent(stdout: &mut io::Stdout) -> Result<bool> {
                 "    No, keep everything local"
             };
 
-            if i == selected {
-                execute!(
-                    stdout,
-                    SetForegroundColor(Color::Green),
-                    Print(format!("{display}\n")),
-                    ResetColor
-                )?;
-            } else {
-                execute!(stdout, Print(format!("{display}\n")))?;
-            }
+            write_menu_line(stdout, display, i == selected)?;
         }
 
         stdout.flush()?;
@@ -470,19 +483,8 @@ fn select_shell(stdout: &mut io::Stdout) -> Result<Shell> {
                 ""
             };
 
-            if i == selected {
-                execute!(
-                    stdout,
-                    SetForegroundColor(Color::Green),
-                    Print(format!("{}{}{}\n", prefix, shell.name(), suffix)),
-                    ResetColor
-                )?;
-            } else {
-                execute!(
-                    stdout,
-                    Print(format!("{}{}{}\n", prefix, shell.name(), suffix))
-                )?;
-            }
+            let text = format!("{}{}{}", prefix, shell.name(), suffix);
+            write_menu_line(stdout, &text, i == selected)?;
         }
 
         stdout.flush()?;
@@ -548,16 +550,8 @@ fn select_daemon_startup(stdout: &mut io::Stdout) -> Result<DaemonStartup> {
         for (i, opt) in options.iter().enumerate() {
             let prefix = if i == selected { "  ▸ " } else { "    " };
 
-            if i == selected {
-                execute!(
-                    stdout,
-                    SetForegroundColor(Color::Green),
-                    Print(format!("{}{}\n", prefix, opt.name())),
-                    ResetColor
-                )?;
-            } else {
-                execute!(stdout, Print(format!("{}{}\n", prefix, opt.name())))?;
-            }
+            let text = format!("{}{}", prefix, opt.name());
+            write_menu_line(stdout, &text, i == selected)?;
         }
 
         stdout.flush()?;
@@ -675,16 +669,7 @@ fn select_build_config(stdout: &mut io::Stdout) -> Result<BuildRecommendation> {
                 "    Skip (use defaults)"
             };
 
-            if i == selected {
-                execute!(
-                    stdout,
-                    SetForegroundColor(Color::Green),
-                    Print(format!("{display}\n")),
-                    ResetColor
-                )?;
-            } else {
-                execute!(stdout, Print(format!("{display}\n")))?;
-            }
+            write_menu_line(stdout, display, i == selected)?;
         }
 
         stdout.flush()?;
@@ -803,16 +788,7 @@ fn confirm_env_capture(stdout: &mut io::Stdout) -> Result<bool> {
                 "    No, I'll do it later"
             };
 
-            if i == selected {
-                execute!(
-                    stdout,
-                    SetForegroundColor(Color::Green),
-                    Print(format!("{display}\n")),
-                    ResetColor
-                )?;
-            } else {
-                execute!(stdout, Print(format!("{display}\n")))?;
-            }
+            write_menu_line(stdout, display, i == selected)?;
         }
 
         stdout.flush()?;
