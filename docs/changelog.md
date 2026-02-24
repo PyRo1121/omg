@@ -16,6 +16,18 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- **Sync**: Avoid nested tokio runtime panic in omg sync
+
+elevate_if_needed() creates a new tokio::runtime::Runtime inside
+
+async_main() which already runs on a tokio runtime. This causes
+
+'Cannot start a runtime from within a runtime' panic.
+
+Replace with direct run_self_sudo().await call since we're already
+
+in an async context. Remove unused elevate_if_needed import.
+
 - **Init**: Cross-platform TUI rendering in raw mode
 
 In raw mode, \n only moves the cursor down without returning to column 0.
