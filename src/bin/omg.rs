@@ -26,7 +26,7 @@ use omg_lib::cli::{
 use omg_lib::cli::{blame, ci, diff, migrate, outdated, pin, size, snapshot, why};
 #[cfg(feature = "arch")]
 use omg_lib::core::is_elevated;
-use omg_lib::core::{elevate_if_needed, is_root, set_yes_flag};
+use omg_lib::core::{is_root, set_yes_flag};
 use omg_lib::hooks;
 
 /// Print minimal success message for fast elevated path
@@ -566,7 +566,11 @@ async fn async_main(args: Vec<String>) -> Result<()> {
 
     let needs_root = matches!(&cli.command, Commands::Sync | Commands::Clean { .. });
     if needs_root && !is_root() {
-        elevate_if_needed(&args)?;
+        // Use run_self_sudo directly — elevate_if_needed creates a nested tokio
+        // runtime which panics with "Cannot start a runtime from within a runtime"
+        let args_refs: Vec<&str> = args.iter().skip(1).map(String::as_str).collect();
+        omg_lib::core::privilege::run_self_sudo(&args_refs).await?;
+        std::process::exit(0);
     }
 
     let ctx = omg_lib::cli::CliContext {
