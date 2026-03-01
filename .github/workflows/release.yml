@@ -37,7 +37,7 @@ jobs:
           pacman -Syu --noconfirm
           pacman -S --noconfirm base-devel git rust cargo pkgconf openssl libarchive clang
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Git safe directory
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -88,7 +88,7 @@ jobs:
             cmake
           rm -rf /var/lib/apt/lists/*
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Git safe directory
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -123,7 +123,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Dependencies
         run: |
@@ -172,7 +172,7 @@ jobs:
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.93.0
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Git safe directory
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -202,7 +202,7 @@ jobs:
     runs-on: macos-14
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -229,7 +229,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -266,7 +266,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 

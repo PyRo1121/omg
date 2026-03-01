@@ -35,7 +35,7 @@ jobs:
           pacman -Syu --noconfirm
           pacman -S --noconfirm base-devel git rust cargo pkgconf openssl libarchive clang bc python python-pip sccache hyperfine jq
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Git safe directory
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"

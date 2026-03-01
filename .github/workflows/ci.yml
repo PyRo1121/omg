@@ -70,7 +70,7 @@ jobs:
     outputs:
       should-build: ${{ steps.changes.outputs.rust }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -194,7 +194,7 @@ jobs:
       - name: Setup environment
         run: ${{ matrix.setup }}
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Fix git permissions
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -298,7 +298,7 @@ jobs:
     runs-on: macos-14
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -347,7 +347,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -469,7 +469,7 @@ jobs:
         if: matrix.container != null
         run: ${{ matrix.setup }}
         
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       
       - name: Fix git permissions
         if: matrix.container != null
@@ -532,7 +532,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       
       - name: Download all coverage reports
         uses: actions/download-artifact@v7
@@ -603,7 +603,7 @@ jobs:
           pacman -Syu --noconfirm
           pacman -S --noconfirm --needed base-devel git rust cargo clang cmake
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Fix git permissions
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
