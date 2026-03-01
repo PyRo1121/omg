@@ -73,7 +73,7 @@ jobs:
 
       - name: Upload dependency tree
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: dependency-tree
           path: dependency-tree.txt
