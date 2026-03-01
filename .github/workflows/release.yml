@@ -270,7 +270,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
 
@@ -388,7 +388,7 @@ jobs:
     needs: [release]
     if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'false')
     steps:
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
 
