@@ -130,7 +130,7 @@ hex = "0.4.3"
 nix = { version = "0.31", features = ["fs"] }
 
 # Date & Time
-jiff = { version = "0.2.21", features = ["serde"] }
+jiff = { version = "0.2.22", features = ["serde"] }
 
 # Random number generation (for jitter)
 fastrand = "2"
@@ -156,7 +156,7 @@ which = "8.0"
 semver = "1.0.27"
 
 # Tempfile handling
-tempfile = "3.25.0"
+tempfile = "3.26.0"
 
 # URL encoding (for DNF/COPR API)
 urlencoding = "2.1"
@@ -182,7 +182,7 @@ winnow = { version = "0.7", optional = true }            # Zero-copy parser comb
 ar = { version = "0.9", optional = true }                # Pure Rust .ar archive parsing
 resolvo = { version = "0.10.2", optional = true }
 rkyv = { version = "0.8", features = ["bytecheck", "little_endian", "aligned"] }  # Zero-copy deserialization
-whoami = "2.0.2"
+whoami = "2.1.1"
 governor = "0.10.4"
 jsonwebtoken = { version = "10.3.0", default-features = false, features = ["rust_crypto"] }  # >=10.3.0 required: CVE-2026-25537 fix
 sentry = { version = "0.46.1", features = ["anyhow", "tracing", "logs"] }
@@ -200,7 +200,7 @@ openssl-sys = { version = "0.9", features = ["vendored"] }  # Build OpenSSL from
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
-tempfile = "3.25.0"
+tempfile = "3.26.0"
 assert_cmd = "2.1"
 predicates = "3.1"
 cargo-audit = "0.22"                                         # Security vulnerability auditing
