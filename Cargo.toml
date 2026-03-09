@@ -43,7 +43,7 @@ thiserror = "2.0.17"
 trait-variant = "0.1"
 
 # Async runtime
-tokio = { version = "1.49", features = [
+tokio = { version = "1.50", features = [
     "rt",
     "rt-multi-thread",
     "macros",
@@ -60,7 +60,7 @@ futures = "0.3.32"
 # Serialization
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
-toml = "1.0.3"
+toml = "1.0.6"
 bitcode = { version = "0.6", features = ["serde"] }
 
 # HTTP client (zstd for faster compressed downloads, read_timeout for reliability)
@@ -79,7 +79,7 @@ flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
 lz4_flex = { version = "0.12", default-features = false, features = [
     "frame",
 ] }
-zip = { version = "8.1.0", default-features = false, features = [
+zip = { version = "8.2.0", default-features = false, features = [
     "deflate",
     "time",
 ] }
@@ -130,7 +130,7 @@ hex = "0.4.3"
 nix = { version = "0.31", features = ["fs"] }
 
 # Date & Time
-jiff = { version = "0.2.21", features = ["serde"] }
+jiff = { version = "0.2.23", features = ["serde"] }
 
 # Random number generation (for jitter)
 fastrand = "2"
@@ -156,7 +156,7 @@ which = "8.0"
 semver = "1.0.27"
 
 # Tempfile handling
-tempfile = "3.25.0"
+tempfile = "3.26.0"
 
 # URL encoding (for DNF/COPR API)
 urlencoding = "2.1"
@@ -170,7 +170,7 @@ sequoia-net = { version = "0.31.0-pqc.1", optional = true }
 nucleo-matcher = "0.3.1"
 dirs = "6.0.0"
 ahash = "0.8.12"
-uuid = { version = "1.21", features = ["v4"] }
+uuid = { version = "1.22", features = ["v4"] }
 ratatui = "0.30"
 crossterm = "0.29"
 rust-apt = { version = "0.9.0", optional = true }
@@ -182,7 +182,7 @@ winnow = { version = "0.7", optional = true }            # Zero-copy parser comb
 ar = { version = "0.9", optional = true }                # Pure Rust .ar archive parsing
 resolvo = { version = "0.10.2", optional = true }
 rkyv = { version = "0.8", features = ["bytecheck", "little_endian", "aligned"] }  # Zero-copy deserialization
-whoami = "2.0.2"
+whoami = "2.1.1"
 governor = "0.10.4"
 jsonwebtoken = { version = "10.3.0", default-features = false, features = ["rust_crypto"] }  # >=10.3.0 required: CVE-2026-25537 fix
 sentry = { version = "0.46.1", features = ["anyhow", "tracing", "logs"] }
@@ -200,7 +200,7 @@ openssl-sys = { version = "0.9", features = ["vendored"] }  # Build OpenSSL from
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
-tempfile = "3.25.0"
+tempfile = "3.26.0"
 assert_cmd = "2.1"
 predicates = "3.1"
 cargo-audit = "0.22"                                         # Security vulnerability auditing
