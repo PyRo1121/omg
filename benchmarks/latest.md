@@ -32,8 +32,8 @@ This benchmark follows fair comparison principles:
 
 | Command | OMG (Daemon) | pacman | yay | Speedup vs pacman |
 |---------|--------------|--------|-----|-------------------|
-| search | 13.00ms | 227.00ms | ms | 17.4x |
-| info | 11.40ms | 209.80ms | ms | 18.4x |
+| search | 12.60ms | 226.20ms | ms | 17.9x |
+| info | 11.60ms | 212.00ms | ms | 18.2x |
 | status | 10.00ms | N/Ams | N/Ams | N/A |
 | explicit | 3.00ms | 16.00ms | ms | 5.3x |
 
