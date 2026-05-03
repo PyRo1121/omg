@@ -24,7 +24,7 @@ This benchmark follows fair comparison principles:
 
 - **OS:** Linux
 - **Kernel:** 6.17.0-1010-azure
-- **CPU:**                              Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz
+- **CPU:**                              AMD EPYC 7763 64-Core Processor
 - **CPU Cores:**                                  4
 - **RAM:** 15Gi
 
@@ -32,10 +32,10 @@ This benchmark follows fair comparison principles:
 
 | Command | OMG (Daemon) | pacman | yay | Speedup vs pacman |
 |---------|--------------|--------|-----|-------------------|
-| search | 9.00ms | 206.80ms | ms | 22.9x |
-| info | 8.80ms | 192.40ms | ms | 21.8x |
-| status | 7.00ms | N/Ams | N/Ams | N/A |
-| explicit | 1.00ms | 10.00ms | ms | 10.0x |
+| search | 11.80ms | 232.40ms | ms | 19.6x |
+| info | 12.00ms | 213.40ms | ms | 17.7x |
+| status | 10.00ms | N/Ams | N/Ams | N/A |
+| explicit | 2.00ms | 15.00ms | ms | 7.5x |
 
 ## Analysis
 
