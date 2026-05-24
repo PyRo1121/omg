@@ -1,6 +1,6 @@
 {
-  "timestamp": "2026-05-17T01:19:24+00:00",
-  "search_ms": 13.00,
-  "speedup": "18.4x",
-  "commit": "a3d4cff8485a7b287a2b62d826bd5d1fe53e8975"
+  "timestamp": "2026-05-24T01:22:44+00:00",
+  "search_ms": 11.40,
+  "speedup": "20.0x",
+  "commit": "77429cad0cde7c845386f8bf123371d83fec5ba5"
 }
