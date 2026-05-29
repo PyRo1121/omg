@@ -74,7 +74,7 @@ git2 = "0.19"  # Pinned: libscoop requires git2 0.19 (libgit2-sys links conflict
 tokio-util = { version = "0.7.18", features = ["io", "codec", "rt"] }
 
 # Archives + compression (zlib-rs = pure Rust SIMD-accelerated zlib, ~2x faster than miniz_oxide)
-tar = "0.4.44"
+tar = "0.4.46"
 flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
 lz4_flex = { version = "0.12", default-features = false, features = [
     "frame",
