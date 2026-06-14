@@ -23,7 +23,7 @@ This benchmark follows fair comparison principles:
 ## Test Environment
 
 - **OS:** Linux
-- **Kernel:** 6.17.0-1015-azure
+- **Kernel:** 6.17.0-1018-azure
 - **CPU:**                              Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz
 - **CPU Cores:**                                  4
 - **RAM:** 15Gi
@@ -32,10 +32,10 @@ This benchmark follows fair comparison principles:
 
 | Command | OMG (Daemon) | pacman | yay | Speedup vs pacman |
 |---------|--------------|--------|-----|-------------------|
-| search | 9.00ms | 206.00ms | ms | 22.8x |
-| info | 8.80ms | 191.80ms | ms | 21.7x |
-| status | 7.20ms | N/Ams | N/Ams | N/A |
-| explicit | 2.20ms | 11.60ms | ms | 5.2x |
+| search | 10.40ms | 208.80ms | ms | 20.0x |
+| info | 8.40ms | 192.60ms | ms | 22.9x |
+| status | 7.40ms | N/Ams | N/Ams | N/A |
+| explicit | 2.20ms | 11.80ms | ms | 5.3x |
 
 ## Analysis
 
