@@ -23,7 +23,7 @@ This benchmark follows fair comparison principles:
 ## Test Environment
 
 - **OS:** Linux
-- **Kernel:** 6.17.0-1018-azure
+- **Kernel:** 6.17.0-1020-azure
 - **CPU:**                              AMD EPYC 7763 64-Core Processor
 - **CPU Cores:**                                  4
 - **RAM:** 15Gi
@@ -32,10 +32,10 @@ This benchmark follows fair comparison principles:
 
 | Command | OMG (Daemon) | pacman | yay | Speedup vs pacman |
 |---------|--------------|--------|-----|-------------------|
-| search | 13.80ms | 218.60ms | ms | 15.8x |
-| info | 13.40ms | 203.40ms | ms | 15.1x |
+| search | 14.40ms | 218.80ms | ms | 15.1x |
+| info | 13.20ms | 200.80ms | ms | 15.2x |
 | status | 11.00ms | N/Ams | N/Ams | N/A |
-| explicit | 3.20ms | 16.20ms | ms | 5.0x |
+| explicit | 3.40ms | 17.20ms | ms | 5.0x |
 
 ## Analysis
 
