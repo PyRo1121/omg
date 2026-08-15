@@ -304,9 +304,11 @@ dependency-type: indirect
 
 ### 🔧 Maintenance
 
+- **Deps**: Update rust dependencies
 - Normalize project formatting
 ### 🧪 Testing
 
+- Remove direct HTTP chaos tests
 - Remove simulated filesystem and daemon suites
 - Remove duplicate version properties
 - Remove local model chaos suite
