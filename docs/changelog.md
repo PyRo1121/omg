@@ -301,6 +301,9 @@ dependency-type: indirect
 
 ...
 
+### 🔧 Maintenance
+
+- Normalize project formatting
 ### 🧪 Testing
 
 - **Fuzz**: Minimize the isolated dependency graph
