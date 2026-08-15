@@ -1,6 +1,6 @@
 # OMG Makefile - Development and Testing Targets
 
-.PHONY: help build release test check fmt clippy clean bench bench-fast bench-hyperfine bench-hyperfine-fast bench-charts docker-debian docker-ubuntu docker-test install audit dev test-property test-fuzz test-chaos test-advanced test-security
+.PHONY: help build release test check fmt clippy clean bench bench-fast bench-hyperfine bench-hyperfine-fast bench-charts docker-debian docker-ubuntu docker-test install audit dev test-property test-fuzz test-advanced test-security
 
 # Default target - show help
 .DEFAULT_GOAL := help
@@ -25,7 +25,7 @@ help:
 	@echo "  make test-property   - Run property-based tests"
 	@echo "  make test-fuzz       - Run fuzzing tests (5 min)"
 	@echo "  make test-fuzz-quick - Run fuzzing tests (1 min)"
-	@echo "  make test-chaos      - Run chaos tests"
+
 	@echo "  make test-advanced   - Run all advanced tests"
 	@echo "  make test-security   - Run security-focused tests"
 	@echo ""
