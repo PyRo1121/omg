@@ -309,6 +309,7 @@ dependency-type: indirect
 - Normalize project formatting
 ### 🧪 Testing
 
+- Remove platform placeholders and timing checks
 - Remove fixture-only Ubuntu and panic repro targets
 - Remove dependency-only version properties
 - Remove direct HTTP chaos tests
