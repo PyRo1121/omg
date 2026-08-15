@@ -38,7 +38,7 @@ clap_complete = "4.5"
 clap_mangen = "0.2"  # Man page generation
 
 # Error handling
-anyhow = "1.0.102"
+anyhow = "1.0.103"
 thiserror = "2.0.17"
 trait-variant = "0.1"
 
@@ -74,9 +74,9 @@ git2 = "0.19"  # Pinned: libscoop requires git2 0.19 (libgit2-sys links conflict
 tokio-util = { version = "0.7.18", features = ["io", "codec", "rt"] }
 
 # Archives + compression (zlib-rs = pure Rust SIMD-accelerated zlib, ~2x faster than miniz_oxide)
-tar = "0.4.44"
+tar = "0.4.45"
 flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
-lz4_flex = { version = "0.12", default-features = false, features = [
+lz4_flex = { version = "0.12.1", default-features = false, features = [
     "frame",
 ] }
 zip = { version = "8.1.0", default-features = false, features = [
@@ -94,7 +94,7 @@ zerocopy = { version = "0.8", features = ["derive"] }
 dashmap = "6.1.0"
 moka = { version = "0.12", features = ["sync"] }
 memchr = "2.7"                                   # SIMD-accelerated string search
-memmap2 = "0.9"
+memmap2 = "0.9.11"
 mimalloc = { version = "0.1", default-features = false, features = ["v3"] }  # v3: lock-free, lower memory
 rustc-hash = "2.1"                                        # FxHash - faster non-cryptographic hashing
 fst = "0.4"                                               # Finite State Transducer for O(1) search
@@ -166,7 +166,6 @@ rayon = "1.11.0"
 
 # Security (Phase 4.2) - PURE RUST crypto backend (for package verification, not secrets)
 sequoia-openpgp = { version = "2.2.0-pqc.1", default-features = false, features = ["crypto-rust", "allow-experimental-crypto", "allow-variable-time-crypto"], optional = true }
-sequoia-net = { version = "0.31.0-pqc.1", optional = true }
 nucleo-matcher = "0.3.1"
 dirs = "6.0.0"
 ahash = "0.8.12"
@@ -177,11 +176,11 @@ rust-apt = { version = "0.9.0", optional = true }
 rustix = { version = "1.1", features = ["fs", "process", "thread"] }
 
 # Debian/Ubuntu 2026 Performance Stack
-debian-packaging = { version = "0.18", optional = true } # Pure Rust apt reimplementation
+debian-packaging = { version = "0.18", default-features = false, features = ["http"], optional = true } # Pure Rust apt reimplementation
 winnow = { version = "0.7", optional = true }            # Zero-copy parser combinators
 ar = { version = "0.9", optional = true }                # Pure Rust .ar archive parsing
 resolvo = { version = "0.10.2", optional = true }
-rkyv = { version = "0.8", features = ["bytecheck", "little_endian", "aligned"] }  # Zero-copy deserialization
+rkyv = { version = "0.8.17", features = ["bytecheck", "little_endian", "aligned"] }  # Zero-copy deserialization
 whoami = "2.0.2"
 governor = "0.10.4"
 jsonwebtoken = { version = "10.3.0", default-features = false, features = ["rust_crypto"] }  # >=10.3.0 required: CVE-2026-25537 fix
@@ -190,7 +189,6 @@ sentry-tracing = "0.46.1"
 
 # Cross-platform package manager support
 rusqlite = { version = "0.38", features = ["bundled"], optional = true }  # SQLite for RPM db
-quick-xml = { version = "0.39", features = ["serialize"], optional = true }  # Fast XML parsing
 
 # Windows-specific (conditional) - only compiled on Windows
 [target.'cfg(target_os = "windows")'.dependencies]
@@ -200,25 +198,15 @@ openssl-sys = { version = "0.9", features = ["vendored"] }  # Build OpenSSL from
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
-tempfile = "3.25.0"
 assert_cmd = "2.1"
 predicates = "3.1"
-cargo-audit = "0.22"                                         # Security vulnerability auditing
 proptest = "1.4"                                             # Property-based testing
-rand = "0.10"                                                 # Random generation for fuzz tests
-serde_json = "1.0"                                           # JSON parsing for test assertions
+rand = "0.10.1"                                              # Random generation for property tests
 serial_test = "3.4"                                          # Serialize tests that modify global state
 scopeguard = "1.2"
-tar = "0.4"
-flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
 chrono = "0.4"
 temp-env = "0.3"
 zstd = "0.13"                                                # For decompression benchmarks
-lzma-rs = "0.3"                                              # For decompression benchmarks
-
-# Unix-specific dependencies
-[target.'cfg(unix)'.dependencies]
-pprof = { version = "0.15", features = ["flamegraph"] }
 
 # Maximum optimization for production releases
 [profile.release]
@@ -291,7 +279,7 @@ arch = [
     "alpm-repo-db",
     "alpm-pkginfo"
 ]
-pgp = ["sequoia-openpgp", "sequoia-net"] # Optional PGP verification (requires Rust 1.80+)
+pgp = ["sequoia-openpgp"] # Optional PGP verification (requires Rust 1.80+)
 
 # Windows support - pure Rust implementation (winreg auto-enabled on Windows via target cfg)
 windows = []
@@ -307,7 +295,7 @@ debian-deb822-backend = ["debian-packaging"]
 debian-resolvo = ["resolvo"]
 
 # Fedora/RHEL support (DNF/RPM) - Pure Rust, no system dependencies
-fedora = ["rusqlite", "quick-xml"]
+fedora = ["rusqlite"]
 
 # macOS/Homebrew support - Pure Rust
 macos = []
@@ -316,7 +304,6 @@ license = [] # Enable license/subscription features (Pro, Team, Enterprise tiers
 proptest = [] # Enable property-based tests
 docker_tests = [] # Enable tests that require running as root (e.g. in Docker)
 sequoia-openpgp = ["dep:sequoia-openpgp"]
-sequoia-net = ["dep:sequoia-net"]
 
 # ============================================================================
 # Rust 1.93 / Edition 2024 Lint Configuration
