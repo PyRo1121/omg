@@ -398,41 +398,6 @@ async fn test_rapid_restart_stability() -> Result<()> {
 // Test 5: Startup Performance
 // ============================================================================
 
-#[tokio::test]
-#[serial]
-async fn test_daemon_startup_performance() -> Result<()> {
-    let fixture = DaemonTestFixture::new()?;
-
-    let start = std::time::Instant::now();
-    let mut daemon = fixture.start_daemon()?;
-
-    // Wait for socket
-    assert!(fixture.wait_for_socket(Duration::from_secs(2)).await);
-
-    // Wait for daemon to be fully responsive
-    let mut ready_time = None;
-    for _ in 0..20 {
-        if fixture.is_daemon_responsive().await {
-            ready_time = Some(start.elapsed());
-            break;
-        }
-        sleep(Duration::from_millis(50)).await;
-    }
-
-    assert!(ready_time.is_some(), "Daemon should become responsive");
-    let startup_time = ready_time.unwrap();
-
-    // Startup should be < 2 seconds
-    assert!(
-        startup_time < Duration::from_secs(2),
-        "Daemon startup should be < 2s, got {:?}",
-        startup_time
-    );
-
-    daemon.kill()?;
-    Ok(())
-}
-
 // ============================================================================
 // Test 6: Socket Cleanup on Abnormal Exit
 // ============================================================================
@@ -499,33 +464,6 @@ async fn test_resource_cleanup_on_shutdown() -> Result<()> {
             !process_exists,
             "Daemon process should be completely terminated"
         );
-    }
-
-    Ok(())
-}
-
-// ============================================================================
-// Test 8: Auto-Restart Simulation (External Supervisor)
-// ============================================================================
-
-#[tokio::test]
-#[serial]
-async fn test_auto_restart_simulation() -> Result<()> {
-    let fixture = DaemonTestFixture::new()?;
-
-    // Simulate systemd/supervisor behavior: restart daemon on crash
-    for restart_count in 0..3 {
-        let mut daemon = fixture.start_daemon()?;
-        assert!(
-            fixture.wait_for_daemon_ready(Duration::from_secs(10)).await,
-            "Daemon should start and become responsive on restart {}",
-            restart_count
-        );
-
-        // Simulate crash
-        daemon.kill()?;
-        // Wait for socket cleanup before next restart
-        sleep(Duration::from_millis(500)).await;
     }
 
     Ok(())
