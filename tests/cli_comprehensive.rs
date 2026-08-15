@@ -25,10 +25,14 @@ mod install_tests {
     #[test]
     fn test_install_nonexistent() {
         let result = run_omg(&["install", "package-that-definitely-does-not-exist-12345"]);
-        // Should complete (may succeed with error message or fail)
         let combined = result.combined_output();
-        // Just verify it handles the case (shows message or exits)
-        assert!(!combined.is_empty(), "Should produce some output");
+        assert!(
+            !result.success
+                || combined.to_lowercase().contains("not found")
+                || combined.to_lowercase().contains("unable")
+                || combined.to_lowercase().contains("error"),
+            "Nonexistent install should fail or explain the error: {combined}"
+        );
     }
 
     #[test]
@@ -56,8 +60,15 @@ mod remove_tests {
     #[test]
     fn test_remove_nonexistent() {
         let result = run_omg(&["remove", "package-never-installed-xyz"]);
-        // Should complete (may show error or handle gracefully)
-        assert!(!result.combined_output().is_empty());
+        let combined = result.combined_output();
+        assert!(
+            (result.success && combined.to_lowercase().contains("remov"))
+                || (!result.success
+                    && (combined.to_lowercase().contains("not found")
+                        || combined.to_lowercase().contains("not installed")
+                        || combined.to_lowercase().contains("error"))),
+            "Nonexistent removal should report an idempotent removal or explain the error: {combined}"
+        );
     }
 }
 
@@ -153,8 +164,11 @@ mod project_tests {
     #[test]
     fn test_tool_list() {
         let result = run_omg(&["tool", "list"]);
-        // Should succeed even if no tools installed
-        assert!(result.success || result.combined_output().contains("No tools"));
+        let output = result.combined_output();
+        assert!(
+            result.success || output.to_lowercase().contains("no tools"),
+            "Tool list should succeed or explain that no tools are installed: {output}"
+        );
     }
 }
 
@@ -430,8 +444,13 @@ mod meta_tests {
     #[test]
     fn test_self_update_check() {
         let result = run_omg(&["self-update", "--check"]);
-        // Should complete (checking for updates)
-        assert!(!result.combined_output().is_empty());
+        let output = result.combined_output();
+        assert!(
+            result.success
+                || output.to_lowercase().contains("update")
+                || output.to_lowercase().contains("error"),
+            "Self-update check should succeed or explain its result: {output}"
+        );
     }
 
     #[test]
@@ -459,8 +478,13 @@ mod package_ops_tests {
     #[test]
     fn test_pin_list() {
         let result = run_omg(&["pin", "list"]);
-        // Should complete successfully
-        assert!(!result.combined_output().is_empty());
+        let output = result.combined_output();
+        assert!(
+            result.success
+                || output.to_lowercase().contains("pin")
+                || output.to_lowercase().contains("error"),
+            "Pin list should succeed or explain its result: {output}"
+        );
     }
 
     #[test]
@@ -527,21 +551,16 @@ mod error_tests {
     #[test]
     fn test_conflicting_flags() {
         let result = run_omg(&["search", "--json", "--quiet", "test"]);
-        // The command should not panic. It may:
-        // - succeed (flags are compatible)
-        // - fail with a conflict error
-        // - time out in minimal CI containers without package DBs
-        // Any of these is acceptable — a panic is not.
+        assert_ne!(result.exit_code, 101, "Conflicting flags must not panic");
         if !result.success {
             let combined = result.combined_output();
             assert!(
-                combined.contains("conflict")
-                    || combined.contains("cannot be used")
-                    || combined.contains("timeout")
-                    || combined.contains("error")
-                    || combined.contains("no results")
-                    || result.exit_code != 101, // 101 = Rust panic exit code
-                "Command panicked or produced unexpected output: {combined}"
+                combined.to_lowercase().contains("conflict")
+                    || combined.to_lowercase().contains("cannot be used")
+                    || combined.to_lowercase().contains("error")
+                    || combined.to_lowercase().contains("no results")
+                    || combined.to_lowercase().contains("not found"),
+                "Failed conflicting-flag command should explain the result: {combined}"
             );
         }
     }
