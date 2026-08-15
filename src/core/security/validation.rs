@@ -2,7 +2,7 @@
 //!
 //! Prevents command injection, path traversal, and other input-based attacks.
 
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 
 /// Validates a package name for security
 ///
