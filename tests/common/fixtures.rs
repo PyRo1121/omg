@@ -292,25 +292,6 @@ pub mod validation {
     pub const EMPTY_INPUTS: &[&str] = &["", " ", "\t", "\n", "   \t\n   "];
 }
 
-/// Performance test parameters
-/// Note: First run may be slower due to cold start, these are generous limits
-pub mod perf {
-    use std::time::Duration;
-
-    pub const HELP_MAX_MS: u64 = 100;
-    pub const STATUS_MAX_MS: u64 = 2000;
-    pub const LIST_MAX_MS: u64 = 2000;
-    pub const WHICH_MAX_MS: u64 = 2000;
-    pub const SEARCH_MAX_MS: u64 = 3000;
-    pub const COMPLETIONS_MAX_MS: u64 = 2000;
-    pub const ENV_CAPTURE_MAX_MS: u64 = 2000;
-    pub const VERSION_SWITCH_MAX_MS: u64 = 500;
-
-    pub const fn max_duration(ms: u64) -> Duration {
-        Duration::from_millis(ms)
-    }
-}
-
 /// Error test helpers
 pub mod error_conditions {
     use crate::common::TestProject;

@@ -37,9 +37,6 @@ export OMG_RUN_SYSTEM_TESTS=1
 
 # Enable tests that actually install/update packages (use with caution!)
 export OMG_RUN_DESTRUCTIVE_TESTS=1
-
-# Enable performance assertions (may fail on slow systems)
-export OMG_RUN_PERF_TESTS=1
 ```
 
 ### Example: Run System Tests
@@ -48,7 +45,9 @@ export OMG_RUN_PERF_TESTS=1
 OMG_RUN_SYSTEM_TESTS=1 cargo test --test integration_suite --features arch
 ```
 
-### Example: Run Performance Tests
+### Example: Run Benchmarks
+
+Use the repository's Criterion benchmarks explicitly when measuring performance:
 
 ```bash
 cargo bench --features arch
@@ -389,14 +388,6 @@ export OMG_RUN_DESTRUCTIVE_TESTS=1
 ```
 
 **Warning**: This will actually install/remove packages!
-
-### "Skipping perf test"
-
-If tests skip with this message:
-
-```bash
-export OMG_RUN_PERF_TESTS=1
-```
 
 ### ALPM Not Available
 

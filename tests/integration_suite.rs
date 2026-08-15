@@ -18,9 +18,6 @@
 //! Run with network tests (hits external APIs):
 //!   OMG_RUN_NETWORK_TESTS=1 cargo test --test integration_suite --features arch
 //!
-//! Run with performance assertions:
-//!   OMG_RUN_PERF_TESTS=1 cargo test --test integration_suite --features arch
-//!
 //! Run destructive tests (actually installs packages - USE WITH CAUTION):
 //!   OMG_RUN_DESTRUCTIVE_TESTS=1 cargo test --test integration_suite --features arch
 
