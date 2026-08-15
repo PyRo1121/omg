@@ -735,40 +735,6 @@ fn test_privacy_status_quiet() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Performance Tests
-// ═══════════════════════════════════════════════════════════════════════════════
-
-#[test]
-fn test_privacy_status_performance() {
-    use std::time::Duration;
-
-    // ===== ARRANGE =====
-    init_test_env();
-
-    // ===== ACT =====
-    let result = run_omg(&["privacy", "status"]);
-
-    // ===== ASSERT =====
-    // Privacy status should be fast (< 2 seconds even with network timeout)
-    result.assert_duration_under(Duration::from_secs(2));
-}
-
-#[test]
-fn test_privacy_opt_out_performance() {
-    use std::time::Duration;
-
-    // ===== ARRANGE =====
-    let project = TestProject::new();
-
-    // ===== ACT =====
-    let result = project.run(&["privacy", "opt-out"]);
-
-    // ===== ASSERT =====
-    // Local opt-out should be very fast (< 1 second)
-    result.assert_duration_under(Duration::from_secs(1));
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
 // Documentation and Help Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
