@@ -174,17 +174,26 @@ mod version_comparison {
         // from both sides, the side with a remaining alpha run ("alpha") loses.
         let v1 = parse_version_or_panic("1.0.0");
         let v2 = parse_version_or_panic("1.0.0alpha");
-        assert!(v1 > v2, "stable (1.0.0) should be greater than pre-release (1.0.0alpha)");
+        assert!(
+            v1 > v2,
+            "stable (1.0.0) should be greater than pre-release (1.0.0alpha)"
+        );
 
         // Beta > alpha: lexicographic order on the alphabetic suffix ("beta" > "alpha").
         let v1 = parse_version_or_panic("1.0.0alpha");
         let v2 = parse_version_or_panic("1.0.0beta");
-        assert!(v2 > v1, "beta (1.0.0beta) should be greater than alpha (1.0.0alpha)");
+        assert!(
+            v2 > v1,
+            "beta (1.0.0beta) should be greater than alpha (1.0.0alpha)"
+        );
 
         // RC > beta: lexicographic order on the alphabetic suffix ("rc" > "beta").
         let v1 = parse_version_or_panic("1.0.0beta");
         let v2 = parse_version_or_panic("1.0.0rc1");
-        assert!(v2 > v1, "rc (1.0.0rc1) should be greater than beta (1.0.0beta)");
+        assert!(
+            v2 > v1,
+            "rc (1.0.0rc1) should be greater than beta (1.0.0beta)"
+        );
     }
 
     /// Test comparison with git versions
