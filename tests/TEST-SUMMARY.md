@@ -17,7 +17,6 @@
 
 - **cli_comprehensive.rs**: 59 passing ✅ (NEW - comprehensive CLI coverage)
 - **cli_integration.rs**: 15 passing
-- **comprehensive_tests.rs**: 124 passing
 - **Other test files**: ~40 additional tests
 - **Total Integration**: ~240+ tests
 - **Coverage**: Real CLI commands, IPC, daemon, workflows
@@ -252,7 +251,6 @@ cargo bench --features arch
 tests/
 ├── cli_comprehensive.rs    # NEW: All 43 commands (59 tests)
 ├── cli_integration.rs      # Core operations (15 tests)
-├── comprehensive_tests.rs  # Deep integration (124 tests)
 ├── e2e_tests.rs           # End-to-end workflows
 ├── benches/               # Criterion performance benchmarks
 └── common/                # Shared test utilities
