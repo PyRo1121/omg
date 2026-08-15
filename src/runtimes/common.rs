@@ -326,16 +326,61 @@ pub fn set_current_version(versions_dir: &Path, version: &str) -> Result<()> {
         );
     }
 
-    // Remove existing symlink
-    if current_link.exists() || current_link.is_symlink() {
-        fs::remove_file(&current_link)?;
-    }
+    #[cfg(not(unix))]
+    anyhow::bail!("Runtime version switching is unsupported on this platform");
 
-    // Create new symlink
     #[cfg(unix)]
-    std::os::unix::fs::symlink(&version_dir, &current_link)?;
+    {
+        match fs::symlink_metadata(&current_link) {
+            Ok(metadata) if !metadata.file_type().is_symlink() => {
+                anyhow::bail!(
+                    "Refusing to replace non-symlink current runtime path: {}",
+                    current_link.display()
+                );
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "Failed to inspect current runtime path: {}",
+                        current_link.display()
+                    )
+                });
+            }
+        }
 
-    Ok(())
+        let temp_link = tempfile::Builder::new()
+            .prefix(".current-")
+            .tempfile_in(versions_dir)
+            .with_context(|| {
+                format!(
+                    "Failed to create temporary runtime link in {}",
+                    versions_dir.display()
+                )
+            })?
+            .into_temp_path();
+        fs::remove_file(&temp_link).with_context(|| {
+            format!(
+                "Failed to prepare temporary runtime link: {}",
+                temp_link.display()
+            )
+        })?;
+        std::os::unix::fs::symlink(&version_dir, &temp_link).with_context(|| {
+            format!(
+                "Failed to create temporary runtime link: {}",
+                temp_link.display()
+            )
+        })?;
+        fs::rename(&temp_link, &current_link).with_context(|| {
+            format!(
+                "Failed to activate runtime version {version} at {}",
+                current_link.display()
+            )
+        })?;
+
+        Ok(())
+    }
 }
 
 /// Get the current version from the "current" symlink
@@ -557,18 +602,75 @@ mod tests {
 
     #[test]
     #[cfg(unix)]
-    fn test_set_and_get_current_version() {
+    fn switching_current_version_replaces_the_existing_link() {
         let temp = TempDir::new().unwrap();
-        fs::create_dir(temp.path().join("1.0.0")).unwrap();
+        let first_version = temp.path().join("1.0.0");
+        let second_version = temp.path().join("2.0.0");
+        fs::create_dir(&first_version).unwrap();
+        fs::create_dir(&second_version).unwrap();
 
         set_current_version(temp.path(), "1.0.0").unwrap();
-        assert_eq!(get_current_version(temp.path()), Some("1.0.0".to_string()));
+        set_current_version(temp.path(), "2.0.0").unwrap();
+
+        assert_eq!(
+            fs::read_link(temp.path().join("current")).unwrap(),
+            second_version
+        );
+        assert_eq!(get_current_version(temp.path()), Some("2.0.0".to_string()));
+        assert!(first_version.is_dir());
     }
 
     #[test]
-    fn test_set_current_version_not_installed() {
+    #[cfg(unix)]
+    fn missing_version_preserves_the_current_link() {
         let temp = TempDir::new().unwrap();
-        let result = set_current_version(temp.path(), "1.0.0");
-        assert!(result.is_err());
+        let installed_version = temp.path().join("1.0.0");
+        fs::create_dir(&installed_version).unwrap();
+        set_current_version(temp.path(), "1.0.0").unwrap();
+
+        let error = set_current_version(temp.path(), "2.0.0").unwrap_err();
+
+        assert!(error.to_string().contains("is not installed"));
+        assert_eq!(
+            fs::read_link(temp.path().join("current")).unwrap(),
+            installed_version
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn activation_refuses_to_replace_a_regular_file() {
+        let temp = TempDir::new().unwrap();
+        fs::create_dir(temp.path().join("1.0.0")).unwrap();
+        let current_path = temp.path().join("current");
+        fs::write(&current_path, "sentinel").unwrap();
+
+        let error = set_current_version(temp.path(), "1.0.0").unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("Refusing to replace non-symlink")
+        );
+        assert_eq!(fs::read_to_string(current_path).unwrap(), "sentinel");
+    }
+
+    #[test]
+    fn set_current_version_rejects_missing_versions() {
+        let temp = TempDir::new().unwrap();
+        let error = set_current_version(temp.path(), "1.0.0").unwrap_err();
+        assert!(error.to_string().contains("is not installed"));
+    }
+
+    #[test]
+    #[cfg(not(unix))]
+    fn activation_fails_explicitly_on_unsupported_platforms() {
+        let temp = TempDir::new().unwrap();
+        fs::create_dir(temp.path().join("1.0.0")).unwrap();
+
+        let error = set_current_version(temp.path(), "1.0.0").unwrap_err();
+
+        assert!(error.to_string().contains("unsupported on this platform"));
+        assert!(!temp.path().join("current").exists());
     }
 }
