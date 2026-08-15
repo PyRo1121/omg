@@ -57,7 +57,6 @@ pub struct TestConfig {
     pub run_system_tests: bool,
     pub run_network_tests: bool,
     pub run_destructive_tests: bool,
-    pub run_perf_tests: bool,
     pub run_fuzz_tests: bool,
     pub run_stress_tests: bool,
     pub target_distro: Option<String>,
@@ -76,9 +75,6 @@ impl Default for TestConfig {
             run_destructive_tests: env::var("OMG_RUN_DESTRUCTIVE_TESTS")
                 .map(|v| v == "1")
                 .unwrap_or(cfg!(feature = "docker_tests")),
-            run_perf_tests: env::var("OMG_RUN_PERF_TESTS")
-                .map(|v| v == "1")
-                .unwrap_or(false),
             run_fuzz_tests: env::var("OMG_RUN_FUZZ_TESTS")
                 .map(|v| v == "1")
                 .unwrap_or(false),
