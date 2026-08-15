@@ -315,6 +315,7 @@ dependency-type: indirect
 - Normalize project formatting
 ### 🧪 Testing
 
+- Remove slow external runtime probe
 - Mark environment-dependent integration cases ignored
 - Remove hollow integration cases
 - Keep one Debian benchmark gate
