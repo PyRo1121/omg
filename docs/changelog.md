@@ -313,6 +313,7 @@ dependency-type: indirect
 - Normalize project formatting
 ### 🧪 Testing
 
+- Make daemon cache assertions deterministic
 - Remove destructive AUR end-to-end target
 - Remove placeholder AUR security suite
 - Remove placeholder AUR recovery suite
