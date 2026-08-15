@@ -242,8 +242,17 @@ mod apt_integration {
         require_destructive_tests!();
         require_debian_like!();
 
-        // Ensure database is synced
-        let _ = run_omg(&["sync"]);
+        // Ensure database is synced before installing.
+        let sync_result = run_omg(&["sync"]);
+        assert!(
+            sync_result.success
+                || sync_result.contains("permission")
+                || sync_result.contains("root")
+                || sync_result.contains("repository")
+                || sync_result.contains("Unable"),
+            "Sync should succeed or explain why it cannot run: {}",
+            sync_result.combined_output()
+        );
 
         // Use a tiny, harmless package
         let pkg = "vim-tiny";
