@@ -9,7 +9,7 @@ use crate::package_managers::get_package_manager;
 pub async fn remove(packages: &[String], recursive: bool) -> Result<()> {
     let start_time = Instant::now();
     let pm = get_package_manager()?;
-    let service = PackageService::new(pm);
+    let service = PackageService::new(pm)?;
 
     crate::cli::modern_ui::print_phase_header(
         "🗑️",

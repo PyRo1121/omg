@@ -147,7 +147,7 @@ impl Model for InstallModel {
                         let result =
                             crate::cli::tea::async_bridge::run_blocking_future(async move {
                                 let pm = get_package_manager()?;
-                                let service = PackageService::new(pm);
+                                let service = PackageService::new(pm)?;
                                 service.install(&packages_task, yes).await
                             })
                             .and_then(std::convert::identity);

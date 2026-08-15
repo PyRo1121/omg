@@ -14,7 +14,10 @@ use std::sync::Arc;
 #[tokio::test]
 async fn test_update_with_no_updates() {
     let pm = Arc::new(TestPackageManager::new());
-    let service = PackageService::builder(pm).without_history().build();
+    let service = PackageService::builder(pm)
+        .without_history()
+        .build()
+        .expect("history-disabled service should build");
 
     let updates = service.list_updates().await.unwrap();
     assert_eq!(updates.len(), 0);
@@ -23,7 +26,10 @@ async fn test_update_with_no_updates() {
 #[tokio::test]
 async fn test_update_with_available_updates() {
     let pm = Arc::new(TestPackageManager::with_updates());
-    let service = PackageService::builder(pm).without_history().build();
+    let service = PackageService::builder(pm)
+        .without_history()
+        .build()
+        .expect("history-disabled service should build");
 
     let updates = service.list_updates().await.unwrap();
     assert_eq!(updates.len(), 2);
@@ -42,7 +48,10 @@ async fn test_update_execution() {
         repo: "extra".to_string(),
     }]);
 
-    let service = PackageService::builder(pm).without_history().build();
+    let service = PackageService::builder(pm)
+        .without_history()
+        .build()
+        .expect("history-disabled service should build");
 
     // Check for updates
     let updates = service.list_updates().await.unwrap();
@@ -58,7 +67,10 @@ async fn test_update_with_backend_failure() {
     let pm = Arc::new(TestPackageManager::new());
     pm.set_fail_operations(true);
 
-    let service = PackageService::builder(pm).without_history().build();
+    let service = PackageService::builder(pm)
+        .without_history()
+        .build()
+        .expect("history-disabled service should build");
 
     let result = service.update().await;
     assert!(result.is_err(), "Update should fail when backend fails");
@@ -67,7 +79,10 @@ async fn test_update_with_backend_failure() {
 #[tokio::test]
 async fn test_search_functionality() {
     let pm = Arc::new(TestPackageManager::with_defaults());
-    let service = PackageService::builder(pm).without_history().build();
+    let service = PackageService::builder(pm)
+        .without_history()
+        .build()
+        .expect("history-disabled service should build");
 
     // Search for existing package
     let results = service.search("git").await.unwrap();
@@ -86,7 +101,8 @@ async fn test_install_package() {
 
     let service = PackageService::builder(pm.clone())
         .without_history()
-        .build();
+        .build()
+        .expect("history-disabled service should build");
 
     // Install the package
     let result = service.install(&["test-package".to_string()], false).await;
@@ -99,7 +115,10 @@ async fn test_install_package() {
 #[tokio::test]
 async fn test_install_nonexistent_package_fails() {
     let pm = Arc::new(TestPackageManager::new());
-    let service = PackageService::builder(pm).without_history().build();
+    let service = PackageService::builder(pm)
+        .without_history()
+        .build()
+        .expect("history-disabled service should build");
 
     let result = service
         .install(&["nonexistent-package".to_string()], false)
@@ -116,7 +135,8 @@ async fn test_remove_package() {
 
     let service = PackageService::builder(pm.clone())
         .without_history()
-        .build();
+        .build()
+        .expect("history-disabled service should build");
 
     // Remove the package
     let result = service.remove(&["test-package".to_string()], false).await;
@@ -129,7 +149,10 @@ async fn test_remove_package() {
 #[tokio::test]
 async fn test_get_status() {
     let pm = Arc::new(TestPackageManager::with_defaults());
-    let service = PackageService::builder(pm).without_history().build();
+    let service = PackageService::builder(pm)
+        .without_history()
+        .build()
+        .expect("history-disabled service should build");
 
     let (total, explicit, orphans, updates) = service.get_status(false).await.unwrap();
 
@@ -143,7 +166,10 @@ async fn test_get_status() {
 #[tokio::test]
 async fn test_get_status_with_updates() {
     let pm = Arc::new(TestPackageManager::with_updates());
-    let service = PackageService::builder(pm).without_history().build();
+    let service = PackageService::builder(pm)
+        .without_history()
+        .build()
+        .expect("history-disabled service should build");
 
     let (_total, _explicit, _orphans, updates) = service.get_status(false).await.unwrap();
 
@@ -153,7 +179,10 @@ async fn test_get_status_with_updates() {
 #[tokio::test]
 async fn test_get_package_info() {
     let pm = Arc::new(TestPackageManager::with_defaults());
-    let service = PackageService::builder(pm).without_history().build();
+    let service = PackageService::builder(pm)
+        .without_history()
+        .build()
+        .expect("history-disabled service should build");
 
     // Get existing package info
     let info = service.info("git").await.unwrap();
@@ -174,7 +203,10 @@ async fn test_update_with_multiple_package_types() {
     // Configure multiple updates of different types
     pm.set_updates(UpdateFixture::typical_system());
 
-    let service = PackageService::builder(pm).without_history().build();
+    let service = PackageService::builder(pm)
+        .without_history()
+        .build()
+        .expect("history-disabled service should build");
 
     let updates = service.list_updates().await.unwrap();
     assert_eq!(updates.len(), 3);
@@ -188,7 +220,12 @@ async fn test_update_with_multiple_package_types() {
 #[tokio::test]
 async fn test_concurrent_operations() {
     let pm = Arc::new(TestPackageManager::with_defaults());
-    let service = Arc::new(PackageService::builder(pm).without_history().build());
+    let service = Arc::new(
+        PackageService::builder(pm)
+            .without_history()
+            .build()
+            .expect("history-disabled service should build"),
+    );
 
     // Run multiple operations concurrently
     let search_task = tokio::spawn({
@@ -251,7 +288,8 @@ mod proptest_tests {
             let pm = Arc::new(TestPackageManager::with_defaults());
             let service = PackageService::builder(pm)
                 .without_history()
-                .build();
+                .build()
+                .expect("history-disabled service should build");
 
             let results = tokio::runtime::Runtime::new()
                 .unwrap()
@@ -276,7 +314,8 @@ mod proptest_tests {
 
             let service = PackageService::builder(pm.clone())
                 .without_history()
-                .build();
+                .build()
+                .expect("history-disabled service should build");
 
             let rt = tokio::runtime::Runtime::new().unwrap();
 

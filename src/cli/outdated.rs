@@ -46,7 +46,7 @@ pub async fn run(security_only: bool, json: bool) -> Result<()> {
     }
 
     let pm = get_package_manager()?;
-    let service = PackageService::new(pm);
+    let service = PackageService::new(pm)?;
     let updates = service.list_updates().await?;
 
     if updates.is_empty() {
