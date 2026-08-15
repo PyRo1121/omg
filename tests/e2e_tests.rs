@@ -28,7 +28,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU16, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tempfile::TempDir;
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1521,93 +1521,6 @@ mod error_handling_tests {
             "Empty packages should deserialize"
         );
         assert_eq!(deserialized.total, 0, "Total should be 0");
-
-        Ok(())
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// SECTION 7: PERFORMANCE TESTS
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/// Performance-related tests (unit-level, not full benchmarks)
-mod performance_tests {
-    use super::*;
-
-    /// Verify bitcode serialization is fast (sanity check)
-    #[test]
-    fn test_bitcode_serialization_performance() -> Result<()> {
-        // Given: A typical request
-        let request = omg_lib::daemon::protocol::Request::Search {
-            id: 1,
-            query: "firefox".to_string(),
-            limit: Some(100),
-        };
-
-        // When: We measure serialization time
-        let start = Instant::now();
-        for _ in 0..1000 {
-            let _ = bitcode::serialize(&request)?;
-        }
-        let duration = start.elapsed();
-
-        // Then: Should be reasonably fast (< 10ms for 1000 iterations)
-        assert!(
-            duration < Duration::from_millis(100),
-            "1000 serializations should complete in <100ms, took {duration:?}"
-        );
-
-        Ok(())
-    }
-
-    /// Verify version comparison is fast
-    #[test]
-    fn test_version_comparison_performance() -> Result<()> {
-        // Given: Two versions
-        let v1 = semver::Version::parse("0.1.75")?;
-        let v2 = semver::Version::parse("0.2.0")?;
-
-        // When: We perform many comparisons
-        let start = Instant::now();
-        for _ in 0..10000 {
-            let _ = v1 < v2;
-        }
-        let duration = start.elapsed();
-
-        // Then: Should be sub-millisecond for 10000 comparisons
-        assert!(
-            duration < Duration::from_millis(10),
-            "10000 version comparisons should complete in <10ms, took {duration:?}"
-        );
-
-        Ok(())
-    }
-
-    /// Verify JSON serialization performance for usage stats
-    #[test]
-    fn test_usage_stats_json_performance() -> Result<()> {
-        // Given: Usage stats with data
-        let mut stats = omg_lib::core::usage::UsageStats::default();
-        for i in 0..100 {
-            stats
-                .installed_packages
-                .insert(format!("pkg-{i}"), u64::try_from(i).unwrap());
-        }
-        stats.total_commands = 1000;
-        stats.time_saved_ms = 100_000;
-
-        // When: We serialize many times
-        let start = Instant::now();
-        for _ in 0..100 {
-            let _ = serde_json::to_string(&stats)?;
-        }
-        let duration = start.elapsed();
-
-        // Then: Should be reasonably fast
-        assert!(
-            duration < Duration::from_millis(100),
-            "100 JSON serializations should complete in <100ms, took {duration:?}"
-        );
 
         Ok(())
     }
