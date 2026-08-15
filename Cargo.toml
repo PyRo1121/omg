@@ -12,7 +12,7 @@ keywords = ["package-manager", "arch-linux", "version-manager", "runtime"]
 categories = ["command-line-utilities", "development-tools"]
 
 [package.metadata.cargo-machete]
-ignored = ["ar", "winnow", "debian-packaging"]
+ignored = ["ar"]
 
 [lib]
 name = "omg_lib"
@@ -74,7 +74,7 @@ git2 = "0.19"  # Pinned: libscoop requires git2 0.19 (libgit2-sys links conflict
 tokio-util = { version = "0.7.18", features = ["io", "codec", "rt"] }
 
 # Archives + compression (zlib-rs = pure Rust SIMD-accelerated zlib, ~2x faster than miniz_oxide)
-tar = "0.4.45"
+tar = "0.4.46"
 flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
 lz4_flex = { version = "0.12.1", default-features = false, features = [
     "frame",
@@ -175,16 +175,14 @@ crossterm = "0.29"
 rust-apt = { version = "0.9.0", optional = true }
 rustix = { version = "1.1", features = ["fs", "process", "thread"] }
 
-# Debian/Ubuntu 2026 Performance Stack
-debian-packaging = { version = "0.18", default-features = false, features = ["http"], optional = true } # Pure Rust apt reimplementation
-winnow = { version = "0.7", optional = true }            # Zero-copy parser combinators
-ar = { version = "0.9", optional = true }                # Pure Rust .ar archive parsing
+# Debian/Ubuntu package support
+ar = { version = "0.9", optional = true } # Pure Rust .ar archive parsing
 resolvo = { version = "0.10.2", optional = true }
 rkyv = { version = "0.8.17", features = ["bytecheck", "little_endian", "aligned"] }  # Zero-copy deserialization
 whoami = "2.0.2"
 governor = "0.10.4"
 jsonwebtoken = { version = "10.3.0", default-features = false, features = ["rust_crypto"] }  # >=10.3.0 required: CVE-2026-25537 fix
-sentry = { version = "0.46.1", features = ["anyhow", "tracing", "logs"] }
+sentry = { version = "0.46.1", default-features = false, features = ["anyhow", "tracing", "logs", "backtrace", "contexts", "panic", "reqwest", "rustls"] }
 sentry-tracing = "0.46.1"
 
 # Cross-platform package manager support
@@ -286,12 +284,10 @@ windows = []
 
 # Debian/Ubuntu support - unified feature
 # Requires libapt-pkg-dev: `apt install libapt-pkg-dev`
-debian = ["debian-packaging", "winnow", "ar", "rust-apt"]
+debian = ["ar", "rust-apt"]
 
 # Pure Rust Debian support (no FFI, no system dependencies) - for testing/indexing
-debian-pure = ["debian-packaging", "winnow", "ar"]
-
-debian-deb822-backend = ["debian-packaging"]
+debian-pure = ["ar"]
 debian-resolvo = ["resolvo"]
 
 # Fedora/RHEL support (DNF/RPM) - Pure Rust, no system dependencies
