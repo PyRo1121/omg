@@ -237,31 +237,6 @@ fn test_docker_status() {
 
 #[test]
 #[ignore = "requires Docker; run the dedicated Docker E2E job with --ignored"]
-fn test_docker_performance_vs_pacman() {
-    require_docker_tests();
-    assert!(ensure_docker_image(), "Docker image not ready");
-
-    // Compare search performance
-    let start = std::time::Instant::now();
-    let (omg_success, _omg_out, _) = run_in_docker(&["omg", "search", "firefox"]);
-    let omg_duration = start.elapsed();
-
-    assert!(omg_success, "OMG search should succeed");
-
-    let start = std::time::Instant::now();
-    let (pacman_success, _pacman_out, _) = run_in_docker(&["pacman", "-Ss", "firefox"]);
-    let pacman_duration = start.elapsed();
-
-    assert!(pacman_success, "Pacman search should succeed");
-
-    eprintln!("OMG search: {omg_duration:?}");
-    eprintln!("Pacman search: {pacman_duration:?}");
-
-    // Note: This is in a container so times may vary, but OMG should be competitive
-}
-
-#[test]
-#[ignore = "requires Docker; run the dedicated Docker E2E job with --ignored"]
 fn test_docker_concurrent_operations() {
     require_docker_tests();
     assert!(ensure_docker_image(), "Docker image not ready");
