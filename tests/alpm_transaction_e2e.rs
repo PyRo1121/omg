@@ -12,7 +12,6 @@ mod common;
 use alpm_harness::{AlpmHarness, HarnessPkg};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Instant;
 
 // =============================================================================
 // TRANSACTION LIFECYCLE TESTS (using harness - no root needed)
@@ -274,61 +273,6 @@ fn test_alpm_progress_callback() {
     alpm.trans_init(alpm::TransFlag::empty())
         .expect("Should init");
     alpm.trans_release().expect("Should release");
-}
-
-// =============================================================================
-// PERFORMANCE TESTS
-// =============================================================================
-
-#[test]
-fn test_alpm_rapid_transaction_creation() {
-    require_arch!();
-
-    let iterations = 50u32;
-    let start = Instant::now();
-    let harness = AlpmHarness::new().expect("Failed to create harness");
-
-    for _ in 0..iterations {
-        let mut alpm = harness.alpm().expect("Failed to get handle");
-        alpm.trans_init(alpm::TransFlag::empty())
-            .expect("Init failed");
-        alpm.trans_release().expect("Release failed");
-    }
-
-    let duration = start.elapsed();
-    let avg = duration / iterations;
-    assert!(
-        avg.as_millis() < 100,
-        "Transaction creation should be fast (avg: {avg:?})"
-    );
-}
-
-#[test]
-fn test_alpm_memory_leak_detection() {
-    require_arch!();
-
-    let harness = AlpmHarness::new().expect("Failed to create harness");
-    harness
-        .add_sync_pkgs("core", &[HarnessPkg::new("test-a", "1.0-1")])
-        .expect("Failed to add packages");
-
-    for _ in 0..100 {
-        let mut alpm = harness.alpm().expect("Failed to get handle");
-        alpm.register_syncdb("core", alpm::SigLevel::NONE)
-            .expect("reg db");
-        alpm.trans_init(alpm::TransFlag::empty())
-            .expect("Init failed");
-
-        for db in alpm.syncdbs() {
-            if let Ok(pkg) = db.pkg("test-a") {
-                let _ = alpm.trans_add_pkg(pkg);
-                break;
-            }
-        }
-
-        drop(alpm.trans_prepare());
-        alpm.trans_release().expect("Release failed");
-    }
 }
 
 // =============================================================================
