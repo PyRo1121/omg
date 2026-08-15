@@ -316,6 +316,7 @@ dependency-type: indirect
 - Normalize project formatting
 ### 🧪 Testing
 
+- Fail closed for destructive opt-in
 - Remove hollow Docker benchmark
 - Remove manual Debian benchmarks
 - Remove ALPM timing-only cases
