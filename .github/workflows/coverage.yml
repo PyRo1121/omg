@@ -30,10 +30,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     container:
-      image: archlinux:latest
+      image: archlinux:latest@sha256:b0deabeb3d283da2c7f7dbf0eea051b7b2cd0554e0b737cc457fd21683bdcdd1
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Install dependencies
         run: |

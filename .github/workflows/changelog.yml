@@ -25,8 +25,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Configure Git
         run: |
@@ -69,18 +69,24 @@ jobs:
 
       - name: Commit and Push
         if: steps.changes.outputs.changed == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git add docs/changelog.md
           git commit -m "docs: update changelog [skip ci]
 
           Auto-generated from git history with git-cliff."
+          git config credential.helper '!f() { echo username=x-access-token; echo "password=$GITHUB_TOKEN"; }; f'
           git push
+          git config --unset credential.helper
 
       - name: Summary
+        env:
+          CHANGELOG_CHANGED: ${{ steps.changes.outputs.changed }}
         run: |
           echo "## Changelog Update" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          if [ "${{ steps.changes.outputs.changed }}" == "true" ]; then
+          if [ "$CHANGELOG_CHANGED" == "true" ]; then
             echo "✅ Changelog updated and committed" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "### Recent entries:" >> $GITHUB_STEP_SUMMARY
