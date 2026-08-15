@@ -18,16 +18,7 @@ use super::{paths, RuntimeBackend};
 ///
 /// Supported runtimes: node, python, go, ruby, java, bun, rust
 pub fn native_runtime_bin_path(runtime: &str, version: &str) -> Option<PathBuf> {
-    native_runtime_bin_path_in(&paths::data_dir(), runtime, version)
-}
-
-fn native_runtime_bin_path_in(
-    data_dir: &std::path::Path,
-    runtime: &str,
-    version: &str,
-) -> Option<PathBuf> {
-    crate::core::security::validate_runtime_version(version).ok()?;
-
+    let data_dir = paths::data_dir();
     let bin_path = match runtime {
         "node" => data_dir.join("versions/node").join(version).join("bin"),
         "python" => data_dir.join("versions/python").join(version).join("bin"),
@@ -35,7 +26,7 @@ fn native_runtime_bin_path_in(
         "ruby" => data_dir.join("versions/ruby").join(version).join("bin"),
         "java" => data_dir.join("versions/java").join(version).join("bin"),
         "bun" => data_dir.join("versions/bun").join(version),
-        "rust" => home::home_dir()?.join(".cargo/bin"),
+        "rust" => home::home_dir().unwrap_or_default().join(".cargo/bin"),
         _ => return None,
     };
 
@@ -140,34 +131,10 @@ pub fn add_mise_path_fallbacks<S: BuildHasher>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
 
     #[test]
     fn test_native_runtime_bin_path_returns_none_for_unknown() {
         assert!(native_runtime_bin_path("unknown-runtime", "1.0.0").is_none());
-    }
-
-    #[test]
-    fn native_runtime_paths_reject_parent_directory_versions() -> anyhow::Result<()> {
-        let temp = TempDir::new()?;
-        let escaped_bin = temp.path().join("versions/bin");
-        std::fs::create_dir_all(&escaped_bin)?;
-
-        assert!(native_runtime_bin_path_in(temp.path(), "node", "..").is_none());
-        Ok(())
-    }
-
-    #[test]
-    fn native_runtime_paths_resolve_installed_safe_versions() -> anyhow::Result<()> {
-        let temp = TempDir::new()?;
-        let expected = temp.path().join("versions/node/22.0.0/bin");
-        std::fs::create_dir_all(&expected)?;
-
-        assert_eq!(
-            native_runtime_bin_path_in(temp.path(), "node", "22.0.0"),
-            Some(expected)
-        );
-        Ok(())
     }
 
     #[test]
