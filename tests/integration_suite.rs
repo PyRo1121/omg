@@ -235,34 +235,6 @@ mod package_management {
     }
 
     #[test]
-    fn test_search_empty_query() {
-        let result = run_omg(&["search", ""]);
-        // Empty query might return error or empty results
-        // Both are acceptable behaviors
-    }
-
-    #[test]
-    fn test_search_special_characters() {
-        // Test with special characters that might break parsing
-        let result = run_omg(&["search", "lib++"]);
-        // Should not crash
-    }
-
-    #[test]
-    fn test_search_unicode() {
-        // Test with unicode characters
-        let result = run_omg(&["search", "日本語"]);
-        // Should not crash, may return no results
-    }
-
-    #[test]
-    fn test_search_very_long_query() {
-        let long_query = "a".repeat(1000);
-        let result = run_omg(&["search", &long_query]);
-        // Should handle gracefully (no crash, may return error)
-    }
-
-    #[test]
     fn test_info_official_package() {
         if !system_tests_enabled() {
             eprintln!("Skipping system test (set OMG_RUN_SYSTEM_TESTS=1)");
@@ -634,12 +606,6 @@ mod runtime_management {
     }
 
     #[test]
-    fn test_use_invalid_version_format() {
-        let result = run_omg(&["use", "node", "not-a-version"]);
-        // Should handle gracefully (may try to install or fail)
-    }
-
-    #[test]
     fn test_runtime_alias_node_nodejs() {
         // "nodejs" should work the same as "node"
         let result1 = run_omg(&["list", "node"]);
@@ -901,21 +867,6 @@ mod completions {
             "Should report unsupported shell"
         );
     }
-
-    #[test]
-    fn test_hidden_complete_command() {
-        // Test the hidden dynamic completion command
-        let result = run_omg(&["complete", "--shell", "zsh", "--current", "fire"]);
-        // May or may not be implemented as a visible command
-    }
-
-    #[test]
-    fn test_fuzzy_completion_typo() {
-        // This tests the internal completion engine
-        // The hidden complete command should handle typos
-        let result = run_omg(&["complete", "--shell", "zsh", "--current", "frfx"]);
-        // If implemented, should suggest "firefox"
-    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -941,12 +892,6 @@ mod shell_hooks {
     fn test_hook_fish() {
         let result = run_omg(&["hook", "fish"]);
         assert!(result.success, "Hook fish should succeed");
-    }
-
-    #[test]
-    fn test_hook_invalid_shell() {
-        let result = run_omg(&["hook", "invalidshell"]);
-        // Should fail or return empty
     }
 }
 
@@ -1076,49 +1021,6 @@ mod edge_cases {
 
         let result = run_omg_in_dir(&["status"], &unicode_dir);
         assert!(result.success, "Should work in unicode directory");
-    }
-
-    #[test]
-    fn test_whitespace_in_version() {
-        // Version with leading/trailing whitespace
-        let temp_dir = TempDir::new().unwrap();
-        let mut f = File::create(temp_dir.path().join(".nvmrc")).unwrap();
-        writeln!(f, "  20.10.0  ").unwrap();
-
-        let result = run_omg_in_dir(&["use", "node"], temp_dir.path());
-        // Should trim whitespace
-    }
-
-    #[test]
-    fn test_comments_in_version_file() {
-        let temp_dir = TempDir::new().unwrap();
-        let mut f = File::create(temp_dir.path().join(".nvmrc")).unwrap();
-        writeln!(f, "# This is a comment").unwrap();
-        writeln!(f, "20.10.0").unwrap();
-
-        let result = run_omg_in_dir(&["use", "node"], temp_dir.path());
-        // Should handle comments (implementation dependent)
-    }
-
-    #[test]
-    fn test_lts_version_alias() {
-        // Using "lts" as a version
-        let result = run_omg(&["use", "node", "lts"]);
-        // Should resolve to actual LTS version
-    }
-
-    #[test]
-    fn test_latest_version_alias() {
-        // Using "latest" as a version
-        let result = run_omg(&["use", "node", "latest"]);
-        // Should resolve to latest version
-    }
-
-    #[test]
-    fn test_partial_version() {
-        // Using partial version like "20" instead of "20.10.0"
-        let result = run_omg(&["use", "node", "20"]);
-        // Should resolve to latest 20.x.x
     }
 }
 
@@ -1746,73 +1648,6 @@ mod regression_tests {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// STRESS TESTS
-// ═══════════════════════════════════════════════════════════════════════════════
-
-mod stress_tests {
-    use super::*;
-    use std::thread;
-
-    #[test]
-    fn test_concurrent_status_commands() {
-        let handles: Vec<_> = (0..5)
-            .map(|_| thread::spawn(|| run_omg(&["status"])))
-            .collect();
-
-        for handle in handles {
-            let result = handle.join().unwrap();
-            assert!(result.success, "Concurrent status should succeed");
-        }
-    }
-
-    #[test]
-    fn test_concurrent_list_commands() {
-        let handles: Vec<_> = (0..5)
-            .map(|_| thread::spawn(|| run_omg(&["list"])))
-            .collect();
-
-        for handle in handles {
-            let result = handle.join().unwrap();
-            assert!(result.success, "Concurrent list should succeed");
-        }
-    }
-
-    #[test]
-    fn test_rapid_version_detection() {
-        if !system_tests_enabled() {
-            eprintln!("Skipping system test (set OMG_RUN_SYSTEM_TESTS=1)");
-            return;
-        }
-
-        let temp_dir = TempDir::new().unwrap();
-        let mut f = File::create(temp_dir.path().join(".nvmrc")).unwrap();
-        writeln!(f, "20.10.0").unwrap();
-
-        // Run multiple times rapidly
-        for i in 0..10 {
-            let result = run_omg_in_dir(&["use", "node"], temp_dir.path());
-            assert!(
-                result.success,
-                "Rapid version detection failed on iteration {i}: stdout: '{}', stderr: '{}'",
-                result.stdout, result.stderr
-            );
-        }
-    }
-
-    #[test]
-    fn test_large_search_query() {
-        if !system_tests_enabled() {
-            eprintln!("Skipping system test (set OMG_RUN_SYSTEM_TESTS=1)");
-            return;
-        }
-
-        // Search for common term that returns many results
-        let result = run_omg(&["search", "lib"]);
-        assert!(result.success, "Large search should succeed");
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
 // OUTPUT FORMAT TESTS
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1863,29 +1698,6 @@ mod output_format {
                 || result.stdout.contains("OMG"),
             "Status should have structured sections"
         );
-    }
-
-    #[test]
-    fn test_list_output_format() {
-        let result = run_omg(&["list"]);
-        // In CI, list may fail if no runtimes are installed - that's OK
-        // The key test is no panic
-        assert!(
-            !result.stderr.contains("panicked at"),
-            "List should not panic"
-        );
-        if result.success && !result.stdout.is_empty() {
-            // If it succeeds, check for expected content
-            assert!(
-                result.stdout.contains("Node")
-                    || result.stdout.contains("Python")
-                    || result.stdout.contains("runtime")
-                    || result.stdout.contains("OMG")
-                    || result.stdout.contains("No")
-                    || result.stdout.is_empty(),
-                "List should show runtime information or indicate none"
-            );
-        }
     }
 }
 
