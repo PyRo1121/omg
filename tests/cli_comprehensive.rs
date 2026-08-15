@@ -466,15 +466,29 @@ mod package_ops_tests {
     #[test]
     fn test_clean_cache() {
         let result = run_omg(&["clean", "cache", "--dry-run"]);
-        // Should complete (dry run is safe)
-        assert!(!result.combined_output().is_empty());
+        let output = result.combined_output();
+        assert!(
+            !output.contains("panicked at"),
+            "Clean cache should not panic"
+        );
+        assert!(
+            result.success || output.contains("cache") || output.contains("Cache"),
+            "Clean cache should succeed or explain the cache outcome: {output}"
+        );
     }
 
     #[test]
     fn test_clean_orphans() {
         let result = run_omg(&["clean", "orphans", "--dry-run"]);
-        // Should complete (dry run is safe)
-        assert!(!result.combined_output().is_empty());
+        let output = result.combined_output();
+        assert!(
+            !output.contains("panicked at"),
+            "Clean orphans should not panic"
+        );
+        assert!(
+            result.success || output.to_lowercase().contains("orphan"),
+            "Clean orphans should succeed or explain the orphan outcome: {output}"
+        );
     }
 }
 
