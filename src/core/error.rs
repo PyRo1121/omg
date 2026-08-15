@@ -174,7 +174,7 @@ impl OmgError {
 pub fn format_error_with_suggestion(err: &OmgError) -> String {
     let mut msg = format!("Error: {err}");
     if let Some(suggestion) = err.suggestion() {
-        msg.push_str("\n\n💡 ");
+        msg.push_str("\n\nSuggestion: ");
         msg.push_str(suggestion);
     }
     msg
@@ -261,7 +261,7 @@ mod tests {
         let err = OmgError::PackageNotFound("test".to_string());
         let formatted = format_error_with_suggestion(&err);
         assert!(formatted.contains("Error:"));
-        assert!(formatted.contains("💡"));
+        assert!(formatted.contains("Suggestion:"));
     }
 
     #[test]
