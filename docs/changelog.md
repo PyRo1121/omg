@@ -314,6 +314,7 @@ dependency-type: indirect
 - Normalize project formatting
 ### 🧪 Testing
 
+- Remove Arch timing-only checks
 - Remove timing-only daemon concurrency checks
 - Make daemon cache assertions deterministic
 - Remove destructive AUR end-to-end target
