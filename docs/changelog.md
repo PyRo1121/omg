@@ -307,6 +307,7 @@ dependency-type: indirect
 - Normalize project formatting
 ### 🧪 Testing
 
+- Remove duplicate version properties
 - Remove local model chaos suite
 - Remove compile-only package targets
 - Remove assertion-free integration placeholders
