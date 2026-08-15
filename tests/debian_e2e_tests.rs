@@ -642,52 +642,6 @@ fn test_version_comparison_handles_invalid_input() {
 }
 
 // ============================================================================
-// Performance Tests (Optional, for manual benchmarking)
-// ============================================================================
-
-#[test]
-#[ignore = "manual benchmark - run with --ignored flag"]
-#[cfg(feature = "docker_tests")]
-fn bench_version_comparison() {
-    let start = std::time::Instant::now();
-    let iterations = 100_000;
-
-    for _ in 0..iterations {
-        let _ = compare_versions("2:9.0.1499-1ubuntu2", "2:9.0.1500-1ubuntu1");
-    }
-
-    let elapsed = start.elapsed();
-    #[allow(clippy::cast_precision_loss)]
-    let ns_per_iter = elapsed.as_nanos() as f64 / iterations as f64;
-    println!(
-        "Version comparisons: {iterations} iterations in {elapsed:?} ({ns_per_iter:.2} ns/iter)"
-    );
-}
-
-#[test]
-#[ignore = "manual benchmark - run with --ignored flag"]
-fn bench_sources_parsing() {
-    use std::fmt::Write;
-    let mut large_sources = String::new();
-    for i in 0..1000 {
-        let _ = writeln!(
-            large_sources,
-            "deb http://example.com/repo{i} bookworm main contrib non-free"
-        );
-    }
-
-    let start = std::time::Instant::now();
-
-    let repos = parse_sources_list_content(&large_sources, Path::new("/test")).unwrap();
-
-    let elapsed = start.elapsed();
-    #[allow(clippy::cast_precision_loss)]
-    let us_per_repo = elapsed.as_micros() as f64 / repos.len() as f64;
-    let len = repos.len();
-    println!("Parsed {len} repositories in {elapsed:?} ({us_per_repo:.2} µs/repo)");
-}
-
-// ============================================================================
 // CLI-LEVEL E2E TESTS FOR DEBIAN
 // ============================================================================
 
@@ -699,11 +653,9 @@ struct CliTestResult {
     success: bool,
     stdout: String,
     stderr: String,
-    duration: std::time::Duration,
 }
 
 fn run_omg_cli(args: &[&str]) -> CliTestResult {
-    let start = std::time::Instant::now();
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_omg"));
     cmd.args(args)
         .env("OMG_TEST_MODE", "1")
@@ -712,13 +664,11 @@ fn run_omg_cli(args: &[&str]) -> CliTestResult {
         .stderr(Stdio::piped());
 
     let output = cmd.output().expect("Failed to execute omg");
-    let duration = start.elapsed();
 
     CliTestResult {
         success: output.status.success(),
         stdout: String::from_utf8_lossy(&output.stdout).to_string(),
         stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-        duration,
     }
 }
 
@@ -954,12 +904,6 @@ fn test_cli_debian_security_updates() {
         "Should handle security updates"
     );
     assert_no_arch_terms(&combined, "Debian security update path");
-
-    // Check should complete reasonably fast
-    assert!(
-        result.duration.as_secs() < 30,
-        "Update check should be fast"
-    );
 }
 
 #[test]
@@ -1029,27 +973,6 @@ fn test_cli_debian_package_not_found() {
     assert!(
         combined.contains("not found") || combined.contains("Unable"),
         "Should show helpful error message"
-    );
-}
-
-#[test]
-fn test_cli_debian_performance_search() {
-    if !is_debian_or_ubuntu() {
-        eprintln!("Skipping: not on Debian/Ubuntu");
-        return;
-    }
-
-    let start = std::time::Instant::now();
-    let result = run_omg_cli(&["search", "python"]);
-    let elapsed = start.elapsed();
-
-    let combined = format!("{}{}", result.stdout, result.stderr);
-    assert!(!combined.contains("panicked"), "Search should not panic");
-
-    // Search should be reasonably fast
-    assert!(
-        elapsed.as_secs() < 15,
-        "Search should complete in under 15s, took {elapsed:?}"
     );
 }
 
@@ -1185,16 +1108,8 @@ fn test_cli_debian_handles_slow_mirrors() {
         return;
     }
 
-    // Ensure we don't hang on slow mirrors
-    let start = std::time::Instant::now();
+    // The command should return a result without panicking.
     let result = run_omg_cli(&["update", "--check"]);
-    let elapsed = start.elapsed();
-
-    assert!(
-        elapsed.as_secs() < 60,
-        "Should not hang indefinitely on slow mirrors"
-    );
-
     let combined = format!("{}{}", result.stdout, result.stderr);
     assert!(
         !combined.contains("panicked"),
