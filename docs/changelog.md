@@ -316,6 +316,7 @@ dependency-type: indirect
 - Normalize project formatting
 ### 🧪 Testing
 
+- Assert workflow command outcomes
 - Reject tautological update outcomes
 - Strengthen CLI error assertions
 - Assert clean command outcomes
