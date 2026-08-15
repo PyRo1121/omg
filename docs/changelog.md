@@ -108,6 +108,7 @@ which newer clippy versions flag as an error with -D warnings.
 
 ### 👷 CI/CD
 
+- Harden workflow credentials and release inputs
 - Enforce a valid supply-chain policy
 - Pin remaining third-party actions
 - Make security and coverage gates fail closed
