@@ -783,9 +783,11 @@ mod attack_scenarios {
         let content = "-----BEGIN RSA PRIVATE KEY-----\nMIIE...";
         let findings = scanner.scan_content(content, "key.pem").unwrap();
         assert!(!findings.is_empty(), "Should detect private key");
-        assert!(findings
-            .iter()
-            .any(|f| f.severity == SecretSeverity::Critical));
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.severity == SecretSeverity::Critical)
+        );
     }
 
     #[test]
@@ -819,29 +821,39 @@ mod attack_scenarios {
         };
 
         // Banned package
-        assert!(policy
-            .check_package("telnet", false, Some("BSD"), SecurityGrade::Verified)
-            .is_err());
+        assert!(
+            policy
+                .check_package("telnet", false, Some("BSD"), SecurityGrade::Verified)
+                .is_err()
+        );
 
         // AUR when disabled
-        assert!(policy
-            .check_package("yay", true, Some("MIT"), SecurityGrade::Community)
-            .is_err());
+        assert!(
+            policy
+                .check_package("yay", true, Some("MIT"), SecurityGrade::Community)
+                .is_err()
+        );
 
         // Wrong license
-        assert!(policy
-            .check_package("pkg", false, Some("GPL-3.0"), SecurityGrade::Verified)
-            .is_err());
+        assert!(
+            policy
+                .check_package("pkg", false, Some("GPL-3.0"), SecurityGrade::Verified)
+                .is_err()
+        );
 
         // Below minimum grade
-        assert!(policy
-            .check_package("pkg", false, Some("MIT"), SecurityGrade::Community)
-            .is_err());
+        assert!(
+            policy
+                .check_package("pkg", false, Some("MIT"), SecurityGrade::Community)
+                .is_err()
+        );
 
         // Valid package
-        assert!(policy
-            .check_package("vim", false, Some("MIT"), SecurityGrade::Verified)
-            .is_ok());
+        assert!(
+            policy
+                .check_package("vim", false, Some("MIT"), SecurityGrade::Verified)
+                .is_ok()
+        );
     }
 
     #[test]
