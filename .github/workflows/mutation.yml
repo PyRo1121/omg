@@ -1,8 +1,6 @@
 name: Mutation Testing
 
 on:
-  push:
-    branches: [main]
   schedule:
     # Run weekly on Sundays at 00:00 UTC
     - cron: '0 0 * * 0'
@@ -43,19 +41,34 @@ jobs:
       - name: Install cargo-mutants
         uses: taiki-e/install-action@82cd3e7658a6f96c86c0234aeeda1748937cb0a1 # v2
         with:
-          tool: cargo-mutants
+          tool: cargo-mutants@27.1.0
 
       - name: Run mutation testing
         run: |
-          # Run on core modules only (full codebase would take too long)
+          set +e
           cargo mutants \
-            --package omg_lib \
+            --package omg \
+            --file src/core/archive.rs \
+            --file src/core/runtime_resolver.rs \
+            --file src/core/security/validation.rs \
+            --file src/core/security/policy.rs \
+            --file src/core/security/secrets.rs \
             --timeout 60 \
             --jobs 2 \
             --exclude-re 'tests?|bench|mock' \
-            --output-html mutants-report \
-            -- --no-default-features --features pgp,license
-        continue-on-error: true
+            --output mutants-report \
+            --no-default-features \
+            --features pgp,license
+          mutants_exit=$?
+          set -e
+
+          case "$mutants_exit" in
+            0|2|3) ;;
+            *)
+              echo "cargo-mutants failed with exit code $mutants_exit" >&2
+              exit "$mutants_exit"
+              ;;
+          esac
 
       - name: Upload mutation report
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
@@ -67,17 +80,27 @@ jobs:
 
       - name: Check mutation score
         run: |
-          if [ -f mutants-report/mutants.json ]; then
-            total=$(jq '.outcomes | length' mutants-report/mutants.json)
-            caught=$(jq '[.outcomes[] | select(.outcome == "Caught")] | length' mutants-report/mutants.json)
-            if [ "$total" -gt 0 ]; then
-              score=$((caught * 100 / total))
-              echo "Mutation score: $score% ($caught/$total mutants caught)"
-              # Warn if mutation score is below target (75% industry best practice)
-              if [ "$score" -lt 75 ]; then
-                echo "::warning::Mutation score $score% is below 75% target. Tests may not be catching all bugs."
-              else
-                echo "::notice::Mutation score $score% meets 75% target"
-              fi
+          result_dir="mutants-report/mutants.out"
+          for report in caught.txt missed.txt timeout.txt; do
+            if [ ! -f "$result_dir/$report" ]; then
+              echo "Missing mutation report: $result_dir/$report" >&2
+              exit 1
             fi
+          done
+
+          caught=$(wc -l < "$result_dir/caught.txt")
+          missed=$(wc -l < "$result_dir/missed.txt")
+          timed_out=$(wc -l < "$result_dir/timeout.txt")
+          total=$((caught + missed + timed_out))
+          if [ "$total" -eq 0 ]; then
+            echo "Mutation run tested zero viable mutants" >&2
+            exit 1
           fi
+
+          score=$((caught * 100 / total))
+          echo "Mutation score: $score% ($caught/$total mutants caught; $missed missed; $timed_out timed out)"
+          if [ "$score" -lt 75 ]; then
+            echo "Mutation score $score% is below the required 75% threshold" >&2
+            exit 1
+          fi
+          echo "::notice::Mutation score $score% meets the 75% threshold"
