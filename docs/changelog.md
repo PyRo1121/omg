@@ -313,6 +313,7 @@ dependency-type: indirect
 - Normalize project formatting
 ### 🧪 Testing
 
+- Remove timing-only daemon concurrency checks
 - Make daemon cache assertions deterministic
 - Remove destructive AUR end-to-end target
 - Remove placeholder AUR security suite
