@@ -108,6 +108,7 @@ which newer clippy versions flag as an error with -D warnings.
 
 ### 👷 CI/CD
 
+- Harden release and mutation quality gates
 - Harden workflow credentials and release inputs
 - Enforce a valid supply-chain policy
 - Pin remaining third-party actions
