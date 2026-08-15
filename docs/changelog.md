@@ -315,6 +315,7 @@ dependency-type: indirect
 - Normalize project formatting
 ### 🧪 Testing
 
+- Remove hollow integration cases
 - Keep one Debian benchmark gate
 - Remove timing-only parser benchmark
 - Remove hollow comprehensive smoke suite
