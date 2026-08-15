@@ -307,6 +307,7 @@ dependency-type: indirect
 - Normalize project formatting
 ### 🧪 Testing
 
+- Remove compile-only package targets
 - Remove assertion-free integration placeholders
 - **Fuzz**: Minimize the isolated dependency graph
 - Make segmented runner reject empty success
