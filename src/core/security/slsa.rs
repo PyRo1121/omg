@@ -304,10 +304,19 @@ impl SlsaVerifier {
 
     /// Calculate SHA-256 hash of a file
     fn calculate_hash<P: AsRef<Path>>(path: P) -> Result<String> {
+        use std::io::Read as _;
+
         let mut hasher = Sha256::new();
         let mut file = std::fs::File::open(path)?;
-        std::io::copy(&mut file, &mut hasher)?;
-        Ok(format!("{:x}", hasher.finalize()))
+        let mut buffer = [0u8; 8192];
+        loop {
+            let read = file.read(&mut buffer)?;
+            if read == 0 {
+                break;
+            }
+            hasher.update(&buffer[..read]);
+        }
+        Ok(hex::encode(hasher.finalize()))
     }
 
     /// Verify hash of a file against expected value

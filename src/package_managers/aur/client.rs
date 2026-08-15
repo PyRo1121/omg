@@ -2226,7 +2226,7 @@ impl AurClient {
         hasher.update(makepkg_args.as_bytes());
         hasher.update(build_method.as_bytes());
         hasher.update(self.settings.aur.secure_makepkg.to_string().as_bytes());
-        Ok(format!("{:x}", hasher.finalize()))
+        Ok(hex::encode(hasher.finalize()))
     }
 
     fn cache_path(&self, package: &str) -> PathBuf {

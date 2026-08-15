@@ -60,7 +60,7 @@ impl ContentStore {
         let data = fs::read(deb_path)
             .with_context(|| format!("Failed to read .deb file: {}", deb_path.display()))?;
         hasher.update(&data);
-        let hash = format!("{:x}", hasher.finalize());
+        let hash = hex::encode(hasher.finalize());
 
         // Store under sharded directory (first 2 chars)
         let hash_dir = self.store_dir.join(&hash[..2]);
@@ -156,7 +156,7 @@ impl ContentStore {
         let data =
             fs::read(path).with_context(|| format!("Failed to read file: {}", path.display()))?;
         hasher.update(&data);
-        Ok(format!("{:x}", hasher.finalize()))
+        Ok(hex::encode(hasher.finalize()))
     }
 
     /// Get the total size of the content store in bytes
