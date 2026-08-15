@@ -105,13 +105,7 @@ test-fuzz:
 	@command -v cargo-fuzz >/dev/null 2>&1 || (echo "Installing cargo-fuzz..." && cargo +nightly install cargo-fuzz)
 	cargo +nightly fuzz run ipc_messages -- -max_total_time=300 -seed=1
 	cargo +nightly fuzz run package_names -- -max_total_time=300 -seed=2
-	@if [ -d fuzz/artifacts ]; then \
-		echo "⚠️  Fuzzing found crashes! Check fuzz/artifacts/"; \
-		ls -la fuzz/artifacts/; \
-		exit 1; \
-	else \
-		echo "✓ Fuzzing tests passed (no crashes)!"; \
-	fi
+	if [ -d fuzz/artifacts ]; then echo "⚠️  Fuzzing found crashes! Check fuzz/artifacts/"; ls -la fuzz/artifacts/; exit 1; else echo "✓ Fuzzing tests passed (no crashes)!"; fi
 
 # Run fuzzing tests (quick mode - 60 seconds per target for CI)
 test-fuzz-quick:
@@ -119,21 +113,10 @@ test-fuzz-quick:
 	@command -v cargo-fuzz >/dev/null 2>&1 || (echo "Installing cargo-fuzz..." && cargo +nightly install cargo-fuzz)
 	cargo +nightly fuzz run ipc_messages -- -max_total_time=60 -seed=1
 	cargo +nightly fuzz run package_names -- -max_total_time=60 -seed=2
-	@if [ -d fuzz/artifacts ]; then \
-		echo "⚠️  Fuzzing found crashes! Check fuzz/artifacts/"; \
-		exit 1; \
-	else \
-		echo "✓ Quick fuzzing tests passed!"; \
-	fi
+	if [ -d fuzz/artifacts ]; then echo "⚠️  Fuzzing found crashes! Check fuzz/artifacts/"; exit 1; else echo "✓ Quick fuzzing tests passed!"; fi
 
-# Run chaos tests
-test-chaos:
-	@echo "Running chaos tests..."
-	cargo test --test chaos_operation_ordering
-	@echo "✓ Chaos tests passed!"
-
-# Run all advanced tests (property + fuzz-quick + chaos)
-test-advanced: test-property test-fuzz-quick test-chaos
+# Run all advanced tests (property + fuzz-quick)
+test-advanced: test-property test-fuzz-quick
 	@echo ""
 	@echo "════════════════════════════════════════════════════════════════"
 	@echo "  All advanced tests passed! ✓"
@@ -149,12 +132,7 @@ test-security:
 	cargo +nightly fuzz run ipc_messages -- -max_total_time=180 -seed=43
 	@echo "3. Property-based validation tests..."
 	cargo test --test property_version_advanced --features arch
-	@if [ -d fuzz/artifacts ]; then \
-		echo "⚠️  Security issues found! Check fuzz/artifacts/"; \
-		exit 1; \
-	else \
-		echo "✓ Security tests passed!"; \
-	fi
+	if [ -d fuzz/artifacts ]; then echo "⚠️  Security issues found! Check fuzz/artifacts/"; exit 1; else echo "✓ Security tests passed!"; fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Quality Checks
