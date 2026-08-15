@@ -316,6 +316,7 @@ dependency-type: indirect
 - Normalize project formatting
 ### 🧪 Testing
 
+- Remove obsolete ignored clean cases
 - Remove false-green sync smoke test
 - Fail closed for destructive opt-in
 - Remove hollow Docker benchmark
