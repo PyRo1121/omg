@@ -143,11 +143,11 @@ alpm = { version = "5.0.2", optional = true }
 
 # Official Arch Linux pure Rust ALPM ecosystem (archlinux/alpm)
 # Pinned to specific commit for supply chain security - update periodically
-alpm-types = { git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", package = "alpm-types", rev = "b5463fcd4b677e55792dfb0c708da9659db0368a", optional = true }
-alpm-srcinfo = { git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", package = "alpm-srcinfo", rev = "b5463fcd4b677e55792dfb0c708da9659db0368a", optional = true }
-alpm-db = { git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", package = "alpm-db", rev = "b5463fcd4b677e55792dfb0c708da9659db0368a", optional = true }
-alpm-repo-db = { git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", package = "alpm-repo-db", rev = "b5463fcd4b677e55792dfb0c708da9659db0368a", optional = true }
-alpm-pkginfo = { git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", package = "alpm-pkginfo", rev = "b5463fcd4b677e55792dfb0c708da9659db0368a", optional = true }
+alpm-types = { version = "=0.11.1", git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", package = "alpm-types", rev = "b5463fcd4b677e55792dfb0c708da9659db0368a", optional = true }
+alpm-srcinfo = { version = "=0.6.2", git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", package = "alpm-srcinfo", rev = "b5463fcd4b677e55792dfb0c708da9659db0368a", optional = true }
+alpm-db = { version = "=0.2.1", git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", package = "alpm-db", rev = "b5463fcd4b677e55792dfb0c708da9659db0368a", optional = true }
+alpm-repo-db = { version = "=0.1.1", git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", package = "alpm-repo-db", rev = "b5463fcd4b677e55792dfb0c708da9659db0368a", optional = true }
+alpm-pkginfo = { version = "=0.6.1", git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", package = "alpm-pkginfo", rev = "b5463fcd4b677e55792dfb0c708da9659db0368a", optional = true }
 
 # Process execution
 which = "8.0"
