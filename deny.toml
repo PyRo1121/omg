@@ -23,14 +23,26 @@ allow = [
     "BSD-2-Clause",
     "BSD-3-Clause",
     "ISC",
-    "Unicode-DFS-2016",
+    "Unicode-3.0",
     "Zlib",
     "0BSD",
+    "BSL-1.0",
     "CC0-1.0",
+    "CDLA-Permissive-2.0",
     "MPL-2.0",
+    "AGPL-3.0-or-later",
 ]
 # Confidence threshold for license detection
 confidence-threshold = 0.8
+
+# Copyleft dependencies are restricted to the package-management and PGP
+# implementations that require them; OMG itself is AGPL-3.0-or-later.
+exceptions = [
+    { allow = ["GPL-3.0"], crate = "alpm" },
+    { allow = ["GPL-3.0"], crate = "alpm-sys" },
+    { allow = ["LGPL-2.0-or-later"], crate = "buffered-reader" },
+    { allow = ["LGPL-2.0-or-later"], crate = "sequoia-openpgp" },
+]
 
 # Specific clarifications for crates with complex licensing
 [[licenses.clarify]]
