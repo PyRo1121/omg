@@ -2,7 +2,7 @@
 //!
 //! Prevents command injection, path traversal, and other input-based attacks.
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 
 const MAX_RELATIVE_PATH_LENGTH: usize = 4096;
 
