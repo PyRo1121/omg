@@ -20,6 +20,11 @@ package-lock.json
 # ---- Node / JS ----
 node_modules/
 
+# ---- Local secrets and environment overrides ----
+.env
+.env.*
+!.env.example
+
 # ---- Logs and debug output ----
 *.log
 cargo_tree_*.txt

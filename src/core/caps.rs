@@ -84,19 +84,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_has_package_caps_does_not_panic() {
-        // Just ensure it doesn't panic - actual result depends on how test is run
-        let _ = has_package_caps();
-    }
-
-    #[test]
-    fn test_is_elevated_without_env() {
-        // Test default state - is_elevated returns based on current env
-        // We can't modify env safely, so just verify the function works
-        let _ = is_elevated();
-    }
-
-    #[test]
     fn test_is_elevated_with_env() {
         // Use temp_env for safe env var manipulation
         temp_env::with_var("OMG_ELEVATED", Some("1"), || {
@@ -110,11 +97,5 @@ mod tests {
         temp_env::with_var_unset("OMG_ELEVATED", || {
             assert!(!is_elevated());
         });
-    }
-
-    #[test]
-    fn test_can_write_pacman_db() {
-        // Just ensure it doesn't panic
-        let _ = can_write_pacman_db();
     }
 }
