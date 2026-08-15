@@ -315,6 +315,7 @@ dependency-type: indirect
 - Normalize project formatting
 ### 🧪 Testing
 
+- Remove timing-only property cases
 - Remove skipped install timing gates
 - Remove Debian timing-only module
 - Remove duplicate telemetry serialization case
