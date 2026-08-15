@@ -313,6 +313,7 @@ dependency-type: indirect
 - Normalize project formatting
 ### 🧪 Testing
 
+- Remove placeholder AUR security suite
 - Remove placeholder AUR recovery suite
 - Require mock task execution success
 - Remove weak Windows and Homebrew checks
