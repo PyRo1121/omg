@@ -598,7 +598,7 @@ fn verify_checksum(data: &[u8], expected_hash: &str) -> Result<()> {
     let mut hasher = Sha256::new();
     hasher.update(data);
     let result = hasher.finalize();
-    let actual_hash = format!("{result:x}");
+    let actual_hash = hex::encode(result);
 
     if actual_hash == expected_hash {
         Ok(())

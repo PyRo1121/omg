@@ -616,12 +616,6 @@ mod network_security {
     }
 
     #[test]
-    fn test_no_http_redirects_to_sensitive() {
-        // Should not follow redirects to file:// or other schemes
-        // (Implementation test)
-    }
-
-    #[test]
     fn test_timeout_handling() {
         // Network operations should have timeouts
         require_network_tests!();
@@ -664,14 +658,6 @@ mod privilege_tests {
     }
 
     #[test]
-    fn test_safe_sudo_usage() {
-        // When sudo is needed, it should be explicit
-        let _result = run_omg(&["install", "nonexistent-pkg-12345"]);
-        // Should either work or clearly indicate need for elevation
-        // Should not silently escalate
-    }
-
-    #[test]
     fn test_no_suid_creation() {
         let project = TestProject::new();
         project.run(&["env", "capture"]);
@@ -692,51 +678,6 @@ mod privilege_tests {
                 }
             }
         }
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// CRYPTOGRAPHIC SECURITY TESTS
-// ═══════════════════════════════════════════════════════════════════════════════
-
-mod crypto_security {
-    use super::*;
-
-    #[test]
-    fn test_hash_integrity() {
-        let project = TestProject::new();
-        project.run(&["env", "capture"]);
-
-        // Lock file should have integrity hash
-        if let Some(lock) = project.read_file("omg.lock") {
-            // Check for hash field
-            let _has_hash =
-                lock.contains("hash") || lock.contains("checksum") || lock.contains("sha");
-            // Hash presence is implementation detail
-        }
-    }
-
-    #[test]
-    fn test_no_weak_hashes() {
-        // Should not use MD5 or SHA1 for security purposes
-        let project = TestProject::new();
-        project.run(&["env", "capture"]);
-
-        if let Some(_lock) = project.read_file("omg.lock") {
-            // SHA256 or better should be used
-            // (Implementation verification)
-        }
-    }
-
-    #[test]
-    fn test_random_generation() {
-        // IDs and tokens should be cryptographically random
-        let project = TestProject::new();
-        project.run(&["snapshot", "create"]);
-        project.run(&["snapshot", "create"]);
-
-        // Snapshots should have unique IDs
-        // (Implementation verification)
     }
 }
 

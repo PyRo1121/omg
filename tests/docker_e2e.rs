@@ -3,17 +3,18 @@
 //! These tests run actual install/remove operations in Docker containers
 //! to verify real system integration without modifying the host.
 //!
-//! Run with: `OMG_RUN_DOCKER_TESTS=1 cargo test --test docker_e2e`
+//! Run with: `OMG_RUN_DOCKER_TESTS=1 cargo test --locked --features arch --test docker_e2e -- --ignored --test-threads=1`
 
 use std::process::Command;
 use std::sync::OnceLock;
 use std::thread;
 
 fn require_docker_tests() {
-    if std::env::var("OMG_RUN_DOCKER_TESTS") != Ok("1".to_string()) {
-        eprintln!("Skipping Docker E2E tests (set OMG_RUN_DOCKER_TESTS=1 to run)");
-        std::process::exit(0);
-    }
+    assert_eq!(
+        std::env::var("OMG_RUN_DOCKER_TESTS").as_deref(),
+        Ok("1"),
+        "Docker E2E tests require OMG_RUN_DOCKER_TESTS=1",
+    );
 }
 
 fn docker_available() -> bool {
@@ -112,6 +113,7 @@ fn strip_ansi(s: &str) -> String {
 }
 
 #[test]
+#[ignore = "requires Docker; run the dedicated Docker E2E job with --ignored"]
 fn test_docker_setup() {
     require_docker_tests();
 
@@ -119,6 +121,7 @@ fn test_docker_setup() {
 }
 
 #[test]
+#[ignore = "requires Docker; run the dedicated Docker E2E job with --ignored"]
 fn test_docker_omg_search() {
     require_docker_tests();
     assert!(ensure_docker_image(), "Docker image not ready");
@@ -131,6 +134,7 @@ fn test_docker_omg_search() {
 }
 
 #[test]
+#[ignore = "requires Docker; run the dedicated Docker E2E job with --ignored"]
 fn test_docker_omg_info() {
     require_docker_tests();
     assert!(ensure_docker_image(), "Docker image not ready");
@@ -150,6 +154,7 @@ fn test_docker_omg_info() {
 }
 
 #[test]
+#[ignore = "requires Docker; run the dedicated Docker E2E job with --ignored"]
 fn test_docker_real_install() {
     require_docker_tests();
     assert!(ensure_docker_image(), "Docker image not ready");
@@ -171,6 +176,7 @@ fn test_docker_real_install() {
 }
 
 #[test]
+#[ignore = "requires Docker; run the dedicated Docker E2E job with --ignored"]
 fn test_docker_real_remove() {
     require_docker_tests();
     assert!(ensure_docker_image(), "Docker image not ready");
@@ -191,6 +197,7 @@ fn test_docker_real_remove() {
 }
 
 #[test]
+#[ignore = "requires Docker; run the dedicated Docker E2E job with --ignored"]
 fn test_docker_update_check() {
     require_docker_tests();
     assert!(ensure_docker_image(), "Docker image not ready");
@@ -202,6 +209,7 @@ fn test_docker_update_check() {
 }
 
 #[test]
+#[ignore = "requires Docker; run the dedicated Docker E2E job with --ignored"]
 fn test_docker_explicit_packages() {
     require_docker_tests();
     assert!(ensure_docker_image(), "Docker image not ready");
@@ -217,6 +225,7 @@ fn test_docker_explicit_packages() {
 }
 
 #[test]
+#[ignore = "requires Docker; run the dedicated Docker E2E job with --ignored"]
 fn test_docker_status() {
     require_docker_tests();
     assert!(ensure_docker_image(), "Docker image not ready");
@@ -227,6 +236,7 @@ fn test_docker_status() {
 }
 
 #[test]
+#[ignore = "requires Docker; run the dedicated Docker E2E job with --ignored"]
 fn test_docker_performance_vs_pacman() {
     require_docker_tests();
     assert!(ensure_docker_image(), "Docker image not ready");
@@ -251,6 +261,7 @@ fn test_docker_performance_vs_pacman() {
 }
 
 #[test]
+#[ignore = "requires Docker; run the dedicated Docker E2E job with --ignored"]
 fn test_docker_concurrent_operations() {
     require_docker_tests();
     assert!(ensure_docker_image(), "Docker image not ready");
@@ -277,6 +288,7 @@ fn test_docker_concurrent_operations() {
 }
 
 #[test]
+#[ignore = "requires Docker; run the dedicated Docker E2E job with --ignored"]
 fn test_docker_nonexistent_package() {
     require_docker_tests();
     assert!(ensure_docker_image(), "Docker image not ready");
@@ -293,6 +305,7 @@ fn test_docker_nonexistent_package() {
 }
 
 #[test]
+#[ignore = "requires Docker; run the dedicated Docker E2E job with --ignored"]
 fn test_docker_install_removes_work_together() {
     require_docker_tests();
     assert!(ensure_docker_image(), "Docker image not ready");

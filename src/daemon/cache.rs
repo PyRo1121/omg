@@ -192,6 +192,7 @@ impl PackageCache {
         self.system_status.invalidate_all();
         self.explicit_packages.invalidate_all();
         self.explicit_count.invalidate_all();
+        self.sync();
     }
 
     /// Sync pending cache operations

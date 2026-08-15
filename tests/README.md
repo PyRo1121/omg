@@ -24,7 +24,7 @@ cargo test --test integration_suite
 cargo test --test version_tests
 cargo test --test update_tests
 cargo test --test error_tests
-cargo test --test benchmarks
+cargo bench --features arch
 ```
 
 ### Environment Variables
@@ -51,7 +51,7 @@ OMG_RUN_SYSTEM_TESTS=1 cargo test --test integration_suite --features arch
 ### Example: Run Performance Tests
 
 ```bash
-OMG_RUN_PERF_TESTS=1 cargo test --test benchmarks --release --features arch
+cargo bench --features arch
 ```
 
 ## Test Files
@@ -61,18 +61,21 @@ OMG_RUN_PERF_TESTS=1 cargo test --test benchmarks --release --features arch
 **Purpose**: Test REAL version parsing and comparison logic
 
 **Features**:
+
 - Tests actual Arch Linux version strings
 - Verifies `alpm_types::Version` correctness
 - Tests update detection logic
 - Validates version comparison operators
 
 **What it tests**:
+
 - Real package versions from Arch repos
 - Version comparison (greater than, less than, equality)
 - Update detection scenarios
 - Edge cases (empty versions, very long versions)
 
 **Running**:
+
 ```bash
 cargo test --test version_tests --features arch
 ```
@@ -82,18 +85,21 @@ cargo test --test version_tests --features arch
 **Purpose**: Test REAL update command functionality
 
 **Features**:
+
 - Tests `omg update --check` behavior
 - Verifies `--yes` flag handling
 - Tests non-interactive mode errors
 - Measures update check performance
 
 **What it tests**:
+
 - Update check returns correct status
 - `--yes` flag works without TTY
 - Helpful error messages in non-interactive mode
 - Update command doesn't hang
 
 **Running**:
+
 ```bash
 OMG_RUN_SYSTEM_TESTS=1 cargo test --test update_tests --features arch
 ```
@@ -103,48 +109,35 @@ OMG_RUN_SYSTEM_TESTS=1 cargo test --test update_tests --features arch
 **Purpose**: Verify errors are handled gracefully
 
 **Features**:
+
 - Tests helpful error messages
 - Verifies panic prevention
 - Tests permission error handling
 - Validates network error messages
 
 **What it tests**:
+
 - Invalid input shows helpful errors
 - Missing permissions suggest sudo
 - Network errors suggest checking connection
 - Corrupted database is handled gracefully
 
 **Running**:
+
 ```bash
 cargo test --test error_tests --features arch
 ```
 
-### `benchmarks.rs`
+### `benches/`
 
-**Purpose**: Verify OMG meets performance targets
+**Purpose**: Measure performance with Criterion benchmarks rather than pass/fail timing assertions.
 
-**Features**:
-- Measures command execution time
-- Tests repeatable performance
-- Validates cold vs warm start
-- Checks memory efficiency
-
-**What it tests**:
-- CLI commands complete in target time
-- Search operations are fast
-- Update check is instant
-- Performance is consistent across runs
-
-**Performance Targets**:
-- Version/help: <50ms
-- Status command: <200ms
-- Search: <100ms
-- Info command: <100ms
-- Update check: <2s
+The benchmark targets cover package operations, daemon behavior, decompression, database access, and I/O. Results are statistical and should be compared across runs instead of enforced by host-dependent millisecond thresholds.
 
 **Running**:
+
 ```bash
-OMG_RUN_PERF_TESTS=1 cargo test --test benchmarks --release --features arch
+cargo bench --features arch
 ```
 
 ### `integration_suite.rs`
@@ -152,12 +145,14 @@ OMG_RUN_PERF_TESTS=1 cargo test --test benchmarks --release --features arch
 **Purpose**: Comprehensive integration testing
 
 **Features**:
+
 - Tests all major commands
 - Validates CLI argument parsing
 - Tests shell completion generation
 - Verifies environment management
 
 **What it tests**:
+
 - All subcommands work correctly
 - Help text is complete
 - Configuration management
@@ -165,6 +160,7 @@ OMG_RUN_PERF_TESTS=1 cargo test --test benchmarks --release --features arch
 - Team sync workflows
 
 **Running**:
+
 ```bash
 OMG_RUN_SYSTEM_TESTS=1 cargo test --test integration_suite --features arch
 ```
@@ -231,6 +227,7 @@ jobs:
 ### Unit Tests (`cargo test --lib`)
 
 Fast tests that don't require system access:
+
 - Version parsing logic
 - Type definitions
 - Error type creation
@@ -239,6 +236,7 @@ Fast tests that don't require system access:
 ### Integration Tests (`cargo test --test *`)
 
 Tests that run the full binary:
+
 - CLI argument parsing
 - Command execution
 - Output verification
@@ -247,6 +245,7 @@ Tests that run the full binary:
 ### System Tests (`OMG_RUN_SYSTEM_TESTS=1`)
 
 Tests that require real package managers:
+
 - pacman/alpm operations
 - Real package database access
 - File system operations
@@ -255,6 +254,7 @@ Tests that require real package managers:
 ### Destructive Tests (`OMG_RUN_DESTRUCTIVE_TESTS=1`)
 
 Tests that modify the system:
+
 - Actual package installation
 - System updates
 - Package removal
@@ -299,7 +299,7 @@ RUST_BACKTRACE=1 cargo test --test error_tests
    - Version parsing → `version_tests.rs`
    - Update logic → `update_tests.rs`
    - Error scenarios → `error_tests.rs`
-   - Performance → `benchmarks.rs`
+   - Performance → `benches/` Criterion targets
    - General integration → `integration_suite.rs`
 3. **Use REAL code paths**: No mocks, no stubs
 4. **Add helpful assertions**: Verify real behavior, not just "doesn't crash"
@@ -341,12 +341,12 @@ mod module_name {
 
 ```bash
 # Before changes
-cargo test --test benchmarks --release --features arch -- --nocapture
+cargo bench --features arch
 
 # Make your changes
 
 # After changes
-cargo test --test benchmarks --release --features arch -- --nocapture
+cargo bench --features arch
 
 # Compare results
 ```
@@ -354,6 +354,7 @@ cargo test --test benchmarks --release --features arch -- --nocapture
 ### Acceptable Variance
 
 Performance tests allow some variance (±20%) for:
+
 - System load differences
 - CI environment variability
 - Cold vs warm cache
@@ -374,6 +375,7 @@ Tests verify security aspects:
 ### "Skipping system test"
 
 If tests skip with this message:
+
 ```bash
 export OMG_RUN_SYSTEM_TESTS=1
 ```
@@ -381,6 +383,7 @@ export OMG_RUN_SYSTEM_TESTS=1
 ### "Skipping destructive test"
 
 If tests skip with this message:
+
 ```bash
 export OMG_RUN_DESTRUCTIVE_TESTS=1
 ```
@@ -390,6 +393,7 @@ export OMG_RUN_DESTRUCTIVE_TESTS=1
 ### "Skipping perf test"
 
 If tests skip with this message:
+
 ```bash
 export OMG_RUN_PERF_TESTS=1
 ```
@@ -397,6 +401,7 @@ export OMG_RUN_PERF_TESTS=1
 ### ALPM Not Available
 
 If tests fail with "ALPM not available":
+
 ```bash
 # Install libalpm-dev
 sudo apt-get install libalpm-dev  # Ubuntu/Debian
@@ -408,6 +413,7 @@ sudo pacman -S alpm-lib         # Arch
 ### Temporary Files
 
 Tests use `tempfile` crate for temporary directories:
+
 ```rust
 use tempfile::TempDir;
 
@@ -419,12 +425,14 @@ let temp_dir = TempDir::new().unwrap();
 ### Test Packages
 
 Tests use well-known packages:
+
 - `pacman` - Core package manager
 - `firefox` - Popular browser (extra repo)
 - `git` - Version control (extra repo)
 - `bash` - Core shell (core repo)
 
 These packages are:
+
 - Available on all Arch systems
 - Stable and maintained
 - Small enough for fast tests

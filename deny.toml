@@ -2,46 +2,61 @@
 # https://embarkstudios.github.io/cargo-deny/
 
 [advisories]
-# Deny crates with security vulnerabilities
-vulnerability = "deny"
-# Warn about unmaintained crates
-unmaintained = "warn"
-# Deny yanked crates
-yanked = "deny"
-# Warn about security notices
-notice = "warn"
-# Ignore advisories for specific crates (use sparingly)
-ignore = []
+# Escalate unmaintained and unsound advisories only when they affect a direct
+# workspace crate. Vulnerabilities remain denied; yanked packages are reported.
+unmaintained = "workspace"
+unsound = "workspace"
+ignore = [
+  { id = "RUSTSEC-2023-0018", reason = "Windows-only libscoop dependency; Scoop runs per-user and OMG does not call it from an elevated service" },
+  { id = "RUSTSEC-2023-0071", reason = "No patched rsa release; OMG performs public-key signature verification only, never network-observable private-key decryption" },
+  { id = "RUSTSEC-2026-0008", reason = "git2 0.19 is pinned by libscoop's libgit2-sys links constraint; OMG does not dereference an empty git2 Buf" },
+  { id = "RUSTSEC-2026-0183", reason = "git2 0.19 is pinned by libscoop's libgit2-sys links constraint; OMG does not call Remote::list" },
+  { id = "RUSTSEC-2026-0184", reason = "git2 0.19 is pinned by libscoop's libgit2-sys links constraint; OMG does not call blame_buffer" },
+]
 
 [licenses]
-# Deny unlicensed crates
-unlicensed = "deny"
 # Allow specific licenses only (common open-source licenses)
 allow = [
-    "MIT",
-    "Apache-2.0",
-    "Apache-2.0 WITH LLVM-exception",
-    "BSD-2-Clause",
-    "BSD-3-Clause",
-    "ISC",
-    "Unicode-DFS-2016",
-    "Zlib",
-    "0BSD",
-    "CC0-1.0",
-    "MPL-2.0",
+  "MIT",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Unicode-3.0",
+  "Zlib",
+  "0BSD",
+  "BSL-1.0",
+  "CC0-1.0",
+  "CDLA-Permissive-2.0",
+  "MPL-2.0",
+  "AGPL-3.0-or-later",
 ]
-# Deny copyleft licenses (GPL, AGPL, etc.) to avoid contamination
-copyleft = "deny"
 # Confidence threshold for license detection
 confidence-threshold = 0.8
+
+# Copyleft dependencies are restricted to the package-management and PGP
+# implementations that require them; OMG itself is AGPL-3.0-or-later.
+exceptions = [
+  { allow = [
+    "GPL-3.0",
+  ], crate = "alpm" },
+  { allow = [
+    "GPL-3.0",
+  ], crate = "alpm-sys" },
+  { allow = [
+    "LGPL-2.0-or-later",
+  ], crate = "buffered-reader" },
+  { allow = [
+    "LGPL-2.0-or-later",
+  ], crate = "sequoia-openpgp" },
+]
 
 # Specific clarifications for crates with complex licensing
 [[licenses.clarify]]
 name = "ring"
 expression = "MIT AND ISC AND OpenSSL"
-license-files = [
-    { path = "LICENSE", hash = 0xbd0eed23 }
-]
+license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
 
 [bans]
 # Warn when multiple versions of the same crate are used (reduces binary size)
@@ -50,14 +65,14 @@ multiple-versions = "warn"
 wildcards = "deny"
 # Allow multiple versions of these crates (common ecosystem pain points)
 skip = [
-    { name = "windows-sys", version = "*" },
-    { name = "windows_x86_64_msvc", version = "*" },
-    { name = "windows_x86_64_gnu", version = "*" },
-    { name = "windows_i686_msvc", version = "*" },
+  { name = "windows-sys", version = "*" },
+  { name = "windows_x86_64_msvc", version = "*" },
+  { name = "windows_x86_64_gnu", version = "*" },
+  { name = "windows_i686_msvc", version = "*" },
 ]
 # Deny specific crates (known bad actors or security issues)
 deny = [
-    # Example: { name = "openssl-sys", reason = "Use rustls instead for better security" },
+  # Example: { name = "openssl-sys", reason = "Use rustls instead for better security" },
 ]
 # Skip tree analysis for these crates
 skip-tree = []
@@ -69,6 +84,4 @@ unknown-registry = "deny"
 unknown-git = "deny"
 # Allow specific git sources for supply chain security
 # Only the official Arch Linux ALPM repository is allowed
-allow-git = [
-    "https://gitlab.archlinux.org/archlinux/alpm/alpm.git",
-]
+allow-git = ["https://gitlab.archlinux.org/archlinux/alpm/alpm.git"]

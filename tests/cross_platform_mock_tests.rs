@@ -20,9 +20,39 @@
 //! - `consistency_checks`: State persistence and platform isolation
 //! - `edge_cases`: Error handling and edge cases
 
+use std::sync::LazyLock;
+
 use anyhow::Result;
-use omg_lib::package_managers::{PackageManager, mock::MockPackageManager};
+use omg_lib::package_managers::{PackageManager, mock::MockPackageManager as MockBackend};
 use serial_test::serial;
+use tempfile::TempDir;
+
+static TEST_DATA_DIR: LazyLock<TempDir> =
+    LazyLock::new(|| TempDir::new().expect("failed to create isolated mock state directory"));
+
+struct MockPackageManager;
+
+impl MockPackageManager {
+    fn arch() -> MockBackend {
+        MockBackend::new_in("arch", TEST_DATA_DIR.path())
+    }
+
+    fn debian() -> MockBackend {
+        MockBackend::new_in("debian", TEST_DATA_DIR.path())
+    }
+
+    fn fedora() -> MockBackend {
+        MockBackend::new_in("fedora", TEST_DATA_DIR.path())
+    }
+
+    fn windows() -> MockBackend {
+        MockBackend::new_in("windows", TEST_DATA_DIR.path())
+    }
+
+    fn macos() -> MockBackend {
+        MockBackend::new_in("macos", TEST_DATA_DIR.path())
+    }
+}
 
 mod all_platforms {
     use super::*;
@@ -453,6 +483,7 @@ mod edge_cases {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_remove_not_installed() -> Result<()> {
         let pm = MockPackageManager::arch();
 
@@ -466,6 +497,7 @@ mod edge_cases {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_empty_package_list() -> Result<()> {
         let pm = MockPackageManager::debian();
 

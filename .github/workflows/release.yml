@@ -3,13 +3,13 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
   workflow_dispatch:
     inputs:
       dry_run:
-        description: 'Dry run (do not publish)'
+        description: "Dry run (do not publish)"
         required: false
-        default: 'true'
+        default: "true"
 
 concurrency:
   group: release
@@ -30,14 +30,16 @@ jobs:
     name: "Build Arch"
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    container: archlinux:latest
+    container: archlinux:latest@sha256:b0deabeb3d283da2c7f7dbf0eea051b7b2cd0554e0b737cc457fd21683bdcdd1
     steps:
       - name: Install Dependencies
         run: |
           pacman -Syu --noconfirm
           pacman -S --noconfirm base-devel git rust cargo pkgconf openssl libarchive clang
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Git safe directory
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -45,7 +47,7 @@ jobs:
       - name: Build
         run: |
           export RUSTFLAGS="-C target-cpu=x86-64-v2"
-          cargo build --release --features arch
+          cargo build --release --features arch --locked
 
       - name: Package
         run: |
@@ -57,7 +59,7 @@ jobs:
           tar -czvf "omg-v${VERSION}-x86_64-linux-arch.tar.gz" "omg-v${VERSION}-x86_64-linux-arch"
           sha256sum "omg-v${VERSION}-x86_64-linux-arch.tar.gz" > "omg-v${VERSION}-x86_64-linux-arch.tar.gz.sha256"
 
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: arch-build
           path: omg-v*.tar.gz*
@@ -67,7 +69,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     container:
-      image: debian:bookworm
+      image: debian:bookworm@sha256:813017f3d62be4b5891a7acca6a01bdcd4b8513daa81b1ab99d3a50385b26931
     env:
       DEBIAN_FRONTEND: noninteractive
       CARGO_HOME: /usr/local/cargo
@@ -88,20 +90,27 @@ jobs:
             cmake
           rm -rf /var/lib/apt/lists/*
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Git safe directory
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Install Rust
         run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+          curl --proto '=https' --tlsv1.2 -fsSL \
+            https://static.rust-lang.org/rustup/archive/1.28.2/x86_64-unknown-linux-gnu/rustup-init \
+            -o /tmp/rustup-init
+          echo "20a06e644b0d9bd2fbdbfd52d42540bdde820ea7df86e92e533c073da0cdd43c  /tmp/rustup-init" | sha256sum --check
+          chmod +x /tmp/rustup-init
+          /tmp/rustup-init -y --profile minimal --default-toolchain 1.93.0
           echo 'export PATH="$CARGO_HOME/bin:$PATH"' >> $GITHUB_ENV
 
       - name: Build
         run: |
           export PATH="$CARGO_HOME/bin:$PATH"
-          cargo build --release --no-default-features --features debian
+          cargo build --release --no-default-features --features debian --locked
 
       - name: Package
         run: |
@@ -113,7 +122,7 @@ jobs:
           tar -czvf "omg-v${VERSION}-x86_64-linux-debian.tar.gz" "omg-v${VERSION}-x86_64-linux-debian"
           sha256sum "omg-v${VERSION}-x86_64-linux-debian.tar.gz" > "omg-v${VERSION}-x86_64-linux-debian.tar.gz.sha256"
 
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: debian-build
           path: omg-v*.tar.gz*
@@ -123,7 +132,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Install Dependencies
         run: |
@@ -136,10 +147,10 @@ jobs:
             cmake
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
 
       - name: Build
-        run: cargo build --release --no-default-features --features debian
+        run: cargo build --release --no-default-features --features debian --locked
 
       - name: Package
         run: |
@@ -150,7 +161,7 @@ jobs:
           tar -czvf "omg-v${VERSION}-x86_64-linux-ubuntu.tar.gz" "omg-v${VERSION}-x86_64-linux-ubuntu"
           sha256sum "omg-v${VERSION}-x86_64-linux-ubuntu.tar.gz" > "omg-v${VERSION}-x86_64-linux-ubuntu.tar.gz.sha256"
 
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: ubuntu-build
           path: omg-v*.tar.gz*
@@ -160,7 +171,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     container:
-      image: fedora:latest
+      image: fedora:latest@sha256:6c75d5bf57cb0fa5aa4b92c6a83c86c791644496d9ac230de7711f5b8ec3b898
     steps:
       - name: Install Dependencies
         run: |
@@ -169,10 +180,17 @@ jobs:
             rpm dnf sqlite yum-utils fedora-release
           rpm --initdb
           dnf makecache --refresh
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.93.0
+          curl --proto '=https' --tlsv1.2 -fsSL \
+            https://static.rust-lang.org/rustup/archive/1.28.2/x86_64-unknown-linux-gnu/rustup-init \
+            -o /tmp/rustup-init
+          echo "20a06e644b0d9bd2fbdbfd52d42540bdde820ea7df86e92e533c073da0cdd43c  /tmp/rustup-init" | sha256sum --check
+          chmod +x /tmp/rustup-init
+          /tmp/rustup-init -y --profile minimal --default-toolchain 1.93.0
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Git safe directory
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -192,7 +210,7 @@ jobs:
           tar -czvf "omg-v${VERSION}-x86_64-linux-fedora.tar.gz" "omg-v${VERSION}-x86_64-linux-fedora"
           sha256sum "omg-v${VERSION}-x86_64-linux-fedora.tar.gz" > "omg-v${VERSION}-x86_64-linux-fedora.tar.gz.sha256"
 
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: fedora-build
           path: omg-v*.tar.gz*
@@ -202,10 +220,12 @@ jobs:
     runs-on: macos-14
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
 
       - name: Build
         run: cargo build --release --no-default-features --features macos,pgp,license --locked
@@ -219,7 +239,7 @@ jobs:
           tar -czf "omg-v${VERSION}-aarch64-darwin.tar.gz" "omg-v${VERSION}-aarch64-darwin"
           shasum -a 256 "omg-v${VERSION}-aarch64-darwin.tar.gz" > "omg-v${VERSION}-aarch64-darwin.tar.gz.sha256"
 
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: macos-build
           path: omg-v*.tar.gz*
@@ -229,10 +249,12 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
 
       - name: Build
         run: cargo build --release --no-default-features --features windows,pgp,license --locked
@@ -249,7 +271,7 @@ jobs:
           $hash = (Get-FileHash -Algorithm SHA256 "$dirname.zip").Hash.ToLower()
           "$hash  $dirname.zip" | Out-File -Encoding ascii "$dirname.zip.sha256"
 
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: windows-build
           path: omg-v*.zip*
@@ -262,15 +284,24 @@ jobs:
     name: "Create Release"
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [build-arch, build-debian, build-ubuntu, build-fedora, build-macos, build-windows]
+    needs:
+      [
+        build-arch,
+        build-debian,
+        build-ubuntu,
+        build-fedora,
+        build-macos,
+        build-windows,
+      ]
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           fetch-depth: 0
 
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           path: artifacts
 
@@ -285,39 +316,39 @@ jobs:
         id: release_notes
         run: |
           VERSION="${GITHUB_REF#refs/tags/v}"
-          
+
           cat > release_notes.md << 'EOF_HEADER'
           ## Installation
-          
+
           **Quick Install (Linux/macOS):**
           ```bash
           curl -fsSL https://pyro1121.com/install.sh | bash
           ```
-          
+
           **Windows (PowerShell):**
           ```powershell
           irm https://pyro1121.com/install.ps1 | iex
           ```
-          
+
           EOF_HEADER
-          
+
           echo "" >> release_notes.md
           echo "## What's New in v${VERSION}" >> release_notes.md
           echo "" >> release_notes.md
-          
+
           if ./scripts/extract-release-notes.sh "${VERSION}" >> release_notes.md 2>/dev/null; then
             echo "✓ Extracted changelog for v${VERSION}"
           else
             echo "⚠ No changelog found, using generic message"
             echo "See [full changelog](https://github.com/PyRo1121/omg/blob/main/docs/changelog.md) for details." >> release_notes.md
           fi
-          
+
           cat >> release_notes.md << EOF_FOOTER
-          
+
           ---
-          
+
           ## Platform Support
-          
+
           | Platform | Architecture | Binary |
           |----------|--------------|--------|
           | Arch Linux | x86_64 | \`omg-v${VERSION}-x86_64-linux-arch.tar.gz\` |
@@ -326,41 +357,41 @@ jobs:
           | Fedora/RHEL | x86_64 | \`omg-v${VERSION}-x86_64-linux-fedora.tar.gz\` |
           | macOS | ARM64 | \`omg-v${VERSION}-aarch64-darwin.tar.gz\` |
           | Windows | x64 | \`omg-v${VERSION}-x86_64-windows.zip\` |
-          
+
           ## Manual Installation
-          
+
           **Linux/macOS:**
           \`\`\`bash
           tar -xzf omg-v${VERSION}-*.tar.gz
           cd omg-v${VERSION}-*
           sudo cp omg /usr/local/bin/
           \`\`\`
-          
+
           **Windows:**
           \`\`\`powershell
           Expand-Archive omg-v${VERSION}-x86_64-windows.zip
           Move-Item omg-v${VERSION}-x86_64-windows/omg.exe \$env:LOCALAPPDATA/Programs/
           \`\`\`
-          
+
           ## Verification
-          
+
           All binaries include SHA256 checksums. Verify downloads:
-          
+
           **Linux/macOS:**
           \`\`\`bash
           sha256sum -c omg-v${VERSION}-*.sha256
           \`\`\`
-          
+
           **Windows (PowerShell):**
           \`\`\`powershell
           (Get-FileHash omg.exe).Hash -eq (Get-Content omg-*.sha256).Split()[0]
           \`\`\`
-          
+
           ---
-          
+
           **Full Changelog**: https://github.com/PyRo1121/omg/blob/main/docs/changelog.md
           EOF_FOOTER
-          
+
           echo ""
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "Generated Release Notes Preview:"
@@ -368,7 +399,7 @@ jobs:
           cat release_notes.md
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'false')
         with:
           body_path: release_notes.md
@@ -388,7 +419,7 @@ jobs:
     needs: [release]
     if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'false')
     steps:
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           path: artifacts
 
@@ -399,9 +430,6 @@ jobs:
           find artifacts -name "*.zip*" -exec cp {} release/ \;
           ls -la release/
 
-      - name: Install Wrangler
-        run: npm install -g wrangler
-
       - name: Upload latest-version marker
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -409,7 +437,7 @@ jobs:
         run: |
           VERSION="${GITHUB_REF#refs/tags/v}"
           echo -n "$VERSION" > release/latest-version
-          wrangler r2 object put "omg-releases/latest-version" \
+          npx --yes wrangler@4.123.0 r2 object put "omg-releases/latest-version" \
             --file=release/latest-version \
             --content-type="text/plain"
           echo "✓ Updated latest-version → $VERSION"
@@ -423,16 +451,16 @@ jobs:
             [ -f "$artifact" ] || continue
             basename=$(basename "$artifact")
             content_type="application/octet-stream"
-            wrangler r2 object put "omg-releases/$basename" \
+            npx --yes wrangler@4.123.0 r2 object put "omg-releases/$basename" \
               --file="$artifact" \
               --content-type="$content_type"
             echo "✓ Uploaded $basename"
           done
-          
+
           for checksum in release/omg-v*.sha256; do
             [ -f "$checksum" ] || continue
             basename=$(basename "$checksum")
-            wrangler r2 object put "omg-releases/$basename" \
+            npx --yes wrangler@4.123.0 r2 object put "omg-releases/$basename" \
               --file="$checksum" \
               --content-type="text/plain"
             echo "✓ Uploaded $basename"

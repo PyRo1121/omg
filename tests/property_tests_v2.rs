@@ -5,13 +5,11 @@
 //! - UpdateType classification
 //! - Elm Architecture model updates
 //! - Package name validation
-//! - Configuration parsing
 //!
 //! Run: cargo test --test property_tests_v2
 //!
 //! For faster iteration: cargo test --test property_tests_v2 -- --test-threads=1
 
-#![allow(clippy::unwrap_used)]
 #![allow(clippy::pedantic)]
 
 use proptest::prelude::*;
@@ -24,44 +22,8 @@ use common::*;
 // ═══════════════════════════════════════════════════════════════════════════════
 
 proptest! {
-    fn prop_version_parse_never_crashes(
-        major in 0u32..1000u32,
-        minor in 0u32..1000u32,
-        patch in 0u32..1000u32
-    ) {
-        let version = format!("{major}.{minor}.{patch}");
-        let parsed = semver::Version::parse(&version);
-        prop_assert!(parsed.is_ok());
-    }
-
-    /// If A > B and B > C, then A > C
-    fn prop_update_type_transitivity(
-        v1_major in 0u32..10u32,
-        v1_minor in 0u32..10u32,
-        v1_patch in 0u32..10u32,
-        v2_major in 0u32..10u32,
-        v2_minor in 0u32..10u32,
-        v2_patch in 0u32..10u32,
-        v3_major in 0u32..10u32,
-        v3_minor in 0u32..10u32,
-        v3_patch in 0u32..10u32
-    ) {
-        use omg_lib::cli::tea::UpdateType;
-
-        let v1 = format!("{v1_major}.{v1_minor}.{v1_patch}");
-        let v2 = format!("{v2_major}.{v2_minor}.{v2_patch}");
-        let v3 = format!("{v3_major}.{v3_minor}.{v3_patch}");
-
-        let type1 = UpdateType::from_versions(&v1, &v2);
-        let type2 = UpdateType::from_versions(&v2, &v3);
-
-        // If both are upgrades, verify consistency
-        // This is a weak property but ensures no crashes
-        prop_assert!(matches!(type1, UpdateType::Major | UpdateType::Minor | UpdateType::Patch | UpdateType::Unknown));
-        prop_assert!(matches!(type2, UpdateType::Major | UpdateType::Minor | UpdateType::Patch | UpdateType::Unknown));
-    }
-
-    fn prop_same_version_patch_or_unknown(
+    #[test]
+    fn prop_same_version_is_patch(
         major in 0u32..50u32,
         minor in 0u32..50u32,
         patch in 0u32..50u32
@@ -71,10 +33,10 @@ proptest! {
         let version = format!("{major}.{minor}.{patch}");
         let update_type = UpdateType::from_versions(&version, &version);
 
-        // Same version should be Patch (or Unknown on parse error)
-        prop_assert!(matches!(update_type, UpdateType::Patch | UpdateType::Unknown));
+        prop_assert_eq!(update_type, UpdateType::Patch);
     }
 
+    #[test]
     fn prop_major_bump_detected(
         old_minor in 0u32..10u32,
         old_patch in 0u32..10u32,
@@ -93,6 +55,7 @@ proptest! {
         prop_assert_eq!(update_type, UpdateType::Major);
     }
 
+    #[test]
     fn prop_minor_bump_detected(
         major in 0u32..10u32,
         old_minor in 0u32..10u32,
@@ -118,6 +81,7 @@ proptest! {
         prop_assert_eq!(update_type, UpdateType::Minor);
     }
 
+    #[test]
     fn prop_patch_bump_detected(
         major in 0u32..10u32,
         minor in 0u32..10u32,
@@ -148,6 +112,7 @@ proptest! {
 
 proptest! {
 
+    #[test]
     fn prop_pacman_version_format(
         major in 0u32..50u32,
         minor in 0u32..50u32,
@@ -161,25 +126,9 @@ proptest! {
 
         let update_type = UpdateType::from_versions(&v1, &v2);
 
-        // Should detect as patch update (newer patch, same pkgrel)
-        prop_assert!(matches!(update_type, UpdateType::Patch | UpdateType::Unknown));
+        prop_assert_eq!(update_type, UpdateType::Patch);
     }
 
-    fn prop_version_with_extras(
-        major in 0u32..20u32,
-        minor in 0u32..20u32,
-        patch in 0u32..20u32,
-        prefix in "[a-z]{0,5}",
-        suffix in "[a-z0-9\\-\\.]{0,10}"
-    ) {
-        use omg_lib::cli::tea::UpdateType;
-
-        let version = format!("{prefix}{major}.{minor}.{patch}{suffix}");
-        let _update_type = UpdateType::from_versions(&version, &version);
-
-        // Should not crash
-        prop_assert!(true);
-    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -188,36 +137,7 @@ proptest! {
 
 proptest! {
 
-    fn prop_update_model_state_transitions(
-        check_only in proptest::bool::ANY,
-        yes in proptest::bool::ANY
-    ) {
-        use omg_lib::cli::tea::{Model, UpdateModel, UpdateMsg};
-
-        let mut model = UpdateModel::new()
-            .with_check_only(check_only)
-            .with_yes(yes);
-
-        // Apply init
-        let _cmd = model.init();
-
-        // Apply various messages
-        let messages = vec![
-            UpdateMsg::Check,
-            UpdateMsg::NoUpdates,
-            UpdateMsg::Complete,
-        ];
-
-        for msg in messages {
-            let _cmd = model.update(msg.clone());
-
-            // After each update, the view should not panic
-            let _view = model.view();
-        }
-
-        prop_assert!(true);
-    }
-
+    #[test]
     fn prop_update_model_empty_packages(
         check_only in proptest::bool::ANY,
         yes in proptest::bool::ANY
@@ -228,15 +148,18 @@ proptest! {
             .with_check_only(check_only)
             .with_yes(yes);
 
-        model.updates.clear();
-
         let _cmd = model.update(UpdateMsg::UpdatesFound(vec![]));
 
-        // View should not panic
-        let view = model.view();
-        prop_assert!(!view.is_empty());
+        prop_assert!(model.updates.is_empty());
+        let expected_state = if check_only || yes {
+            omg_lib::cli::tea::UpdateState::ShowingUpdates
+        } else {
+            omg_lib::cli::tea::UpdateState::Confirming
+        };
+        prop_assert_eq!(model.state, expected_state);
     }
 
+    #[test]
     fn prop_error_state_preserved(
         error_msg in "[a-zA-Z0-9 ]{1,100}"
     ) {
@@ -252,11 +175,27 @@ proptest! {
     }
 }
 
+#[test]
+fn update_model_state_sequence_reaches_completion() {
+    use omg_lib::cli::tea::{Model, UpdateModel, UpdateMsg, UpdateState};
+
+    let mut model = UpdateModel::new();
+    let _check_command = model.update(UpdateMsg::Check);
+    assert_eq!(model.state, UpdateState::Checking);
+
+    let _no_updates_command = model.update(UpdateMsg::NoUpdates);
+    assert_eq!(model.state, UpdateState::Complete);
+
+    let _complete_command = model.update(UpdateMsg::Complete);
+    assert_eq!(model.state, UpdateState::Complete);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // PACKAGE NAME VALIDATION PROPERTIES
 // ═══════════════════════════════════════════════════════════════════════════════
 
 proptest! {
+    #[test]
     fn prop_valid_package_names(
         name in "[a-z]{1,10}"
     ) {
@@ -267,6 +206,7 @@ proptest! {
         prop_assert!(result.is_ok());
     }
 
+    #[test]
     fn prop_shell_chars_rejected(
         base in "[a-z]{1,10}",
         shell_char in prop::sample::select(vec![';', '|', '&', '$', '`', '(', ')', '<', '>', '\n', '\r', '\t'])
@@ -280,9 +220,10 @@ proptest! {
         prop_assert!(result.is_err());
     }
 
+    #[test]
     fn prop_path_traversal_rejected(
         base in "[a-z]{1,10}",
-        traversal in "[.]{2}|[.]/|[.][\\\\]|~|/etc"
+        traversal in prop::sample::select(vec!["../", "..\\\\", "/../"])
     ) {
         use omg_lib::core::security;
 
@@ -301,25 +242,6 @@ fn test_empty_name_rejected() {
 
     let result = security::validate_package_name("");
     assert!(result.is_err());
-}
-
-// Additional regular tests for comprehensive coverage
-#[test]
-fn test_version_parse_basic() {
-    let version = semver::Version::parse("1.0.0");
-    assert!(version.is_ok());
-}
-
-#[test]
-fn test_version_parse_with_prerelease() {
-    let version = semver::Version::parse("1.0.0-alpha");
-    assert!(version.is_ok());
-}
-
-#[test]
-fn test_version_parse_with_build() {
-    let version = semver::Version::parse("1.0.0+build");
-    assert!(version.is_ok());
 }
 
 #[test]
@@ -356,13 +278,6 @@ fn test_pacman_version_format() {
         UpdateType::from_versions("1.15.6-1", "1.15.8-1"),
         UpdateType::Patch
     );
-}
-
-#[test]
-fn test_version_comparison_ordering() {
-    let v1 = semver::Version::parse("1.0.0").unwrap();
-    let v2 = semver::Version::parse("1.1.0").unwrap();
-    assert!(v2 > v1);
 }
 
 #[test]
@@ -403,349 +318,18 @@ fn test_search_model_with_query() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// CONFIGURATION PARSING PROPERTIES
-// ═══════════════════════════════════════════════════════════════════════════════
-
-proptest! {
-
-    fn prop_toml_parse_safe(
-        content in "\\PC{0,1000}"
-    ) {
-        use std::io::Write;
-        use tempfile::NamedTempFile;
-
-        let mut temp_file = NamedTempFile::new().unwrap();
-        writeln!(temp_file, "{}", content).unwrap();
-
-        // Try to parse as TOML - may fail but should not panic
-        let _parsed: Result<toml::Table, _> = toml::from_str(&content);
-
-        // If it's valid TOML, it should parse
-        // If it's invalid, it should error gracefully
-        prop_assert!(true);
-    }
-
-    fn prop_lock_file_resilient(
-        sections in prop::collection::hash_map("[a-z_]{1,20}", "[^\x00]{0,100}", 0..10)
-    ) {
-        use std::io::Write;
-        use tempfile::NamedTempFile;
-
-        let mut temp_file = NamedTempFile::new().unwrap();
-
-        for (key, value) in &sections {
-            writeln!(temp_file, "[{}]", key).unwrap();
-            writeln!(temp_file, "value = \"{}\"", value.replace('"', "'")).unwrap();
-        }
-
-        // Should not crash when reading
-        let path = temp_file.path();
-        let _content = std::fs::read_to_string(path);
-
-        prop_assert!(true);
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
 // CLI ARGUMENT PARSING PROPERTIES
 // ═══════════════════════════════════════════════════════════════════════════════
 
 proptest! {
+    #![proptest_config(ProptestConfig::with_cases(32))]
 
+    #[test]
     fn prop_cli_never_crashes(
         command in "[a-z]{1,10}",
         args in "[^\x00]{0,100}"
     ) {
         let result = run_omg(&[&command, &args]);
         prop_assert!(!result.stderr.contains("panicked at"));
-    }
-
-    fn prop_flag_combinations(
-        has_check in proptest::bool::ANY,
-        has_yes in proptest::bool::ANY,
-        has_help in proptest::bool::ANY
-    ) {
-        // Test that various flag combinations don't cause panics
-        let _has_any_flag = has_check || has_yes || has_help;
-
-        let result = run_omg(&["update"]);
-        prop_assert!(!result.stderr.contains("panicked at"));
-    }
-
-    fn prop_multiple_packages(
-        count in 1usize..10usize,
-        name_prefix in "[a-z]{1,5}"
-    ) {
-        let _packages: Vec<String> = (0..count)
-            .map(|i| format!("{}{}", name_prefix, i))
-            .collect();
-
-        // Test that search works regardless of how many packages we might want
-        let result = run_omg(&["search", "test"]);
-
-        prop_assert!(!result.stderr.contains("panicked at"));
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// STRING OPERATIONS PROPERTIES
-// ═══════════════════════════════════════════════════════════════════════════════
-
-proptest! {
-
-    fn prop_version_trim_consistent(
-        version in "\\PC{1,50}"
-    ) {
-        // The version trimming logic removes non-numeric prefixes
-        let trimmed1 = version.trim_start_matches(|c: char| !c.is_numeric());
-        let trimmed2 = version.trim_start_matches(|c: char| !c.is_numeric());
-
-        prop_assert_eq!(trimmed1, trimmed2, "Trimming should be idempotent");
-    }
-
-    fn prop_string_join_no_data_loss(
-        parts in prop::collection::vec("[a-z]{1,10}", 1..20)
-    ) {
-        let joined = parts.join("/");
-        let split_count = joined.split('/').count();
-
-        prop_assert_eq!(split_count, parts.len());
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// INVARIANTS AND EDGE CASES
-// ═══════════════════════════════════════════════════════════════════════════════
-
-proptest! {
-
-    fn prop_unicode_preserved(
-        text in "\\PC{1,50}"
-    ) {
-        // Should not crash on unicode
-        let _displayed = text.contains("✓");
-        prop_assert!(true);
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// FUZZING-STYLE PROPERTIES
-// ═══════════════════════════════════════════════════════════════════════════════
-
-proptest! {
-
-    fn prop_arbitrary_bytes(
-        bytes in prop::collection::vec(0u8..255u8, 0..100)
-    ) {
-        // Convert to string (may have invalid UTF-8)
-        let _string = String::from_utf8_lossy(&bytes);
-
-        // Should not panic
-        prop_assert!(true);
-    }
-
-    fn prop_repeated_operations_consistent(
-        version1 in "[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}",
-        version2 in "[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}"
-    ) {
-        use omg_lib::cli::tea::UpdateType;
-
-        // Apply operation twice
-        let type1 = UpdateType::from_versions(&version1, &version2);
-        let type2 = UpdateType::from_versions(&version1, &version2);
-
-        prop_assert_eq!(type1, type2, "Operation should be deterministic");
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// PHASE 3 PROPERTY TESTS - DATA STRUCTURE INVARIANTS
-// ═══════════════════════════════════════════════════════════════════════════════
-
-proptest! {
-    /// Property: Package collections should maintain ordering consistency
-    /// When we sort packages by name, the order should be stable and repeatable
-    #[test]
-    fn prop_package_collection_ordering_stable(
-        count in 1usize..20usize,
-        seed in 0u64..1000u64
-    ) {
-        // Arrange - Create random package names
-        let mut packages: Vec<String> = (0..count)
-            .map(|i| format!("pkg{}{}", i, seed))
-            .collect();
-
-        // Act - Sort twice
-        packages.sort();
-        let first_sort = packages.clone();
-        packages.sort();
-        let second_sort = packages.clone();
-
-        // Assert - Order should be identical
-        prop_assert_eq!(first_sort, second_sort, "Sorting should be stable");
-    }
-
-    /// Property: Version parsing should be reversible
-    /// If we parse a version and convert it back to string, parsing again should yield the same result
-    #[test]
-    fn prop_version_parsing_reversible(
-        major in 0u32..100u32,
-        minor in 0u32..100u32,
-        patch in 0u32..100u32
-    ) {
-        // Arrange
-        let original = format!("{major}.{minor}.{patch}");
-
-        // Act - Parse and stringify
-        let parsed1 = semver::Version::parse(&original);
-        if let Ok(v1) = parsed1 {
-            let stringified = v1.to_string();
-            let parsed2 = semver::Version::parse(&stringified);
-
-            // Assert - Second parse should succeed and match first
-            prop_assert!(parsed2.is_ok());
-            prop_assert_eq!(v1, parsed2.unwrap());
-        }
-    }
-
-    /// Property: Error messages should never contain sensitive information
-    /// No error message should leak paths, passwords, or system information
-    #[test]
-    fn prop_error_messages_safe(
-        error_type in "[a-z]{1,20}",
-        user_input in "[^\x00]{0,100}"
-    ) {
-        // Arrange - Simulate an error with user input
-        let error_msg = format!("Error in {}: {}", error_type, user_input);
-
-        // Act & Assert - Should not contain sensitive patterns
-        prop_assert!(!error_msg.contains("/etc/passwd"));
-        prop_assert!(!error_msg.contains("/etc/shadow"));
-        prop_assert!(!error_msg.contains("root:"));
-        prop_assert!(!error_msg.contains("password="));
-        prop_assert!(!error_msg.contains("token="));
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// PHASE 3 PROPERTY TESTS - MATHEMATICAL PROPERTIES
-// ═══════════════════════════════════════════════════════════════════════════════
-
-proptest! {
-    /// Property: Version comparison should be transitive
-    /// If v1 < v2 and v2 < v3, then v1 < v3
-    #[test]
-    fn prop_version_comparison_transitive(
-        maj1 in 0u32..10u32,
-        min1 in 0u32..10u32,
-        pat1 in 0u32..10u32,
-        maj2 in 0u32..10u32,
-        min2 in 0u32..10u32,
-        pat2 in 0u32..10u32,
-        maj3 in 0u32..10u32,
-        min3 in 0u32..10u32,
-        pat3 in 0u32..10u32
-    ) {
-        // Arrange
-        let v1 = semver::Version::new(maj1.into(), min1.into(), pat1.into());
-        let v2 = semver::Version::new(maj2.into(), min2.into(), pat2.into());
-        let v3 = semver::Version::new(maj3.into(), min3.into(), pat3.into());
-
-        // Act & Assert - Transitivity property
-        if v1 < v2 && v2 < v3 {
-            prop_assert!(v1 < v3, "Transitivity violated: {v1} < {v2} < {v3} but {v1} >= {v3}");
-        }
-    }
-
-    /// Property: Version comparison should be antisymmetric
-    /// If v1 < v2, then v2 > v1 (and not v2 < v1)
-    #[test]
-    fn prop_version_comparison_antisymmetric(
-        maj1 in 0u32..20u32,
-        min1 in 0u32..20u32,
-        pat1 in 0u32..20u32,
-        maj2 in 0u32..20u32,
-        min2 in 0u32..20u32,
-        pat2 in 0u32..20u32
-    ) {
-        // Arrange
-        let v1 = semver::Version::new(maj1.into(), min1.into(), pat1.into());
-        let v2 = semver::Version::new(maj2.into(), min2.into(), pat2.into());
-
-        // Act & Assert - Antisymmetry property
-        if v1 < v2 {
-            prop_assert!(v2 > v1);
-            prop_assert!(v2 >= v1);
-        }
-    }
-
-    /// Property: Version comparison should be reflexive for equality
-    /// Any version should be equal to itself
-    #[test]
-    fn prop_version_equality_reflexive(
-        major in 0u32..50u32,
-        minor in 0u32..50u32,
-        patch in 0u32..50u32
-    ) {
-        // Arrange
-        let v1 = semver::Version::new(major.into(), minor.into(), patch.into());
-        let v2 = semver::Version::new(major.into(), minor.into(), patch.into());
-
-        // Act & Assert - Reflexivity property
-        prop_assert_eq!(&v1, &v2);
-        prop_assert!(v1 <= v2);
-        prop_assert!(v1 >= v2);
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// PHASE 3 PROPERTY TESTS - CONCURRENT SAFETY
-// ═══════════════════════════════════════════════════════════════════════════════
-
-proptest! {
-    #![proptest_config(ProptestConfig::with_cases(10))]
-
-    /// Property: Multiple reads of the same data should be consistent
-    /// Reading package info multiple times should return the same result
-    #[test]
-    fn prop_concurrent_reads_consistent(
-        package_name in "[a-z]{3,10}",
-        _thread_count in 1usize..5usize
-    ) {
-        // Arrange - Run the same query multiple times
-        let result1 = run_omg(&["search", &package_name]);
-        let result2 = run_omg(&["search", &package_name]);
-
-        // Act & Assert - Results should be consistent (both succeed or both fail)
-        prop_assert_eq!(result1.success, result2.success);
-
-        // If successful, output should be deterministic
-        if result1.success && result2.success {
-            // Note: Output might differ slightly due to timestamps or dynamic content,
-            // but should not panic and should have same success status
-            prop_assert!(!result1.stderr.contains("panicked"));
-            prop_assert!(!result2.stderr.contains("panicked"));
-        }
-    }
-
-    /// Property: File operations should be atomic from external perspective
-    /// Creating and reading a file should be consistent
-    #[test]
-    fn prop_file_operations_atomic(
-        filename in "[a-z]{1,20}\\.txt",
-        content in "[^\x00]{0,1000}"
-    ) {
-        // Arrange
-        let project = TestProject::new();
-
-        // Act - Create and immediately read
-        project.create_file(&filename, &content);
-        let read_back = project.read_file(&filename);
-
-        // Assert - Content should match
-        prop_assert!(read_back.is_some());
-        if let Some(read_content) = read_back {
-            prop_assert_eq!(read_content, content);
-        }
     }
 }

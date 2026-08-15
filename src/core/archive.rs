@@ -5,8 +5,32 @@
 use anyhow::{Context, Result};
 use flate2::read::GzDecoder;
 use std::fs::{self, File};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tar::Archive;
+
+pub(crate) fn stripped_archive_path(
+    path: &Path,
+    strip_components: usize,
+) -> Result<Option<PathBuf>> {
+    let mut components = Vec::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::Normal(value) => components.push(value.to_owned()),
+            std::path::Component::CurDir => {}
+            std::path::Component::Prefix(_)
+            | std::path::Component::RootDir
+            | std::path::Component::ParentDir => {
+                anyhow::bail!("Unsafe path in archive: {}", path.display());
+            }
+        }
+    }
+
+    let stripped = components
+        .into_iter()
+        .skip(strip_components)
+        .collect::<PathBuf>();
+    Ok((!stripped.as_os_str().is_empty()).then_some(stripped))
+}
 
 /// Extract a .tar.gz archive to a directory
 pub fn extract_tar_gz(archive_path: &Path, dest_dir: &Path) -> Result<()> {
@@ -39,25 +63,9 @@ pub fn extract_tar_gz_strip(archive_path: &Path, dest_dir: &Path, strip: usize) 
         let mut entry = entry?;
         let path = entry.path()?;
 
-        // SECURITY: Prevent path traversal
-        if path.components().any(|c| {
-            matches!(
-                c,
-                std::path::Component::ParentDir | std::path::Component::RootDir
-            )
-        }) {
-            anyhow::bail!(
-                "Security: Malicious path detected in archive: {}",
-                path.display()
-            );
-        }
-
-        // Strip N components from path
-        let stripped: std::path::PathBuf = path.components().skip(strip).collect();
-
-        if stripped.as_os_str().is_empty() {
+        let Some(stripped) = stripped_archive_path(&path, strip)? else {
             continue;
-        }
+        };
 
         let dest_path = dest_dir.join(&stripped);
 
@@ -127,29 +135,13 @@ pub fn extract_zip_strip(archive_path: &Path, dest_dir: &Path, strip: usize) -> 
 
     for i in 0..archive.len() {
         let mut file = archive.by_index(i)?;
-        let outpath = match file.enclosed_name() {
-            Some(path) => {
-                // SECURITY: Prevent path traversal (enclosed_name handles most, but be explicit)
-                if path.components().any(|c| {
-                    matches!(
-                        c,
-                        std::path::Component::ParentDir | std::path::Component::RootDir
-                    )
-                }) {
-                    anyhow::bail!(
-                        "Security: Malicious path detected in zip archive: {}",
-                        path.display()
-                    );
-                }
-
-                let stripped: std::path::PathBuf = path.components().skip(strip).collect();
-                if stripped.as_os_str().is_empty() {
-                    continue;
-                }
-                dest_dir.join(stripped)
-            }
-            None => continue,
+        let path = file
+            .enclosed_name()
+            .ok_or_else(|| anyhow::anyhow!("Unsafe path in ZIP archive: {}", file.name()))?;
+        let Some(stripped) = stripped_archive_path(&path, strip)? else {
+            continue;
         };
+        let outpath = dest_dir.join(stripped);
 
         if file.is_dir() {
             fs::create_dir_all(&outpath)?;
@@ -226,5 +218,28 @@ pub fn extract_auto_strip(archive_path: &Path, dest_dir: &Path, strip: usize) ->
     } else {
         // Fall back to regular extraction for other types
         extract_auto(archive_path, dest_dir)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::stripped_archive_path;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn archive_paths_are_stripped_without_changing_containment() -> anyhow::Result<()> {
+        assert_eq!(
+            stripped_archive_path(Path::new("runtime/bin/tool"), 1)?,
+            Some(PathBuf::from("bin/tool"))
+        );
+        assert_eq!(stripped_archive_path(Path::new("runtime"), 1)?, None);
+        Ok(())
+    }
+
+    #[test]
+    fn archive_paths_reject_absolute_and_parent_components() {
+        for path in ["../escape", "runtime/../../escape", "/absolute/path"] {
+            assert!(stripped_archive_path(Path::new(path), 1).is_err(), "{path}");
+        }
     }
 }
