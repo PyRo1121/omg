@@ -74,7 +74,7 @@ reqwest = { version = "0.13.1", features = [
 httpdate = "1.0.3"
 
 # Version Control
-git2 = "0.19" # Pinned: libscoop requires git2 0.19 (libgit2-sys links conflict with 0.20)
+git2 = "0.20" # Pinned: libscoop requires git2 0.19 (libgit2-sys links conflict with 0.20)
 
 # Filesystem
 tokio-util = { version = "0.7.18", features = ["io", "codec", "rt"] }
