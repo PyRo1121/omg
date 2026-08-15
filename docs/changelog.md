@@ -316,6 +316,7 @@ dependency-type: indirect
 - Normalize project formatting
 ### 🧪 Testing
 
+- Strengthen CLI error assertions
 - Assert clean command outcomes
 - Remove obsolete ignored clean cases
 - Remove false-green sync smoke test
