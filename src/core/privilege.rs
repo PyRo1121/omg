@@ -426,13 +426,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_is_root() {
-        // In normal test environment, we're not root
-        // This test just ensures the function doesn't panic
-        let _ = is_root();
-    }
-
-    #[test]
     fn test_elevate_for_operation_whitelist() {
         let empty_args = Vec::new();
         // Allowed operations
@@ -449,13 +442,6 @@ mod tests {
         assert!(elevate_for_operation("status", &empty_args).is_err());
         assert!(elevate_for_operation("evil_command", &empty_args).is_err());
         assert!(elevate_for_operation("install; rm -rf /", &empty_args).is_err());
-    }
-
-    #[test]
-    fn test_elevate_if_needed_behavior() {
-        // In a unit test, we can't easily check if it execs sudo without mocking Command
-        // but we can verify it returns Ok(()) if we pretend to be root (which we can't easily mock here without restructuring)
-        // So we focus on the whitelist logic above which is the critical decision logic.
     }
 
     #[test]
@@ -501,13 +487,6 @@ mod tests {
         assert_eq!(log.len(), 1);
         assert_eq!(log[0].0, "install");
         assert_eq!(log[0].1, args);
-    }
-
-    #[test]
-    fn test_system_privilege_checker() {
-        let checker = SystemPrivilegeChecker;
-        // Just ensure it doesn't panic
-        let _ = checker.is_root();
     }
 
     #[test]

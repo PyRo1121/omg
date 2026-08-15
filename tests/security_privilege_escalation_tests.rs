@@ -11,7 +11,6 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use omg_lib::core::privilege::{PrivilegeChecker, SystemPrivilegeChecker};
 use omg_lib::core::security::audit::{AuditEventType, AuditLogger, AuditSeverity};
 #[cfg(feature = "pgp")]
 use omg_lib::core::security::pgp::PgpVerifier;
@@ -27,18 +26,6 @@ use tempfile::{NamedTempFile, TempDir};
 // ═══════════════════════════════════════════════════════════════════════════
 
 mod privilege_escalation {
-    use super::*;
-
-    // Note: MockPrivilegeChecker is only available in unit tests (cfg(test))
-    // These integration tests use the real SystemPrivilegeChecker
-
-    #[test]
-    fn test_system_privilege_checker_no_panic() {
-        let checker = SystemPrivilegeChecker;
-        // Should not panic, just check current privileges
-        let _is_root = checker.is_root();
-    }
-
     #[test]
     #[allow(unsafe_code)]
     fn test_elevation_whitelist_allowed_operations() {
@@ -318,9 +305,12 @@ mod security_validation {
         let long_name = "a".repeat(10_000);
         assert!(validate_package_name(&long_name).is_err());
 
-        // Many path segments
-        let deep_path = (0..1000).map(|_| "a").collect::<Vec<_>>().join("/");
-        assert!(validate_relative_path(&deep_path).is_ok() || deep_path.len() > 255);
+        // Many path segments must be rejected before they reach filesystem APIs.
+        let deep_path = (0..10_000).map(|_| "a").collect::<Vec<_>>().join("/");
+        assert!(
+            validate_relative_path(&deep_path).is_err(),
+            "oversized relative paths must be rejected"
+        );
     }
 }
 
@@ -332,13 +322,6 @@ mod security_validation {
 mod pgp_verification {
     use super::*;
     use std::io::Write;
-
-    #[test]
-    fn test_pgp_verifier_construction() {
-        let verifier = PgpVerifier::new();
-        // Should construct without panic
-        assert!(std::ptr::addr_of!(verifier) as usize > 0);
-    }
 
     #[test]
     fn test_signature_file_not_found() {
@@ -705,11 +688,18 @@ mod attack_scenarios {
         ];
 
         for path in attacks {
-            // Should be blocked by validation
+            // Package arguments must never be accepted as paths. Relative-path
+            // validation is also required for inputs that reach file APIs.
             assert!(
-                validate_package_name(path).is_err() || validate_relative_path(path).is_err(),
-                "Should block path injection: {path}",
+                validate_package_name(path).is_err(),
+                "Package validation must block path injection: {path}",
             );
+            if !path.starts_with('/') {
+                assert!(
+                    validate_relative_path(path).is_err(),
+                    "Relative-path validation must block path injection: {path}",
+                );
+            }
         }
     }
 
@@ -746,9 +736,12 @@ mod attack_scenarios {
             // Should fail validation before elevation
             for arg in &args {
                 assert!(
-                    validate_package_name(arg).is_err()
-                        || validate_package_name_or_file(arg).is_err(),
-                    "Should block bypass attempt: {op} {arg}",
+                    validate_package_name(arg).is_err(),
+                    "Package validation must block bypass attempt: {op} {arg}",
+                );
+                assert!(
+                    validate_package_name_or_file(arg).is_err(),
+                    "Package-or-file validation must block bypass attempt: {op} {arg}",
                 );
             }
         }
@@ -761,10 +754,11 @@ mod attack_scenarios {
         assert!(validate_package_name(&long_name).is_err());
 
         // Many nested paths
-        let deep = (0..10000).map(|_| "a").collect::<Vec<_>>().join("/");
-        let result = validate_relative_path(&deep);
-        // Should either reject or handle gracefully
-        assert!(result.is_ok() || result.is_err());
+        let deep = (0..10_000).map(|_| "a").collect::<Vec<_>>().join("/");
+        assert!(
+            validate_relative_path(&deep).is_err(),
+            "oversized relative paths must be rejected"
+        );
 
         // Recursive symlinks would be caught at filesystem level
     }
@@ -783,11 +777,9 @@ mod attack_scenarios {
         let content = "-----BEGIN RSA PRIVATE KEY-----\nMIIE...";
         let findings = scanner.scan_content(content, "key.pem").unwrap();
         assert!(!findings.is_empty(), "Should detect private key");
-        assert!(
-            findings
-                .iter()
-                .any(|f| f.severity == SecretSeverity::Critical)
-        );
+        assert!(findings
+            .iter()
+            .any(|f| f.severity == SecretSeverity::Critical));
     }
 
     #[test]
@@ -821,39 +813,29 @@ mod attack_scenarios {
         };
 
         // Banned package
-        assert!(
-            policy
-                .check_package("telnet", false, Some("BSD"), SecurityGrade::Verified)
-                .is_err()
-        );
+        assert!(policy
+            .check_package("telnet", false, Some("BSD"), SecurityGrade::Verified)
+            .is_err());
 
         // AUR when disabled
-        assert!(
-            policy
-                .check_package("yay", true, Some("MIT"), SecurityGrade::Community)
-                .is_err()
-        );
+        assert!(policy
+            .check_package("yay", true, Some("MIT"), SecurityGrade::Community)
+            .is_err());
 
         // Wrong license
-        assert!(
-            policy
-                .check_package("pkg", false, Some("GPL-3.0"), SecurityGrade::Verified)
-                .is_err()
-        );
+        assert!(policy
+            .check_package("pkg", false, Some("GPL-3.0"), SecurityGrade::Verified)
+            .is_err());
 
         // Below minimum grade
-        assert!(
-            policy
-                .check_package("pkg", false, Some("MIT"), SecurityGrade::Community)
-                .is_err()
-        );
+        assert!(policy
+            .check_package("pkg", false, Some("MIT"), SecurityGrade::Community)
+            .is_err());
 
         // Valid package
-        assert!(
-            policy
-                .check_package("vim", false, Some("MIT"), SecurityGrade::Verified)
-                .is_ok()
-        );
+        assert!(policy
+            .check_package("vim", false, Some("MIT"), SecurityGrade::Verified)
+            .is_ok());
     }
 
     #[test]
@@ -884,11 +866,11 @@ mod attack_scenarios {
         ];
 
         for attack in unicode_attacks {
-            // Should handle gracefully without panic
-            let result = validate_package_name(attack);
+            // Package names are ASCII-delimited identifiers; reject Unicode
+            // control/format characters rather than accepting an ambiguous name.
             assert!(
-                result.is_ok() || result.is_err(),
-                "Should handle unicode: {attack:?}",
+                validate_package_name(attack).is_err(),
+                "Should reject Unicode attack input: {attack:?}",
             );
         }
     }
@@ -900,22 +882,6 @@ mod attack_scenarios {
 
 mod integration {
     use super::*;
-
-    #[test]
-    fn test_privilege_escalation_with_validation() {
-        // Valid package
-        let pkg = "firefox";
-        assert!(validate_package_name(pkg).is_ok());
-
-        // Verify privilege checker works without actually elevating
-        let checker = SystemPrivilegeChecker;
-        let _ = checker.is_root(); // Should not panic
-
-        // Invalid package
-        let malicious = "pkg; rm -rf /";
-        assert!(validate_package_name(malicious).is_err());
-        // Validation prevents elevation attempt
-    }
 
     #[test]
     #[allow(unsafe_code)]
@@ -964,50 +930,30 @@ mod integration {
 
     #[test]
     #[allow(unsafe_code)]
-    fn test_end_to_end_security_workflow() {
-        // Simulate complete security workflow
-        let temp_dir = TempDir::new().unwrap();
-        // SAFETY: Setting test-specific data directory; test isolation ensures no conflicts
-        unsafe {
-            std::env::set_var("OMG_DATA_DIR", temp_dir.path());
-        }
+    fn test_end_to_end_security_workflow() -> anyhow::Result<()> {
+        let temp_dir = TempDir::new()?;
+        temp_env::with_var("OMG_DATA_DIR", Some(temp_dir.path()), || {
+            let pkg_name = "vim";
+            validate_package_name(pkg_name)?;
 
-        // 1. Validate package name
-        let pkg_name = "vim";
-        assert!(validate_package_name(pkg_name).is_ok());
+            let policy = SecurityPolicy::default();
+            policy.check_package(pkg_name, false, Some("MIT"), SecurityGrade::Verified)?;
 
-        // 2. Check policy
-        let policy = SecurityPolicy::default();
-        assert!(
-            policy
-                .check_package(pkg_name, false, Some("MIT"), SecurityGrade::Verified)
-                .is_ok()
-        );
+            let verifier = SlsaVerifier::new()?;
+            let level = verifier.determine_slsa_level(pkg_name, true);
+            assert_eq!(level, SlsaLevel::Level2);
 
-        // 3. Verify SLSA level
-        let verifier = SlsaVerifier::new().unwrap();
-        let level = verifier.determine_slsa_level(pkg_name, true);
-        assert_eq!(level, SlsaLevel::Level2);
-
-        // 4. Verify operation is in whitelist (would elevate if needed)
-        // Skip actual elevation in tests as it requires sudo
-        let checker = SystemPrivilegeChecker;
-        // Just verify we can check root status without crashing
-        let _ = checker.is_root();
-
-        // 5. Audit the operation
-        let mut logger = AuditLogger::new().unwrap();
-        logger
-            .log(
+            let mut logger = AuditLogger::new()?;
+            logger.log(
                 AuditEventType::PackageInstall,
                 AuditSeverity::Info,
                 pkg_name,
                 "Package installed successfully",
-            )
-            .unwrap();
+            )?;
 
-        // Verify audit integrity
-        let report = logger.verify_integrity().unwrap();
-        assert!(report.is_valid());
+            let report = logger.verify_integrity()?;
+            assert!(report.is_valid());
+            Ok(())
+        })
     }
 }

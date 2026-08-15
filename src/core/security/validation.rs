@@ -4,6 +4,8 @@
 
 use anyhow::{Result, bail};
 
+const MAX_RELATIVE_PATH_LENGTH: usize = 4096;
+
 /// Validates a package name for security
 ///
 /// Package names must:
@@ -162,6 +164,10 @@ pub fn validate_relative_path(path: &str) -> Result<()> {
         bail!("Path cannot be empty");
     }
 
+    if path.len() > MAX_RELATIVE_PATH_LENGTH {
+        bail!("Path too long (max {MAX_RELATIVE_PATH_LENGTH} bytes)");
+    }
+
     if path.contains('\0') {
         bail!("Path contains null byte");
     }
@@ -267,6 +273,24 @@ mod tests {
         assert!(validate_relative_path("foo/../bar").is_err());
         assert!(validate_relative_path("foo//bar").is_err());
         assert!(validate_relative_path("foo\0bar").is_err());
+    }
+
+    #[test]
+    fn relative_path_length_is_bounded_in_bytes() {
+        let max_ascii = "a".repeat(MAX_RELATIVE_PATH_LENGTH);
+        assert!(validate_relative_path(&max_ascii).is_ok());
+
+        let too_long_ascii = "a".repeat(MAX_RELATIVE_PATH_LENGTH + 1);
+        let error = validate_relative_path(&too_long_ascii)
+            .expect_err("path above the byte limit must be rejected");
+        assert!(error.to_string().contains("Path too long"));
+
+        let max_multibyte = "é".repeat(MAX_RELATIVE_PATH_LENGTH / "é".len());
+        assert_eq!(max_multibyte.len(), MAX_RELATIVE_PATH_LENGTH);
+        assert!(validate_relative_path(&max_multibyte).is_ok());
+
+        let too_long_multibyte = format!("{max_multibyte}é");
+        assert!(validate_relative_path(&too_long_multibyte).is_err());
     }
 
     #[test]

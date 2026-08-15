@@ -1093,17 +1093,6 @@ mod error_handling {
     use super::*;
 
     #[test]
-    fn test_graceful_handling_missing_alpm() {
-        // If ALPM is not available (e.g., non-Arch system), should handle gracefully
-        // This test is more for documentation than assertion
-    }
-
-    #[test]
-    fn test_network_timeout_handling() {
-        // Test with a very short timeout environment variable if supported
-    }
-
-    #[test]
     fn test_invalid_lock_file() {
         let temp_dir = TempDir::new().unwrap();
 
@@ -1126,17 +1115,6 @@ mod error_handling {
 
         let result = run_omg_in_dir(&["env", "check"], temp_dir.path());
         // Should handle gracefully
-    }
-
-    #[test]
-    fn test_permission_denied_handling() {
-        // This test is platform-specific and may not work in all environments
-        // Skipping actual implementation but documenting the need
-    }
-
-    #[test]
-    fn test_disk_full_handling() {
-        // Difficult to test, but documenting the need
     }
 }
 
