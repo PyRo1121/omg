@@ -228,6 +228,20 @@ impl Ord for RelevanceScore {
 }
 
 impl PackageIndex {
+    /// Create an empty index for isolated handler tests and explicitly empty states.
+    ///
+    /// Production startup should use [`Self::new`] so a missing or unsynced package
+    /// database remains an actionable error outside hermetic test mode.
+    pub fn empty() -> Self {
+        Self {
+            items: Vec::new(),
+            pool: StringPool::default(),
+            name_to_idx: AHashMap::new(),
+            bloom: PackageBloomFilter::new(0),
+            trigrams: TrigramIndex::new(0),
+        }
+    }
+
     pub fn new() -> Result<Self> {
         #[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
         use crate::core::env::distro::{Distro, detect_distro};
@@ -567,6 +581,20 @@ impl PackageIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn empty_index_has_no_observable_packages() {
+        let index = PackageIndex::empty();
+
+        assert!(index.is_empty());
+        assert_eq!(index.len(), 0);
+        assert!(index.search("anything", 10).is_empty());
+        assert!(index.search("anything", 0).is_empty());
+        assert!(index.search("", 10).is_empty());
+        assert!(index.suggest("anything", 10).is_empty());
+        assert!(index.get("anything").is_none());
+        assert!(index.all_packages().is_empty());
+    }
 
     #[test]
     fn test_string_pool_interning() {

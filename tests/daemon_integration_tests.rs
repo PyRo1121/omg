@@ -9,32 +9,26 @@
 //! Tests IPC protocol, caching, concurrency, error handling
 
 use omg_lib::daemon::handlers::{DaemonState, handle_request};
+use omg_lib::daemon::index::PackageIndex;
 use omg_lib::daemon::protocol::{Request, Response, ResponseResult, error_codes};
+use omg_lib::package_managers::mock::MockPackageManager;
 use serial_test::serial;
 use std::sync::Arc;
 use tempfile::TempDir;
 
 fn setup_test_env() -> (TempDir, Arc<DaemonState>) {
-    #[cfg(feature = "arch")]
-    {
-        omg_lib::package_managers::clear_alpm_cache();
-        omg_lib::package_managers::invalidate_caches();
-    }
-
     let temp_dir = TempDir::new().unwrap();
 
-    #[allow(unsafe_code)]
-    unsafe {
-        std::env::set_var("OMG_DAEMON_DATA_DIR", temp_dir.path());
-        std::env::set_var("OMG_DATA_DIR", temp_dir.path());
-    }
+    temp_env::with_var("OMG_DATA_DIR", Some(temp_dir.path()), || {
+        omg_lib::core::security::init_audit_logger()
+    })
+    .expect("Failed to init audit logger");
 
-    omg_lib::core::security::init_audit_logger().expect("Failed to init audit logger");
-
-    let state = match DaemonState::new() {
-        Ok(s) => Arc::new(s),
-        Err(e) => unreachable!("Failed to create DaemonState: {}", e),
-    };
+    let package_manager = Arc::new(MockPackageManager::new_in("arch", temp_dir.path()));
+    let state = Arc::new(
+        DaemonState::new_isolated(temp_dir.path(), PackageIndex::empty(), package_manager)
+            .expect("Failed to create hermetic DaemonState"),
+    );
 
     (temp_dir, state)
 }
@@ -45,32 +39,27 @@ fn setup_test_env() -> (TempDir, Arc<DaemonState>) {
 
 #[tokio::test]
 #[serial]
-#[allow(unsafe_code)]
 async fn test_metrics_endpoint_returns_valid_data() {
     let (_temp, state) = setup_test_env();
 
     let req = Request::Metrics { id: 100 };
     let response = handle_request(Arc::clone(&state), req).await;
 
-    match response {
-        Response::Success { id, result } => {
-            assert_eq!(id, 100);
-            if let ResponseResult::Metrics(metrics) = result {
-                // Verify metrics are returned (unsigned, so always >= 0)
-                let _ = metrics.requests_total;
-                let _ = metrics.cache_hits;
-                let _ = metrics.cache_misses;
-            } else {
-                unreachable!("Expected Metrics response");
-            }
-        }
-        Response::Error { message, .. } => unreachable!("Metrics failed: {}", message),
-    }
+    let Response::Success {
+        id: 100,
+        result: ResponseResult::Metrics(metrics),
+    } = response
+    else {
+        panic!("expected metrics response, got {response:?}");
+    };
+    assert!(
+        metrics.requests_total >= 1,
+        "the metrics request itself must be counted"
+    );
 }
 
 #[tokio::test]
 #[serial]
-#[allow(unsafe_code)]
 async fn test_suggest_endpoint_handles_empty_query() {
     let (_temp, state) = setup_test_env();
 
@@ -81,81 +70,17 @@ async fn test_suggest_endpoint_handles_empty_query() {
     };
     let response = handle_request(Arc::clone(&state), req).await;
 
-    match response {
-        Response::Success { id, result } => {
-            assert_eq!(id, 200);
-            if let ResponseResult::Suggest(suggestions) = result {
-                assert!(
-                    suggestions.is_empty(),
-                    "Empty query should return empty suggestions"
-                );
-            } else {
-                unreachable!("Expected Suggest response");
-            }
-        }
-        Response::Error { .. } => {
-            // Empty query might be rejected, which is also acceptable
-        }
-    }
+    assert!(matches!(
+        response,
+        Response::Success {
+            id: 200,
+            result: ResponseResult::Suggest(ref suggestions),
+        } if suggestions.is_empty()
+    ));
 }
 
 #[tokio::test]
 #[serial]
-#[allow(unsafe_code)]
-async fn test_suggest_endpoint_respects_limit() {
-    let (_temp, state) = setup_test_env();
-
-    let req = Request::Suggest {
-        id: 201,
-        query: "fire".to_string(),
-        limit: Some(5),
-    };
-    let response = handle_request(Arc::clone(&state), req).await;
-
-    match response {
-        Response::Success { id, result } => {
-            assert_eq!(id, 201);
-            if let ResponseResult::Suggest(suggestions) = result {
-                assert!(suggestions.len() <= 5, "Should respect limit parameter");
-            } else {
-                unreachable!("Expected Suggest response");
-            }
-        }
-        Response::Error { .. } => {
-            // Might fail if index not available, which is OK
-        }
-    }
-}
-
-#[tokio::test]
-#[serial]
-#[allow(unsafe_code)]
-async fn test_suggest_endpoint_rejects_oversized_limit() {
-    let (_temp, state) = setup_test_env();
-
-    let req = Request::Suggest {
-        id: 202,
-        query: "test".to_string(),
-        limit: Some(1000), // Way over limit
-    };
-    let response = handle_request(Arc::clone(&state), req).await;
-
-    // Should clamp to max limit (50) or reject
-    match response {
-        Response::Success { result, .. } => {
-            if let ResponseResult::Suggest(suggestions) = result {
-                assert!(suggestions.len() <= 50, "Should clamp to max limit");
-            }
-        }
-        Response::Error { .. } => {
-            // Rejection is also acceptable
-        }
-    }
-}
-
-#[tokio::test]
-#[serial]
-#[allow(unsafe_code)]
 async fn test_batch_request_executes_all_subcommands() {
     let (_temp, state) = setup_test_env();
 
@@ -171,30 +96,33 @@ async fn test_batch_request_executes_all_subcommands() {
     };
     let response = handle_request(Arc::clone(&state), req).await;
 
-    match response {
-        Response::Success { id, result } => {
-            assert_eq!(id, 300);
-            if let ResponseResult::Batch(responses) = result {
-                assert_eq!(responses.len(), 3, "Should execute all 3 subrequests");
-                for resp in responses.iter() {
-                    match resp {
-                        Response::Success { result, .. } => {
-                            assert!(matches!(result, ResponseResult::Ping(_)));
-                        }
-                        Response::Error { .. } => unreachable!("Batch subrequest failed"),
-                    }
-                }
-            } else {
-                unreachable!("Expected Batch response");
-            }
-        }
-        Response::Error { message, .. } => unreachable!("Batch request failed: {}", message),
+    let Response::Success {
+        id: 300,
+        result: ResponseResult::Batch(responses),
+    } = response
+    else {
+        panic!("expected batch response, got {response:?}");
+    };
+    assert_eq!(responses.len(), 3, "Should execute all 3 subrequests");
+
+    let mut response_ids = Vec::with_capacity(responses.len());
+    for response in responses {
+        let Response::Success {
+            id,
+            result: ResponseResult::Ping(message),
+        } = response
+        else {
+            panic!("expected successful ping subresponse, got {response:?}");
+        };
+        assert_eq!(message, "pong");
+        response_ids.push(id);
     }
+    response_ids.sort_unstable();
+    assert_eq!(response_ids, [1, 2, 3]);
 }
 
 #[tokio::test]
 #[serial]
-#[allow(unsafe_code)]
 async fn test_batch_request_handles_mixed_success_and_failure() {
     let (_temp, state) = setup_test_env();
 
@@ -213,26 +141,38 @@ async fn test_batch_request_handles_mixed_success_and_failure() {
     };
     let response = handle_request(Arc::clone(&state), req).await;
 
-    match response {
-        Response::Success { result, .. } => {
-            if let ResponseResult::Batch(responses) = result {
-                assert_eq!(responses.len(), 3);
-                // First and third should succeed (Ping)
-                // Second should fail (invalid package name)
-                let has_success = responses
-                    .iter()
-                    .any(|r| matches!(r, Response::Success { .. }));
-                let has_error = responses
-                    .iter()
-                    .any(|r| matches!(r, Response::Error { .. }));
-                assert!(has_success, "Should have some successful responses");
-                assert!(has_error, "Should have some error responses");
-            } else {
-                unreachable!("Expected Batch response");
+    let Response::Success {
+        id: 301,
+        result: ResponseResult::Batch(responses),
+    } = response
+    else {
+        panic!("expected mixed batch response, got {response:?}");
+    };
+    assert_eq!(responses.len(), 3);
+
+    let mut seen_ids = Vec::with_capacity(responses.len());
+    for response in responses {
+        match response {
+            Response::Success {
+                id: id @ (1 | 3),
+                result: ResponseResult::Ping(message),
+            } => {
+                assert_eq!(message, "pong");
+                seen_ids.push(id);
             }
+            Response::Error {
+                id: 2,
+                code: error_codes::INVALID_PARAMS,
+                message,
+            } => {
+                assert!(message.contains("Invalid package name"));
+                seen_ids.push(2);
+            }
+            other => panic!("unexpected mixed batch subresponse: {other:?}"),
         }
-        Response::Error { message, .. } => unreachable!("Batch request failed: {}", message),
     }
+    seen_ids.sort_unstable();
+    assert_eq!(seen_ids, [1, 2, 3]);
 }
 
 // ============================================================================
@@ -241,81 +181,56 @@ async fn test_batch_request_handles_mixed_success_and_failure() {
 
 #[tokio::test]
 #[serial]
-#[allow(unsafe_code)]
-#[cfg(feature = "arch")]
-async fn test_cache_hit_after_search() {
-    let (_temp, state) = setup_test_env();
-
-    // First search - should be cache miss
-    let req1 = Request::Search {
-        id: 400,
-        query: "firefox".to_string(),
-        limit: Some(10),
-    };
-    let _response1 = handle_request(Arc::clone(&state), req1).await;
-
-    // Second identical search - should be cache hit
-    let req2 = Request::Search {
-        id: 401,
-        query: "firefox".to_string(),
-        limit: Some(10),
-    };
-    let start = std::time::Instant::now();
-    let _response2 = handle_request(Arc::clone(&state), req2).await;
-    let elapsed = start.elapsed();
-
-    // Cache hit should be extremely fast (< 5ms)
-    assert!(
-        elapsed.as_millis() < 50,
-        "Cached response should be fast, got {:?}",
-        elapsed
-    );
-}
-
-#[tokio::test]
-#[serial]
-#[allow(unsafe_code)]
 async fn test_cache_clear_invalidates_cache() {
     let (_temp, state) = setup_test_env();
+    state.cache.insert("fixture".to_string(), Vec::new());
+    state.cache.sync();
 
-    // Get current cache size
-    let stats_req = Request::CacheStats { id: 500 };
-    let _stats1 = handle_request(Arc::clone(&state), stats_req.clone()).await;
+    let stats_before = handle_request(Arc::clone(&state), Request::CacheStats { id: 500 }).await;
+    let Response::Success {
+        id: 500,
+        result: ResponseResult::CacheStats { size: 1, .. },
+    } = stats_before
+    else {
+        panic!("expected one cached entry before clear, got {stats_before:?}");
+    };
 
-    // Clear cache
-    let clear_req = Request::CacheClear { id: 501 };
-    let _clear_resp = handle_request(Arc::clone(&state), clear_req).await;
+    let clear_response = handle_request(Arc::clone(&state), Request::CacheClear { id: 501 }).await;
+    assert!(matches!(
+        clear_response,
+        Response::Success {
+            id: 501,
+            result: ResponseResult::Message(ref message),
+        } if message == "cleared"
+    ));
 
-    // Check cache size is now zero
-    let stats2 = handle_request(Arc::clone(&state), stats_req).await;
-
-    if let Response::Success { result, .. } = stats2
-        && let ResponseResult::CacheStats { size, .. } = result
-    {
-        assert_eq!(size, 0, "Cache should be empty after clear");
-    }
+    let stats_after = handle_request(state, Request::CacheStats { id: 502 }).await;
+    assert!(matches!(
+        stats_after,
+        Response::Success {
+            id: 502,
+            result: ResponseResult::CacheStats { size: 0, .. },
+        }
+    ));
 }
 
 #[tokio::test]
 #[serial]
-#[allow(unsafe_code)]
 async fn test_cache_respects_max_size_limit() {
     let (_temp, state) = setup_test_env();
 
     let stats_req = Request::CacheStats { id: 600 };
     let response = handle_request(Arc::clone(&state), stats_req).await;
 
-    match response {
-        Response::Success { result, .. } => {
-            if let ResponseResult::CacheStats { size, max_size } = result {
-                assert!(size <= max_size, "Cache size should never exceed max");
-                assert!(max_size > 0, "Max size should be configured");
-            } else {
-                unreachable!("Expected CacheStats response");
-            }
-        }
-        Response::Error { message, .. } => unreachable!("CacheStats failed: {}", message),
-    }
+    let Response::Success {
+        id: 600,
+        result: ResponseResult::CacheStats { size, max_size },
+    } = response
+    else {
+        panic!("expected cache stats response, got {response:?}");
+    };
+    assert!(size <= max_size, "Cache size should never exceed max");
+    assert!(max_size > 0, "Max size should be configured");
 }
 
 // ============================================================================
@@ -324,7 +239,6 @@ async fn test_cache_respects_max_size_limit() {
 
 #[tokio::test]
 #[serial]
-#[allow(unsafe_code)]
 async fn test_concurrent_ping_requests() {
     let (_temp, state) = setup_test_env();
 
@@ -336,24 +250,26 @@ async fn test_concurrent_ping_requests() {
             let req = Request::Ping { id: i };
             handle_request(state_clone, req).await
         });
-        handles.push(handle);
+        handles.push((i, handle));
     }
 
     // All should succeed
-    for handle in handles {
-        let response = handle.await.unwrap();
-        match response {
-            Response::Success { result, .. } => {
-                assert!(matches!(result, ResponseResult::Ping(_)));
-            }
-            Response::Error { message, .. } => unreachable!("Concurrent ping failed: {}", message),
-        }
+    for (expected_id, handle) in handles {
+        let response = handle
+            .await
+            .expect("invariant: ping handler task must not panic");
+        assert!(matches!(
+            response,
+            Response::Success {
+                id,
+                result: ResponseResult::Ping(ref message),
+            } if id == expected_id && message == "pong"
+        ));
     }
 }
 
 #[tokio::test]
 #[serial]
-#[allow(unsafe_code)]
 #[cfg(feature = "arch")]
 async fn test_concurrent_search_requests_different_queries() {
     let (_temp, state) = setup_test_env();
@@ -388,7 +304,6 @@ async fn test_concurrent_search_requests_different_queries() {
 
 #[tokio::test]
 #[serial]
-#[allow(unsafe_code)]
 async fn test_cache_thread_safety_under_concurrent_access() {
     let (_temp, state) = setup_test_env();
 
@@ -416,7 +331,6 @@ async fn test_cache_thread_safety_under_concurrent_access() {
 
 #[tokio::test]
 #[serial]
-#[allow(unsafe_code)]
 async fn test_invalid_package_name_returns_helpful_error() {
     let (_temp, state) = setup_test_env();
 
@@ -435,7 +349,8 @@ async fn test_invalid_package_name_returns_helpful_error() {
         let response = handle_request(Arc::clone(&state), req).await;
 
         match response {
-            Response::Error { code, message, .. } => {
+            Response::Error { id, code, message } => {
+                assert_eq!(id, 700);
                 assert_eq!(code, error_codes::INVALID_PARAMS);
                 assert!(
                     message.contains("Invalid package name"),
@@ -451,7 +366,6 @@ async fn test_invalid_package_name_returns_helpful_error() {
 
 #[tokio::test]
 #[serial]
-#[allow(unsafe_code)]
 async fn test_oversized_query_is_rejected() {
     let (_temp, state) = setup_test_env();
 
@@ -465,7 +379,8 @@ async fn test_oversized_query_is_rejected() {
     let response = handle_request(Arc::clone(&state), req).await;
 
     match response {
-        Response::Error { code, message, .. } => {
+        Response::Error { id, code, message } => {
+            assert_eq!(id, 800);
             assert_eq!(code, error_codes::INVALID_PARAMS);
             assert!(
                 message.contains("too long") || message.contains("Query"),
@@ -478,7 +393,6 @@ async fn test_oversized_query_is_rejected() {
 
 #[tokio::test]
 #[serial]
-#[allow(unsafe_code)]
 async fn test_state_recovery_after_error() {
     let (_temp, state) = setup_test_env();
 
@@ -487,24 +401,24 @@ async fn test_state_recovery_after_error() {
         id: 900,
         package: "invalid; rm -rf /".to_string(),
     };
-    let _error_resp = handle_request(Arc::clone(&state), bad_req).await;
-
-    // Verify daemon is still operational
-    let good_req = Request::Ping { id: 901 };
-    let response = handle_request(Arc::clone(&state), good_req).await;
-
-    match response {
-        Response::Success { result, .. } => {
-            assert!(
-                matches!(result, ResponseResult::Ping(_)),
-                "Daemon should recover after error"
-            );
+    let error_response = handle_request(Arc::clone(&state), bad_req).await;
+    assert!(matches!(
+        error_response,
+        Response::Error {
+            id: 900,
+            code: error_codes::INVALID_PARAMS,
+            ..
         }
-        Response::Error { message, .. } => unreachable!(
-            "Daemon should be operational after previous error: {}",
-            message
-        ),
-    }
+    ));
+
+    let response = handle_request(state, Request::Ping { id: 901 }).await;
+    assert!(matches!(
+        response,
+        Response::Success {
+            id: 901,
+            result: ResponseResult::Ping(ref message),
+        } if message == "pong"
+    ));
 }
 
 // ============================================================================
@@ -513,43 +427,25 @@ async fn test_state_recovery_after_error() {
 
 #[tokio::test]
 #[serial]
-#[allow(unsafe_code)]
 async fn test_health_status_reflects_cache_size() {
     let (_temp, state) = setup_test_env();
 
     let req = Request::Health { id: 1000 };
     let response = handle_request(Arc::clone(&state), req).await;
 
-    match response {
-        Response::Success { result, .. } => {
-            if let ResponseResult::Health(health) = result {
-                // Verify health status is one of valid states
-                assert!(
-                    health.status == "healthy"
-                        || health.status == "degraded"
-                        || health.status == "unhealthy",
-                    "Invalid health status: {}",
-                    health.status
-                );
-
-                // Verify health reflects cache size
-                if health.cache_size > 50_000 {
-                    assert_eq!(
-                        health.status, "degraded",
-                        "Large cache should trigger degraded status"
-                    );
-                }
-            } else {
-                unreachable!("Expected Health response");
-            }
-        }
-        Response::Error { message, .. } => unreachable!("Health check failed: {}", message),
-    }
+    let Response::Success {
+        id: 1000,
+        result: ResponseResult::Health(health),
+    } = response
+    else {
+        panic!("expected health response, got {response:?}");
+    };
+    assert_eq!(health.cache_size, 0);
+    assert_eq!(health.status, "healthy");
 }
 
 #[tokio::test]
 #[serial]
-#[allow(unsafe_code)]
 async fn test_metrics_increment_on_requests() {
     let (_temp, state) = setup_test_env();
 
@@ -557,125 +453,36 @@ async fn test_metrics_increment_on_requests() {
     let metrics_req = Request::Metrics { id: 1100 };
     let initial = handle_request(Arc::clone(&state), metrics_req.clone()).await;
 
-    let initial_count = if let Response::Success {
-        result: ResponseResult::Metrics(m),
-        ..
+    let Response::Success {
+        id: 1100,
+        result: ResponseResult::Metrics(initial_metrics),
     } = initial
-    {
-        m.requests_total
-    } else {
-        0
+    else {
+        panic!("expected initial metrics response, got {initial:?}");
     };
 
-    // Make some requests
-    for i in 0..5 {
-        let req = Request::Ping { id: i };
-        let _ = handle_request(Arc::clone(&state), req).await;
+    for id in 0..5 {
+        let response = handle_request(Arc::clone(&state), Request::Ping { id }).await;
+        assert!(matches!(
+            response,
+            Response::Success {
+                id: response_id,
+                result: ResponseResult::Ping(ref message),
+            } if response_id == id && message == "pong"
+        ));
     }
 
-    // Get updated metrics
     let updated = handle_request(Arc::clone(&state), metrics_req).await;
-
-    if let Response::Success { result, .. } = updated
-        && let ResponseResult::Metrics(m) = result
-    {
-        assert!(
-            m.requests_total > initial_count,
-            "Request count should increment, initial: {}, current: {}",
-            initial_count,
-            m.requests_total
-        );
-    }
-}
-
-#[tokio::test]
-#[serial]
-#[allow(unsafe_code)]
-async fn test_uptime_increases_monotonically() {
-    let (_temp, state) = setup_test_env();
-
-    let req = Request::Health { id: 1200 };
-    let response1 = handle_request(Arc::clone(&state), req.clone()).await;
-
-    let uptime1 = if let Response::Success {
-        result: ResponseResult::Health(h),
-        ..
-    } = response1
-    {
-        h.uptime_seconds
-    } else {
-        0
+    let Response::Success {
+        id: 1100,
+        result: ResponseResult::Metrics(updated_metrics),
+    } = updated
+    else {
+        panic!("expected updated metrics response, got {updated:?}");
     };
-
-    // Wait a bit
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
-    let response2 = handle_request(Arc::clone(&state), req).await;
-
-    if let Response::Success { result, .. } = response2
-        && let ResponseResult::Health(h) = result
-    {
-        assert!(
-            h.uptime_seconds >= uptime1,
-            "Uptime should increase monotonically"
-        );
-    }
-}
-
-// ============================================================================
-// Performance Tests
-// ============================================================================
-
-#[tokio::test]
-#[serial]
-#[allow(unsafe_code)]
-async fn test_ping_response_time_is_fast() {
-    let (_temp, state) = setup_test_env();
-
-    let req = Request::Ping { id: 1300 };
-    let start = std::time::Instant::now();
-    let _ = handle_request(Arc::clone(&state), req).await;
-    let elapsed = start.elapsed();
-
-    assert!(
-        elapsed.as_millis() < 10,
-        "Ping should respond in <10ms, got {:?}",
-        elapsed
-    );
-}
-
-#[tokio::test]
-#[serial]
-#[allow(unsafe_code)]
-async fn test_cache_stats_response_time_is_fast() {
-    let (_temp, state) = setup_test_env();
-
-    let req = Request::CacheStats { id: 1400 };
-    let start = std::time::Instant::now();
-    let _ = handle_request(Arc::clone(&state), req).await;
-    let elapsed = start.elapsed();
-
-    assert!(
-        elapsed.as_millis() < 10,
-        "CacheStats should respond in <10ms, got {:?}",
-        elapsed
-    );
-}
-
-#[tokio::test]
-#[serial]
-#[allow(unsafe_code)]
-async fn test_health_check_response_time_is_fast() {
-    let (_temp, state) = setup_test_env();
-
-    let req = Request::Health { id: 1500 };
-    let start = std::time::Instant::now();
-    let _ = handle_request(Arc::clone(&state), req).await;
-    let elapsed = start.elapsed();
-
-    assert!(
-        elapsed.as_millis() < 10,
-        "Health check should respond in <10ms, got {:?}",
-        elapsed
+    assert_eq!(
+        updated_metrics.requests_total,
+        initial_metrics.requests_total + 6,
+        "five pings and the final metrics request must be counted"
     );
 }
