@@ -310,7 +310,7 @@ impl MiseManager {
     pub fn use_version(&self, runtime: &str, version: &str) -> Result<()> {
         // SECURITY: Validate runtime and version
         crate::core::security::validate_package_name(runtime)?;
-        crate::core::security::validate_version(version)?;
+        crate::core::security::validate_runtime_version(version)?;
 
         let tool_spec = format!("{runtime}@{version}");
 
@@ -341,6 +341,9 @@ impl MiseManager {
     /// Get the bin directory for a mise-managed runtime
     #[must_use]
     pub fn runtime_bin_path(&self, runtime: &str, version: &str) -> Option<PathBuf> {
+        crate::core::security::validate_package_name(runtime).ok()?;
+        crate::core::security::validate_runtime_version(version).ok()?;
+
         // mise installs to ~/.local/share/mise/installs/<runtime>/<version>/bin
         let mise_data = dirs::data_dir()?.join("mise").join("installs");
         let bin_path = mise_data.join(runtime).join(version).join("bin");

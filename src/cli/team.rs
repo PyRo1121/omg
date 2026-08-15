@@ -683,13 +683,13 @@ pub mod golden_path {
             anyhow::bail!("Invalid template name (alphanumeric and hyphens only)");
         }
         if let Some(v) = node
-            && let Err(e) = crate::core::security::validate_version(v)
+            && let Err(e) = crate::core::security::validate_runtime_version(v)
         {
             execute_cmd(Cmd::error(format!("Invalid Node version: {e}")));
             return Err(e);
         }
         if let Some(v) = python
-            && let Err(e) = crate::core::security::validate_version(v)
+            && let Err(e) = crate::core::security::validate_runtime_version(v)
         {
             execute_cmd(Cmd::error(format!("Invalid Python version: {e}")));
             return Err(e);

@@ -530,6 +530,7 @@ impl Default for RustManager {
 impl RustToolchainSpec {
     pub fn parse(input: &str) -> Result<Self> {
         let input = input.trim();
+        crate::core::security::validate_runtime_version(input)?;
         let mut segments: Vec<&str> = input.split('-').collect();
         let mut channel = segments.first().copied().unwrap_or(input).to_string();
 
@@ -662,6 +663,13 @@ mod tests {
         let spec = RustToolchainSpec::parse("nightly-2024-01-15").unwrap();
         assert_eq!(spec.channel, "nightly");
         assert_eq!(spec.date, Some("2024-01-15".to_string()));
+    }
+
+    #[test]
+    fn toolchain_specs_reject_unsafe_path_components() {
+        for input in ["", ".", "..", "current", "../nightly", "/nightly"] {
+            assert!(RustToolchainSpec::parse(input).is_err(), "{input:?}");
+        }
     }
 
     #[test]
