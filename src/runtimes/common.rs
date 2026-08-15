@@ -5,12 +5,14 @@
 use std::cmp::Ordering;
 use std::fs::{self, File};
 use std::io::BufReader;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::{Context, Result};
 use indicatif::{ProgressBar, ProgressStyle};
 use owo_colors::OwoColorize;
 use sha2::{Digest, Sha256};
+
+use crate::core::archive::stripped_archive_path;
 
 /// Progress bar style for downloads
 #[expect(clippy::expect_used)] // Path operations on known-valid HOME directory; failure is unrecoverable
@@ -138,21 +140,9 @@ pub async fn extract_tar_gz(
         for entry in archive.entries()? {
             let mut entry = entry?;
             let path = entry.path()?;
-
-            // Strip leading components
-            let stripped: PathBuf = path.components().skip(strip_components).collect();
-            if stripped.as_os_str().is_empty() {
+            let Some(stripped) = stripped_archive_path(&path, strip_components)? else {
                 continue;
-            }
-
-            // Security: Reject paths with parent directory traversal (zip-slip protection)
-            if stripped
-                .components()
-                .any(|c| c == std::path::Component::ParentDir)
-            {
-                tracing::warn!("Skipping path with directory traversal: {}", path.display());
-                continue;
-            }
+            };
 
             let dest_path = dest_dir.join(&stripped);
             pb.set_message(format!("Extracting: {}", stripped.display()));
@@ -214,20 +204,9 @@ pub async fn extract_tar_xz(
             let mut entry = entry?;
             let path = entry.path()?;
 
-            // Strip leading components
-            let stripped: PathBuf = path.components().skip(strip_components).collect();
-            if stripped.as_os_str().is_empty() {
+            let Some(stripped) = stripped_archive_path(&path, strip_components)? else {
                 continue;
-            }
-
-            // Security: Reject paths with parent directory traversal (zip-slip protection)
-            if stripped
-                .components()
-                .any(|c| c == std::path::Component::ParentDir)
-            {
-                tracing::warn!("Skipping path with directory traversal: {}", path.display());
-                continue;
-            }
+            };
 
             let dest_path = dest_dir.join(&stripped);
 
@@ -271,22 +250,12 @@ pub async fn extract_zip(
 
         for i in 0..archive.len() {
             let mut file = archive.by_index(i)?;
-            let path = file.mangled_name();
-
-            // Strip leading components
-            let stripped: PathBuf = path.components().skip(strip_components).collect();
-            if stripped.as_os_str().is_empty() {
+            let path = file.enclosed_name().ok_or_else(|| {
+                anyhow::anyhow!("Unsafe path in runtime ZIP archive: {}", file.name())
+            })?;
+            let Some(stripped) = stripped_archive_path(&path, strip_components)? else {
                 continue;
-            }
-
-            // Security: Reject paths with parent directory traversal (zip-slip protection)
-            if stripped
-                .components()
-                .any(|c| c == std::path::Component::ParentDir)
-            {
-                tracing::warn!("Skipping path with directory traversal: {}", path.display());
-                continue;
-            }
+            };
 
             let dest_path = dest_dir.join(&stripped);
             pb.set_message(format!("Extracting: {}", stripped.display()));
