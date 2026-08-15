@@ -299,6 +299,7 @@ dependency-type: indirect
 
 ### 🧪 Testing
 
+- **Fuzz**: Minimize the isolated dependency graph
 - Make segmented runner reject empty success
 - **Fuzz**: Compile production fuzz targets in CI
 - Remove hollow checks and strengthen security coverage
