@@ -3,7 +3,7 @@ use crate::core::history::{HistoryManager, PackageChange, TransactionType};
 use crate::core::security::SecurityPolicy;
 use crate::package_managers::PackageManager;
 use crate::package_managers::types::UpdateInfo;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::sync::Arc;
 
 /// Service for orchestrating package operations across different backends.
@@ -17,7 +17,7 @@ pub struct PackageService {
 
 impl PackageService {
     /// Create a new `PackageService` with the given backend
-    pub fn new(backend: Arc<dyn PackageManager>) -> Self {
+    pub fn new(backend: Arc<dyn PackageManager>) -> Result<Self> {
         Self::builder(backend).build()
     }
 
@@ -106,10 +106,7 @@ impl PackageService {
             }
             .await;
 
-            if let Some(history) = &self.history {
-                let _ = history.add_transaction(TransactionType::Install, changes, result.is_ok());
-            }
-            return result;
+            return self.finish_transaction(TransactionType::Install, changes, result);
         }
 
         // Generic fallback for non-arch
@@ -136,10 +133,7 @@ impl PackageService {
             }
 
             let result = self.backend.install(packages).await;
-            if let Some(history) = &self.history {
-                let _ = history.add_transaction(TransactionType::Install, changes, result.is_ok());
-            }
-            result
+            self.finish_transaction(TransactionType::Install, changes, result)
         }
 
         // Fallback for Arch without AUR (shouldn't happen in practice)
@@ -166,10 +160,7 @@ impl PackageService {
             }
 
             let result = self.backend.install(packages).await;
-            if let Some(history) = &self.history {
-                let _ = history.add_transaction(TransactionType::Install, changes, result.is_ok());
-            }
-            result
+            self.finish_transaction(TransactionType::Install, changes, result)
         }
     }
 
@@ -190,10 +181,7 @@ impl PackageService {
 
         let result = self.backend.remove(packages).await;
 
-        if let Some(history) = &self.history {
-            let _ = history.add_transaction(TransactionType::Remove, changes, result.is_ok());
-        }
-        result
+        self.finish_transaction(TransactionType::Remove, changes, result)
     }
 
     /// Update system
@@ -225,10 +213,30 @@ impl PackageService {
         }
         .await;
 
-        if let Some(history) = &self.history {
-            let _ = history.add_transaction(TransactionType::Update, changes, result.is_ok());
+        self.finish_transaction(TransactionType::Update, changes, result)
+    }
+
+    fn finish_transaction(
+        &self,
+        transaction_type: TransactionType,
+        changes: Vec<PackageChange>,
+        operation_result: Result<()>,
+    ) -> Result<()> {
+        let history_result = self.history.as_ref().map(|history| {
+            history
+                .add_transaction(transaction_type, changes, operation_result.is_ok())
+                .context("Failed to persist package operation history")
+        });
+
+        match (operation_result, history_result) {
+            (Ok(()), None | Some(Ok(()))) => Ok(()),
+            (Err(operation_error), None | Some(Ok(()))) => Err(operation_error),
+            (Ok(()), Some(Err(history_error))) => Err(history_error
+                .context("Package operation succeeded but its history could not be persisted")),
+            (Err(operation_error), Some(Err(history_error))) => Err(anyhow::anyhow!(
+                "Package operation failed: {operation_error}; history persistence also failed: {history_error}"
+            )),
         }
-        result
     }
 
     /// List available updates
@@ -348,7 +356,7 @@ impl PackageServiceBuilder {
     }
 
     /// Build the `PackageService`
-    pub fn build(self) -> PackageService {
+    pub fn build(self) -> Result<PackageService> {
         #[cfg(feature = "arch")]
         let aur_client = if self.enable_aur && self.backend.name() == "pacman" {
             self.aur_client
@@ -358,18 +366,18 @@ impl PackageServiceBuilder {
         };
 
         let history = match self.history {
-            HistoryConfiguration::Default => HistoryManager::new().ok(),
+            HistoryConfiguration::Default => Some(HistoryManager::new()?),
             HistoryConfiguration::Custom(history) => Some(history),
             HistoryConfiguration::Disabled => None,
         };
 
-        PackageService {
+        Ok(PackageService {
             backend: self.backend,
             policy: self.policy.unwrap_or_default(),
             history,
             #[cfg(feature = "arch")]
             aur_client,
-        }
+        })
     }
 }
 
@@ -386,9 +394,28 @@ mod tests {
         let service = PackageService::builder(backend)
             .history(history)
             .without_history()
-            .build();
+            .build()?;
 
         assert!(service.history.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn operation_reports_history_persistence_failure() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let history_path = directory.path().join("history.json");
+        let history = HistoryManager::new_in(&history_path)?;
+        std::fs::create_dir(&history_path)?;
+
+        let backend = Arc::new(crate::core::testing::TestPackageManager::new());
+        backend.add_package("example", "1.0.0", "Example package");
+        let service = PackageService::builder(backend).history(history).build()?;
+
+        let error = service
+            .install(&["example".to_string()], false)
+            .await
+            .expect_err("history persistence failure must be returned");
+        assert!(error.to_string().contains("history"));
         Ok(())
     }
 }

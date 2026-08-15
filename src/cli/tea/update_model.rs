@@ -142,7 +142,7 @@ impl Model for UpdateModel {
         Cmd::Exec(Box::new(|| {
             let updates_result = crate::cli::tea::async_bridge::run_blocking_future(async {
                 let pm = get_package_manager()?;
-                let service = PackageService::new(pm);
+                let service = PackageService::new(pm)?;
                 service.list_updates().await
             })
             .and_then(std::convert::identity);

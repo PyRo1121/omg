@@ -135,7 +135,7 @@ impl Model for RemoveModel {
                 Cmd::Exec(Box::new(move || {
                     let result = crate::cli::tea::async_bridge::run_blocking_future(async move {
                         let pm = get_package_manager()?;
-                        let service = PackageService::new(pm);
+                        let service = PackageService::new(pm)?;
                         service.remove(&packages, recursive).await
                     })
                     .and_then(std::convert::identity);
