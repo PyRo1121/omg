@@ -42,19 +42,6 @@ use tempfile::TempDir;
 // TEST UTILITIES
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Guard for destructive integration tests (real installs/updates)
-fn destructive_tests_enabled() -> bool {
-    matches!(env::var("OMG_RUN_DESTRUCTIVE_TESTS"), Ok(value) if value == "1")
-}
-
-fn system_tests_enabled() -> bool {
-    matches!(env::var("OMG_RUN_SYSTEM_TESTS"), Ok(value) if value == "1")
-}
-
-fn network_tests_enabled() -> bool {
-    matches!(env::var("OMG_RUN_NETWORK_TESTS"), Ok(value) if value == "1")
-}
-
 /// Create a temporary project directory with common config files
 fn create_test_project(dir: &Path, config_type: &str) {
     fs::create_dir_all(dir).unwrap();
@@ -207,11 +194,8 @@ mod package_management {
     use super::*;
 
     #[test]
+    #[ignore = "requires a configured system package database"]
     fn test_search_official_package() {
-        if !system_tests_enabled() {
-            eprintln!("Skipping system test (set OMG_RUN_SYSTEM_TESTS=1)");
-            return;
-        }
         let result = run_omg(&["search", "firefox"]);
         assert!(result.success, "Search should succeed");
         assert!(result.stdout.contains("firefox"), "Should find firefox");
@@ -224,22 +208,16 @@ mod package_management {
     }
 
     #[test]
+    #[ignore = "requires network access to package metadata"]
     fn test_search_with_detailed_flag() {
-        if !network_tests_enabled() {
-            eprintln!("Skipping network test (set OMG_RUN_NETWORK_TESTS=1)");
-            return;
-        }
         let result = run_omg(&["search", "firefox", "--detailed"]);
         assert!(result.success, "Detailed search should succeed");
         // Detailed output should include votes/popularity for AUR
     }
 
     #[test]
+    #[ignore = "requires a configured system package database"]
     fn test_info_official_package() {
-        if !system_tests_enabled() {
-            eprintln!("Skipping system test (set OMG_RUN_SYSTEM_TESTS=1)");
-            return;
-        }
         let result = run_omg(&["info", "pacman"]);
         assert!(result.success, "Info for official package should succeed");
         assert!(result.stdout.contains("pacman"), "Should show package name");
@@ -263,12 +241,8 @@ mod package_management {
     }
 
     #[test]
+    #[ignore = "performs a real package installation"]
     fn test_install_real_package() {
-        if !destructive_tests_enabled() {
-            eprintln!("Skipping destructive test (set OMG_RUN_DESTRUCTIVE_TESTS=1)");
-            return;
-        }
-
         let pkg = env::var("OMG_TEST_PACKAGE").unwrap_or_else(|_| "ripgrep".to_string());
         let args = vec!["install", "-y", &pkg];
         let result = run_omg(&args);
@@ -281,23 +255,15 @@ mod package_management {
     }
 
     #[test]
+    #[ignore = "requires a live package database"]
     fn test_update_check_only() {
-        if !destructive_tests_enabled() {
-            eprintln!("Skipping destructive test (set OMG_RUN_DESTRUCTIVE_TESTS=1)");
-            return;
-        }
-
         let result = run_omg(&["update", "--check"]);
         assert!(result.success, "Update check should succeed");
     }
 
     #[test]
+    #[ignore = "requires a live package database"]
     fn test_update_check_shows_real_updates() {
-        if !destructive_tests_enabled() {
-            eprintln!("Skipping destructive test (set OMG_RUN_DESTRUCTIVE_TESTS=1)");
-            return;
-        }
-
         let result = run_omg(&["update", "--check"]);
         let combined = result.combined_output();
 
@@ -329,12 +295,8 @@ mod package_management {
     }
 
     #[test]
+    #[ignore = "performs a real system update"]
     fn test_update_with_yes_flag() {
-        if !destructive_tests_enabled() {
-            eprintln!("Skipping destructive test (set OMG_RUN_DESTRUCTIVE_TESTS=1)");
-            return;
-        }
-
         let result = run_omg(&["update", "--yes"]);
         let combined = result.combined_output();
 
@@ -353,12 +315,8 @@ mod package_management {
     }
 
     #[test]
+    #[ignore = "requires a real non-interactive package manager"]
     fn test_non_interactive_without_yes_fails_gracefully() {
-        if !destructive_tests_enabled() {
-            eprintln!("Skipping destructive test (set OMG_RUN_DESTRUCTIVE_TESTS=1)");
-            return;
-        }
-
         // Test that running in non-interactive mode without --yes
         // gives a helpful error message
         let result = run_omg_with_env(&["update"], &[("CI", "true"), ("OMG_NON_INTERACTIVE", "1")]);
@@ -411,11 +369,8 @@ mod package_management {
     }
 
     #[test]
+    #[ignore = "requires a configured system package database"]
     fn test_explicit_packages() {
-        if !system_tests_enabled() {
-            eprintln!("Skipping system test (set OMG_RUN_SYSTEM_TESTS=1)");
-            return;
-        }
         let result = run_omg(&["explicit"]);
         assert!(result.success, "Explicit should succeed");
         // Should list some packages on a real Arch system
@@ -451,73 +406,52 @@ mod runtime_management {
     }
 
     #[test]
+    #[ignore = "requires network access to runtime metadata"]
     fn test_list_available_node() {
-        if !network_tests_enabled() {
-            eprintln!("Skipping network test (set OMG_RUN_NETWORK_TESTS=1)");
-            return;
-        }
         let result = run_omg(&["list", "node", "--available"]);
         assert!(result.success, "List available node should succeed");
         // Should show versions from nodejs.org
     }
 
     #[test]
+    #[ignore = "requires network access to runtime metadata"]
     fn test_list_available_python() {
-        if !network_tests_enabled() {
-            eprintln!("Skipping network test (set OMG_RUN_NETWORK_TESTS=1)");
-            return;
-        }
         let result = run_omg(&["list", "python", "--available"]);
         assert!(result.success, "List available python should succeed");
     }
 
     #[test]
+    #[ignore = "requires network access to runtime metadata"]
     fn test_list_available_go() {
-        if !network_tests_enabled() {
-            eprintln!("Skipping network test (set OMG_RUN_NETWORK_TESTS=1)");
-            return;
-        }
         let result = run_omg(&["list", "go", "--available"]);
         assert!(result.success, "List available go should succeed");
     }
 
     #[test]
+    #[ignore = "requires network access to runtime metadata"]
     fn test_list_available_rust() {
-        if !network_tests_enabled() {
-            eprintln!("Skipping network test (set OMG_RUN_NETWORK_TESTS=1)");
-            return;
-        }
         let result = run_omg(&["list", "rust", "--available"]);
         assert!(result.success, "List available rust should succeed");
     }
 
     #[test]
+    #[ignore = "requires network access to runtime metadata"]
     fn test_list_available_ruby() {
-        if !network_tests_enabled() {
-            eprintln!("Skipping network test (set OMG_RUN_NETWORK_TESTS=1)");
-            return;
-        }
         let result = run_omg(&["list", "ruby", "--available"]);
         assert!(result.success, "List available ruby should succeed");
     }
 
     #[test]
+    #[ignore = "requires network access to runtime metadata"]
     fn test_list_available_java() {
-        if !network_tests_enabled() {
-            eprintln!("Skipping network test (set OMG_RUN_NETWORK_TESTS=1)");
-            return;
-        }
         let result = run_omg(&["list", "java", "--available"]);
         assert!(result.success, "List available java should succeed");
         // Should show LTS markers
     }
 
     #[test]
+    #[ignore = "requires network access to runtime metadata"]
     fn test_list_available_bun() {
-        if !network_tests_enabled() {
-            eprintln!("Skipping network test (set OMG_RUN_NETWORK_TESTS=1)");
-            return;
-        }
         let result = run_omg(&["list", "bun", "--available"]);
         assert!(result.success, "List available bun should succeed");
     }
@@ -1456,12 +1390,8 @@ mod pacman_database {
     use super::*;
 
     #[test]
+    #[ignore = "requires a configured system package database"]
     fn test_search_returns_results() {
-        if !system_tests_enabled() {
-            eprintln!("Skipping system test (set OMG_RUN_SYSTEM_TESTS=1)");
-            return;
-        }
-
         let result = run_omg(&["search", "pacman"]);
         assert!(result.success, "Search should succeed");
         assert!(
@@ -1471,12 +1401,8 @@ mod pacman_database {
     }
 
     #[test]
+    #[ignore = "requires a configured system package database"]
     fn test_search_output_format() {
-        if !system_tests_enabled() {
-            eprintln!("Skipping system test (set OMG_RUN_SYSTEM_TESTS=1)");
-            return;
-        }
-
         let result = run_omg(&["search", "firefox"]);
         assert!(result.success, "Search should succeed");
 
@@ -1488,24 +1414,16 @@ mod pacman_database {
     }
 
     #[test]
+    #[ignore = "requires a configured system package database"]
     fn test_info_shows_package_details() {
-        if !system_tests_enabled() {
-            eprintln!("Skipping system test (set OMG_RUN_SYSTEM_TESTS=1)");
-            return;
-        }
-
         let result = run_omg(&["info", "pacman"]);
         assert!(result.success, "Info should succeed for installed package");
         assert!(result.stdout.contains("pacman"), "Should show package name");
     }
 
     #[test]
+    #[ignore = "requires a configured system package database"]
     fn test_update_check_parses_databases() {
-        if !system_tests_enabled() {
-            eprintln!("Skipping system test (set OMG_RUN_SYSTEM_TESTS=1)");
-            return;
-        }
-
         let result = run_omg(&["update", "--check"]);
         let combined = result.combined_output();
         assert!(
@@ -1518,12 +1436,8 @@ mod pacman_database {
     }
 
     #[test]
+    #[ignore = "requires a configured system package database"]
     fn test_explicit_packages_list() {
-        if !system_tests_enabled() {
-            eprintln!("Skipping system test (set OMG_RUN_SYSTEM_TESTS=1)");
-            return;
-        }
-
         let result = run_omg(&["explicit"]);
         assert!(result.success, "Explicit should succeed");
 
@@ -1540,12 +1454,8 @@ mod aur_integration {
     use super::*;
 
     #[test]
+    #[ignore = "requires network access to the AUR"]
     fn test_aur_search() {
-        if !network_tests_enabled() {
-            eprintln!("Skipping network test (set OMG_RUN_NETWORK_TESTS=1)");
-            return;
-        }
-
         let result = run_omg(&["search", "yay", "--detailed"]);
         assert!(result.success, "AUR search should succeed");
         assert!(
@@ -1555,12 +1465,8 @@ mod aur_integration {
     }
 
     #[test]
+    #[ignore = "requires a configured system package database"]
     fn test_update_detects_aur_packages() {
-        if !system_tests_enabled() {
-            eprintln!("Skipping system test (set OMG_RUN_SYSTEM_TESTS=1)");
-            return;
-        }
-
         let result = run_omg(&["update", "--check"]);
         let combined = result.combined_output();
 
@@ -1585,12 +1491,8 @@ mod regression_tests {
     /// The sync database was only parsing packages with %MD5SUM% (V1 format),
     /// missing most packages that use V2 format (no MD5SUM).
     #[test]
+    #[ignore = "requires a configured system package database"]
     fn test_sync_db_parses_v2_format_packages() {
-        if !system_tests_enabled() {
-            eprintln!("Skipping system test (set OMG_RUN_SYSTEM_TESTS=1)");
-            return;
-        }
-
         // Search should find packages from all repos (V2 format)
         let result = run_omg(&["search", "linux"]);
         assert!(result.success, "Search should succeed");
@@ -1598,33 +1500,6 @@ mod regression_tests {
             result.stdout.contains("linux"),
             "Should find packages from V2 format databases"
         );
-    }
-
-    /// Regression: Local DB parsing missing packages without MD5SUM
-    #[test]
-    fn test_local_db_parses_all_packages() {
-        if !system_tests_enabled() {
-            eprintln!("Skipping system test (set OMG_RUN_SYSTEM_TESTS=1)");
-            return;
-        }
-
-        let result = run_omg(&["explicit"]);
-        // In CI containers, explicit may fail or return few packages - that's OK
-        // The key test is that it doesn't panic
-        assert!(
-            !result.stderr.contains("panicked at"),
-            "Should not panic when listing explicit packages"
-        );
-        if result.success {
-            // CI containers may have very few explicit packages
-            // Just verify we can parse the output
-            let _package_count = result
-                .stdout
-                .lines()
-                .filter(|l| !l.trim().is_empty())
-                .count();
-            // If we reached here, parsing succeeded
-        }
     }
 
     /// Regression: engines should take priority over volta in package.json
