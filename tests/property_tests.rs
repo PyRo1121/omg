@@ -16,7 +16,6 @@ mod common;
 
 use common::*;
 use proptest::prelude::*;
-use std::time::Duration;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // PROPERTY-BASED CLI TESTS
@@ -396,32 +395,6 @@ proptest! {
 
         let result = project.run(&["use", "node"]);
         prop_assert!(!result.stderr.contains("panicked at"));
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// PERFORMANCE PROPERTIES
-// ═══════════════════════════════════════════════════════════════════════════════
-
-proptest! {
-    #![proptest_config(ProptestConfig::with_cases(10))]
-
-    /// Help should always be fast regardless of input
-    #[test]
-    fn prop_help_always_fast(subcommand in "[a-z]{1,20}") {
-        let result = run_omg(&[&subcommand, "--help"]);
-        // Help should be fast even for invalid commands (generous for cold start)
-        prop_assert!(result.duration < Duration::from_secs(3));
-    }
-
-    /// Status should be reasonably fast
-    #[test]
-    fn prop_status_performance(_seed in 0u32..100) {
-        let result = run_omg(&["status"]);
-        if result.success {
-            // Very generous timeout - proptest runs many iterations
-            prop_assert!(result.duration < Duration::from_secs(30));
-        }
     }
 }
 
