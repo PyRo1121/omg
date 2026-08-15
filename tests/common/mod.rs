@@ -8,7 +8,6 @@
 pub mod assertions;
 pub mod fixtures;
 pub mod mocks;
-pub mod runners;
 
 use anyhow::Result;
 use std::env;
