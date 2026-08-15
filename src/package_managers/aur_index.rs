@@ -311,8 +311,8 @@ mod tests {
         let index = AurIndex::open(&index_path)?;
 
         let local_pkgs = vec![
-            ("pkg-a".to_string(), parse_version_or_zero("1.0")),  // remote 2.0 > local 1.0
-            ("pkg-b".to_string(), parse_version_or_zero("1.0")),  // remote 1.0 == local 1.0
+            ("pkg-a".to_string(), parse_version_or_zero("1.0")), // remote 2.0 > local 1.0
+            ("pkg-b".to_string(), parse_version_or_zero("1.0")), // remote 1.0 == local 1.0
         ];
 
         let updates = index.get_updates(&local_pkgs)?;
