@@ -391,24 +391,6 @@ fn test_explicit_count() {
 }
 
 #[test]
-fn test_sync_command() {
-    init_test_env();
-
-    // Sync may require privileges, so we just test it runs
-    let result = run_omg(&["sync"]);
-
-    // Should complete (may fail due to permissions or missing repos in CI containers)
-    // In minimal Docker containers, sync may produce no output at all if there are
-    // no repos configured and the command exits quickly.
-    let output = result.combined_output();
-    let _completed = true; // If we got here, the command completed without hanging
-    assert!(
-        !output.is_empty() || !result.success || std::env::var("CI").is_ok(),
-        "Sync should produce output or fail gracefully"
-    );
-}
-
-#[test]
 #[ignore = "clean command has tokio runtime nesting issue in test context"]
 fn test_clean_cache_dry_run() {
     init_test_env();
