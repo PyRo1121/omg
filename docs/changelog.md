@@ -315,6 +315,7 @@ dependency-type: indirect
 - Normalize project formatting
 ### 🧪 Testing
 
+- Remove E2E microbenchmarks
 - Remove privacy timing assertions
 - Remove timing-only e2e assertions
 - Remove slow external runtime probe
