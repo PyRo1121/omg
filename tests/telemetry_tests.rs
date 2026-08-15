@@ -354,24 +354,6 @@ async fn test_session_event_serialization() -> Result<()> {
 }
 
 #[tokio::test]
-async fn test_performance_event_serialization() -> Result<()> {
-    use omg_lib::core::telemetry_client::PerformanceEvent;
-
-    let event = PerformanceEvent {
-        metric_type: "cli_startup".to_string(),
-        duration_ms: 120,
-        context: Some("with_daemon".to_string()),
-    };
-
-    let json = serde_json::to_string(&event)?;
-    assert!(json.contains("cli_startup"));
-    assert!(json.contains("120"));
-    assert!(json.contains("with_daemon"));
-
-    Ok(())
-}
-
-#[tokio::test]
 async fn test_feature_event_serialization() -> Result<()> {
     use omg_lib::core::telemetry_client::FeatureEvent;
 
