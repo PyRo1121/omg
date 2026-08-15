@@ -96,7 +96,7 @@ test-lib:
 # Run property-based tests
 test-property:
 	@echo "Running property-based tests..."
-	cargo test --test property_version_advanced --features arch
+	cargo test --test property_tests_v2 --features arch
 	@echo "✓ Property tests passed!"
 
 # Run fuzzing tests (5 minutes per target)
@@ -130,8 +130,8 @@ test-security:
 	cargo +nightly fuzz run package_names -- -max_total_time=180 -seed=42
 	@echo "2. IPC message validation fuzzing..."
 	cargo +nightly fuzz run ipc_messages -- -max_total_time=180 -seed=43
-	@echo "3. Property-based validation tests..."
-	cargo test --test property_version_advanced --features arch
+	@echo "3. Security validation tests..."
+	cargo test --test security_audit_tests --features arch
 	if [ -d fuzz/artifacts ]; then echo "⚠️  Security issues found! Check fuzz/artifacts/"; exit 1; else echo "✓ Security tests passed!"; fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
