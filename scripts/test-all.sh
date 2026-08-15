@@ -47,70 +47,70 @@ OUTPUT_FILE=$(mktemp "${TMPDIR:-/tmp}/omg-test-all.XXXXXX")
 trap 'rm -f "$OUTPUT_FILE"' EXIT
 
 while [[ $# -gt 0 ]]; do
-    case $1 in
-        --quick|-q)
-            QUICK=true
-            shift
-            ;;
-        --segment|-s)
-            if [[ $# -lt 2 ]]; then
-                echo "Missing segment name after $1" >&2
-                exit 1
-            fi
-            SEGMENT="$2"
-            shift 2
-            ;;
-        --verbose|-v)
-            VERBOSE=true
-            shift
-            ;;
-        --help|-h)
-            echo "Usage: $0 [OPTIONS]"
-            echo ""
-            echo "Options:"
-            echo "  --quick, -q          Run quick tests only (skip integration)"
-            echo "  --segment, -s NAME   Run only specific segment"
-            echo "  --verbose, -v        Show verbose output"
-            echo "  --help, -h           Show this help"
-            echo ""
-            echo "Segments:"
-            echo "  lint       - Formatting and clippy"
-            echo "  build      - Compilation check"
-            echo "  core       - Core module unit tests"
-            echo "  runtimes   - Runtime manager tests"
-            echo "  cli        - CLI argument and command tests"
-            echo "  packages   - Package manager tests"
-            echo "  security   - Security and input validation tests"
-            echo "  property   - Property-based tests"
-            echo "  comprehensive - CLI command and feature tests"
-            echo "  integration - Full integration tests"
-            exit 0
-            ;;
-        *)
-            echo "Unknown option: $1"
-            exit 1
-            ;;
-    esac
+  case $1 in
+  --quick | -q)
+    QUICK=true
+    shift
+    ;;
+  --segment | -s)
+    if [[ $# -lt 2 ]]; then
+      echo "Missing segment name after $1" >&2
+      exit 1
+    fi
+    SEGMENT="$2"
+    shift 2
+    ;;
+  --verbose | -v)
+    VERBOSE=true
+    shift
+    ;;
+  --help | -h)
+    echo "Usage: $0 [OPTIONS]"
+    echo ""
+    echo "Options:"
+    echo "  --quick, -q          Run quick tests only (skip integration)"
+    echo "  --segment, -s NAME   Run only specific segment"
+    echo "  --verbose, -v        Show verbose output"
+    echo "  --help, -h           Show this help"
+    echo ""
+    echo "Segments:"
+    echo "  lint       - Formatting and clippy"
+    echo "  build      - Compilation check"
+    echo "  core       - Core module unit tests"
+    echo "  runtimes   - Runtime manager tests"
+    echo "  cli        - CLI argument and command tests"
+    echo "  packages   - Package manager tests"
+    echo "  security   - Security and input validation tests"
+    echo "  property   - Property-based tests"
+    echo "  comprehensive - CLI command and feature tests"
+    echo "  integration - Full integration tests"
+    exit 0
+    ;;
+  *)
+    echo "Unknown option: $1"
+    exit 1
+    ;;
+  esac
 done
 
 if [[ -n "$SEGMENT" ]]; then
-    SEGMENT_IS_VALID=false
-    for candidate in "${VALID_SEGMENTS[@]}"; do
-        if [[ "$SEGMENT" == "$candidate" ]]; then
-            SEGMENT_IS_VALID=true
-            break
-        fi
-    done
-    if ! $SEGMENT_IS_VALID; then
-        echo "Unknown segment: $SEGMENT" >&2
-        echo "Valid segments: ${VALID_SEGMENTS[*]}" >&2
-        exit 1
+  SEGMENT_IS_VALID=false
+  for candidate in "${VALID_SEGMENTS[@]}"; do
+    if [[ "$SEGMENT" == "$candidate" ]]; then
+      SEGMENT_IS_VALID=true
+      break
     fi
+  done
+  if ! $SEGMENT_IS_VALID; then
+    echo "Unknown segment: $SEGMENT" >&2
+    echo "Valid segments: ${VALID_SEGMENTS[*]}" >&2
+    exit 1
+  fi
 fi
 
 if $QUICK && [[ "$SEGMENT" == "property" || "$SEGMENT" == "integration" ]]; then
-    echo "Segment '$SEGMENT' is excluded by --quick" >&2
-    exit 1
+  echo "Segment '$SEGMENT' is excluded by --quick" >&2
+  exit 1
 fi
 
 # Header
@@ -125,58 +125,58 @@ START_TIME=$(date +%s)
 
 # Function to run a test segment
 run_segment() {
-    local name="$1"
-    local cmd="$2"
-    local required="${3:-true}"
-    
-    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "${BOLD}▶ ${name}${NC}"
-    echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    
-    local start
-    start=$(date +%s%3N)
+  local name="$1"
+  local cmd="$2"
+  local required="${3:-true}"
 
-    local exit_code=0
-    
-    if $VERBOSE; then
-        eval "$cmd" || exit_code=$?
-    else
-        eval "$cmd" > "$OUTPUT_FILE" 2>&1 || exit_code=$?
+  echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+  echo -e "${BOLD}▶ ${name}${NC}"
+  echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+
+  local start
+  start=$(date +%s%3N)
+
+  local exit_code=0
+
+  if $VERBOSE; then
+    eval "$cmd" || exit_code=$?
+  else
+    eval "$cmd" >"$OUTPUT_FILE" 2>&1 || exit_code=$?
+  fi
+
+  local end
+  end=$(date +%s%3N)
+  local duration=$((end - start))
+
+  if [ $exit_code -eq 0 ]; then
+    echo -e "${GREEN}✓ ${name} passed${NC} (${duration}ms)"
+    ((PASSED++))
+  else
+    echo -e "${RED}✗ ${name} failed${NC} (${duration}ms)"
+    if ! $VERBOSE; then
+      echo ""
+      echo -e "${YELLOW}Output:${NC}"
+      tail -30 "$OUTPUT_FILE"
+      echo ""
     fi
-    
-    local end
-    end=$(date +%s%3N)
-    local duration=$((end - start))
-    
-    if [ $exit_code -eq 0 ]; then
-        echo -e "${GREEN}✓ ${name} passed${NC} (${duration}ms)"
-        ((PASSED++))
-    else
-        echo -e "${RED}✗ ${name} failed${NC} (${duration}ms)"
-        if ! $VERBOSE; then
-            echo ""
-            echo -e "${YELLOW}Output:${NC}"
-            tail -30 "$OUTPUT_FILE"
-            echo ""
-        fi
-        ((FAILED++))
-        if [ "$required" = "true" ]; then
-            return 1
-        fi
+    ((FAILED++))
+    if [ "$required" = "true" ]; then
+      return 1
     fi
-    return 0
+  fi
+  return 0
 }
 
 # Function to check if segment should run
 should_run() {
-    local seg="$1"
-    if [ -z "$SEGMENT" ]; then
-        return 0
-    fi
-    if [ "$SEGMENT" = "$seg" ]; then
-        return 0
-    fi
-    return 1
+  local seg="$1"
+  if [ -z "$SEGMENT" ]; then
+    return 0
+  fi
+  if [ "$SEGMENT" = "$seg" ]; then
+    return 0
+  fi
+  return 1
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -184,13 +184,13 @@ should_run() {
 # ═══════════════════════════════════════════════════════════════════════════════
 
 if should_run "lint"; then
-    echo ""
-    echo -e "${CYAN}┌─────────────────────────────────────────────────────────────────────────────────┐${NC}"
-    echo -e "${CYAN}│${NC}  ${BOLD}SEGMENT 1: LINT${NC} - Code formatting and static analysis                        ${CYAN}│${NC}"
-    echo -e "${CYAN}└─────────────────────────────────────────────────────────────────────────────────┘${NC}"
-    
-    run_segment "Format Check" "cargo fmt -- --check"
-    run_segment "Clippy (warnings as errors)" "cargo clippy --features arch --locked -- -D warnings"
+  echo ""
+  echo -e "${CYAN}┌─────────────────────────────────────────────────────────────────────────────────┐${NC}"
+  echo -e "${CYAN}│${NC}  ${BOLD}SEGMENT 1: LINT${NC} - Code formatting and static analysis                        ${CYAN}│${NC}"
+  echo -e "${CYAN}└─────────────────────────────────────────────────────────────────────────────────┘${NC}"
+
+  run_segment "Format Check" "cargo fmt -- --check"
+  run_segment "Clippy (warnings as errors)" "cargo clippy --features arch --locked -- -D warnings"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -198,12 +198,12 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════════
 
 if should_run "build" || [ -z "$SEGMENT" ]; then
-    echo ""
-    echo -e "${CYAN}┌─────────────────────────────────────────────────────────────────────────────────┐${NC}"
-    echo -e "${CYAN}│${NC}  ${BOLD}SEGMENT 2: BUILD${NC} - Compilation check                                         ${CYAN}│${NC}"
-    echo -e "${CYAN}└─────────────────────────────────────────────────────────────────────────────────┘${NC}"
-    
-    run_segment "Debug Build" "cargo build --features arch --locked"
+  echo ""
+  echo -e "${CYAN}┌─────────────────────────────────────────────────────────────────────────────────┐${NC}"
+  echo -e "${CYAN}│${NC}  ${BOLD}SEGMENT 2: BUILD${NC} - Compilation check                                         ${CYAN}│${NC}"
+  echo -e "${CYAN}└─────────────────────────────────────────────────────────────────────────────────┘${NC}"
+
+  run_segment "Debug Build" "cargo build --features arch --locked"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -211,16 +211,16 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════════
 
 if should_run "core"; then
-    echo ""
-    echo -e "${CYAN}┌─────────────────────────────────────────────────────────────────────────────────┐${NC}"
-    echo -e "${CYAN}│${NC}  ${BOLD}SEGMENT 3: CORE${NC} - Core module unit tests                                     ${CYAN}│${NC}"
-    echo -e "${CYAN}└─────────────────────────────────────────────────────────────────────────────────┘${NC}"
-    
-    run_segment "Database Tests" "cargo test --features arch --locked --lib core::database"
-    run_segment "Completion Tests" "cargo test --features arch --locked --lib core::completion"
-    run_segment "Container Tests" "cargo test --features arch --locked --lib core::container"
-    run_segment "Security Tests" "cargo test --features arch --locked --lib core::security"
-    run_segment "System Info Tests" "cargo test --features arch --locked --lib core::sysinfo"
+  echo ""
+  echo -e "${CYAN}┌─────────────────────────────────────────────────────────────────────────────────┐${NC}"
+  echo -e "${CYAN}│${NC}  ${BOLD}SEGMENT 3: CORE${NC} - Core module unit tests                                     ${CYAN}│${NC}"
+  echo -e "${CYAN}└─────────────────────────────────────────────────────────────────────────────────┘${NC}"
+
+  run_segment "Database Tests" "cargo test --features arch --locked --lib core::database"
+  run_segment "Completion Tests" "cargo test --features arch --locked --lib core::completion"
+  run_segment "Container Tests" "cargo test --features arch --locked --lib core::container"
+  run_segment "Security Tests" "cargo test --features arch --locked --lib core::security"
+  run_segment "System Info Tests" "cargo test --features arch --locked --lib core::sysinfo"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -228,20 +228,20 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════════
 
 if should_run "runtimes"; then
-    echo ""
-    echo -e "${CYAN}┌─────────────────────────────────────────────────────────────────────────────────┐${NC}"
-    echo -e "${CYAN}│${NC}  ${BOLD}SEGMENT 4: RUNTIMES${NC} - Runtime manager unit tests                             ${CYAN}│${NC}"
-    echo -e "${CYAN}└─────────────────────────────────────────────────────────────────────────────────┘${NC}"
-    
-    run_segment "Common Utilities" "cargo test --features arch --locked --lib runtimes::common"
-    run_segment "Node.js Manager" "cargo test --features arch --locked --lib runtimes::node"
-    run_segment "Python Manager" "cargo test --features arch --locked --lib runtimes::python"
-    run_segment "Go Manager" "cargo test --features arch --locked --lib runtimes::go"
-    run_segment "Bun Manager" "cargo test --features arch --locked --lib runtimes::bun"
-    run_segment "Ruby Manager" "cargo test --features arch --locked --lib runtimes::ruby"
-    run_segment "Java Manager" "cargo test --features arch --locked --lib runtimes::java"
-    run_segment "Rust Manager" "cargo test --features arch --locked --lib runtimes::rust"
-    run_segment "Mise Manager" "cargo test --features arch --locked --lib runtimes::mise"
+  echo ""
+  echo -e "${CYAN}┌─────────────────────────────────────────────────────────────────────────────────┐${NC}"
+  echo -e "${CYAN}│${NC}  ${BOLD}SEGMENT 4: RUNTIMES${NC} - Runtime manager unit tests                             ${CYAN}│${NC}"
+  echo -e "${CYAN}└─────────────────────────────────────────────────────────────────────────────────┘${NC}"
+
+  run_segment "Common Utilities" "cargo test --features arch --locked --lib runtimes::common"
+  run_segment "Node.js Manager" "cargo test --features arch --locked --lib runtimes::node"
+  run_segment "Python Manager" "cargo test --features arch --locked --lib runtimes::python"
+  run_segment "Go Manager" "cargo test --features arch --locked --lib runtimes::go"
+  run_segment "Bun Manager" "cargo test --features arch --locked --lib runtimes::bun"
+  run_segment "Ruby Manager" "cargo test --features arch --locked --lib runtimes::ruby"
+  run_segment "Java Manager" "cargo test --features arch --locked --lib runtimes::java"
+  run_segment "Rust Manager" "cargo test --features arch --locked --lib runtimes::rust"
+  run_segment "Mise Manager" "cargo test --features arch --locked --lib runtimes::mise"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -249,13 +249,13 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════════
 
 if should_run "cli"; then
-    echo ""
-    echo -e "${CYAN}┌─────────────────────────────────────────────────────────────────────────────────┐${NC}"
-    echo -e "${CYAN}│${NC}  ${BOLD}SEGMENT 5: CLI${NC} - Command-line interface tests                                ${CYAN}│${NC}"
-    echo -e "${CYAN}└─────────────────────────────────────────────────────────────────────────────────┘${NC}"
-    
-    run_segment "CLI Args Parsing" "cargo test --features arch --locked --lib cli::args"
-    run_segment "Hooks Tests" "cargo test --features arch --locked --lib hooks"
+  echo ""
+  echo -e "${CYAN}┌─────────────────────────────────────────────────────────────────────────────────┐${NC}"
+  echo -e "${CYAN}│${NC}  ${BOLD}SEGMENT 5: CLI${NC} - Command-line interface tests                                ${CYAN}│${NC}"
+  echo -e "${CYAN}└─────────────────────────────────────────────────────────────────────────────────┘${NC}"
+
+  run_segment "CLI Args Parsing" "cargo test --features arch --locked --lib cli::args"
+  run_segment "Hooks Tests" "cargo test --features arch --locked --lib hooks"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -263,13 +263,13 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════════
 
 if should_run "packages"; then
-    echo ""
-    echo -e "${CYAN}┌─────────────────────────────────────────────────────────────────────────────────┐${NC}"
-    echo -e "${CYAN}│${NC}  ${BOLD}SEGMENT 6: PACKAGES${NC} - Package manager tests                                  ${CYAN}│${NC}"
-    echo -e "${CYAN}└─────────────────────────────────────────────────────────────────────────────────┘${NC}"
-    
-    run_segment "Pacman DB Tests" "cargo test --features arch --locked --lib package_managers::pacman_db"
-    run_segment "Parallel Sync Tests" "cargo test --features arch --locked --lib package_managers::parallel_sync"
+  echo ""
+  echo -e "${CYAN}┌─────────────────────────────────────────────────────────────────────────────────┐${NC}"
+  echo -e "${CYAN}│${NC}  ${BOLD}SEGMENT 6: PACKAGES${NC} - Package manager tests                                  ${CYAN}│${NC}"
+  echo -e "${CYAN}└─────────────────────────────────────────────────────────────────────────────────┘${NC}"
+
+  run_segment "Pacman DB Tests" "cargo test --features arch --locked --lib package_managers::pacman_db"
+  run_segment "Parallel Sync Tests" "cargo test --features arch --locked --lib package_managers::parallel_sync"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -277,14 +277,14 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════════
 
 if should_run "security"; then
-    echo ""
-    echo -e "${CYAN}┌─────────────────────────────────────────────────────────────────────────────────┐${NC}"
-    echo -e "${CYAN}│${NC}  ${BOLD}SEGMENT 7: SECURITY${NC} - Security and input validation tests                    ${CYAN}│${NC}"
-    echo -e "${CYAN}└─────────────────────────────────────────────────────────────────────────────────┘${NC}"
-    
-    run_segment "Input Validation" "cargo test --features arch --locked --test security_tests input_validation"
-    run_segment "Privilege Tests" "cargo test --features arch --locked --test security_tests privilege_tests"
-    run_segment "Filesystem Security" "cargo test --features arch --locked --test security_tests filesystem_security"
+  echo ""
+  echo -e "${CYAN}┌─────────────────────────────────────────────────────────────────────────────────┐${NC}"
+  echo -e "${CYAN}│${NC}  ${BOLD}SEGMENT 7: SECURITY${NC} - Security and input validation tests                    ${CYAN}│${NC}"
+  echo -e "${CYAN}└─────────────────────────────────────────────────────────────────────────────────┘${NC}"
+
+  run_segment "Input Validation" "cargo test --features arch --locked --test security_tests input_validation"
+  run_segment "Privilege Tests" "cargo test --features arch --locked --test security_tests privilege_tests"
+  run_segment "Filesystem Security" "cargo test --features arch --locked --test security_tests filesystem_security"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -292,12 +292,12 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════════
 
 if should_run "property" && [ "$QUICK" = "false" ]; then
-    echo ""
-    echo -e "${CYAN}┌─────────────────────────────────────────────────────────────────────────────────┐${NC}"
-    echo -e "${CYAN}│${NC}  ${BOLD}SEGMENT 8: PROPERTY${NC} - Property-based fuzzing tests                           ${CYAN}│${NC}"
-    echo -e "${CYAN}└─────────────────────────────────────────────────────────────────────────────────┘${NC}"
-    
-    run_segment "Property Tests" "cargo test --features arch --locked --test property_tests --test property_tests_v2"
+  echo ""
+  echo -e "${CYAN}┌─────────────────────────────────────────────────────────────────────────────────┐${NC}"
+  echo -e "${CYAN}│${NC}  ${BOLD}SEGMENT 8: PROPERTY${NC} - Property-based fuzzing tests                           ${CYAN}│${NC}"
+  echo -e "${CYAN}└─────────────────────────────────────────────────────────────────────────────────┘${NC}"
+
+  run_segment "Property Tests" "cargo test --features arch --locked --test property_tests --test property_tests_v2"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -305,24 +305,24 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════════
 
 if should_run "comprehensive"; then
-    echo ""
-    echo -e "${CYAN}┌─────────────────────────────────────────────────────────────────────────────────┐${NC}"
-    echo -e "${CYAN}│${NC}  ${BOLD}SEGMENT 9: COMPREHENSIVE${NC} - All CLI commands and features                     ${CYAN}│${NC}"
-    echo -e "${CYAN}└─────────────────────────────────────────────────────────────────────────────────┘${NC}"
-    
-    run_segment "CLI Help Tests" "cargo test --features arch --locked --test comprehensive_tests cli_help"
-    run_segment "CLI Search Tests" "cargo test --features arch --locked --test comprehensive_tests cli_search"
-    run_segment "CLI Info Tests" "cargo test --features arch --locked --test comprehensive_tests cli_info"
-    run_segment "CLI Runtime Tests" "cargo test --features arch --locked --test comprehensive_tests cli_runtimes"
-    run_segment "CLI Env Tests" "cargo test --features arch --locked --test comprehensive_tests cli_env"
-    run_segment "CLI Tool Tests" "cargo test --features arch --locked --test comprehensive_tests cli_tool"
-    run_segment "CLI Status Tests" "cargo test --features arch --locked --test comprehensive_tests cli_status"
-    run_segment "Project Detection" "cargo test --features arch --locked --test comprehensive_tests project_detection"
-    run_segment "Error Handling" "cargo test --features arch --locked --test comprehensive_tests error_handling"
-    run_segment "File Handling" "cargo test --features arch --locked --test comprehensive_tests file_handling"
-    run_segment "Edge Cases" "cargo test --features arch --locked --test comprehensive_tests edge_cases"
-    run_segment "Performance" "cargo test --features arch --locked --test comprehensive_tests performance"
-    run_segment "Concurrency" "cargo test --features arch --locked --test comprehensive_tests concurrency"
+  echo ""
+  echo -e "${CYAN}┌─────────────────────────────────────────────────────────────────────────────────┐${NC}"
+  echo -e "${CYAN}│${NC}  ${BOLD}SEGMENT 9: COMPREHENSIVE${NC} - All CLI commands and features                     ${CYAN}│${NC}"
+  echo -e "${CYAN}└─────────────────────────────────────────────────────────────────────────────────┘${NC}"
+
+  run_segment "CLI Help Tests" "cargo test --features arch --locked --test comprehensive_tests cli_help"
+  run_segment "CLI Search Tests" "cargo test --features arch --locked --test comprehensive_tests cli_search"
+  run_segment "CLI Info Tests" "cargo test --features arch --locked --test comprehensive_tests cli_info"
+  run_segment "CLI Runtime Tests" "cargo test --features arch --locked --test comprehensive_tests cli_runtimes"
+  run_segment "CLI Env Tests" "cargo test --features arch --locked --test comprehensive_tests cli_env"
+  run_segment "CLI Tool Tests" "cargo test --features arch --locked --test comprehensive_tests cli_tool"
+  run_segment "CLI Status Tests" "cargo test --features arch --locked --test comprehensive_tests cli_status"
+  run_segment "Project Detection" "cargo test --features arch --locked --test comprehensive_tests project_detection"
+  run_segment "Error Handling" "cargo test --features arch --locked --test comprehensive_tests error_handling"
+  run_segment "File Handling" "cargo test --features arch --locked --test comprehensive_tests file_handling"
+  run_segment "Edge Cases" "cargo test --features arch --locked --test comprehensive_tests edge_cases"
+  run_segment "Performance" "cargo test --features arch --locked --test comprehensive_tests performance"
+  run_segment "Concurrency" "cargo test --features arch --locked --test comprehensive_tests concurrency"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -330,13 +330,13 @@ fi
 # ═══════════════════════════════════════════════════════════════════════════════
 
 if should_run "integration" && [ "$QUICK" = "false" ]; then
-    echo ""
-    echo -e "${CYAN}┌─────────────────────────────────────────────────────────────────────────────────┐${NC}"
-    echo -e "${CYAN}│${NC}  ${BOLD}SEGMENT 10: INTEGRATION${NC} - Full integration tests                             ${CYAN}│${NC}"
-    echo -e "${CYAN}└─────────────────────────────────────────────────────────────────────────────────┘${NC}"
-    
-    run_segment "Arch Integration" "cargo test --features arch --locked --test arch_tests"
-    run_segment "Integration Suite" "cargo test --features arch --locked --test integration_suite"
+  echo ""
+  echo -e "${CYAN}┌─────────────────────────────────────────────────────────────────────────────────┐${NC}"
+  echo -e "${CYAN}│${NC}  ${BOLD}SEGMENT 10: INTEGRATION${NC} - Full integration tests                             ${CYAN}│${NC}"
+  echo -e "${CYAN}└─────────────────────────────────────────────────────────────────────────────────┘${NC}"
+
+  run_segment "Arch Integration" "cargo test --features arch --locked --test arch_tests"
+  run_segment "Integration Suite" "cargo test --features arch --locked --test integration_suite"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -358,20 +358,20 @@ echo -e "  ${BLUE}⏱ Duration:${NC} ${DURATION}s"
 echo ""
 
 if [ "$PASSED" -eq 0 ] && [ "$FAILED" -eq 0 ]; then
-    echo -e "${RED}No test segments executed.${NC}" >&2
-    exit 1
+  echo -e "${RED}No test segments executed.${NC}" >&2
+  exit 1
 fi
 
 if [ "$FAILED" -gt 0 ]; then
-    echo -e "${RED}╔═══════════════════════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${RED}║${NC}  ${BOLD}TESTS FAILED${NC} - Do not push until all tests pass!                             ${RED}║${NC}"
-    echo -e "${RED}╚═══════════════════════════════════════════════════════════════════════════════╝${NC}"
-    echo ""
-    exit 1
+  echo -e "${RED}╔═══════════════════════════════════════════════════════════════════════════════╗${NC}"
+  echo -e "${RED}║${NC}  ${BOLD}TESTS FAILED${NC} - Do not push until all tests pass!                             ${RED}║${NC}"
+  echo -e "${RED}╚═══════════════════════════════════════════════════════════════════════════════╝${NC}"
+  echo ""
+  exit 1
 else
-    echo -e "${GREEN}╔═══════════════════════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${GREEN}║${NC}  ${BOLD}ALL TESTS PASSED${NC} - Ready to push!                                           ${GREEN}║${NC}"
-    echo -e "${GREEN}╚═══════════════════════════════════════════════════════════════════════════════╝${NC}"
-    echo ""
-    exit 0
+  echo -e "${GREEN}╔═══════════════════════════════════════════════════════════════════════════════╗${NC}"
+  echo -e "${GREEN}║${NC}  ${BOLD}ALL TESTS PASSED${NC} - Ready to push!                                           ${GREEN}║${NC}"
+  echo -e "${GREEN}╚═══════════════════════════════════════════════════════════════════════════════╝${NC}"
+  echo ""
+  exit 0
 fi
