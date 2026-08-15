@@ -317,6 +317,8 @@ pub async fn extract_zip(
 
 /// Create or update the "current" symlink
 pub fn set_current_version(versions_dir: &Path, version: &str) -> Result<()> {
+    crate::core::security::validate_runtime_version(version)?;
+
     let current_link = versions_dir.join("current");
     let version_dir = versions_dir.join(version);
 
@@ -502,6 +504,7 @@ macro_rules! impl_runtime_common {
                 use std::fs;
 
                 let version = $crate::runtimes::common::normalize_version(version);
+                $crate::core::security::validate_runtime_version(&version)?;
                 let version_dir = self.versions_dir.join(&version);
 
                 if !version_dir.exists() {
