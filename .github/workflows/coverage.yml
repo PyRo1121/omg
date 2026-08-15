@@ -33,7 +33,7 @@ jobs:
       image: archlinux:latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install dependencies
         run: |
@@ -46,12 +46,12 @@ jobs:
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Install coverage tools
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@82cd3e7658a6f96c86c0234aeeda1748937cb0a1 # v2
         with:
           tool: cargo-llvm-cov,nextest
 
       - name: Cache cargo registry
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: |
             ~/.cargo/registry/index/
@@ -61,7 +61,7 @@ jobs:
           restore-keys: coverage-registry-
 
       - name: Cache target directory
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: target
           key: coverage-target-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('src/**/*.rs') }}
@@ -78,7 +78,6 @@ jobs:
             --locked \
             --no-fail-fast \
             --no-report
-        continue-on-error: true
 
       - name: Generate LCOV report
         if: always()
@@ -87,11 +86,10 @@ jobs:
             --features arch,pgp,license \
             --lcov \
             --output-path lcov.info
-        continue-on-error: true
 
       - name: Upload coverage to Codecov
         if: always()
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5
         with:
           files: lcov.info
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -106,11 +104,10 @@ jobs:
           cargo llvm-cov report \
             --features arch,pgp,license \
             --html
-        continue-on-error: true
 
       - name: Upload HTML coverage report
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: coverage-report
           path: target/llvm-cov/html/
@@ -125,4 +122,3 @@ jobs:
             --features arch,pgp,license \
             --summary-only \
             | tee -a $GITHUB_STEP_SUMMARY
-        continue-on-error: true
