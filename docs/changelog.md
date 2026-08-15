@@ -316,6 +316,7 @@ dependency-type: indirect
 - Normalize project formatting
 ### 🧪 Testing
 
+- Remove ALPM timing-only cases
 - Remove unused benchmark helpers
 - Remove timing-only property cases
 - Remove skipped install timing gates
