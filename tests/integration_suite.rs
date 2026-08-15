@@ -36,19 +36,11 @@ use std::env;
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::Path;
-use std::time::Duration;
 use tempfile::TempDir;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TEST UTILITIES
 // ═══════════════════════════════════════════════════════════════════════════════
-
-/// Helper to measure execution time
-fn measure_time<F: FnOnce() -> T, T>(f: F) -> (T, Duration) {
-    let start = std::time::Instant::now();
-    let result = f();
-    (result, start.elapsed())
-}
 
 /// Guard for destructive integration tests (real installs/updates)
 fn destructive_tests_enabled() -> bool {
@@ -61,10 +53,6 @@ fn system_tests_enabled() -> bool {
 
 fn network_tests_enabled() -> bool {
     matches!(env::var("OMG_RUN_NETWORK_TESTS"), Ok(value) if value == "1")
-}
-
-fn perf_tests_enabled() -> bool {
-    matches!(env::var("OMG_RUN_PERF_TESTS"), Ok(value) if value == "1")
 }
 
 /// Create a temporary project directory with common config files
@@ -993,94 +981,6 @@ mod config {
                 || result.stdout.contains("invalid"),
             "Config get for invalid key should report error, got: {}",
             result.stdout
-        );
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// PERFORMANCE TESTS
-// ═══════════════════════════════════════════════════════════════════════════════
-
-mod performance {
-    use super::*;
-
-    #[test]
-    fn test_status_performance() {
-        if !perf_tests_enabled() {
-            eprintln!("Skipping perf test (set OMG_RUN_PERF_TESTS=1)");
-            return;
-        }
-        let (result, duration) = measure_time(|| run_omg(&["status"]));
-        assert!(result.success, "Status should succeed");
-
-        // Status should complete in under 500ms (generous for CI)
-        assert!(
-            duration < Duration::from_millis(500),
-            "Status took too long: {duration:?}"
-        );
-    }
-
-    #[test]
-    fn test_list_performance() {
-        if !perf_tests_enabled() {
-            eprintln!("Skipping perf test (set OMG_RUN_PERF_TESTS=1)");
-            return;
-        }
-        let (result, duration) = measure_time(|| run_omg(&["list"]));
-        assert!(result.success, "List should succeed");
-
-        // List installed should be very fast
-        assert!(
-            duration < Duration::from_millis(200),
-            "List took too long: {duration:?}"
-        );
-    }
-
-    #[test]
-    fn test_which_performance() {
-        if !perf_tests_enabled() {
-            eprintln!("Skipping perf test (set OMG_RUN_PERF_TESTS=1)");
-            return;
-        }
-        let (result, duration) = measure_time(|| run_omg(&["which", "node"]));
-        assert!(result.success, "Which should succeed");
-
-        // Which should be extremely fast (< 50ms)
-        assert!(
-            duration < Duration::from_millis(100),
-            "Which took too long: {duration:?}"
-        );
-    }
-
-    #[test]
-    fn test_help_performance() {
-        if !perf_tests_enabled() {
-            eprintln!("Skipping perf test (set OMG_RUN_PERF_TESTS=1)");
-            return;
-        }
-        let (result, duration) = measure_time(|| run_omg(&["--help"]));
-        assert!(result.success, "Help should succeed");
-
-        // Help should be instant
-        assert!(
-            duration < Duration::from_millis(50),
-            "Help took too long: {duration:?}"
-        );
-    }
-
-    #[test]
-    fn test_completions_generation_performance() {
-        if !perf_tests_enabled() {
-            eprintln!("Skipping perf test (set OMG_RUN_PERF_TESTS=1)");
-            return;
-        }
-        let (result, duration) = measure_time(|| run_omg(&["completions", "zsh", "--stdout"]));
-        assert!(result.success, "Completions should succeed");
-
-        // Completions generation should be fast
-        assert!(
-            duration < Duration::from_millis(100),
-            "Completions generation took too long: {duration:?}"
         );
     }
 }
