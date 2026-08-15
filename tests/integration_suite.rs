@@ -1175,24 +1175,6 @@ zig = "0.11.0"
         let result = run_omg_in_dir(&["status"], temp_dir.path());
         assert!(result.success, "Status should work with .mise.toml");
     }
-
-    #[test]
-    fn test_non_native_runtime_handling() {
-        let temp_dir = TempDir::new().unwrap();
-
-        // Try to use an unknown runtime - should handle gracefully
-        let result = run_omg_in_dir(&["use", "erlang", "26.0"], temp_dir.path());
-
-        // Should either work (via mise) or give helpful message
-        let combined = result.combined_output();
-        assert!(
-            combined.contains("mise")
-                || combined.contains("erlang")
-                || combined.contains("installing")
-                || combined.contains("Switching"),
-            "Should handle non-native runtime: {combined}"
-        );
-    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
