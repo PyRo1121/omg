@@ -18,6 +18,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use owo_colors::OwoColorize;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
+use hex::encode as hex_encode;
 use tokio::process::Command;
 use tracing::{instrument, warn};
 use which::which;
@@ -2226,7 +2227,7 @@ impl AurClient {
         hasher.update(makepkg_args.as_bytes());
         hasher.update(build_method.as_bytes());
         hasher.update(self.settings.aur.secure_makepkg.to_string().as_bytes());
-        Ok(format!("{:x}", hasher.finalize()))
+        Ok(hex_encode(hasher.finalize()))
     }
 
     fn cache_path(&self, package: &str) -> PathBuf {

@@ -6,6 +6,7 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use hex::encode as hex_encode;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -130,7 +131,8 @@ impl AuditEntry {
             hasher.update(meta.to_string().as_bytes());
         }
         hasher.update(self.prev_hash.as_bytes());
-        format!("{:x}", hasher.finalize())
+        let result = hasher.finalize();
+        hex_encode(result)
     }
 
     /// Verify the integrity of this entry

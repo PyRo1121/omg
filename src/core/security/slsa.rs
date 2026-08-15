@@ -8,6 +8,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use hex::encode as hex_encode;
 
 use crate::core::http::shared_client;
 
@@ -305,9 +306,10 @@ impl SlsaVerifier {
     /// Calculate SHA-256 hash of a file
     fn calculate_hash<P: AsRef<Path>>(path: P) -> Result<String> {
         let mut hasher = Sha256::new();
-        let mut file = std::fs::File::open(path)?;
-        std::io::copy(&mut file, &mut hasher)?;
-        Ok(format!("{:x}", hasher.finalize()))
+        let file_content = std::fs::read(path)?;
+        hasher.update(&file_content);
+        let result = hasher.finalize();
+        Ok(hex_encode(result))
     }
 
     /// Verify hash of a file against expected value

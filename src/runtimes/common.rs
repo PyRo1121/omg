@@ -11,6 +11,7 @@ use anyhow::{Context, Result};
 use indicatif::{ProgressBar, ProgressStyle};
 use owo_colors::OwoColorize;
 use sha2::{Digest, Sha256};
+use hex::encode as hex_encode;
 
 /// Progress bar style for downloads
 #[expect(clippy::expect_used)] // Path operations on known-valid HOME directory; failure is unrecoverable
@@ -99,7 +100,7 @@ pub async fn download_with_progress(
         // SAFETY: hasher is guaranteed to be Some when expected_sha256 is Some
         // (see initialization at line 76-80)
         let hasher = hasher.expect("hasher initialized when expected_sha256 is Some");
-        let actual = format!("{:x}", hasher.finalize());
+        let actual = hex_encode(hasher.finalize());
 
         if actual != expected.to_lowercase() {
             anyhow::bail!(
