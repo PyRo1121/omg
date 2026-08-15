@@ -309,6 +309,7 @@ dependency-type: indirect
 - Normalize project formatting
 ### 🧪 Testing
 
+- Require mock task execution success
 - Remove weak Windows and Homebrew checks
 - Remove platform placeholders and timing checks
 - Remove fixture-only Ubuntu and panic repro targets
