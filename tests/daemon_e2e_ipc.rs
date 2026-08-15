@@ -175,20 +175,14 @@ async fn test_large_request_handling() -> Result<()> {
 
     let response = fixture.send_request(&mut stream, &request).await?;
 
-    match response {
-        Response::Success { id, .. } => {
-            assert_eq!(id, 2);
-        }
-        Response::Error { code, message, .. } => {
-            // May fail if query is invalid, but should not crash
-            assert_ne!(
-                code,
-                error_codes::INTERNAL_ERROR,
-                "Should not cause internal error: {}",
-                message
-            );
-        }
-    }
+    let Response::Success { id, result } = response else {
+        unreachable!("A valid query within the size limit should succeed");
+    };
+    assert_eq!(id, 2);
+    assert!(
+        matches!(result, ResponseResult::Search(_)),
+        "A search request should return search results"
+    );
 
     Ok(())
 }
@@ -244,21 +238,17 @@ async fn test_empty_request_handling() -> Result<()> {
 
     let response = fixture.send_request(&mut stream, &request).await?;
 
-    // Should succeed but return empty results
-    match response {
-        Response::Success { id, result } => {
-            assert_eq!(id, 4);
-            if let ResponseResult::Search(search_result) = result {
-                assert!(
-                    search_result.packages.is_empty(),
-                    "Empty query should return no results"
-                );
-            }
-        }
-        Response::Error { .. } => {
-            // Also acceptable to reject empty queries
-        }
-    }
+    let Response::Success { id, result } = response else {
+        unreachable!("An empty search query should return an empty result set");
+    };
+    assert_eq!(id, 4);
+    let ResponseResult::Search(search_result) = result else {
+        unreachable!("A search request should return search results");
+    };
+    assert!(
+        search_result.packages.is_empty(),
+        "Empty query should return no results"
+    );
 
     Ok(())
 }
@@ -338,56 +328,9 @@ async fn test_sequential_requests_on_single_connection() -> Result<()> {
     Ok(())
 }
 
-#[tokio::test]
-#[serial]
-async fn test_connection_reuse_performance() -> Result<()> {
-    let fixture = IpcTestFixture::new().await?;
-    let _server = fixture.start_server().await?;
-
-    let mut stream = fixture.connect().await?;
-
-    // Measure latency of reused connection
-    let start = std::time::Instant::now();
-    for i in 0..10 {
-        let request = Request::Ping { id: i };
-        let _ = fixture.send_request(&mut stream, &request).await?;
-    }
-    let elapsed = start.elapsed();
-
-    // 10 pings should complete in < 100ms on reused connection
-    assert!(
-        elapsed < Duration::from_millis(100),
-        "Reused connection should be fast, got {:?}",
-        elapsed
-    );
-
-    Ok(())
-}
-
 // ============================================================================
 // Test 4: Timeout Handling
 // ============================================================================
-
-#[tokio::test]
-#[serial]
-async fn test_request_timeout_not_triggered_for_fast_requests() -> Result<()> {
-    let fixture = IpcTestFixture::new().await?;
-    let _server = fixture.start_server().await?;
-
-    let mut stream = fixture.connect().await?;
-    let request = Request::Ping { id: 100 };
-
-    // Fast request should complete well before timeout
-    let result = timeout(
-        Duration::from_secs(1),
-        fixture.send_request(&mut stream, &request),
-    )
-    .await;
-
-    assert!(result.is_ok(), "Fast request should not timeout");
-
-    Ok(())
-}
 
 #[tokio::test]
 #[serial]

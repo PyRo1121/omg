@@ -9,9 +9,9 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT"
 
 echo "🔨 Building OMG binary..."
-cargo build --release --features arch
+cargo build --release --features arch --locked
 
 echo "🐳 Running Docker E2E tests..."
-OMG_RUN_DOCKER_TESTS=1 cargo test --features arch --test docker_e2e -- --test-threads=1
+OMG_RUN_DOCKER_TESTS=1 cargo test --features arch --test docker_e2e --locked -- --ignored --test-threads=1
 
 echo "✅ Docker E2E tests completed successfully!"

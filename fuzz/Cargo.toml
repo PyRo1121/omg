@@ -2,11 +2,17 @@
 name = "omg-fuzz"
 version = "0.0.0"
 publish = false
-edition = "2021"
+edition = "2024"
+rust-version = "1.93"
+
+[package.metadata]
+cargo-fuzz = true
 
 [dependencies]
+bitcode = { version = "0.6", features = ["serde"] }
 libfuzzer-sys = "0.4"
-omg_lib = { path = ".." }
+toml = "1.0.3"
+omg_lib = { package = "omg", path = "..", default-features = false }
 
 [[bin]]
 name = "parse_config"

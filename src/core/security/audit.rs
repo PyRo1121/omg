@@ -130,7 +130,7 @@ impl AuditEntry {
             hasher.update(meta.to_string().as_bytes());
         }
         hasher.update(self.prev_hash.as_bytes());
-        format!("{:x}", hasher.finalize())
+        hex::encode(hasher.finalize())
     }
 
     /// Verify the integrity of this entry

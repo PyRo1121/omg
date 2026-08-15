@@ -4,11 +4,11 @@ on:
   push:
     branches: [main]
     paths:
-      - 'src/**'
-      - 'Cargo.toml'
-      - 'benchmark.sh'
+      - "src/**"
+      - "Cargo.toml"
+      - "benchmark.sh"
   schedule:
-    - cron: '0 0 * * 0'
+    - cron: "0 0 * * 0"
   workflow_dispatch:
 
 concurrency:
@@ -26,7 +26,7 @@ jobs:
   benchmark:
     name: Run Benchmarks
     runs-on: ubuntu-latest
-    container: archlinux:latest
+    container: archlinux:latest@sha256:b0deabeb3d283da2c7f7dbf0eea051b7b2cd0554e0b737cc457fd21683bdcdd1
     timeout-minutes: 30
 
     steps:
@@ -35,13 +35,15 @@ jobs:
           pacman -Syu --noconfirm
           pacman -S --noconfirm base-devel git rust cargo pkgconf openssl libarchive clang bc python python-pip sccache hyperfine jq
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Git safe directory
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.9
+        uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
         continue-on-error: true
 
       - name: Configure sccache
@@ -55,7 +57,7 @@ jobs:
           fi
 
       - name: Cache cargo registry
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: |
             ~/.cargo/registry/index/
@@ -65,7 +67,7 @@ jobs:
           restore-keys: bench-registry-
 
       - name: Cache target directory
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: target
           key: bench-target-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('src/**/*.rs') }}
@@ -83,10 +85,10 @@ jobs:
         id: bench
         run: |
           chmod +x benchmark-hyperfine.sh benchmark.sh
-          
+
           # Use hyperfine for statistical rigor and JSON export
           ./benchmark-hyperfine.sh --fast 2>&1 | tee benchmark_output.txt
-          
+
           # Extract metrics from hyperfine JSON output (if available)
           if [ -f "benchmark_results.json" ]; then
             SEARCH_TIME=$(jq -r '.results[] | select(.command | contains("omg search")) | .mean' benchmark_results.json | awk '{printf "%.1f", $1 * 1000}')
@@ -111,30 +113,27 @@ jobs:
           fi
 
       - name: Performance Regression Gate
-        continue-on-error: true
         run: |
           chmod +x scripts/check-perf-regression.py
           python3 scripts/check-perf-regression.py
 
       - name: Generate Badge JSON
+        env:
+          BENCH_SPEEDUP: ${{ steps.bench.outputs.speedup }}
+          BENCH_SEARCH_TIME: ${{ steps.bench.outputs.search_time }}
         run: |
-          SPEEDUP="${{ steps.bench.outputs.speedup }}"
-          SEARCH_TIME="${{ steps.bench.outputs.search_time }}"
-          
-          cat > benchmark-badge.json << EOF
-          {
-            "schemaVersion": 1,
-            "label": "search",
-            "message": "${SEARCH_TIME}ms (${SPEEDUP} faster)",
-            "color": "brightgreen"
-          }
-          EOF
-          
+          [[ "$BENCH_SEARCH_TIME" =~ ^[0-9]+([.][0-9]+)?$ ]]
+          [[ "$BENCH_SPEEDUP" =~ ^[0-9]+([.][0-9]+)?x$ ]]
+
+          jq -n \
+            --arg message "${BENCH_SEARCH_TIME}ms (${BENCH_SPEEDUP} faster)" \
+            '{schemaVersion: 1, label: "search", message: $message, color: "brightgreen"}' \
+            > benchmark-badge.json
+
           cat benchmark-badge.json
 
       - name: Upload Benchmark Report
-        continue-on-error: true
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: benchmark-report
           path: |
@@ -146,28 +145,39 @@ jobs:
 
       - name: Update Benchmark Results
         if: github.ref == 'refs/heads/main'
+        env:
+          BENCH_SPEEDUP: ${{ steps.bench.outputs.speedup }}
+          BENCH_SEARCH_TIME: ${{ steps.bench.outputs.search_time }}
         run: |
           mkdir -p benchmarks
-          
+
           TIMESTAMP=$(date +%Y%m%d_%H%M%S)
           cp benchmark_report.md "benchmarks/report_${TIMESTAMP}.md"
           cp benchmark_report.md benchmarks/latest.md
           cp benchmark-badge.json benchmarks/badge.json
-          
-          cat > benchmarks/summary.json << EOF
-          {
-            "timestamp": "$(date -Iseconds)",
-            "search_ms": ${{ steps.bench.outputs.search_time }},
-            "speedup": "${{ steps.bench.outputs.speedup }}",
-            "commit": "${{ github.sha }}"
-          }
-          EOF
+
+          jq -n \
+            --arg timestamp "$(date -Iseconds)" \
+            --argjson search_ms "$BENCH_SEARCH_TIME" \
+            --arg speedup "$BENCH_SPEEDUP" \
+            --arg commit "$GITHUB_SHA" \
+            '{timestamp: $timestamp, search_ms: $search_ms, speedup: $speedup, commit: $commit}' \
+            > benchmarks/summary.json
 
       - name: Commit Benchmark Results
         if: github.ref == 'refs/heads/main'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add benchmarks/
-          git diff --staged --quiet || git commit -m "Update benchmark results [skip ci]"
-          git push || echo "Nothing to push"
+          if git diff --staged --quiet; then
+            echo "No benchmark changes to commit"
+            exit 0
+          fi
+
+          git commit -m "Update benchmark results [skip ci]"
+          git config credential.helper '!f() { echo username=x-access-token; echo "password=$GITHUB_TOKEN"; }; f'
+          git push
+          git config --unset credential.helper
