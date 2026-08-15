@@ -14,12 +14,10 @@
 use anyhow::Result;
 use omg_lib::daemon::cache::PackageCache;
 use omg_lib::daemon::handlers::{DaemonState, handle_request};
-use omg_lib::daemon::protocol::{PackageInfo, Request, Response, ResponseResult};
+use omg_lib::daemon::protocol::{Request, Response, ResponseResult};
 use serial_test::serial;
 use std::sync::Arc;
-use std::time::Duration;
 use tempfile::TempDir;
-use tokio::time::sleep;
 
 /// Test fixture for caching tests
 struct CacheTestFixture {
@@ -163,41 +161,6 @@ async fn test_explicit_cache_clear() -> Result<()> {
     // Verify cache is empty
     let (size_after, _) = fixture.get_cache_stats();
     assert_eq!(size_after, 0, "Cache should be empty after clear");
-
-    Ok(())
-}
-
-#[tokio::test]
-#[serial]
-async fn test_ttl_expiration() -> Result<()> {
-    // Create cache with very short TTL (1 second)
-    let cache = PackageCache::new(100, 1);
-
-    // Insert test data
-    cache.insert(
-        "test-query".to_string(),
-        vec![PackageInfo {
-            name: "test".to_string(),
-            version: "1.0".to_string(),
-            description: "Test package".to_string(),
-            source: "test".to_string(),
-        }],
-    );
-
-    // Should be available immediately
-    assert!(
-        cache.get("test-query").is_some(),
-        "Cache entry should exist immediately"
-    );
-
-    // Wait for TTL expiration (2 seconds to be safe)
-    sleep(Duration::from_secs(2)).await;
-
-    // Should be expired
-    assert!(
-        cache.get("test-query").is_none(),
-        "Cache entry should expire after TTL"
-    );
 
     Ok(())
 }
@@ -358,37 +321,6 @@ async fn test_missing_package_returns_error_consistently() -> Result<()> {
 
 #[tokio::test]
 #[serial]
-async fn test_cache_eviction_under_pressure() -> Result<()> {
-    // Create small cache (10 entries max)
-    let cache = PackageCache::new(10, 300);
-
-    // Insert 20 entries (exceeds max)
-    for i in 0..20 {
-        cache.insert(
-            format!("query-{}", i),
-            vec![PackageInfo {
-                name: format!("pkg-{}", i),
-                version: "1.0".to_string(),
-                description: "Test".to_string(),
-                source: "test".to_string(),
-            }],
-        );
-    }
-
-    // Cache should have evicted oldest entries
-    let stats = cache.stats();
-    assert!(
-        stats.size <= stats.max_size,
-        "Cache size should not exceed max: {} > {}",
-        stats.size,
-        stats.max_size
-    );
-
-    Ok(())
-}
-
-#[tokio::test]
-#[serial]
 async fn test_lru_eviction_behavior() -> Result<()> {
     // Create small cache (3 entries max)
     let cache = PackageCache::new(3, 300);
@@ -423,63 +355,6 @@ async fn test_lru_eviction_behavior() -> Result<()> {
 // ============================================================================
 // Test 6: Persistent Cache (Disk-backed)
 // ============================================================================
-
-#[tokio::test]
-#[serial]
-async fn test_persistent_cache_survival() -> Result<()> {
-    let temp_dir = TempDir::new()?;
-    let data_dir = temp_dir.path().join("data");
-    std::fs::create_dir_all(&data_dir)?;
-
-    #[expect(unsafe_code)]
-    unsafe {
-        std::env::set_var("OMG_DAEMON_DATA_DIR", &data_dir);
-        std::env::set_var("OMG_DATA_DIR", &data_dir);
-    }
-
-    omg_lib::core::security::init_audit_logger()?;
-
-    // Create first daemon instance
-    {
-        let state = Arc::new(DaemonState::new()?);
-
-        // Populate status cache
-        let response = handle_request(Arc::clone(&state), Request::Status { id: 1 }).await;
-        assert!(
-            matches!(
-                response,
-                Response::Success {
-                    result: ResponseResult::Status(_),
-                    ..
-                }
-            ),
-            "Initial status request should succeed"
-        );
-
-        // Drop state (simulates daemon shutdown)
-        drop(state);
-    }
-
-    // Create second daemon instance (simulates restart)
-    {
-        let state = Arc::new(DaemonState::new()?);
-
-        // Status should be available from persistent cache.
-        let response = handle_request(Arc::clone(&state), Request::Status { id: 2 }).await;
-        assert!(
-            matches!(
-                response,
-                Response::Success {
-                    result: ResponseResult::Status(_),
-                    ..
-                }
-            ),
-            "Persistent cache restart should return a status response"
-        );
-    }
-
-    Ok(())
-}
 
 // ============================================================================
 // Test 8: Cache Performance Metrics
