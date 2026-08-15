@@ -42,6 +42,9 @@ SKIPPED=0
 QUICK=false
 SEGMENT=""
 VERBOSE=false
+VALID_SEGMENTS=(lint build core runtimes cli packages security property comprehensive integration)
+OUTPUT_FILE=$(mktemp "${TMPDIR:-/tmp}/omg-test-all.XXXXXX")
+trap 'rm -f "$OUTPUT_FILE"' EXIT
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -50,6 +53,10 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --segment|-s)
+            if [[ $# -lt 2 ]]; then
+                echo "Missing segment name after $1" >&2
+                exit 1
+            fi
             SEGMENT="$2"
             shift 2
             ;;
@@ -68,12 +75,14 @@ while [[ $# -gt 0 ]]; do
             echo ""
             echo "Segments:"
             echo "  lint       - Formatting and clippy"
+            echo "  build      - Compilation check"
             echo "  core       - Core module unit tests"
             echo "  runtimes   - Runtime manager tests"
             echo "  cli        - CLI argument and command tests"
             echo "  packages   - Package manager tests"
             echo "  security   - Security and input validation tests"
             echo "  property   - Property-based tests"
+            echo "  comprehensive - CLI command and feature tests"
             echo "  integration - Full integration tests"
             exit 0
             ;;
@@ -83,6 +92,26 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+if [[ -n "$SEGMENT" ]]; then
+    SEGMENT_IS_VALID=false
+    for candidate in "${VALID_SEGMENTS[@]}"; do
+        if [[ "$SEGMENT" == "$candidate" ]]; then
+            SEGMENT_IS_VALID=true
+            break
+        fi
+    done
+    if ! $SEGMENT_IS_VALID; then
+        echo "Unknown segment: $SEGMENT" >&2
+        echo "Valid segments: ${VALID_SEGMENTS[*]}" >&2
+        exit 1
+    fi
+fi
+
+if $QUICK && [[ "$SEGMENT" == "property" || "$SEGMENT" == "integration" ]]; then
+    echo "Segment '$SEGMENT' is excluded by --quick" >&2
+    exit 1
+fi
 
 # Header
 echo ""
@@ -104,17 +133,19 @@ run_segment() {
     echo -e "${BOLD}▶ ${name}${NC}"
     echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     
-    local start=$(date +%s%3N)
-    
+    local start
+    start=$(date +%s%3N)
+
     local exit_code=0
     
     if $VERBOSE; then
         eval "$cmd" || exit_code=$?
     else
-        eval "$cmd" > /tmp/omg_test_output.txt 2>&1 || exit_code=$?
+        eval "$cmd" > "$OUTPUT_FILE" 2>&1 || exit_code=$?
     fi
     
-    local end=$(date +%s%3N)
+    local end
+    end=$(date +%s%3N)
     local duration=$((end - start))
     
     if [ $exit_code -eq 0 ]; then
@@ -125,7 +156,7 @@ run_segment() {
         if ! $VERBOSE; then
             echo ""
             echo -e "${YELLOW}Output:${NC}"
-            tail -30 /tmp/omg_test_output.txt
+            tail -30 "$OUTPUT_FILE"
             echo ""
         fi
         ((FAILED++))
@@ -158,8 +189,8 @@ if should_run "lint"; then
     echo -e "${CYAN}│${NC}  ${BOLD}SEGMENT 1: LINT${NC} - Code formatting and static analysis                        ${CYAN}│${NC}"
     echo -e "${CYAN}└─────────────────────────────────────────────────────────────────────────────────┘${NC}"
     
-    run_segment "Format Check" "rustup run nightly cargo fmt -- --check"
-    run_segment "Clippy (warnings as errors)" "rustup run nightly cargo clippy --features arch -- -D warnings"
+    run_segment "Format Check" "cargo fmt -- --check"
+    run_segment "Clippy (warnings as errors)" "cargo clippy --features arch --locked -- -D warnings"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -172,7 +203,7 @@ if should_run "build" || [ -z "$SEGMENT" ]; then
     echo -e "${CYAN}│${NC}  ${BOLD}SEGMENT 2: BUILD${NC} - Compilation check                                         ${CYAN}│${NC}"
     echo -e "${CYAN}└─────────────────────────────────────────────────────────────────────────────────┘${NC}"
     
-    run_segment "Debug Build" "rustup run nightly cargo build --features arch"
+    run_segment "Debug Build" "cargo build --features arch --locked"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -185,11 +216,11 @@ if should_run "core"; then
     echo -e "${CYAN}│${NC}  ${BOLD}SEGMENT 3: CORE${NC} - Core module unit tests                                     ${CYAN}│${NC}"
     echo -e "${CYAN}└─────────────────────────────────────────────────────────────────────────────────┘${NC}"
     
-    run_segment "Database Tests" "rustup run nightly cargo test --features arch --lib core::database"
-    run_segment "Completion Tests" "rustup run nightly cargo test --features arch --lib core::completion"
-    run_segment "Container Tests" "rustup run nightly cargo test --features arch --lib core::container"
-    run_segment "Security Tests" "rustup run nightly cargo test --features arch --lib core::security"
-    run_segment "System Info Tests" "rustup run nightly cargo test --features arch --lib core::sysinfo"
+    run_segment "Database Tests" "cargo test --features arch --locked --lib core::database"
+    run_segment "Completion Tests" "cargo test --features arch --locked --lib core::completion"
+    run_segment "Container Tests" "cargo test --features arch --locked --lib core::container"
+    run_segment "Security Tests" "cargo test --features arch --locked --lib core::security"
+    run_segment "System Info Tests" "cargo test --features arch --locked --lib core::sysinfo"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -202,15 +233,15 @@ if should_run "runtimes"; then
     echo -e "${CYAN}│${NC}  ${BOLD}SEGMENT 4: RUNTIMES${NC} - Runtime manager unit tests                             ${CYAN}│${NC}"
     echo -e "${CYAN}└─────────────────────────────────────────────────────────────────────────────────┘${NC}"
     
-    run_segment "Common Utilities" "rustup run nightly cargo test --features arch --lib runtimes::common"
-    run_segment "Node.js Manager" "rustup run nightly cargo test --features arch --lib runtimes::node"
-    run_segment "Python Manager" "rustup run nightly cargo test --features arch --lib runtimes::python"
-    run_segment "Go Manager" "rustup run nightly cargo test --features arch --lib runtimes::go"
-    run_segment "Bun Manager" "rustup run nightly cargo test --features arch --lib runtimes::bun"
-    run_segment "Ruby Manager" "rustup run nightly cargo test --features arch --lib runtimes::ruby"
-    run_segment "Java Manager" "rustup run nightly cargo test --features arch --lib runtimes::java"
-    run_segment "Rust Manager" "rustup run nightly cargo test --features arch --lib runtimes::rust"
-    run_segment "Mise Manager" "rustup run nightly cargo test --features arch --lib runtimes::mise"
+    run_segment "Common Utilities" "cargo test --features arch --locked --lib runtimes::common"
+    run_segment "Node.js Manager" "cargo test --features arch --locked --lib runtimes::node"
+    run_segment "Python Manager" "cargo test --features arch --locked --lib runtimes::python"
+    run_segment "Go Manager" "cargo test --features arch --locked --lib runtimes::go"
+    run_segment "Bun Manager" "cargo test --features arch --locked --lib runtimes::bun"
+    run_segment "Ruby Manager" "cargo test --features arch --locked --lib runtimes::ruby"
+    run_segment "Java Manager" "cargo test --features arch --locked --lib runtimes::java"
+    run_segment "Rust Manager" "cargo test --features arch --locked --lib runtimes::rust"
+    run_segment "Mise Manager" "cargo test --features arch --locked --lib runtimes::mise"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -223,8 +254,8 @@ if should_run "cli"; then
     echo -e "${CYAN}│${NC}  ${BOLD}SEGMENT 5: CLI${NC} - Command-line interface tests                                ${CYAN}│${NC}"
     echo -e "${CYAN}└─────────────────────────────────────────────────────────────────────────────────┘${NC}"
     
-    run_segment "CLI Args Parsing" "rustup run nightly cargo test --features arch --lib cli::args"
-    run_segment "Hooks Tests" "rustup run nightly cargo test --features arch --lib hooks"
+    run_segment "CLI Args Parsing" "cargo test --features arch --locked --lib cli::args"
+    run_segment "Hooks Tests" "cargo test --features arch --locked --lib hooks"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -237,8 +268,8 @@ if should_run "packages"; then
     echo -e "${CYAN}│${NC}  ${BOLD}SEGMENT 6: PACKAGES${NC} - Package manager tests                                  ${CYAN}│${NC}"
     echo -e "${CYAN}└─────────────────────────────────────────────────────────────────────────────────┘${NC}"
     
-    run_segment "Pacman DB Tests" "rustup run nightly cargo test --features arch --lib package_managers::pacman_db"
-    run_segment "Parallel Sync Tests" "rustup run nightly cargo test --features arch --lib package_managers::parallel_sync"
+    run_segment "Pacman DB Tests" "cargo test --features arch --locked --lib package_managers::pacman_db"
+    run_segment "Parallel Sync Tests" "cargo test --features arch --locked --lib package_managers::parallel_sync"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -251,9 +282,9 @@ if should_run "security"; then
     echo -e "${CYAN}│${NC}  ${BOLD}SEGMENT 7: SECURITY${NC} - Security and input validation tests                    ${CYAN}│${NC}"
     echo -e "${CYAN}└─────────────────────────────────────────────────────────────────────────────────┘${NC}"
     
-    run_segment "Input Validation" "rustup run nightly cargo test --features arch --test security_tests input_validation"
-    run_segment "Privilege Tests" "rustup run nightly cargo test --features arch --test security_tests privilege_tests"
-    run_segment "Filesystem Security" "rustup run nightly cargo test --features arch --test security_tests filesystem_security"
+    run_segment "Input Validation" "cargo test --features arch --locked --test security_tests input_validation"
+    run_segment "Privilege Tests" "cargo test --features arch --locked --test security_tests privilege_tests"
+    run_segment "Filesystem Security" "cargo test --features arch --locked --test security_tests filesystem_security"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -266,7 +297,7 @@ if should_run "property" && [ "$QUICK" = "false" ]; then
     echo -e "${CYAN}│${NC}  ${BOLD}SEGMENT 8: PROPERTY${NC} - Property-based fuzzing tests                           ${CYAN}│${NC}"
     echo -e "${CYAN}└─────────────────────────────────────────────────────────────────────────────────┘${NC}"
     
-    run_segment "Property Tests" "rustup run nightly cargo test --features arch --test property_tests" "false"
+    run_segment "Property Tests" "cargo test --features arch --locked --test property_tests --test property_tests_v2"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -279,19 +310,19 @@ if should_run "comprehensive"; then
     echo -e "${CYAN}│${NC}  ${BOLD}SEGMENT 9: COMPREHENSIVE${NC} - All CLI commands and features                     ${CYAN}│${NC}"
     echo -e "${CYAN}└─────────────────────────────────────────────────────────────────────────────────┘${NC}"
     
-    run_segment "CLI Help Tests" "rustup run nightly cargo test --features arch --test comprehensive_tests cli_help"
-    run_segment "CLI Search Tests" "rustup run nightly cargo test --features arch --test comprehensive_tests cli_search"
-    run_segment "CLI Info Tests" "rustup run nightly cargo test --features arch --test comprehensive_tests cli_info"
-    run_segment "CLI Runtime Tests" "rustup run nightly cargo test --features arch --test comprehensive_tests cli_runtimes"
-    run_segment "CLI Env Tests" "rustup run nightly cargo test --features arch --test comprehensive_tests cli_env"
-    run_segment "CLI Tool Tests" "rustup run nightly cargo test --features arch --test comprehensive_tests cli_tool"
-    run_segment "CLI Status Tests" "rustup run nightly cargo test --features arch --test comprehensive_tests cli_status"
-    run_segment "Project Detection" "rustup run nightly cargo test --features arch --test comprehensive_tests project_detection"
-    run_segment "Error Handling" "rustup run nightly cargo test --features arch --test comprehensive_tests error_handling"
-    run_segment "File Handling" "rustup run nightly cargo test --features arch --test comprehensive_tests file_handling"
-    run_segment "Edge Cases" "rustup run nightly cargo test --features arch --test comprehensive_tests edge_cases"
-    run_segment "Performance" "rustup run nightly cargo test --features arch --test comprehensive_tests performance"
-    run_segment "Concurrency" "rustup run nightly cargo test --features arch --test comprehensive_tests concurrency"
+    run_segment "CLI Help Tests" "cargo test --features arch --locked --test comprehensive_tests cli_help"
+    run_segment "CLI Search Tests" "cargo test --features arch --locked --test comprehensive_tests cli_search"
+    run_segment "CLI Info Tests" "cargo test --features arch --locked --test comprehensive_tests cli_info"
+    run_segment "CLI Runtime Tests" "cargo test --features arch --locked --test comprehensive_tests cli_runtimes"
+    run_segment "CLI Env Tests" "cargo test --features arch --locked --test comprehensive_tests cli_env"
+    run_segment "CLI Tool Tests" "cargo test --features arch --locked --test comprehensive_tests cli_tool"
+    run_segment "CLI Status Tests" "cargo test --features arch --locked --test comprehensive_tests cli_status"
+    run_segment "Project Detection" "cargo test --features arch --locked --test comprehensive_tests project_detection"
+    run_segment "Error Handling" "cargo test --features arch --locked --test comprehensive_tests error_handling"
+    run_segment "File Handling" "cargo test --features arch --locked --test comprehensive_tests file_handling"
+    run_segment "Edge Cases" "cargo test --features arch --locked --test comprehensive_tests edge_cases"
+    run_segment "Performance" "cargo test --features arch --locked --test comprehensive_tests performance"
+    run_segment "Concurrency" "cargo test --features arch --locked --test comprehensive_tests concurrency"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -304,8 +335,8 @@ if should_run "integration" && [ "$QUICK" = "false" ]; then
     echo -e "${CYAN}│${NC}  ${BOLD}SEGMENT 10: INTEGRATION${NC} - Full integration tests                             ${CYAN}│${NC}"
     echo -e "${CYAN}└─────────────────────────────────────────────────────────────────────────────────┘${NC}"
     
-    run_segment "Arch Integration" "rustup run nightly cargo test --features arch --test arch_tests" "false"
-    run_segment "Integration Suite" "rustup run nightly cargo test --features arch --test integration_suite" "false"
+    run_segment "Arch Integration" "cargo test --features arch --locked --test arch_tests"
+    run_segment "Integration Suite" "cargo test --features arch --locked --test integration_suite"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -325,6 +356,11 @@ echo -e "  ${RED}✗ Failed:${NC}  ${FAILED}"
 echo -e "  ${YELLOW}⊘ Skipped:${NC} ${SKIPPED}"
 echo -e "  ${BLUE}⏱ Duration:${NC} ${DURATION}s"
 echo ""
+
+if [ "$PASSED" -eq 0 ] && [ "$FAILED" -eq 0 ]; then
+    echo -e "${RED}No test segments executed.${NC}" >&2
+    exit 1
+fi
 
 if [ "$FAILED" -gt 0 ]; then
     echo -e "${RED}╔═══════════════════════════════════════════════════════════════════════════════╗${NC}"
