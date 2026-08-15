@@ -7,7 +7,7 @@ on:
     branches: [main]
   schedule:
     # Run nightly to catch regressions
-    - cron: '0 2 * * *'
+    - cron: "0 2 * * *"
 
 concurrency:
   group: docker-e2e-${{ github.ref }}
@@ -55,7 +55,7 @@ jobs:
         run: sudo chown -R $(id -u):$(id -g) target/
 
       - name: Run Docker E2E Tests
-        run: OMG_RUN_DOCKER_TESTS=1 cargo test --no-default-features --features pgp,license --test docker_e2e -- --test-threads=1
+        run: OMG_RUN_DOCKER_TESTS=1 cargo test --no-default-features --features pgp,license --test docker_e2e --locked -- --ignored --test-threads=1
         env:
           RUST_BACKTRACE: 1
 
