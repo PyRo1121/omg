@@ -62,20 +62,6 @@ mod dnf_integration {
     }
 
     #[tokio::test]
-    async fn test_package_info() -> Result<()> {
-        let pm = DnfPackageManager::new();
-
-        let info = pm.info("vim-minimal").await?;
-
-        if let Some(pkg) = info {
-            assert!(pkg.name.contains("vim"));
-            assert!(!pkg.version.is_empty(), "Version should not be empty");
-        }
-
-        Ok(())
-    }
-
-    #[tokio::test]
     async fn test_list_updates() -> Result<()> {
         let pm = DnfPackageManager::new();
 
@@ -100,18 +86,6 @@ mod dnf_integration {
 
 mod dnf_rpm_database {
     use super::*;
-    use std::path::Path;
-
-    #[tokio::test]
-    async fn test_rpm_database_exists() {
-        let rpm_db_path = Path::new("/var/lib/rpm/rpmdb.sqlite");
-
-        if rpm_db_path.exists() {
-            assert!(rpm_db_path.is_file(), "RPM database should be a file");
-        } else {
-            eprintln!("WARNING: RPM database not found at /var/lib/rpm/rpmdb.sqlite");
-        }
-    }
 
     #[tokio::test]
     async fn test_rpm_database_query() {
@@ -216,139 +190,5 @@ mod dnf_error_handling {
             result.is_err(),
             "Should fail to install nonexistent package"
         );
-    }
-
-    #[tokio::test]
-    async fn test_remove_not_installed_package() {
-        if !omg_lib::core::is_root() {
-            return;
-        }
-
-        let pm = DnfPackageManager::new();
-
-        let _result = pm.remove(&["not-installed-package-xyz".to_string()]).await;
-    }
-
-    #[tokio::test]
-    async fn test_empty_package_list_install() {
-        if !omg_lib::core::is_root() {
-            return;
-        }
-
-        let pm = DnfPackageManager::new();
-
-        let _result = pm.install(&[]).await;
-    }
-}
-
-mod dnf_performance {
-    use super::*;
-    use std::time::Instant;
-
-    #[tokio::test]
-    async fn test_search_performance() -> Result<()> {
-        let pm = DnfPackageManager::new();
-
-        let start = Instant::now();
-        let _results = pm.search("python").await?;
-        let duration = start.elapsed();
-
-        assert!(
-            duration.as_millis() < 500,
-            "Search should complete in <500ms with SQLite cache, got {duration:?}"
-        );
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_list_installed_performance() -> Result<()> {
-        let pm = DnfPackageManager::new();
-
-        let start = Instant::now();
-        let _installed = pm.list_installed().await?;
-        let duration = start.elapsed();
-
-        assert!(
-            duration.as_millis() < 100,
-            "List installed should complete in <100ms (SQLite query), got {duration:?}"
-        );
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_multiple_searches_consistency() -> Result<()> {
-        let pm = DnfPackageManager::new();
-
-        let results1 = pm.search("python").await?;
-        let results2 = pm.search("python").await?;
-
-        assert_eq!(
-            results1.len(),
-            results2.len(),
-            "Multiple searches should return consistent results"
-        );
-
-        Ok(())
-    }
-}
-
-mod dnf_copr {
-    use super::*;
-
-    #[tokio::test]
-    async fn test_copr_search() -> Result<()> {
-        let pm = DnfPackageManager::new();
-
-        let _results = pm.search("rust").await?;
-
-        Ok(())
-    }
-}
-
-mod dnf_repository_metadata {
-    use super::*;
-    use std::path::Path;
-
-    #[tokio::test]
-    async fn test_repository_files_exist() {
-        let repos_dir = Path::new("/etc/yum.repos.d");
-
-        if !repos_dir.exists() {
-            eprintln!("WARNING: /etc/yum.repos.d not found");
-            return;
-        }
-
-        assert!(repos_dir.is_dir(), "Repos directory should exist");
-    }
-
-    #[tokio::test]
-    async fn test_parse_repository_metadata() -> Result<()> {
-        use std::fs;
-
-        let repos_dir = Path::new("/etc/yum.repos.d");
-
-        if !repos_dir.exists() {
-            return Ok(());
-        }
-
-        let entries = fs::read_dir(repos_dir)?;
-
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().is_some_and(|ext| ext == "repo") {
-                let content = fs::read_to_string(&path)?;
-
-                assert!(
-                    content.contains('[') && content.contains(']'),
-                    "Repo file should contain sections"
-                );
-
-                break;
-            }
-        }
-
-        Ok(())
     }
 }

@@ -362,7 +362,6 @@ pub fn run_shell(cmd: &str) -> CommandResult {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// A test project with managed temp directory
-#[expect(dead_code)]
 pub struct TestProject {
     pub dir: TempDir,
     pub data_dir: TempDir,
@@ -384,6 +383,14 @@ impl TestProject {
         }
     }
 
+    pub fn for_distro(distro: &str) -> Self {
+        let config = TestConfig {
+            target_distro: Some(distro.to_string()),
+            ..TestConfig::default()
+        };
+        Self::with_config(config)
+    }
+
     pub fn with_config(config: TestConfig) -> Self {
         init_test_env();
         Self {
@@ -399,25 +406,40 @@ impl TestProject {
         self.dir.path()
     }
 
+    fn distro(&self) -> &str {
+        self.config.target_distro.as_deref().unwrap_or("arch")
+    }
+
+    fn utf8_path(path: &Path) -> &str {
+        path.to_str()
+            .expect("invariant: test temporary paths must be valid UTF-8")
+    }
+
     pub fn run(&self, args: &[&str]) -> CommandResult {
-        let data_dir = self.data_dir.path().to_str().unwrap();
-        let config_dir = self.config_dir.path().to_str().unwrap();
-        let pacman_root = self.pacman_root.path().to_str().unwrap();
+        let data_dir = Self::utf8_path(self.data_dir.path());
+        let config_dir = Self::utf8_path(self.config_dir.path());
+        let pacman_root = Self::utf8_path(self.pacman_root.path());
+        let cache_dir = self.data_dir.path().join("cache");
+        let cache_dir = Self::utf8_path(&cache_dir);
         run_omg_with_options(
             args,
             Some(self.path()),
             &[
                 ("OMG_DATA_DIR", data_dir),
                 ("OMG_CONFIG_DIR", config_dir),
+                ("OMG_CACHE_DIR", cache_dir),
                 ("OMG_PACMAN_ROOT", pacman_root),
+                ("OMG_TEST_DISTRO", self.distro()),
             ],
         )
     }
 
     pub fn run_with_env(&self, args: &[&str], env_vars: &[(&str, &str)]) -> CommandResult {
-        let data_dir = self.data_dir.path().to_str().unwrap();
-        let config_dir = self.config_dir.path().to_str().unwrap();
-        let pacman_root = self.pacman_root.path().to_str().unwrap();
+        let data_dir = Self::utf8_path(self.data_dir.path());
+        let config_dir = Self::utf8_path(self.config_dir.path());
+        let pacman_root = Self::utf8_path(self.pacman_root.path());
+        let cache_dir = self.data_dir.path().join("cache");
+        let cache_dir = Self::utf8_path(&cache_dir);
         let mut vars = env_vars.to_vec();
         if !vars.iter().any(|(k, _)| *k == "OMG_DATA_DIR") {
             vars.push(("OMG_DATA_DIR", data_dir));
@@ -425,18 +447,24 @@ impl TestProject {
         if !vars.iter().any(|(k, _)| *k == "OMG_CONFIG_DIR") {
             vars.push(("OMG_CONFIG_DIR", config_dir));
         }
+        if !vars.iter().any(|(k, _)| *k == "OMG_CACHE_DIR") {
+            vars.push(("OMG_CACHE_DIR", cache_dir));
+        }
         if !vars.iter().any(|(k, _)| *k == "OMG_PACMAN_ROOT") {
             vars.push(("OMG_PACMAN_ROOT", pacman_root));
+        }
+        if !vars.iter().any(|(k, _)| *k == "OMG_TEST_DISTRO") {
+            vars.push(("OMG_TEST_DISTRO", self.distro()));
         }
         run_omg_with_options(args, Some(self.path()), &vars)
     }
 
     pub fn mock_install(&self, package: &str, version: &str) -> Result<()> {
-        update_mock_state(self.data_dir.path(), package, version, true)
+        update_mock_state(self.data_dir.path(), self.distro(), package, version, true)
     }
 
     pub fn mock_available(&self, package: &str, version: &str) -> Result<()> {
-        update_mock_state(self.data_dir.path(), package, version, false)
+        update_mock_state(self.data_dir.path(), self.distro(), package, version, false)
     }
 
     /// Create a file in the project
@@ -575,80 +603,18 @@ pub fn is_package_installed(name: &str) -> bool {
 
 fn update_mock_state(
     data_dir: &Path,
+    distro: &str,
     package: &str,
     version: &str,
     is_install: bool,
 ) -> Result<()> {
-    let path = data_dir.join("mock_state.json");
-
-    let mut state: serde_json::Value = fs::read_to_string(&path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_else(|| {
-            serde_json::json!({
-                "installed": {},
-                "available": {}
-            })
-        });
-
+    let package_manager =
+        omg_lib::package_managers::mock::MockPackageManager::new_in(distro, data_dir);
     if is_install {
-        if let Some(installed) = state["installed"].as_object_mut() {
-            installed.insert(package.to_string(), serde_json::json!(version.to_string()));
-        }
-        // Also make it available if installed
-        if let Some(available) = state["available"].as_object_mut() {
-            available.insert(package.to_string(), serde_json::json!(version.to_string()));
-        }
-    } else if let Some(available) = state["available"].as_object_mut() {
-        available.insert(package.to_string(), serde_json::json!(version.to_string()));
+        package_manager.set_installed_version(package, version)
+    } else {
+        package_manager.set_available_version(package, version)
     }
-
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).ok();
-    }
-    fs::write(&path, serde_json::to_string_pretty(&state)?).map_err(|e| anyhow::anyhow!(e))?;
-
-    Ok(())
-}
-
-pub fn mock_install(package: &str, version: &str) -> Result<()> {
-    use std::env;
-
-    if env::var("OMG_TEST_MODE").as_deref() != Ok("1") {
-        eprintln!("Warning: mock_install requires OMG_TEST_MODE=1");
-        return Ok(());
-    }
-
-    let path = env::var("OMG_DATA_DIR").map_or_else(
-        |_| PathBuf::from(env::var("HOME").unwrap_or_default()).join(".local/share/omg"),
-        PathBuf::from,
-    );
-
-    update_mock_state(&path, package, version, true)
-}
-
-pub fn mock_available(package: &str, version: &str) -> Result<()> {
-    use std::env;
-
-    if env::var("OMG_TEST_MODE").as_deref() != Ok("1") {
-        eprintln!("Warning: mock_available requires OMG_TEST_MODE=1");
-        return Ok(());
-    }
-
-    let path = env::var("OMG_DATA_DIR").map_or_else(
-        |_| PathBuf::from(env::var("HOME").unwrap_or_default()).join(".local/share/omg"),
-        PathBuf::from,
-    );
-
-    update_mock_state(&path, package, version, false)
-}
-
-pub fn create_update_scenario(updates: Vec<(&str, &str, &str)>) -> Result<()> {
-    for (name, installed, available) in updates {
-        mock_install(name, installed)?;
-        mock_available(name, available)?;
-    }
-    Ok(())
 }
 
 /// Get installed package version (distro-agnostic)

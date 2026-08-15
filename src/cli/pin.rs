@@ -138,7 +138,7 @@ fn pin_target(config: &mut PinConfig, target: &str) -> Result<()> {
         }
 
         // SECURITY: Validate version string
-        crate::core::security::validate_version(version)?;
+        crate::core::security::validate_runtime_version(version)?;
 
         config
             .runtimes

@@ -424,11 +424,13 @@ fn resolve_bun_bin_path(data_dir: &Path, version: &str) -> Option<PathBuf> {
 }
 
 fn node_version_bin_path(versions_dir: &Path, version: &str) -> Option<PathBuf> {
+    crate::core::security::validate_runtime_version(version).ok()?;
     let path = versions_dir.join(version).join("bin");
     path.exists().then_some(path)
 }
 
 fn bun_version_bin_path(versions_dir: &Path, version: &str) -> Option<PathBuf> {
+    crate::core::security::validate_runtime_version(version).ok()?;
     let path = versions_dir.join(version);
     path.exists().then_some(path)
 }
@@ -542,15 +544,16 @@ fn native_runtime_bin_path(runtime: &str, version: &str) -> Option<PathBuf> {
     let data_dir = paths::data_dir();
     let bin_path = match runtime {
         "node" => resolve_node_bin_path(&data_dir, version)?,
-        "python" => data_dir.join("versions/python").join(version).join("bin"),
-        "go" => data_dir.join("versions/go").join(version).join("bin"),
-        "ruby" => data_dir.join("versions/ruby").join(version).join("bin"),
-        "java" => data_dir.join("versions/java").join(version).join("bin"),
+        "python" | "go" | "ruby" | "java" => {
+            crate::core::security::validate_runtime_version(version).ok()?;
+            data_dir
+                .join(format!("versions/{runtime}"))
+                .join(version)
+                .join("bin")
+        }
         "bun" => resolve_bun_bin_path(&data_dir, version)?,
         "rust" => {
-            let toolchain = RustToolchainSpec::parse(version)
-                .ok()
-                .map_or_else(|| version.to_string(), |spec| spec.name());
+            let toolchain = RustToolchainSpec::parse(version).ok()?.name();
             data_dir.join("versions/rust").join(toolchain).join("bin")
         }
         _ => return None,
@@ -814,6 +817,25 @@ erlang = "26.2"
         assert_eq!(versions.get("zig"), Some(&"0.11.0".to_string()));
         assert_eq!(versions.get("swift"), Some(&"5.9".to_string()));
         assert_eq!(versions.get("erlang"), Some(&"26.2".to_string()));
+    }
+
+    #[test]
+    fn runtime_path_builders_reject_parent_directory_versions() {
+        let dir = tempdir().unwrap();
+        let versions_dir = dir.path().join("versions/node");
+        fs::create_dir_all(dir.path().join("versions/bin")).unwrap();
+
+        assert!(node_version_bin_path(&versions_dir, "..").is_none());
+        assert!(bun_version_bin_path(&versions_dir, "..").is_none());
+    }
+
+    #[test]
+    fn node_requirements_resolve_to_safe_installed_versions() {
+        let dir = tempdir().unwrap();
+        let expected = dir.path().join("versions/node/20.11.1/bin");
+        fs::create_dir_all(&expected).unwrap();
+
+        assert_eq!(resolve_node_bin_path(dir.path(), "^20"), Some(expected));
     }
 
     #[test]

@@ -82,6 +82,7 @@ impl GoManager {
     /// Install Go - PURE RUST, NO SUBPROCESS
     pub async fn install(&self, version: &str) -> Result<()> {
         let version = normalize_version(version);
+        crate::core::security::validate_runtime_version(&version)?;
         let version_dir = self.versions_dir.join(&version);
 
         if version_dir.exists() {
@@ -160,10 +161,36 @@ impl Default for GoManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
 
     #[test]
     fn test_go_manager_new() {
         let mgr = GoManager::new();
         assert!(mgr.versions_dir.ends_with("go"));
+    }
+
+    #[test]
+    fn uninstall_rejects_parent_directory_versions_before_deletion() -> Result<()> {
+        let temp = TempDir::new()?;
+        let versions_dir = temp.path().join("versions");
+        fs::create_dir(&versions_dir)?;
+        let sentinel = temp.path().join("sentinel");
+        fs::write(&sentinel, "preserve")?;
+
+        let mut manager = GoManager::new();
+        manager.versions_dir = versions_dir.clone();
+        manager.current_link = versions_dir.join("current");
+
+        assert!(manager.uninstall("..").is_err());
+        assert_eq!(fs::read_to_string(sentinel)?, "preserve");
+        assert!(versions_dir.is_dir());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn install_rejects_parent_directory_versions_before_network_access() -> Result<()> {
+        let manager = GoManager::new();
+        assert!(manager.install("..").await.is_err());
+        Ok(())
     }
 }

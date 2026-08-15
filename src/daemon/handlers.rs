@@ -1,5 +1,6 @@
 //! Request handlers for the daemon
 
+use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::Context;
@@ -15,8 +16,6 @@ use super::protocol::{
 };
 use crate::core::metrics::GLOBAL_METRICS;
 use crate::core::security::{AuditEventType, AuditSeverity, audit_log};
-#[cfg(feature = "arch")]
-use crate::package_managers::AurClient;
 use crate::package_managers::{PackageManager, get_package_manager};
 #[cfg(feature = "arch")]
 use crate::package_managers::{alpm_worker::AlpmWorker, search_detailed};
@@ -34,16 +33,34 @@ const DAEMON_INFO_BACKEND_TIMEOUT: std::time::Duration = std::time::Duration::fr
 #[cfg(feature = "arch")]
 const DAEMON_INFO_AUR_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
 
+enum SystemBackendAccess {
+    Isolated,
+    Production {
+        #[cfg(feature = "arch")]
+        alpm_worker: AlpmWorker,
+    },
+}
+
+impl SystemBackendAccess {
+    fn production() -> Self {
+        Self::Production {
+            #[cfg(feature = "arch")]
+            alpm_worker: AlpmWorker::new(),
+        }
+    }
+
+    fn is_production(&self) -> bool {
+        matches!(self, Self::Production { .. })
+    }
+}
+
 /// Daemon state shared across handlers
 pub struct DaemonState {
     pub cache: PackageCache,
     pub persistent: super::db::PersistentCache,
     pub package_manager: Arc<dyn PackageManager>,
-    #[cfg(feature = "arch")]
-    pub aur: crate::package_managers::AurClient,
-    #[cfg(feature = "arch")]
-    pub alpm_worker: AlpmWorker,
     pub index: Arc<PackageIndex>,
+    system_backends: SystemBackendAccess,
     pub runtime_versions: Arc<RwLock<Vec<(String, String)>>>,
     pub rate_limiter: Arc<RateLimiter<NotKeyed, InMemoryState, DefaultClock>>,
     pub start_time: std::time::Instant,
@@ -52,25 +69,62 @@ pub struct DaemonState {
 impl DaemonState {
     pub fn new() -> anyhow::Result<Self> {
         let data_dir = crate::core::paths::daemon_data_dir();
-        tracing::info!("Initializing daemon data directory: {:?}", data_dir);
-
-        let persistent = super::db::PersistentCache::new(&data_dir).with_context(|| {
-            format!(
-                "Failed to initialize persistent cache at {}. \
-                 Check permissions and disk space.",
-                data_dir.display()
-            )
-        })?;
-
+        let persistent = Self::open_persistent_cache(&data_dir)?;
         let index = PackageIndex::new_with_cache(&persistent)
-            .or_else(|e| {
-                tracing::warn!("Failed to load cached index: {e}, building fresh index...");
+            .or_else(|error| {
+                tracing::warn!("Failed to load cached index: {error}, building fresh index...");
                 PackageIndex::new()
             })
             .with_context(|| {
                 "Failed to build package index. Ensure package databases are synced (run 'omg sync')."
             })?;
 
+        let package_manager = get_package_manager()?;
+        Ok(Self::from_index(
+            persistent,
+            index,
+            package_manager,
+            SystemBackendAccess::production(),
+        ))
+    }
+
+    /// Initialize daemon handlers with explicit isolated dependencies.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the persistent cache cannot be opened at `data_dir`.
+    pub fn new_isolated(
+        data_dir: &Path,
+        index: PackageIndex,
+        package_manager: Arc<dyn PackageManager>,
+    ) -> anyhow::Result<Self> {
+        let persistent = Self::open_persistent_cache(data_dir)?;
+        Ok(Self::from_index(
+            persistent,
+            index,
+            package_manager,
+            SystemBackendAccess::Isolated,
+        ))
+    }
+
+    fn open_persistent_cache(data_dir: &Path) -> anyhow::Result<super::db::PersistentCache> {
+        tracing::info!("Initializing daemon data directory: {:?}", data_dir);
+
+        super::db::PersistentCache::new(data_dir).with_context(|| {
+            format!(
+                "Failed to initialize persistent cache at {}. \
+                 Check permissions and disk space.",
+                data_dir.display()
+            )
+        })
+    }
+
+    fn from_index(
+        persistent: super::db::PersistentCache,
+        index: PackageIndex,
+        package_manager: Arc<dyn PackageManager>,
+        system_backends: SystemBackendAccess,
+    ) -> Self {
         tracing::info!("Package index loaded: {} packages", index.len());
 
         let cache = PackageCache::default();
@@ -84,37 +138,32 @@ impl DaemonState {
             .allow_burst(crate::core::safe_ops::nonzero_u32_or_default(200, 1));
         let rate_limiter = Arc::new(RateLimiter::direct(quota));
 
-        let pm = get_package_manager()?;
-        tracing::info!("Using package manager: {}", pm.name());
+        tracing::info!("Using package manager: {}", package_manager.name());
 
         // Pre-warm Debian package cache if on Debian/Ubuntu
         #[cfg(any(feature = "debian", feature = "debian-pure"))]
-        {
+        if system_backends.is_production() {
             tracing::info!("Pre-warming Debian package cache...");
             let start = std::time::Instant::now();
 
             // Load the full index
-            if let Err(e) = crate::package_managers::debian_db::ensure_index_loaded() {
-                tracing::warn!("Failed to pre-warm Debian cache: {}", e);
+            if let Err(error) = crate::package_managers::debian_db::ensure_index_loaded() {
+                tracing::warn!("Failed to pre-warm Debian cache: {error}");
             } else {
-                let duration = start.elapsed();
-                tracing::info!("Debian cache pre-warmed in {:?}", duration);
+                tracing::info!("Debian cache pre-warmed in {:?}", start.elapsed());
             }
         }
 
-        Ok(Self {
+        Self {
             cache,
             persistent,
-            package_manager: pm,
-            #[cfg(feature = "arch")]
-            aur: AurClient::new(),
-            #[cfg(feature = "arch")]
-            alpm_worker: AlpmWorker::new(),
+            package_manager,
             index: Arc::new(index),
+            system_backends,
             runtime_versions: Arc::new(RwLock::new(Vec::new())),
             rate_limiter,
             start_time: std::time::Instant::now(),
-        })
+        }
     }
 }
 
@@ -542,7 +591,8 @@ async fn handle_info(state: Arc<DaemonState>, id: RequestId, package: String) ->
 
     // 4. Try AUR (arch only)
     #[cfg(feature = "arch")]
-    if state.package_manager.name() == "pacman"
+    if state.system_backends.is_production()
+        && state.package_manager.name() == "pacman"
         && let Ok(Ok(details)) =
             tokio::time::timeout(DAEMON_INFO_AUR_TIMEOUT, search_detailed(&package)).await
         && let Some(pkg) = details.into_iter().find(|p| p.name == package)
@@ -613,37 +663,49 @@ async fn handle_status(state: Arc<DaemonState>, id: RequestId) -> Response {
     // METRICS: Cache miss - need to query system
     GLOBAL_METRICS.inc_cache_misses();
 
-    // 3. Query system backends (Heavy I/O)
-    let state_clone = Arc::clone(&state);
-    let status_result = tokio::task::spawn_blocking(move || {
-        let pm_name = state_clone.package_manager.name();
+    // 3. Query the selected backend. Production uses the optimized native
+    // status paths; dependency-injected states stay behind the package-manager
+    // interface and never access host package databases.
+    let status_result = if state.system_backends.is_production() {
+        let state_clone = Arc::clone(&state);
+        match tokio::task::spawn_blocking(move || {
+            let pm_name = state_clone.package_manager.name();
 
-        if pm_name == "apt" {
-            #[cfg(feature = "debian")]
-            {
-                crate::package_managers::apt_get_system_status()
+            if pm_name == "apt" {
+                #[cfg(feature = "debian")]
+                {
+                    crate::package_managers::apt_get_system_status()
+                }
+                #[cfg(not(feature = "debian"))]
+                {
+                    Err::<(usize, usize, usize, usize), _>(anyhow::anyhow!(
+                        "Debian backend disabled"
+                    ))
+                }
+            } else if pm_name == "pacman" {
+                #[cfg(feature = "arch")]
+                {
+                    crate::package_managers::get_system_status()
+                }
+                #[cfg(not(feature = "arch"))]
+                {
+                    Err(anyhow::anyhow!("Arch backend disabled"))
+                }
+            } else {
+                Err(anyhow::anyhow!("Unsupported package manager: {pm_name}"))
             }
-            #[cfg(not(feature = "debian"))]
-            {
-                Err::<(usize, usize, usize, usize), _>(anyhow::anyhow!("Debian backend disabled"))
-            }
-        } else if pm_name == "pacman" {
-            #[cfg(feature = "arch")]
-            {
-                crate::package_managers::get_system_status()
-            }
-            #[cfg(not(feature = "arch"))]
-            {
-                Err(anyhow::anyhow!("Arch backend disabled"))
-            }
-        } else {
-            Err(anyhow::anyhow!("Unsupported package manager: {pm_name}"))
+        })
+        .await
+        {
+            Ok(result) => result,
+            Err(error) => return internal_error(id, format!("Status task panicked: {error}")),
         }
-    })
-    .await;
+    } else {
+        state.package_manager.get_status(false).await
+    };
 
     match status_result {
-        Ok(Ok((total, explicit, orphans, updates))) => {
+        Ok((total, explicit, orphans, updates)) => {
             let res = StatusResult {
                 total_packages: total,
                 explicit_packages: explicit,
@@ -666,8 +728,7 @@ async fn handle_status(state: Arc<DaemonState>, id: RequestId) -> Response {
                 result: ResponseResult::Status(Arc::unwrap_or_clone(res_arc)),
             }
         }
-        Ok(Err(e)) => internal_error(id, format!("Failed to get system status: {e}")),
-        Err(e) => internal_error(id, format!("Status task panicked: {e}")),
+        Err(error) => internal_error(id, format!("Failed to get system status: {error}")),
     }
 }
 
@@ -921,48 +982,33 @@ fn handle_health(state: &Arc<DaemonState>, id: RequestId) -> Response {
 /// Handle list updates request using the hot ALPM worker (zero ALPM init overhead)
 async fn handle_list_updates(state: Arc<DaemonState>, id: RequestId) -> Response {
     #[cfg(feature = "arch")]
-    {
-        use super::protocol::UpdateEntry;
-        match state.alpm_worker.list_updates().await {
-            Ok(updates) => Response::Success {
+    let updates_result = match &state.system_backends {
+        SystemBackendAccess::Production { alpm_worker } => alpm_worker.list_updates().await,
+        SystemBackendAccess::Isolated => state.package_manager.list_updates().await,
+    };
+
+    #[cfg(not(feature = "arch"))]
+    let updates_result = state.package_manager.list_updates().await;
+
+    match updates_result {
+        Ok(updates) => {
+            use super::protocol::UpdateEntry;
+            Response::Success {
                 id,
                 result: ResponseResult::ListUpdates(
                     updates
                         .into_iter()
-                        .map(|u| UpdateEntry {
-                            name: u.name,
-                            old_version: u.old_version,
-                            new_version: u.new_version,
-                            repo: u.repo,
+                        .map(|update| UpdateEntry {
+                            name: update.name,
+                            old_version: update.old_version,
+                            new_version: update.new_version,
+                            repo: update.repo,
                         })
                         .collect(),
                 ),
-            },
-            Err(e) => internal_error(id, format!("Failed to list updates: {e}")),
-        }
-    }
-    #[cfg(not(feature = "arch"))]
-    {
-        match state.package_manager.list_updates().await {
-            Ok(updates) => {
-                use super::protocol::UpdateEntry;
-                Response::Success {
-                    id,
-                    result: ResponseResult::ListUpdates(
-                        updates
-                            .into_iter()
-                            .map(|u| UpdateEntry {
-                                name: u.name,
-                                old_version: u.old_version,
-                                new_version: u.new_version,
-                                repo: u.repo,
-                            })
-                            .collect(),
-                    ),
-                }
             }
-            Err(e) => internal_error(id, format!("Failed to list updates: {e}")),
         }
+        Err(error) => internal_error(id, format!("Failed to list updates: {error}")),
     }
 }
 

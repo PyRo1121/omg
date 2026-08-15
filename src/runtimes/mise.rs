@@ -21,6 +21,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::Command;
 
+use crate::core::archive::stripped_archive_path;
 use crate::core::http::download_client;
 
 const MISE_GITHUB_RELEASES: &str = "https://github.com/jdx/mise/releases";
@@ -195,11 +196,15 @@ impl MiseManager {
         // First pass: try to find and extract mise directly
         for entry in archive.entries()? {
             let mut entry = entry?;
-            let path = entry.path()?;
+            let path = entry.path()?.into_owned();
+            stripped_archive_path(&path, 0)?;
             let path_str = path.to_string_lossy();
 
-            // Look for the mise binary in the archive
+            // Look for the mise binary in the archive.
             if path_str.ends_with("/mise") || path_str == "mise" {
+                if !entry.header().entry_type().is_file() {
+                    anyhow::bail!("Mise archive binary entry is not a regular file");
+                }
                 entry.unpack(&self.mise_bin)?;
                 return Ok(());
             }
@@ -216,14 +221,14 @@ impl MiseManager {
                 continue;
             }
 
-            let path = entry.path()?.to_path_buf();
-            // Strip first component if present
-            let stripped: PathBuf = path.components().skip(1).collect();
-            let dest = if stripped.as_os_str().is_empty() {
-                self.bin_dir.join(&path)
-            } else {
-                self.bin_dir.join(&stripped)
+            let path = entry.path()?.into_owned();
+            // Strip first component if present, while preserving a root-level file.
+            let stripped = match stripped_archive_path(&path, 1)? {
+                Some(stripped) => stripped,
+                None => stripped_archive_path(&path, 0)?
+                    .ok_or_else(|| anyhow::anyhow!("Mise archive contains an empty file path"))?,
             };
+            let dest = self.bin_dir.join(&stripped);
 
             if let Some(parent) = dest.parent() {
                 fs::create_dir_all(parent)?;
@@ -310,7 +315,7 @@ impl MiseManager {
     pub fn use_version(&self, runtime: &str, version: &str) -> Result<()> {
         // SECURITY: Validate runtime and version
         crate::core::security::validate_package_name(runtime)?;
-        crate::core::security::validate_version(version)?;
+        crate::core::security::validate_runtime_version(version)?;
 
         let tool_spec = format!("{runtime}@{version}");
 
@@ -341,6 +346,9 @@ impl MiseManager {
     /// Get the bin directory for a mise-managed runtime
     #[must_use]
     pub fn runtime_bin_path(&self, runtime: &str, version: &str) -> Option<PathBuf> {
+        crate::core::security::validate_package_name(runtime).ok()?;
+        crate::core::security::validate_runtime_version(version).ok()?;
+
         // mise installs to ~/.local/share/mise/installs/<runtime>/<version>/bin
         let mise_data = dirs::data_dir()?.join("mise").join("installs");
         let bin_path = mise_data.join(runtime).join(version).join("bin");
@@ -357,10 +365,73 @@ impl Default for MiseManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use flate2::{Compression, write::GzEncoder};
+    use std::io::Cursor;
+    use tar::{Builder, EntryType, Header};
+    use tempfile::TempDir;
+
+    fn mise_archive(entry_type: EntryType, link_name: Option<&str>) -> Result<Vec<u8>> {
+        let encoder = GzEncoder::new(Vec::new(), Compression::default());
+        let mut builder = Builder::new(encoder);
+        let mut header = Header::new_gnu();
+        header.set_entry_type(entry_type);
+        header.set_mode(0o755);
+        let contents = if entry_type.is_file() {
+            b"mise".as_slice()
+        } else {
+            b"".as_slice()
+        };
+        header.set_size(contents.len() as u64);
+        if let Some(target) = link_name {
+            header.set_link_name(target)?;
+        }
+        header.set_cksum();
+        builder.append_data(&mut header, "release/mise", Cursor::new(contents))?;
+        let encoder = builder.into_inner()?;
+        Ok(encoder.finish()?)
+    }
+
+    fn test_manager(temp: &TempDir) -> Result<MiseManager> {
+        let bin_dir = temp.path().join("bin");
+        fs::create_dir(&bin_dir)?;
+        Ok(MiseManager {
+            mise_bin: bin_dir.join("mise"),
+            bin_dir,
+            client: download_client().clone(),
+        })
+    }
 
     #[test]
     fn test_mise_manager_new() {
         let mgr = MiseManager::new();
         assert!(mgr.bin_dir.ends_with("mise"));
+    }
+
+    #[test]
+    fn mise_extraction_writes_a_regular_binary() -> Result<()> {
+        let temp = TempDir::new()?;
+        let manager = test_manager(&temp)?;
+        let archive_path = temp.path().join("mise.tar.gz");
+        fs::write(&archive_path, mise_archive(EntryType::Regular, None)?)?;
+
+        manager.extract_tarball(&archive_path)?;
+
+        assert_eq!(fs::read(&manager.mise_bin)?, b"mise");
+        Ok(())
+    }
+
+    #[test]
+    fn mise_extraction_rejects_a_linked_binary() -> Result<()> {
+        let temp = TempDir::new()?;
+        let manager = test_manager(&temp)?;
+        let archive_path = temp.path().join("mise.tar.gz");
+        fs::write(
+            &archive_path,
+            mise_archive(EntryType::Symlink, Some("../../escape"))?,
+        )?;
+
+        assert!(manager.extract_tarball(&archive_path).is_err());
+        assert!(!manager.mise_bin.exists());
+        Ok(())
     }
 }
