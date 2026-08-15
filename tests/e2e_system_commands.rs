@@ -623,11 +623,21 @@ fn test_workflow_config_set_and_list() {
 fn test_workflow_history_and_stats() {
     init_test_env();
 
-    // Check history
     let history_result = run_omg(&["history"]);
-    let _ = history_result; // May be empty
+    let history_output = history_result.combined_output();
+    assert!(
+        history_result.success
+            || history_output.contains("No history")
+            || history_output.to_lowercase().contains("transaction"),
+        "History should succeed or explain its empty/error state: {history_output}"
+    );
 
-    // Check stats
     let stats_result = run_omg(&["stats"]);
-    let _ = stats_result; // May be empty or show initial state
+    let stats_output = stats_result.combined_output();
+    assert!(
+        stats_result.success
+            || stats_output.to_lowercase().contains("stats")
+            || stats_output.to_lowercase().contains("usage"),
+        "Stats should succeed or explain its result: {stats_output}"
+    );
 }
