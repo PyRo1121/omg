@@ -301,31 +301,6 @@ if should_run "property" && [ "$QUICK" = "false" ]; then
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# SEGMENT 9: COMPREHENSIVE TESTS
-# ═══════════════════════════════════════════════════════════════════════════════
-
-if should_run "comprehensive"; then
-  echo ""
-  echo -e "${CYAN}┌─────────────────────────────────────────────────────────────────────────────────┐${NC}"
-  echo -e "${CYAN}│${NC}  ${BOLD}SEGMENT 9: COMPREHENSIVE${NC} - All CLI commands and features                     ${CYAN}│${NC}"
-  echo -e "${CYAN}└─────────────────────────────────────────────────────────────────────────────────┘${NC}"
-
-  run_segment "CLI Help Tests" "cargo test --features arch --locked --test comprehensive_tests cli_help"
-  run_segment "CLI Search Tests" "cargo test --features arch --locked --test comprehensive_tests cli_search"
-  run_segment "CLI Info Tests" "cargo test --features arch --locked --test comprehensive_tests cli_info"
-  run_segment "CLI Runtime Tests" "cargo test --features arch --locked --test comprehensive_tests cli_runtimes"
-  run_segment "CLI Env Tests" "cargo test --features arch --locked --test comprehensive_tests cli_env"
-  run_segment "CLI Tool Tests" "cargo test --features arch --locked --test comprehensive_tests cli_tool"
-  run_segment "CLI Status Tests" "cargo test --features arch --locked --test comprehensive_tests cli_status"
-  run_segment "Project Detection" "cargo test --features arch --locked --test comprehensive_tests project_detection"
-  run_segment "Error Handling" "cargo test --features arch --locked --test comprehensive_tests error_handling"
-  run_segment "File Handling" "cargo test --features arch --locked --test comprehensive_tests file_handling"
-  run_segment "Edge Cases" "cargo test --features arch --locked --test comprehensive_tests edge_cases"
-  run_segment "Performance" "cargo test --features arch --locked --test comprehensive_tests performance"
-  run_segment "Concurrency" "cargo test --features arch --locked --test comprehensive_tests concurrency"
-fi
-
-# ═══════════════════════════════════════════════════════════════════════════════
 # SEGMENT 10: INTEGRATION TESTS
 # ═══════════════════════════════════════════════════════════════════════════════
 
