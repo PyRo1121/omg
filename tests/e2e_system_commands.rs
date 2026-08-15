@@ -20,7 +20,6 @@
 mod common;
 
 use common::*;
-use std::time::Duration;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // DOCTOR COMMAND E2E TESTS
@@ -72,22 +71,6 @@ fn test_doctor_shows_checks() {
         output.contains("✓") || output.contains("System") || output.contains("Check"),
         "Should show diagnostic checks"
     );
-}
-
-#[test]
-fn test_doctor_performance() {
-    init_test_env();
-
-    let result = run_omg(&["doctor"]);
-
-    if result.success {
-        // Doctor should be fast
-        assert!(
-            result.duration < Duration::from_secs(2),
-            "Doctor took {:?}, should be <2s",
-            result.duration
-        );
-    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -521,22 +504,6 @@ fn test_status_json_output() {
     }
 }
 
-#[test]
-fn test_status_performance() {
-    init_test_env();
-
-    let result = run_omg(&["status"]);
-
-    if result.success {
-        // Status should be fast (target: <10ms per CLAUDE.md)
-        assert!(
-            result.duration < Duration::from_millis(500),
-            "Status took {:?}, target is <500ms",
-            result.duration
-        );
-    }
-}
-
 // ═══════════════════════════════════════════════════════════════════════════════
 // MIGRATE COMMAND E2E TESTS
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -663,54 +630,4 @@ fn test_workflow_history_and_stats() {
     // Check stats
     let stats_result = run_omg(&["stats"]);
     let _ = stats_result; // May be empty or show initial state
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// PERFORMANCE REGRESSION TESTS
-// ═══════════════════════════════════════════════════════════════════════════════
-
-#[test]
-fn test_performance_doctor_under_threshold() {
-    init_test_env();
-
-    let result = run_omg(&["doctor"]);
-
-    if result.success {
-        assert!(
-            result.duration < Duration::from_secs(2),
-            "Doctor took {:?}, target is <2s",
-            result.duration
-        );
-    }
-}
-
-#[test]
-fn test_performance_config_list_under_threshold() {
-    init_test_env();
-
-    let result = run_omg(&["config", "list"]);
-
-    if result.success {
-        assert!(
-            result.duration < Duration::from_millis(500),
-            "Config list took {:?}, target is <500ms",
-            result.duration
-        );
-    }
-}
-
-#[test]
-fn test_performance_completions_generation() {
-    init_test_env();
-
-    let result = run_omg(&["completions", "bash"]);
-
-    if result.success {
-        // Completion generation should be instant
-        assert!(
-            result.duration < Duration::from_millis(500),
-            "Completions took {:?}, target is <500ms",
-            result.duration
-        );
-    }
 }

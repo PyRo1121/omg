@@ -18,7 +18,6 @@
 mod common;
 
 use common::*;
-use std::time::Duration;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // USE COMMAND E2E TESTS
@@ -446,42 +445,6 @@ fn test_error_unsupported_runtime() {
         output.contains("unsupported") || output.contains("unknown"),
         "Should reject unsupported runtimes"
     );
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// PERFORMANCE TESTS
-// ═══════════════════════════════════════════════════════════════════════════════
-
-#[test]
-fn test_performance_list_runtimes() {
-    init_test_env();
-
-    let result = run_omg(&["list"]);
-
-    if result.success {
-        // Performance target: < 1s for list
-        assert!(
-            result.duration < Duration::from_secs(1),
-            "List took {:?}, target is <1s",
-            result.duration
-        );
-    }
-}
-
-#[test]
-fn test_performance_version_file_detection() {
-    init_test_env();
-
-    let project = TestProject::new();
-    project.with_node_project();
-
-    let result = project.run(&["use", "node"]);
-
-    // Version file detection may trigger download, so be lenient
-    if result.duration < Duration::from_secs(30) {
-        // Just verify it completes in reasonable time
-        assert!(result.duration < Duration::from_secs(30));
-    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

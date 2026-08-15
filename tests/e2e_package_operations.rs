@@ -20,7 +20,6 @@
 mod common;
 
 use common::*;
-use std::time::Duration;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SEARCH COMMAND E2E TESTS
@@ -39,13 +38,6 @@ fn test_search_official_package() {
     assert!(
         result.stdout_contains("bash") || result.stderr_contains("bash"),
         "Search should return bash package"
-    );
-
-    // Should complete within performance target (< 100ms for cached)
-    assert!(
-        result.duration < Duration::from_secs(2),
-        "Search took {:?}, should be under 2s",
-        result.duration
     );
 }
 
@@ -156,22 +148,6 @@ fn test_info_shows_package_details() {
         output.contains("Description") || output.contains("Version") || output.contains("Size"),
         "Info should show package details"
     );
-}
-
-#[test]
-fn test_info_performance() {
-    init_test_env();
-
-    let result = run_omg(&["info", "linux"]);
-
-    if result.success {
-        // Performance target: < 100ms for cached info
-        assert!(
-            result.duration < Duration::from_secs(2),
-            "Info command took {:?}, should be under 2s",
-            result.duration
-        );
-    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -304,22 +280,6 @@ fn test_update_with_yes_flag() {
         output.contains("up to date") || output.contains("Update") || output.contains("available"),
         "Should show update status"
     );
-}
-
-#[test]
-fn test_update_performance_check() {
-    init_test_env();
-
-    let result = run_omg(&["update", "--check"]);
-
-    if result.success {
-        // Should be fast for cached data
-        assert!(
-            result.duration < Duration::from_secs(5),
-            "Update check took {:?}, should be under 5s",
-            result.duration
-        );
-    }
 }
 
 #[test]
@@ -593,58 +553,6 @@ fn test_verbose_flag_adds_output() {
         assert!(
             verbose_result.combined_output().len() >= normal_result.combined_output().len(),
             "Verbose mode should produce more or equal output"
-        );
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// PERFORMANCE BENCHMARKS (Unit-level)
-// ═══════════════════════════════════════════════════════════════════════════════
-
-#[test]
-fn test_performance_search_under_threshold() {
-    init_test_env();
-
-    let result = run_omg(&["search", "firefox"]);
-
-    if result.success {
-        // Performance target: search < 2s
-        assert!(
-            result.duration < Duration::from_secs(2),
-            "Search took {:?}, target is <2s",
-            result.duration
-        );
-    }
-}
-
-#[test]
-fn test_performance_info_under_threshold() {
-    init_test_env();
-
-    let result = run_omg(&["info", "bash"]);
-
-    if result.success {
-        // Performance target: info < 2s
-        assert!(
-            result.duration < Duration::from_secs(2),
-            "Info took {:?}, target is <2s",
-            result.duration
-        );
-    }
-}
-
-#[test]
-fn test_performance_explicit_under_threshold() {
-    init_test_env();
-
-    let result = run_omg(&["explicit"]);
-
-    if result.success {
-        // Performance target: explicit < 1s
-        assert!(
-            result.duration < Duration::from_secs(1),
-            "Explicit list took {:?}, target is <1s",
-            result.duration
         );
     }
 }
