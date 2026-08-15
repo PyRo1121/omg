@@ -390,11 +390,16 @@ fn test_workflow_list_then_use() {
 fn test_workflow_use_then_list() {
     init_test_env();
 
-    // Use a runtime version
     let use_result = run_omg(&["use", "node", "20.10.0"]);
-    let _ = use_result; // May succeed or fail
+    let use_output = use_result.combined_output();
+    assert!(
+        use_result.success
+            || use_output.to_lowercase().contains("version")
+            || use_output.to_lowercase().contains("install")
+            || use_output.to_lowercase().contains("error"),
+        "Runtime switch should succeed or explain the outcome: {use_output}"
+    );
 
-    // Then list to verify
     let list_result = run_omg(&["list", "node"]);
     list_result.assert_success();
 }
