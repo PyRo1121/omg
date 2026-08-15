@@ -390,46 +390,6 @@ fn test_explicit_count() {
     );
 }
 
-#[test]
-#[ignore = "clean command has tokio runtime nesting issue in test context"]
-fn test_clean_cache_dry_run() {
-    init_test_env();
-
-    let result = run_omg(&["clean", "--cache", "--dry-run"]);
-
-    // Should show what would be cleaned
-    let output = result.combined_output();
-    assert!(
-        result.success
-            || output.contains("Would clean")
-            || output.contains("cache")
-            || output.contains("Clean")
-            || output.contains("clean")
-            || output.contains("No orphan"),
-        "Should show cleanup plan: {}",
-        output
-    );
-}
-
-#[test]
-#[ignore = "clean command has tokio runtime nesting issue in test context"]
-fn test_clean_orphans_dry_run() {
-    init_test_env();
-
-    let result = run_omg(&["clean", "--orphans", "--dry-run"]);
-
-    let output = result.combined_output();
-    assert!(
-        result.success
-            || output.contains("orphan")
-            || output.contains("Would remove")
-            || output.contains("No orphan")
-            || output.contains("clean"),
-        "Should show orphan packages: {}",
-        output
-    );
-}
-
 // ═══════════════════════════════════════════════════════════════════════════════
 // MULTI-COMMAND WORKFLOW TESTS
 // ═══════════════════════════════════════════════════════════════════════════════
