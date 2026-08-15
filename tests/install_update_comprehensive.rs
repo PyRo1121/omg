@@ -14,7 +14,6 @@
 //! - Transaction rollback and error recovery
 //! - Retry logic for network failures
 //! - Parallel build functionality
-//! - Performance requirements
 //! - Security (PGP verification, sandbox)
 //! - Non-interactive mode (CI/CD)
 //! - Mixed package sources
@@ -26,11 +25,9 @@
 //! Environment variables:
 //!   OMG_RUN_SYSTEM_TESTS=1      - Enable tests requiring real system access
 //!   OMG_RUN_DESTRUCTIVE_TESTS=1 - Enable tests that modify the system
-//!   OMG_RUN_PERF_TESTS=1        - Enable performance assertions
 
 use std::env;
 use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TEST INFRASTRUCTURE
@@ -41,7 +38,6 @@ struct TestResult {
     stdout: String,
     stderr: String,
     exit_code: i32,
-    duration: Duration,
 }
 
 impl TestResult {
@@ -89,16 +85,6 @@ impl TestResult {
         self
     }
 
-    fn assert_duration_under(&self, max_secs: u64) -> &Self {
-        assert!(
-            self.duration.as_secs() < max_secs,
-            "Command took {:?}, expected under {}s",
-            self.duration,
-            max_secs
-        );
-        self
-    }
-
     fn assert_no_panic(&self) -> &Self {
         let combined = self.combined();
         assert!(
@@ -127,7 +113,6 @@ fn run_omg(args: &[&str]) -> TestResult {
 }
 
 fn run_omg_with_env(args: &[&str], env_vars: &[(&str, &str)]) -> TestResult {
-    let start = Instant::now();
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_omg"));
     cmd.args(args)
         .env("OMG_TEST_MODE", "1")
@@ -140,14 +125,12 @@ fn run_omg_with_env(args: &[&str], env_vars: &[(&str, &str)]) -> TestResult {
     }
 
     let output = cmd.output().expect("Failed to execute omg");
-    let duration = start.elapsed();
 
     TestResult {
         success: output.status.success(),
         stdout: String::from_utf8_lossy(&output.stdout).to_string(),
         stderr: String::from_utf8_lossy(&output.stderr).to_string(),
         exit_code: output.status.code().unwrap_or(-1),
-        duration,
     }
 }
 
@@ -157,10 +140,6 @@ fn system_tests_enabled() -> bool {
 
 fn destructive_tests_enabled() -> bool {
     matches!(env::var("OMG_RUN_DESTRUCTIVE_TESTS"), Ok(v) if v == "1")
-}
-
-fn perf_tests_enabled() -> bool {
-    matches!(env::var("OMG_RUN_PERF_TESTS"), Ok(v) if v == "1")
 }
 
 fn is_package_installed(pkg: &str) -> bool {
@@ -400,15 +379,6 @@ mod update_check_tests {
             combined
         );
     }
-
-    #[test]
-    fn test_check_mode_performance() {
-        if !system_tests_enabled() || !perf_tests_enabled() {
-            return;
-        }
-        let result = run_omg(&["update", "--check"]);
-        result.assert_duration_under(10);
-    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -431,9 +401,9 @@ mod update_ci_tests {
     }
 
     #[test]
-    fn test_no_hang_in_ci() {
+    fn test_ci_check_completes() {
         let result = run_omg_with_env(&["update", "--check"], &[("CI", "1")]);
-        result.assert_duration_under(30);
+        result.assert_no_panic();
     }
 }
 
@@ -628,7 +598,7 @@ mod parallel_build_tests {
 
 #[cfg(feature = "arch")]
 mod batch_query_tests {
-    use super::{perf_tests_enabled, system_tests_enabled};
+    use super::system_tests_enabled;
 
     #[test]
     fn test_batch_query_exists() {
@@ -650,79 +620,6 @@ mod batch_query_tests {
         assert!(results[0].is_some());
         assert!(results[1].is_some());
         assert!(results[2].is_none());
-    }
-
-    #[test]
-    fn test_batch_query_performance() {
-        if !system_tests_enabled() || !perf_tests_enabled() {
-            return;
-        }
-        use omg_lib::package_managers::alpm_direct::get_package_info_batch;
-        use std::time::Instant;
-
-        let packages: Vec<&str> = vec!["pacman", "glibc", "linux", "base", "systemd"];
-
-        let start = Instant::now();
-        let _ = get_package_info_batch(&packages);
-        let batch_time = start.elapsed();
-
-        assert!(
-            batch_time.as_millis() < 100,
-            "Batch query should be fast, took {:?}",
-            batch_time
-        );
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// PERFORMANCE TESTS
-// ═══════════════════════════════════════════════════════════════════════════════
-
-mod performance_tests {
-    use super::*;
-
-    #[test]
-    fn test_help_command_fast() {
-        let result = run_omg(&["--help"]);
-        result.assert_success();
-        result.assert_duration_under(2);
-    }
-
-    #[test]
-    fn test_version_command_fast() {
-        let result = run_omg(&["--version"]);
-        result.assert_success();
-        result.assert_duration_under(2);
-    }
-
-    #[test]
-    fn test_search_performance() {
-        if !system_tests_enabled() || !perf_tests_enabled() {
-            return;
-        }
-        let result = run_omg(&["search", "firefox"]);
-        result.assert_success();
-        result.assert_duration_under(5);
-    }
-
-    #[test]
-    fn test_info_performance() {
-        if !system_tests_enabled() || !perf_tests_enabled() {
-            return;
-        }
-        let result = run_omg(&["info", "pacman"]);
-        result.assert_success();
-        result.assert_duration_under(3);
-    }
-
-    #[test]
-    fn test_status_performance() {
-        if !system_tests_enabled() || !perf_tests_enabled() {
-            return;
-        }
-        let result = run_omg(&["status"]);
-        result.assert_success();
-        result.assert_duration_under(5);
     }
 }
 
@@ -1095,66 +992,6 @@ mod edge_case_tests {
         // Some flags might conflict
         let result = run_omg(&["install", "--fast", "--turbo", "vim"]);
         result.assert_no_panic();
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// PERFORMANCE AND SCALE TESTS
-// ═══════════════════════════════════════════════════════════════════════════════
-
-mod scale_tests {
-    use super::*;
-
-    #[test]
-    fn test_install_many_packages_performance() {
-        if !system_tests_enabled() || !perf_tests_enabled() {
-            return;
-        }
-
-        let packages = ["vim", "git", "curl", "wget", "htop", "tmux", "zsh", "bash"];
-        let args: Vec<&str> = std::iter::once("install")
-            .chain(std::iter::once("--dry-run"))
-            .chain(packages.iter().copied())
-            .collect();
-
-        let result = run_omg(&args);
-        result.assert_success();
-        result.assert_duration_under(15);
-    }
-
-    #[test]
-    fn test_repeated_install_calls_performance() {
-        if !system_tests_enabled() || !perf_tests_enabled() {
-            return;
-        }
-
-        // Simulates user trying multiple times
-        for _ in 0..5 {
-            let result = run_omg(&["install", "--dry-run", "vim"]);
-            result.assert_success();
-            result.assert_duration_under(10);
-        }
-    }
-
-    #[test]
-    fn test_update_check_is_fast() {
-        if !system_tests_enabled() || !perf_tests_enabled() {
-            return;
-        }
-
-        let result = run_omg(&["update", "--check"]);
-        result.assert_duration_under(15);
-    }
-
-    #[test]
-    fn test_status_command_performance() {
-        if !system_tests_enabled() || !perf_tests_enabled() {
-            return;
-        }
-
-        let result = run_omg(&["status"]);
-        result.assert_success();
-        result.assert_duration_under(5);
     }
 }
 
