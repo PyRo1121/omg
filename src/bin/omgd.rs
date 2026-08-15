@@ -53,11 +53,9 @@ async fn main() -> Result<()> {
     // DSN is loaded from OMG_SENTRY_DSN environment variable
     let _guard = sentry::init((
         std::env::var("OMG_SENTRY_DSN").ok(),
-        sentry::ClientOptions {
-            release: sentry::release_name!(),
-            attach_stacktrace: true,
-            ..Default::default()
-        },
+        sentry::ClientOptions::new()
+            .maybe_release(sentry::release_name!())
+            .attach_stacktrace(true),
     ));
 
     // Initialize tracing with Sentry integration
