@@ -4,6 +4,7 @@
 
 # ---- Build outputs ----
 /target
+/fuzz/target/
 dist/
 site/dist/
 omg-binary
@@ -66,6 +67,7 @@ Thumbs.db
 # ---- Generated documentation ----
 # Session artifacts
 SESSION-SUMMARY.md
+skills.md
 MEMORY_AUDIT_REPORT.md
 DOCUMENTATION-AUDIT*.md
 PERFORMANCE_OPTIMIZATIONS.md

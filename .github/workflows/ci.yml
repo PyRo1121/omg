@@ -132,6 +132,9 @@ jobs:
       - name: Compile check
         run: cargo check --all-targets --no-default-features --features pgp,license --locked
 
+      - name: Compile fuzz targets
+        run: cargo check --manifest-path fuzz/Cargo.toml --all-targets --locked
+
       - name: Install nextest
         uses: taiki-e/install-action@68250fb3d551d72befef105162372ebb3e8016e0 # nextest
 
