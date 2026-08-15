@@ -108,6 +108,7 @@ which newer clippy versions flag as an error with -D warnings.
 
 ### 👷 CI/CD
 
+- Enforce a valid supply-chain policy
 - Pin remaining third-party actions
 - Make security and coverage gates fail closed
 - Run Docker E2E tests explicitly
