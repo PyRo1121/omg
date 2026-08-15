@@ -638,11 +638,12 @@ mod destructive_tests {
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "performs a real package installation; requires OMG_RUN_DESTRUCTIVE_TESTS=1"]
     fn test_real_install_official_package() {
-        if !destructive_tests_enabled() {
-            return;
-        }
+        assert!(
+            destructive_tests_enabled(),
+            "Set OMG_RUN_DESTRUCTIVE_TESTS=1 to run destructive tests"
+        );
 
         let test_pkg = "cowsay";
         let was_installed = is_package_installed(test_pkg);
@@ -667,11 +668,12 @@ mod destructive_tests {
     }
 
     #[test]
-    #[ignore]
+    #[ignore = "runs a privileged real-system update check; requires OMG_RUN_DESTRUCTIVE_TESTS=1"]
     fn test_real_update_check() {
-        if !destructive_tests_enabled() {
-            return;
-        }
+        assert!(
+            destructive_tests_enabled(),
+            "Set OMG_RUN_DESTRUCTIVE_TESTS=1 to run destructive tests"
+        );
 
         let result = Command::new("sudo")
             .args([env!("CARGO_BIN_EXE_omg"), "update", "--check"])
