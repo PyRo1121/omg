@@ -279,10 +279,16 @@ impl PackageService {
 }
 
 /// Builder for `PackageService` with dependency injection support
+enum HistoryConfiguration {
+    Default,
+    Custom(HistoryManager),
+    Disabled,
+}
+
 pub struct PackageServiceBuilder {
     backend: Arc<dyn PackageManager>,
     policy: Option<SecurityPolicy>,
-    history: Option<HistoryManager>,
+    history: HistoryConfiguration,
     #[cfg(feature = "arch")]
     aur_client: Option<crate::package_managers::AurClient>,
     #[cfg(feature = "arch")]
@@ -295,7 +301,7 @@ impl PackageServiceBuilder {
         Self {
             backend,
             policy: None,
-            history: None,
+            history: HistoryConfiguration::Default,
             #[cfg(feature = "arch")]
             aur_client: None,
             #[cfg(feature = "arch")]
@@ -313,14 +319,14 @@ impl PackageServiceBuilder {
     /// Set the history manager (defaults to `HistoryManager::new()`)
     #[must_use]
     pub fn history(mut self, history: HistoryManager) -> Self {
-        self.history = Some(history);
+        self.history = HistoryConfiguration::Custom(history);
         self
     }
 
     /// Disable history tracking
     #[must_use]
     pub fn without_history(mut self) -> Self {
-        self.history = None;
+        self.history = HistoryConfiguration::Disabled;
         self
     }
 
@@ -351,10 +357,16 @@ impl PackageServiceBuilder {
             self.aur_client
         };
 
+        let history = match self.history {
+            HistoryConfiguration::Default => HistoryManager::new().ok(),
+            HistoryConfiguration::Custom(history) => Some(history),
+            HistoryConfiguration::Disabled => None,
+        };
+
         PackageService {
             backend: self.backend,
             policy: self.policy.unwrap_or_default(),
-            history: self.history.or_else(|| HistoryManager::new().ok()),
+            history,
             #[cfg(feature = "arch")]
             aur_client,
         }
@@ -366,29 +378,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_builder_with_defaults() {
-        // This test just verifies the builder compiles and runs
-        // In a real test, we'd use a mock backend
+    fn builder_without_history_disables_explicit_history() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let history = HistoryManager::new_in(directory.path().join("history.json"))?;
         let backend = Arc::new(crate::core::testing::TestPackageManager::new());
-        let service = PackageService::builder(backend).build();
-        // Service was created successfully
-        let _ = service;
-    }
 
-    #[test]
-    fn test_builder_without_history() {
-        let backend = Arc::new(crate::core::testing::TestPackageManager::new());
-        let service = PackageService::builder(backend).without_history().build();
-        // Service was created without history
-        let _ = service;
-    }
+        let service = PackageService::builder(backend)
+            .history(history)
+            .without_history()
+            .build();
 
-    #[test]
-    fn test_builder_with_custom_policy() {
-        let backend = Arc::new(crate::core::testing::TestPackageManager::new());
-        let policy = SecurityPolicy::default();
-        let service = PackageService::builder(backend).policy(policy).build();
-        // Service was created with custom policy
-        let _ = service;
+        assert!(service.history.is_none());
+        Ok(())
     }
 }

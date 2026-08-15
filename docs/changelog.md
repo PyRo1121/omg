@@ -11,11 +11,25 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 ---
 
 ## [Unreleased]
+### ⚡ Performance
+
+- Move daemon performance coverage out of test targets
+- Remove destructive AUR performance suite
+- Move performance checks to benchmarks
 ### ✨ New Features
 
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- **Deps**: Sync lockfile with updated crypto APIs
+- **Packages**: Make history opt-out effective
+- **History**: Reject corruption and persist atomically
+- **Security**: Remove vulnerable unused dependency paths
+- **Security**: Eliminate dependency vulnerabilities
+- **Runtime**: Reject unsafe archive entries
+- **Runtime**: Route aliases and fresh tools consistently
+- **Runtime**: Validate version path boundaries
+- **Runtime**: Activate versions atomically
 - **Sync**: Avoid nested tokio runtime panic in omg sync
 
 elevate_if_needed() creates a new tokio::runtime::Runtime inside
@@ -100,6 +114,14 @@ The configure_mirrors function was placed after #[cfg(test)] mod tests,
 
 which newer clippy versions flag as an error with -D warnings.
 
+### 👷 CI/CD
+
+- Harden release and mutation quality gates
+- Harden workflow credentials and release inputs
+- Enforce a valid supply-chain policy
+- Pin remaining third-party actions
+- Make security and coverage gates fail closed
+- Run Docker E2E tests explicitly
 ### 📦 Dependencies
 
 - **Deps**: Bump the dependencies group with 8 updates
@@ -286,8 +308,40 @@ dependency-type: indirect
 
 ...
 
+### 🔧 Maintenance
+
+- **Deps**: Update rust dependencies
+- Normalize project formatting
 ### 🧪 Testing
 
+- Remove timing-only parser benchmark
+- Remove hollow comprehensive smoke suite
+- Remove timing-only cache coverage
+- Remove duplicate daemon concurrency cases
+- Remove IPC timing checks and hollow branches
+- Remove duplicate daemon lifecycle timing checks
+- Remove Arch timing-only checks
+- Remove timing-only daemon concurrency checks
+- Make daemon cache assertions deterministic
+- Remove destructive AUR end-to-end target
+- Remove placeholder AUR security suite
+- Remove placeholder AUR recovery suite
+- Require mock task execution success
+- Remove weak Windows and Homebrew checks
+- Remove platform placeholders and timing checks
+- Remove fixture-only Ubuntu and panic repro targets
+- Remove dependency-only version properties
+- Remove direct HTTP chaos tests
+- Remove simulated filesystem and daemon suites
+- Remove duplicate version properties
+- Remove local model chaos suite
+- Remove compile-only package targets
+- Remove assertion-free integration placeholders
+- **Fuzz**: Minimize the isolated dependency graph
+- Make segmented runner reject empty success
+- **Fuzz**: Compile production fuzz targets in CI
+- Remove hollow checks and strengthen security coverage
+- Isolate daemon and package manager state
 - AUR fallback regression tests and test harness improvements
 
 Add 3 regression tests for the AUR update fallback bug (v0.1.215):

@@ -1,7 +1,0 @@
-# Seeds for failure cases proptest has generated in the past. It is
-# automatically read and these particular cases re-run before any
-# novel cases are generated.
-#
-# It is recommended to check this file in to source control so that
-# everyone who runs the test benefits from these saved cases.
-cc 11d2c11c5fb016564f4c92327e5f170d0888e55d4eb4a5ff0a664e02669bf234 # shrinks to ops = [Search("firefox"), Search("firefox"), Search("firefox"), Search("firefox"), Search("firefox"), Search("firefox"), Search("firefox"), Search("firefox"), Search("firefox"), Search("firefox")]

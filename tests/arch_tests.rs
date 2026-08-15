@@ -266,15 +266,6 @@ mod aur_integration {
     }
 
     #[test]
-    fn test_info_aur_package() {
-        require_network_tests!();
-        require_arch!();
-
-        let _result = run_omg(&["info", "yay"]);
-        // Should show AUR info or indicate AUR source
-    }
-
-    #[test]
     fn test_aur_helper_detection() {
         require_arch!();
 
@@ -518,74 +509,6 @@ mod new_features {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// PERFORMANCE TESTS
-// ═══════════════════════════════════════════════════════════════════════════════
-
-mod performance {
-    use super::*;
-
-    #[test]
-    fn test_status_performance() {
-        require_system_tests!();
-        require_arch!();
-
-        let result = run_omg(&["status"]);
-        result.assert_success();
-        assert_performance(&result, perf::STATUS_MAX_MS, "status");
-    }
-
-    #[test]
-    fn test_explicit_count_performance() {
-        require_system_tests!();
-        require_arch!();
-
-        let result = run_omg(&["explicit", "--count"]);
-        result.assert_success();
-        // Should be very fast (sub-10ms target)
-        assert_performance(&result, 50, "explicit --count");
-    }
-
-    #[test]
-    fn test_search_performance() {
-        require_system_tests!();
-        require_arch!();
-
-        let result = run_omg(&["search", "firefox"]);
-        result.assert_success();
-        // Search should be fast with ALPM direct
-        assert_performance(&result, perf::SEARCH_MAX_MS, "search");
-    }
-
-    #[test]
-    fn test_which_performance() {
-        let result = run_omg(&["which", "node"]);
-        result.assert_success();
-        assert_performance(&result, perf::WHICH_MAX_MS, "which");
-    }
-
-    #[test]
-    fn test_list_performance() {
-        let result = run_omg(&["list"]);
-        result.assert_success();
-        assert_performance(&result, perf::LIST_MAX_MS, "list");
-    }
-
-    #[test]
-    fn test_help_performance() {
-        let result = run_omg(&["--help"]);
-        result.assert_success();
-        assert_performance(&result, perf::HELP_MAX_MS, "help");
-    }
-
-    #[test]
-    fn test_completions_performance() {
-        let result = run_omg(&["completions", "zsh", "--stdout"]);
-        result.assert_success();
-        assert_performance(&result, perf::COMPLETIONS_MAX_MS, "completions");
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
 // SECURITY TESTS
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -727,39 +650,6 @@ mod edge_cases {
             let result = handle.join().unwrap();
             result.assert_success();
         }
-    }
-
-    #[test]
-    fn test_deeply_nested_directory() {
-        let project = TestProject::new();
-        project.with_node_project();
-
-        let deep_path = project.create_dir("a/b/c/d/e/f/g/h/i/j");
-        let _result = run_omg_in_dir(&["use", "node"], &deep_path);
-        // Should find version file in parent
-    }
-
-    #[test]
-    fn test_symlink_handling() {
-        let project = TestProject::new();
-        project.with_node_project();
-
-        #[cfg(unix)]
-        {
-            let link_path = project.path().join("link");
-            std::os::unix::fs::symlink(project.path(), &link_path).ok();
-            if link_path.exists() {
-                let _result = run_omg_in_dir(&["use", "node"], &link_path);
-                // Should work through symlinks
-            }
-        }
-    }
-
-    #[test]
-    fn test_readonly_directory() {
-        // Test handling of readonly directories
-        let _project = TestProject::new();
-        // Would need elevated permissions to test properly
     }
 
     #[test]

@@ -1,6 +1,6 @@
 [package]
 name = "omg"
-version = "0.1.214"
+version = "0.1.215"
 edition = "2024"
 rust-version = "1.93"
 description = "The Fastest Unified Package Manager for Arch Linux + All Language Runtimes"
@@ -12,7 +12,7 @@ keywords = ["package-manager", "arch-linux", "version-manager", "runtime"]
 categories = ["command-line-utilities", "development-tools"]
 
 [package.metadata.cargo-machete]
-ignored = ["ar", "winnow", "debian-packaging"]
+ignored = ["ar"]
 
 [lib]
 name = "omg_lib"
@@ -35,25 +35,25 @@ path = "src/bin/omg-fast.rs"
 # CLI Framework
 clap = { version = "4.5.60", features = ["derive", "env", "wrap_help"] }
 clap_complete = "4.5"
-clap_mangen = "0.2"  # Man page generation
+clap_mangen = "0.2"                                                      # Man page generation
 
 # Error handling
-anyhow = "1.0.102"
+anyhow = "1.0.103"
 thiserror = "2.0.17"
 trait-variant = "0.1"
 
 # Async runtime
 tokio = { version = "1.49", features = [
-    "rt",
-    "rt-multi-thread",
-    "macros",
-    "net",
-    "process",
-    "fs",
-    "io-util",
-    "sync",
-    "signal",
-    "time",
+  "rt",
+  "rt-multi-thread",
+  "macros",
+  "net",
+  "process",
+  "fs",
+  "io-util",
+  "sync",
+  "signal",
+  "time",
 ] }
 futures = "0.3.32"
 
@@ -64,11 +64,17 @@ toml = "1.0.3"
 bitcode = { version = "0.6", features = ["serde"] }
 
 # HTTP client (zstd for faster compressed downloads, read_timeout for reliability)
-reqwest = { version = "0.13.1", features = ["json", "stream", "gzip", "brotli", "zstd"] }
+reqwest = { version = "0.13.1", features = [
+  "json",
+  "stream",
+  "gzip",
+  "brotli",
+  "zstd",
+] }
 httpdate = "1.0.3"
 
 # Version Control
-git2 = "0.19"  # Pinned: libscoop requires git2 0.19 (libgit2-sys links conflict with 0.20)
+git2 = "0.19" # Pinned: libscoop requires git2 0.19 (libgit2-sys links conflict with 0.20)
 
 # Filesystem
 tokio-util = { version = "0.7.18", features = ["io", "codec", "rt"] }
@@ -76,16 +82,16 @@ tokio-util = { version = "0.7.18", features = ["io", "codec", "rt"] }
 # Archives + compression (zlib-rs = pure Rust SIMD-accelerated zlib, ~2x faster than miniz_oxide)
 tar = "0.4.46"
 flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
-lz4_flex = { version = "0.12", default-features = false, features = [
-    "frame",
+lz4_flex = { version = "0.14.0", default-features = false, features = [
+  "frame",
 ] }
 zip = { version = "8.1.0", default-features = false, features = [
-    "deflate",
-    "time",
+  "deflate",
+  "time",
 ] }
 lzma-rs = "0.3" # Pure Rust XZ/LZMA (replaces xz2)
 regex = "1.12.2"
-ruzstd = "0.8.2" # Pure Rust zstd decoder (replaces zstd)
+ruzstd = "0.9.0" # Pure Rust zstd decoder (replaces zstd)
 
 # Git operations - using command-line git (always available on Arch)
 
@@ -93,11 +99,13 @@ ruzstd = "0.8.2" # Pure Rust zstd decoder (replaces zstd)
 zerocopy = { version = "0.8", features = ["derive"] }
 dashmap = "6.1.0"
 moka = { version = "0.12", features = ["sync"] }
-memchr = "2.7"                                   # SIMD-accelerated string search
-memmap2 = "0.9"
-mimalloc = { version = "0.1", default-features = false, features = ["v3"] }  # v3: lock-free, lower memory
-rustc-hash = "2.1"                                        # FxHash - faster non-cryptographic hashing
-fst = "0.4"                                               # Finite State Transducer for O(1) search
+memchr = "2.7" # SIMD-accelerated string search
+memmap2 = "0.9.11"
+mimalloc = { version = "0.1", default-features = false, features = [
+  "v3",
+] } # v3: lock-free, lower memory
+rustc-hash = "2.1" # FxHash - faster non-cryptographic hashing
+fst = "0.4" # Finite State Transducer for O(1) search
 
 # Logging
 tracing = "0.1.44"
@@ -123,7 +131,7 @@ notify = "8.2"
 home = "0.5.12"
 
 # Cryptography
-sha2 = "0.10.9"
+sha2 = "0.11.0"
 hex = "0.4.3"
 
 # System calls (for disk space checks, etc.)
@@ -143,11 +151,11 @@ alpm = { version = "5.0.2", optional = true }
 
 # Official Arch Linux pure Rust ALPM ecosystem (archlinux/alpm)
 # Pinned to specific commit for supply chain security - update periodically
-alpm-types = { git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", package = "alpm-types", rev = "b5463fcd4b677e55792dfb0c708da9659db0368a", optional = true }
-alpm-srcinfo = { git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", package = "alpm-srcinfo", rev = "b5463fcd4b677e55792dfb0c708da9659db0368a", optional = true }
-alpm-db = { git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", package = "alpm-db", rev = "b5463fcd4b677e55792dfb0c708da9659db0368a", optional = true }
-alpm-repo-db = { git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", package = "alpm-repo-db", rev = "b5463fcd4b677e55792dfb0c708da9659db0368a", optional = true }
-alpm-pkginfo = { git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", package = "alpm-pkginfo", rev = "b5463fcd4b677e55792dfb0c708da9659db0368a", optional = true }
+alpm-types = { version = "=0.11.1", git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", package = "alpm-types", rev = "b5463fcd4b677e55792dfb0c708da9659db0368a", optional = true }
+alpm-srcinfo = { version = "=0.6.2", git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", package = "alpm-srcinfo", rev = "b5463fcd4b677e55792dfb0c708da9659db0368a", optional = true }
+alpm-db = { version = "=0.2.1", git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", package = "alpm-db", rev = "b5463fcd4b677e55792dfb0c708da9659db0368a", optional = true }
+alpm-repo-db = { version = "=0.1.1", git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", package = "alpm-repo-db", rev = "b5463fcd4b677e55792dfb0c708da9659db0368a", optional = true }
+alpm-pkginfo = { version = "=0.6.1", git = "https://gitlab.archlinux.org/archlinux/alpm/alpm.git", package = "alpm-pkginfo", rev = "b5463fcd4b677e55792dfb0c708da9659db0368a", optional = true }
 
 # Process execution
 which = "8.0"
@@ -165,77 +173,86 @@ urlencoding = "2.1"
 rayon = "1.11.0"
 
 # Security (Phase 4.2) - PURE RUST crypto backend (for package verification, not secrets)
-sequoia-openpgp = { version = "2.2.0-pqc.1", default-features = false, features = ["crypto-rust", "allow-experimental-crypto", "allow-variable-time-crypto"], optional = true }
-sequoia-net = { version = "0.31.0-pqc.1", optional = true }
+sequoia-openpgp = { version = "2.2.0-pqc.1", default-features = false, features = [
+  "crypto-rust",
+  "allow-experimental-crypto",
+  "allow-variable-time-crypto",
+], optional = true }
 nucleo-matcher = "0.3.1"
 dirs = "6.0.0"
 ahash = "0.8.12"
 uuid = { version = "1.21", features = ["v4"] }
 ratatui = "0.30"
 crossterm = "0.29"
-rust-apt = { version = "0.9.0", optional = true }
+rust-apt = { version = "0.10.0", optional = true }
 rustix = { version = "1.1", features = ["fs", "process", "thread"] }
 
-# Debian/Ubuntu 2026 Performance Stack
-debian-packaging = { version = "0.18", optional = true } # Pure Rust apt reimplementation
-winnow = { version = "0.7", optional = true }            # Zero-copy parser combinators
-ar = { version = "0.9", optional = true }                # Pure Rust .ar archive parsing
-resolvo = { version = "0.10.2", optional = true }
-rkyv = { version = "0.8", features = ["bytecheck", "little_endian", "aligned"] }  # Zero-copy deserialization
+# Debian/Ubuntu package support
+ar = { version = "0.9", optional = true } # Pure Rust .ar archive parsing
+resolvo = { version = "0.12.0", optional = true }
+rkyv = { version = "0.8.17", features = [
+  "bytecheck",
+  "little_endian",
+  "aligned",
+] } # Zero-copy deserialization
 whoami = "2.0.2"
 governor = "0.10.4"
-jsonwebtoken = { version = "10.3.0", default-features = false, features = ["rust_crypto"] }  # >=10.3.0 required: CVE-2026-25537 fix
-sentry = { version = "0.46.1", features = ["anyhow", "tracing", "logs"] }
-sentry-tracing = "0.46.1"
+jsonwebtoken = { version = "10.3.0", default-features = false, features = [
+  "rust_crypto",
+] } # >=10.3.0 required: CVE-2026-25537 fix
+sentry = { version = "0.49.0", default-features = false, features = [
+  "anyhow",
+  "tracing",
+  "logs",
+  "backtrace",
+  "contexts",
+  "panic",
+  "reqwest",
+  "rustls",
+] }
+sentry-tracing = "0.49.0"
 
 # Cross-platform package manager support
-rusqlite = { version = "0.38", features = ["bundled"], optional = true }  # SQLite for RPM db
-quick-xml = { version = "0.39", features = ["serialize"], optional = true }  # Fast XML parsing
+rusqlite = { version = "0.40", features = [
+  "bundled",
+], optional = true } # SQLite for RPM db
 
 # Windows-specific (conditional) - only compiled on Windows
 [target.'cfg(target_os = "windows")'.dependencies]
-winreg = { version = "0.55" }  # Windows registry access
-libscoop = { version = "0.1.0-beta.7" }  # Pure Rust Scoop implementation
-openssl-sys = { version = "0.9", features = ["vendored"] }  # Build OpenSSL from source on Windows
+winreg = { version = "0.56" } # Windows registry access
+libscoop = { version = "0.1.0-beta.7" } # Pure Rust Scoop implementation
+openssl-sys = { version = "0.9", features = [
+  "vendored",
+] } # Build OpenSSL from source on Windows
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
-tempfile = "3.25.0"
 assert_cmd = "2.1"
 predicates = "3.1"
-cargo-audit = "0.22"                                         # Security vulnerability auditing
 proptest = "1.4"                                             # Property-based testing
-rand = "0.10"                                                 # Random generation for fuzz tests
-serde_json = "1.0"                                           # JSON parsing for test assertions
+rand = "0.10.1"                                              # Random generation for property tests
 serial_test = "3.4"                                          # Serialize tests that modify global state
 scopeguard = "1.2"
-tar = "0.4"
-flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
 chrono = "0.4"
 temp-env = "0.3"
 zstd = "0.13"                                                # For decompression benchmarks
-lzma-rs = "0.3"                                              # For decompression benchmarks
-
-# Unix-specific dependencies
-[target.'cfg(unix)'.dependencies]
-pprof = { version = "0.15", features = ["flamegraph"] }
 
 # Maximum optimization for production releases
 [profile.release]
-lto = "fat"       # Full LTO for maximum cross-crate inlining
-codegen-units = 1 # Maximum optimization, slower builds
-panic = "unwind"  # CRITICAL: Required for catch_unwind to work in release builds
+lto = "fat"         # Full LTO for maximum cross-crate inlining
+codegen-units = 1   # Maximum optimization, slower builds
+panic = "unwind"    # CRITICAL: Required for catch_unwind to work in release builds
 strip = true
-opt-level = 3     # Maximum optimization
+opt-level = 3       # Maximum optimization
 incremental = false # LTO incompatible with incremental
 
 # Fast release builds (4-5x faster than release, ~5% slower runtime)
 [profile.release-fast]
 inherits = "release"
-lto = "thin"      # Thin LTO: 80% of fat LTO benefits, 4x faster builds
-codegen-units = 16 # Parallel codegen
-incremental = true # Enable incremental for faster rebuilds
-opt-level = 2     # Good optimization, faster compilation
+lto = "thin"         # Thin LTO: 80% of fat LTO benefits, 4x faster builds
+codegen-units = 16   # Parallel codegen
+incremental = true   # Enable incremental for faster rebuilds
+opt-level = 2        # Good optimization, faster compilation
 
 # Size-optimized builds (smallest possible binary)
 # Minimal build: cargo build --profile release-size --no-default-features --features arch
@@ -243,33 +260,33 @@ opt-level = 2     # Good optimization, faster compilation
 [profile.release-size]
 inherits = "release"
 lto = "fat"
-opt-level = "z"   # Optimize for size
-strip = "symbols" # Aggressive stripping
+opt-level = "z"      # Optimize for size
+strip = "symbols"    # Aggressive stripping
 codegen-units = 1
 
 # Benchmarking profile
 [profile.bench]
 inherits = "release"
-debug = true      # Keep debug info for profiling
+debug = true         # Keep debug info for profiling
 
 # PGO Phase 1: Instrumentation (collect profile data)
 # Minimal optimization - just needs to run workload, not be fast
 [profile.pgo-instrument]
 inherits = "release"
-lto = false           # No LTO during instrumentation (avoids MIR inliner crashes)
-codegen-units = 16    # Maximum parallelism, minimum optimization pressure
-opt-level = 2         # Reduce optimization (less MIR complexity)
+lto = false          # No LTO during instrumentation (avoids MIR inliner crashes)
+codegen-units = 16   # Maximum parallelism, minimum optimization pressure
+opt-level = 2        # Reduce optimization (less MIR complexity)
 debug = false
 incremental = false
-strip = false         # Keep symbols for better profiling
+strip = false        # Keep symbols for better profiling
 
 # PGO Phase 2: Optimized build (use profile data)
 # Thin LTO is safe when using profile data (not generating it)
 [profile.release-pgo]
 inherits = "release"
-lto = "thin"      # Thin LTO is safe with profile-use (not profile-generate)
-codegen-units = 8 # Balanced optimization
-opt-level = 3     # Maximum runtime performance
+lto = "thin"         # Thin LTO is safe with profile-use (not profile-generate)
+codegen-units = 8    # Balanced optimization
+opt-level = 3        # Maximum runtime performance
 
 # Faster dev builds for iteration
 [profile.dev.package."*"]
@@ -284,39 +301,37 @@ split-debuginfo = "unpacked" # Faster linking on Linux
 [features]
 default = ["arch", "license", "pgp"]
 arch = [
-    "alpm",
-    "alpm-types",
-    "alpm-srcinfo",
-    "alpm-db",
-    "alpm-repo-db",
-    "alpm-pkginfo"
+  "alpm",
+  "alpm-types",
+  "alpm-srcinfo",
+  "alpm-db",
+  "alpm-repo-db",
+  "alpm-pkginfo",
 ]
-pgp = ["sequoia-openpgp", "sequoia-net"] # Optional PGP verification (requires Rust 1.80+)
+pgp = ["sequoia-openpgp"] # Optional PGP verification (requires Rust 1.80+)
 
 # Windows support - pure Rust implementation (winreg auto-enabled on Windows via target cfg)
 windows = []
 
 # Debian/Ubuntu support - unified feature
 # Requires libapt-pkg-dev: `apt install libapt-pkg-dev`
-debian = ["debian-packaging", "winnow", "ar", "rust-apt"]
+debian = ["ar", "rust-apt"]
 
 # Pure Rust Debian support (no FFI, no system dependencies) - for testing/indexing
-debian-pure = ["debian-packaging", "winnow", "ar"]
-
-debian-deb822-backend = ["debian-packaging"]
+debian-pure = ["ar"]
 debian-resolvo = ["resolvo"]
 
 # Fedora/RHEL support (DNF/RPM) - Pure Rust, no system dependencies
-fedora = ["rusqlite", "quick-xml"]
+fedora = ["rusqlite"]
 
 # macOS/Homebrew support - Pure Rust
 macos = []
 
-license = [] # Enable license/subscription features (Pro, Team, Enterprise tiers)
+license = [
+] # Enable license/subscription features (Pro, Team, Enterprise tiers)
 proptest = [] # Enable property-based tests
 docker_tests = [] # Enable tests that require running as root (e.g. in Docker)
 sequoia-openpgp = ["dep:sequoia-openpgp"]
-sequoia-net = ["dep:sequoia-net"]
 
 # ============================================================================
 # Rust 1.93 / Edition 2024 Lint Configuration
@@ -336,25 +351,25 @@ nursery = { level = "warn", priority = -1 }
 correctness = { level = "deny", priority = -1 }
 
 # Production safety lints
-dbg_macro = "deny"             # Never ship debug macros to production
-todo = "warn"                  # Track incomplete code
-unimplemented = "warn"         # Track unimplemented code paths
+dbg_macro = "deny"     # Never ship debug macros to production
+todo = "warn"          # Track incomplete code
+unimplemented = "warn" # Track unimplemented code paths
 # Note: unwrap/expect warnings disabled - too noisy for CLI with 48+ legitimate uses
 # Note: print_stdout/stderr disabled - CLI tool intentionally uses println!
 
 # Rust 1.93 / Edition 2024 optimization lints
-missing_const_for_fn = "warn"  # Find const fn opportunities
-redundant_clone = "warn"       # Detect unnecessary clones
-large_enum_variant = "warn"    # Warn on >200 byte enum variants
+missing_const_for_fn = "warn" # Find const fn opportunities
+redundant_clone = "warn"      # Detect unnecessary clones
+large_enum_variant = "warn"   # Warn on >200 byte enum variants
 
 # Project-specific allowances (with justification)
-module_name_repetitions = "allow"      # e.g., PackageManager in package_managers module
-too_many_arguments = "allow"           # CLI functions legitimately need many args
-missing_errors_doc = "allow"           # Error docs not always needed for internal fns
-missing_panics_doc = "allow"           # Panic docs not always needed for internal fns
-must_use_candidate = "allow"           # Too noisy - we handle this case-by-case
-similar_names = "allow"                # e.g., pkg vs pkgs is intentional and clear
-doc_markdown = "allow"                 # Too strict on technical terms like CLI flags
-struct_excessive_bools = "allow"       # Config structs legitimately have bool fields
-fn_params_excessive_bools = "allow"    # CLI functions need bool flags for options
-significant_drop_tightening = "allow"  # False positives with lock guards in closures
+module_name_repetitions = "allow"     # e.g., PackageManager in package_managers module
+too_many_arguments = "allow"          # CLI functions legitimately need many args
+missing_errors_doc = "allow"          # Error docs not always needed for internal fns
+missing_panics_doc = "allow"          # Panic docs not always needed for internal fns
+must_use_candidate = "allow"          # Too noisy - we handle this case-by-case
+similar_names = "allow"               # e.g., pkg vs pkgs is intentional and clear
+doc_markdown = "allow"                # Too strict on technical terms like CLI flags
+struct_excessive_bools = "allow"      # Config structs legitimately have bool fields
+fn_params_excessive_bools = "allow"   # CLI functions need bool flags for options
+significant_drop_tightening = "allow" # False positives with lock guards in closures

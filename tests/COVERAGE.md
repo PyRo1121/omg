@@ -6,6 +6,7 @@
 **Integration Tests**: ~112 passing
 
 ## Coverage Status Legend
+
 - ✅ **Covered**: Has comprehensive e2e tests (success + error cases)
 - 🟡 **Partial**: Has basic tests but missing error/edge cases
 - ❌ **Missing**: No e2e tests exist
@@ -15,7 +16,7 @@
 ## Core Package Management (8 commands)
 
 | Command | Status | Tests | Missing |
-|---------|--------|-------|---------|
+| --------- | -------- | ------- | --------- |
 | `search` | ✅ | Basic search, AUR search, detailed, regex | Performance benchmarks |
 | `install` | 🟡 | Help text only | Actual install flow, error cases, security grading |
 | `remove` | 🟡 | Help text only | Actual remove flow, dependency handling, orphan cleanup |
@@ -32,7 +33,7 @@
 ## Package Operations (5 commands)
 
 | Command | Status | Tests | Missing |
-|---------|--------|-------|---------|
+| --------- | -------- | ------- | --------- |
 | `explicit` | ✅ | List, count | Large systems (1000+ packages) |
 | `clean` | 🟡 | Help only | Actual cleanup, dry-run, selective clean |
 | `pin` | ❌ | None | Pin package, unpin, list pinned |
@@ -46,7 +47,7 @@
 ## Runtime Management (4 commands)
 
 | Command | Status | Tests | Missing |
-|---------|--------|-------|---------|
+| --------- | -------- | ------- | --------- |
 | `use` | 🟡 | Basic node switch | Python, Go, Rust, Bun, Ruby, Java; global vs local |
 | `list` | ✅ | Installed runtimes | `--available`, filtering, JSON output |
 | `hook` | ❌ | None | Shell hooks (bash, zsh, fish), integration tests |
@@ -59,7 +60,7 @@
 ## Project Workflows (4 commands)
 
 | Command | Status | Tests | Missing |
-|---------|--------|-------|---------|
+| --------- | -------- | ------- | --------- |
 | `run` | ❌ | None | package.json, Cargo.toml, Makefile, pyproject.toml detection |
 | `new` | ❌ | None | All templates (react, rust, python, etc.) |
 | `tool` | ❌ | None | Install, remove, list, update cross-ecosystem tools |
@@ -72,7 +73,7 @@
 ## Environment & Team (4 commands)
 
 | Command | Status | Tests | Missing |
-|---------|--------|-------|---------|
+| --------- | -------- | ------- | --------- |
 | `env` | ❌ | None | Capture, restore, check, share |
 | `team` | ❌ | None | Init, join, push, pull, status, diff |
 | `hooks` | ❌ | None | Git hook installation, pre-commit, post-checkout |
@@ -107,7 +108,7 @@
 ## System Management (8 commands)
 
 | Command | Status | Tests | Missing |
-|---------|--------|-------|---------|
+| --------- | -------- | ------- | --------- |
 | `status` | ✅ | Basic, concurrent | Detailed status, JSON output |
 | `doctor` | ❌ | None | Health checks, diagnostics, fix suggestions |
 | `config` | ❌ | None | get, set, list, unset |
@@ -124,7 +125,7 @@
 ## UI & Utilities (6 commands)
 
 | Command | Status | Tests | Missing |
-|---------|--------|-------|---------|
+| --------- | -------- | ------- | --------- |
 | `dash` | ❌ | None | TUI launch, navigation, keybindings |
 | `stats` | ❌ | None | Usage stats, time saved, command frequency |
 | `metrics` | ❌ | None | Prometheus metrics export |
@@ -161,6 +162,7 @@
 ## Summary
 
 ### Current Coverage
+
 - **Well Tested (✅)**: 10/43 commands (23%)
 - **Partially Tested (🟡)**: 7/43 commands (16%)
 - **Not Tested (❌)**: 26/43 commands (60%)
@@ -168,6 +170,7 @@
 ### Priority Test Additions (Next 2 hours)
 
 **Tier 1 (Critical - User-Facing)**:
+
 1. `install`, `remove`, `update` - Core package operations
 2. `run`, `new` - Project workflows
 3. `use` (multi-runtime), `hook` - Runtime management
@@ -241,7 +244,7 @@ cargo test --test cli_integration
 cargo test --test security_tests
 
 # Performance
-cargo test --test benchmarks --release
+cargo bench --features arch
 
 # All tests
 cargo test --all

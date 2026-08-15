@@ -180,10 +180,14 @@ mod apt_integration {
 
     #[test]
     fn test_update_check_with_mock_updates() {
-        let project = TestProject::new();
+        let project = TestProject::for_distro("debian");
 
-        mock_install("firefox-esr", "115.6.0").ok();
-        mock_available("firefox-esr", "116.0.0").ok();
+        project
+            .mock_install("firefox-esr", "115.6.0")
+            .expect("failed to create installed Debian mock fixture");
+        project
+            .mock_available("firefox-esr", "116.0.0")
+            .expect("failed to create available Debian mock fixture");
 
         let result = project.run(&["update", "--check"]);
         result.assert_success();
@@ -198,10 +202,14 @@ mod apt_integration {
 
     #[test]
     fn test_update_check_no_updates_when_current() {
-        let project = TestProject::new();
+        let project = TestProject::for_distro("debian");
 
-        mock_install("firefox-esr", "116.0.0").ok();
-        mock_available("firefox-esr", "116.0.0").ok();
+        project
+            .mock_install("firefox-esr", "116.0.0")
+            .expect("failed to create installed Debian mock fixture");
+        project
+            .mock_available("firefox-esr", "116.0.0")
+            .expect("failed to create available Debian mock fixture");
 
         let result = project.run(&["update", "--check"]);
         result.assert_success();

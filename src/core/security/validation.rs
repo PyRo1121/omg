@@ -4,6 +4,8 @@
 
 use anyhow::{bail, Result};
 
+const MAX_RELATIVE_PATH_LENGTH: usize = 4096;
+
 /// Validates a package name for security
 ///
 /// Package names must:
@@ -141,11 +143,34 @@ pub fn validate_version(version: &str) -> Result<()> {
         bail!("Version string too long (max 128 characters)");
     }
 
+    if matches!(version, "." | "..") {
+        bail!("Version cannot be a filesystem path component");
+    }
+
     // Allow: digits, dots, hyphens, plus, colons (for epochs), and letters
     for c in version.chars() {
         if !c.is_ascii_alphanumeric() && !matches!(c, '.' | '-' | '+' | ':' | '~') {
             bail!("Invalid character '{c}' in version string");
         }
+    }
+
+    Ok(())
+}
+
+/// Validate a runtime version before using it as a filesystem path component.
+///
+/// Runtime versions are stricter than package versions: package-manager epoch
+/// and tilde syntax are not valid runtime directory names, and `current` is
+/// reserved for the active-version symlink.
+pub fn validate_runtime_version(version: &str) -> Result<()> {
+    validate_version(version)?;
+
+    if version.eq_ignore_ascii_case("current") {
+        bail!("Runtime version name 'current' is reserved");
+    }
+
+    if version.contains(':') || version.contains('~') {
+        bail!("Runtime version contains characters unsafe for filesystem paths");
     }
 
     Ok(())
@@ -160,6 +185,10 @@ pub fn validate_version(version: &str) -> Result<()> {
 pub fn validate_relative_path(path: &str) -> Result<()> {
     if path.is_empty() {
         bail!("Path cannot be empty");
+    }
+
+    if path.len() > MAX_RELATIVE_PATH_LENGTH {
+        bail!("Path too long (max {MAX_RELATIVE_PATH_LENGTH} bytes)");
     }
 
     if path.contains('\0') {
@@ -251,6 +280,21 @@ mod tests {
         assert!(validate_version(&"1".repeat(129)).is_err());
         assert!(validate_version("1.0; rm -rf /").is_err());
         assert!(validate_version("1.0$(whoami)").is_err());
+        assert!(validate_version(".").is_err());
+        assert!(validate_version("..").is_err());
+    }
+
+    #[test]
+    fn runtime_versions_are_safe_path_components() {
+        for version in ["1.0.0", "v22.1.0", "1.82.0-beta.5", "nightly-2026-08-15"] {
+            assert!(validate_runtime_version(version).is_ok(), "{version}");
+        }
+
+        for version in [
+            ".", "..", "current", "CURRENT", "1:2.0", "1.0~rc1", "../1.0",
+        ] {
+            assert!(validate_runtime_version(version).is_err(), "{version}");
+        }
     }
 
     #[test]
@@ -267,6 +311,24 @@ mod tests {
         assert!(validate_relative_path("foo/../bar").is_err());
         assert!(validate_relative_path("foo//bar").is_err());
         assert!(validate_relative_path("foo\0bar").is_err());
+    }
+
+    #[test]
+    fn relative_path_length_is_bounded_in_bytes() {
+        let max_ascii = "a".repeat(MAX_RELATIVE_PATH_LENGTH);
+        assert!(validate_relative_path(&max_ascii).is_ok());
+
+        let too_long_ascii = "a".repeat(MAX_RELATIVE_PATH_LENGTH + 1);
+        let error = validate_relative_path(&too_long_ascii)
+            .expect_err("path above the byte limit must be rejected");
+        assert!(error.to_string().contains("Path too long"));
+
+        let max_multibyte = "é".repeat(MAX_RELATIVE_PATH_LENGTH / "é".len());
+        assert_eq!(max_multibyte.len(), MAX_RELATIVE_PATH_LENGTH);
+        assert!(validate_relative_path(&max_multibyte).is_ok());
+
+        let too_long_multibyte = format!("{max_multibyte}é");
+        assert!(validate_relative_path(&too_long_multibyte).is_err());
     }
 
     #[test]

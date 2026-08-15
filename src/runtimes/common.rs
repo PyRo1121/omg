@@ -5,12 +5,14 @@
 use std::cmp::Ordering;
 use std::fs::{self, File};
 use std::io::BufReader;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::{Context, Result};
 use indicatif::{ProgressBar, ProgressStyle};
 use owo_colors::OwoColorize;
 use sha2::{Digest, Sha256};
+
+use crate::core::archive::stripped_archive_path;
 
 /// Progress bar style for downloads
 #[expect(clippy::expect_used)] // Path operations on known-valid HOME directory; failure is unrecoverable
@@ -99,7 +101,7 @@ pub async fn download_with_progress(
         // SAFETY: hasher is guaranteed to be Some when expected_sha256 is Some
         // (see initialization at line 76-80)
         let hasher = hasher.expect("hasher initialized when expected_sha256 is Some");
-        let actual = format!("{:x}", hasher.finalize());
+        let actual = hex::encode(hasher.finalize());
 
         if actual != expected.to_lowercase() {
             anyhow::bail!(
@@ -138,21 +140,9 @@ pub async fn extract_tar_gz(
         for entry in archive.entries()? {
             let mut entry = entry?;
             let path = entry.path()?;
-
-            // Strip leading components
-            let stripped: PathBuf = path.components().skip(strip_components).collect();
-            if stripped.as_os_str().is_empty() {
+            let Some(stripped) = stripped_archive_path(&path, strip_components)? else {
                 continue;
-            }
-
-            // Security: Reject paths with parent directory traversal (zip-slip protection)
-            if stripped
-                .components()
-                .any(|c| c == std::path::Component::ParentDir)
-            {
-                tracing::warn!("Skipping path with directory traversal: {}", path.display());
-                continue;
-            }
+            };
 
             let dest_path = dest_dir.join(&stripped);
             pb.set_message(format!("Extracting: {}", stripped.display()));
@@ -214,20 +204,9 @@ pub async fn extract_tar_xz(
             let mut entry = entry?;
             let path = entry.path()?;
 
-            // Strip leading components
-            let stripped: PathBuf = path.components().skip(strip_components).collect();
-            if stripped.as_os_str().is_empty() {
+            let Some(stripped) = stripped_archive_path(&path, strip_components)? else {
                 continue;
-            }
-
-            // Security: Reject paths with parent directory traversal (zip-slip protection)
-            if stripped
-                .components()
-                .any(|c| c == std::path::Component::ParentDir)
-            {
-                tracing::warn!("Skipping path with directory traversal: {}", path.display());
-                continue;
-            }
+            };
 
             let dest_path = dest_dir.join(&stripped);
 
@@ -271,22 +250,12 @@ pub async fn extract_zip(
 
         for i in 0..archive.len() {
             let mut file = archive.by_index(i)?;
-            let path = file.mangled_name();
-
-            // Strip leading components
-            let stripped: PathBuf = path.components().skip(strip_components).collect();
-            if stripped.as_os_str().is_empty() {
+            let path = file.enclosed_name().ok_or_else(|| {
+                anyhow::anyhow!("Unsafe path in runtime ZIP archive: {}", file.name())
+            })?;
+            let Some(stripped) = stripped_archive_path(&path, strip_components)? else {
                 continue;
-            }
-
-            // Security: Reject paths with parent directory traversal (zip-slip protection)
-            if stripped
-                .components()
-                .any(|c| c == std::path::Component::ParentDir)
-            {
-                tracing::warn!("Skipping path with directory traversal: {}", path.display());
-                continue;
-            }
+            };
 
             let dest_path = dest_dir.join(&stripped);
             pb.set_message(format!("Extracting: {}", stripped.display()));
@@ -317,6 +286,8 @@ pub async fn extract_zip(
 
 /// Create or update the "current" symlink
 pub fn set_current_version(versions_dir: &Path, version: &str) -> Result<()> {
+    crate::core::security::validate_runtime_version(version)?;
+
     let current_link = versions_dir.join("current");
     let version_dir = versions_dir.join(version);
 
@@ -326,16 +297,61 @@ pub fn set_current_version(versions_dir: &Path, version: &str) -> Result<()> {
         );
     }
 
-    // Remove existing symlink
-    if current_link.exists() || current_link.is_symlink() {
-        fs::remove_file(&current_link)?;
-    }
+    #[cfg(not(unix))]
+    anyhow::bail!("Runtime version switching is unsupported on this platform");
 
-    // Create new symlink
     #[cfg(unix)]
-    std::os::unix::fs::symlink(&version_dir, &current_link)?;
+    {
+        match fs::symlink_metadata(&current_link) {
+            Ok(metadata) if !metadata.file_type().is_symlink() => {
+                anyhow::bail!(
+                    "Refusing to replace non-symlink current runtime path: {}",
+                    current_link.display()
+                );
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "Failed to inspect current runtime path: {}",
+                        current_link.display()
+                    )
+                });
+            }
+        }
 
-    Ok(())
+        let temp_link = tempfile::Builder::new()
+            .prefix(".current-")
+            .tempfile_in(versions_dir)
+            .with_context(|| {
+                format!(
+                    "Failed to create temporary runtime link in {}",
+                    versions_dir.display()
+                )
+            })?
+            .into_temp_path();
+        fs::remove_file(&temp_link).with_context(|| {
+            format!(
+                "Failed to prepare temporary runtime link: {}",
+                temp_link.display()
+            )
+        })?;
+        std::os::unix::fs::symlink(&version_dir, &temp_link).with_context(|| {
+            format!(
+                "Failed to create temporary runtime link: {}",
+                temp_link.display()
+            )
+        })?;
+        fs::rename(&temp_link, &current_link).with_context(|| {
+            format!(
+                "Failed to activate runtime version {version} at {}",
+                current_link.display()
+            )
+        })?;
+
+        Ok(())
+    }
 }
 
 /// Get the current version from the "current" symlink
@@ -457,6 +473,7 @@ macro_rules! impl_runtime_common {
                 use std::fs;
 
                 let version = $crate::runtimes::common::normalize_version(version);
+                $crate::core::security::validate_runtime_version(&version)?;
                 let version_dir = self.versions_dir.join(&version);
 
                 if !version_dir.exists() {
@@ -557,18 +574,75 @@ mod tests {
 
     #[test]
     #[cfg(unix)]
-    fn test_set_and_get_current_version() {
+    fn switching_current_version_replaces_the_existing_link() {
         let temp = TempDir::new().unwrap();
-        fs::create_dir(temp.path().join("1.0.0")).unwrap();
+        let first_version = temp.path().join("1.0.0");
+        let second_version = temp.path().join("2.0.0");
+        fs::create_dir(&first_version).unwrap();
+        fs::create_dir(&second_version).unwrap();
 
         set_current_version(temp.path(), "1.0.0").unwrap();
-        assert_eq!(get_current_version(temp.path()), Some("1.0.0".to_string()));
+        set_current_version(temp.path(), "2.0.0").unwrap();
+
+        assert_eq!(
+            fs::read_link(temp.path().join("current")).unwrap(),
+            second_version
+        );
+        assert_eq!(get_current_version(temp.path()), Some("2.0.0".to_string()));
+        assert!(first_version.is_dir());
     }
 
     #[test]
-    fn test_set_current_version_not_installed() {
+    #[cfg(unix)]
+    fn missing_version_preserves_the_current_link() {
         let temp = TempDir::new().unwrap();
-        let result = set_current_version(temp.path(), "1.0.0");
-        assert!(result.is_err());
+        let installed_version = temp.path().join("1.0.0");
+        fs::create_dir(&installed_version).unwrap();
+        set_current_version(temp.path(), "1.0.0").unwrap();
+
+        let error = set_current_version(temp.path(), "2.0.0").unwrap_err();
+
+        assert!(error.to_string().contains("is not installed"));
+        assert_eq!(
+            fs::read_link(temp.path().join("current")).unwrap(),
+            installed_version
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn activation_refuses_to_replace_a_regular_file() {
+        let temp = TempDir::new().unwrap();
+        fs::create_dir(temp.path().join("1.0.0")).unwrap();
+        let current_path = temp.path().join("current");
+        fs::write(&current_path, "sentinel").unwrap();
+
+        let error = set_current_version(temp.path(), "1.0.0").unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("Refusing to replace non-symlink")
+        );
+        assert_eq!(fs::read_to_string(current_path).unwrap(), "sentinel");
+    }
+
+    #[test]
+    fn set_current_version_rejects_missing_versions() {
+        let temp = TempDir::new().unwrap();
+        let error = set_current_version(temp.path(), "1.0.0").unwrap_err();
+        assert!(error.to_string().contains("is not installed"));
+    }
+
+    #[test]
+    #[cfg(not(unix))]
+    fn activation_fails_explicitly_on_unsupported_platforms() {
+        let temp = TempDir::new().unwrap();
+        fs::create_dir(temp.path().join("1.0.0")).unwrap();
+
+        let error = set_current_version(temp.path(), "1.0.0").unwrap_err();
+
+        assert!(error.to_string().contains("unsupported on this platform"));
+        assert!(!temp.path().join("current").exists());
     }
 }
