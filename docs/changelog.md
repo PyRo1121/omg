@@ -16,6 +16,10 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- **Runtime**: Reject unsafe archive entries
+- **Runtime**: Route aliases and fresh tools consistently
+- **Runtime**: Validate version path boundaries
+- **Runtime**: Activate versions atomically
 - **Sync**: Avoid nested tokio runtime panic in omg sync
 
 elevate_if_needed() creates a new tokio::runtime::Runtime inside
@@ -100,6 +104,11 @@ The configure_mirrors function was placed after #[cfg(test)] mod tests,
 
 which newer clippy versions flag as an error with -D warnings.
 
+### 👷 CI/CD
+
+- Pin remaining third-party actions
+- Make security and coverage gates fail closed
+- Run Docker E2E tests explicitly
 ### 📦 Dependencies
 
 - **Deps**: Bump the dependencies group with 8 updates
@@ -288,6 +297,10 @@ dependency-type: indirect
 
 ### 🧪 Testing
 
+- Make segmented runner reject empty success
+- **Fuzz**: Compile production fuzz targets in CI
+- Remove hollow checks and strengthen security coverage
+- Isolate daemon and package manager state
 - AUR fallback regression tests and test harness improvements
 
 Add 3 regression tests for the AUR update fallback bug (v0.1.215):
