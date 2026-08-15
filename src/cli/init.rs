@@ -20,7 +20,11 @@ use std::process::Command;
 /// to scatter across the screen. This helper uses `\r\n` and clears each line
 /// before writing to ensure correct cross-platform rendering.
 fn write_menu_line(stdout: &mut io::Stdout, text: &str, highlighted: bool) -> Result<()> {
-    execute!(stdout, cursor::MoveToColumn(0), terminal::Clear(ClearType::CurrentLine))?;
+    execute!(
+        stdout,
+        cursor::MoveToColumn(0),
+        terminal::Clear(ClearType::CurrentLine)
+    )?;
     if highlighted {
         execute!(
             stdout,
