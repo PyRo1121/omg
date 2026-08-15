@@ -229,7 +229,7 @@ async fn test_run_detect_and_execute_mock_task() -> Result<()> {
         all: false,
     };
 
-    let _ = run_cmd.execute(&ctx).await;
+    run_cmd.execute(&ctx).await?;
 
     Ok(())
 }

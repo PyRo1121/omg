@@ -1,6 +1,6 @@
 # OMG Makefile - Development and Testing Targets
 
-.PHONY: help build release test check fmt clippy clean bench bench-fast bench-hyperfine bench-hyperfine-fast bench-charts docker-debian docker-ubuntu docker-test install audit dev test-property test-fuzz test-chaos test-advanced test-security
+.PHONY: help build release test check fmt clippy clean bench bench-fast bench-hyperfine bench-hyperfine-fast bench-charts docker-debian docker-ubuntu docker-test install audit dev test-property test-fuzz test-advanced test-security
 
 # Default target - show help
 .DEFAULT_GOAL := help
@@ -25,7 +25,7 @@ help:
 	@echo "  make test-property   - Run property-based tests"
 	@echo "  make test-fuzz       - Run fuzzing tests (5 min)"
 	@echo "  make test-fuzz-quick - Run fuzzing tests (1 min)"
-	@echo "  make test-chaos      - Run chaos tests"
+
 	@echo "  make test-advanced   - Run all advanced tests"
 	@echo "  make test-security   - Run security-focused tests"
 	@echo ""
@@ -96,7 +96,7 @@ test-lib:
 # Run property-based tests
 test-property:
 	@echo "Running property-based tests..."
-	cargo test --test property_version_advanced --features arch
+	cargo test --test property_tests_v2 --features arch
 	@echo "✓ Property tests passed!"
 
 # Run fuzzing tests (5 minutes per target)
@@ -105,13 +105,7 @@ test-fuzz:
 	@command -v cargo-fuzz >/dev/null 2>&1 || (echo "Installing cargo-fuzz..." && cargo +nightly install cargo-fuzz)
 	cargo +nightly fuzz run ipc_messages -- -max_total_time=300 -seed=1
 	cargo +nightly fuzz run package_names -- -max_total_time=300 -seed=2
-	@if [ -d fuzz/artifacts ]; then \
-		echo "⚠️  Fuzzing found crashes! Check fuzz/artifacts/"; \
-		ls -la fuzz/artifacts/; \
-		exit 1; \
-	else \
-		echo "✓ Fuzzing tests passed (no crashes)!"; \
-	fi
+	if [ -d fuzz/artifacts ]; then echo "⚠️  Fuzzing found crashes! Check fuzz/artifacts/"; ls -la fuzz/artifacts/; exit 1; else echo "✓ Fuzzing tests passed (no crashes)!"; fi
 
 # Run fuzzing tests (quick mode - 60 seconds per target for CI)
 test-fuzz-quick:
@@ -119,21 +113,10 @@ test-fuzz-quick:
 	@command -v cargo-fuzz >/dev/null 2>&1 || (echo "Installing cargo-fuzz..." && cargo +nightly install cargo-fuzz)
 	cargo +nightly fuzz run ipc_messages -- -max_total_time=60 -seed=1
 	cargo +nightly fuzz run package_names -- -max_total_time=60 -seed=2
-	@if [ -d fuzz/artifacts ]; then \
-		echo "⚠️  Fuzzing found crashes! Check fuzz/artifacts/"; \
-		exit 1; \
-	else \
-		echo "✓ Quick fuzzing tests passed!"; \
-	fi
+	if [ -d fuzz/artifacts ]; then echo "⚠️  Fuzzing found crashes! Check fuzz/artifacts/"; exit 1; else echo "✓ Quick fuzzing tests passed!"; fi
 
-# Run chaos tests
-test-chaos:
-	@echo "Running chaos tests..."
-	cargo test --test chaos_operation_ordering
-	@echo "✓ Chaos tests passed!"
-
-# Run all advanced tests (property + fuzz-quick + chaos)
-test-advanced: test-property test-fuzz-quick test-chaos
+# Run all advanced tests (property + fuzz-quick)
+test-advanced: test-property test-fuzz-quick
 	@echo ""
 	@echo "════════════════════════════════════════════════════════════════"
 	@echo "  All advanced tests passed! ✓"
@@ -147,14 +130,9 @@ test-security:
 	cargo +nightly fuzz run package_names -- -max_total_time=180 -seed=42
 	@echo "2. IPC message validation fuzzing..."
 	cargo +nightly fuzz run ipc_messages -- -max_total_time=180 -seed=43
-	@echo "3. Property-based validation tests..."
-	cargo test --test property_version_advanced --features arch
-	@if [ -d fuzz/artifacts ]; then \
-		echo "⚠️  Security issues found! Check fuzz/artifacts/"; \
-		exit 1; \
-	else \
-		echo "✓ Security tests passed!"; \
-	fi
+	@echo "3. Security validation tests..."
+	cargo test --test security_audit_tests --features arch
+	if [ -d fuzz/artifacts ]; then echo "⚠️  Security issues found! Check fuzz/artifacts/"; exit 1; else echo "✓ Security tests passed!"; fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Quality Checks

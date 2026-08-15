@@ -187,7 +187,7 @@ pub fn verify_package_hash(
         hasher.update(&buffer[..n]);
     }
 
-    let computed_hash = format!("{:x}", hasher.finalize());
+    let computed_hash = hex::encode(hasher.finalize());
 
     if computed_hash != expected_hash {
         anyhow::bail!(

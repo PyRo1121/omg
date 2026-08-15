@@ -5,7 +5,7 @@
 OMG supports 5 platform-specific package managers, each with unique APIs and behaviors:
 
 | Platform | Package Manager | Backend | Test Coverage |
-|----------|----------------|---------|---------------|
+| ---------- | ---------------- | --------- | --------------- |
 | **Arch Linux** | pacman/yay | libalpm FFI (pure Rust) | ✅ Comprehensive (`arch_tests.rs`) |
 | **Debian/Ubuntu** | apt | rust-apt FFI + pure Rust | ✅ Comprehensive (`debian_tests.rs`) |
 | **Fedora/RHEL** | dnf/rpm | SQLite + subprocess fallback | ✅ NEW (`fedora_tests.rs`) |
@@ -25,7 +25,7 @@ tests/
 ├── fedora_tests.rs            # Fedora/RHEL DNF tests (NEW)
 ├── macos_tests.rs             # macOS Homebrew tests (NEW)
 ├── windows_tests.rs           # Windows Scoop tests (NEW)
-└── comprehensive_tests.rs     # Cross-platform smoke tests
+└── integration_suite.rs      # Cross-platform integration tests
 ```
 
 ### Conditional Compilation
@@ -50,6 +50,7 @@ All platform-specific tests use `#[cfg(target_os = "...")]` to ensure they only 
 Each platform test suite includes 5-7 test modules:
 
 ### 1. Integration Tests (Basic Operations)
+
 - Package manager initialization
 - Search functionality
 - List installed packages
@@ -58,6 +59,7 @@ Each platform test suite includes 5-7 test modules:
 - `is_installed()` verification
 
 **Example**:
+
 ```rust
 #[tokio::test]
 async fn test_search_common_package() -> Result<()> {
@@ -69,6 +71,7 @@ async fn test_search_common_package() -> Result<()> {
 ```
 
 ### 2. Install/Remove Operations (Ignored by Default)
+
 - Install test package
 - Verify installation
 - Remove package
@@ -89,17 +92,20 @@ async fn test_install_and_remove_package() -> Result<()> {
 ```
 
 ### 3. Error Handling
+
 - Invalid package names
 - Nonexistent packages
 - Permission errors
 - Empty input validation
 
 ### 4. Performance Tests
+
 - Search latency (<100ms target)
 - List installed latency (<500ms target)
 - Result consistency across multiple calls
 
 ### 5. Platform-Specific Features
+
 - **Windows**: Registry enumeration, libscoop API
 - **macOS**: Cellar path detection, INSTALL_RECEIPT parsing
 - **Fedora**: RPM database queries, repository metadata parsing
@@ -128,6 +134,7 @@ The CI pipeline tests all 5 platforms in parallel:
 ### Test Execution Flow
 
 #### Stage 1: Quick Gate (Linux only)
+
 ```bash
 cargo fmt --check
 cargo clippy --all-targets
@@ -137,6 +144,7 @@ cargo test --lib  # Portable unit tests
 #### Stage 2: Platform Matrix
 
 **Linux (Arch/Debian/Fedora)**:
+
 ```bash
 # In container with platform-specific deps
 cargo build --release --features $PLATFORM
@@ -145,6 +153,7 @@ cargo nextest run --test ${PLATFORM}_tests  # NEW!
 ```
 
 **macOS**:
+
 ```bash
 # Native macOS runner
 brew install wget  # Ensure test package exists
@@ -153,6 +162,7 @@ cargo test --test macos_tests  # NEW!
 ```
 
 **Windows**:
+
 ```powershell
 # Install Scoop if not present
 irm get.scoop.sh | iex
@@ -169,7 +179,7 @@ cargo test --test windows_tests  # NEW!
 ### Prerequisites
 
 | Platform | Requirements |
-|----------|-------------|
+| ---------- | ------------- |
 | **Arch** | Arch Linux system with pacman |
 | **Debian** | Ubuntu/Debian with apt |
 | **Fedora** | Fedora/RHEL with dnf |
@@ -207,7 +217,7 @@ cargo test --test windows_tests windows_libscoop_integration::test_install_and_r
 Each platform uses a small, stable package for install/remove tests:
 
 | Platform | Test Package | Size | Reason |
-|----------|-------------|------|--------|
+| ---------- | ------------- | ------ | -------- |
 | Windows | `hello` | ~1MB | Minimal, no dependencies |
 | macOS | `hello` | ~50KB | Tiny formula, fast install |
 | Fedora | `nano` | ~2MB | Common, minimal deps |
@@ -229,7 +239,7 @@ Common queries used across platforms for consistency:
 ### Target Latencies
 
 | Operation | Target | Platform Notes |
-|-----------|--------|----------------|
+| ----------- | -------- | ---------------- |
 | `search()` | <100ms | With mmap/cache |
 | `list_installed()` | <500ms | Direct filesystem/DB |
 | `info()` | <50ms | Single package lookup |
@@ -271,6 +281,7 @@ cargo tarpaulin --features fedora --test fedora_tests
 ### CI Integration
 
 Coverage reports are generated in CI for:
+
 - Linux platforms (Arch, Debian, Fedora) - via containers
 - macOS - via native runner
 - Windows - via native runner
@@ -294,16 +305,19 @@ cargo test --test macos_tests test_search_common_formula -- --nocapture
 ### Platform-Specific Issues
 
 **Windows (Scoop)**:
+
 - Ensure Scoop is installed: `scoop --version`
 - Check SCOOP environment variable: `echo $env:SCOOP`
 - Verify buckets: `scoop bucket list`
 
 **macOS (Homebrew)**:
+
 - Verify Homebrew: `brew --version`
 - Check Cellar exists: `ls /opt/homebrew/Cellar` or `ls /usr/local/Cellar`
 - Update formulae: `brew update`
 
 **Fedora (DNF)**:
+
 - Check RPM database: `ls -lh /var/lib/rpm/rpmdb.sqlite`
 - Verify repositories: `dnf repolist`
 - Update metadata: `dnf makecache`
@@ -360,7 +374,7 @@ mod your_platform_performance {
 ## Current Test Statistics
 
 | Platform | Test Files | Test Count | Coverage | CI Status |
-|----------|-----------|------------|----------|-----------|
+| ---------- | ----------- | ------------ | ---------- | ----------- |
 | Arch | arch_tests.rs | 25+ | 85%+ | ✅ Passing |
 | Debian | debian_tests.rs | 30+ | 90%+ | ✅ Passing |
 | Fedora | fedora_tests.rs | 20+ | 70%+ | ✅ NEW |
@@ -409,30 +423,35 @@ rustup component add llvm-tools-preview
 #### Generate Coverage for Your Platform
 
 **Linux (Arch)**:
+
 ```bash
 cargo llvm-cov --no-default-features --features arch,pgp,license \
   --lib --test arch_tests --test cross_platform_mock_tests
 ```
 
 **Linux (Debian)**:
+
 ```bash
 cargo llvm-cov --no-default-features --features debian,pgp,license \
   --lib --test debian_tests --test cross_platform_mock_tests
 ```
 
 **Linux (Fedora)**:
+
 ```bash
 cargo llvm-cov --no-default-features --features fedora,pgp,license \
   --lib --test fedora_tests --test cross_platform_mock_tests
 ```
 
 **macOS**:
+
 ```bash
 cargo llvm-cov --no-default-features --features macos,pgp,license \
   --lib --test macos_tests --test cross_platform_mock_tests
 ```
 
 **Windows**:
+
 ```powershell
 cargo llvm-cov --no-default-features --features windows,pgp,license `
   --lib --test windows_tests --test cross_platform_mock_tests
@@ -454,11 +473,13 @@ Coverage is automatically collected in CI for all platforms:
 #### Coverage Jobs (STAGE 2c)
 
 **Per-Platform Coverage Collection**:
+
 - Runs in parallel with platform build jobs
 - Generates LCOV format coverage data
 - Uploads coverage artifacts for aggregation
 
 **Platforms Covered**:
+
 1. Arch Linux (container: `archlinux:latest`)
 2. Debian (container: `debian:bookworm`)
 3. Fedora (container: `fedora:latest`)
@@ -468,12 +489,14 @@ Coverage is automatically collected in CI for all platforms:
 #### Coverage Aggregation (STAGE 2d)
 
 **Merge Process**:
+
 1. Downloads all platform coverage artifacts
 2. Uses `lcov` to merge coverage reports
 3. Generates unified coverage summary
 4. Uploads to Codecov
 
 **GitHub Actions Summary**:
+
 - Overall coverage percentage
 - Top 50 most-covered files
 - Coverage trends over time
@@ -483,6 +506,7 @@ Coverage is automatically collected in CI for all platforms:
 Coverage reports are uploaded to [Codecov](https://codecov.io/gh/pyro1121/omg):
 
 **Features**:
+
 - Pull request coverage comments
 - Coverage diff between branches
 - Sunburst visualization per platform
@@ -490,6 +514,7 @@ Coverage reports are uploaded to [Codecov](https://codecov.io/gh/pyro1121/omg):
 - Coverage badges for README
 
 **Configuration**:
+
 - Token stored in `secrets.CODECOV_TOKEN`
 - Reports flagged with `unittests` and `integration`
 - Non-blocking: Coverage failures don't fail CI
@@ -497,7 +522,7 @@ Coverage reports are uploaded to [Codecov](https://codecov.io/gh/pyro1121/omg):
 ### Coverage Targets
 
 | Category | Target | Current |
-|----------|--------|---------|
+| ---------- | -------- | --------- |
 | Overall | 85% | [![codecov](https://codecov.io/gh/pyro1121/omg/branch/main/graph/badge.svg)](https://codecov.io/gh/pyro1121/omg) |
 | Unit Tests | 90%+ | - |
 | Integration | 75%+ | - |
@@ -506,17 +531,20 @@ Coverage reports are uploaded to [Codecov](https://codecov.io/gh/pyro1121/omg):
 ### Interpreting Coverage Reports
 
 **What Coverage Measures**:
+
 - ✅ **Line Coverage**: Percentage of lines executed
 - ✅ **Branch Coverage**: Percentage of conditional branches taken
 - ❌ **NOT**: Code quality, correctness, or test thoroughness
 
 **Coverage Blind Spots**:
+
 - Panic paths and error recovery
 - Platform-specific conditional compilation
 - Unsafe code blocks (tested but not counted)
 - Const evaluation and macros
 
 **Best Practices**:
+
 - Aim for high coverage, but prioritize meaningful tests
 - 100% coverage ≠ bug-free code
 - Focus on critical paths first
@@ -558,12 +586,14 @@ fn debug_only_function() {
 ### Coverage in Pull Requests
 
 **Automated Checks**:
+
 1. Coverage collected on all platforms
 2. Codecov comments on PR with coverage diff
 3. CI shows coverage summary in job output
 4. No PR blocked on coverage (informational only)
 
 **Review Guidelines**:
+
 - New code should have ≥80% coverage
 - Coverage drops >5% require justification
 - Critical paths (install/remove) must be tested
@@ -573,6 +603,7 @@ fn debug_only_function() {
 ## Best Practices
 
 ### DO
+
 - ✅ Use `#[cfg(target_os)]` for platform-specific code
 - ✅ Mark destructive tests with `#[ignore]`
 - ✅ Check for required tools before testing (skip if missing)
@@ -582,6 +613,7 @@ fn debug_only_function() {
 - ✅ Test error paths, not just happy paths
 
 ### DON'T
+
 - ❌ Run install/remove tests without `#[ignore]`
 - ❌ Assume package managers are installed
 - ❌ Leave test packages installed

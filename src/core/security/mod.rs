@@ -18,6 +18,6 @@ pub use slsa::{SlsaLevel, SlsaVerifier};
 pub use validation::{
     is_local_package_file, validate_package_name, validate_package_name_or_file,
     validate_package_names, validate_package_names_or_files, validate_relative_path,
-    validate_version,
+    validate_runtime_version, validate_version,
 };
 pub use vulnerability::VulnerabilityScanner;

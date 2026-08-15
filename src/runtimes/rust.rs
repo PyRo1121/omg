@@ -22,6 +22,7 @@ use super::common::{
     download_with_progress, get_current_version, list_installed_versions, print_already_installed,
     print_installed, print_using, set_current_version,
 };
+use crate::core::archive::stripped_archive_path;
 use crate::core::http::download_client;
 
 const RUST_DIST_URL: &str = "https://static.rust-lang.org/dist";
@@ -262,7 +263,7 @@ impl RustManager {
 
         for entry in archive.entries()? {
             let mut entry = entry?;
-            let path = entry.path()?;
+            let path = entry.path()?.into_owned();
             let path_str = path.to_string_lossy();
 
             // Skip manifest and installer files, only extract from the component subdirectory
@@ -273,15 +274,10 @@ impl RustManager {
                 continue;
             }
 
-            // Strip prefix and component name
-            let stripped: PathBuf = path
-                .components()
-                .skip(2) // Skip "component-version-target/component/"
-                .collect();
-
-            if stripped.as_os_str().is_empty() {
+            // Skip "component-version-target/component/".
+            let Some(stripped) = stripped_archive_path(&path, 2)? else {
                 continue;
-            }
+            };
 
             let dest_path = dest_dir.join(&stripped);
 
@@ -289,10 +285,16 @@ impl RustManager {
                 fs::create_dir_all(parent)?;
             }
 
-            if entry.header().entry_type().is_dir() {
+            let entry_type = entry.header().entry_type();
+            if entry_type.is_dir() {
                 fs::create_dir_all(&dest_path)?;
-            } else {
+            } else if entry_type.is_file() {
                 entry.unpack(&dest_path)?;
+            } else {
+                anyhow::bail!(
+                    "Unsupported link or special entry in Rust component archive: {}",
+                    path.display()
+                );
             }
         }
 
@@ -530,6 +532,7 @@ impl Default for RustManager {
 impl RustToolchainSpec {
     pub fn parse(input: &str) -> Result<Self> {
         let input = input.trim();
+        crate::core::security::validate_runtime_version(input)?;
         let mut segments: Vec<&str> = input.split('-').collect();
         let mut channel = segments.first().copied().unwrap_or(input).to_string();
 
@@ -636,6 +639,24 @@ fn manifest_component_url(manifest: &toml::Value, component: &str, target: &str)
 #[expect(clippy::unwrap_used)] // Idiomatic in tests: panics on failure with clear error context
 mod tests {
     use super::*;
+    use std::io::Cursor;
+    use tar::{Builder, EntryType, Header};
+    use tempfile::TempDir;
+
+    fn component_archive(path: &str, entry_type: EntryType, contents: &[u8]) -> Result<Vec<u8>> {
+        let mut bytes = Vec::new();
+        {
+            let mut builder = Builder::new(&mut bytes);
+            let mut header = Header::new_gnu();
+            header.set_entry_type(entry_type);
+            header.set_mode(0o755);
+            header.set_size(contents.len() as u64);
+            header.set_cksum();
+            builder.append_data(&mut header, path, contents)?;
+            builder.finish()?;
+        }
+        Ok(bytes)
+    }
 
     #[test]
     fn test_rust_manager_new() {
@@ -665,12 +686,64 @@ mod tests {
     }
 
     #[test]
+    fn toolchain_specs_reject_unsafe_path_components() {
+        for input in ["", ".", "..", "current", "../nightly", "/nightly"] {
+            assert!(RustToolchainSpec::parse(input).is_err(), "{input:?}");
+        }
+    }
+
+    #[test]
     fn test_toolchain_spec_name() {
         let spec = RustToolchainSpec::parse("stable").unwrap();
         let name = spec.name();
         assert!(name.starts_with("stable-"));
         // Platform-agnostic check: should contain any valid OS component
         assert!(name.contains("linux") || name.contains("darwin") || name.contains("windows"));
+    }
+
+    #[test]
+    fn component_extraction_writes_regular_files_inside_the_destination() -> Result<()> {
+        let bytes = component_archive(
+            "rustc-1.0.0-target/rustc/bin/rustc",
+            EntryType::Regular,
+            b"runtime",
+        )?;
+        let mut archive = Archive::new(Cursor::new(bytes));
+        let destination = TempDir::new()?;
+
+        RustManager::extract_component_entries(
+            &mut archive,
+            destination.path(),
+            "rustc",
+            "1.0.0",
+            "target",
+        )?;
+
+        assert_eq!(fs::read(destination.path().join("bin/rustc"))?, b"runtime");
+        Ok(())
+    }
+
+    #[test]
+    fn component_extraction_rejects_links() -> Result<()> {
+        let bytes = component_archive(
+            "rustc-1.0.0-target/rustc/bin/rustc",
+            EntryType::Symlink,
+            b"",
+        )?;
+        let mut archive = Archive::new(Cursor::new(bytes));
+        let destination = TempDir::new()?;
+
+        let result = RustManager::extract_component_entries(
+            &mut archive,
+            destination.path(),
+            "rustc",
+            "1.0.0",
+            "target",
+        );
+
+        assert!(result.is_err());
+        assert!(!destination.path().join("bin/rustc").exists());
+        Ok(())
     }
 
     #[test]

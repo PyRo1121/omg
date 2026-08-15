@@ -1012,21 +1012,17 @@ fn find_info_from_apt_lists_fast(name: &str) -> Result<Option<Package>> {
     Ok(None)
 }
 
-#[cfg(feature = "debian-deb822-backend")]
-#[inline]
-fn parse_paragraph_str(paragraph: &str, component: &str) -> Result<DebianPackage> {
-    parse_paragraph_str_deb822(paragraph, component)
-}
-
-#[cfg(not(feature = "debian-deb822-backend"))]
-#[inline]
-fn parse_paragraph_str(paragraph: &str, component: &str) -> Result<DebianPackage> {
-    parse_paragraph_str_manual(paragraph, component)
+fn append_dependencies(value: &str, dependencies: &mut Vec<String>) {
+    dependencies.reserve(value.matches(',').count() + 1);
+    for dependency in value.split(',') {
+        if let Some(package) = dependency.split_whitespace().next() {
+            dependencies.push(package.to_string());
+        }
+    }
 }
 
 #[inline]
-#[cfg_attr(feature = "debian-deb822-backend", allow(dead_code))]
-fn parse_paragraph_str_manual(paragraph: &str, component: &str) -> Result<DebianPackage> {
+fn parse_paragraph_str(paragraph: &str, component: &str) -> Result<DebianPackage> {
     let mut name = String::new();
     let mut version = String::new();
     let mut description = String::with_capacity(128); // Pre-allocate for description
@@ -1040,46 +1036,53 @@ fn parse_paragraph_str_manual(paragraph: &str, component: &str) -> Result<Debian
     let mut size = 0u64;
     let mut sha256 = String::new();
     let mut homepage = String::new();
+    let mut current_field = None;
 
     for line in paragraph.lines() {
-        // Handle continuation lines (multi-line descriptions)
         if line.starts_with(' ') || line.starts_with('\t') {
-            if !description.is_empty() {
-                description.push('\n');
-                description.push_str(line.trim_start());
+            let value = line.trim_start();
+            match current_field {
+                Some("Description") if !description.is_empty() => {
+                    description.push('\n');
+                    if value != "." {
+                        description.push_str(value);
+                    }
+                }
+                Some("Depends") => append_dependencies(value, &mut depends),
+                _ => {}
             }
             continue;
         }
-
-        // Fast path: SIMD-accelerated colon search
-        let Some(colon_pos) = memchr::memchr(b':', line.as_bytes()) else {
+        if line.is_empty() {
             continue;
-        };
+        }
 
+        let colon_pos = memchr::memchr(b':', line.as_bytes())
+            .with_context(|| format!("Invalid deb822 field without a colon: {line}"))?;
         let key = &line[..colon_pos];
         let value = line[colon_pos + 1..].trim_start();
+        current_field = Some(key);
 
-        // Use match on byte slice for faster comparison
         match key.as_bytes() {
             b"Package" => name = value.to_string(),
             b"Version" => version = value.to_string(),
             b"Description" => description = value.to_string(),
             b"Section" => section = value.to_string(),
             b"Priority" => priority = value.to_string(),
-            b"Installed-Size" => installed_size = value.parse().unwrap_or(0),
+            b"Installed-Size" => {
+                installed_size = value
+                    .parse()
+                    .with_context(|| format!("Invalid Installed-Size value: {value}"))?;
+            }
             b"Maintainer" => maintainer = value.to_string(),
             b"Architecture" => architecture = value.to_string(),
-            b"Depends" => {
-                // Optimized depends parsing - pre-allocate and avoid intermediate allocations
-                depends.reserve(value.matches(',').count() + 1);
-                for dep in value.split(',') {
-                    if let Some(pkg) = dep.split_whitespace().next() {
-                        depends.push(pkg.to_string());
-                    }
-                }
-            }
+            b"Depends" => append_dependencies(value, &mut depends),
             b"Filename" => filename = value.to_string(),
-            b"Size" => size = value.parse().unwrap_or(0),
+            b"Size" => {
+                size = value
+                    .parse()
+                    .with_context(|| format!("Invalid Size value: {value}"))?;
+            }
             b"SHA256" => sha256 = value.to_string(),
             b"Homepage" => homepage = value.to_string(),
             _ => {}
@@ -1089,78 +1092,6 @@ fn parse_paragraph_str_manual(paragraph: &str, component: &str) -> Result<Debian
     if name.is_empty() {
         anyhow::bail!("Invalid package entry: missing 'Package' field in Packages file");
     }
-    Ok(DebianPackage {
-        name,
-        version,
-        description,
-        section,
-        priority,
-        installed_size,
-        maintainer,
-        architecture,
-        depends,
-        filename,
-        size,
-        sha256,
-        homepage,
-        component: component.to_string(),
-    })
-}
-
-#[cfg(feature = "debian-deb822-backend")]
-#[inline]
-fn parse_paragraph_str_deb822(paragraph: &str, component: &str) -> Result<DebianPackage> {
-    use std::io::Cursor;
-
-    use debian_packaging::control::ControlParagraphReader;
-
-    let mut reader = ControlParagraphReader::new(Cursor::new(paragraph.as_bytes()));
-    let parsed = reader
-        .next()
-        .transpose()?
-        .context("Invalid package entry: failed to parse deb822 paragraph")?;
-
-    let name = parsed.required_field_str("Package")?.to_string();
-    let version = parsed
-        .field_str("Version")
-        .map_or_else(String::new, ToString::to_string);
-    let description = parsed
-        .field_str("Description")
-        .map_or_else(String::new, ToString::to_string);
-    let section = parsed
-        .field_str("Section")
-        .map_or_else(String::new, ToString::to_string);
-    let priority = parsed
-        .field_str("Priority")
-        .map_or_else(String::new, ToString::to_string);
-    let installed_size = parsed.field_u64("Installed-Size").transpose()?.unwrap_or(0);
-    let maintainer = parsed
-        .field_str("Maintainer")
-        .map_or_else(String::new, ToString::to_string);
-    let architecture = parsed
-        .field_str("Architecture")
-        .map_or_else(String::new, ToString::to_string);
-    let filename = parsed
-        .field_str("Filename")
-        .map_or_else(String::new, ToString::to_string);
-    let size = parsed.field_u64("Size").transpose()?.unwrap_or(0);
-    let sha256 = parsed
-        .field_str("SHA256")
-        .map_or_else(String::new, ToString::to_string);
-    let homepage = parsed
-        .field_str("Homepage")
-        .map_or_else(String::new, ToString::to_string);
-
-    let depends = parsed.field_str("Depends").map_or_else(Vec::new, |value| {
-        let mut deps = Vec::with_capacity(value.matches(',').count() + 1);
-        for dep in value.split(',') {
-            if let Some(pkg) = dep.split_whitespace().next() {
-                deps.push(pkg.to_string());
-            }
-        }
-        deps
-    });
-
     Ok(DebianPackage {
         name,
         version,
@@ -2270,61 +2201,58 @@ pub fn clean_package_cache() -> Result<(usize, u64)> {
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
 
     #[test]
+    fn parse_paragraph_reads_required_and_numeric_fields() -> Result<()> {
+        let paragraph = "Package: vim\nVersion: 2:9.1.0-1\nDescription: Vi IMproved - enhanced vi editor\nSection: editors\nPriority: optional\nInstalled-Size: 3500\n";
 
-    fn test_parse_paragraph_basic() {
-        let para = "Package: vim\nVersion: 2:9.1.0-1\nDescription: Vi IMproved - enhanced vi editor\nSection: editors\nPriority: optional\nInstalled-Size: 3500\n";
+        let package = parse_paragraph_str(paragraph, "main")?;
 
-        let pkg = parse_paragraph_str(para, "main").unwrap();
-
-        assert_eq!(pkg.name, "vim");
-
-        assert_eq!(pkg.version, "2:9.1.0-1");
-
-        assert_eq!(pkg.description, "Vi IMproved - enhanced vi editor");
-
-        assert_eq!(pkg.installed_size, 3500);
+        assert_eq!(package.name, "vim");
+        assert_eq!(package.version, "2:9.1.0-1");
+        assert_eq!(package.description, "Vi IMproved - enhanced vi editor");
+        assert_eq!(package.installed_size, 3500);
+        Ok(())
     }
 
     #[test]
+    fn parse_paragraph_preserves_description_continuations() -> Result<()> {
+        let paragraph = "Package: curl\nVersion: 8.5.0-1\nDescription: command line tool for transferring data\n curl is a tool to transfer data from or to a server\n .\n using one of the supported protocols.\nSection: net\n";
 
-    fn test_parse_paragraph_multiline_desc() {
-        let para = "Package: curl\nVersion: 8.5.0-1\nDescription: command line tool for transferring data\n curl is a tool to transfer data from or to a server\n using one of the supported protocols.\nSection: net\n";
+        let package = parse_paragraph_str(paragraph, "main")?;
 
-        let pkg = parse_paragraph_str(para, "main").unwrap();
-
-        assert_eq!(pkg.name, "curl");
-
-        assert!(pkg.description.contains("curl is a tool"));
-
-        assert!(pkg.description.contains("supported protocols."));
+        assert_eq!(
+            package.description,
+            "command line tool for transferring data\ncurl is a tool to transfer data from or to a server\n\nusing one of the supported protocols."
+        );
+        Ok(())
     }
 
     #[test]
-
-    fn test_parse_paragraph_invalid() {
-        let para = "Version: 1.0\n"; // Missing name
-
-        assert!(parse_paragraph_str(para, "main").is_err());
+    fn parse_paragraph_rejects_missing_package_name() {
+        assert!(parse_paragraph_str("Version: 1.0\n", "main").is_err());
     }
 
     #[test]
+    fn parse_paragraph_rejects_invalid_numeric_fields() {
+        let error = parse_paragraph_str("Package: curl\nSize: many\n", "main")
+            .expect_err("a nonnumeric package size must be rejected");
 
-    fn test_parse_paragraph_with_depends() {
-        let para = "Package: bash\nDepends: libc6 (>= 2.38), libreadline8 (>= 8.1)\n";
+        assert!(error.to_string().contains("Invalid Size value"));
+    }
 
-        let pkg = parse_paragraph_str(para, "main").unwrap();
+    #[test]
+    fn parse_paragraph_reads_multiline_dependencies() -> Result<()> {
+        let paragraph = "Package: bash\nDepends: libc6 (>= 2.38),\n libreadline8 (>= 8.1), libtinfo6 | ncurses-term\n";
 
-        assert_eq!(pkg.name, "bash");
+        let package = parse_paragraph_str(paragraph, "main")?;
 
-        assert_eq!(pkg.depends.len(), 2);
-
-        assert_eq!(pkg.depends[0], "libc6");
-
-        assert_eq!(pkg.depends[1], "libreadline8");
+        assert_eq!(
+            package.depends,
+            ["libc6", "libreadline8", "libtinfo6"]
+        );
+        Ok(())
     }
 
     #[test]

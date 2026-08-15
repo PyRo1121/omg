@@ -1093,17 +1093,6 @@ mod error_handling {
     use super::*;
 
     #[test]
-    fn test_graceful_handling_missing_alpm() {
-        // If ALPM is not available (e.g., non-Arch system), should handle gracefully
-        // This test is more for documentation than assertion
-    }
-
-    #[test]
-    fn test_network_timeout_handling() {
-        // Test with a very short timeout environment variable if supported
-    }
-
-    #[test]
     fn test_invalid_lock_file() {
         let temp_dir = TempDir::new().unwrap();
 
@@ -1114,29 +1103,6 @@ mod error_handling {
         let result = run_omg_in_dir(&["env", "check"], temp_dir.path());
         assert!(!result.success, "Should fail with invalid lock file");
         // Should show a helpful error, not panic
-    }
-
-    #[test]
-    fn test_corrupted_lock_file() {
-        let temp_dir = TempDir::new().unwrap();
-
-        // Create corrupted omg.lock (valid TOML but wrong schema)
-        let mut f = File::create(temp_dir.path().join("omg.lock")).unwrap();
-        writeln!(f, "[wrong_section]\nkey = \"value\"").unwrap();
-
-        let result = run_omg_in_dir(&["env", "check"], temp_dir.path());
-        // Should handle gracefully
-    }
-
-    #[test]
-    fn test_permission_denied_handling() {
-        // This test is platform-specific and may not work in all environments
-        // Skipping actual implementation but documenting the need
-    }
-
-    #[test]
-    fn test_disk_full_handling() {
-        // Difficult to test, but documenting the need
     }
 }
 
@@ -1173,20 +1139,11 @@ mod edge_cases {
 
         // Running from deep path should still find .nvmrc at root
         let result = run_omg_in_dir(&["use", "node"], &deep_path);
-        // Should detect version from parent directories
-    }
-
-    #[test]
-    fn test_symlink_handling() {
-        let temp_dir = TempDir::new().unwrap();
-        create_test_project(temp_dir.path(), "node");
-
-        // Create a symlink to the directory
-        let symlink_path = temp_dir.path().join("symlink_dir");
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(temp_dir.path(), &symlink_path).ok();
-
-        // Should work through symlinks
+        assert!(
+            result.success,
+            "Runtime resolution should work from a nested directory: {}",
+            result.stderr
+        );
     }
 
     #[test]

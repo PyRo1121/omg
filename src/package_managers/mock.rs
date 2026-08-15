@@ -3,15 +3,14 @@
 //! Enabled only when `OMG_TEST_MODE=1` is set.
 //! Persists state to a JSON file in `OMG_DATA_DIR` to allow stateful tests across CLI runs.
 
-#![allow(clippy::unwrap_used)]
-
 use std::collections::HashMap;
 use std::fs;
 use std::future::Future;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
-use anyhow::Result;
+use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 
 use crate::core::{Package, PackageSource, paths};
@@ -44,15 +43,18 @@ impl MockPackageDb {
     }
 
     pub fn add_package(&self, name: &str, version: &str, description: &str, repo: &str) {
-        self.packages.lock().unwrap().insert(
-            name.to_string(),
-            MockPackage {
-                name: name.to_string(),
-                version: version.to_string(),
-                description: description.to_string(),
-                repo: repo.to_string(),
-            },
-        );
+        self.packages
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(
+                name.to_string(),
+                MockPackage {
+                    name: name.to_string(),
+                    version: version.to_string(),
+                    description: description.to_string(),
+                    repo: repo.to_string(),
+                },
+            );
     }
 
     pub fn arch_defaults() -> Self {
@@ -105,21 +107,45 @@ impl MockPackageDb {
 pub struct MockPackageManager {
     pub db: MockPackageDb,
     pub distro_name: &'static str,
+    state_dir: Option<PathBuf>,
+}
+
+/// Return the persistent-state backend name used by a mock distro.
+#[must_use]
+pub fn backend_name_for_distro(distro: &str) -> &'static str {
+    match distro {
+        "arch" => "pacman",
+        "debian" | "ubuntu" => "apt",
+        "fedora" | "rhel" => "dnf",
+        "windows" => "scoop",
+        "macos" | "darwin" => "homebrew",
+        _ => "mock",
+    }
 }
 
 impl MockPackageManager {
     pub fn new(distro: &str) -> Self {
-        let (db, name) = match distro {
-            "arch" => (MockPackageDb::arch_defaults(), "pacman"),
-            "debian" | "ubuntu" => (MockPackageDb::debian_defaults(), "apt"),
-            "fedora" | "rhel" => (MockPackageDb::fedora_defaults(), "dnf"),
-            "windows" => (MockPackageDb::windows_defaults(), "scoop"),
-            "macos" | "darwin" => (MockPackageDb::macos_defaults(), "homebrew"),
-            _ => (MockPackageDb::new(), "mock"),
+        Self::build(distro, None)
+    }
+
+    /// Create a mock whose persistent state is isolated to `data_dir`.
+    pub fn new_in(distro: &str, data_dir: impl AsRef<Path>) -> Self {
+        Self::build(distro, Some(data_dir.as_ref().to_path_buf()))
+    }
+
+    fn build(distro: &str, state_dir: Option<PathBuf>) -> Self {
+        let db = match distro {
+            "arch" => MockPackageDb::arch_defaults(),
+            "debian" | "ubuntu" => MockPackageDb::debian_defaults(),
+            "fedora" | "rhel" => MockPackageDb::fedora_defaults(),
+            "windows" => MockPackageDb::windows_defaults(),
+            "macos" | "darwin" => MockPackageDb::macos_defaults(),
+            _ => MockPackageDb::new(),
         };
         Self {
             db,
-            distro_name: name,
+            distro_name: backend_name_for_distro(distro),
+            state_dir,
         }
     }
 
@@ -144,23 +170,23 @@ impl MockPackageManager {
     }
 
     pub fn set_installed_version(&self, name: &str, version: &str) -> Result<()> {
-        let mut state = Self::load_state(self.distro_name);
+        let mut state = self.load_state()?;
         state
             .installed
             .insert(name.to_string(), version.to_string());
         state
             .available
             .insert(name.to_string(), version.to_string());
-        Self::save_state(self.distro_name, &state);
+        self.save_state(&state)?;
         Ok(())
     }
 
     pub fn set_available_version(&self, name: &str, version: &str) -> Result<()> {
-        let mut state = Self::load_state(self.distro_name);
+        let mut state = self.load_state()?;
         state
             .available
             .insert(name.to_string(), version.to_string());
-        Self::save_state(self.distro_name, &state);
+        self.save_state(&state)?;
         Ok(())
     }
 
@@ -175,52 +201,62 @@ impl MockPackageManager {
         Ok(())
     }
 
-    fn load_state(distro_name: &str) -> MockState {
-        let path = paths::data_dir().join(format!("mock_state_{distro_name}.json"));
-        if let Ok(data) = fs::read_to_string(&path) {
-            // Handle migration from old format (HashSet) to new format (HashMap)
-            // This is a bit tricky with serde.
-            // For now, let's assume clean state or compatible format.
-            // If we encounter a HashSet, serde will fail.
-            // We can try to parse as Value first.
-            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&data)
-                && let Some(installed_arr) = val.get("installed").and_then(|v| v.as_array())
-            {
-                // Old format: installed is array of strings
-                let mut installed_map = HashMap::new();
-                for v in installed_arr {
-                    if let Some(s) = v.as_str() {
-                        installed_map.insert(s.to_string(), "0".to_string());
-                    }
-                }
-                let available: HashMap<String, String> =
-                    serde_json::from_value(val["available"].clone()).unwrap_or_default();
-                return MockState {
-                    installed: installed_map,
-                    available,
-                };
-            }
-            serde_json::from_str(&data).unwrap_or_default()
-        } else {
-            let mut state = MockState::default();
-            // Default installed packages need a version.
-            // We don't know the version here easily without db access.
-            // But load_state is static.
-            // Let's just use "0" for default installed.
-            state
-                .installed
-                .insert(distro_name.to_string(), "0".to_string());
-            state
+    fn state_path(&self) -> PathBuf {
+        let file_name = format!("mock_state_{}.json", self.distro_name);
+        match &self.state_dir {
+            Some(data_dir) => data_dir.join(file_name),
+            None => paths::data_dir().join(file_name),
         }
     }
 
-    fn save_state(distro_name: &str, state: &MockState) {
-        let path = paths::data_dir().join(format!("mock_state_{distro_name}.json"));
-        tracing::debug!("Mock saving state to {}", path.display());
-        let _ = fs::create_dir_all(path.parent().unwrap());
-        if let Ok(data) = serde_json::to_string(state) {
-            let _ = fs::write(&path, data);
+    fn load_state(&self) -> Result<MockState> {
+        let path = self.state_path();
+        let data = match fs::read_to_string(&path) {
+            Ok(data) => data,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(MockState::default());
+            }
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("failed to read mock state at {}", path.display()));
+            }
+        };
+
+        let value: serde_json::Value = serde_json::from_str(&data)
+            .with_context(|| format!("failed to parse mock state at {}", path.display()))?;
+
+        if let Some(installed_values) = value.get("installed").and_then(|value| value.as_array()) {
+            let installed = installed_values
+                .iter()
+                .map(|value| {
+                    value
+                        .as_str()
+                        .map(|name| (name.to_string(), "0".to_string()))
+                        .ok_or_else(|| anyhow!("legacy mock state contains a non-string package"))
+                })
+                .collect::<Result<HashMap<_, _>>>()?;
+            let available = value
+                .get("available")
+                .cloned()
+                .map(serde_json::from_value)
+                .transpose()
+                .context("failed to parse available packages in legacy mock state")?
+                .unwrap_or_default();
+            return Ok(MockState {
+                installed,
+                available,
+            });
         }
+
+        serde_json::from_value(value)
+            .with_context(|| format!("invalid mock state schema at {}", path.display()))
+    }
+
+    fn save_state(&self, state: &MockState) -> Result<()> {
+        let path = self.state_path();
+        tracing::debug!("Mock saving state to {}", path.display());
+        let data = serde_json::to_vec(state).context("failed to serialize mock state")?;
+        crate::core::safe_ops::atomic_write_file_sync(path, data)
     }
 
     // Used only when arch feature is disabled
@@ -242,8 +278,11 @@ impl PackageManager for MockPackageManager {
         let query = query.to_lowercase();
         Box::pin(async move {
             let db = self.db.clone();
-            let state = Self::load_state(self.distro_name);
-            let pkgs = db.packages.lock().unwrap();
+            let state = self.load_state()?;
+            let pkgs = db
+                .packages
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             Ok(pkgs
                 .values()
                 .filter(|p| {
@@ -266,9 +305,12 @@ impl PackageManager for MockPackageManager {
     ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
         let packages = packages.to_vec();
         Box::pin(async move {
-            let distro_name = self.distro_name;
-            let mut state = Self::load_state(distro_name);
-            let pkgs = self.db.packages.lock().unwrap();
+            let mut state = self.load_state()?;
+            let pkgs = self
+                .db
+                .packages
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
 
             for pkg in &packages {
                 let exists = state.available.contains_key(pkg) || pkgs.contains_key(pkg);
@@ -286,7 +328,7 @@ impl PackageManager for MockPackageManager {
                     .unwrap_or_else(|| "0".to_string());
                 state.installed.insert(pkg.clone(), version);
             }
-            Self::save_state(distro_name, &state);
+            self.save_state(&state)?;
             Ok(())
         })
     }
@@ -294,12 +336,11 @@ impl PackageManager for MockPackageManager {
     fn remove(&self, packages: &[String]) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
         let packages = packages.to_vec();
         Box::pin(async move {
-            let distro_name = self.distro_name;
-            let mut state = Self::load_state(distro_name);
+            let mut state = self.load_state()?;
             for pkg in &packages {
                 state.installed.remove(pkg);
             }
-            Self::save_state(distro_name, &state);
+            self.save_state(&state)?;
             Ok(())
         })
     }
@@ -319,8 +360,11 @@ impl PackageManager for MockPackageManager {
         let package = package.to_string();
         Box::pin(async move {
             let db = self.db.clone();
-            let state = Self::load_state(self.distro_name);
-            let pkgs = db.packages.lock().unwrap();
+            let state = self.load_state()?;
+            let pkgs = db
+                .packages
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             Ok(pkgs.get(&package).map(|p| Package {
                 name: p.name.clone(),
                 version: parse_version_or_zero(&p.version),
@@ -334,8 +378,11 @@ impl PackageManager for MockPackageManager {
     fn list_installed(&self) -> Pin<Box<dyn Future<Output = Result<Vec<Package>>> + Send + '_>> {
         Box::pin(async move {
             let db = self.db.clone();
-            let state = Self::load_state(self.distro_name);
-            let pkgs = db.packages.lock().unwrap();
+            let state = self.load_state()?;
+            let pkgs = db
+                .packages
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             Ok(state
                 .installed
                 .iter()
@@ -368,7 +415,7 @@ impl PackageManager for MockPackageManager {
         _fast: bool,
     ) -> Pin<Box<dyn Future<Output = Result<(usize, usize, usize, usize)>> + Send + '_>> {
         Box::pin(async move {
-            let state = Self::load_state(self.distro_name);
+            let state = self.load_state()?;
             // total = all installed packages
             // explicit = explicitly installed packages (in mock, all are explicit since no dependency tracking)
             let total = state.installed.len();
@@ -379,7 +426,7 @@ impl PackageManager for MockPackageManager {
 
     fn list_explicit(&self) -> Pin<Box<dyn Future<Output = Result<Vec<String>>> + Send + '_>> {
         Box::pin(async move {
-            let state = Self::load_state(self.distro_name);
+            let state = self.load_state()?;
             Ok(state.installed.keys().cloned().collect())
         })
     }
@@ -387,8 +434,11 @@ impl PackageManager for MockPackageManager {
     fn list_updates(&self) -> Pin<Box<dyn Future<Output = Result<Vec<UpdateInfo>>> + Send + '_>> {
         Box::pin(async move {
             let db = self.db.clone();
-            let state = Self::load_state(self.distro_name);
-            let pkgs = db.packages.lock().unwrap();
+            let state = self.load_state()?;
+            let pkgs = db
+                .packages
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             let mut updates = Vec::new();
 
             for (pkg_name, installed_ver) in &state.installed {
@@ -399,17 +449,8 @@ impl PackageManager for MockPackageManager {
                         .map_or_else(|| "unknown".to_string(), |p| p.repo.clone());
 
                     #[cfg(feature = "arch")]
-                    let is_update_needed = {
-                        use crate::package_managers::types::Version as AlpmVersion;
-                        use std::str::FromStr;
-
-                        let installed = AlpmVersion::from_str(installed_ver)
-                            .unwrap_or_else(|_| AlpmVersion::from_str("0").unwrap());
-                        let available = AlpmVersion::from_str(available_ver)
-                            .unwrap_or_else(|_| AlpmVersion::from_str("0").unwrap());
-
-                        available > installed
-                    };
+                    let is_update_needed =
+                        parse_version_or_zero(available_ver) > parse_version_or_zero(installed_ver);
 
                     #[cfg(not(feature = "arch"))]
                     let is_update_needed = Self::is_newer(installed_ver, available_ver);
@@ -432,8 +473,13 @@ impl PackageManager for MockPackageManager {
     fn is_installed(&self, package: &str) -> Pin<Box<dyn Future<Output = bool> + Send + '_>> {
         let package = package.to_string();
         Box::pin(async move {
-            let state = Self::load_state(self.distro_name);
-            state.installed.contains_key(&package)
+            match self.load_state() {
+                Ok(state) => state.installed.contains_key(&package),
+                Err(error) => {
+                    tracing::warn!("Failed to inspect mock package state: {error}");
+                    false
+                }
+            }
         })
     }
 }
@@ -444,17 +490,48 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn test_mock_persistence() {
-        let dir = tempdir().unwrap();
-        temp_env::with_var("OMG_DATA_DIR", Some(dir.path()), || {
-            let pm1 = MockPackageManager::new("arch");
-            pm1.db
-                .add_package("test-pkg", "1.0.0", "Test package", "extra");
-            futures::executor::block_on(pm1.install(&["test-pkg".to_string()])).unwrap();
+    fn backend_names_match_persistent_state_contract() {
+        for (distro, backend) in [
+            ("arch", "pacman"),
+            ("debian", "apt"),
+            ("ubuntu", "apt"),
+            ("fedora", "dnf"),
+            ("rhel", "dnf"),
+            ("windows", "scoop"),
+            ("macos", "homebrew"),
+            ("darwin", "homebrew"),
+            ("unknown", "mock"),
+        ] {
+            assert_eq!(backend_name_for_distro(distro), backend);
+            assert_eq!(MockPackageManager::new(distro).distro_name, backend);
+        }
+    }
 
-            let pm2 = MockPackageManager::new("arch");
-            let installed = futures::executor::block_on(pm2.list_explicit()).unwrap();
-            assert!(installed.contains(&"test-pkg".to_string()));
-        });
+    #[test]
+    fn test_mock_persistence() -> Result<()> {
+        let dir = tempdir()?;
+        let pm1 = MockPackageManager::new_in("arch", dir.path());
+        pm1.db
+            .add_package("test-pkg", "1.0.0", "Test package", "extra");
+        futures::executor::block_on(pm1.install(&["test-pkg".to_string()]))?;
+
+        let pm2 = MockPackageManager::new_in("arch", dir.path());
+        let installed = futures::executor::block_on(pm2.list_explicit())?;
+        assert!(installed.iter().any(|package| package == "test-pkg"));
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_mock_state_is_reported() -> Result<()> {
+        let dir = tempdir()?;
+        fs::write(dir.path().join("mock_state_pacman.json"), b"not json")?;
+        let package_manager = MockPackageManager::new_in("arch", dir.path());
+
+        let Err(error) = futures::executor::block_on(package_manager.search("git")) else {
+            anyhow::bail!("malformed persisted state must not be discarded");
+        };
+
+        assert!(error.to_string().contains("failed to parse mock state"));
+        Ok(())
     }
 }

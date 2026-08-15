@@ -92,52 +92,59 @@ async fn install_or_use<M: RuntimeInstallUse + Sync>(mgr: &M, version: &str) -> 
     Ok(())
 }
 
-pub async fn use_version(runtime: &str, version: Option<&str>) -> Result<()> {
-    if !known_runtimes().contains(&runtime.to_string()) {
-        anyhow::bail!(
-            "Unknown runtime: '{runtime}'. Available: {}",
-            SUPPORTED_RUNTIMES.join(", ")
-        );
+fn canonical_runtime_name(runtime: &str) -> String {
+    match runtime.to_ascii_lowercase().as_str() {
+        "nodejs" => "node".to_string(),
+        "python3" => "python".to_string(),
+        "golang" => "go".to_string(),
+        "jdk" | "openjdk" => "java".to_string(),
+        "bunjs" => "bun".to_string(),
+        normalized => normalized.to_string(),
     }
+}
+
+pub async fn use_version(runtime: &str, version: Option<&str>) -> Result<()> {
+    crate::core::security::validate_package_name(runtime)?;
+    let runtime = canonical_runtime_name(runtime);
 
     let version = if let Some(v) = version {
-        crate::core::security::validate_version(v)?;
         v.to_string()
     } else {
         let active = crate::hooks::get_active_versions();
-        let Some(v) = active.get(&runtime.to_lowercase()) else {
+        let Some(v) = active.get(&runtime) else {
             anyhow::bail!("No version specified and none detected in .tool-versions, .nvmrc, etc.");
         };
         println!("{} Detected version {} from file", "→".blue(), v.yellow());
         v.clone()
     };
+    crate::core::security::validate_runtime_version(&version)?;
 
     ui::print_header("OMG", &format!("Switching {runtime} to version {version}"));
     ui::print_spacer();
 
-    crate::core::usage::track_runtime_switch(runtime);
+    crate::core::usage::track_runtime_switch(&runtime);
 
-    match runtime.to_lowercase().as_str() {
-        "node" | "nodejs" => {
+    match runtime.as_str() {
+        "node" => {
             install_or_use(&NodeManager::new(), version.trim_start_matches('v')).await?;
         }
-        "python" | "python3" => {
+        "python" => {
             install_or_use(&PythonManager::new(), version.trim_start_matches('v')).await?;
         }
         "rust" => {
             // Rust manager handles toolchains internally; always delegates to install
             RustManager::new().install(&version).await?;
         }
-        "go" | "golang" => {
+        "go" => {
             install_or_use(&GoManager::new(), version.trim_start_matches('v')).await?;
         }
         "ruby" => {
             install_or_use(&RubyManager::new(), version.trim_start_matches('v')).await?;
         }
-        "java" | "jdk" | "openjdk" => {
+        "java" => {
             install_or_use(&JavaManager::new(), &version).await?;
         }
-        "bun" | "bunjs" => {
+        "bun" => {
             install_or_use(&BunManager::new(), version.trim_start_matches('v')).await?;
         }
         _ => {
@@ -149,7 +156,7 @@ pub async fn use_version(runtime: &str, version: Option<&str>) -> Result<()> {
                 );
                 MISE.ensure_installed().await?;
             }
-            MISE.use_version(runtime, &version)?;
+            MISE.use_version(&runtime, &version)?;
         }
     }
 
@@ -429,4 +436,29 @@ pub async fn list_versions(runtime: Option<&str>, available: bool) -> Result<()>
 
     ui::print_spacer();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::canonical_runtime_name;
+
+    #[test]
+    fn runtime_aliases_normalize_before_dispatch() {
+        for (alias, canonical) in [
+            ("NodeJS", "node"),
+            ("python3", "python"),
+            ("GOLANG", "go"),
+            ("jdk", "java"),
+            ("openjdk", "java"),
+            ("bunjs", "bun"),
+        ] {
+            assert_eq!(canonical_runtime_name(alias), canonical);
+        }
+    }
+
+    #[test]
+    fn non_native_runtime_names_are_preserved_for_mise_dispatch() {
+        assert_eq!(canonical_runtime_name("Erlang"), "erlang");
+        assert_eq!(canonical_runtime_name("deno"), "deno");
+    }
 }
