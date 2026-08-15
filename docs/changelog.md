@@ -314,6 +314,8 @@ dependency-type: indirect
 - Normalize project formatting
 ### 🧪 Testing
 
+- Remove timing-only parser benchmark
+- Remove hollow comprehensive smoke suite
 - Remove timing-only cache coverage
 - Remove duplicate daemon concurrency cases
 - Remove IPC timing checks and hollow branches
