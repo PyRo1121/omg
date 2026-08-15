@@ -23,6 +23,7 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Refresh fuzz lockfile after main integration
 - Propagate package history failures
 - **Deps**: Sync lockfile with updated crypto APIs
 - **Packages**: Make history opt-out effective
@@ -126,6 +127,26 @@ which newer clippy versions flag as an error with -D warnings.
 - Make security and coverage gates fail closed
 - Run Docker E2E tests explicitly
 ### 📦 Dependencies
+
+- **Deps**: Bump tar from 0.4.44 to 0.4.46
+
+Bumps [tar](https://github.com/composefs/tar-rs) from 0.4.44 to 0.4.46.
+
+  - [Release notes](https://github.com/composefs/tar-rs/releases)
+
+  - [Commits](https://github.com/composefs/tar-rs/compare/0.4.44...0.4.46)
+
+---
+
+updated-dependencies:
+
+  - dependency-name: tar
+
+dependency-version: 0.4.46
+
+dependency-type: direct:production
+
+...
 
 - **Deps**: Bump the dependencies group with 8 updates
 
@@ -311,8 +332,14 @@ dependency-type: indirect
 
 ...
 
+### 🔒 Security
+
+- Merge pull request [#35](https://github.com/PyRo1121/omg/issues/35) from PyRo1121/renovate/crate-git2-vulnerability
+
+chore(deps): update rust crate git2 to 0.20 [security]
 ### 🔧 Maintenance
 
+- **Deps**: Update rust crate git2 to 0.20 [security]
 - **Deps**: Update rust dependencies
 - Normalize project formatting
 ### 🧪 Testing
