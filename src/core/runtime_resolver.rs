@@ -10,7 +10,7 @@ use std::hash::BuildHasher;
 use std::path::PathBuf;
 use std::process::Command;
 
-use super::{RuntimeBackend, paths};
+use super::{paths, RuntimeBackend};
 
 /// Resolve the binary directory path for a native OMG-managed runtime
 ///

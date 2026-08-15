@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths-ignore:
-      - 'docs/changelog.md'
+      - "docs/changelog.md"
   release:
     types: [published]
   workflow_dispatch:
@@ -39,10 +39,10 @@ jobs:
       - name: Generate Changelog
         run: |
           git-cliff --output docs/changelog.md
-          
+
           # Escape HTML-like tags for MDX compatibility
           sed -i 's/<\([A-Z][a-zA-Z]*\)>/`<\1>`/g' docs/changelog.md
-          
+
           # Add Docusaurus frontmatter if not present
           if ! grep -q "^---$" docs/changelog.md; then
             {
