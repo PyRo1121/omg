@@ -2248,10 +2248,7 @@ mod tests {
 
         let package = parse_paragraph_str(paragraph, "main")?;
 
-        assert_eq!(
-            package.depends,
-            ["libc6", "libreadline8", "libtinfo6"]
-        );
+        assert_eq!(package.depends, ["libc6", "libreadline8", "libtinfo6"]);
         Ok(())
     }
 
