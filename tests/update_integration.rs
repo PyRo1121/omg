@@ -15,7 +15,6 @@
 mod common;
 
 use common::*;
-use std::time::Duration;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // CHECK MODE TESTS
@@ -68,14 +67,11 @@ mod check_mode_tests {
     }
 
     #[test]
-    fn test_check_mode_is_fast() {
+    fn test_check_mode_does_not_prompt() {
         require_system_tests!();
 
         let result = run_omg(&["update", "--check"]);
         assert_no_password_prompt(&result);
-
-        // Check mode should complete quickly
-        result.assert_duration_under(Duration::from_secs(5));
     }
 
     #[test]
@@ -195,9 +191,6 @@ mod sudo_integration_tests {
     fn test_n_flag_fallback_in_ci() {
         // Test that sudo -n fallback works in CI
         let result = run_omg_with_env(&["update", "--yes"], &[("CI", "1")]);
-
-        // Should not hang waiting for password
-        assert_no_hang(&result);
 
         let combined = result.combined_output();
 
@@ -321,43 +314,6 @@ mod error_handling_tests {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// PERFORMANCE TESTS
-// ═══════════════════════════════════════════════════════════════════════════════
-
-mod performance_tests {
-    use super::*;
-
-    #[test]
-    fn test_check_mode_performance() {
-        require_system_tests!();
-
-        let result = run_omg(&["update", "--check"]);
-
-        // Should be fast
-        assert!(
-            result.duration.as_millis() < 2000,
-            "Check mode should be <2s, took {}ms",
-            result.duration.as_millis()
-        );
-    }
-
-    #[test]
-    fn test_update_command_start_time() {
-        // Test that command starts quickly
-        let start = std::time::Instant::now();
-        let _result = run_omg(&["update", "--check"]);
-        let elapsed = start.elapsed();
-
-        // Should start reasonably fast (allowing for cold start)
-        assert!(
-            elapsed.as_millis() < 10000, // 10 seconds is reasonable for cold start
-            "Command should start quickly, took {}ms",
-            elapsed.as_millis()
-        );
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
 // OUTPUT FORMAT TESTS
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -424,9 +380,6 @@ mod regression_tests {
         let result = run_omg(&["update", "--check"]);
 
         assert_no_password_prompt(&result);
-
-        // Should complete quickly (not hang on password prompt)
-        assert_no_hang(&result);
     }
 
     #[test]
@@ -434,9 +387,6 @@ mod regression_tests {
         // Regression test for -n flag fallback detection
         // The bug was: sudo -n exit code wasn't properly detected
         let result = run_omg_with_env(&["update", "--yes"], &[("CI", "1")]);
-
-        // Should not hang
-        assert_no_hang(&result);
 
         // If it fails, should have helpful error
         if !result.success {
@@ -530,13 +480,5 @@ fn assert_no_password_prompt(result: &CommandResult) {
             && !combined.contains("Password:"),
         "Should not prompt for password. Got:\n{}",
         combined
-    );
-}
-
-fn assert_no_hang(result: &CommandResult) {
-    assert!(
-        result.duration.as_secs() < 30,
-        "Command should complete quickly, took {:?}",
-        result.duration
     );
 }

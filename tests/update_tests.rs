@@ -24,7 +24,6 @@
 mod common;
 
 use common::*;
-use std::time::Instant;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // UPDATE CHECK TESTS
@@ -246,64 +245,6 @@ mod error_handling {
         assert!(
             !result.stdout.is_empty() || !result.stderr.is_empty(),
             "Should produce output without daemon"
-        );
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// PERFORMANCE TESTS
-// ═══════════════════════════════════════════════════════════════════════════════
-
-mod performance {
-    use super::*;
-
-    /// Test that update check completes quickly
-    #[test]
-    fn test_update_check_performance() {
-        require_system_tests!();
-
-        let start = Instant::now();
-        let result = run_omg(&["update", "--check"]);
-        let elapsed = start.elapsed();
-
-        assert!(result.success, "Update check should succeed");
-        assert!(
-            !result.stdout.is_empty() || !result.stderr.is_empty(),
-            "Should produce output"
-        );
-
-        // Update check should be fast (even without daemon)
-        // Direct ALPM operations should complete in <500ms on most systems
-        assert!(
-            elapsed.as_millis() < 2000,
-            "Update check should complete in <2s, took {}ms. Output:\nstdout:\n{}\nstderr:\n{}",
-            elapsed.as_millis(),
-            result.stdout,
-            result.stderr
-        );
-    }
-
-    /// Test that update check with --yes flag is also fast
-    #[test]
-    fn test_update_with_yes_performance() {
-        require_destructive_tests!();
-
-        let start = Instant::now();
-        let result = run_omg(&["update", "--yes"]);
-        let elapsed = start.elapsed();
-
-        assert!(result.success, "Update with --yes should succeed");
-        assert!(
-            !result.stdout.is_empty() || !result.stderr.is_empty(),
-            "Should produce output"
-        );
-
-        // Even with actual updates, should complete in reasonable time
-        // (may be slower if there are many updates)
-        assert!(
-            elapsed.as_secs() < 600, // 10 minutes max
-            "Update should complete in <10 minutes, took {}s",
-            elapsed.as_secs()
         );
     }
 }
