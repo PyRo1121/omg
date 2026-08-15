@@ -1,9 +1,9 @@
 [advisories]
 ignore = [
-    # Windows-only transitive dependency of libscoop. Scoop operations are per-user;
-    # OMG does not invoke remove_dir_all from an elevated Windows service.
-    "RUSTSEC-2023-0018",
-    # No patched rsa release exists. OMG uses rsa only for public-key signature
-    # verification and never performs network-observable private-key decryption.
-    "RUSTSEC-2023-0071",
+  # Windows-only transitive dependency of libscoop. Scoop operations are per-user;
+  # OMG does not invoke remove_dir_all from an elevated Windows service.
+  "RUSTSEC-2023-0018",
+  # No patched rsa release exists. OMG uses rsa only for public-key signature
+  # verification and never performs network-observable private-key decryption.
+  "RUSTSEC-2023-0071",
 ]

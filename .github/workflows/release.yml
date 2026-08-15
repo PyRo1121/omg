@@ -3,13 +3,13 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
   workflow_dispatch:
     inputs:
       dry_run:
-        description: 'Dry run (do not publish)'
+        description: "Dry run (do not publish)"
         required: false
-        default: 'true'
+        default: "true"
 
 concurrency:
   group: release
@@ -284,7 +284,15 @@ jobs:
     name: "Create Release"
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [build-arch, build-debian, build-ubuntu, build-fedora, build-macos, build-windows]
+    needs:
+      [
+        build-arch,
+        build-debian,
+        build-ubuntu,
+        build-fedora,
+        build-macos,
+        build-windows,
+      ]
     permissions:
       contents: write
     steps:
@@ -308,39 +316,39 @@ jobs:
         id: release_notes
         run: |
           VERSION="${GITHUB_REF#refs/tags/v}"
-          
+
           cat > release_notes.md << 'EOF_HEADER'
           ## Installation
-          
+
           **Quick Install (Linux/macOS):**
           ```bash
           curl -fsSL https://pyro1121.com/install.sh | bash
           ```
-          
+
           **Windows (PowerShell):**
           ```powershell
           irm https://pyro1121.com/install.ps1 | iex
           ```
-          
+
           EOF_HEADER
-          
+
           echo "" >> release_notes.md
           echo "## What's New in v${VERSION}" >> release_notes.md
           echo "" >> release_notes.md
-          
+
           if ./scripts/extract-release-notes.sh "${VERSION}" >> release_notes.md 2>/dev/null; then
             echo "✓ Extracted changelog for v${VERSION}"
           else
             echo "⚠ No changelog found, using generic message"
             echo "See [full changelog](https://github.com/PyRo1121/omg/blob/main/docs/changelog.md) for details." >> release_notes.md
           fi
-          
+
           cat >> release_notes.md << EOF_FOOTER
-          
+
           ---
-          
+
           ## Platform Support
-          
+
           | Platform | Architecture | Binary |
           |----------|--------------|--------|
           | Arch Linux | x86_64 | \`omg-v${VERSION}-x86_64-linux-arch.tar.gz\` |
@@ -349,41 +357,41 @@ jobs:
           | Fedora/RHEL | x86_64 | \`omg-v${VERSION}-x86_64-linux-fedora.tar.gz\` |
           | macOS | ARM64 | \`omg-v${VERSION}-aarch64-darwin.tar.gz\` |
           | Windows | x64 | \`omg-v${VERSION}-x86_64-windows.zip\` |
-          
+
           ## Manual Installation
-          
+
           **Linux/macOS:**
           \`\`\`bash
           tar -xzf omg-v${VERSION}-*.tar.gz
           cd omg-v${VERSION}-*
           sudo cp omg /usr/local/bin/
           \`\`\`
-          
+
           **Windows:**
           \`\`\`powershell
           Expand-Archive omg-v${VERSION}-x86_64-windows.zip
           Move-Item omg-v${VERSION}-x86_64-windows/omg.exe \$env:LOCALAPPDATA/Programs/
           \`\`\`
-          
+
           ## Verification
-          
+
           All binaries include SHA256 checksums. Verify downloads:
-          
+
           **Linux/macOS:**
           \`\`\`bash
           sha256sum -c omg-v${VERSION}-*.sha256
           \`\`\`
-          
+
           **Windows (PowerShell):**
           \`\`\`powershell
           (Get-FileHash omg.exe).Hash -eq (Get-Content omg-*.sha256).Split()[0]
           \`\`\`
-          
+
           ---
-          
+
           **Full Changelog**: https://github.com/PyRo1121/omg/blob/main/docs/changelog.md
           EOF_FOOTER
-          
+
           echo ""
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo "Generated Release Notes Preview:"
@@ -448,7 +456,7 @@ jobs:
               --content-type="$content_type"
             echo "✓ Uploaded $basename"
           done
-          
+
           for checksum in release/omg-v*.sha256; do
             [ -f "$checksum" ] || continue
             basename=$(basename "$checksum")
