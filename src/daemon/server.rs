@@ -127,7 +127,15 @@ pub async fn run(
                     // 3. Scan for Vulnerabilities (async, done in background)
                     // This is already async, so we run it here in the async context
                     let scanner = crate::core::security::VulnerabilityScanner::new();
-                    let vuln_count = scanner.scan_system().await.unwrap_or(0);
+                    let vuln_count = match scanner.scan_system().await {
+                        Ok(count) => count,
+                        Err(error) => {
+                            tracing::warn!(
+                                "Vulnerability scan failed during status refresh: {error}"
+                            );
+                            0
+                        }
+                    };
 
                     let res = super::protocol::StatusResult {
                         total_packages: total,
@@ -145,6 +153,8 @@ pub async fn run(
                         tracing::warn!("Failed to persist status cache: {error}");
                     }
                     state.cache.update_status(res_arc);
+                } else if let Err(error) = status {
+                    tracing::warn!("Failed to refresh package status: {error}");
                 }
             } else if let Err(e) = result {
                 tracing::error!("Status refresh panic: {e}");
@@ -155,22 +165,31 @@ pub async fn run(
             #[cfg(feature = "arch")]
             {
                 let state_explicit = Arc::clone(state);
-                let _ = tokio::task::spawn_blocking(move || {
+                if let Err(error) = tokio::task::spawn_blocking(move || {
                     use crate::core::env::distro::use_debian_backend;
-                    if !use_debian_backend()
-                        && let Ok(explicit_pkgs) = crate::package_managers::list_explicit_fast()
-                    {
-                        state_explicit.cache.update_explicit(explicit_pkgs);
-                        tracing::debug!("Pre-warmed explicit package cache");
+                    if use_debian_backend() {
+                        return;
+                    }
+                    match crate::package_managers::list_explicit_fast() {
+                        Ok(explicit_pkgs) => {
+                            state_explicit.cache.update_explicit(explicit_pkgs);
+                            tracing::debug!("Pre-warmed explicit package cache");
+                        }
+                        Err(error) => {
+                            tracing::warn!("Failed to pre-warm explicit package cache: {error}");
+                        }
                     }
                 })
-                .await;
+                .await
+                {
+                    tracing::warn!("Explicit package cache pre-warm task failed: {error}");
+                }
             }
 
             // Pre-warm search cache with common queries for instant first searches
             {
                 let state_search = Arc::clone(state);
-                tokio::task::spawn_blocking(move || {
+                if let Err(error) = tokio::task::spawn_blocking(move || {
                     let common_queries = ["", "linux", "python", "node", "firefox", "git"];
                     for query in common_queries {
                         let results = state_search.index.search(query, 50);
@@ -185,7 +204,9 @@ pub async fn run(
                     );
                 })
                 .await
-                .ok();
+                {
+                    tracing::warn!("Search cache pre-warm task failed: {error}");
+                }
             }
         }
 
