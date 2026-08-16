@@ -26,6 +26,16 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Surface daemon status-refresh and cache pre-warm failures
+
+refresh_status discarded JoinErrors from explicit-list and search
+
+pre-warm tasks, treated a failed vulnerability scan as zero issues,
+
+and ignored package-status errors. Log those failures so a panicked
+
+worker or failed scan cannot silently leave stale or empty caches.
+
 - Log leftover runtime archive and symlink cleanup failures
 
 Runtime installers discarded leftover archive and current-link removals
