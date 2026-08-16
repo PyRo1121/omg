@@ -26,6 +26,16 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Persist the mise binary atomically after extraction
+
+extract_tarball unpacked the live mise binary in place, so a crash
+
+mid-extract left a file that is_available() treated as installed.
+
+Copy the archive entry into a same-directory temp file, set
+
+permissions, and persist it only after the write succeeds.
+
 - Stage first-time Rust toolchain installs until complete
 
 install_with_profile created the final toolchain directory before any
