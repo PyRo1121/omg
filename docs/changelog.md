@@ -26,6 +26,18 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Fail closed on Arch audit, enterprise mirror, and self-update cleanup
+
+omg audit scan printed an error then returned success when the daemon
+
+was down or the audit RPC failed. omg audit log hid read failures as
+
+an empty log. enterprise server mirror hid a failed update list as
+
+up to date. Surface those errors, and log leftover self-update
+
+backup cleanup instead of discarding it.
+
 - Fail closed on Arch dry-run and team proposal lookups
 
 omg install --dry-run and omg update --dry-run treated a failed
