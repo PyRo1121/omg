@@ -97,8 +97,7 @@ impl GoManager {
             version.yellow()
         );
 
-        let arch = Self::detect_architecture()?;
-        let filename = format!("go{version}.linux-{arch}.tar.gz");
+        let filename = format!("go{version}.{}.tar.gz", go_platform()?);
         let url = format!("{GO_DOWNLOAD_URL}/{filename}");
 
         fs::create_dir_all(&self.versions_dir)?;
@@ -119,14 +118,6 @@ impl GoManager {
 
         print_installed("Go", &version);
         self.use_version(&version)
-    }
-
-    fn detect_architecture() -> Result<&'static str> {
-        match std::env::consts::ARCH {
-            "x86_64" => Ok("amd64"),
-            "aarch64" => Ok("arm64"),
-            arch => anyhow::bail!("Unsupported architecture: {arch}"),
-        }
     }
 
     /// Fetch SHA256 checksum from go.dev
@@ -163,6 +154,20 @@ impl GoManager {
 
 // Generate common runtime manager methods (list_installed, current_version, uninstall)
 crate::impl_runtime_common!(GoManager, "Go");
+
+fn go_platform() -> Result<String> {
+    let os = match std::env::consts::OS {
+        "linux" => "linux",
+        "macos" => "darwin",
+        other => anyhow::bail!("Unsupported operating system for Go: {other}"),
+    };
+    let arch = match std::env::consts::ARCH {
+        "x86_64" => "amd64",
+        "aarch64" => "arm64",
+        arch => anyhow::bail!("Unsupported architecture for Go: {arch}"),
+    };
+    Ok(format!("{os}-{arch}"))
+}
 
 impl Default for GoManager {
     fn default() -> Self {
@@ -204,5 +209,15 @@ mod tests {
         let manager = GoManager::new();
         assert!(manager.install("..").await.is_err());
         Ok(())
+    }
+
+    #[test]
+    fn go_platform_uses_host_os_and_arch() {
+        let platform = go_platform().expect("host platform should be supported");
+        if std::env::consts::OS == "linux" {
+            assert!(platform.starts_with("linux-"));
+        } else {
+            assert!(!platform.starts_with("linux-"));
+        }
     }
 }

@@ -126,13 +126,7 @@ impl BunManager {
             version.yellow()
         );
 
-        let arch = match std::env::consts::ARCH {
-            "x86_64" => "linux-x64",
-            "aarch64" => "linux-aarch64",
-            arch => anyhow::bail!("Unsupported architecture: {arch}"),
-        };
-
-        let filename = format!("bun-{arch}.zip");
+        let filename = format!("bun-{}.zip", bun_platform()?);
         let url = format!("{BUN_RELEASES_URL}/bun-v{version}/{filename}");
         let checksum = self.fetch_checksum(&version, &filename).await?;
 
@@ -192,6 +186,20 @@ impl BunManager {
 // Generate common runtime manager methods (list_installed, current_version, uninstall)
 crate::impl_runtime_common!(BunManager, "Bun");
 
+fn bun_platform() -> Result<String> {
+    let os = match std::env::consts::OS {
+        "linux" => "linux",
+        "macos" => "darwin",
+        other => anyhow::bail!("Unsupported operating system for Bun: {other}"),
+    };
+    let arch = match std::env::consts::ARCH {
+        "x86_64" => "x64",
+        "aarch64" => "aarch64",
+        arch => anyhow::bail!("Unsupported architecture for Bun: {arch}"),
+    };
+    Ok(format!("{os}-{arch}"))
+}
+
 impl Default for BunManager {
     fn default() -> Self {
         Self::new()
@@ -206,5 +214,15 @@ mod tests {
     fn test_bun_manager_new() {
         let mgr = BunManager::new();
         assert!(mgr.versions_dir.ends_with("bun"));
+    }
+
+    #[test]
+    fn bun_platform_is_host_specific() {
+        let platform = bun_platform().expect("host platform should be supported");
+        if std::env::consts::OS == "linux" {
+            assert!(platform.starts_with("linux-"));
+        } else {
+            assert!(!platform.starts_with("linux-"));
+        }
     }
 }
