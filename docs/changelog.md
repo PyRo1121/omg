@@ -26,6 +26,18 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Fail closed on corrupt policy, settings, and audit logs
+
+Missing policy.toml or settings.toml still uses built-in defaults, but
+
+unreadable or malformed files no longer silently become defaults.
+
+Audit verify and enterprise change-log export now distinguish a missing
+
+log from an integrity or read failure, and Arch TUI search no longer
+
+treats official lookup errors as empty results.
+
 - Surface Arch TUI info and search failures
 
 The interactive info and search models collapsed package-manager and
