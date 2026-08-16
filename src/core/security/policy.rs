@@ -4,9 +4,10 @@
 //! vulnerabilities, licenses, and trust levels with A-F grading.
 
 use crate::package_managers::types::Version;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::io;
 use std::path::Path;
 
 use crate::core::paths;
@@ -52,6 +53,14 @@ const fn default_true() -> bool {
     true
 }
 
+fn is_not_found(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause
+            .downcast_ref::<io::Error>()
+            .is_some_and(|io_error| io_error.kind() == io::ErrorKind::NotFound)
+    })
+}
+
 impl Default for SecurityPolicy {
     fn default() -> Self {
         Self {
@@ -65,18 +74,30 @@ impl Default for SecurityPolicy {
 }
 
 impl SecurityPolicy {
-    /// Load policy from file
+    /// Load policy from file. A missing file is not handled here; callers that
+    /// want defaults for an absent policy should use [`Self::load_optional`].
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let content = fs::read_to_string(path)?;
-        let policy: Self = toml::from_str(&content)?;
-        Ok(policy)
+        let path = path.as_ref();
+        let content = fs::read_to_string(path)
+            .with_context(|| format!("Failed to read security policy: {}", path.display()))?;
+        toml::from_str(&content)
+            .with_context(|| format!("Failed to parse security policy: {}", path.display()))
     }
 
-    /// Load from default location (~/.config/omg/policy.toml)
-    #[must_use]
-    pub fn load_default() -> Option<Self> {
-        let policy_path = paths::config_dir().join("policy.toml");
-        Self::load(policy_path).ok()
+    /// Load a policy file, using the built-in default only when the file is absent.
+    pub fn load_optional<P: AsRef<Path>>(path: P) -> Result<Self> {
+        let path = path.as_ref();
+        match Self::load(path) {
+            Ok(policy) => Ok(policy),
+            Err(error) if is_not_found(&error) => Ok(Self::default()),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Load from default location (~/.config/omg/policy.toml).
+    /// A missing file uses the built-in default; a corrupt or unreadable file fails closed.
+    pub fn load_default() -> Result<Self> {
+        Self::load_optional(paths::config_dir().join("policy.toml"))
     }
 
     /// Assign a security grade to a package based on metadata
@@ -207,6 +228,28 @@ mod tests {
             policy
                 .check_package("test", true, None, SecurityGrade::Community)
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn load_optional_uses_defaults_when_policy_is_missing() {
+        let temp = tempfile::TempDir::new().expect("temp dir");
+        let policy = SecurityPolicy::load_optional(temp.path().join("policy.toml"))
+            .expect("missing policy should use defaults");
+        assert_eq!(policy.minimum_grade, SecurityGrade::Community);
+        assert!(policy.allow_aur);
+    }
+
+    #[test]
+    fn load_optional_rejects_corrupt_policy() {
+        let temp = tempfile::TempDir::new().expect("temp dir");
+        let path = temp.path().join("policy.toml");
+        fs::write(&path, "minimum_grade = [").expect("write corrupt policy");
+        let error = SecurityPolicy::load_optional(&path).expect_err("corrupt policy must fail");
+        assert!(
+            error
+                .to_string()
+                .contains("Failed to parse security policy")
         );
     }
 }

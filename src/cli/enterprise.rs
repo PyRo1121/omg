@@ -5,7 +5,7 @@ use crate::cli::tea::Cmd;
 use crate::cli::{
     CliContext, EnterpriseCommands, EnterprisePolicyCommands, LocalCommandRunner, ServerCommands,
 };
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -153,7 +153,7 @@ pub fn audit_export(
     // Generate audit files
     let files = vec![
         ("access-control-matrix.csv", generate_access_control_csv()),
-        ("change-log.json", generate_change_log_json()),
+        ("change-log.json", generate_change_log_json()?),
         ("policy-enforcement.json", generate_policy_json()),
         ("vulnerability-remediation.csv", generate_vuln_csv()),
         ("sbom-inventory.json", generate_sbom_json()),
@@ -554,14 +554,25 @@ fn generate_access_control_csv() -> String {
     csv
 }
 
-fn generate_change_log_json() -> String {
-    // Try to get actual audit entries
-    let entries = if let Ok(logger) = crate::core::security::audit::AuditLogger::new() {
-        logger.get_recent(100).unwrap_or_default()
-    } else {
-        Vec::new()
+fn generate_change_log_json() -> Result<String> {
+    let logger = crate::core::security::audit::AuditLogger::new()
+        .context("Failed to open audit log for enterprise export")?;
+    let entries = match logger.get_recent(100) {
+        Ok(entries) => entries,
+        Err(error)
+            if error.chain().any(|cause| {
+                cause
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|io_error| io_error.kind() == std::io::ErrorKind::NotFound)
+            }) =>
+        {
+            Vec::new()
+        }
+        Err(error) => {
+            return Err(error).context("Failed to read audit log entries for enterprise export");
+        }
     };
-    serde_json::to_string(&entries).unwrap_or_else(|_| "[]".to_string())
+    serde_json::to_string(&entries).context("Failed to serialize audit log entries")
 }
 
 fn generate_policy_json() -> String {

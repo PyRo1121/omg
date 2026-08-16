@@ -2,7 +2,7 @@ use crate::core::env::team::TeamStatus;
 use crate::core::history::Transaction;
 #[cfg(unix)]
 use crate::daemon::protocol::StatusResult;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use crossterm::event::KeyCode;
 use std::time::Instant;
 
@@ -313,7 +313,8 @@ impl App {
         // Fallback to direct search if daemon is not available
         #[cfg(feature = "arch")]
         {
-            self.search_results = crate::package_managers::search_sync(query).unwrap_or_default();
+            self.search_results = crate::package_managers::search_sync(query)
+                .context("Failed to search official packages")?;
         }
         #[cfg(feature = "debian")]
         {

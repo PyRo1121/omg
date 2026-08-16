@@ -298,19 +298,25 @@ pub fn verify_audit_log(_ctx: &CliContext) -> Result<()> {
         style::runtime("OMG")
     );
 
-    let Ok(logger) = AuditLogger::new() else {
-        println!(
-            "  {} No audit log exists yet.",
-            style::maybe_color("ℹ", |t| t.blue().to_string())
-        );
-        return Ok(());
-    };
-    let Ok(report) = logger.verify_integrity() else {
-        println!(
-            "  {} No audit log exists yet.",
-            style::maybe_color("ℹ", |t| t.blue().to_string())
-        );
-        return Ok(());
+    let logger = AuditLogger::new().context("Failed to open audit log")?;
+    let report = match logger.verify_integrity() {
+        Ok(report) => report,
+        Err(error)
+            if error.chain().any(|cause| {
+                cause
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|io_error| io_error.kind() == std::io::ErrorKind::NotFound)
+            }) =>
+        {
+            println!(
+                "  {} No audit log exists yet.",
+                style::maybe_color("ℹ", |t| t.blue().to_string())
+            );
+            return Ok(());
+        }
+        Err(error) => {
+            return Err(error).context("Failed to verify audit log integrity");
+        }
     };
 
     if report.is_valid() {
@@ -372,7 +378,7 @@ pub fn verify_audit_log(_ctx: &CliContext) -> Result<()> {
 pub fn show_policy(_ctx: &CliContext) -> Result<()> {
     println!("{} Security Policy Status\n", style::runtime("OMG"));
 
-    let policy = SecurityPolicy::load_default().unwrap_or_default();
+    let policy = SecurityPolicy::load_default().context("Failed to load security policy")?;
 
     println!(
         "  {} {}",
@@ -731,7 +737,7 @@ pub fn scan_licenses(
 
     // Check against policy if requested
     if check_policy {
-        let policy = SecurityPolicy::load_default().unwrap_or_default();
+        let policy = SecurityPolicy::load_default().context("Failed to load security policy")?;
         let mut violations = Vec::new();
 
         for (name, license, _) in &filtered_packages {
@@ -1093,7 +1099,8 @@ pub async fn export_compliance(
                 "framework": "SOC2",
                 "generated_at": now.to_string(),
                 "period": period,
-                "policy": SecurityPolicy::load_default().unwrap_or_default(),
+                "policy": SecurityPolicy::load_default()
+                    .context("Failed to load security policy")?,
             });
             let config_path = output_dir.join(format!("config-snapshot-{timestamp}.json"));
             std::fs::write(
