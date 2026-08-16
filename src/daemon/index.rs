@@ -242,6 +242,54 @@ impl PackageIndex {
         }
     }
 
+    /// Build a hermetic index from explicit package records.
+    ///
+    /// Used by tests that need ranking, suggestion, and lookup behavior without
+    /// reading the host package database.
+    #[cfg(test)]
+    fn from_records(records: &[(&str, &str, &str)]) -> Self {
+        let pkg_count = records.len();
+        let mut pool = StringPool::default();
+        let mut items = Vec::with_capacity(pkg_count);
+        let mut name_to_idx = AHashMap::with_capacity(pkg_count);
+        let mut bloom = PackageBloomFilter::new(pkg_count);
+        let mut trigrams = TrigramIndex::new(pkg_count);
+
+        for (name, version, description) in records {
+            let name_lower = name.to_ascii_lowercase();
+            let name_offset = pool.intern(name);
+            let name_lower_offset = pool.intern(&name_lower);
+            let description_offset = pool.intern(description);
+            let description_lower_offset = pool.intern(&description.to_ascii_lowercase());
+            let idx = items.len();
+
+            items.push(CompactPackageInfo {
+                name_offset,
+                name_lower_offset,
+                version_offset: pool.intern(version),
+                description_offset,
+                description_lower_offset,
+                url_offset: pool.intern(""),
+                size: 0,
+                download_size: 0,
+                repo_offset: pool.intern("extra"),
+                source_offset: pool.intern("official"),
+            });
+
+            trigrams.insert(&name_lower, idx as u32);
+            name_to_idx.insert((*name).to_string(), idx);
+            bloom.insert(name);
+        }
+
+        Self {
+            items,
+            pool,
+            name_to_idx,
+            bloom,
+            trigrams,
+        }
+    }
+
     pub fn new() -> Result<Self> {
         #[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
         use crate::core::env::distro::{Distro, detect_distro};
@@ -594,6 +642,59 @@ mod tests {
         assert!(index.suggest("anything", 10).is_empty());
         assert!(index.get("anything").is_none());
         assert!(index.all_packages().is_empty());
+    }
+
+    fn fixture_index() -> PackageIndex {
+        PackageIndex::from_records(&[
+            (
+                "firefox",
+                "146.0",
+                "Standalone web browser from mozilla.org",
+            ),
+            (
+                "firefox-developer-edition",
+                "147.0b1",
+                "Developer edition of firefox",
+            ),
+            ("librewolf", "146.0", "Privacy-focused firefox fork"),
+            ("python", "3.13.1", "High-level scripting language"),
+            ("git", "2.47.1", "Distributed version control system"),
+        ])
+    }
+
+    #[test]
+    fn populated_index_ranks_exact_name_matches_first() {
+        let index = fixture_index();
+        let results = index.search("firefox", 10);
+
+        assert!(!results.is_empty());
+        assert_eq!(results[0].name, "firefox");
+        assert!(
+            results
+                .iter()
+                .any(|pkg| pkg.name == "firefox-developer-edition")
+        );
+        assert!(results.iter().any(|pkg| pkg.name == "librewolf"));
+        assert!(!results.iter().any(|pkg| pkg.name == "python"));
+    }
+
+    #[test]
+    fn populated_index_suggests_prefix_matches_and_looks_up_exact_names() {
+        let index = fixture_index();
+
+        assert_eq!(
+            index.suggest("fire", 10),
+            vec![
+                "firefox".to_string(),
+                "firefox-developer-edition".to_string()
+            ]
+        );
+        assert!(index.suggest("zzz", 10).is_empty());
+
+        let firefox = index.get("firefox").expect("exact name must resolve");
+        assert_eq!(firefox.version, "146.0");
+        assert_eq!(firefox.source, "official");
+        assert!(index.get("missing").is_none());
     }
 
     #[test]
