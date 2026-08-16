@@ -62,48 +62,43 @@ pub async fn scan(_ctx: &CliContext) -> Result<()> {
 
     #[cfg(unix)]
     {
-        let Ok(mut client) = DaemonClient::connect().await else {
-            ui::print_error("Daemon not running. Security audit requires the daemon.");
-            return Ok(());
-        };
-
-        match client.security_audit().await {
-            Ok(res) => {
-                if res.total_vulnerabilities == 0 {
-                    ui::print_success("No vulnerabilities found in scanned packages.");
-                } else {
-                    ui::print_warning(format!(
-                        "Found {} vulnerabilities ({} high severity)",
-                        res.total_vulnerabilities, res.high_severity
-                    ));
-                    println!();
-                    for (pkg, vulns) in res.vulnerabilities {
-                        println!(
-                            "  {} ({} issues):",
-                            style::maybe_color(&pkg, |t| t.white().bold().to_string()),
-                            vulns.len()
-                        );
-                        for vuln in vulns {
-                            let score = vuln
-                                .score
-                                .map(|s| format!(" [Score: {s}]"))
-                                .unwrap_or_default();
-                            println!(
-                                "    {} {} - {}{}",
-                                style::maybe_color("→", |t| t.red().to_string()),
-                                style::maybe_color(&vuln.id, |t| t.yellow().to_string()),
-                                vuln.summary,
-                                style::dim(&score)
-                            );
-                        }
-                        println!();
-                    }
-                    ui::print_tip("Run 'omg audit sbom' to generate a full security report.");
+        let mut client = DaemonClient::connect().await.context(
+            "Daemon not running. Security audit requires the daemon (start it with: omg daemon)",
+        )?;
+        let res = client
+            .security_audit()
+            .await
+            .context("Failed to run security audit")?;
+        if res.total_vulnerabilities == 0 {
+            ui::print_success("No vulnerabilities found in scanned packages.");
+        } else {
+            ui::print_warning(format!(
+                "Found {} vulnerabilities ({} high severity)",
+                res.total_vulnerabilities, res.high_severity
+            ));
+            println!();
+            for (pkg, vulns) in res.vulnerabilities {
+                println!(
+                    "  {} ({} issues):",
+                    style::maybe_color(&pkg, |t| t.white().bold().to_string()),
+                    vulns.len()
+                );
+                for vuln in vulns {
+                    let score = vuln
+                        .score
+                        .map(|s| format!(" [Score: {s}]"))
+                        .unwrap_or_default();
+                    println!(
+                        "    {} {} - {}{}",
+                        style::maybe_color("→", |t| t.red().to_string()),
+                        style::maybe_color(&vuln.id, |t| t.yellow().to_string()),
+                        vuln.summary,
+                        style::dim(&score)
+                    );
                 }
+                println!();
             }
-            Err(e) => {
-                ui::print_error(format!("Audit failed: {e}"));
-            }
+            ui::print_tip("Run 'omg audit sbom' to generate a full security report.");
         }
     }
 
@@ -203,9 +198,13 @@ pub fn view_audit_log(
                 return Ok(());
             }
         };
-        logger.filter_by_severity(min_severity).unwrap_or_default()
+        logger
+            .filter_by_severity(min_severity)
+            .context("Failed to read audit log entries")?
     } else {
-        logger.get_recent(limit).unwrap_or_default()
+        logger
+            .get_recent(limit)
+            .context("Failed to read audit log entries")?
     };
 
     if let Some(export_path) = export {
@@ -1052,7 +1051,9 @@ pub async fn export_compliance(
 
             // 1. Export audit log
             if let Ok(logger) = AuditLogger::new() {
-                let entries = logger.get_recent(1000).unwrap_or_default();
+                let entries = logger
+                    .get_recent(1000)
+                    .context("Failed to read audit log entries for compliance export")?;
                 let json = serde_json::to_string_pretty(&entries)?;
                 let log_path = output_dir.join(format!("audit-log-{timestamp}.json"));
                 std::fs::write(&log_path, json)?;

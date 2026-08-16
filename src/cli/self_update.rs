@@ -124,7 +124,12 @@ pub async fn run(force: bool, version: Option<String>) -> Result<()> {
                 }
 
                 // Cleanup backup; a leftover .old file is harmless.
-                let _ = fs::remove_file(backup_path);
+                if let Err(error) = fs::remove_file(&backup_path) {
+                    tracing::debug!(
+                        "Failed to remove self-update backup {}: {error}",
+                        backup_path.display()
+                    );
+                }
             }
             Err(e) => {
                 // Restore backup, and surface a restore failure: otherwise the

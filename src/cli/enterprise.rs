@@ -389,6 +389,7 @@ pub mod server {
     use crate::cli::components::Components;
     use crate::cli::packages::execute_cmd;
     use crate::cli::tea::Cmd;
+    use anyhow::Context;
 
     pub fn init(license_key: &str, storage: &str, domain: &str, _ctx: &CliContext) -> Result<()> {
         // SECURITY: Validate all inputs
@@ -464,7 +465,10 @@ pub mod server {
         pm.sync().await?;
 
         // Check for updates to show meaningful status
-        let updates = pm.list_updates().await.unwrap_or_default();
+        let updates = pm
+            .list_updates()
+            .await
+            .context("Failed to list available updates after mirror sync")?;
 
         if updates.is_empty() {
             execute_cmd(Cmd::batch([
