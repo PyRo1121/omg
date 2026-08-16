@@ -14,6 +14,7 @@
 use anyhow::{Context, Result};
 use owo_colors::OwoColorize;
 use std::fs::{self, File};
+use std::io::{self, Write};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
@@ -109,8 +110,14 @@ impl MiseManager {
         tracing::info!("{} Extracting...", "→".blue());
         self.extract_tarball(&download_path)?;
 
-        // Cleanup
-        let _ = fs::remove_file(&download_path);
+        // Best-effort: the archive is already extracted; leftover files only
+        // waste cache space and are overwritten on the next download.
+        if let Err(error) = fs::remove_file(&download_path) {
+            tracing::debug!(
+                "Failed to remove mise archive {}: {error}",
+                download_path.display()
+            );
+        }
 
         // Verify installation
         if !self.mise_bin.exists() {
@@ -172,7 +179,7 @@ impl MiseManager {
                 if !entry.header().entry_type().is_file() {
                     anyhow::bail!("Mise archive binary entry is not a regular file");
                 }
-                entry.unpack(&self.mise_bin)?;
+                self.persist_mise_binary(&mut entry)?;
                 return Ok(());
             }
         }
@@ -197,12 +204,59 @@ impl MiseManager {
             };
             let dest = self.bin_dir.join(&stripped);
 
+            if dest == self.mise_bin {
+                self.persist_mise_binary(&mut entry)?;
+                continue;
+            }
+
             if let Some(parent) = dest.parent() {
                 fs::create_dir_all(parent)?;
             }
             entry.unpack(&dest)?;
         }
 
+        Ok(())
+    }
+
+    /// Unpack the mise binary into a same-directory temp file and atomically
+    /// publish it. A crash mid-extract therefore never leaves a live binary
+    /// that [`is_available`] would treat as installed.
+    fn persist_mise_binary<R: io::Read>(&self, entry: &mut tar::Entry<'_, R>) -> Result<()> {
+        fs::create_dir_all(&self.bin_dir).with_context(|| {
+            format!(
+                "Failed to create mise directory: {}",
+                self.bin_dir.display()
+            )
+        })?;
+        let mut temporary = tempfile::NamedTempFile::new_in(&self.bin_dir).with_context(|| {
+            format!(
+                "Failed to create temporary mise binary in {}",
+                self.bin_dir.display()
+            )
+        })?;
+        io::copy(entry, &mut temporary).with_context(|| {
+            format!(
+                "Failed to write temporary mise binary in {}",
+                self.bin_dir.display()
+            )
+        })?;
+        temporary.flush()?;
+        temporary.as_file_mut().sync_all()?;
+        #[cfg(unix)]
+        {
+            let mut perms = temporary.as_file().metadata()?.permissions();
+            perms.set_mode(0o755);
+            temporary.as_file().set_permissions(perms)?;
+        }
+        temporary
+            .persist(&self.mise_bin)
+            .map_err(|error| error.error)
+            .with_context(|| {
+                format!(
+                    "Failed to persist mise binary at {}",
+                    self.mise_bin.display()
+                )
+            })?;
         Ok(())
     }
 
