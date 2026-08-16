@@ -26,6 +26,16 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Fail closed on AUR update failures and persist pins atomically
+
+omg update printed a warning after AUR builds failed, then returned
+
+success. Return an error so scripts cannot treat a partial upgrade as
+
+complete. Persist pins.toml through a same-directory temp file and
+
+sync so a crash cannot leave a truncated pin config.
+
 - Fail closed when runtime listing or daemon startup fails
 
 omg use treated a failed list_installed as empty and could reinstall
