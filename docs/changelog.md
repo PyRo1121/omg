@@ -26,6 +26,16 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Fail closed on Arch enterprise inventory and evidence
+
+License scan treated a failed local package-cache read as an empty
+
+inventory. Audit export wrote invented CVE, SBOM, and policy files.
+
+Load the real Arch package list and security policy, and fail closed
+
+when those lookups fail instead of exporting sample evidence.
+
 - Select host-specific runtime archives and real Ruby versions
 
 omg list ruby --available never matched ruby-X.Y.Z tags and invented
