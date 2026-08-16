@@ -26,6 +26,16 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Reject symlink and file impostors as runtime versions
+
+Runtime managers used Path::exists() to decide whether a version was
+
+installed, which follows symlinks and accepts regular-file impostors.
+
+Require real directories for install short-circuits, activation, and
+
+version listing, with a regression test for symlinked and file paths.
+
 - Verify Ruby and mise release asset digests
 
 Ruby and mise downloads were accepted without vendor integrity data.
