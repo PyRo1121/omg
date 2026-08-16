@@ -4,7 +4,7 @@
 
 use std::cmp::Ordering;
 use std::fs::{self, File};
-use std::io::BufReader;
+use std::io::{BufReader, Write};
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -296,6 +296,79 @@ pub async fn extract_zip(
     .await?
 }
 
+const INSTALL_MARKER: &str = ".omg-install-complete";
+
+/// Begin a same-filesystem staged runtime install.
+///
+/// Extraction writes into the returned staging directory, which only becomes
+/// the final version directory when [`complete_staged_install`] publishes it
+/// after a successful extraction. An interrupted install therefore never
+/// leaves a version directory that looks installed.
+pub fn begin_staged_install(versions_dir: &Path) -> Result<tempfile::TempDir> {
+    fs::create_dir_all(versions_dir).with_context(|| {
+        format!(
+            "Failed to create runtime versions directory: {}",
+            versions_dir.display()
+        )
+    })?;
+    tempfile::Builder::new()
+        .prefix(".install-")
+        .tempdir_in(versions_dir)
+        .with_context(|| {
+            format!(
+                "Failed to create runtime staging directory in {}",
+                versions_dir.display()
+            )
+        })
+}
+
+/// Atomically publish a staged runtime installation.
+///
+/// Writes the completion marker, then renames the staging directory into its
+/// final path on the same filesystem. Fails if the final path appeared during
+/// staging (for example, a concurrent install).
+pub fn complete_staged_install(
+    staging: &tempfile::TempDir,
+    version_dir: &Path,
+    version: &str,
+) -> Result<()> {
+    write_install_marker(staging.path(), version)?;
+    if fs::symlink_metadata(version_dir).is_ok() {
+        anyhow::bail!(
+            "Runtime installation appeared during staging: {}",
+            version_dir.display()
+        );
+    }
+    fs::rename(staging.path(), version_dir).with_context(|| {
+        format!(
+            "Failed to publish runtime installation at {}",
+            version_dir.display()
+        )
+    })?;
+    Ok(())
+}
+
+fn write_install_marker(version_dir: &Path, version: &str) -> Result<()> {
+    let mut marker = tempfile::NamedTempFile::new_in(version_dir).with_context(|| {
+        format!(
+            "Failed to create install marker in {}",
+            version_dir.display()
+        )
+    })?;
+    writeln!(marker, "{version}")?;
+    marker.as_file_mut().sync_all()?;
+    marker
+        .persist(version_dir.join(INSTALL_MARKER))
+        .map_err(|error| error.error)
+        .with_context(|| {
+            format!(
+                "Failed to persist install marker in {}",
+                version_dir.display()
+            )
+        })?;
+    Ok(())
+}
+
 /// Create or update the "current" symlink
 pub fn set_current_version(versions_dir: &Path, version: &str) -> Result<()> {
     crate::core::security::validate_runtime_version(version)?;
@@ -384,9 +457,13 @@ pub fn list_installed_versions(versions_dir: &Path) -> Result<Vec<String>> {
     for entry in fs::read_dir(versions_dir)? {
         let entry = entry?;
         let name = entry.file_name().to_string_lossy().into_owned();
-        if name != "current" && entry.file_type()?.is_dir() {
-            versions.push(name);
+        // Skip the "current" symlink and dot-prefixed entries (e.g. staging
+        // directories left by an interrupted install, which must never be
+        // reported as installed versions).
+        if name.starts_with('.') || name == "current" || !entry.file_type()?.is_dir() {
+            continue;
         }
+        versions.push(name);
     }
 
     versions.sort_by(|a, b| version_cmp(b, a));
@@ -593,6 +670,59 @@ mod tests {
         assert!(parse_sha256_digest("not-a-digest", "nodejs.org").is_err());
         assert!(parse_sha256_digest(&"a".repeat(63), "nodejs.org").is_err());
         assert!(parse_sha256_digest(&"z".repeat(64), "nodejs.org").is_err());
+    }
+
+    #[test]
+    fn staged_install_publishes_marker_on_success() -> anyhow::Result<()> {
+        let temp = TempDir::new()?;
+        let versions_dir = temp.path().join("versions");
+        let version_dir = versions_dir.join("1.0.0");
+
+        let staging = begin_staged_install(&versions_dir)?;
+        fs::write(staging.path().join("bin"), "binary")?;
+        complete_staged_install(&staging, &version_dir, "1.0.0")?;
+
+        assert!(version_dir.join("bin").is_file());
+        assert_eq!(
+            fs::read_to_string(version_dir.join(INSTALL_MARKER))?,
+            "1.0.0\n"
+        );
+        assert_eq!(
+            list_installed_versions(&versions_dir)?,
+            vec!["1.0.0".to_string()]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn interrupted_staged_install_leaves_no_version_or_staging_entry() -> anyhow::Result<()> {
+        let temp = TempDir::new()?;
+        let versions_dir = temp.path().join("versions");
+        let version_dir = versions_dir.join("1.0.0");
+
+        {
+            let staging = begin_staged_install(&versions_dir)?;
+            fs::write(staging.path().join("bin"), "partial")?;
+            // Simulate an interrupted install: staging drops without publishing.
+        }
+
+        assert!(!version_dir.exists());
+        assert!(list_installed_versions(&versions_dir)?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn staged_install_refuses_to_clobber_an_existing_version() -> anyhow::Result<()> {
+        let temp = TempDir::new()?;
+        let versions_dir = temp.path().join("versions");
+        let version_dir = versions_dir.join("1.0.0");
+        fs::create_dir_all(&version_dir)?;
+
+        let staging = begin_staged_install(&versions_dir)?;
+        let error = complete_staged_install(&staging, &version_dir, "1.0.0")
+            .expect_err("must refuse to publish over an existing version");
+        assert!(error.to_string().contains("appeared during staging"));
+        Ok(())
     }
 
     #[test]

@@ -14,8 +14,8 @@ use std::fs;
 use std::path::PathBuf;
 
 use super::common::{
-    download_with_progress, extract_zip, normalize_version, print_already_installed,
-    print_installed, print_using, set_current_version,
+    begin_staged_install, complete_staged_install, download_with_progress, extract_zip,
+    normalize_version, print_already_installed, print_installed, print_using, set_current_version,
 };
 use crate::core::http::download_client;
 
@@ -133,7 +133,9 @@ impl BunManager {
         download_with_progress(&self.client, &url, &download_path, None).await?;
 
         println!("{} Extracting (pure Rust)...", "→".blue());
-        extract_zip(&download_path, &version_dir, 1).await?;
+        let staging = begin_staged_install(&self.versions_dir)?;
+        extract_zip(&download_path, staging.path(), 1).await?;
+        complete_staged_install(&staging, &version_dir, &version)?;
 
         let _ = fs::remove_file(&download_path);
 

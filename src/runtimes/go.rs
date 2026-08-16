@@ -17,8 +17,9 @@ use owo_colors::OwoColorize;
 use serde::Deserialize;
 
 use super::common::{
-    download_with_progress, extract_tar_gz, normalize_version, parse_sha256_digest,
-    print_already_installed, print_installed, set_current_version,
+    begin_staged_install, complete_staged_install, download_with_progress, extract_tar_gz,
+    normalize_version, parse_sha256_digest, print_already_installed, print_installed,
+    set_current_version,
 };
 use crate::core::http::download_client;
 
@@ -110,7 +111,9 @@ impl GoManager {
         download_with_progress(self.client, &url, &download_path, Some(&checksum)).await?;
 
         println!("{} Extracting (pure Rust)...", "→".blue());
-        extract_tar_gz(&download_path, &version_dir, 1).await?;
+        let staging = begin_staged_install(&self.versions_dir)?;
+        extract_tar_gz(&download_path, staging.path(), 1).await?;
+        complete_staged_install(&staging, &version_dir, &version)?;
 
         let _ = fs::remove_file(&download_path);
 
