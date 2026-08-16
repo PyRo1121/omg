@@ -21,7 +21,7 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::{self, File};
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::RwLock;
@@ -723,21 +723,48 @@ fn get_cache_dir() -> PathBuf {
 
 /// Save cache to disk in binary format
 fn save_cache_to_disk<T: Serialize>(cache: &T, name: &str) -> Result<()> {
-    let cache_dir = get_cache_dir();
-    fs::create_dir_all(&cache_dir).ok();
-    let path = cache_dir.join(format!("{name}.bin"));
+    save_cache_to_disk_in(cache, &get_cache_dir(), name)
+}
 
-    // Write to a temporary file first for atomicity
-    let tmp_path = path.with_extension("tmp");
+fn save_cache_to_disk_in<T: Serialize>(cache: &T, cache_dir: &Path, name: &str) -> Result<()> {
+    fs::create_dir_all(cache_dir).with_context(|| {
+        format!(
+            "Failed to create package cache directory: {}",
+            cache_dir.display()
+        )
+    })?;
+    let path = cache_dir.join(format!("{name}.bin"));
     let data = bitcode::serialize(cache)?;
-    fs::write(&tmp_path, data)?;
-    fs::rename(tmp_path, path)?;
+    let mut file = tempfile::NamedTempFile::new_in(cache_dir).with_context(|| {
+        format!(
+            "Failed to create temporary package cache in {}",
+            cache_dir.display()
+        )
+    })?;
+    file.write_all(&data)?;
+    file.as_file_mut().sync_all()?;
+    file.persist(&path)
+        .map_err(|error| error.error)
+        .with_context(|| format!("Failed to persist package cache at {}", path.display()))?;
     Ok(())
+}
+
+fn persist_cache_best_effort<T: Serialize>(cache: &T, name: &str) {
+    if let Err(error) = save_cache_to_disk(cache, name) {
+        tracing::warn!("Failed to persist {name} package cache: {error}");
+    }
 }
 
 /// Load cache from disk
 fn load_cache_from_disk<T: for<'de> Deserialize<'de>>(name: &str) -> Result<T> {
-    let path = get_cache_dir().join(format!("{name}.bin"));
+    load_cache_from_disk_in(&get_cache_dir(), name)
+}
+
+fn load_cache_from_disk_in<T: for<'de> Deserialize<'de>>(
+    cache_dir: &Path,
+    name: &str,
+) -> Result<T> {
+    let path = cache_dir.join(format!("{name}.bin"));
     let data = fs::read(&path)?;
     let cache: T = bitcode::deserialize(&data)?;
     Ok(cache)
@@ -901,8 +928,9 @@ fn ensure_sync_cache_loaded(sync_dir: &Path) -> Result<()> {
     cache.last_modified = Some(current_mtime);
     cache.last_accessed = Some(SystemTime::now());
 
-    // Save to disk for next time (bitcode for backward compat)
-    let _ = save_cache_to_disk(&*cache, "sync_db");
+    // Persist for faster restarts; the in-memory cache is authoritative
+    // for this process, so a disk write failure is logged, not fatal.
+    persist_cache_best_effort(&*cache, "sync_db");
 
     // Also save rkyv mmap index for zero-copy access
     let mtime_secs = current_mtime
@@ -989,8 +1017,7 @@ fn ensure_local_cache_loaded(local_dir: &Path) -> Result<()> {
     cache.last_modified = Some(current_mtime);
     cache.last_accessed = Some(SystemTime::now());
 
-    // Save to disk
-    let _ = save_cache_to_disk(&*cache, "local_db");
+    persist_cache_best_effort(&*cache, "local_db");
 
     Ok(())
 }
@@ -1039,9 +1066,20 @@ pub fn invalidate_caches() {
     super::super::alpm_direct::clear_alpm_cache();
 
     let cache_dir = get_cache_dir();
-    let _ = fs::remove_file(cache_dir.join("sync_db.bin"));
-    let _ = fs::remove_file(cache_dir.join("local_db.bin"));
-    let _ = fs::remove_file(get_mmap_index_path());
+    remove_cache_file_best_effort(&cache_dir.join("sync_db.bin"));
+    remove_cache_file_best_effort(&cache_dir.join("local_db.bin"));
+    remove_cache_file_best_effort(&get_mmap_index_path());
+}
+
+fn remove_cache_file_best_effort(path: &Path) {
+    if let Err(error) = fs::remove_file(path)
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
+        tracing::debug!(
+            "Failed to remove package cache file {}: {error}",
+            path.display()
+        );
+    }
 }
 
 /// Pre-load caches in background (call on daemon startup)
@@ -1568,6 +1606,37 @@ mod tests {
         let fresh = now - std::time::Duration::from_secs(1);
 
         assert!(!is_cache_reusable(Some(now), now, false, Some(fresh)));
+    }
+
+    #[test]
+    fn package_cache_round_trips_through_atomic_persist() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let cache = LocalDbCache {
+            packages: HashMap::from([(
+                "firefox".to_string(),
+                LocalDbPackage {
+                    name: "firefox".to_string(),
+                    ..Default::default()
+                },
+            )]),
+            last_modified: Some(SystemTime::UNIX_EPOCH),
+            last_accessed: None,
+        };
+
+        save_cache_to_disk_in(&cache, temp.path(), "local_db").unwrap();
+        let loaded: LocalDbCache = load_cache_from_disk_in(temp.path(), "local_db").unwrap();
+        assert!(loaded.packages.contains_key("firefox"));
+        assert_eq!(loaded.last_modified, Some(SystemTime::UNIX_EPOCH));
+    }
+
+    #[test]
+    fn package_cache_persist_refuses_to_clobber_a_directory() {
+        let temp = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir(temp.path().join("local_db.bin")).unwrap();
+
+        let error = save_cache_to_disk_in(&LocalDbCache::default(), temp.path(), "local_db")
+            .expect_err("must refuse to persist over a directory");
+        assert!(!error.to_string().is_empty());
     }
 
     #[test]
