@@ -26,6 +26,18 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Persist AUR source pre-downloads atomically and surface failures
+
+AUR source pre-download hid .SRCINFO parse failures, discarded download
+
+counts, and renamed unsynced .tmp files that could collide with real
+
+source names. Stream each source into a same-directory temp file, sync
+
+and persist it, count successes and failures, and log parse/download
+
+and build-dir chown problems instead of swallowing them.
+
 - Keep the audit hash chain aligned with durable writes
 
 AuditLogger advanced last_hash before the JSONL append succeeded, so a
