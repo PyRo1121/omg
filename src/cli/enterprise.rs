@@ -154,9 +154,9 @@ pub fn audit_export(
     let files = vec![
         ("access-control-matrix.csv", generate_access_control_csv()),
         ("change-log.json", generate_change_log_json()?),
-        ("policy-enforcement.json", generate_policy_json()),
-        ("vulnerability-remediation.csv", generate_vuln_csv()),
-        ("sbom-inventory.json", generate_sbom_json()),
+        ("policy-enforcement.json", generate_policy_json()?),
+        ("installed-packages.csv", generate_installed_packages_csv()?),
+        ("sbom-inventory.json", generate_sbom_json()?),
     ];
 
     let mut file_list = vec![];
@@ -204,7 +204,7 @@ pub fn license_scan(export: Option<&str>, _ctx: &CliContext) -> Result<()> {
 
     license::require_feature("license-scan")?;
 
-    let scan = perform_license_scan();
+    let scan = perform_license_scan()?;
 
     // Display results
     let mut license_inventory = vec![];
@@ -575,35 +575,61 @@ fn generate_change_log_json() -> Result<String> {
     serde_json::to_string(&entries).context("Failed to serialize audit log entries")
 }
 
-fn generate_policy_json() -> String {
-    // Return a structured but minimal policy inventory
-    let policies = vec![
-        serde_json::json!({
-            "rule": "Allow only signed packages",
-            "scope": "global",
-            "enforced": true
-        }),
-        serde_json::json!({
-            "rule": "Block copyleft licenses in production",
-            "scope": "production",
-            "enforced": true
-        }),
-    ];
-    serde_json::to_string_pretty(&policies).unwrap_or_else(|_| "[]".to_string())
+fn generate_policy_json() -> Result<String> {
+    let policy = crate::core::security::SecurityPolicy::load_default()
+        .context("Failed to load security policy for enterprise export")?;
+    serde_json::to_string_pretty(&policy).context("Failed to serialize security policy")
 }
 
-fn generate_vuln_csv() -> String {
-    let mut csv = "cve,package,severity,fixed_version,fixed_date\n".to_string();
-    // Provide sample data for audit verification
-    csv.push_str("CVE-2023-1234,openssl,High,3.0.8,2023-02-01\n");
-    csv.push_str("CVE-2023-5678,curl,Medium,7.88.1,2023-03-20\n");
-    csv
+fn generate_installed_packages_csv() -> Result<String> {
+    let mut csv = String::from("package,version,description\n");
+    #[cfg(feature = "arch")]
+    {
+        let packages = crate::package_managers::list_installed_fast()
+            .context("Failed to list installed packages for enterprise export")?;
+        for pkg in packages {
+            let _ = std::fmt::write(
+                &mut csv,
+                format_args!(
+                    "{},{},{}\n",
+                    pkg.name,
+                    pkg.version,
+                    pkg.description.replace(',', " ")
+                ),
+            );
+        }
+    }
+    #[cfg(not(feature = "arch"))]
+    anyhow::bail!("Installed-package export requires the Arch package backend");
+    Ok(csv)
 }
 
-fn generate_sbom_json() -> String {
-    // In production, this would call the actual SBOM generator
-    // For now we return a valid but empty CycloneDX shell
-    r#"{"bomFormat": "CycloneDX", "specVersion": "1.4", "serialNumber": "urn:uuid:52f6f7e0-9efc-41c9-bc4c-f0c014883f0a", "version": 1, "components": []}"#.to_string()
+fn generate_sbom_json() -> Result<String> {
+    #[cfg(feature = "arch")]
+    {
+        let packages = crate::package_managers::list_installed_fast()
+            .context("Failed to list installed packages for SBOM export")?;
+        let components: Vec<serde_json::Value> = packages
+            .into_iter()
+            .map(|pkg| {
+                serde_json::json!({
+                    "type": "library",
+                    "name": pkg.name,
+                    "version": pkg.version.to_string(),
+                    "description": pkg.description,
+                })
+            })
+            .collect();
+        serde_json::to_string_pretty(&serde_json::json!({
+            "bomFormat": "CycloneDX",
+            "specVersion": "1.5",
+            "version": 1,
+            "components": components,
+        }))
+        .context("Failed to serialize SBOM inventory")
+    }
+    #[cfg(not(feature = "arch"))]
+    anyhow::bail!("SBOM inventory export requires the Arch package backend")
 }
 
 #[derive(Debug, Serialize)]
@@ -621,25 +647,24 @@ struct LicenseViolation {
     reason: String,
 }
 
-#[allow(unused_mut)] // Mutated only inside feature-gated block
-fn perform_license_scan() -> LicenseScan {
-    let mut by_license: HashMap<String, usize> = HashMap::new();
-    let mut violations: Vec<LicenseViolation> = Vec::new();
-    let mut unknown: Vec<String> = Vec::new();
-    let mut total_packages = 0;
+fn perform_license_scan() -> Result<LicenseScan> {
+    #[cfg(not(feature = "arch"))]
+    anyhow::bail!("Enterprise license scan requires the Arch package backend");
 
-    // Use pure Rust database parser for speed
     #[cfg(feature = "arch")]
-    if let Ok(packages) = crate::package_managers::pacman_db::list_local_cached() {
+    {
+        let packages = crate::package_managers::pacman_db::list_local_cached()
+            .context("Failed to list installed packages for license scan")?;
+        let mut by_license: HashMap<String, usize> = HashMap::new();
+        let mut violations: Vec<LicenseViolation> = Vec::new();
+        let mut unknown: Vec<String> = Vec::new();
+        let total = packages.len();
         for pkg in packages {
-            total_packages += 1;
             if pkg.licenses.is_empty() {
                 unknown.push(pkg.name.clone());
             } else {
                 for lic in &pkg.licenses {
                     *by_license.entry(lic.clone()).or_insert(0) += 1;
-
-                    // Production policy: Flag copyleft licenses for review
                     if lic.to_uppercase().contains("GPL") {
                         violations.push(LicenseViolation {
                             package: pkg.name.clone(),
@@ -650,13 +675,12 @@ fn perform_license_scan() -> LicenseScan {
                 }
             }
         }
-    }
-
-    LicenseScan {
-        total: total_packages,
-        by_license,
-        violations,
-        unknown,
+        Ok(LicenseScan {
+            total,
+            by_license,
+            violations,
+            unknown,
+        })
     }
 }
 
