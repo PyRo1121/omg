@@ -26,6 +26,16 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Fail closed on Arch dry-run and team proposal lookups
+
+omg install --dry-run and omg update --dry-run treated a failed
+
+official-package lookup as AUR/unknown. omg team propose hid a
+
+failed explicit-package list as an empty environment. Surface
+
+those errors so Arch commands cannot invent missing packages.
+
 - Fail closed on Arch info, remove, explicit, and audit lookups
 
 omg info treated official and AUR lookup failures as not found.
