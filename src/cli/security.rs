@@ -6,6 +6,39 @@
 use anyhow::{Context, Result};
 use owo_colors::OwoColorize;
 
+fn is_not_found(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|io_error| io_error.kind() == std::io::ErrorKind::NotFound)
+    })
+}
+
+fn read_audit_entries(
+    logger: &AuditLogger,
+    limit: usize,
+    severity_filter: Option<&str>,
+) -> Result<Vec<crate::core::security::audit::AuditEntry>> {
+    let result = if let Some(sev) = severity_filter {
+        let min_severity = match sev.to_lowercase().as_str() {
+            "debug" => AuditSeverity::Debug,
+            "info" => AuditSeverity::Info,
+            "warning" | "warn" => AuditSeverity::Warning,
+            "error" => AuditSeverity::Error,
+            "critical" => AuditSeverity::Critical,
+            _ => anyhow::bail!("Invalid severity: {sev}"),
+        };
+        logger.filter_by_severity(min_severity)
+    } else {
+        logger.get_recent(limit)
+    };
+    match result {
+        Ok(entries) => Ok(entries),
+        Err(error) if is_not_found(&error) => Ok(Vec::new()),
+        Err(error) => Err(error).context("Failed to read audit log entries"),
+    }
+}
+
 use crate::cli::{AuditCommands, CliContext, LocalCommandRunner, style, ui};
 #[cfg(unix)]
 use crate::core::client::DaemonClient;
@@ -26,7 +59,7 @@ impl LocalCommandRunner for AuditCommands {
                 limit,
                 severity,
                 export,
-            } => view_audit_log(*limit, severity.clone(), export.clone(), ctx),
+            } => view_audit_log(*limit, severity.as_deref(), export.clone(), ctx),
             AuditCommands::Verify => verify_audit_log(ctx),
             AuditCommands::Policy => show_policy(ctx),
             AuditCommands::Slsa { package } => check_slsa(package, ctx).await,
@@ -167,45 +200,15 @@ pub async fn generate_sbom(
 /// View audit log entries
 pub fn view_audit_log(
     limit: usize,
-    severity_filter: Option<String>,
+    severity_filter: Option<&str>,
     export: Option<String>,
     _ctx: &CliContext,
 ) -> Result<()> {
     // Require Team tier for audit logs
     license::require_feature("audit-log")?;
 
-    let Ok(logger) = AuditLogger::new() else {
-        println!(
-            "  {} No audit log exists yet. Events will be logged during package operations.",
-            style::maybe_color("ℹ", |t| t.blue().to_string())
-        );
-        return Ok(());
-    };
-
-    let entries = if let Some(sev) = severity_filter {
-        let min_severity = match sev.to_lowercase().as_str() {
-            "debug" => AuditSeverity::Debug,
-            "info" => AuditSeverity::Info,
-            "warning" | "warn" => AuditSeverity::Warning,
-            "error" => AuditSeverity::Error,
-            "critical" => AuditSeverity::Critical,
-            _ => {
-                println!(
-                    "{} Invalid severity: {}",
-                    style::maybe_color("✗", |t| t.red().to_string()),
-                    sev
-                );
-                return Ok(());
-            }
-        };
-        logger
-            .filter_by_severity(min_severity)
-            .context("Failed to read audit log entries")?
-    } else {
-        logger
-            .get_recent(limit)
-            .context("Failed to read audit log entries")?
-    };
+    let logger = AuditLogger::new().context("Failed to open audit log")?;
+    let entries = read_audit_entries(&logger, limit, severity_filter)?;
 
     if let Some(export_path) = export {
         println!(
@@ -1056,25 +1059,28 @@ pub async fn export_compliance(
             // - Configuration documentation
 
             // 1. Export audit log
-            if let Ok(logger) = AuditLogger::new() {
-                let entries = logger
-                    .get_recent(1000)
-                    .context("Failed to read audit log entries for compliance export")?;
-                let json = serde_json::to_string_pretty(&entries)?;
-                let log_path = output_dir.join(format!("audit-log-{timestamp}.json"));
-                std::fs::write(&log_path, json)?;
-                println!(
-                    "  {} Audit log: {}",
-                    style::success("✓"),
-                    log_path.display()
-                );
-            }
+            let logger =
+                AuditLogger::new().context("Failed to open audit log for compliance export")?;
+            let entries = read_audit_entries(&logger, 1000, None)?;
+            let json = serde_json::to_string_pretty(&entries)?;
+            let log_path = output_dir.join(format!("audit-log-{timestamp}.json"));
+            std::fs::write(&log_path, json)?;
+            println!(
+                "  {} Audit log: {}",
+                style::success("✓"),
+                log_path.display()
+            );
 
             // 2. Export vulnerability scan
             #[cfg(unix)]
-            if let Ok(mut client) = DaemonClient::connect().await
-                && let Ok(scan) = client.security_audit().await
             {
+                let mut client = DaemonClient::connect().await.context(
+                    "Daemon not running. Compliance export requires the daemon (start it with: omg daemon)",
+                )?;
+                let scan = client
+                    .security_audit()
+                    .await
+                    .context("Failed to run security audit for compliance export")?;
                 let json = serde_json::to_string_pretty(&scan)?;
                 let scan_path = output_dir.join(format!("vulnerability-scan-{timestamp}.json"));
                 std::fs::write(&scan_path, json)?;
@@ -1087,12 +1093,14 @@ pub async fn export_compliance(
 
             // 3. Generate SBOM
             let generator = SbomGenerator::new().with_vulnerabilities(true);
-            if let Ok(sbom) = generator.generate_system_sbom().await {
-                let sbom_filename = format!("sbom-{timestamp}.json");
-                let sbom_path = output_dir.join(sbom_filename);
-                generator.export_json(&sbom, &sbom_path)?;
-                println!("  {} SBOM: {}", style::success("✓"), sbom_path.display());
-            }
+            let sbom = generator
+                .generate_system_sbom()
+                .await
+                .context("Failed to generate SBOM for compliance export")?;
+            let sbom_filename = format!("sbom-{timestamp}.json");
+            let sbom_path = output_dir.join(sbom_filename);
+            generator.export_json(&sbom, &sbom_path)?;
+            println!("  {} SBOM: {}", style::success("✓"), sbom_path.display());
 
             // 4. Configuration snapshot
             let config_snapshot = serde_json::json!({
