@@ -191,7 +191,11 @@ pub fn build_index(json_path: &Path, output_path: &Path) -> Result<()> {
         NamedTempFile::new_in(parent).context("Failed to create temporary index file")?;
     temp.write_all(&bytes)
         .context("Failed to write index data")?;
+    temp.as_file_mut()
+        .sync_all()
+        .context("Failed to sync AUR index")?;
     temp.persist(output_path)
+        .map_err(|error| error.error)
         .context("Failed to persist index file")?;
 
     Ok(())

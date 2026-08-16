@@ -430,7 +430,12 @@ impl WindowsPackageManager {
 
     fn save_mmap_index(index: &RkyvWindowsIndex) -> Result<()> {
         let cache_dir = Self::get_cache_dir();
-        std::fs::create_dir_all(&cache_dir).ok();
+        std::fs::create_dir_all(&cache_dir).with_context(|| {
+            format!(
+                "Failed to create Windows cache directory: {}",
+                cache_dir.display()
+            )
+        })?;
         let path = Self::get_mmap_path();
 
         let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(index)
@@ -440,7 +445,12 @@ impl WindowsPackageManager {
         let mut temp =
             NamedTempFile::new_in(parent).context("Failed to create temp file for mmap index")?;
         temp.write_all(&bytes)?;
-        temp.persist(&path)?;
+        temp.as_file_mut().sync_all()?;
+        temp.persist(&path)
+            .map_err(|error| error.error)
+            .with_context(|| {
+                format!("Failed to persist Windows mmap index at {}", path.display())
+            })?;
 
         Ok(())
     }
@@ -549,7 +559,9 @@ impl WindowsPackageManager {
             }
         }
 
-        let _ = self.save_cache().await;
+        if let Err(error) = self.save_cache().await {
+            tracing::warn!("Failed to persist Windows package cache: {error}");
+        }
 
         let rkyv_index = Self::build_rkyv_index(&self.package_index);
         if let Err(e) = Self::save_mmap_index(&rkyv_index) {
@@ -827,7 +839,18 @@ impl WindowsPackageManager {
 
         let bytes = bitcode::encode(&cache);
         let cache_path = self.cache_dir.join("packages.cache");
-        fs::write(&cache_path, &bytes).await?;
+        let cache_dir = self.cache_dir.clone();
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            let mut file = tempfile::NamedTempFile::new_in(&cache_dir)
+                .context("Failed to create temporary Windows package cache")?;
+            std::io::Write::write_all(&mut file, &bytes)?;
+            file.as_file_mut().sync_all()?;
+            file.persist(&cache_path)
+                .map_err(|error| error.error)
+                .context("Failed to persist Windows package cache")?;
+            Ok(())
+        })
+        .await??;
 
         Ok(())
     }
