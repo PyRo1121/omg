@@ -271,7 +271,9 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
         modern_ui::print_warning(&format!(
             "Upgraded {installed_count} packages, {failed_count} failed"
         ));
-    } else if installed_count > 0 {
+        anyhow::bail!("{failed_count} package(s) failed to update");
+    }
+    if installed_count > 0 {
         modern_ui::print_success(&format!("Upgraded {installed_count} packages"));
     } else {
         modern_ui::print_up_to_date();
