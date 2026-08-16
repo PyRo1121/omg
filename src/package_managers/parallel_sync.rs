@@ -5,6 +5,7 @@
 
 use alpm_types::Version;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -96,10 +97,6 @@ fn save_cached_mirrors(mirrors: &[String]) {
     }
 
     let path = mirror_cache_path();
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-
     let cache = MirrorCache {
         cached_at: SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -108,9 +105,64 @@ fn save_cached_mirrors(mirrors: &[String]) {
         mirrors: mirrors.to_vec(),
     };
 
-    if let Ok(content) = serde_json::to_string(&cache) {
-        let _ = std::fs::write(&path, content);
+    if let Ok(content) = serde_json::to_string(&cache)
+        && let Err(error) = persist_file_atomically(&path, content.as_bytes())
+    {
+        tracing::debug!("Failed to persist mirror cache: {error}");
     }
+}
+
+fn persist_file_atomically(dest: &Path, data: &[u8]) -> Result<()> {
+    let parent = dest.parent().unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent).with_context(|| {
+        format!(
+            "Failed to create download cache directory: {}",
+            parent.display()
+        )
+    })?;
+    let mut file = tempfile::NamedTempFile::new_in(parent).with_context(|| {
+        format!(
+            "Failed to create temporary download cache in {}",
+            parent.display()
+        )
+    })?;
+    file.write_all(data)?;
+    file.as_file_mut().sync_all()?;
+    file.persist(dest)
+        .map_err(|error| error.error)
+        .with_context(|| format!("Failed to persist download cache at {}", dest.display()))?;
+    Ok(())
+}
+
+fn begin_same_dir_temp(dest: &Path) -> Result<(std::fs::File, tempfile::TempPath)> {
+    let parent = dest.parent().unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent)
+        .with_context(|| format!("Failed to create download directory: {}", parent.display()))?;
+    tempfile::Builder::new()
+        .prefix(".download-")
+        .tempfile_in(parent)
+        .with_context(|| {
+            format!(
+                "Failed to create temporary download in {}",
+                parent.display()
+            )
+        })
+        .map(tempfile::NamedTempFile::into_parts)
+}
+
+async fn persist_same_dir_temp(
+    mut file: File,
+    temporary_path: tempfile::TempPath,
+    dest: &Path,
+) -> Result<()> {
+    file.flush().await.context("Failed to flush download")?;
+    file.sync_all().await.context("Failed to sync download")?;
+    drop(file);
+    temporary_path
+        .persist(dest)
+        .map_err(|error| error.error)
+        .with_context(|| format!("Failed to persist download at {}", dest.display()))?;
+    Ok(())
 }
 
 /// Build the URL for a database file
@@ -175,33 +227,15 @@ async fn race_mirrors(client: &Client, urls: &[String]) -> Option<usize> {
     Some(0)
 }
 
-async fn download_response_to_file(
-    mut response: reqwest::Response,
-    temp_path: &Path,
-) -> Result<()> {
-    let mut file = File::create(temp_path)
-        .await
-        .with_context(|| format!("Failed to create {}", temp_path.display()))?;
-
+async fn download_response_to_dest(mut response: reqwest::Response, dest: &Path) -> Result<()> {
+    let (std_file, temporary_path) = begin_same_dir_temp(dest)?;
+    let mut file = File::from_std(std_file);
     while let Some(chunk) = response.chunk().await? {
         file.write_all(&chunk)
             .await
             .context("Write error during download")?;
     }
-
-    Ok(())
-}
-
-async fn finalize_downloaded_file(temp_path: &Path, dest: &Path) -> Result<()> {
-    let mut file = File::open(temp_path).await?;
-    file.flush().await.context("Failed to flush file")?;
-    drop(file);
-
-    tokio::fs::rename(temp_path, dest)
-        .await
-        .context("Failed to rename temp file to destination")?;
-
-    Ok(())
+    persist_same_dir_temp(file, temporary_path, dest).await
 }
 
 #[expect(clippy::literal_string_with_formatting_args, clippy::expect_used)] // Static indicatif templates are always valid; braces are template syntax
@@ -308,17 +342,8 @@ async fn download_db(
                 );
             }
 
-            let temp_path = dest.with_extension("db.part");
-
-            if let Err(e) = download_response_to_file(response, &temp_path).await {
+            if let Err(e) = download_response_to_dest(response, dest).await {
                 last_error = Some(e);
-                let _ = tokio::fs::remove_file(&temp_path).await;
-                continue;
-            }
-
-            if let Err(e) = finalize_downloaded_file(&temp_path, dest).await {
-                last_error = Some(e);
-                let _ = tokio::fs::remove_file(&temp_path).await;
                 continue;
             }
 
@@ -658,19 +683,14 @@ async fn download_package(
                 break;
             }
 
-            // Download to temp file
-            let temp_path = dest.with_extension("part");
-            let file_result = File::create(&temp_path).await;
-            let mut file = match file_result {
-                Ok(f) => f,
-                Err(e) => {
-                    last_error = Some(anyhow::anyhow!(
-                        "Failed to create {}: {e}",
-                        temp_path.display()
-                    ));
+            let (std_file, temporary_path) = match begin_same_dir_temp(&dest) {
+                Ok(parts) => parts,
+                Err(error) => {
+                    last_error = Some(error);
                     break;
                 }
             };
+            let mut file = File::from_std(std_file);
 
             let mut response = response;
             let mut download_failed = false;
@@ -692,18 +712,11 @@ async fn download_package(
             }
 
             if download_failed {
-                let _ = tokio::fs::remove_file(&temp_path).await;
                 continue;
             }
 
-            if let Err(e) = file.flush().await {
-                last_error = Some(anyhow::anyhow!("Flush error: {e}"));
-                let _ = tokio::fs::remove_file(&temp_path).await;
-                continue;
-            }
-
-            if let Err(e) = tokio::fs::rename(&temp_path, &dest).await {
-                last_error = Some(anyhow::anyhow!("Rename error: {e}"));
+            if let Err(e) = persist_same_dir_temp(file, temporary_path, &dest).await {
+                last_error = Some(e);
                 continue;
             }
 

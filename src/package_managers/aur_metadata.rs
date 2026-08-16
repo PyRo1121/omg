@@ -4,11 +4,11 @@
 //! (packages-meta-ext-v1.json.gz).
 
 use std::fs::File;
-use std::io::BufReader;
+use std::io::{BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use flate2::read::GzDecoder;
 use reqwest::header::{ETAG, IF_MODIFIED_SINCE, IF_NONE_MATCH, LAST_MODIFIED};
 use serde::{Deserialize, Serialize};
@@ -127,8 +127,9 @@ pub async fn sync_aur_metadata(
         // Touch the file to update mtime so we don't check again immediately
         if cache_path.exists()
             && let Ok(file) = File::options().write(true).open(&cache_path)
+            && let Err(error) = file.set_modified(SystemTime::now())
         {
-            let _ = file.set_modified(SystemTime::now());
+            tracing::debug!("Failed to refresh AUR metadata mtime: {error}");
         }
 
         // Ensure index exists
@@ -157,19 +158,25 @@ pub async fn sync_aur_metadata(
         .and_then(|v| v.to_str().ok())
         .map(String::from);
 
-    // Download to temp file
-    let tmp_path = cache_path.with_extension("tmp");
     let bytes = response.bytes().await?;
-    tokio_fs::write(&tmp_path, &bytes).await?;
-    tokio_fs::rename(&tmp_path, &cache_path).await?;
+    {
+        let cache_path = cache_path.clone();
+        let bytes = bytes.to_vec();
+        tokio::task::spawn_blocking(move || persist_file_atomically(&cache_path, &bytes)).await??;
+    }
 
-    // Save meta cache
+    // Persist ETag / Last-Modified so the next sync can make a conditional request.
     let new_meta = AurMetaCache {
         etag,
         last_modified,
     };
-    if let Ok(meta_bytes) = serde_json::to_vec(&new_meta) {
-        let _ = tokio_fs::write(&meta_path, meta_bytes).await;
+    match serde_json::to_vec(&new_meta) {
+        Ok(meta_bytes) => {
+            if let Err(error) = persist_file_atomically(&meta_path, &meta_bytes) {
+                tracing::warn!("Failed to persist AUR metadata sidecar: {error}");
+            }
+        }
+        Err(error) => tracing::warn!("Failed to serialize AUR metadata sidecar: {error}"),
     }
 
     // Rebuild index
@@ -206,4 +213,52 @@ pub fn get_index_path() -> PathBuf {
         .join("aur")
         .join("_meta")
         .join("packages-meta-ext-v1.rkyv")
+}
+
+fn persist_file_atomically(dest: &Path, data: &[u8]) -> Result<()> {
+    let parent = dest.parent().unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(parent).with_context(|| {
+        format!(
+            "Failed to create AUR metadata directory: {}",
+            parent.display()
+        )
+    })?;
+    let mut file = tempfile::NamedTempFile::new_in(parent).with_context(|| {
+        format!(
+            "Failed to create temporary AUR metadata in {}",
+            parent.display()
+        )
+    })?;
+    file.write_all(data)?;
+    file.as_file_mut().sync_all()?;
+    file.persist(dest)
+        .map_err(|error| error.error)
+        .with_context(|| format!("Failed to persist AUR metadata at {}", dest.display()))?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn aur_metadata_persist_round_trips() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let dest = temp
+            .path()
+            .join("_meta")
+            .join("packages-meta-ext-v1.json.gz");
+        persist_file_atomically(&dest, b"archive").unwrap();
+        assert_eq!(std::fs::read(dest).unwrap(), b"archive");
+    }
+
+    #[test]
+    fn aur_metadata_persist_refuses_to_clobber_a_directory() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let dest = temp.path().join("packages-meta-ext-v1.json.gz");
+        std::fs::create_dir(&dest).unwrap();
+        let error = persist_file_atomically(&dest, b"archive")
+            .expect_err("must refuse to persist over a directory");
+        assert!(!error.to_string().is_empty());
+    }
 }
