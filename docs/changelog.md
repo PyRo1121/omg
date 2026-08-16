@@ -26,6 +26,20 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Stage first-time Rust toolchain installs until complete
+
+install_with_profile created the final toolchain directory before any
+
+component landed, so a crash mid-profile left a directory that looked
+
+installed. Extract every first-install component into a same-filesystem
+
+staging directory, persist metadata atomically, and publish only after
+
+the profile is complete. Incremental component/target installs still
+
+write into an existing published toolchain.
+
 - Stage runtime installs so interrupted builds never look installed
 
 Archive-based runtime installers (node, go, java, ruby, python, bun)
