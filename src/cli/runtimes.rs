@@ -83,7 +83,9 @@ impl_runtime_install_use!(
 
 /// Use an already-installed version, or install it first if missing.
 async fn install_or_use<M: RuntimeInstallUse + Sync>(mgr: &M, version: &str) -> Result<()> {
-    let installed = mgr.list_installed().unwrap_or_default();
+    let installed = mgr
+        .list_installed()
+        .context("Failed to list installed runtime versions")?;
     if installed.iter().any(|v| v == version) {
         mgr.use_version(version)?;
     } else {
@@ -196,12 +198,14 @@ fn mise_list_all() -> Result<()> {
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        if !stderr.is_empty() {
-            tracing::warn!("mise ls failed: {}", stderr);
-        }
-        // Don't fail - just show nothing instead
-        println!("  {} No mise runtimes detected", "-".dimmed());
-        return Ok(());
+        anyhow::bail!(
+            "mise failed to list installed runtimes{}",
+            if stderr.trim().is_empty() {
+                String::new()
+            } else {
+                format!(": {}", stderr.trim())
+            }
+        );
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -226,6 +230,18 @@ fn print_installed_versions(installed: Vec<String>, current: Option<&str>) {
     }
 }
 
+fn print_listed_versions(
+    runtime: &str,
+    installed: Result<Vec<String>>,
+    current: Option<&str>,
+) -> Result<()> {
+    print_installed_versions(
+        installed.with_context(|| format!("Failed to list installed {runtime} versions"))?,
+        current,
+    );
+    Ok(())
+}
+
 pub fn list_versions_sync(runtime: Option<&str>) -> Result<()> {
     if let Some(rt) = runtime {
         ui::print_header("OMG", &format!("{rt} versions"));
@@ -234,52 +250,59 @@ pub fn list_versions_sync(runtime: Option<&str>) -> Result<()> {
         match rt.to_lowercase().as_str() {
             "node" | "nodejs" => {
                 let mgr = NodeManager::new();
-                print_installed_versions(
-                    mgr.list_installed().unwrap_or_default(),
+                print_listed_versions(
+                    "node",
+                    mgr.list_installed(),
                     mgr.current_version().as_deref(),
-                );
+                )?;
             }
             "python" => {
                 let mgr = PythonManager::new();
-                print_installed_versions(
-                    mgr.list_installed().unwrap_or_default(),
+                print_listed_versions(
+                    "python",
+                    mgr.list_installed(),
                     mgr.current_version().as_deref(),
-                );
+                )?;
             }
             "rust" => {
                 let mgr = RustManager::new();
-                print_installed_versions(
-                    mgr.list_installed().unwrap_or_default(),
+                print_listed_versions(
+                    "rust",
+                    mgr.list_installed(),
                     mgr.current_version().as_deref(),
-                );
+                )?;
             }
             "go" | "golang" => {
                 let mgr = GoManager::new();
-                print_installed_versions(
-                    mgr.list_installed().unwrap_or_default(),
+                print_listed_versions(
+                    "go",
+                    mgr.list_installed(),
                     mgr.current_version().as_deref(),
-                );
+                )?;
             }
             "ruby" => {
                 let mgr = RubyManager::new();
-                print_installed_versions(
-                    mgr.list_installed().unwrap_or_default(),
+                print_listed_versions(
+                    "ruby",
+                    mgr.list_installed(),
                     mgr.current_version().as_deref(),
-                );
+                )?;
             }
             "java" | "jdk" => {
                 let mgr = JavaManager::new();
-                print_installed_versions(
-                    mgr.list_installed().unwrap_or_default(),
+                print_listed_versions(
+                    "java",
+                    mgr.list_installed(),
                     mgr.current_version().as_deref(),
-                );
+                )?;
             }
             "bun" | "bunjs" => {
                 let mgr = BunManager::new();
-                print_installed_versions(
-                    mgr.list_installed().unwrap_or_default(),
+                print_listed_versions(
+                    "bun",
+                    mgr.list_installed(),
                     mgr.current_version().as_deref(),
-                );
+                )?;
             }
             _ => {
                 mise_list_versions(rt, false)?;

@@ -899,8 +899,10 @@ fn configure_daemon_startup(stdout: &mut io::Stdout, startup: DaemonStartup) -> 
             )?;
         }
         DaemonStartup::OnDemand => {
-            // Start daemon now
-            let _ = Command::new("omg").args(["daemon", "--"]).spawn();
+            Command::new("omg")
+                .args(["daemon", "--"])
+                .spawn()
+                .context("Failed to start the OMG daemon")?;
             execute!(
                 stdout,
                 SetForegroundColor(Color::Green),
@@ -952,13 +954,21 @@ WantedBy=default.target
 
     std::fs::write(format!("{service_dir}/omgd.service"), service_content)?;
 
-    // Enable and start the service
-    let _ = Command::new("systemctl")
+    let reload = Command::new("systemctl")
         .args(["--user", "daemon-reload", "--"])
-        .output();
-    let _ = Command::new("systemctl")
+        .status()
+        .context("Failed to run systemctl --user daemon-reload")?;
+    if !reload.success() {
+        anyhow::bail!("systemctl --user daemon-reload failed with {reload}");
+    }
+
+    let enable = Command::new("systemctl")
         .args(["--user", "enable", "--now", "--", "omgd.service"])
-        .output();
+        .status()
+        .context("Failed to enable the omgd systemd user service")?;
+    if !enable.success() {
+        anyhow::bail!("systemctl --user enable --now omgd.service failed with {enable}");
+    }
 
     Ok(())
 }
