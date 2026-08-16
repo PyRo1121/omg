@@ -163,10 +163,16 @@ pub async fn extract_tar_gz(
                 fs::create_dir_all(parent)?;
             }
 
-            if entry.header().entry_type().is_dir() {
+            let entry_type = entry.header().entry_type();
+            if entry_type.is_dir() {
                 fs::create_dir_all(&dest_path)?;
-            } else {
+            } else if entry_type.is_file() {
                 entry.unpack(&dest_path)?;
+            } else {
+                anyhow::bail!(
+                    "Unsupported link or special entry in runtime archive: {}",
+                    path.display()
+                );
             }
         }
 
@@ -226,10 +232,16 @@ pub async fn extract_tar_xz(
                 fs::create_dir_all(parent)?;
             }
 
-            if entry.header().entry_type().is_dir() {
+            let entry_type = entry.header().entry_type();
+            if entry_type.is_dir() {
                 fs::create_dir_all(&dest_path)?;
-            } else {
+            } else if entry_type.is_file() {
                 entry.unpack(&dest_path)?;
+            } else {
+                anyhow::bail!(
+                    "Unsupported link or special entry in runtime archive: {}",
+                    path.display()
+                );
             }
         }
 
@@ -268,6 +280,12 @@ pub async fn extract_zip(
             let Some(stripped) = stripped_archive_path(&path, strip_components)? else {
                 continue;
             };
+            if file.is_symlink() {
+                anyhow::bail!(
+                    "Unsupported symlink entry in runtime ZIP archive: {}",
+                    path.display()
+                );
+            }
 
             let dest_path = dest_dir.join(&stripped);
             pb.set_message(format!("Extracting: {}", stripped.display()));
@@ -624,6 +642,22 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    fn tar_archive(entry_type: tar::EntryType) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        let mut builder = tar::Builder::new(&mut bytes);
+        let mut header = tar::Header::new_gnu();
+        header.set_entry_type(entry_type);
+        header.set_mode(0o755);
+        header.set_size(if entry_type.is_file() { 4 } else { 0 });
+        header.set_cksum();
+        builder
+            .append_data(&mut header, "runtime/bin/tool", &b"tool"[..])
+            .unwrap();
+        builder.finish().unwrap();
+        drop(builder);
+        bytes
+    }
+
     #[test]
     fn test_version_cmp() {
         assert_eq!(version_cmp("1.0.0", "1.0.0"), Ordering::Equal);
@@ -682,6 +716,45 @@ mod tests {
         assert!(parse_sha256_digest("not-a-digest", "nodejs.org").is_err());
         assert!(parse_sha256_digest(&"a".repeat(63), "nodejs.org").is_err());
         assert!(parse_sha256_digest(&"z".repeat(64), "nodejs.org").is_err());
+    }
+
+    #[tokio::test]
+    async fn tar_gz_extraction_rejects_symlinks() -> anyhow::Result<()> {
+        let temp = TempDir::new()?;
+        let archive_path = temp.path().join("runtime.tar.gz");
+        let gz = {
+            let mut encoder =
+                flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+            std::io::Write::write_all(&mut encoder, &tar_archive(tar::EntryType::symlink()))?;
+            encoder.finish()?
+        };
+        fs::write(&archive_path, gz)?;
+
+        let error = extract_tar_gz(&archive_path, temp.path().join("out").as_path(), 1)
+            .await
+            .expect_err("symlink entries must be rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("Unsupported link or special entry")
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn tar_xz_extraction_accepts_regular_files() -> anyhow::Result<()> {
+        let temp = TempDir::new()?;
+        let archive_path = temp.path().join("runtime.tar.xz");
+        let mut compressed = Vec::new();
+        lzma_rs::xz_compress(
+            &mut std::io::Cursor::new(tar_archive(tar::EntryType::Regular)),
+            &mut compressed,
+        )?;
+        fs::write(&archive_path, compressed)?;
+
+        extract_tar_xz(&archive_path, temp.path().join("out").as_path(), 1).await?;
+        assert_eq!(fs::read(temp.path().join("out/bin/tool"))?, b"tool");
+        Ok(())
     }
 
     #[test]
