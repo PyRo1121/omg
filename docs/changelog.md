@@ -26,6 +26,16 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Fail closed on audit log and SOC2 evidence export
+
+omg audit log treated any logger-open failure as a missing log, and SOC2
+
+export silently omitted audit, scan, or SBOM evidence when those steps
+
+failed. Open and generation errors now fail closed; a missing log file
+
+still exports as empty evidence.
+
 - Stage incremental Rust component and target updates
 
 Incremental rustc component and target installs wrote into an already
