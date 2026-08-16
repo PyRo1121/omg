@@ -13,6 +13,7 @@
 
 use anyhow::{Context, Result};
 use owo_colors::OwoColorize;
+use serde::Deserialize;
 use std::fs::{self, File};
 use std::io::{self, Write};
 #[cfg(unix)]
@@ -23,9 +24,23 @@ use std::process::Command;
 use crate::core::archive::stripped_archive_path;
 use crate::core::http::download_client;
 
-use super::common::{download_with_progress, remove_file_best_effort};
+use super::common::{download_with_progress, parse_sha256_digest, remove_file_best_effort};
 
 const MISE_GITHUB_RELEASES: &str = "https://github.com/jdx/mise/releases";
+const MISE_GITHUB_API: &str = "https://api.github.com/repos/jdx/mise";
+
+#[derive(Debug, Deserialize)]
+struct GithubRelease {
+    tag_name: String,
+    #[serde(default)]
+    assets: Vec<GithubAsset>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GithubAsset {
+    name: String,
+    digest: Option<String>,
+}
 
 /// Mise runtime manager - bundled with OMG
 pub struct MiseManager {
@@ -101,10 +116,11 @@ impl MiseManager {
         let version = self.get_latest_version().await?;
         let filename = format!("mise-v{version}-linux-{arch}.tar.gz");
         let url = format!("{MISE_GITHUB_RELEASES}/download/v{version}/{filename}");
+        let checksum = self.fetch_checksum(&version, &filename).await?;
 
         tracing::info!("{} Downloading mise v{}...", "→".blue(), version);
         let download_path = self.bin_dir.join(&filename);
-        download_with_progress(&self.client, &url, &download_path, None).await?;
+        download_with_progress(&self.client, &url, &download_path, Some(&checksum)).await?;
 
         // Extract the tarball
         tracing::info!("{} Extracting...", "→".blue());
@@ -129,16 +145,36 @@ impl MiseManager {
         Ok(())
     }
 
+    async fn fetch_checksum(&self, version: &str, filename: &str) -> Result<String> {
+        let release: GithubRelease = self
+            .client
+            .get(format!("{MISE_GITHUB_API}/releases/tags/v{version}"))
+            .header("User-Agent", "omg-package-manager")
+            .send()
+            .await
+            .context("Failed to fetch mise release metadata")?
+            .error_for_status()
+            .context("mise release metadata request failed")?
+            .json()
+            .await
+            .context("Failed to parse mise release metadata")?;
+        let asset = release
+            .assets
+            .iter()
+            .find(|asset| asset.name == filename)
+            .ok_or_else(|| anyhow::anyhow!("mise release asset not found: {filename}"))?;
+        let digest = asset
+            .digest
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("mise release asset has no SHA-256 digest"))?;
+        parse_sha256_digest(digest, "GitHub mise release")
+    }
+
     /// Get the latest mise version from GitHub
     async fn get_latest_version(&self) -> Result<String> {
-        #[derive(serde::Deserialize)]
-        struct Release {
-            tag_name: String,
-        }
-
-        let release: Release = self
+        let release: GithubRelease = self
             .client
-            .get("https://api.github.com/repos/jdx/mise/releases/latest")
+            .get(format!("{MISE_GITHUB_API}/releases/latest"))
             .header("User-Agent", "omg-package-manager")
             .send()
             .await
