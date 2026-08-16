@@ -17,7 +17,8 @@ use serde::Deserialize;
 
 use super::common::{
     begin_staged_install, complete_staged_install, download_with_progress, extract_tar_gz,
-    print_already_installed, print_installed, remove_file_best_effort, set_current_version,
+    parse_sha256_digest, print_already_installed, print_installed, remove_file_best_effort,
+    set_current_version,
 };
 use crate::core::http::download_client;
 
@@ -32,6 +33,7 @@ struct AdoptiumBinary {
 struct AdoptiumPackage {
     link: String,
     name: String,
+    checksum: String,
 }
 
 /// Java version info
@@ -142,7 +144,14 @@ impl JavaManager {
 
         println!("{} Downloading {}...", "→".blue(), binary.package.name);
         let download_path = self.versions_dir.join(&binary.package.name);
-        download_with_progress(&self.client, &binary.package.link, &download_path, None).await?;
+        let checksum = parse_sha256_digest(&binary.package.checksum, "Adoptium")?;
+        download_with_progress(
+            &self.client,
+            &binary.package.link,
+            &download_path,
+            Some(&checksum),
+        )
+        .await?;
 
         println!("{} Extracting (pure Rust)...", "→".blue());
         let staging = begin_staged_install(&self.versions_dir)?;
