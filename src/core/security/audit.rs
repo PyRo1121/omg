@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use crate::core::paths;
 
 /// Audit event types for security logging
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum AuditEventType {
     // Package operations
@@ -227,12 +227,12 @@ impl AuditLogger {
             hash: None,
         };
 
-        // Compute and set the hash
+        // Compute the hash, but do not advance the in-memory chain until the
+        // entry is durably on disk. Otherwise a failed write leaves the next
+        // event pointing at a hash that never landed.
         let hash = entry.compute_hash();
         entry.hash = Some(hash.clone());
-        self.last_hash = hash;
 
-        // Append to log file
         let mut file = OpenOptions::new()
             .create(true)
             .append(true)
@@ -240,6 +240,9 @@ impl AuditLogger {
 
         let json = serde_json::to_string(&entry)?;
         writeln!(file, "{json}")?;
+        file.flush()?;
+        file.sync_all()?;
+        self.last_hash = hash;
 
         // Also emit to tracing for real-time monitoring
         match severity {
@@ -358,6 +361,18 @@ impl AuditLogger {
 
         Ok(entries)
     }
+
+    #[cfg(test)]
+    fn with_path(log_path: PathBuf) -> Result<Self> {
+        if let Some(parent) = log_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let last_hash = Self::get_last_hash(&log_path)?;
+        Ok(Self {
+            log_path,
+            last_hash,
+        })
+    }
 }
 
 impl AuditEntry {
@@ -419,9 +434,10 @@ pub fn audit_log(
 ) {
     let mut guard = AUDIT_LOGGER.lock().expect("lock poisoned");
     if let Some(logger) = guard.as_mut() {
-        let _ = logger.log(event, severity, resource, description);
+        if let Err(error) = logger.log(event, severity, resource, description) {
+            tracing::warn!("Failed to persist audit event {event} for {resource}: {error}");
+        }
     } else {
-        // Fallback to tracing if audit logger is not available
         tracing::warn!("Audit logger not available: {} - {}", event, description);
     }
 }
@@ -436,7 +452,11 @@ pub fn audit_log_with_metadata(
 ) {
     let mut guard = AUDIT_LOGGER.lock().expect("lock poisoned");
     if let Some(logger) = guard.as_mut() {
-        let _ = logger.log_with_metadata(event, severity, resource, description, Some(metadata));
+        if let Err(error) =
+            logger.log_with_metadata(event, severity, resource, description, Some(metadata))
+        {
+            tracing::warn!("Failed to persist audit event {event} for {resource}: {error}");
+        }
     } else {
         // Fallback to tracing if audit logger is not available
         tracing::warn!(
@@ -451,6 +471,37 @@ pub fn audit_log_with_metadata(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_audit_write_does_not_advance_the_chain() -> Result<()> {
+        let temp = tempfile::TempDir::new()?;
+        let log_path = temp.path().join("audit.jsonl");
+        let mut logger = AuditLogger::with_path(log_path.clone())?;
+
+        logger.log(
+            AuditEventType::PackageInstall,
+            AuditSeverity::Info,
+            "firefox",
+            "Installed firefox",
+        )?;
+        let hash_after_first = logger.last_hash.clone();
+        assert_ne!(hash_after_first, "genesis");
+
+        std::fs::remove_file(&log_path)?;
+        std::fs::create_dir(&log_path)?;
+
+        let error = logger
+            .log(
+                AuditEventType::PackageRemove,
+                AuditSeverity::Info,
+                "firefox",
+                "Removed firefox",
+            )
+            .expect_err("appending over a directory must fail");
+        assert!(!error.to_string().is_empty());
+        assert_eq!(logger.last_hash, hash_after_first);
+        Ok(())
+    }
 
     #[test]
     fn test_audit_entry_hash() {
