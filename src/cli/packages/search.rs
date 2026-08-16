@@ -1,7 +1,7 @@
 use std::io::Write;
 use std::time::Instant;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::Serialize;
 
 use crate::cli::packages::common::{description_width, validate_search_query};
@@ -87,78 +87,22 @@ async fn search_internal(
     no_aur: bool,
     limit: usize,
 ) -> Result<()> {
-    let _ = detailed;
     let start_time = Instant::now();
 
     validate_search_query(query)?;
 
-    let official_search = async {
-        let mut results = Vec::with_capacity(50); // Pre-allocate for typical search results
-        #[cfg(unix)]
-        if let Ok(mut client) = DaemonClient::connect().await
-            && let Ok(res) = client.search(query, Some(50)).await
-        {
-            for pkg in res.packages {
-                results.push(DisplayPackage {
-                    name: pkg.name,
-                    version: pkg.version,
-                    description: pkg.description,
-                    source: pkg.source,
-                    votes: None,
-                    popularity: None,
-                    maintainer: None,
-                    out_of_date: None,
-                });
-            }
-        }
-        #[cfg(not(unix))]
-        if let Ok(pm) = get_package_manager() {
-            if let Ok(packages) = pm.search(query).await {
-                results.extend(packages.into_iter().map(DisplayPackage::from_package));
-            }
-        }
-        #[cfg(unix)]
-        if results.is_empty()
-            && let Ok(pm) = get_package_manager()
-            && let Ok(packages) = pm.search(query).await
-        {
-            results.extend(packages.into_iter().map(DisplayPackage::from_package));
-        }
-        results
-    };
+    let official_search = async { search_official_packages(query).await };
 
     // Skip AUR search if --no-aur flag is set (for benchmarks/official-only searches)
     let aur_search = async {
         if no_aur {
-            return Vec::new();
+            return Ok(Vec::new());
         }
-        #[cfg(feature = "arch")]
-        {
-            if detailed {
-                crate::package_managers::search_detailed(query)
-                    .await
-                    .map(|pkgs| {
-                        pkgs.into_iter()
-                            .map(DisplayPackage::from_aur_detail)
-                            .collect()
-                    })
-                    .unwrap_or_default()
-            } else {
-                let aur = AurClient::new();
-                aur.search(query)
-                    .await
-                    .map(|pkgs| pkgs.into_iter().map(DisplayPackage::from_package).collect())
-                    .unwrap_or_default()
-            }
-        }
-        #[cfg(not(feature = "arch"))]
-        {
-            Vec::<DisplayPackage>::new()
-        }
+        search_aur_packages(query, detailed).await
     };
 
     // Run official + AUR searches concurrently (saves ~50-100ms vs sequential)
-    let (official_packages, aur_packages) = tokio::join!(official_search, aur_search);
+    let (official_packages, aur_packages) = tokio::try_join!(official_search, aur_search)?;
 
     let mut display_packages = official_packages;
     // Deduplicate: skip AUR packages already present in official results
@@ -175,8 +119,8 @@ async fn search_internal(
     crate::core::usage::track_search_timed(query, display_packages.len(), duration_ms, true);
 
     if json {
-        let json_str =
-            serde_json::to_string_pretty(&display_packages).unwrap_or_else(|_| "[]".to_string());
+        let json_str = serde_json::to_string_pretty(&display_packages)
+            .context("Failed to serialize search results as JSON")?;
         println!("{json_str}");
         return Ok(());
     }
@@ -212,6 +156,70 @@ async fn search_internal(
     stdout.flush()?;
 
     Ok(())
+}
+
+async fn search_official_packages(query: &str) -> Result<Vec<DisplayPackage>> {
+    #[cfg(unix)]
+    if let Ok(mut client) = DaemonClient::connect().await {
+        match client.search(query, Some(50)).await {
+            Ok(res) => {
+                return Ok(res
+                    .packages
+                    .into_iter()
+                    .map(|pkg| DisplayPackage {
+                        name: pkg.name,
+                        version: pkg.version,
+                        description: pkg.description,
+                        source: pkg.source,
+                        votes: None,
+                        popularity: None,
+                        maintainer: None,
+                        out_of_date: None,
+                    })
+                    .collect());
+            }
+            Err(error) => {
+                tracing::debug!("Daemon search failed for {query}: {error}");
+            }
+        }
+    }
+
+    let pm = get_package_manager().context("Failed to initialize package manager for search")?;
+    let packages = pm
+        .search(query)
+        .await
+        .with_context(|| format!("Failed to search official repositories for {query}"))?;
+    Ok(packages
+        .into_iter()
+        .map(DisplayPackage::from_package)
+        .collect())
+}
+
+async fn search_aur_packages(query: &str, detailed: bool) -> Result<Vec<DisplayPackage>> {
+    #[cfg(feature = "arch")]
+    {
+        if detailed {
+            return crate::package_managers::search_detailed(query)
+                .await
+                .map(|pkgs| {
+                    pkgs.into_iter()
+                        .map(DisplayPackage::from_aur_detail)
+                        .collect()
+                })
+                .with_context(|| format!("Failed to search AUR for {query}"));
+        }
+        let aur = AurClient::new();
+        return aur
+            .search(query)
+            .await
+            .map(|pkgs| pkgs.into_iter().map(DisplayPackage::from_package).collect())
+            .with_context(|| format!("Failed to search AUR for {query}"));
+    }
+    #[cfg(not(feature = "arch"))]
+    {
+        let _ = (query, detailed);
+        Ok(Vec::new())
+    }
 }
 
 pub fn search_sync_cli(

@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use dialoguer::Select;
 use futures::future::BoxFuture;
 
@@ -47,34 +47,12 @@ pub async fn install(packages: &[String], yes: bool) -> Result<()> {
             continue;
         }
 
-        let is_official = {
+        let is_official = lookup_official_package(
             #[cfg(unix)]
-            {
-                if let Some(client) = daemon_client.as_mut() {
-                    daemon_has_official_package(client, pkg)
-                        .await
-                        .unwrap_or_else(|_| {
-                            crate::package_managers::get_sync_pkg_info(pkg)
-                                .ok()
-                                .flatten()
-                                .is_some()
-                        })
-                } else {
-                    crate::package_managers::get_sync_pkg_info(pkg)
-                        .ok()
-                        .flatten()
-                        .is_some()
-                }
-            }
-
-            #[cfg(not(unix))]
-            {
-                crate::package_managers::get_sync_pkg_info(pkg)
-                    .ok()
-                    .flatten()
-                    .is_some()
-            }
-        };
+            daemon_client.as_mut(),
+            pkg,
+        )
+        .await?;
 
         if !is_official {
             missing_packages.push(pkg.clone());
@@ -263,6 +241,25 @@ async fn daemon_has_official_package(client: &mut DaemonClient, package: &str) -
         .packages
         .iter()
         .any(|pkg| pkg.name == package && pkg.source != "AUR"))
+}
+
+async fn lookup_official_package(
+    #[cfg(unix)] daemon_client: Option<&mut DaemonClient>,
+    package: &str,
+) -> Result<bool> {
+    #[cfg(unix)]
+    if let Some(client) = daemon_client {
+        match daemon_has_official_package(client, package).await {
+            Ok(found) => return Ok(found),
+            Err(error) => {
+                tracing::debug!("Daemon official-package lookup failed for {package}: {error}");
+            }
+        }
+    }
+
+    crate::package_managers::get_sync_pkg_info(package)
+        .map(|info| info.is_some())
+        .with_context(|| format!("Failed to look up {package} in official repositories"))
 }
 
 fn handle_missing_package(
