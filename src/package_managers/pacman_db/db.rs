@@ -808,15 +808,30 @@ fn build_rkyv_index(packages: &HashMap<String, SyncDbPackage>, mtime: u64) -> Rk
 }
 
 fn save_mmap_index(index: &RkyvSyncIndex) -> Result<()> {
-    let cache_dir = get_cache_dir();
-    fs::create_dir_all(&cache_dir).ok();
-    let path = get_mmap_index_path();
-    let tmp_path = path.with_extension("tmp");
+    save_mmap_index_in(index, &get_cache_dir())
+}
 
+fn save_mmap_index_in(index: &RkyvSyncIndex, cache_dir: &Path) -> Result<()> {
+    fs::create_dir_all(cache_dir).with_context(|| {
+        format!(
+            "Failed to create package cache directory: {}",
+            cache_dir.display()
+        )
+    })?;
+    let path = cache_dir.join("sync_db_v2.rkyv");
     let bytes =
         rkyv::to_bytes::<rkyv::rancor::Error>(index).map_err(|e| anyhow::anyhow!("rkyv: {e}"))?;
-    fs::write(&tmp_path, &bytes)?;
-    fs::rename(tmp_path, path)?;
+    let mut file = tempfile::NamedTempFile::new_in(cache_dir).with_context(|| {
+        format!(
+            "Failed to create temporary mmap index in {}",
+            cache_dir.display()
+        )
+    })?;
+    file.write_all(&bytes)?;
+    file.as_file_mut().sync_all()?;
+    file.persist(&path)
+        .map_err(|error| error.error)
+        .with_context(|| format!("Failed to persist mmap index at {}", path.display()))?;
     Ok(())
 }
 
@@ -1627,6 +1642,26 @@ mod tests {
         let loaded: LocalDbCache = load_cache_from_disk_in(temp.path(), "local_db").unwrap();
         assert!(loaded.packages.contains_key("firefox"));
         assert_eq!(loaded.last_modified, Some(SystemTime::UNIX_EPOCH));
+    }
+
+    #[test]
+    fn mmap_index_round_trips_through_atomic_persist() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let mut packages = HashMap::new();
+        packages.insert(
+            "firefox".to_string(),
+            SyncDbPackage {
+                name: "firefox".to_string(),
+                desc: "web browser".to_string(),
+                ..Default::default()
+            },
+        );
+        let index = build_rkyv_index(&packages, 42);
+
+        save_mmap_index_in(&index, temp.path()).unwrap();
+        let loaded = PacmanMmapIndex::load(&temp.path().join("sync_db_v2.rkyv")).unwrap();
+        assert_eq!(loaded.mtime, 42);
+        assert!(loaded.archived().name_to_idx.contains_key("firefox"));
     }
 
     #[test]

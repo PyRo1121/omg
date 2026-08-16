@@ -302,14 +302,14 @@ async fn sync_repository(
         Ok(DownloadResult::Downloaded { last_modified }) => {
             tracing::debug!("Downloaded fresh Release file from {release_url}");
             // Store Last-Modified for future conditional requests
-            if let Some(lm) = last_modified {
-                if let Err(error) = store_last_modified(&cache_dir, "InRelease", &lm) {
-                    tracing::warn!(
-                        "Failed to persist Last-Modified for {}/{}: {error}",
-                        repo.uri,
-                        repo.suite
-                    );
-                }
+            if let Some(lm) = last_modified
+                && let Err(error) = store_last_modified(&cache_dir, "InRelease", &lm)
+            {
+                tracing::warn!(
+                    "Failed to persist Last-Modified for {}/{}: {error}",
+                    repo.uri,
+                    repo.suite
+                );
             }
         }
         Err(e) => {
@@ -596,7 +596,8 @@ fn store_last_modified(cache_dir: &Path, filename: &str, last_modified: &str) ->
     file.as_file_mut().sync_all()?;
     file.persist(&meta_path)
         .map_err(|error| error.error)
-        .context("Failed to persist Last-Modified metadata")
+        .context("Failed to persist Last-Modified metadata")?;
+    Ok(())
 }
 
 /// Atomically write data to a file
@@ -604,7 +605,10 @@ fn atomic_write(dest: &Path, data: &[u8]) -> Result<()> {
     let parent = dest.parent().unwrap_or_else(|| Path::new("."));
     let mut temp = NamedTempFile::new_in(parent)?;
     temp.write_all(data)?;
-    temp.persist(dest)?;
+    temp.as_file_mut().sync_all()?;
+    temp.persist(dest)
+        .map_err(|error| error.error)
+        .with_context(|| format!("Failed to persist {}", dest.display()))?;
     Ok(())
 }
 
@@ -680,7 +684,18 @@ fn is_cache_fresh(cache_dir: &Path) -> bool {
 /// Update the cache timestamp
 fn update_cache_timestamp(cache_dir: &Path) -> Result<()> {
     let timestamp_file = cache_dir.join(".synced");
-    fs::write(&timestamp_file, "").context("Failed to update sync timestamp")
+    let mut file = NamedTempFile::new_in(cache_dir).with_context(|| {
+        format!(
+            "Failed to create Debian sync timestamp in {}",
+            cache_dir.display()
+        )
+    })?;
+    file.write_all(b"")?;
+    file.as_file_mut().sync_all()?;
+    file.persist(&timestamp_file)
+        .map_err(|error| error.error)
+        .context("Failed to persist Debian sync timestamp")?;
+    Ok(())
 }
 
 /// Get a display name for a repository
@@ -751,19 +766,35 @@ fn decompress_none(data: &[u8]) -> Result<Vec<u8>> {
 
 /// Force a full sync, ignoring cache
 pub async fn force_sync_all() -> Result<()> {
-    // Clear the sync timestamps
-    let cache_base = paths::cache_dir().join("apt");
-    if cache_base.exists() {
-        for entry in fs::read_dir(&cache_base)? {
-            let entry = entry?;
-            if entry.path().is_dir() {
-                let timestamp = entry.path().join(".synced");
-                let _ = fs::remove_file(timestamp);
+    invalidate_sync_timestamps(&paths::cache_dir().join("apt"))?;
+    sync_all_repositories(true).await
+}
+
+/// Remove `.synced` markers so the next sync cannot treat stale cache as fresh.
+fn invalidate_sync_timestamps(cache_base: &Path) -> Result<()> {
+    if !cache_base.exists() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(cache_base)? {
+        let entry = entry?;
+        if !entry.path().is_dir() {
+            continue;
+        }
+        let timestamp = entry.path().join(".synced");
+        match fs::remove_file(&timestamp) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "Failed to invalidate Debian sync timestamp {}",
+                        timestamp.display()
+                    )
+                });
             }
         }
     }
-
-    sync_all_repositories(true).await
+    Ok(())
 }
 
 /// Check if any repositories need syncing
@@ -781,6 +812,35 @@ pub fn needs_sync() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn invalidate_sync_timestamps_removes_fresh_markers() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let repo_dir = temp.path().join("debian_bookworm");
+        fs::create_dir_all(&repo_dir).unwrap();
+        fs::write(repo_dir.join(".synced"), b"").unwrap();
+        assert!(is_cache_fresh(&repo_dir));
+
+        invalidate_sync_timestamps(temp.path()).unwrap();
+        assert!(!is_cache_fresh(&repo_dir));
+        assert!(!repo_dir.join(".synced").exists());
+    }
+
+    #[test]
+    fn invalidate_sync_timestamps_fails_closed_when_a_marker_cannot_be_removed() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let repo_dir = temp.path().join("debian_bookworm");
+        fs::create_dir_all(repo_dir.join(".synced")).unwrap();
+
+        let error = invalidate_sync_timestamps(temp.path())
+            .expect_err("a directory marker must fail closed");
+        assert!(
+            error
+                .to_string()
+                .contains("invalidate Debian sync timestamp")
+        );
+        assert!(repo_dir.join(".synced").exists());
+    }
 
     #[test]
     fn test_get_system_arch() {
