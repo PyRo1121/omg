@@ -23,6 +23,32 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Enforce runtime download integrity and restore dependency resolution
+
+  - Stream runtime downloads to a same-filesystem temporary file, sync,
+
+verify the vendor checksum, and only then atomically persist to the
+
+final path. Failed, aborted, or checksum-mismatched downloads no
+
+longer leave a partial artifact that installers treat as valid.
+
+  - Require the vendor SHA-256 checksum for Node and Go installs instead
+
+of silently skipping verification when the checksum fetch fails.
+
+Validate the digest (exactly 64 hex characters) with a shared parser.
+
+  - Pin git2 back to 0.19: the 0.20 bump broke --locked resolution
+
+because libscoop 0.1.0-beta.7 requires git2 ^0.19 and only one
+
+libgit2-sys (links = "git2") may be linked. GHSA-j39j-6gw9-jw6h is
+
+low severity and constrained by libscoop; re-evaluate when libscoop
+
+releases a git2 0.20-compatible version.
+
 - Refresh fuzz lockfile after main integration
 - Propagate package history failures
 - **Deps**: Sync lockfile with updated crypto APIs
