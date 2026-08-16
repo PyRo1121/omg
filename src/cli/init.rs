@@ -287,7 +287,7 @@ fn apply_telemetry_config(stdout: &mut io::Stdout, enabled: bool) -> Result<()> 
         Print(" Configuring telemetry...")
     )?;
 
-    let mut settings = Settings::load().unwrap_or_default();
+    let mut settings = Settings::load().context("Failed to load OMG settings")?;
     settings.telemetry_enabled = enabled;
 
     if let Err(e) = settings.save() {
@@ -724,7 +724,7 @@ fn apply_build_config(stdout: &mut io::Stdout, config: &BuildRecommendation) -> 
         Print(" Applying build settings...")
     )?;
 
-    let mut settings = Settings::load().unwrap_or_default();
+    let mut settings = Settings::load().context("Failed to load OMG settings")?;
 
     if !config.makeflags.is_empty() {
         settings.aur.makeflags = Some(config.makeflags.clone());

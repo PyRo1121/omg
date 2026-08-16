@@ -14,7 +14,7 @@ pub fn get(key: &str) -> Result<()> {
     // SECURITY: Validate config key
     validate_key(key)?;
 
-    let settings = Settings::load().unwrap_or_default();
+    let settings = Settings::load().context("Failed to load OMG settings")?;
 
     let value = match key {
         "shims.enabled" => settings.shims_enabled.to_string(),
@@ -44,7 +44,7 @@ pub fn set(key: &str, value: &str) -> Result<()> {
     validate_key(key)?;
     validate_value(value)?;
 
-    let mut settings = Settings::load().unwrap_or_default();
+    let mut settings = Settings::load().context("Failed to load OMG settings")?;
 
     match key {
         "telemetry.enabled" => {
@@ -144,7 +144,7 @@ pub fn set(key: &str, value: &str) -> Result<()> {
 
 /// List all configuration values
 pub fn list() -> Result<()> {
-    let settings = Settings::load().unwrap_or_default();
+    let settings = Settings::load().context("Failed to load OMG settings")?;
 
     println!("{}", style::header("OMG Configuration"));
     println!();

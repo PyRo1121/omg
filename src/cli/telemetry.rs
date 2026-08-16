@@ -8,7 +8,7 @@ use crate::core::telemetry::is_telemetry_opt_out;
 
 pub fn status() -> Result<()> {
     let opt_out = is_telemetry_opt_out();
-    let settings = Settings::load().unwrap_or_default();
+    let settings = Settings::load().context("Failed to load OMG settings")?;
 
     println!(
         "{}",
@@ -47,7 +47,7 @@ pub fn status() -> Result<()> {
 }
 
 pub fn set_enabled(enabled: bool) -> Result<()> {
-    let mut settings = Settings::load().unwrap_or_default();
+    let mut settings = Settings::load().context("Failed to load OMG settings")?;
     settings.telemetry_enabled = enabled;
     settings.save()?;
 
@@ -75,7 +75,7 @@ pub fn set_enabled(enabled: bool) -> Result<()> {
 }
 
 pub fn toggle() -> Result<()> {
-    let settings = Settings::load().unwrap_or_default();
+    let settings = Settings::load().context("Failed to load OMG settings")?;
     set_enabled(!settings.telemetry_enabled)
 }
 
@@ -337,7 +337,7 @@ pub async fn opt_out_api() -> Result<()> {
     let license = license::load_license().context("No license found. Using local opt-out only.")?;
 
     // Set local config
-    let mut settings = Settings::load().unwrap_or_default();
+    let mut settings = Settings::load().context("Failed to load OMG settings")?;
     settings.telemetry_enabled = false;
     settings.save()?;
 
@@ -377,7 +377,7 @@ pub async fn opt_in_api() -> Result<()> {
     let license = license::load_license();
 
     // Set local config
-    let mut settings = Settings::load().unwrap_or_default();
+    let mut settings = Settings::load().context("Failed to load OMG settings")?;
     settings.telemetry_enabled = true;
     settings.save()?;
 

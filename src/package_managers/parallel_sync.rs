@@ -385,7 +385,13 @@ pub async fn sync_databases_parallel() -> Result<()> {
     let aur_sync_handle = {
         let client = client.clone();
         tokio::spawn(async move {
-            let settings = Settings::load().unwrap_or_default();
+            let settings = match Settings::load() {
+                Ok(settings) => settings,
+                Err(error) => {
+                    tracing::error!("Failed to load OMG settings for AUR metadata sync: {error}");
+                    return;
+                }
+            };
             if let Err(e) = sync_aur_metadata(&client, &settings, false).await {
                 tracing::warn!("Failed to sync AUR metadata: {}", e);
             }
