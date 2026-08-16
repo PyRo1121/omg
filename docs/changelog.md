@@ -26,6 +26,24 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Select host-specific runtime archives and real Ruby versions
+
+omg list ruby --available never matched ruby-X.Y.Z tags and invented
+
+stable versions. Parse MRI release tags only and fail closed when none
+
+are found. Node, Go, Bun, Java, Python, and mise now download the host
+
+OS/arch archive instead of always fetching a Linux binary.
+
+- Require expected runtime binaries before activation
+
+Runtime use/install treated an empty version directory as installed.
+
+Require the expected regular binary before flipping current, reject
+
+symlink impostors, and refuse to uninstall non-directory version paths.
+
 - Fail closed on official package-name completions
 
 Install and remove completions treated official ALPM lookup failures as
