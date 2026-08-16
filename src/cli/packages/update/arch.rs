@@ -291,16 +291,21 @@ fn update_dry_run(updates: &[UpdateInfo]) -> Result<()> {
 
     let mut total_download: u64 = 0;
     for update in updates.iter().take(50) {
-        let download_size =
-            if let Ok(Some(info)) = crate::package_managers::get_sync_pkg_info(&update.name) {
+        let download_size = match crate::package_managers::get_sync_pkg_info(&update.name) {
+            Ok(Some(info)) => {
                 total_download += info.download_size.unwrap_or(0);
                 format!(
                     "{:.2} MB",
                     info.download_size.unwrap_or(0) as f64 / 1024.0 / 1024.0
                 )
-            } else {
-                "unknown".to_string()
-            };
+            }
+            Ok(None) => "unknown".to_string(),
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("Failed to look up {} in official repositories", update.name)
+                });
+            }
+        };
 
         println!(
             "    {} {} {} {} {} ({})",
