@@ -21,8 +21,8 @@ use tar::Archive;
 
 use super::common::{
     begin_staged_install, complete_staged_install, download_with_progress, get_current_version,
-    list_installed_versions, print_already_installed, print_installed, print_using,
-    remove_file_best_effort, set_current_version,
+    list_installed_versions, parse_sha256_digest, print_already_installed, print_installed,
+    print_using, remove_file_best_effort, set_current_version,
 };
 use crate::core::archive::stripped_archive_path;
 use crate::core::http::download_client;
@@ -457,9 +457,10 @@ impl RustManager {
             .rsplit('/')
             .next()
             .ok_or_else(|| anyhow::anyhow!("Invalid download URL for {component}"))?;
+        let checksum = manifest_component_checksum(&manifest, component, target, &url)?;
         let download_path = self.versions_dir.join(filename);
 
-        download_with_progress(&self.client, &url, &download_path, None).await?;
+        download_with_progress(&self.client, &url, &download_path, Some(&checksum)).await?;
         tracing::info!("{} Extracting {}...", "→".blue(), component);
         Self::extract_component(
             &download_path,
@@ -641,18 +642,21 @@ fn manifest_version(manifest: &toml::Value) -> Option<String> {
         .map(|value| value.split_whitespace().next().unwrap_or(value).to_string())
 }
 
-fn manifest_component_url(manifest: &toml::Value, component: &str, target: &str) -> Result<String> {
-    let pkg = manifest
+fn manifest_component_target<'a>(
+    manifest: &'a toml::Value,
+    component: &str,
+    target: &str,
+) -> Result<&'a toml::Value> {
+    manifest
         .get("pkg")
         .and_then(|pkg| pkg.get(component))
-        .ok_or_else(|| anyhow::anyhow!("Component '{component}' not found in manifest"))?;
-    let target_info = pkg
-        .get("target")
+        .and_then(|pkg| pkg.get("target"))
         .and_then(|targets| targets.get(target))
-        .ok_or_else(|| {
-            anyhow::anyhow!("Target '{target}' not found for component '{component}'")
-        })?;
+        .ok_or_else(|| anyhow::anyhow!("Target '{target}' not found for component '{component}'"))
+}
 
+fn manifest_component_url(manifest: &toml::Value, component: &str, target: &str) -> Result<String> {
+    let target_info = manifest_component_target(manifest, component, target)?;
     let url = target_info
         .get("xz_url")
         .and_then(toml::Value::as_str)
@@ -660,6 +664,34 @@ fn manifest_component_url(manifest: &toml::Value, component: &str, target: &str)
         .ok_or_else(|| anyhow::anyhow!("No download URL for {component} on {target}"))?;
 
     Ok(url.to_string())
+}
+
+fn manifest_component_checksum(
+    manifest: &toml::Value,
+    component: &str,
+    target: &str,
+    url: &str,
+) -> Result<String> {
+    let target_info = manifest_component_target(manifest, component, target)?;
+    let digest = target_info
+        .get(
+            if Path::new(url)
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("xz"))
+            {
+                "xz_hash"
+            } else {
+                "hash"
+            },
+        )
+        .and_then(toml::Value::as_str)
+        .or_else(|| target_info.get("hash").and_then(toml::Value::as_str))
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Missing SHA-256 checksum for Rust component {component} target {target}"
+            )
+        })?;
+    parse_sha256_digest(digest, "Rust distribution manifest")
 }
 
 #[cfg(test)]
