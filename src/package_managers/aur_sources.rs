@@ -118,22 +118,32 @@ fn extract_http_source(source_url: &str) -> Option<SourceFile> {
     })
 }
 
+/// Result of a best-effort AUR source pre-download.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SourceDownloadSummary {
+    pub succeeded: usize,
+    pub failed: usize,
+}
+
 /// Download sources concurrently (up to 8 at a time)
 ///
-/// Downloads are skipped if the file already exists in SRCDEST.
-/// Errors are logged but not fatal - makepkg will retry on build.
-///
-/// # Returns
-/// Number of successfully downloaded files
-pub async fn download_sources(sources: Vec<SourceFile>, srcdest: &Path) -> usize {
+/// Downloads are skipped if a regular file already exists in SRCDEST.
+/// Failures are counted and logged; makepkg still retries on build.
+pub async fn download_sources(sources: Vec<SourceFile>, srcdest: &Path) -> SourceDownloadSummary {
     if sources.is_empty() {
-        return 0;
+        return SourceDownloadSummary {
+            succeeded: 0,
+            failed: 0,
+        };
     }
 
     // Ensure SRCDEST exists
     if let Err(e) = tokio::fs::create_dir_all(srcdest).await {
-        warn!("Failed to create SRCDEST directory: {}", e);
-        return 0;
+        warn!("Failed to create SRCDEST directory: {e}");
+        return SourceDownloadSummary {
+            succeeded: 0,
+            failed: sources.len(),
+        };
     }
 
     let multi = MultiProgress::new();
@@ -150,10 +160,23 @@ pub async fn download_sources(sources: Vec<SourceFile>, srcdest: &Path) -> usize
         pb.set_message(source.filename.clone());
 
         async move {
-            // Skip if already downloaded
-            if dest_path.exists() {
-                pb.finish_with_message(format!("{} (cached)", source.filename));
-                return Ok(());
+            match tokio::fs::symlink_metadata(&dest_path).await {
+                Ok(metadata) if metadata.is_file() => {
+                    pb.finish_with_message(format!("{} (cached)", source.filename));
+                    return Ok(());
+                }
+                Ok(_) => {
+                    return Err(anyhow::anyhow!(
+                        "SRCDEST path is not a regular file: {}",
+                        dest_path.display()
+                    ));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!("Failed to inspect SRCDEST path {}", dest_path.display())
+                    });
+                }
             }
 
             download_file(&source.url, &dest_path, pb).await
@@ -166,8 +189,18 @@ pub async fn download_sources(sources: Vec<SourceFile>, srcdest: &Path) -> usize
         .collect()
         .await;
 
-    // Count successes
-    results.iter().filter(|r| r.is_ok()).count()
+    let mut succeeded = 0;
+    let mut failed = 0;
+    for result in results {
+        match result {
+            Ok(()) => succeeded += 1,
+            Err(error) => {
+                failed += 1;
+                warn!("Failed to pre-download AUR source: {error}");
+            }
+        }
+    }
+    SourceDownloadSummary { succeeded, failed }
 }
 
 /// Download a single file with progress tracking
@@ -190,32 +223,39 @@ async fn download_file(url: &str, dest_path: &Path, pb: ProgressBar) -> Result<(
         pb.set_length(total);
     }
 
-    // Create temporary file
-    let temp_path = dest_path.with_extension("tmp");
+    let parent = dest_path.parent().unwrap_or_else(|| Path::new("."));
+    let temporary = tempfile::Builder::new()
+        .prefix(".src-")
+        .tempfile_in(parent)
+        .with_context(|| {
+            format!(
+                "Failed to create temporary AUR source in {}",
+                parent.display()
+            )
+        })?;
+    let (std_file, temporary_path) = temporary.into_parts();
 
-    // Use a scope guard pattern to clean up temp file on error
-    let result = download_to_file(url, &temp_path, dest_path, &pb, expected_length, response).await;
-
-    // Clean up temp file on error
-    if result.is_err() {
-        let _ = tokio::fs::remove_file(&temp_path).await;
-    }
-
-    result
+    download_to_file(
+        std_file,
+        temporary_path,
+        dest_path,
+        &pb,
+        expected_length,
+        response,
+    )
+    .await
 }
 
-/// Inner download function that can be cleaned up on error
+/// Stream the response into a same-directory temp file, then persist it.
 async fn download_to_file(
-    _url: &str,
-    temp_path: &Path,
+    std_file: std::fs::File,
+    temporary_path: tempfile::TempPath,
     dest_path: &Path,
     pb: &ProgressBar,
     expected_length: Option<u64>,
     response: reqwest::Response,
 ) -> Result<()> {
-    let mut file = File::create(temp_path)
-        .await
-        .with_context(|| format!("Failed to create file at {}", temp_path.display()))?;
+    let mut file = File::from_std(std_file);
 
     // Stream download with progress updates
     let mut downloaded = 0u64;
@@ -233,6 +273,9 @@ async fn download_to_file(
     }
 
     file.flush().await.context("Failed to flush file")?;
+    file.sync_all()
+        .await
+        .context("Failed to sync AUR source download")?;
     drop(file);
 
     // Validate download size if Content-Length was provided
@@ -244,16 +287,10 @@ async fn download_to_file(
         ));
     }
 
-    // Atomically move to final location
-    tokio::fs::rename(temp_path, dest_path)
-        .await
-        .with_context(|| {
-            format!(
-                "Failed to move {} to {}",
-                temp_path.display(),
-                dest_path.display()
-            )
-        })?;
+    temporary_path
+        .persist(dest_path)
+        .map_err(|error| error.error)
+        .with_context(|| format!("Failed to persist AUR source at {}", dest_path.display()))?;
 
     pb.finish_with_message(format!(
         "{} (done)",
