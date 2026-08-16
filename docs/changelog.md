@@ -26,6 +26,16 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Reject link and special entries in runtime archives
+
+The shared tar.gz and tar.xz extractors accepted symlink, hardlink,
+
+and special entries. A tampered archive could therefore create links
+
+inside a staged runtime tree before publication. Accept only regular
+
+files and directories, reject ZIP symlinks, and add regression tests.
+
 - Reject invalid settings at the Arch AUR boundary
 - Fail closed on Arch audit, enterprise mirror, and self-update cleanup
 
