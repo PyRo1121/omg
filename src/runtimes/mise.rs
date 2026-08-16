@@ -12,10 +12,8 @@
 //! The integration code in this file is part of OMG and licensed under AGPL-3.0.
 
 use anyhow::{Context, Result};
-use indicatif::{ProgressBar, ProgressStyle};
 use owo_colors::OwoColorize;
 use std::fs::{self, File};
-use std::io::Write;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
@@ -23,6 +21,8 @@ use std::process::Command;
 
 use crate::core::archive::stripped_archive_path;
 use crate::core::http::download_client;
+
+use super::common::download_with_progress;
 
 const MISE_GITHUB_RELEASES: &str = "https://github.com/jdx/mise/releases";
 
@@ -103,7 +103,7 @@ impl MiseManager {
 
         tracing::info!("{} Downloading mise v{}...", "→".blue(), version);
         let download_path = self.bin_dir.join(&filename);
-        self.download_file(&url, &download_path).await?;
+        download_with_progress(&self.client, &url, &download_path, None).await?;
 
         // Extract the tarball
         tracing::info!("{} Extracting...", "→".blue());
@@ -152,39 +152,6 @@ impl MiseManager {
             .strip_prefix('v')
             .unwrap_or(&release.tag_name)
             .to_owned())
-    }
-
-    /// Download a file with progress bar
-    async fn download_file(&self, url: &str, path: &PathBuf) -> Result<()> {
-        let response = self
-            .client
-            .get(url)
-            .header("User-Agent", "omg-package-manager")
-            .send()
-            .await
-            .with_context(|| format!("Failed to download from {url}"))?;
-
-        let status = response.status();
-        anyhow::ensure!(status.is_success(), "Download failed with status: {status}");
-
-        let total_size = response.content_length().unwrap_or(0);
-
-        let pb = ProgressBar::new(total_size);
-        pb.set_style(
-            ProgressStyle::default_bar()
-                .template("{spinner:.green} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")
-                .unwrap_or_else(|_| ProgressStyle::default_bar())
-                .progress_chars("█▓░"),
-        );
-
-        let bytes = response.bytes().await?;
-        pb.inc(bytes.len() as u64);
-
-        let mut file = File::create(path)?;
-        file.write_all(&bytes)?;
-
-        pb.finish_and_clear();
-        Ok(())
     }
 
     /// Extract mise tarball
