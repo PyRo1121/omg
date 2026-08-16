@@ -26,6 +26,20 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Make analytics and telemetry persistence failures explicit
+
+All session/queue save results were discarded with bare 'let _ =', hiding
+
+persistence failures from logs and observers. Route best-effort saves
+
+through persist_best_effort, which logs the error at debug level (telemetry
+
+must never fail a user command), and log the flush-path queue save at warn
+
+because a failed save after take_events() leaves the old queue on disk and
+
+re-enqueues duplicates after restart.
+
 - Surface backup restore failure on self-update error
 
 If installing the updated binary fails and restoring the previous binary
