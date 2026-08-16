@@ -26,6 +26,18 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Surface backup restore failure on self-update error
+
+If installing the updated binary fails and restoring the previous binary
+
+from .old also fails, the original failure was reported but the restore
+
+failure was silently discarded, leaving the binary missing with no
+
+indication. Surface both errors so the failed update cannot hide a
+
+missing executable.
+
 - Surface task failures in watch mode
 
 run_task_watch discarded the initial run result, every rerun failure, and
