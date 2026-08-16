@@ -532,6 +532,7 @@ pub fn parse_sha256_digest(value: &str, source: &str) -> Result<String> {
     let digest = value
         .split_whitespace()
         .next()
+        .and_then(|digest| digest.strip_prefix("sha256:").or(Some(digest)))
         .filter(|digest| digest.len() == 64 && digest.chars().all(|c| c.is_ascii_hexdigit()))
         .ok_or_else(|| anyhow::anyhow!("Invalid SHA-256 digest returned by {source}"))?;
     Ok(digest.to_ascii_lowercase())
@@ -706,6 +707,10 @@ mod tests {
         // Digest-only payloads (go.dev style) are also accepted.
         assert_eq!(
             parse_sha256_digest(&digest, "go.dev")?,
+            digest.to_lowercase()
+        );
+        assert_eq!(
+            parse_sha256_digest(&format!("sha256:{digest}"), "GitHub")?,
             digest.to_lowercase()
         );
         Ok(())
