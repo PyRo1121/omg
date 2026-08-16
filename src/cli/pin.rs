@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 use owo_colors::OwoColorize;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::PathBuf;
 
 use crate::cli::style;
@@ -42,8 +43,22 @@ impl PinConfig {
             })?;
         }
         let content = toml::to_string_pretty(self).context("Failed to serialize pins")?;
-        std::fs::write(&path, &content)
-            .with_context(|| format!("Failed to write pins file: {}", path.display()))?;
+        let parent = path
+            .parent()
+            .context("Pins path must have a parent directory")?;
+        let mut temporary = tempfile::NamedTempFile::new_in(parent)
+            .context("Failed to create temporary pins file")?;
+        temporary
+            .write_all(content.as_bytes())
+            .context("Failed to write pins file")?;
+        temporary
+            .as_file_mut()
+            .sync_all()
+            .context("Failed to sync pins file")?;
+        temporary
+            .persist(&path)
+            .map_err(|error| error.error)
+            .with_context(|| format!("Failed to persist pins file: {}", path.display()))?;
         Ok(())
     }
 
