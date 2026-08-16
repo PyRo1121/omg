@@ -66,7 +66,7 @@ impl MiseManager {
     #[must_use]
     pub fn is_available(&self) -> bool {
         // First check bundled mise
-        if self.mise_bin.exists() {
+        if super::common::require_regular_file(&self.mise_bin).is_ok() {
             return true;
         }
 
@@ -83,7 +83,7 @@ impl MiseManager {
     /// Get the path to the mise binary (bundled or system)
     #[must_use]
     pub fn mise_path(&self) -> &std::path::Path {
-        if self.mise_bin.exists() {
+        if super::common::require_regular_file(&self.mise_bin).is_ok() {
             &self.mise_bin
         } else {
             std::path::Path::new("mise")
@@ -129,9 +129,8 @@ impl MiseManager {
         remove_file_best_effort(&download_path, "mise archive");
 
         // Verify installation
-        if !self.mise_bin.exists() {
-            anyhow::bail!("mise binary not found after extraction");
-        }
+        super::common::require_regular_file(&self.mise_bin)
+            .context("mise binary not found after extraction")?;
 
         // Make executable (Unix only)
         #[cfg(unix)]

@@ -20,10 +20,10 @@ use std::path::{Path, PathBuf};
 use tar::Archive;
 
 use super::common::{
-    begin_staged_install, complete_staged_install, copy_regular_tree, download_with_progress,
-    get_current_version, is_valid_version_dir, list_installed_versions, parse_sha256_digest,
-    print_already_installed, print_installed, print_using, remove_file_best_effort,
-    replace_staged_install, set_current_version,
+    activate_version, begin_staged_install, complete_staged_install, copy_regular_tree,
+    download_with_progress, get_current_version, is_valid_version_dir, list_installed_versions,
+    parse_sha256_digest, print_already_installed, print_installed, print_using,
+    remove_file_best_effort, replace_staged_install,
 };
 use crate::core::archive::stripped_archive_path;
 use crate::core::http::download_client;
@@ -321,7 +321,7 @@ impl RustManager {
     pub fn use_version(&self, version: &str) -> Result<()> {
         let toolchain = RustToolchainSpec::parse(version)?;
         let toolchain_name = toolchain.name();
-        set_current_version(&self.versions_dir, &toolchain_name)?;
+        activate_version(&self.versions_dir, &toolchain_name, Path::new("bin/rustc"))?;
         print_using("Rust", &toolchain_name, &self.bin_dir());
         Ok(())
     }

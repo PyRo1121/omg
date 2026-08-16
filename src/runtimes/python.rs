@@ -11,12 +11,12 @@ use anyhow::{Context, Result};
 use owo_colors::OwoColorize;
 use serde::Deserialize;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::common::{
-    begin_staged_install, complete_staged_install, download_with_progress, extract_tar_gz,
-    normalize_version, parse_sha256_digest, print_already_installed, print_installed, print_using,
-    remove_file_best_effort, set_current_version, version_cmp,
+    activate_version, begin_staged_install, complete_staged_install, download_with_progress,
+    extract_tar_gz, normalize_version, parse_sha256_digest, print_already_installed,
+    print_installed, print_using, remove_file_best_effort, version_cmp,
 };
 use crate::core::http::download_client;
 
@@ -152,8 +152,8 @@ impl PythonManager {
         }
 
         if crate::core::paths::test_mode() {
-            fs::create_dir_all(&version_dir)?;
-            fs::write(version_dir.join("test_marker"), "mock")?;
+            fs::create_dir_all(version_dir.join("bin"))?;
+            fs::write(version_dir.join("bin/python3"), "mock")?;
             print_installed("Python", &version);
             return self.use_version(&version);
         }
@@ -228,7 +228,7 @@ impl PythonManager {
     /// Switch to a specific version
     pub fn use_version(&self, version: &str) -> Result<()> {
         let version = normalize_version(version);
-        set_current_version(&self.versions_dir, &version)?;
+        activate_version(&self.versions_dir, &version, Path::new("bin/python3"))?;
         print_using("Python", &version, &self.bin_dir());
         Ok(())
     }

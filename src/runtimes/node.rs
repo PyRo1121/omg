@@ -12,12 +12,12 @@ use anyhow::{Context, Result};
 use owo_colors::OwoColorize;
 use serde::Deserialize;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::common::{
-    begin_staged_install, complete_staged_install, download_with_progress, extract_tar_xz,
-    normalize_version, parse_sha256_digest, print_already_installed, print_installed, print_using,
-    remove_file_best_effort, set_current_version,
+    activate_version, begin_staged_install, complete_staged_install, download_with_progress,
+    extract_tar_xz, normalize_version, parse_sha256_digest, print_already_installed,
+    print_installed, print_using, remove_file_best_effort,
 };
 use crate::core::http::download_client;
 
@@ -164,7 +164,7 @@ impl NodeManager {
     /// Switch to a specific version
     pub fn use_version(&self, version: &str) -> Result<()> {
         let version = normalize_version(version);
-        set_current_version(&self.versions_dir, &version)?;
+        activate_version(&self.versions_dir, &version, Path::new("bin/node"))?;
         print_using("Node.js", &version, &self.bin_dir());
         Ok(())
     }

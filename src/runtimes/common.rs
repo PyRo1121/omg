@@ -521,6 +521,28 @@ pub fn is_valid_version_dir(version_dir: &Path) -> bool {
     fs::symlink_metadata(version_dir).is_ok_and(|metadata| metadata.is_dir())
 }
 
+/// Require a regular file at `path`. Symlinks, directories, and missing paths fail closed.
+pub fn require_regular_file(path: &Path) -> Result<()> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_file() => Ok(()),
+        Ok(_) => anyhow::bail!(
+            "Expected a regular file at {}, found a symlink or special path",
+            path.display()
+        ),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            anyhow::bail!("Missing required runtime binary: {}", path.display())
+        }
+        Err(error) => Err(error)
+            .with_context(|| format!("Failed to inspect runtime binary: {}", path.display())),
+    }
+}
+
+/// Activate a runtime version only after its expected binary is a regular file.
+pub fn activate_version(versions_dir: &Path, version: &str, expected_binary: &Path) -> Result<()> {
+    require_regular_file(&versions_dir.join(version).join(expected_binary))?;
+    set_current_version(versions_dir, version)
+}
+
 /// Create or update the "current" symlink
 pub fn set_current_version(versions_dir: &Path, version: &str) -> Result<()> {
     crate::core::security::validate_runtime_version(version)?;
@@ -731,14 +753,28 @@ macro_rules! impl_runtime_common {
                 $crate::core::security::validate_runtime_version(&version)?;
                 let version_dir = self.versions_dir.join(&version);
 
-                if !version_dir.exists() {
-                    println!(
-                        "{} {} {} is not installed",
-                        "→".dimmed(),
-                        $runtime_name,
-                        version
-                    );
-                    return Ok(());
+                match fs::symlink_metadata(&version_dir) {
+                    Ok(metadata) if metadata.is_dir() => {}
+                    Ok(_) => {
+                        anyhow::bail!(
+                            "Refusing to remove non-directory runtime path: {}",
+                            version_dir.display()
+                        );
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                        println!(
+                            "{} {} {} is not installed",
+                            "→".dimmed(),
+                            $runtime_name,
+                            version
+                        );
+                        return Ok(());
+                    }
+                    Err(error) => {
+                        return Err(error).with_context(|| {
+                            format!("Failed to inspect runtime path: {}", version_dir.display())
+                        });
+                    }
                 }
 
                 // Clear current link if uninstalling the active version
@@ -1080,6 +1116,38 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let error = set_current_version(temp.path(), "1.0.0").unwrap_err();
         assert!(error.to_string().contains("is not installed"));
+    }
+
+    #[test]
+    fn activate_version_requires_a_regular_expected_binary() {
+        let temp = TempDir::new().unwrap();
+        let version_dir = temp.path().join("1.0.0");
+        fs::create_dir_all(version_dir.join("bin")).unwrap();
+
+        let missing = activate_version(temp.path(), "1.0.0", Path::new("bin/node")).unwrap_err();
+        assert!(
+            missing
+                .to_string()
+                .contains("Missing required runtime binary")
+        );
+        assert!(!temp.path().join("current").exists());
+
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink("elsewhere", version_dir.join("bin/node")).unwrap();
+            let linked = activate_version(temp.path(), "1.0.0", Path::new("bin/node")).unwrap_err();
+            assert!(linked.to_string().contains("regular file"));
+            assert!(!temp.path().join("current").exists());
+            fs::remove_file(version_dir.join("bin/node")).unwrap();
+        }
+
+        fs::write(version_dir.join("bin/node"), b"node").unwrap();
+        activate_version(temp.path(), "1.0.0", Path::new("bin/node")).unwrap();
+        #[cfg(unix)]
+        assert_eq!(
+            fs::read_link(temp.path().join("current")).unwrap(),
+            version_dir
+        );
     }
 
     #[test]
