@@ -26,6 +26,24 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Stage runtime installs so interrupted builds never look installed
+
+Archive-based runtime installers (node, go, java, ruby, python, bun)
+
+extracted directly into the final version directory, so a crash mid-extract
+
+left a partial directory that passed the version_dir.exists() check and was
+
+listed as installed on the next run. Extract into a same-filesystem staging
+
+directory, write a completion marker, and atomically rename on success.
+
+list_installed_versions now skips dot-prefixed entries so leftover staging
+
+directories are never reported as installed. Legacy version directories
+
+remain accepted unchanged.
+
 - Surface stale AUR directory cleanup failures
 
 When a stale package dir exists without a PKGBUILD, removal failures were
