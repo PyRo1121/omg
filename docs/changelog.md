@@ -26,6 +26,16 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Verify GitHub asset digests before installing Python
+
+GitHub release assets expose immutable SHA-256 digests. Require the
+
+selected python-build-standalone asset to provide a valid digest,
+
+accept GitHub's sha256: prefix, and verify the archive before staged
+
+extraction and publication.
+
 - Verify Adoptium checksums before installing Java
 
 Java downloads were accepted based only on HTTPS. Parse the checksum
