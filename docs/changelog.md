@@ -26,6 +26,18 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Persist package caches atomically and log write failures
+
+Pacman disk-cache writes used a shared .tmp name, discarded create_dir
+
+and persist errors, and left invalidate_caches file removals silent.
+
+Debian Last-Modified metadata was written in place the same way.
+
+Serialize into a same-directory temp file, sync, persist, and log
+
+failures so a crashed write cannot leave a truncated cache.
+
 - Surface daemon status-refresh and cache pre-warm failures
 
 refresh_status discarded JoinErrors from explicit-list and search
