@@ -31,6 +31,15 @@ const SESSION_TIMEOUT_SECS: i64 = 1800;
 static SESSION_CACHE: OnceLock<RwLock<SessionState>> = OnceLock::new();
 static QUEUE_CACHE: OnceLock<RwLock<EventQueue>> = OnceLock::new();
 
+/// Persist analytics state on a best-effort basis. Analytics must never fail a
+/// user command, so persistence errors are logged at debug level and the
+/// in-memory state (authoritative for the current process) is left unchanged.
+fn persist_best_effort(result: Result<()>) {
+    if let Err(error) = result {
+        tracing::debug!("Failed to persist analytics state (non-fatal): {error}");
+    }
+}
+
 /// Format timestamp consistently for analytics
 fn format_timestamp(ts: jiff::Timestamp) -> String {
     // Use RFC 3339 format with millisecond precision for consistency
@@ -252,7 +261,7 @@ impl EventQueue {
         if self.events.len() > MAX_EVENT_QUEUE_SIZE {
             self.events.drain(0..EVENT_DRAIN_COUNT);
         }
-        let _ = self.save();
+        persist_best_effort(self.save());
     }
 
     #[must_use]
@@ -415,7 +424,7 @@ pub fn track_feature(feature: &str, properties: HashMap<String, serde_json::Valu
     let mut session = SessionState::load();
     if !session.features_used.contains(&feature.to_string()) {
         session.features_used.push(feature.to_string());
-        let _ = session.save();
+        persist_best_effort(session.save());
     }
 }
 
@@ -437,7 +446,7 @@ pub fn track_error(error_type: &str, message: &str, context: Option<&str>) {
 
     let mut session = SessionState::load();
     session.errors_this_session += 1;
-    let _ = session.save();
+    persist_best_effort(session.save());
 }
 
 /// Track performance metric
@@ -510,7 +519,12 @@ pub async fn flush_events() -> Result<()> {
     }
 
     let events = queue.take_events();
-    let _ = queue.save();
+    // A failed save here leaves the old queue on disk; the events are
+    // re-enqueued on the next load, so duplicates are possible. Log at warn
+    // because it is observable, unlike ordinary best-effort persistence.
+    if let Err(error) = queue.save() {
+        tracing::warn!("Failed to persist analytics queue before flush: {error}");
+    }
 
     let client = crate::core::http::shared_client();
     let res = client
@@ -553,7 +567,7 @@ pub async fn maybe_flush() {
 
     let queue = EventQueue::load();
     if queue.needs_flush() {
-        let _ = flush_events().await;
+        persist_best_effort(flush_events().await);
     }
 }
 
@@ -564,7 +578,7 @@ pub fn flush_background() {
     }
 
     tokio::spawn(async {
-        let _ = flush_events().await;
+        persist_best_effort(flush_events().await);
     });
 }
 

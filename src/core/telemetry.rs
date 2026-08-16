@@ -38,6 +38,15 @@ const MAX_QUEUED_EVENTS: usize = 500;
 const MAX_QUEUE_SIZE: usize = 5000;
 /// Persist queue to disk every N events
 const PERSIST_EVERY_N_EVENTS: u32 = 10;
+
+/// Persist telemetry state on a best-effort basis. Telemetry must never fail a
+/// user command, so persistence errors are logged at debug level only and the
+/// in-memory state (authoritative for the current process) is left unchanged.
+fn persist_best_effort(result: Result<()>) {
+    if let Err(error) = result {
+        tracing::debug!("Failed to persist telemetry state (non-fatal): {error}");
+    }
+}
 /// Persist queue to disk every N seconds
 const PERSIST_INTERVAL_SECS: i64 = 30;
 
@@ -429,7 +438,7 @@ fn get_session() -> &'static Mutex<TelemetrySession> {
         let mut session = TelemetrySession::load();
         if session.is_expired() {
             session = TelemetrySession::new();
-            let _ = session.save();
+            persist_best_effort(session.save());
         }
         Mutex::new(session)
     })
@@ -478,7 +487,7 @@ pub fn queue_event(event: TelemetryEvent) {
 
         // Only persist periodically, not on every event
         if queue.needs_persist() {
-            let _ = queue.save();
+            persist_best_effort(queue.save());
         }
     }
 }
@@ -502,7 +511,7 @@ pub fn track_command_event(
 
         // Only persist periodically
         if session.needs_persist() {
-            let _ = session.save();
+            persist_best_effort(session.save());
         }
     }
 
@@ -532,7 +541,7 @@ pub fn track_search_event(query: &str, result_count: usize, duration_ms: u64, su
 
         // Only persist periodically
         if session.needs_persist() {
-            let _ = session.save();
+            persist_best_effort(session.save());
         }
     }
 
@@ -567,7 +576,7 @@ pub fn track_update_event(
 
         // Only persist periodically
         if session.needs_persist() {
-            let _ = session.save();
+            persist_best_effort(session.save());
         }
     }
 
@@ -660,7 +669,13 @@ pub async fn flush_events() {
     let events = {
         if let Ok(mut queue) = get_event_queue().lock() {
             let events = queue.take_events();
-            let _ = queue.save();
+            // A failed save here leaves the old queue on disk; the events are
+            // re-enqueued on the next load, so duplicates are possible. Log at
+            // warn because it is observable, unlike ordinary best-effort
+            // persistence.
+            if let Err(error) = queue.save() {
+                tracing::warn!("Failed to persist telemetry queue before flush: {error}");
+            }
             events
         } else {
             return;
