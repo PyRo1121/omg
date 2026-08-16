@@ -15,7 +15,7 @@ use std::path::PathBuf;
 
 use super::common::{
     begin_staged_install, complete_staged_install, download_with_progress, extract_zip,
-    normalize_version, print_already_installed, print_installed, print_using,
+    normalize_version, parse_sha256_digest, print_already_installed, print_installed, print_using,
     remove_file_best_effort, set_current_version,
 };
 use crate::core::http::download_client;
@@ -34,6 +34,14 @@ pub struct BunVersion {
 struct GithubRelease {
     tag_name: String,
     prerelease: bool,
+    #[serde(default)]
+    assets: Vec<GithubAsset>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GithubAsset {
+    name: String,
+    digest: Option<String>,
 }
 
 pub struct BunManager {
@@ -126,12 +134,13 @@ impl BunManager {
 
         let filename = format!("bun-{arch}.zip");
         let url = format!("{BUN_RELEASES_URL}/bun-v{version}/{filename}");
+        let checksum = self.fetch_checksum(&version, &filename).await?;
 
         fs::create_dir_all(&self.versions_dir)?;
 
         println!("{} Downloading Bun v{}...", "→".blue(), version);
         let download_path = self.versions_dir.join(&filename);
-        download_with_progress(&self.client, &url, &download_path, None).await?;
+        download_with_progress(&self.client, &url, &download_path, Some(&checksum)).await?;
 
         println!("{} Extracting (pure Rust)...", "→".blue());
         let staging = begin_staged_install(&self.versions_dir)?;
@@ -144,6 +153,31 @@ impl BunManager {
         self.use_version(&version)?;
 
         Ok(())
+    }
+
+    async fn fetch_checksum(&self, version: &str, filename: &str) -> Result<String> {
+        let release: GithubRelease = self
+            .client
+            .get(format!("{BUN_API_URL}/tags/bun-v{version}"))
+            .header("User-Agent", "omg-package-manager")
+            .send()
+            .await
+            .context("Failed to fetch Bun release metadata")?
+            .error_for_status()
+            .context("Bun release metadata request failed")?
+            .json()
+            .await
+            .context("Failed to parse Bun release metadata")?;
+
+        let asset = release
+            .assets
+            .iter()
+            .find(|asset| asset.name == filename)
+            .ok_or_else(|| anyhow::anyhow!("Bun release asset not found: {filename}"))?;
+        let digest = asset.digest.as_deref().ok_or_else(|| {
+            anyhow::anyhow!("Bun release asset has no SHA-256 digest: {filename}")
+        })?;
+        parse_sha256_digest(digest, "GitHub Bun release")
     }
 
     /// Switch to a specific version
