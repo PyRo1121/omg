@@ -26,6 +26,16 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Keep the audit hash chain aligned with durable writes
+
+AuditLogger advanced last_hash before the JSONL append succeeded, so a
+
+failed persist left the next event pointing at a hash that never landed.
+
+Sync the entry first, then advance the chain, and log persist failures
+
+from the global wrappers instead of discarding them.
+
 - Persist the mise binary atomically after extraction
 
 extract_tarball unpacked the live mise binary in place, so a crash
