@@ -15,7 +15,7 @@ use std::path::PathBuf;
 
 use super::common::{
     begin_staged_install, complete_staged_install, download_with_progress, extract_tar_gz,
-    normalize_version, print_already_installed, print_installed, print_using,
+    normalize_version, parse_sha256_digest, print_already_installed, print_installed, print_using,
     remove_file_best_effort, set_current_version, version_cmp,
 };
 use crate::core::http::download_client;
@@ -32,6 +32,7 @@ struct GithubRelease {
 struct GithubAsset {
     name: String,
     browser_download_url: String,
+    digest: Option<String>,
 }
 
 /// Python version info for available versions
@@ -199,12 +200,17 @@ impl PythonManager {
 
         let url = &asset.browser_download_url;
         let asset_name = &asset.name;
+        let checksum = asset
+            .digest
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("Python release asset has no SHA-256 digest"))
+            .and_then(|digest| parse_sha256_digest(digest, "GitHub Python release"))?;
 
         fs::create_dir_all(&self.versions_dir)?;
 
         println!("{} Downloading {}...", "→".blue(), asset_name);
         let download_path = self.versions_dir.join(asset_name);
-        download_with_progress(&self.client, url, &download_path, None).await?;
+        download_with_progress(&self.client, url, &download_path, Some(&checksum)).await?;
 
         println!("{} Extracting (pure Rust)...", "→".blue());
         let staging = begin_staged_install(&self.versions_dir)?;
