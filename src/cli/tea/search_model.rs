@@ -359,11 +359,15 @@ async fn fetch_search_results(query: &str) -> SearchMsg {
     }
 
     // 2. Fallback to direct package manager if daemon returned nothing
-    if results.is_empty()
-        && let Ok(pm) = crate::package_managers::get_package_manager()
-        && let Ok(packages) = pm.search(query).await
-    {
-        results.extend(packages.into_iter().map(SearchResult::from));
+    if results.is_empty() {
+        let pm = match crate::package_managers::get_package_manager() {
+            Ok(pm) => pm,
+            Err(error) => return SearchMsg::Error(error.to_string()),
+        };
+        match pm.search(query).await {
+            Ok(packages) => results.extend(packages.into_iter().map(SearchResult::from)),
+            Err(error) => return SearchMsg::Error(error.to_string()),
+        }
     }
 
     // 3. AUR search
@@ -375,13 +379,14 @@ async fn fetch_search_results(query: &str) -> SearchMsg {
             Ok(client) => client,
             Err(error) => return SearchMsg::Error(error.to_string()),
         };
-        if let Ok(aur_pkgs) = aur.search(query).await {
-            results.extend(
+        match aur.search(query).await {
+            Ok(aur_pkgs) => results.extend(
                 aur_pkgs
                     .into_iter()
                     .filter(|p| !official_names.contains(&p.name))
                     .map(SearchResult::from),
-            );
+            ),
+            Err(error) => return SearchMsg::Error(error.to_string()),
         }
     }
 
