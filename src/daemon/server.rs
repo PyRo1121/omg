@@ -138,7 +138,12 @@ pub async fn run(
                         runtime_versions: versions,
                     };
                     let res_arc = Arc::new(res);
-                    let _ = state.persistent.set_status(&res_arc);
+                    // Persist for faster restarts; the in-memory cache is
+                    // authoritative for this process, so a persistence failure
+                    // is logged, not fatal.
+                    if let Err(error) = state.persistent.set_status(&res_arc) {
+                        tracing::warn!("Failed to persist status cache: {error}");
+                    }
                     state.cache.update_status(res_arc);
                 }
             } else if let Err(e) = result {
