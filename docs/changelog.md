@@ -26,6 +26,18 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Persist AUR metadata and Arch repo downloads atomically
+
+AUR metadata used a shared unsynced .tmp name and discarded the ETag
+
+sidecar write. Arch repo and package downloads used .db.part / .part
+
+names without syncing before rename. Stream those artifacts into
+
+same-directory temp files, sync, persist, and log sidecar failures
+
+so a crash cannot leave a truncated cache that later looks valid.
+
 - Fail closed when Debian forced sync cannot invalidate cache
 
 force_sync_all discarded .synced removals, so a leftover freshness
