@@ -26,6 +26,16 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Verify Rust component archives against dist manifests
+
+Rust toolchain components were downloaded without checking the hash
+
+published in the Rust distribution manifest. Require the component
+
+hash, parse it as SHA-256, and verify before extraction into the staged
+
+first-install or existing toolchain directory.
+
 - Verify GitHub asset digests before installing Bun
 
 Fetch the Bun release metadata, require the selected archive's
