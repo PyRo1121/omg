@@ -20,9 +20,10 @@ use std::path::{Path, PathBuf};
 use tar::Archive;
 
 use super::common::{
-    begin_staged_install, complete_staged_install, download_with_progress, get_current_version,
-    list_installed_versions, parse_sha256_digest, print_already_installed, print_installed,
-    print_using, remove_file_best_effort, set_current_version,
+    begin_staged_install, complete_staged_install, copy_regular_tree, download_with_progress,
+    get_current_version, is_valid_version_dir, list_installed_versions, parse_sha256_digest,
+    print_already_installed, print_installed, print_using, remove_file_best_effort,
+    replace_staged_install, set_current_version,
 };
 use crate::core::archive::stripped_archive_path;
 use crate::core::http::download_client;
@@ -167,7 +168,8 @@ impl RustManager {
         let toolchain = RustToolchainSpec::parse(version)?;
         let version_dir = self.toolchain_dir(&toolchain);
 
-        if crate::runtimes::common::is_valid_version_dir(&version_dir) {
+        Self::reject_invalid_toolchain_path(&version_dir)?;
+        if is_valid_version_dir(&version_dir) {
             print_already_installed("Rust", &toolchain.name());
             return self.use_version(version);
         }
@@ -185,7 +187,9 @@ impl RustManager {
 
     pub fn toolchain_status(&self, request: &RustToolchainRequest) -> Result<RustToolchainStatus> {
         let toolchain = RustToolchainSpec::parse(&request.channel)?;
-        let needs_install = !self.toolchain_dir(&toolchain).exists();
+        let version_dir = self.toolchain_dir(&toolchain);
+        Self::reject_invalid_toolchain_path(&version_dir)?;
+        let needs_install = !is_valid_version_dir(&version_dir);
         let missing_components = self.missing_components(&toolchain, &request.components)?;
         let missing_targets = self.missing_targets(&toolchain, &request.targets)?;
 
@@ -200,7 +204,9 @@ impl RustManager {
     pub async fn ensure_toolchain(&self, request: &RustToolchainRequest) -> Result<()> {
         let toolchain = RustToolchainSpec::parse(&request.channel)?;
         let profile = request.profile.as_deref().unwrap_or("default");
-        let needs_install = !self.toolchain_dir(&toolchain).exists();
+        let version_dir = self.toolchain_dir(&toolchain);
+        Self::reject_invalid_toolchain_path(&version_dir)?;
+        let needs_install = !is_valid_version_dir(&version_dir);
         let needs_components = self.missing_components(&toolchain, &request.components)?;
         let needs_targets = self.missing_targets(&toolchain, &request.targets)?;
 
@@ -212,19 +218,27 @@ impl RustManager {
             self.install_with_profile(&toolchain, profile, &request.components, &request.targets)
                 .await
         } else {
-            if !needs_components.is_empty() {
-                self.install_components(&toolchain, &needs_components)
-                    .await?;
-            }
-            if !needs_targets.is_empty() {
-                self.install_targets(&toolchain, &needs_targets).await?;
-            }
-            Ok(())
+            self.apply_incremental_updates(&toolchain, &needs_components, &needs_targets)
+                .await
         }
     }
 
     pub fn toolchain_dir(&self, toolchain: &RustToolchainSpec) -> PathBuf {
         self.versions_dir.join(toolchain.name())
+    }
+
+    fn reject_invalid_toolchain_path(path: &Path) -> Result<()> {
+        match fs::symlink_metadata(path) {
+            Ok(metadata) if metadata.is_dir() => Ok(()),
+            Ok(_) => anyhow::bail!(
+                "Refusing to use non-directory Rust toolchain path: {}",
+                path.display()
+            ),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error).with_context(|| {
+                format!("Failed to inspect Rust toolchain path: {}", path.display())
+            }),
+        }
     }
 
     fn extract_component(
@@ -317,13 +331,30 @@ impl RustManager {
         let toolchain = RustToolchainSpec::parse(version)?;
         let version_dir = self.toolchain_dir(&toolchain);
 
-        if !version_dir.exists() {
-            tracing::info!(
-                "{} Rust {} is not installed",
-                "→".dimmed(),
-                toolchain.name()
-            );
-            return Ok(());
+        match fs::symlink_metadata(&version_dir) {
+            Ok(metadata) if metadata.is_dir() => {}
+            Ok(_) => {
+                anyhow::bail!(
+                    "Refusing to remove non-directory Rust toolchain path: {}",
+                    version_dir.display()
+                );
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                tracing::info!(
+                    "{} Rust {} is not installed",
+                    "→".dimmed(),
+                    toolchain.name()
+                );
+                return Ok(());
+            }
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "Failed to inspect Rust toolchain path: {}",
+                        version_dir.display()
+                    )
+                });
+            }
         }
 
         if let Some(current) = self.current_version()
@@ -380,8 +411,6 @@ impl RustManager {
 
         // First-time installs extract into a same-filesystem staging directory
         // and publish only after every component and the metadata file land.
-        // Incremental component/target installs keep writing into an existing
-        // published toolchain.
         let staging = begin_staged_install(&self.versions_dir)?;
         let dest_dir = staging.path();
 
@@ -406,38 +435,37 @@ impl RustManager {
         Ok(())
     }
 
-    async fn install_components(
+    async fn apply_incremental_updates(
         &self,
         toolchain: &RustToolchainSpec,
         components: &[String],
-    ) -> Result<()> {
-        let version_dir = self.toolchain_dir(toolchain);
-        let mut metadata = Self::read_metadata(&version_dir)?;
-
-        for component in components {
-            self.install_component(toolchain, &version_dir, component, &toolchain.host)
-                .await?;
-            metadata.components.insert(component.clone());
-        }
-
-        Self::write_metadata(&version_dir, &metadata)
-    }
-
-    async fn install_targets(
-        &self,
-        toolchain: &RustToolchainSpec,
         targets: &[String],
     ) -> Result<()> {
         let version_dir = self.toolchain_dir(toolchain);
-        let mut metadata = Self::read_metadata(&version_dir)?;
-
-        for target in targets {
-            self.install_component(toolchain, &version_dir, "rust-std", target)
-                .await?;
-            metadata.targets.insert(target.clone());
+        if !is_valid_version_dir(&version_dir) {
+            anyhow::bail!(
+                "Rust toolchain is not installed as a valid directory: {}",
+                version_dir.display()
+            );
         }
 
-        Self::write_metadata(&version_dir, &metadata)
+        let staging = begin_staged_install(&self.versions_dir)?;
+        copy_regular_tree(&version_dir, staging.path())?;
+
+        for component in components {
+            self.install_component(toolchain, staging.path(), component, &toolchain.host)
+                .await?;
+        }
+        for target in targets {
+            self.install_component(toolchain, staging.path(), "rust-std", target)
+                .await?;
+        }
+
+        let mut metadata = Self::read_metadata(staging.path())?;
+        metadata.components.extend(components.iter().cloned());
+        metadata.targets.extend(targets.iter().cloned());
+        Self::write_metadata(staging.path(), &metadata)?;
+        replace_staged_install(&staging, &version_dir, &toolchain.name())
     }
 
     async fn install_component(
@@ -849,6 +877,50 @@ mod tests {
             list_installed_versions(versions.path())?,
             vec!["stable-x86_64-unknown-linux-gnu".to_string()]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn incremental_replace_keeps_existing_files_and_new_metadata() -> Result<()> {
+        let versions = TempDir::new()?;
+        let version_dir = versions.path().join("stable-x86_64-unknown-linux-gnu");
+        fs::create_dir_all(version_dir.join("bin"))?;
+        fs::write(version_dir.join("bin/rustc"), b"old")?;
+        RustManager::write_metadata(
+            &version_dir,
+            &RustToolchainMetadata {
+                components: BTreeSet::from(["rustc".to_string()]),
+                targets: BTreeSet::new(),
+            },
+        )?;
+
+        let staging = begin_staged_install(versions.path())?;
+        copy_regular_tree(&version_dir, staging.path())?;
+        fs::write(staging.path().join("bin/clippy"), b"new")?;
+        let mut metadata = RustManager::read_metadata(staging.path())?;
+        metadata.components.insert("clippy".to_string());
+        RustManager::write_metadata(staging.path(), &metadata)?;
+        replace_staged_install(&staging, &version_dir, "stable-x86_64-unknown-linux-gnu")?;
+
+        assert_eq!(fs::read(version_dir.join("bin/rustc"))?, b"old");
+        assert_eq!(fs::read(version_dir.join("bin/clippy"))?, b"new");
+        let loaded = RustManager::read_metadata(&version_dir)?;
+        assert!(loaded.components.contains("rustc"));
+        assert!(loaded.components.contains("clippy"));
+        Ok(())
+    }
+
+    #[test]
+    fn reject_invalid_toolchain_path_blocks_files_and_allows_missing() -> Result<()> {
+        let temp = TempDir::new()?;
+        let missing = temp.path().join("missing");
+        RustManager::reject_invalid_toolchain_path(&missing)?;
+
+        let file_path = temp.path().join("file");
+        fs::write(&file_path, b"not a dir")?;
+        let error = RustManager::reject_invalid_toolchain_path(&file_path)
+            .expect_err("regular files must be rejected");
+        assert!(error.to_string().contains("non-directory"));
         Ok(())
     }
 
