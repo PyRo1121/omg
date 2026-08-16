@@ -79,7 +79,7 @@ pub async fn complete(_shell: &str, current: &str, last: &str, full: Option<&str
         }
         "remove" | "r" => {
             // Remove should only show INSTALLED packages
-            let mut results = complete_installed_packages(&engine, current);
+            let mut results = complete_installed_packages(&engine, current)?;
             results.truncate(limit);
             results
         }
@@ -115,9 +115,10 @@ async fn complete_package_names(
         return Ok(engine.fuzzy_match(current, crate::cli::tool::installed_tool_names()));
     }
 
-    // Get package names from daemon or fallback to direct ALPM
+    // Get package names from daemon or fallback to direct ALPM.
+    // Official lookup failures fail closed; AUR names remain optional enrichment.
     #[allow(unused_mut)] // Mutated only inside feature-gated block
-    let mut names = get_package_names_with_fallback().await;
+    let mut names = get_package_names_with_fallback().await?;
 
     // Include AUR packages on Arch
     #[cfg(feature = "arch")]
@@ -134,52 +135,58 @@ async fn complete_package_names(
 fn complete_installed_packages(
     engine: &crate::core::completion::CompletionEngine,
     current: &str,
-) -> Vec<String> {
-    let names = get_installed_package_names();
-    engine.fuzzy_match(current, names)
+) -> Result<Vec<String>> {
+    let names = get_installed_package_names()?;
+    Ok(engine.fuzzy_match(current, names))
 }
 
 /// Get installed package names for remove completion
-fn get_installed_package_names() -> Vec<String> {
+fn get_installed_package_names() -> Result<Vec<String>> {
     #[cfg(feature = "arch")]
     {
-        if let Ok(installed) = crate::package_managers::list_installed_fast() {
-            return installed.into_iter().map(|p| p.name).collect();
-        }
+        return crate::package_managers::list_installed_fast()
+            .map(|installed| installed.into_iter().map(|pkg| pkg.name).collect())
+            .context("Failed to list installed packages for completion");
     }
 
     #[cfg(any(feature = "debian", feature = "debian-pure"))]
     {
-        if let Ok(installed) = crate::package_managers::debian_db::list_installed_fast() {
-            return installed.into_iter().map(|p| p.name).collect();
-        }
+        return crate::package_managers::debian_db::list_installed_fast()
+            .map(|installed| installed.into_iter().map(|pkg| pkg.name).collect())
+            .context("Failed to list installed packages for completion");
     }
 
-    Vec::new()
+    #[allow(unreachable_code)]
+    Ok(Vec::new())
 }
 
 /// Get package names from daemon with fallback to direct access
-async fn get_package_names_with_fallback() -> Vec<String> {
+async fn get_package_names_with_fallback() -> Result<Vec<String>> {
     if use_debian_backend() {
         #[cfg(feature = "debian")]
-        return apt_list_all_package_names().unwrap_or_default();
+        return apt_list_all_package_names()
+            .context("Failed to list official package names for completion");
         #[cfg(not(feature = "debian"))]
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
-    // Try daemon first
+    // Try daemon first. A missing or down daemon is expected and falls back.
     #[cfg(unix)]
-    if let Ok(mut client) = crate::core::client::DaemonClient::connect().await
-        && let Ok(res) = client.search("", None).await
-    {
-        return res.packages.into_iter().map(|p| p.name).collect();
+    if let Ok(mut client) = crate::core::client::DaemonClient::connect().await {
+        match client.search("", None).await {
+            Ok(res) => return Ok(res.packages.into_iter().map(|pkg| pkg.name).collect()),
+            Err(error) => {
+                tracing::debug!("Daemon package-name search failed, using local lookup: {error}");
+            }
+        }
     }
 
-    // Fallback to direct ALPM
+    // Fallback to direct ALPM. Local lookup failures fail closed.
     #[cfg(feature = "arch")]
-    return crate::package_managers::alpm_direct::list_all_package_names().unwrap_or_default();
+    return crate::package_managers::alpm_direct::list_all_package_names()
+        .context("Failed to list official package names for completion");
     #[cfg(not(feature = "arch"))]
-    Vec::new()
+    Ok(Vec::new())
 }
 
 /// Complete runtime names
