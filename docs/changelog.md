@@ -26,6 +26,16 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Fail closed when Debian forced sync cannot invalidate cache
+
+force_sync_all discarded .synced removals, so a leftover freshness
+
+marker could skip the forced sync. Persist timestamps atomically,
+
+require every marker removal to succeed, and write the pacman mmap
+
+index through the same same-directory temp-file path.
+
 - Persist package caches atomically and log write failures
 
 Pacman disk-cache writes used a shared .tmp name, discarded create_dir
@@ -528,6 +538,16 @@ chore(deps): update rust crate git2 to 0.20 [security]
 - **Deps**: Update rust dependencies
 - Normalize project formatting
 ### 🧪 Testing
+
+- Add a hermetic non-empty PackageIndex fixture
+
+Empty-index tests cannot exercise ranking, suggestion, or exact
+
+lookup. Build a small deterministic fixture so search ranks exact
+
+name matches first and prefix suggestions resolve without reading
+
+the host package database.
 
 - Assert Debian sync setup outcome
 - Assert workflow command outcomes
