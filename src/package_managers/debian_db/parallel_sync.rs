@@ -303,7 +303,13 @@ async fn sync_repository(
             tracing::debug!("Downloaded fresh Release file from {release_url}");
             // Store Last-Modified for future conditional requests
             if let Some(lm) = last_modified {
-                let _ = store_last_modified(&cache_dir, "InRelease", &lm);
+                if let Err(error) = store_last_modified(&cache_dir, "InRelease", &lm) {
+                    tracing::warn!(
+                        "Failed to persist Last-Modified for {}/{}: {error}",
+                        repo.uri,
+                        repo.suite
+                    );
+                }
             }
         }
         Err(e) => {
@@ -580,7 +586,17 @@ fn get_cached_last_modified(cache_dir: &Path, filename: &str) -> Option<String> 
 /// Store Last-Modified header for a URL
 fn store_last_modified(cache_dir: &Path, filename: &str, last_modified: &str) -> Result<()> {
     let meta_path = cache_dir.join(format!("{filename}.meta"));
-    fs::write(&meta_path, last_modified).context("Failed to store Last-Modified metadata")
+    let mut file = NamedTempFile::new_in(cache_dir).with_context(|| {
+        format!(
+            "Failed to create Last-Modified temp file in {}",
+            cache_dir.display()
+        )
+    })?;
+    file.write_all(last_modified.as_bytes())?;
+    file.as_file_mut().sync_all()?;
+    file.persist(&meta_path)
+        .map_err(|error| error.error)
+        .context("Failed to persist Last-Modified metadata")
 }
 
 /// Atomically write data to a file
