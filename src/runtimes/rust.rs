@@ -15,12 +15,14 @@ use owo_colors::OwoColorize;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fs::{self, File};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use tar::Archive;
 
 use super::common::{
-    download_with_progress, get_current_version, list_installed_versions, print_already_installed,
-    print_installed, print_using, set_current_version,
+    begin_staged_install, complete_staged_install, download_with_progress, get_current_version,
+    list_installed_versions, print_already_installed, print_installed, print_using,
+    set_current_version,
 };
 use crate::core::archive::stripped_archive_path;
 use crate::core::http::download_client;
@@ -327,7 +329,14 @@ impl RustManager {
         if let Some(current) = self.current_version()
             && current == toolchain.name()
         {
-            let _ = fs::remove_file(&self.current_link);
+            // Best-effort: the toolchain directory is removed next. A leftover
+            // current symlink is repaired by the next successful use_version.
+            if let Err(error) = fs::remove_file(&self.current_link) {
+                tracing::debug!(
+                    "Failed to remove Rust current symlink {}: {error}",
+                    self.current_link.display()
+                );
+            }
         }
 
         fs::remove_dir_all(&version_dir)?;
@@ -369,27 +378,33 @@ impl RustManager {
         targets: &[String],
     ) -> Result<()> {
         let version_dir = self.toolchain_dir(toolchain);
-        fs::create_dir_all(&self.versions_dir)?;
-        fs::create_dir_all(&version_dir)?;
-
         let mut required_components = profile_components(profile)?;
         required_components.extend_from_slice(components);
         required_components.sort_unstable();
         required_components.dedup();
 
+        // First-time installs extract into a same-filesystem staging directory
+        // and publish only after every component and the metadata file land.
+        // Incremental component/target installs keep writing into an existing
+        // published toolchain.
+        let staging = begin_staged_install(&self.versions_dir)?;
+        let dest_dir = staging.path();
+
         for component in &required_components {
-            self.install_component(toolchain, component, &toolchain.host)
+            self.install_component(toolchain, dest_dir, component, &toolchain.host)
                 .await?;
         }
 
-        if !targets.is_empty() {
-            self.install_targets(toolchain, targets).await?;
+        for target in targets {
+            self.install_component(toolchain, dest_dir, "rust-std", target)
+                .await?;
         }
 
-        let mut metadata = Self::read_metadata(&version_dir)?;
+        let mut metadata = Self::read_metadata(dest_dir)?;
         metadata.components.extend(required_components);
         metadata.targets.extend(targets.iter().cloned());
-        Self::write_metadata(&version_dir, &metadata)?;
+        Self::write_metadata(dest_dir, &metadata)?;
+        complete_staged_install(&staging, &version_dir, &toolchain.name())?;
 
         print_installed("Rust", &toolchain.name());
 
@@ -405,7 +420,7 @@ impl RustManager {
         let mut metadata = Self::read_metadata(&version_dir)?;
 
         for component in components {
-            self.install_component(toolchain, component, &toolchain.host)
+            self.install_component(toolchain, &version_dir, component, &toolchain.host)
                 .await?;
             metadata.components.insert(component.clone());
         }
@@ -422,7 +437,7 @@ impl RustManager {
         let mut metadata = Self::read_metadata(&version_dir)?;
 
         for target in targets {
-            self.install_component(toolchain, "rust-std", target)
+            self.install_component(toolchain, &version_dir, "rust-std", target)
                 .await?;
             metadata.targets.insert(target.clone());
         }
@@ -433,6 +448,7 @@ impl RustManager {
     async fn install_component(
         &self,
         toolchain: &RustToolchainSpec,
+        dest_dir: &Path,
         component: &str,
         target: &str,
     ) -> Result<()> {
@@ -452,12 +468,19 @@ impl RustManager {
         tracing::info!("{} Extracting {}...", "→".blue(), component);
         Self::extract_component(
             &download_path,
-            &self.toolchain_dir(toolchain),
+            dest_dir,
             component,
             &component_version,
             target,
         )?;
-        fs::remove_file(&download_path).ok();
+        // Best-effort: the archive is already extracted; leftover files only
+        // waste cache space and are overwritten on the next download.
+        if let Err(error) = fs::remove_file(&download_path) {
+            tracing::debug!(
+                "Failed to remove Rust component archive {}: {error}",
+                download_path.display()
+            );
+        }
         Ok(())
     }
 
@@ -473,7 +496,23 @@ impl RustManager {
     fn write_metadata(toolchain_dir: &Path, metadata: &RustToolchainMetadata) -> Result<()> {
         let path = toolchain_dir.join(RUST_METADATA_FILE);
         let content = toml::to_string_pretty(metadata)?;
-        fs::write(path, content).map_err(Into::into)
+        let mut file = tempfile::NamedTempFile::new_in(toolchain_dir).with_context(|| {
+            format!(
+                "Failed to create Rust toolchain metadata in {}",
+                toolchain_dir.display()
+            )
+        })?;
+        file.write_all(content.as_bytes())?;
+        file.as_file_mut().sync_all()?;
+        file.persist(&path)
+            .map_err(|error| error.error)
+            .with_context(|| {
+                format!(
+                    "Failed to persist Rust toolchain metadata at {}",
+                    path.display()
+                )
+            })?;
+        Ok(())
     }
 
     fn missing_components(
@@ -743,6 +782,53 @@ mod tests {
 
         assert!(result.is_err());
         assert!(!destination.path().join("bin/rustc").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn write_metadata_replaces_existing_file_atomically() -> Result<()> {
+        let destination = TempDir::new()?;
+        let first = RustToolchainMetadata {
+            components: BTreeSet::from(["rustc".to_string()]),
+            targets: BTreeSet::new(),
+        };
+        let second = RustToolchainMetadata {
+            components: BTreeSet::from(["rustc".to_string(), "cargo".to_string()]),
+            targets: BTreeSet::from(["x86_64-unknown-linux-gnu".to_string()]),
+        };
+
+        RustManager::write_metadata(destination.path(), &first)?;
+        RustManager::write_metadata(destination.path(), &second)?;
+
+        let loaded = RustManager::read_metadata(destination.path())?;
+        assert_eq!(loaded.components, second.components);
+        assert_eq!(loaded.targets, second.targets);
+        Ok(())
+    }
+
+    #[test]
+    fn first_install_staging_does_not_publish_until_complete() -> Result<()> {
+        let versions = TempDir::new()?;
+        let version_dir = versions.path().join("stable-x86_64-unknown-linux-gnu");
+        let staging = begin_staged_install(versions.path())?;
+        fs::write(staging.path().join("bin-placeholder"), b"partial")?;
+        RustManager::write_metadata(
+            staging.path(),
+            &RustToolchainMetadata {
+                components: BTreeSet::from(["rustc".to_string()]),
+                targets: BTreeSet::new(),
+            },
+        )?;
+
+        assert!(!version_dir.exists());
+        assert!(list_installed_versions(versions.path())?.is_empty());
+
+        complete_staged_install(&staging, &version_dir, "stable-x86_64-unknown-linux-gnu")?;
+        assert!(version_dir.join(RUST_METADATA_FILE).is_file());
+        assert_eq!(
+            list_installed_versions(versions.path())?,
+            vec!["stable-x86_64-unknown-linux-gnu".to_string()]
+        );
         Ok(())
     }
 
