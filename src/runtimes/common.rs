@@ -64,15 +64,19 @@ pub async fn download_with_progress(
     let pb = ProgressBar::new(total_size);
     pb.set_style(download_progress_style());
 
-    if let Some(parent) = dest.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .with_context(|| format!("Failed to create parent directory: {}", parent.display()))?;
-    }
-
-    let mut file = tokio::fs::File::create(dest)
+    let parent = dest.parent().unwrap_or_else(|| Path::new("."));
+    tokio::fs::create_dir_all(parent)
         .await
-        .with_context(|| format!("Failed to create file: {}", dest.display()))?;
+        .with_context(|| format!("Failed to create parent directory: {}", parent.display()))?;
+
+    // Stream into a same-filesystem temporary file so a failed, aborted, or
+    // checksum-mismatched download never leaves a partial artifact at `dest`.
+    let temporary = tempfile::Builder::new()
+        .prefix(".download-")
+        .tempfile_in(parent)
+        .with_context(|| format!("Failed to create temporary download for {}", dest.display()))?;
+    let (std_file, temporary_path) = temporary.into_parts();
+    let mut file = tokio::fs::File::from_std(std_file);
 
     let mut stream = response.bytes_stream();
     let mut downloaded: u64 = 0;
@@ -95,15 +99,19 @@ pub async fn download_with_progress(
     file.flush()
         .await
         .with_context(|| format!("Failed to flush download to: {}", dest.display()))?;
+    file.sync_all()
+        .await
+        .with_context(|| format!("Failed to sync download to: {}", dest.display()))?;
+    drop(file);
 
-    // Verify checksum if provided
+    // Verify checksum before publishing the download to its final path.
     if let Some(expected) = expected_sha256 {
-        // SAFETY: hasher is guaranteed to be Some when expected_sha256 is Some
-        // (see initialization at line 76-80)
-        let hasher = hasher.expect("hasher initialized when expected_sha256 is Some");
-        let actual = hex::encode(hasher.finalize());
+        let actual = hasher
+            .map(|hasher| hex::encode(hasher.finalize()))
+            .ok_or_else(|| anyhow::anyhow!("Checksum verifier was not initialized"))?;
+        let expected = expected.trim();
 
-        if actual != expected.to_lowercase() {
+        if !actual.eq_ignore_ascii_case(expected) {
             anyhow::bail!(
                 "Checksum mismatch!\n  Expected: {expected}\n  Got: {actual}\n\nThis could indicate a corrupted download or security issue."
             );
@@ -111,6 +119,10 @@ pub async fn download_with_progress(
         pb.println(format!("  {} Checksum verified", "✓".green()));
     }
 
+    temporary_path
+        .persist(dest)
+        .map_err(|error| error.error)
+        .with_context(|| format!("Failed to finalize download: {}", dest.display()))?;
     pb.finish_and_clear();
     Ok(())
 }
@@ -408,6 +420,19 @@ pub fn normalize_version(version: &str) -> String {
     version.trim_start_matches('v').to_owned()
 }
 
+/// Parse and validate a SHA-256 digest returned by a runtime vendor.
+///
+/// Vendors may serve the digest alone or as `"<hex>  <filename>"`; only the
+/// digest is returned. Rejects anything that is not exactly 64 hex characters.
+pub fn parse_sha256_digest(value: &str, source: &str) -> Result<String> {
+    let digest = value
+        .split_whitespace()
+        .next()
+        .filter(|digest| digest.len() == 64 && digest.chars().all(|c| c.is_ascii_hexdigit()))
+        .ok_or_else(|| anyhow::anyhow!("Invalid SHA-256 digest returned by {source}"))?;
+    Ok(digest.to_ascii_lowercase())
+}
+
 /// Extract domain from URL for error messages
 fn extract_domain(url: &str) -> &str {
     url.split("://")
@@ -543,6 +568,31 @@ mod tests {
         assert_eq!(extract_domain("https://github.com/foo/bar"), "github.com");
         // Invalid URLs return the original string (no :// separator)
         assert_eq!(extract_domain("invalid-url"), "invalid-url");
+    }
+
+    #[test]
+    fn parse_sha256_digest_accepts_a_vendor_manifest_line() -> Result<()> {
+        let digest = "A".repeat(64);
+        assert_eq!(
+            parse_sha256_digest(
+                &format!("{digest}  node-v20.0.0-linux-x64.tar.xz"),
+                "nodejs.org"
+            )?,
+            digest.to_lowercase()
+        );
+        // Digest-only payloads (go.dev style) are also accepted.
+        assert_eq!(
+            parse_sha256_digest(&digest, "go.dev")?,
+            digest.to_lowercase()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn parse_sha256_digest_rejects_malformed_values() {
+        assert!(parse_sha256_digest("not-a-digest", "nodejs.org").is_err());
+        assert!(parse_sha256_digest(&"a".repeat(63), "nodejs.org").is_err());
+        assert!(parse_sha256_digest(&"z".repeat(64), "nodejs.org").is_err());
     }
 
     #[test]

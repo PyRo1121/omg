@@ -17,8 +17,8 @@ use owo_colors::OwoColorize;
 use serde::Deserialize;
 
 use super::common::{
-    download_with_progress, extract_tar_gz, normalize_version, print_already_installed,
-    print_installed, set_current_version,
+    download_with_progress, extract_tar_gz, normalize_version, parse_sha256_digest,
+    print_already_installed, print_installed, set_current_version,
 };
 use crate::core::http::download_client;
 
@@ -102,11 +102,12 @@ impl GoManager {
 
         fs::create_dir_all(&self.versions_dir)?;
 
-        let checksum = self.fetch_checksum(&filename).await.ok();
+        // A vendor checksum is required before installing a downloaded runtime.
+        let checksum = self.fetch_checksum(&filename).await?;
 
         println!("{} Downloading {filename}...", "→".blue());
         let download_path = self.versions_dir.join(&filename);
-        download_with_progress(self.client, &url, &download_path, checksum.as_deref()).await?;
+        download_with_progress(self.client, &url, &download_path, Some(&checksum)).await?;
 
         println!("{} Extracting (pure Rust)...", "→".blue());
         extract_tar_gz(&download_path, &version_dir, 1).await?;
@@ -128,8 +129,16 @@ impl GoManager {
     /// Fetch SHA256 checksum from go.dev
     async fn fetch_checksum(&self, filename: &str) -> Result<String> {
         let url = format!("{GO_DOWNLOAD_URL}/{filename}.sha256");
-        let text = self.client.get(&url).send().await?.text().await?;
-        Ok(text.trim().to_owned())
+        let text = self
+            .client
+            .get(&url)
+            .send()
+            .await?
+            .error_for_status()
+            .context("Failed to fetch Go checksum")?
+            .text()
+            .await?;
+        parse_sha256_digest(&text, &url)
     }
 
     /// Switch to a specific version

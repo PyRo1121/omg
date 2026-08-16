@@ -15,8 +15,8 @@ use std::fs;
 use std::path::PathBuf;
 
 use super::common::{
-    download_with_progress, extract_tar_xz, normalize_version, print_already_installed,
-    print_installed, print_using, set_current_version,
+    download_with_progress, extract_tar_xz, normalize_version, parse_sha256_digest,
+    print_already_installed, print_installed, print_using, set_current_version,
 };
 use crate::core::http::download_client;
 
@@ -121,12 +121,12 @@ impl NodeManager {
 
         fs::create_dir_all(&self.versions_dir)?;
 
-        // Fetch checksum for verification
-        let checksum = self.fetch_checksum(&version, &filename).await.ok();
+        // A vendor checksum is required before installing a downloaded runtime.
+        let checksum = self.fetch_checksum(&version, &filename).await?;
 
         println!("{} Downloading {}...", "→".blue(), filename);
         let download_path = self.versions_dir.join(&filename);
-        download_with_progress(&self.client, &url, &download_path, checksum.as_deref()).await?;
+        download_with_progress(&self.client, &url, &download_path, Some(&checksum)).await?;
 
         println!("{} Extracting (pure Rust)...", "→".blue());
         extract_tar_xz(&download_path, &version_dir, 1).await?;
@@ -142,13 +142,20 @@ impl NodeManager {
     /// Fetch SHA256 checksum from nodejs.org
     async fn fetch_checksum(&self, version: &str, filename: &str) -> Result<String> {
         let url = format!("{NODE_DIST_URL}/v{version}/SHASUMS256.txt");
-        let text = self.client.get(&url).send().await?.text().await?;
-
-        text.lines()
-            .find(|line| line.ends_with(filename))
-            .and_then(|line| line.split_whitespace().next())
-            .map(String::from)
-            .ok_or_else(|| anyhow::anyhow!("Checksum not found for {filename}"))
+        let text = self
+            .client
+            .get(&url)
+            .send()
+            .await?
+            .error_for_status()
+            .context("Failed to fetch Node.js checksum manifest")?
+            .text()
+            .await?;
+        let digest_line = text
+            .lines()
+            .find(|line| line.split_whitespace().nth(1) == Some(filename))
+            .ok_or_else(|| anyhow::anyhow!("Checksum not found for {filename}"))?;
+        parse_sha256_digest(digest_line, &url)
     }
 
     /// Switch to a specific version
