@@ -26,6 +26,16 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Surface task failures in watch mode
+
+run_task_watch discarded the initial run result, every rerun failure, and
+
+watch-registration errors, so a failing task or an unwatchable directory
+
+degraded silently. Print failures and watch errors explicitly so watch
+
+mode never hides a broken task.
+
 - Log persistent status cache write failures
 
 handle_status and the daemon status refresh silently discarded
