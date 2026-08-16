@@ -26,6 +26,16 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Surface Arch TUI info and search failures
+
+The interactive info and search models collapsed package-manager and
+
+AUR errors into NotFound or empty results. Return explicit Error
+
+messages for configuration, lookup, and network failures while keeping
+
+an actual missing package as NotFound.
+
 - Reject symlink and file impostors as runtime versions
 
 Runtime managers used Path::exists() to decide whether a version was
