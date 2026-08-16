@@ -944,8 +944,10 @@ pub async fn run_task_watch(
         task_name.white().bold()
     );
 
-    // Initial run
-    let _ = run_task(task_name, extra_args, backend_override);
+    // Initial run; surface failures in watch mode instead of discarding them.
+    if let Err(error) = run_task(task_name, extra_args, backend_override) {
+        eprintln!("{} Task failed: {error}", "!".yellow());
+    }
 
     // Set up file watcher
     let (tx, rx) = channel();
@@ -964,8 +966,14 @@ pub async fn run_task_watch(
     let watch_dirs = ["src", "lib", "app", "pages", "components", "tests", "."];
     for dir in watch_dirs {
         let path = current_dir.join(dir);
-        if path.exists() {
-            let _ = watcher.watch(&path, RecursiveMode::Recursive);
+        if path.exists()
+            && let Err(error) = watcher.watch(&path, RecursiveMode::Recursive)
+        {
+            eprintln!(
+                "{} Failed to watch {}: {error}",
+                "!".yellow(),
+                path.display()
+            );
         }
     }
 
@@ -989,7 +997,9 @@ pub async fn run_task_watch(
                     "→".yellow(),
                     task_name.cyan()
                 );
-                let _ = run_task(task_name, extra_args, backend_override);
+                if let Err(error) = run_task(task_name, extra_args, backend_override) {
+                    eprintln!("{} Task failed: {error}", "!".yellow());
+                }
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                 // No events, continue watching
