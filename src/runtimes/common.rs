@@ -375,6 +375,125 @@ pub fn complete_staged_install(
     Ok(())
 }
 
+/// Atomically replace a published runtime directory with a staged successor.
+///
+/// The existing version is moved aside first. If publishing the staged tree
+/// fails, the previous directory is restored. A crash after the old tree is
+/// moved aside leaves no published version directory, which is fail-closed:
+/// the next lookup treats the toolchain as uninstalled instead of half-updated.
+pub fn replace_staged_install(
+    staging: &tempfile::TempDir,
+    version_dir: &Path,
+    version: &str,
+) -> Result<()> {
+    write_install_marker(staging.path(), version)?;
+    if !is_valid_version_dir(version_dir) {
+        anyhow::bail!(
+            "Cannot replace missing or invalid runtime version: {}",
+            version_dir.display()
+        );
+    }
+    let parent = version_dir.parent().ok_or_else(|| {
+        anyhow::anyhow!(
+            "Runtime version path has no parent directory: {}",
+            version_dir.display()
+        )
+    })?;
+    let backup = tempfile::Builder::new()
+        .prefix(".replace-")
+        .tempfile_in(parent)
+        .with_context(|| {
+            format!(
+                "Failed to reserve replacement backup path in {}",
+                parent.display()
+            )
+        })?
+        .into_temp_path();
+    fs::remove_file(&backup).with_context(|| {
+        format!(
+            "Failed to prepare replacement backup path: {}",
+            backup.display()
+        )
+    })?;
+    fs::rename(version_dir, &backup).with_context(|| {
+        format!(
+            "Failed to move existing runtime version aside: {}",
+            version_dir.display()
+        )
+    })?;
+    if let Err(error) = fs::rename(staging.path(), version_dir) {
+        if let Err(restore_error) = fs::rename(&backup, version_dir) {
+            return Err(error).with_context(|| {
+                format!(
+                    "Failed to publish replacement at {} and failed to restore previous version: {restore_error}",
+                    version_dir.display()
+                )
+            });
+        }
+        return Err(error).with_context(|| {
+            format!(
+                "Failed to publish replacement runtime version at {}",
+                version_dir.display()
+            )
+        });
+    }
+    if let Err(error) = fs::remove_dir_all(&backup) {
+        tracing::warn!(
+            "Failed to remove replaced runtime backup {}: {error}",
+            backup.display()
+        );
+    }
+    let _ = backup.keep();
+    Ok(())
+}
+
+/// Copy a directory tree of regular files and directories only.
+///
+/// Symlinks and special files are rejected so a staged replacement cannot
+/// inherit a link that later escapes the published version directory.
+pub fn copy_regular_tree(src: &Path, dest: &Path) -> Result<()> {
+    let metadata = fs::symlink_metadata(src)
+        .with_context(|| format!("Failed to inspect source path: {}", src.display()))?;
+    if !metadata.is_dir() {
+        anyhow::bail!("Source is not a regular directory: {}", src.display());
+    }
+    fs::create_dir_all(dest)
+        .with_context(|| format!("Failed to create destination directory: {}", dest.display()))?;
+    copy_regular_tree_contents(src, dest)
+}
+
+fn copy_regular_tree_contents(src: &Path, dest: &Path) -> Result<()> {
+    for entry in
+        fs::read_dir(src).with_context(|| format!("Failed to read directory: {}", src.display()))?
+    {
+        let entry = entry
+            .with_context(|| format!("Failed to read directory entry in {}", src.display()))?;
+        let file_type = entry
+            .file_type()
+            .with_context(|| format!("Failed to inspect {}", entry.path().display()))?;
+        let dest_path = dest.join(entry.file_name());
+        if file_type.is_dir() {
+            fs::create_dir_all(&dest_path)
+                .with_context(|| format!("Failed to create directory: {}", dest_path.display()))?;
+            copy_regular_tree_contents(&entry.path(), &dest_path)?;
+        } else if file_type.is_file() {
+            fs::copy(entry.path(), &dest_path).with_context(|| {
+                format!(
+                    "Failed to copy {} to {}",
+                    entry.path().display(),
+                    dest_path.display()
+                )
+            })?;
+        } else {
+            anyhow::bail!(
+                "Refusing to copy symlink or special file: {}",
+                entry.path().display()
+            );
+        }
+    }
+    Ok(())
+}
+
 fn write_install_marker(version_dir: &Path, version: &str) -> Result<()> {
     let mut marker = tempfile::NamedTempFile::new_in(version_dir).with_context(|| {
         format!(
@@ -818,6 +937,44 @@ mod tests {
         let error = complete_staged_install(&staging, &version_dir, "1.0.0")
             .expect_err("must refuse to publish over an existing version");
         assert!(error.to_string().contains("appeared during staging"));
+        Ok(())
+    }
+
+    #[test]
+    fn replace_staged_install_swaps_the_published_directory() -> anyhow::Result<()> {
+        let temp = TempDir::new()?;
+        let versions_dir = temp.path().join("versions");
+        let version_dir = versions_dir.join("1.0.0");
+        fs::create_dir_all(&version_dir)?;
+        fs::write(version_dir.join("bin"), "old")?;
+
+        let staging = begin_staged_install(&versions_dir)?;
+        fs::write(staging.path().join("bin"), "new")?;
+        replace_staged_install(&staging, &version_dir, "1.0.0")?;
+
+        assert_eq!(fs::read_to_string(version_dir.join("bin"))?, "new");
+        assert_eq!(
+            fs::read_to_string(version_dir.join(INSTALL_MARKER))?,
+            "1.0.0\n"
+        );
+        assert_eq!(
+            list_installed_versions(&versions_dir)?,
+            vec!["1.0.0".to_string()]
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn copy_regular_tree_rejects_symlinks() -> anyhow::Result<()> {
+        let temp = TempDir::new()?;
+        let src = temp.path().join("src");
+        let dest = temp.path().join("dest");
+        fs::create_dir_all(&src)?;
+        std::os::unix::fs::symlink("/tmp", src.join("link"))?;
+
+        let error = copy_regular_tree(&src, &dest).expect_err("symlinks must be rejected");
+        assert!(error.to_string().contains("symlink or special file"));
         Ok(())
     }
 
