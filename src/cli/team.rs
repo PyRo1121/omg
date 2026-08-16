@@ -6,7 +6,7 @@ use crate::cli::{
     CliContext, GoldenPathCommands, LocalCommandRunner, NotifyCommands, TeamCommands,
     TeamRoleCommands,
 };
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use crate::core::env::team::TeamWorkspace;
 use crate::core::license;
@@ -527,7 +527,8 @@ pub async fn propose(message: &str, _ctx: &CliContext) -> Result<()> {
     let packages = {
         #[cfg(feature = "arch")]
         {
-            crate::package_managers::list_explicit_fast().unwrap_or_default()
+            crate::package_managers::list_explicit_fast()
+                .context("Failed to list explicitly installed packages for the proposal")?
         }
         #[cfg(feature = "debian")]
         {

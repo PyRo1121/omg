@@ -184,23 +184,31 @@ pub fn install_dry_run(packages: &[String]) -> Result<()> {
             }
         }
 
-        if let Ok(Some(info)) = crate::package_managers::get_sync_pkg_info(pkg_name) {
-            let size_mb = info.download_size.unwrap_or(0) as f64 / 1024.0 / 1024.0;
-            total_size += info.download_size.unwrap_or(0);
+        match crate::package_managers::get_sync_pkg_info(pkg_name) {
+            Ok(Some(info)) => {
+                let size_mb = info.download_size.unwrap_or(0) as f64 / 1024.0 / 1024.0;
+                total_size += info.download_size.unwrap_or(0);
 
-            table.add_row(vec![
-                info.name.bold().to_string(),
-                info.version.to_string().cyan().to_string(),
-                format!("{size_mb:.2} MB"),
-                format!("{} Official", "✓".green()),
-            ]);
-        } else {
-            table.add_row(vec![
-                pkg_name.bold().to_string(),
-                String::new(),
-                String::new(),
-                format!("{} AUR?", "?".yellow()),
-            ]);
+                table.add_row(vec![
+                    info.name.bold().to_string(),
+                    info.version.to_string().cyan().to_string(),
+                    format!("{size_mb:.2} MB"),
+                    format!("{} Official", "✓".green()),
+                ]);
+            }
+            Ok(None) => {
+                table.add_row(vec![
+                    pkg_name.bold().to_string(),
+                    String::new(),
+                    String::new(),
+                    format!("{} AUR?", "?".yellow()),
+                ]);
+            }
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("Failed to look up {pkg_name} in official repositories")
+                });
+            }
         }
     }
 
