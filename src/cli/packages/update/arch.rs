@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use dialoguer::Confirm;
 
 use crate::cli::{modern_ui, style, ui};
@@ -142,8 +142,7 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
                 }
                 Err(e) => {
                     modern_ui::finish_clear(&aur_pb);
-                    tracing::warn!("Failed to check AUR updates: {}", e);
-                    (0, Vec::new())
+                    return Err(e).context("Failed to check AUR updates");
                 }
             }
         }

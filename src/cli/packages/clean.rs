@@ -1,6 +1,6 @@
 //! Clean/orphan functionality for packages
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use super::common::use_debian_backend;
 
@@ -56,7 +56,7 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bo
         // Default: show what can be cleaned
         #[cfg(feature = "arch")]
         {
-            let orphan_list = list_orphans_direct().unwrap_or_default();
+            let orphan_list = list_orphans_direct().context("Failed to list orphan packages")?;
             if !orphan_list.is_empty() {
                 use owo_colors::OwoColorize;
                 println!(
@@ -93,7 +93,8 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bo
         #[cfg(feature = "arch")]
         {
             if dry_run {
-                let orphan_list = list_orphans_direct().unwrap_or_default();
+                let orphan_list =
+                    list_orphans_direct().context("Failed to list orphan packages")?;
                 use owo_colors::OwoColorize;
                 println!(
                     "  {} Would remove {} orphan packages:",
@@ -146,7 +147,7 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bo
                         );
                     }
                     Err(e) => {
-                        crate::cli::modern_ui::print_error(&format!("Failed to clear cache: {e}"));
+                        return Err(e).context("Failed to clear package cache");
                     }
                 }
             }
