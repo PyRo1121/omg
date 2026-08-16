@@ -562,7 +562,9 @@ pub fn ensure_index_loaded() -> Result<()> {
         // Update timestamp and save
         index.updated_at = jiff::Timestamp::now().as_second();
         if let Some(p) = cache_path.parent() {
-            let _ = fs::create_dir_all(p);
+            fs::create_dir_all(p).with_context(|| {
+                format!("Failed to create Debian cache directory: {}", p.display())
+            })?;
         }
         let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&index)
             .map_err(|e| anyhow::anyhow!("Serialization error: {e}"))?;
