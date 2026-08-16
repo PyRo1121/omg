@@ -17,9 +17,9 @@ use owo_colors::OwoColorize;
 use serde::Deserialize;
 
 use super::common::{
-    begin_staged_install, complete_staged_install, download_with_progress, extract_tar_gz,
-    normalize_version, parse_sha256_digest, print_already_installed, print_installed,
-    remove_file_best_effort, set_current_version,
+    activate_version, begin_staged_install, complete_staged_install, download_with_progress,
+    extract_tar_gz, normalize_version, parse_sha256_digest, print_already_installed,
+    print_installed, remove_file_best_effort,
 };
 use crate::core::http::download_client;
 
@@ -148,7 +148,7 @@ impl GoManager {
     pub fn use_version(&self, version: &str) -> Result<()> {
         let version = normalize_version(version);
         let version_dir = self.versions_dir.join(&version);
-        set_current_version(&self.versions_dir, &version)?;
+        activate_version(&self.versions_dir, &version, Path::new("bin/go"))?;
 
         Self::print_version_info(&version, &version_dir, &self.bin_dir());
         Ok(())
