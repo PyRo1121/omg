@@ -26,6 +26,14 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Verify Adoptium checksums before installing Java
+
+Java downloads were accepted based only on HTTPS. Parse the checksum
+
+returned by Adoptium, require a valid SHA-256 digest, and pass it to
+
+the atomic runtime downloader before extraction and publication.
+
 - Reject link and special entries in runtime archives
 
 The shared tar.gz and tar.xz extractors accepted symlink, hardlink,
