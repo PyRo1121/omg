@@ -298,6 +298,15 @@ pub async fn extract_zip(
 
 const INSTALL_MARKER: &str = ".omg-install-complete";
 
+/// Best-effort file removal for leftover archives and stale current links.
+/// Failure only wastes cache space or leaves a dangling symlink; the next
+/// successful install or activation repairs it.
+pub fn remove_file_best_effort(path: &Path, kind: &str) {
+    if let Err(error) = fs::remove_file(path) {
+        tracing::debug!("Failed to remove {kind} {}: {error}", path.display());
+    }
+}
+
 /// Begin a same-filesystem staged runtime install.
 ///
 /// Extraction writes into the returned staging directory, which only becomes
@@ -592,7 +601,10 @@ macro_rules! impl_runtime_common {
                 if let Some(current) = self.current_version()
                     && current == version
                 {
-                    let _ = fs::remove_file(&self.current_link);
+                    $crate::runtimes::common::remove_file_best_effort(
+                        &self.current_link,
+                        "current runtime symlink",
+                    );
                 }
 
                 fs::remove_dir_all(&version_dir).with_context(|| {

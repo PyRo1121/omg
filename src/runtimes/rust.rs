@@ -22,7 +22,7 @@ use tar::Archive;
 use super::common::{
     begin_staged_install, complete_staged_install, download_with_progress, get_current_version,
     list_installed_versions, print_already_installed, print_installed, print_using,
-    set_current_version,
+    remove_file_best_effort, set_current_version,
 };
 use crate::core::archive::stripped_archive_path;
 use crate::core::http::download_client;
@@ -331,12 +331,7 @@ impl RustManager {
         {
             // Best-effort: the toolchain directory is removed next. A leftover
             // current symlink is repaired by the next successful use_version.
-            if let Err(error) = fs::remove_file(&self.current_link) {
-                tracing::debug!(
-                    "Failed to remove Rust current symlink {}: {error}",
-                    self.current_link.display()
-                );
-            }
+            remove_file_best_effort(&self.current_link, "Rust current symlink");
         }
 
         fs::remove_dir_all(&version_dir)?;
@@ -473,14 +468,7 @@ impl RustManager {
             &component_version,
             target,
         )?;
-        // Best-effort: the archive is already extracted; leftover files only
-        // waste cache space and are overwritten on the next download.
-        if let Err(error) = fs::remove_file(&download_path) {
-            tracing::debug!(
-                "Failed to remove Rust component archive {}: {error}",
-                download_path.display()
-            );
-        }
+        remove_file_best_effort(&download_path, "Rust component archive");
         Ok(())
     }
 

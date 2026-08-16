@@ -15,7 +15,8 @@ use std::path::PathBuf;
 
 use super::common::{
     begin_staged_install, complete_staged_install, download_with_progress, extract_zip,
-    normalize_version, print_already_installed, print_installed, print_using, set_current_version,
+    normalize_version, print_already_installed, print_installed, print_using,
+    remove_file_best_effort, set_current_version,
 };
 use crate::core::http::download_client;
 
@@ -137,7 +138,7 @@ impl BunManager {
         extract_zip(&download_path, staging.path(), 1).await?;
         complete_staged_install(&staging, &version_dir, &version)?;
 
-        let _ = fs::remove_file(&download_path);
+        remove_file_best_effort(&download_path, "runtime archive");
 
         print_installed("Bun", &version);
         self.use_version(&version)?;
