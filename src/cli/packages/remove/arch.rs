@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use crate::cli::{style, ui};
 use crate::core::packages::PackageService;
@@ -50,22 +50,29 @@ pub fn remove_dry_run(packages: &[String], recursive: bool) -> Result<()> {
 
     let mut total_size: u64 = 0;
     for pkg_name in packages {
-        if let Ok(Some(info)) = crate::package_managers::get_package_info(pkg_name) {
-            let size_mb = info.size as f64 / 1024.0 / 1024.0;
-            total_size += info.size;
-            println!(
-                "    {} {} {} ({:.2} MB)",
-                style::error("✗"),
-                style::package(&info.name),
-                style::version(&info.version.to_string()),
-                size_mb
-            );
-        } else {
-            println!(
-                "    {} {} (not installed)",
-                style::warning("?"),
-                style::package(pkg_name)
-            );
+        match crate::package_managers::get_package_info(pkg_name) {
+            Ok(Some(info)) => {
+                let size_mb = info.size as f64 / 1024.0 / 1024.0;
+                total_size += info.size;
+                println!(
+                    "    {} {} {} ({:.2} MB)",
+                    style::error("✗"),
+                    style::package(&info.name),
+                    style::version(&info.version.to_string()),
+                    size_mb
+                );
+            }
+            Ok(None) => {
+                println!(
+                    "    {} {} (not installed)",
+                    style::warning("?"),
+                    style::package(pkg_name)
+                );
+            }
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("Failed to look up installed package {pkg_name}"));
+            }
         }
     }
 

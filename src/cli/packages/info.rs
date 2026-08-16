@@ -1,6 +1,6 @@
 //! Info/display functionality for packages
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::time::Duration;
 
 use crate::cli::tea::run_info_elm;
@@ -96,8 +96,7 @@ pub fn info_sync(package: &str) -> Result<bool> {
         #[cfg(feature = "arch")]
         {
             if let Some(info) = crate::package_managers::get_sync_pkg_info(package)
-                .ok()
-                .flatten()
+                .with_context(|| format!("Failed to look up {package} in official repositories"))?
             {
                 crate::package_managers::display_pkg_info(&info);
                 ui::print_kv(
@@ -218,7 +217,8 @@ async fn info_json(package: &str) -> Result<()> {
     })
     .await
     {
-        let json_str = serde_json::to_string_pretty(&info).unwrap_or_else(|_| "{}".to_string());
+        let json_str = serde_json::to_string_pretty(&info)
+            .context("Failed to serialize package info as JSON")?;
         println!("{json_str}");
         return Ok(());
     }
@@ -227,8 +227,7 @@ async fn info_json(package: &str) -> Result<()> {
     if pm.name() == "pacman" {
         #[cfg(feature = "arch")]
         if let Some(info) = crate::package_managers::get_sync_pkg_info(package)
-            .ok()
-            .flatten()
+            .with_context(|| format!("Failed to look up {package} in official repositories"))?
         {
             let json_obj = serde_json::json!({
                 "name": info.name,
@@ -245,7 +244,8 @@ async fn info_json(package: &str) -> Result<()> {
             });
             println!(
                 "{}",
-                serde_json::to_string_pretty(&json_obj).unwrap_or_else(|_| "{}".to_string())
+                serde_json::to_string_pretty(&json_obj)
+                    .context("Failed to serialize package info as JSON")?
             );
             return Ok(());
         }
@@ -278,12 +278,12 @@ async fn info_fallback(package: &str) -> Result<()> {
             match tokio::time::timeout(AUR_INFO_TIMEOUT, search_detailed(package)).await {
                 Ok(Ok(results)) => results,
                 Ok(Err(err)) => {
-                    tracing::debug!("AUR detailed info failed for '{}': {}", package, err);
-                    Vec::new()
+                    pb.finish_and_clear();
+                    return Err(err).context(format!("Failed to look up {package} on the AUR"));
                 }
                 Err(_) => {
-                    tracing::warn!("AUR detailed info timed out for '{}'", package);
-                    Vec::new()
+                    pb.finish_and_clear();
+                    anyhow::bail!("Timed out looking up {package} on the AUR");
                 }
             };
         pb.finish_and_clear();

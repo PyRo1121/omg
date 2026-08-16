@@ -1,6 +1,6 @@
 //! Explicit package listing functionality
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::Serialize;
 
 #[cfg(unix)]
@@ -94,7 +94,8 @@ pub fn explicit_sync_with_json(count: bool, json: bool) -> Result<()> {
 
     #[cfg(feature = "arch")]
     {
-        let packages = crate::package_managers::list_explicit_fast().unwrap_or_default();
+        let packages = crate::package_managers::list_explicit_fast()
+            .context("Failed to list explicitly installed packages")?;
         display_explicit_list(packages, json)?;
     }
 
@@ -115,7 +116,7 @@ fn display_explicit_list(mut packages: Vec<String>, json: bool) -> Result<()> {
             packages,
         };
         let json_str = serde_json::to_string_pretty(&output)
-            .unwrap_or_else(|_| r#"{"packages": [], "count": 0}"#.to_string());
+            .context("Failed to serialize explicit package list as JSON")?;
         println!("{json_str}");
         return Ok(());
     }

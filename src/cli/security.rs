@@ -3,7 +3,7 @@
 //! Provides CLI handlers for vulnerability scanning, SBOM generation, secret detection,
 //! license compliance, SLSA verification, and audit log management.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use owo_colors::OwoColorize;
 
 use crate::cli::{AuditCommands, CliContext, LocalCommandRunner, style, ui};
@@ -925,7 +925,9 @@ pub async fn fix_vulnerabilities(
                 // Check if there's an available update
                 #[cfg(feature = "arch")]
                 {
-                    if crate::package_managers::alpm_direct::has_update(pkg).unwrap_or_default() {
+                    if crate::package_managers::alpm_direct::has_update(pkg).with_context(|| {
+                        format!("Failed to check whether {pkg} has an available update")
+                    })? {
                         to_upgrade.push(pkg.clone());
                     } else {
                         for vuln in vulns {
