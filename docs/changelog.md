@@ -26,6 +26,18 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Stage incremental Rust component and target updates
+
+Incremental rustc component and target installs wrote into an already
+
+published toolchain, so a failed extract could leave a half-updated
+
+directory looking installed. Copy the existing tree into same-filesystem
+
+staging, reject symlink impostors, and atomically replace the published
+
+directory only after metadata lands.
+
 - Fail closed on corrupt policy, settings, and audit logs
 
 Missing policy.toml or settings.toml still uses built-in defaults, but
