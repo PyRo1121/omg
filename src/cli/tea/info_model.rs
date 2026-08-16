@@ -297,29 +297,31 @@ async fn fetch_info(package: &str) -> InfoMsg {
     }
 
     // 2. Fallback to local package manager
-    let Ok(pm) = get_package_manager() else {
-        return InfoMsg::NotFound(package.to_string());
+    let pm = match get_package_manager() {
+        Ok(pm) => pm,
+        Err(error) => return InfoMsg::Error(error.to_string()),
     };
     if pm.name() == "pacman" {
         #[cfg(feature = "arch")]
         {
-            if let Some(info) = crate::package_managers::get_sync_pkg_info(package)
-                .ok()
-                .flatten()
-            {
-                return InfoMsg::InfoReceived(PackageInfo {
-                    name: info.name,
-                    version: info.version.to_string(),
-                    description: info.description,
-                    source: InfoSource::Official,
-                    repo: info.repo,
-                    url: info.url,
-                    size: info.install_size.map(|s| s as u64),
-                    licenses: vec![], // Local info might not have license list handy in this struct
-                    maintainer: None,
-                    popularity: None,
-                    out_of_date: false,
-                });
+            match crate::package_managers::get_sync_pkg_info(package) {
+                Ok(Some(info)) => {
+                    return InfoMsg::InfoReceived(PackageInfo {
+                        name: info.name,
+                        version: info.version.to_string(),
+                        description: info.description,
+                        source: InfoSource::Official,
+                        repo: info.repo,
+                        url: info.url,
+                        size: info.install_size.map(|s| s as u64),
+                        licenses: vec![],
+                        maintainer: None,
+                        popularity: None,
+                        out_of_date: false,
+                    });
+                }
+                Ok(None) => {}
+                Err(error) => return InfoMsg::Error(error.to_string()),
             }
         }
     } else if pm.name() == "apt" || pm.name() == "apt-pure" {
@@ -375,7 +377,13 @@ async fn fetch_info(package: &str) -> InfoMsg {
             Err(error) => return InfoMsg::Error(error.to_string()),
         };
         let aur_info = tokio::time::timeout(AUR_INFO_TIMEOUT, aur.info(package)).await;
-        if let Ok(Ok(Some(info))) = aur_info {
+        let info = match aur_info {
+            Ok(Ok(Some(info))) => info,
+            Ok(Ok(None)) => return InfoMsg::NotFound(package.to_string()),
+            Ok(Err(error)) => return InfoMsg::Error(error.to_string()),
+            Err(_) => return InfoMsg::Error(format!("Timed out looking up {package} on the AUR")),
+        };
+        {
             // Get more details if possible
             let mut popularity = None;
             let mut maintainer = None;
@@ -397,7 +405,7 @@ async fn fetch_info(package: &str) -> InfoMsg {
                 out_of_date = d.out_of_date.is_some();
             }
 
-            return InfoMsg::InfoReceived(PackageInfo {
+            InfoMsg::InfoReceived(PackageInfo {
                 name: info.name,
                 version: info.version.to_string(),
                 description: info.description,
@@ -409,11 +417,14 @@ async fn fetch_info(package: &str) -> InfoMsg {
                 maintainer,
                 popularity,
                 out_of_date,
-            });
+            })
         }
     }
 
-    InfoMsg::NotFound(package.to_string())
+    #[cfg(not(feature = "arch"))]
+    {
+        InfoMsg::NotFound(package.to_string())
+    }
 }
 
 #[cfg(test)]
