@@ -586,21 +586,47 @@ pub async fn update(name: &str) -> Result<()> {
             println!("{}", style::dim("No tools installed."));
             return Ok(());
         }
+        let mut failed = Vec::new();
         for tool in installed {
             println!(
                 "\n{} Updating {}...",
                 style::dim("→"),
                 style::package(&tool)
             );
-            // Re-install to update
-            if let Some((_, source, _, _)) = TOOL_REGISTRY.iter().find(|(k, _, _, _)| *k == tool)
-                && let Some((manager, pkg)) = source.split_once(':')
-            {
-                let _ = install_managed(manager, pkg, &tool, &tools_dir, &bin_dir).await;
+            if let Some((_, source, _, _)) = TOOL_REGISTRY.iter().find(|(k, _, _, _)| *k == tool) {
+                let Some((manager, pkg)) = source.split_once(':') else {
+                    println!(
+                        "  {}",
+                        style::error(&format!("Invalid registry format for {tool}"))
+                    );
+                    failed.push(tool);
+                    continue;
+                };
+                if let Err(error) = install_managed(manager, pkg, &tool, &tools_dir, &bin_dir).await
+                {
+                    println!(
+                        "  {}",
+                        style::error(&format!("Failed to update {tool}: {error}"))
+                    );
+                    failed.push(tool);
+                }
+            } else {
+                println!(
+                    "  {}",
+                    style::error(&format!("{tool} is not in the tool registry"))
+                );
+                failed.push(tool);
             }
         }
-        println!("\n{}", style::success("All tools updated!"));
-        return Ok(());
+        if failed.is_empty() {
+            println!("\n{}", style::success("All tools updated!"));
+            return Ok(());
+        }
+        anyhow::bail!(
+            "Failed to update {} tool(s): {}",
+            failed.len(),
+            failed.join(", ")
+        );
     }
 
     println!(
