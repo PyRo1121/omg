@@ -26,6 +26,16 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Surface stale AUR directory cleanup failures
+
+When a stale package dir exists without a PKGBUILD, removal failures were
+
+discarded with .ok(), so the subsequent git clone failed with a confusing
+
+GitCloneFailed that hid the real cause. Log cleanup failures at warn,
+
+matching the recovery-path pattern used by the git_pull failure branch.
+
 - Make analytics and telemetry persistence failures explicit
 
 All session/queue save results were discarded with bare 'let _ =', hiding
