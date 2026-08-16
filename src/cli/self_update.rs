@@ -123,12 +123,17 @@ pub async fn run(force: bool, version: Option<String>) -> Result<()> {
                         .context("Failed to set updated binary permissions")?;
                 }
 
-                // Cleanup backup
+                // Cleanup backup; a leftover .old file is harmless.
                 let _ = fs::remove_file(backup_path);
             }
             Err(e) => {
-                // Restore backup
-                let _ = fs::rename(&backup_path, &current_exe);
+                // Restore backup, and surface a restore failure: otherwise the
+                // binary is left missing with only the install error reported.
+                if let Err(restore_error) = fs::rename(&backup_path, &current_exe) {
+                    return Err(anyhow::anyhow!(
+                        "Failed to install update: {e}; additionally failed to restore the previous binary: {restore_error}"
+                    ));
+                }
                 return Err(anyhow::anyhow!("Failed to install update: {e}"));
             }
         }
