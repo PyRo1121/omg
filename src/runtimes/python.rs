@@ -146,7 +146,7 @@ impl PythonManager {
         crate::core::security::validate_runtime_version(&version)?;
         let version_dir = self.versions_dir.join(&version);
 
-        if version_dir.exists() {
+        if crate::runtimes::common::is_valid_version_dir(&version_dir) {
             print_already_installed("Python", &version);
             return self.use_version(&version);
         }

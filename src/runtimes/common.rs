@@ -396,6 +396,12 @@ fn write_install_marker(version_dir: &Path, version: &str) -> Result<()> {
     Ok(())
 }
 
+/// Return whether a runtime version path is a real directory, not a symlink or file.
+#[must_use]
+pub fn is_valid_version_dir(version_dir: &Path) -> bool {
+    fs::symlink_metadata(version_dir).is_ok_and(|metadata| metadata.is_dir())
+}
+
 /// Create or update the "current" symlink
 pub fn set_current_version(versions_dir: &Path, version: &str) -> Result<()> {
     crate::core::security::validate_runtime_version(version)?;
@@ -403,9 +409,9 @@ pub fn set_current_version(versions_dir: &Path, version: &str) -> Result<()> {
     let current_link = versions_dir.join("current");
     let version_dir = versions_dir.join(version);
 
-    if !version_dir.exists() {
+    if !is_valid_version_dir(&version_dir) {
         anyhow::bail!(
-            "Version {version} is not installed. Install it first with: omg use <runtime>@{version}"
+            "Version {version} is not installed as a valid directory. Install it first with: omg use <runtime>@{version}"
         );
     }
 
@@ -487,7 +493,7 @@ pub fn list_installed_versions(versions_dir: &Path) -> Result<Vec<String>> {
         // Skip the "current" symlink and dot-prefixed entries (e.g. staging
         // directories left by an interrupted install, which must never be
         // reported as installed versions).
-        if name.starts_with('.') || name == "current" || !entry.file_type()?.is_dir() {
+        if name.starts_with('.') || name == "current" || !is_valid_version_dir(&entry.path()) {
             continue;
         }
         versions.push(name);
@@ -834,6 +840,21 @@ mod tests {
         assert!(versions.contains(&"1.0.0".to_string()));
         assert!(versions.contains(&"2.0.0".to_string()));
         assert!(!versions.contains(&"current".to_string()));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn version_listing_and_activation_reject_symlinked_version_dirs() {
+        let temp = TempDir::new().unwrap();
+        fs::create_dir(temp.path().join("real")).unwrap();
+        std::os::unix::fs::symlink("real", temp.path().join("1.0.0")).unwrap();
+        fs::write(temp.path().join("2.0.0"), b"not a directory").unwrap();
+
+        let versions = list_installed_versions(temp.path()).unwrap();
+        assert_eq!(versions, vec!["real".to_string()]);
+
+        let error = set_current_version(temp.path(), "1.0.0").unwrap_err();
+        assert!(error.to_string().contains("valid directory"));
     }
 
     #[test]
