@@ -208,7 +208,7 @@ async fn search_aur_packages(query: &str, detailed: bool) -> Result<Vec<DisplayP
                 })
                 .with_context(|| format!("Failed to search AUR for {query}"));
         }
-        let aur = AurClient::new();
+        let aur = AurClient::new()?;
         return aur
             .search(query)
             .await

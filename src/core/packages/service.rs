@@ -359,8 +359,10 @@ impl PackageServiceBuilder {
     pub fn build(self) -> Result<PackageService> {
         #[cfg(feature = "arch")]
         let aur_client = if self.enable_aur && self.backend.name() == "pacman" {
-            self.aur_client
-                .or_else(|| Some(crate::package_managers::AurClient::new()))
+            match self.aur_client {
+                Some(client) => Some(client),
+                None => Some(crate::package_managers::AurClient::new()?),
+            }
         } else {
             self.aur_client
         };

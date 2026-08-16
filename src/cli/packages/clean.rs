@@ -169,7 +169,7 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bo
                 use owo_colors::OwoColorize;
                 println!("  {} Would clean all AUR build directories", "→".cyan());
             } else {
-                let aur_client = AurClient::new();
+                let aur_client = AurClient::new()?;
                 aur_client.clean_all()?;
             }
         }

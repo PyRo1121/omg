@@ -149,14 +149,14 @@ struct AurResponse {
 }
 
 impl AurClient {
-    pub fn new() -> Self {
-        let settings = Settings::load().unwrap_or_default();
+    pub fn new() -> Result<Self> {
+        let settings = Settings::load().context("Failed to load OMG settings for AUR")?;
         let build_dir = paths::cache_dir().join("aur");
 
-        Self {
+        Ok(Self {
             build_dir,
             settings,
-        }
+        })
     }
 
     #[must_use]
@@ -2481,12 +2481,6 @@ impl AurClient {
     }
 }
 
-impl Default for AurClient {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 /// Create a spinner
 #[expect(clippy::literal_string_with_formatting_args, clippy::expect_used)] // Static indicatif template is always valid; braces are template syntax not Rust format args
 fn create_spinner(msg: &str) -> ProgressBar {
@@ -2629,7 +2623,7 @@ mod tests {
     #[tokio::test]
     async fn test_sandbox_security_isolation() {
         // Verify that the sandbox arguments strictly isolate the build environment
-        let _client = AurClient::default();
+        let _client = AurClient::new().expect("test settings must load");
         let _pkg_dir = PathBuf::from("/tmp/pkg");
 
         let _env = MakepkgEnv {
@@ -2691,7 +2685,7 @@ mod tests {
     #[test]
     fn test_makepkg_env_sanitization() {
         // Verify that environment variables are properly handled
-        let client = AurClient::default();
+        let client = AurClient::new().expect("test settings must load");
         let pkg_dir = PathBuf::from("/tmp/test");
 
         // This should not panic

@@ -332,7 +332,7 @@ async fn try_get_suggestions(query: &str) -> Vec<String> {
 }
 
 async fn try_aur_package(pkg_name: &str) -> Result<crate::core::Package> {
-    let aur = AurClient::new();
+    let aur = AurClient::new()?;
     let results = aur.search(pkg_name).await?;
 
     let exact_match = results.iter().find(|p| p.name == pkg_name);
@@ -392,7 +392,7 @@ async fn handle_aur_package(
 
     modern_ui::print_aur_build_phase("Building", &aur_pkg.name);
 
-    let aur_client = AurClient::new();
+    let aur_client = AurClient::new()?;
     aur_client.install(&aur_pkg.name).await?;
 
     modern_ui::print_success(&format!("Built and installed {} from AUR", aur_pkg.name));

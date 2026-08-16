@@ -371,7 +371,10 @@ async fn fetch_search_results(query: &str) -> SearchMsg {
     {
         let official_names: std::collections::HashSet<String> =
             results.iter().map(|r| r.name.clone()).collect();
-        let aur = crate::package_managers::AurClient::new();
+        let aur = match crate::package_managers::AurClient::new() {
+            Ok(client) => client,
+            Err(error) => return SearchMsg::Error(error.to_string()),
+        };
         if let Ok(aur_pkgs) = aur.search(query).await {
             results.extend(
                 aur_pkgs

@@ -118,7 +118,7 @@ pub fn info_sync(package: &str) -> Result<bool> {
 /// Show AUR package information (Async fallback) - Arch only
 #[cfg(feature = "arch")]
 pub async fn info_aur(package: &str) -> Result<()> {
-    let aur = AurClient::new();
+    let aur = AurClient::new()?;
     let Some(info) = aur.info(package).await? else {
         ui::print_error(format!("Package '{package}' not found"));
         ui::print_tip("Try: omg search <package>");
