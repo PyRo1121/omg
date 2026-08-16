@@ -17,7 +17,7 @@ use std::path::PathBuf;
 use super::common::{
     begin_staged_install, complete_staged_install, download_with_progress, extract_tar_xz,
     normalize_version, parse_sha256_digest, print_already_installed, print_installed, print_using,
-    set_current_version,
+    remove_file_best_effort, set_current_version,
 };
 use crate::core::http::download_client;
 
@@ -134,7 +134,7 @@ impl NodeManager {
         extract_tar_xz(&download_path, staging.path(), 1).await?;
         complete_staged_install(&staging, &version_dir, &version)?;
 
-        let _ = fs::remove_file(&download_path);
+        remove_file_best_effort(&download_path, "runtime archive");
 
         print_installed("Node.js", &version);
         self.use_version(&version)?;

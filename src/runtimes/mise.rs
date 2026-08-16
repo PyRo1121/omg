@@ -23,7 +23,7 @@ use std::process::Command;
 use crate::core::archive::stripped_archive_path;
 use crate::core::http::download_client;
 
-use super::common::download_with_progress;
+use super::common::{download_with_progress, remove_file_best_effort};
 
 const MISE_GITHUB_RELEASES: &str = "https://github.com/jdx/mise/releases";
 
@@ -110,14 +110,7 @@ impl MiseManager {
         tracing::info!("{} Extracting...", "→".blue());
         self.extract_tarball(&download_path)?;
 
-        // Best-effort: the archive is already extracted; leftover files only
-        // waste cache space and are overwritten on the next download.
-        if let Err(error) = fs::remove_file(&download_path) {
-            tracing::debug!(
-                "Failed to remove mise archive {}: {error}",
-                download_path.display()
-            );
-        }
+        remove_file_best_effort(&download_path, "mise archive");
 
         // Verify installation
         if !self.mise_bin.exists() {
