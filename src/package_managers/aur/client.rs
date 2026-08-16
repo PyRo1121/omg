@@ -951,7 +951,15 @@ impl AurClient {
             }
         } else {
             if pkg_dir.exists() {
-                remove_dir_as_user(&pkg_dir).await.ok();
+                // Surface cleanup failures: otherwise a stale directory that
+                // cannot be removed surfaces as a confusing clone failure.
+                if let Err(error) = remove_dir_as_user(&pkg_dir).await {
+                    tracing::warn!(
+                        "Failed to remove stale AUR directory {} before re-cloning: {}",
+                        pkg_dir.display(),
+                        error
+                    );
+                }
             }
             self.git_clone(package).await.map_err(|e| {
                 tracing::warn!("Git clone failed for {}: {}", package, e);
@@ -1199,7 +1207,15 @@ impl AurClient {
             })?;
         } else {
             if pkg_dir.exists() {
-                remove_dir_as_user(&pkg_dir).await.ok();
+                // Surface cleanup failures: otherwise a stale directory that
+                // cannot be removed surfaces as a confusing clone failure.
+                if let Err(error) = remove_dir_as_user(&pkg_dir).await {
+                    tracing::warn!(
+                        "Failed to remove stale AUR directory {} before re-cloning: {}",
+                        pkg_dir.display(),
+                        error
+                    );
+                }
             }
             self.git_clone(package).await.map_err(|e| {
                 tracing::warn!("Git clone failed for {}: {}", package, e);
