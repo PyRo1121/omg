@@ -14,12 +14,11 @@ use std::path::PathBuf;
 
 use super::common::{
     begin_staged_install, complete_staged_install, download_with_progress, extract_tar_gz,
-    normalize_version, print_already_installed, print_installed, print_using,
+    normalize_version, parse_sha256_digest, print_already_installed, print_installed, print_using,
     remove_file_best_effort, set_current_version, version_cmp,
 };
 use crate::core::http::download_client;
 
-const RUBY_PREBUILT_URL: &str = "https://github.com/ruby/ruby-builder/releases/download";
 const RUBY_VERSIONS_URL: &str = "https://api.github.com/repos/ruby/ruby-builder/releases";
 
 /// Ruby version info
@@ -32,6 +31,15 @@ pub struct RubyVersion {
 #[derive(Debug, Deserialize)]
 struct GithubRelease {
     tag_name: String,
+    #[serde(default)]
+    assets: Vec<GithubAsset>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GithubAsset {
+    name: String,
+    browser_download_url: String,
+    digest: Option<String>,
 }
 
 pub struct RubyManager {
@@ -119,23 +127,53 @@ impl RubyManager {
             version.yellow()
         );
 
-        // Use pre-built Ruby from GitHub ruby-builder
-        const OS: &str = "ubuntu-22.04"; // Most compatible glibc version
-        let filename = format!("ruby-{version}.tar.gz");
-        let url = format!("{RUBY_PREBUILT_URL}/toolcache/{OS}-{filename}");
+        // Use the release-specific, pre-built Ruby from GitHub ruby-builder.
+        let arch = match std::env::consts::ARCH {
+            "x86_64" => "x64",
+            "aarch64" => "arm64",
+            arch => anyhow::bail!("Unsupported architecture: {arch}"),
+        };
+        let release: GithubRelease = self
+            .client
+            .get(format!("{RUBY_VERSIONS_URL}/tags/ruby-{version}"))
+            .header("User-Agent", "omg-package-manager")
+            .send()
+            .await
+            .context("Failed to fetch Ruby release metadata")?
+            .error_for_status()
+            .context("Ruby release metadata request failed")?
+            .json()
+            .await
+            .context("Failed to parse Ruby release metadata")?;
+        let expected_name = format!("ruby-{version}-ubuntu-22.04-{arch}.tar.gz");
+        let asset = release
+            .assets
+            .iter()
+            .find(|asset| asset.name == expected_name)
+            .ok_or_else(|| anyhow::anyhow!("Ruby release asset not found: {expected_name}"))?;
+        let checksum = asset
+            .digest
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("Ruby release asset has no SHA-256 digest"))
+            .and_then(|digest| parse_sha256_digest(digest, "GitHub Ruby release"))?;
 
         fs::create_dir_all(&self.versions_dir)?;
 
         println!("{} Downloading pre-built Ruby {version}...", "→".blue());
-        let download_path = self.versions_dir.join(&filename);
+        let download_path = self.versions_dir.join(&asset.name);
 
-        download_with_progress(&self.client, &url, &download_path, None)
-            .await
-            .with_context(|| {
-                eprintln!("{} Pre-built Ruby {version} not available", "!".yellow());
-                eprintln!("  Try: omg list ruby --available");
-                format!("Failed to download Ruby {version}")
-            })?;
+        download_with_progress(
+            &self.client,
+            &asset.browser_download_url,
+            &download_path,
+            Some(&checksum),
+        )
+        .await
+        .with_context(|| {
+            eprintln!("{} Pre-built Ruby {version} not available", "!".yellow());
+            eprintln!("  Try: omg list ruby --available");
+            format!("Failed to download Ruby {version}")
+        })?;
 
         println!("{} Extracting (pure Rust)...", "→".blue());
         let staging = begin_staged_install(&self.versions_dir)?;
