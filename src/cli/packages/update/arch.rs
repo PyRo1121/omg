@@ -108,7 +108,7 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
         } else {
             let aur_pb = modern_ui::modern_spinner("Checking", "AUR packages");
             let aur_start = std::time::Instant::now();
-            let client = crate::package_managers::AurClient::new();
+            let client = crate::package_managers::AurClient::new()?;
             match client.get_update_list().await {
                 Ok(aur_updates) => {
                     let aur_elapsed = aur_start.elapsed();
@@ -233,7 +233,7 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
         use crate::package_managers::aur::{BuildJob, ParallelBuilder};
         use std::sync::Arc;
 
-        let client = Arc::new(crate::package_managers::AurClient::new());
+        let client = Arc::new(crate::package_managers::AurClient::new()?);
         let jobs: Vec<BuildJob> = aur_packages
             .iter()
             .map(|pkg| BuildJob::new(pkg.clone(), Vec::new()))

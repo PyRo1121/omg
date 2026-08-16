@@ -370,7 +370,10 @@ async fn fetch_info(package: &str) -> InfoMsg {
     // 3. AUR Fallback (Arch Only)
     #[cfg(feature = "arch")]
     {
-        let aur = AurClient::new();
+        let aur = match AurClient::new() {
+            Ok(client) => client,
+            Err(error) => return InfoMsg::Error(error.to_string()),
+        };
         let aur_info = tokio::time::timeout(AUR_INFO_TIMEOUT, aur.info(package)).await;
         if let Ok(Ok(Some(info))) = aur_info {
             // Get more details if possible
