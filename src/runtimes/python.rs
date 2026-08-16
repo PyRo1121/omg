@@ -89,19 +89,15 @@ impl PythonManager {
             .await
             .context("Failed to parse Python release data")?;
 
-        let arch = match std::env::consts::ARCH {
-            "aarch64" => "aarch64",
-            _ => "x86_64",
-        };
+        let target = python_target()?;
 
         let mut versions = std::collections::HashSet::new();
 
         for release in &releases {
             for asset in &release.assets {
-                // Only include assets that match our architecture and are install_only
-                if asset.name.contains(arch)
-                    && asset.name.contains("linux-gnu")
+                if asset.name.contains(&target)
                     && asset.name.contains("install_only")
+                    && asset.name.ends_with(".tar.gz")
                     && let Some(version) = Self::extract_cpython_version(&asset.name)
                 {
                     versions.insert(version);
@@ -164,11 +160,7 @@ impl PythonManager {
             version.yellow()
         );
 
-        let arch = match std::env::consts::ARCH {
-            "x86_64" => "x86_64",
-            "aarch64" => "aarch64",
-            arch => anyhow::bail!("Unsupported architecture: {arch}"),
-        };
+        let target = python_target()?;
 
         println!("{} Finding Python {} release...", "→".blue(), version);
 
@@ -189,8 +181,7 @@ impl PythonManager {
             .flat_map(|release| &release.assets)
             .find(|asset| {
                 asset.name.contains(&python_prefix)
-                    && asset.name.contains(arch)
-                    && asset.name.contains("linux-gnu")
+                    && asset.name.contains(&target)
                     && asset.name.contains("install_only")
                     && asset.name.ends_with(".tar.gz")
             })
@@ -237,6 +228,18 @@ impl PythonManager {
 // Generate common runtime manager methods (list_installed, current_version, uninstall)
 crate::impl_runtime_common!(PythonManager, "Python");
 
+fn python_target() -> Result<String> {
+    let arch = match std::env::consts::ARCH {
+        "x86_64" | "aarch64" => std::env::consts::ARCH,
+        arch => anyhow::bail!("Unsupported architecture for Python: {arch}"),
+    };
+    match std::env::consts::OS {
+        "linux" => Ok(format!("{arch}-unknown-linux-gnu")),
+        "macos" => Ok(format!("{arch}-apple-darwin")),
+        other => anyhow::bail!("Unsupported operating system for Python: {other}"),
+    }
+}
+
 impl Default for PythonManager {
     fn default() -> Self {
         Self::new()
@@ -273,5 +276,15 @@ mod tests {
         assert!(PythonManager::is_semver_like("3.11.5"));
         assert!(!PythonManager::is_semver_like("3.12"));
         assert!(!PythonManager::is_semver_like("3"));
+    }
+
+    #[test]
+    fn python_target_uses_host_os_and_arch() {
+        let target = python_target().expect("host platform should be supported");
+        if std::env::consts::OS == "linux" {
+            assert!(target.contains("linux-gnu"));
+        } else {
+            assert!(!target.contains("linux-gnu"));
+        }
     }
 }

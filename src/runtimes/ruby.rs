@@ -75,27 +75,13 @@ impl RubyManager {
             .await
             .context("Failed to parse Ruby release data")?;
 
-        // Extract unique Ruby versions from release tags
-        // Tags are like "toolcache" or version-specific
-        let re = regex::Regex::new(r"^(\d+\.\d+\.\d+)$")?;
-
-        let mut versions: std::collections::HashSet<_> = releases
+        // Tags are `ruby-X.Y.Z`, plus engine tags such as `jruby-*` and `toolcache`.
+        let versions: std::collections::HashSet<_> = releases
             .iter()
-            .filter_map(|release| {
-                re.captures(&release.tag_name)
-                    .and_then(|caps| caps.get(1))
-                    .map(|m| m.as_str().to_owned())
-            })
+            .filter_map(|release| parse_ruby_release_version(&release.tag_name))
             .collect();
-
-        // If no version tags found, return common stable versions
         if versions.is_empty() {
-            versions.extend([
-                "3.3.0".to_owned(),
-                "3.2.2".to_owned(),
-                "3.1.4".to_owned(),
-                "3.0.6".to_owned(),
-            ]);
+            anyhow::bail!("No MRI Ruby releases found. Try again later or specify a version.");
         }
 
         let mut result: Vec<_> = versions
@@ -145,7 +131,7 @@ impl RubyManager {
             .json()
             .await
             .context("Failed to parse Ruby release metadata")?;
-        let expected_name = format!("ruby-{version}-ubuntu-22.04-{arch}.tar.gz");
+        let expected_name = format!("ruby-{version}-{}-{arch}.tar.gz", ruby_platform()?);
         let asset = release
             .assets
             .iter()
@@ -200,6 +186,29 @@ impl RubyManager {
 // Generate common runtime manager methods (list_installed, current_version, uninstall)
 crate::impl_runtime_common!(RubyManager, "Ruby");
 
+fn parse_ruby_release_version(tag_name: &str) -> Option<String> {
+    tag_name
+        .strip_prefix("ruby-")
+        .filter(|version| {
+            let mut parts = version.split('.');
+            match (parts.next(), parts.next(), parts.next(), parts.next()) {
+                (Some(major), Some(minor), Some(patch), None) => [major, minor, patch]
+                    .iter()
+                    .all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit())),
+                _ => false,
+            }
+        })
+        .map(str::to_owned)
+}
+
+fn ruby_platform() -> Result<&'static str> {
+    match std::env::consts::OS {
+        "linux" => Ok("ubuntu-22.04"),
+        "macos" => Ok("darwin"),
+        other => anyhow::bail!("Unsupported operating system for pre-built Ruby: {other}"),
+    }
+}
+
 impl Default for RubyManager {
     fn default() -> Self {
         Self::new()
@@ -214,5 +223,27 @@ mod tests {
     fn test_ruby_manager_new() {
         let mgr = RubyManager::new();
         assert!(mgr.versions_dir.ends_with("ruby"));
+    }
+
+    #[test]
+    fn ruby_release_tags_parse_mri_versions_only() {
+        assert_eq!(
+            parse_ruby_release_version("ruby-3.4.10").as_deref(),
+            Some("3.4.10")
+        );
+        assert_eq!(parse_ruby_release_version("3.4.10"), None);
+        assert_eq!(parse_ruby_release_version("toolcache"), None);
+        assert_eq!(parse_ruby_release_version("jruby-10.0.6.0"), None);
+        assert_eq!(parse_ruby_release_version("ruby-3.4"), None);
+    }
+
+    #[test]
+    fn ruby_platform_is_host_specific() {
+        let platform = ruby_platform().expect("host platform should be supported");
+        if std::env::consts::OS == "linux" {
+            assert_eq!(platform, "ubuntu-22.04");
+        } else {
+            assert_ne!(platform, "ubuntu-22.04");
+        }
     }
 }

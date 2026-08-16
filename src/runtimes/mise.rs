@@ -106,15 +106,8 @@ impl MiseManager {
 
         fs::create_dir_all(&self.bin_dir)?;
 
-        let arch = match std::env::consts::ARCH {
-            "x86_64" => "x64",
-            "aarch64" => "arm64",
-            arch => anyhow::bail!("Unsupported architecture: {arch}"),
-        };
-
-        // Get latest version from GitHub API
         let version = self.get_latest_version().await?;
-        let filename = format!("mise-v{version}-linux-{arch}.tar.gz");
+        let filename = format!("mise-v{version}-{}.tar.gz", mise_platform()?);
         let url = format!("{MISE_GITHUB_RELEASES}/download/v{version}/{filename}");
         let checksum = self.fetch_checksum(&version, &filename).await?;
 
@@ -405,6 +398,20 @@ impl MiseManager {
     }
 }
 
+fn mise_platform() -> Result<String> {
+    let os = match std::env::consts::OS {
+        "linux" => "linux",
+        "macos" => "macos",
+        other => anyhow::bail!("Unsupported operating system for mise: {other}"),
+    };
+    let arch = match std::env::consts::ARCH {
+        "x86_64" => "x64",
+        "aarch64" => "arm64",
+        arch => anyhow::bail!("Unsupported architecture for mise: {arch}"),
+    };
+    Ok(format!("{os}-{arch}"))
+}
+
 impl Default for MiseManager {
     fn default() -> Self {
         Self::new()
@@ -482,5 +489,15 @@ mod tests {
         assert!(manager.extract_tarball(&archive_path).is_err());
         assert!(!manager.mise_bin.exists());
         Ok(())
+    }
+
+    #[test]
+    fn mise_platform_is_host_specific() {
+        let platform = mise_platform().expect("host platform should be supported");
+        if std::env::consts::OS == "linux" {
+            assert!(platform.starts_with("linux-"));
+        } else {
+            assert!(!platform.starts_with("linux-"));
+        }
     }
 }

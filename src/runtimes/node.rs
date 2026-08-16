@@ -111,13 +111,7 @@ impl NodeManager {
             version.yellow()
         );
 
-        let arch = match std::env::consts::ARCH {
-            "x86_64" => "x64",
-            "aarch64" => "arm64",
-            arch => anyhow::bail!("Unsupported architecture: {arch}"),
-        };
-
-        let filename = format!("node-v{version}-linux-{arch}.tar.xz");
+        let filename = format!("node-v{version}-{}.tar.xz", node_platform()?);
         let url = format!("{NODE_DIST_URL}/v{version}/{filename}");
 
         fs::create_dir_all(&self.versions_dir)?;
@@ -173,6 +167,20 @@ impl NodeManager {
 // Generate common runtime manager methods (list_installed, current_version, uninstall)
 crate::impl_runtime_common!(NodeManager, "Node.js");
 
+fn node_platform() -> Result<String> {
+    let os = match std::env::consts::OS {
+        "linux" => "linux",
+        "macos" => "darwin",
+        other => anyhow::bail!("Unsupported operating system for Node.js: {other}"),
+    };
+    let arch = match std::env::consts::ARCH {
+        "x86_64" => "x64",
+        "aarch64" => "arm64",
+        arch => anyhow::bail!("Unsupported architecture for Node.js: {arch}"),
+    };
+    Ok(format!("{os}-{arch}"))
+}
+
 impl Default for NodeManager {
     fn default() -> Self {
         Self::new()
@@ -210,5 +218,12 @@ mod tests {
             lts: serde_json::Value::Bool(false),
         };
         assert_eq!(get_lts_name(&non_lts), None);
+    }
+
+    #[test]
+    fn node_platform_uses_host_os_and_arch() {
+        let platform = node_platform().expect("host platform should be supported");
+        assert!(platform.contains('-'));
+        assert!(!platform.starts_with("linux-") || std::env::consts::OS == "linux");
     }
 }

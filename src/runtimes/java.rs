@@ -115,11 +115,7 @@ impl JavaManager {
             version.yellow()
         );
 
-        let arch = match std::env::consts::ARCH {
-            "x86_64" => "x64",
-            "aarch64" => "aarch64",
-            arch => anyhow::bail!("Unsupported architecture: {arch}"),
-        };
+        let (os, arch) = java_platform()?;
 
         println!("{} Querying Adoptium API...", "→".blue());
 
@@ -127,7 +123,7 @@ impl JavaManager {
             .client
             .get(format!(
                 "{ADOPTIUM_API}/assets/latest/{version}/hotspot?\
-                 architecture={arch}&image_type=jdk&os=linux&vendor=eclipse"
+                 architecture={arch}&image_type=jdk&os={os}&vendor=eclipse"
             ))
             .send()
             .await
@@ -188,6 +184,20 @@ impl JavaManager {
 // Generate common runtime manager methods (list_installed, current_version, uninstall)
 crate::impl_runtime_common!(JavaManager, "Java");
 
+fn java_platform() -> Result<(&'static str, &'static str)> {
+    let os = match std::env::consts::OS {
+        "linux" => "linux",
+        "macos" => "mac",
+        other => anyhow::bail!("Unsupported operating system for Java: {other}"),
+    };
+    let arch = match std::env::consts::ARCH {
+        "x86_64" => "x64",
+        "aarch64" => "aarch64",
+        arch => anyhow::bail!("Unsupported architecture for Java: {arch}"),
+    };
+    Ok((os, arch))
+}
+
 impl Default for JavaManager {
     fn default() -> Self {
         Self::new()
@@ -202,5 +212,15 @@ mod tests {
     fn test_java_manager_new() {
         let mgr = JavaManager::new();
         assert!(mgr.versions_dir.ends_with("java"));
+    }
+
+    #[test]
+    fn java_platform_is_host_specific() {
+        let (os, _arch) = java_platform().expect("host platform should be supported");
+        if std::env::consts::OS == "linux" {
+            assert_eq!(os, "linux");
+        } else {
+            assert_ne!(os, "linux");
+        }
     }
 }
