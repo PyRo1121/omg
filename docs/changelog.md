@@ -26,6 +26,18 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Fail closed when runtime listing or daemon startup fails
+
+omg use treated a failed list_installed as empty and could reinstall
+
+an already-installed runtime. omg list hid the same failure as no
+
+versions. omg init printed that the daemon or systemd service started
+
+even when spawn/systemctl failed. Surface those errors instead of
+
+claiming success.
+
 - Sync remaining package-index persists before publish
 
 AUR rkyv indexes, Debian cache/mmap/FST files, dpkg status rewrites,
