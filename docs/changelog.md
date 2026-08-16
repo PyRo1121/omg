@@ -26,6 +26,16 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Log leftover runtime archive and symlink cleanup failures
+
+Runtime installers discarded leftover archive and current-link removals
+
+with bare let _ = / .ok(). Route those through one documented
+
+remove_file_best_effort helper so cleanup failures are visible without
+
+failing an already-successful install or uninstall.
+
 - Persist AUR source pre-downloads atomically and surface failures
 
 AUR source pre-download hid .SRCINFO parse failures, discarded download
