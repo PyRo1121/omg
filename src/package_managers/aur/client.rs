@@ -848,11 +848,24 @@ impl AurClient {
             crate::cli::modern_ui::print_success(&format!("Installed dependency: {dep}"));
         }
 
-        // Parse and download sources in parallel
-        let sources = parse_sources(&pkg_dir).unwrap_or_default();
-        if !sources.is_empty() {
-            let _ = download_sources(sources, &env.srcdest).await;
-            // Errors are logged but not fatal - makepkg will retry
+        // Best-effort pre-download: makepkg still fetches anything we miss.
+        match parse_sources(&pkg_dir) {
+            Ok(sources) if sources.is_empty() => {}
+            Ok(sources) => {
+                let summary = download_sources(sources, &env.srcdest).await;
+                if summary.failed > 0 {
+                    tracing::warn!(
+                        "Pre-downloaded {}/{} AUR sources for {package}; makepkg will retry the rest",
+                        summary.succeeded,
+                        summary.succeeded + summary.failed
+                    );
+                }
+            }
+            Err(error) => {
+                tracing::warn!(
+                    "Failed to parse AUR sources for {package}: {error}; makepkg will fetch them"
+                );
+            }
         }
 
         let cache_key = self.cache_key(&pkg_dir, &env.makeflags)?;
@@ -2181,9 +2194,23 @@ impl AurClient {
                 .ok()
                 .or_else(|| std::env::var("DOAS_USER").ok())
         {
-            let _ = std::process::Command::new("chown")
-                .args(["-R", &build_user, builddir.to_str().unwrap_or("")])
-                .output();
+            let status = std::process::Command::new("chown")
+                .arg("-R")
+                .arg(&build_user)
+                .arg("--")
+                .arg(builddir.as_os_str())
+                .status();
+            match status {
+                Ok(status) if status.success() => {}
+                Ok(status) => tracing::warn!(
+                    "Failed to chown AUR build directory {} to {build_user}: {status}",
+                    builddir.display()
+                ),
+                Err(error) => tracing::warn!(
+                    "Failed to chown AUR build directory {} to {build_user}: {error}",
+                    builddir.display()
+                ),
+            }
         }
 
         let mut extra_env = Vec::new();
