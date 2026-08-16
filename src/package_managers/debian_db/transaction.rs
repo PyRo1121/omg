@@ -1844,9 +1844,13 @@ fn update_dpkg_status_for_removal(package_name: &str) -> Result<()> {
     temp_file
         .write_all(updated_content.as_bytes())
         .context("Failed to write updated status")?;
-
+    temp_file
+        .as_file_mut()
+        .sync_all()
+        .context("Failed to sync updated dpkg status")?;
     temp_file
         .persist(status_path)
+        .map_err(|error| error.error)
         .context("Failed to persist updated status file")?;
 
     tracing::debug!(

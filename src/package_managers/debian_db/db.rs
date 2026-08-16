@@ -583,7 +583,12 @@ pub fn ensure_index_loaded() -> Result<()> {
             .write_all(&compressed)
             .context("Failed to write compressed cache data")?;
         temp_cache
+            .as_file_mut()
+            .sync_all()
+            .context("Failed to sync compressed Debian cache")?;
+        temp_cache
             .persist(&cache_path)
+            .map_err(|error| error.error)
             .context("Failed to persist compressed cache file")?;
 
         // Also save uncompressed version for zero-copy mmap access
@@ -597,7 +602,12 @@ pub fn ensure_index_loaded() -> Result<()> {
             .write_all(&bytes)
             .context("Failed to write mmap data")?;
         temp_mmap
+            .as_file_mut()
+            .sync_all()
+            .context("Failed to sync Debian mmap index")?;
+        temp_mmap
             .persist(&mmap_path)
+            .map_err(|error| error.error)
             .context("Failed to persist mmap file")?;
 
         // Load the mmap index for zero-copy access
@@ -653,7 +663,12 @@ pub fn ensure_index_loaded() -> Result<()> {
             .write_all(&fst_bytes)
             .context("Failed to write FST data")?;
         temp_fst
+            .as_file_mut()
+            .sync_all()
+            .context("Failed to sync Debian FST index")?;
+        temp_fst
             .persist(&fst_path)
+            .map_err(|error| error.error)
             .context("Failed to persist FST file")?;
 
         tracing::debug!(
