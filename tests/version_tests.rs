@@ -344,39 +344,18 @@ mod parse_version_or_zero_tests {
     #![allow(clippy::pedantic, clippy::nursery)]
     use super::*;
 
-    /// Test that parse_version_or_zero never panics
+    /// Test that parse_version_or_zero returns a version or zero
     #[test]
-    fn test_never_panics() {
-        // Valid versions
-        let _ = parse_version_or_zero("1.2.3");
-
-        // Empty string (edge case) - should not panic
-        let _ = parse_version_or_zero("");
-
-        // Very long version
+    fn test_parse_version_or_zero_values() {
+        assert_eq!(parse_version_or_zero("1.2.3").to_string(), "1.2.3");
+        assert_eq!(
+            parse_version_or_zero("").to_string(),
+            "0",
+            "unparseable input must become the zero version"
+        );
+        assert_eq!(parse_version_or_zero("2.0.0-1").to_string(), "2.0.0-1");
         let long_ver = "1.2.3.4.5.6.7.8.9.10.11.12.13.14.15.16.17.18.19.20";
-        let _ = parse_version_or_zero(long_ver);
-
-        // Version with special characters
-        let _ = parse_version_or_zero("1.0.0alpha1+build2-3");
-    }
-
-    /// Test that parse_version_or_zero returns valid Version type
-    #[test]
-    fn test_returns_valid_version() {
-        let versions = vec![
-            "1.2.3",
-            "2.0.0-1",
-            "3.4.5.r123.gabcdef",
-            "1.0.0.alpha1",
-            "2024.01.24.1",
-        ];
-
-        for ver in versions {
-            let _parsed = parse_version_or_zero(ver);
-            // Should always return a valid Version object
-            // (AlpmVersion is actual type, we just verify it exists)
-        }
+        assert_eq!(parse_version_or_zero(long_ver).to_string(), long_ver);
     }
 }
 

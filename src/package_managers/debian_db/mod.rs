@@ -16,8 +16,6 @@ pub mod content_store;
 pub mod db;
 pub mod parallel_sync;
 pub mod resolver;
-#[cfg(feature = "debian-resolvo")]
-pub mod resolvo_adapter;
 pub mod sources;
 pub mod transaction;
 pub mod validation;
@@ -34,8 +32,6 @@ pub use db::{
 
 pub use parallel_sync::{force_sync_all, needs_sync, sync_all_repositories};
 pub use resolver::{DependencyResolver, ResolutionResult, compare_versions};
-#[cfg(feature = "debian-resolvo")]
-pub use resolvo_adapter::ResolvoAdapter;
 pub use sources::{
     RepoType, Repository, get_enabled_binary_repos, parse_all_sources, parse_deb822_content,
     parse_sources_list_content,
@@ -43,5 +39,5 @@ pub use sources::{
 pub use transaction::{Transaction, TransactionState, dry_run};
 pub use validation::{
     check_disk_space, check_mirror_availability, estimate_time_remaining, format_bytes,
-    format_speed, validate_deb_archive, verify_package_hash,
+    format_speed, require_verified_deb, validate_deb_archive, verify_package_hash,
 };

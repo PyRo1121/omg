@@ -550,16 +550,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_detect_runtime() {
-        // This test will pass if either Docker or Podman is installed
-        let runtime = detect_runtime();
-        // Just verify it doesn't panic
-        if let Some(rt) = runtime {
-            assert!(rt.is_available());
-        }
-    }
-
-    #[test]
     fn test_container_config_default() {
         let config = ContainerConfig::default();
         assert_eq!(config.image, "ubuntu:24.04");

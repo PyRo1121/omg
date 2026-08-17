@@ -187,19 +187,19 @@ fn test_slsa_level_production_rules() {
         let level = verifier.determine_slsa_level(pkg, true);
         assert_eq!(
             level,
-            SlsaLevel::Level3,
-            "Core package {pkg} should be Level 3"
+            SlsaLevel::None,
+            "Core package {pkg} must not receive a name-based SLSA level"
         );
     }
 
-    // Official repository packages (high trust)
+    // Official repository packages also have no inferred SLSA level
     let official_packages = ["vim", "firefox", "rust", "python"];
     for pkg in official_packages {
         let level = verifier.determine_slsa_level(pkg, true);
         assert_eq!(
             level,
-            SlsaLevel::Level2,
-            "Official package {pkg} should be Level 2"
+            SlsaLevel::None,
+            "Official package {pkg} must not receive a name-based SLSA level"
         );
     }
 

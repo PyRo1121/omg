@@ -32,6 +32,9 @@ pub async fn status_with_json(fast: bool, json: bool) -> Result<()> {
     }
 
     if let Err(e) = run_status_elm(fast) {
+        if e.kind() == std::io::ErrorKind::Other {
+            return Err(e.into());
+        }
         tracing::warn!("Elm UI failed, falling back to basic mode: {}", e);
         status_fallback(fast).await
     } else {

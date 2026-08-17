@@ -167,8 +167,12 @@ fn test_cli_handles_network_timeout_gracefully() {
 
     let combined = format!("{}{}", result.stdout, result.stderr);
     assert!(
-        !combined.contains("panicked"),
-        "CLI should not panic on network errors"
+        combined.contains("not found") || combined.contains("error") || combined.contains("AUR"),
+        "CLI must report the missing package, got: {combined}"
+    );
+    assert!(
+        !result.success,
+        "nonexistent package dry-run must not succeed"
     );
 }
 

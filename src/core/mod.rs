@@ -6,7 +6,6 @@ pub mod caps;
 #[cfg(unix)]
 pub mod client;
 pub mod completion;
-pub mod constants;
 pub mod container;
 mod database;
 pub mod env;

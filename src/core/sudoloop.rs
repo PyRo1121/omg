@@ -176,13 +176,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_can_use_sudoloop_not_root() {
-        // This test assumes we're not running as root in the test environment
-        // and that sudo is installed (typical development setup)
-        let result = can_use_sudoloop();
-        // Don't assert specific value since it depends on environment
-        // Just verify it doesn't panic
-        let _ = result;
+    fn test_can_use_sudoloop_matches_root_and_sudo() {
+        assert_eq!(
+            can_use_sudoloop(),
+            !crate::core::is_root() && which::which("sudo").is_ok()
+        );
     }
 
     #[tokio::test]

@@ -297,9 +297,18 @@ mod tests {
         // This test will check the keyring path validation
         // On non-Arch systems, the keyring won't exist
         let result = verifier.verify_package(pkg.path(), sig.path());
-
-        // May succeed on Arch Linux, should fail on other systems
-        // We're just testing that it doesn't panic
-        let _ = result;
+        if std::path::Path::new("/usr/share/pacman/keyrings/archlinux.gpg").exists() {
+            let err = result.expect_err("garbage signature must fail verification");
+            assert!(
+                err.to_string().contains("Signature verification failed"),
+                "got: {err}"
+            );
+        } else {
+            let err = result.expect_err("missing keyring must fail closed");
+            assert!(
+                err.to_string().contains("System keyring not found"),
+                "got: {err}"
+            );
+        }
     }
 }

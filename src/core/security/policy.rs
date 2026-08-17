@@ -115,19 +115,13 @@ impl SecurityPolicy {
             return Ok(SecurityGrade::Risk);
         }
 
-        // 2. Check for SLSA (Locked) - In 2026, we assume official core packages have SLSA
-        // This would normally check a transparency log or embedded provenance
-        if is_official && matches!(name, "glibc" | "linux" | "pacman") {
-            // Mocking SLSA verification for core system components
-            return Ok(SecurityGrade::Locked);
-        }
-
-        // 3. Official packages are Verified (PGP)
+        // Official packages are Verified (signed repository metadata). A Locked
+        // grade requires provenance evidence, which this function does not have.
         if is_official {
             return Ok(SecurityGrade::Verified);
         }
 
-        // 4. AUR packages are Community
+        // AUR and other unsigned sources are Community
         if is_aur {
             return Ok(SecurityGrade::Community);
         }
@@ -163,31 +157,55 @@ impl SecurityPolicy {
             anyhow::bail!("Package '{name}' is from AUR, which is disabled by security policy");
         }
 
+        if self.require_pgp && grade < SecurityGrade::Verified {
+            anyhow::bail!(
+                "Package '{name}' is unsigned; security policy requires PGP or checksum verification"
+            );
+        }
+
         // Check License (if allowed list is not empty)
         if !self.allowed_licenses.is_empty() {
             if let Some(lic) = license {
-                // Simple check: if license contains any of the allowed strings
-                // In reality, license strings can be complex ("MIT OR Apache-2.0")
-                let allowed = self
-                    .allowed_licenses
-                    .iter()
-                    .any(|allowed| lic.to_lowercase().contains(&allowed.to_lowercase()));
-
-                if !allowed {
+                if !license_matches_allowlist(lic, &self.allowed_licenses) {
                     anyhow::bail!(
                         "Package '{name}' has license '{lic}' which is not in allowed list"
                     );
                 }
             } else {
-                // No license info => fail if strict?
-                // For now, warn but allow? or fail?
-                // Let's strictly enforce if list is present
                 anyhow::bail!("Package '{name}' has unknown license, but allowed list is enforced");
             }
         }
 
         Ok(())
     }
+}
+
+/// SPDX-ish tokens from a license expression (operators and punctuation dropped).
+pub fn spdx_license_tokens(license: &str) -> Vec<String> {
+    license
+        .split(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '+')))
+        .filter(|token| !token.is_empty())
+        .filter(|token| {
+            !matches!(
+                token.to_ascii_uppercase().as_str(),
+                "AND" | "OR" | "WITH" | "TO"
+            )
+        })
+        .map(str::to_ascii_lowercase)
+        .collect()
+}
+
+/// True when `license` contains an allowed SPDX identifier as a whole token.
+pub fn license_matches_allowlist(license: &str, allowed: &[String]) -> bool {
+    let tokens = spdx_license_tokens(license);
+    allowed.iter().any(|allowed| {
+        let needle = allowed.to_ascii_lowercase();
+        tokens.iter().any(|token| {
+            token == &needle
+                || token.strip_suffix('+') == Some(needle.as_str())
+                || needle.strip_suffix('+') == Some(token.as_str())
+        })
+    })
 }
 
 #[cfg(test)]
@@ -249,6 +267,133 @@ mod tests {
             error
                 .to_string()
                 .contains("Failed to parse security policy")
+        );
+    }
+
+    struct EmptyVulns;
+
+    impl super::super::vulnerability::VulnerabilitySource for EmptyVulns {
+        fn scan_package<'a>(
+            &'a self,
+            _name: &'a str,
+            _version: &'a crate::package_managers::types::Version,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<
+                        Output = Result<
+                            Vec<crate::core::security::vulnerability::VulnerabilityReport>,
+                        >,
+                    > + Send
+                    + 'a,
+            >,
+        > {
+            Box::pin(async { Ok(Vec::new()) })
+        }
+    }
+
+    struct FailingVulns;
+
+    impl super::super::vulnerability::VulnerabilitySource for FailingVulns {
+        fn scan_package<'a>(
+            &'a self,
+            _name: &'a str,
+            _version: &'a crate::package_managers::types::Version,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<
+                        Output = Result<
+                            Vec<crate::core::security::vulnerability::VulnerabilityReport>,
+                        >,
+                    > + Send
+                    + 'a,
+            >,
+        > {
+            Box::pin(async { anyhow::bail!("osv unavailable") })
+        }
+    }
+
+    #[tokio::test]
+    async fn official_packages_are_verified_not_locked_by_name() {
+        let policy = SecurityPolicy::default();
+        let version = crate::package_managers::parse_version_or_zero("2.40");
+        let grade = policy
+            .assign_grade(&EmptyVulns, "glibc", &version, false, true)
+            .await
+            .expect("empty vuln source");
+        assert_eq!(
+            grade,
+            SecurityGrade::Verified,
+            "package names must not mint a Locked SLSA grade"
+        );
+    }
+
+    #[tokio::test]
+    async fn aur_packages_are_community() {
+        let policy = SecurityPolicy::default();
+        let version = crate::package_managers::parse_version_or_zero("1.0");
+        let grade = policy
+            .assign_grade(&EmptyVulns, "yay", &version, true, false)
+            .await
+            .expect("empty vuln source");
+        assert_eq!(grade, SecurityGrade::Community);
+    }
+
+    #[tokio::test]
+    async fn unavailable_vuln_source_fails_closed() {
+        let policy = SecurityPolicy::default();
+        let version = crate::package_managers::parse_version_or_zero("1.0");
+        let error = policy
+            .assign_grade(&FailingVulns, "vim", &version, false, true)
+            .await
+            .expect_err("missing evidence must not look like a clean package");
+        assert!(
+            error.to_string().contains("osv unavailable"),
+            "scanner error must be preserved, got: {error}"
+        );
+    }
+
+    #[test]
+    fn require_pgp_rejects_unsigned_packages() {
+        let policy = SecurityPolicy {
+            require_pgp: true,
+            ..SecurityPolicy::default()
+        };
+        let err = policy
+            .check_package("yay", true, Some("MIT"), SecurityGrade::Community)
+            .expect_err("AUR community packages are unsigned");
+        assert!(
+            err.to_string().contains("unsigned"),
+            "require_pgp must mention missing verification, got: {err}"
+        );
+        assert!(
+            policy
+                .check_package("vim", false, Some("MIT"), SecurityGrade::Verified)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn allowed_license_matches_spdx_tokens_not_substrings() {
+        let policy = SecurityPolicy {
+            allowed_licenses: vec!["MIT".to_string()],
+            ..SecurityPolicy::default()
+        };
+        let err = policy
+            .check_package("foo", false, Some("LIMITED"), SecurityGrade::Verified)
+            .expect_err("LIMITED must not match MIT");
+        assert!(
+            err.to_string().contains("not in allowed list"),
+            "got: {err}"
+        );
+        assert!(
+            policy
+                .check_package(
+                    "foo",
+                    false,
+                    Some("MIT OR Apache-2.0"),
+                    SecurityGrade::Verified
+                )
+                .is_ok()
         );
     }
 }

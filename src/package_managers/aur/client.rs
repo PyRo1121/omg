@@ -2695,15 +2695,24 @@ mod tests {
 
     #[test]
     fn test_makepkg_env_sanitization() {
-        // Verify that environment variables are properly handled
         let client = AurClient::new().expect("test settings must load");
-        let pkg_dir = PathBuf::from("/tmp/test");
+        let dir = tempfile::tempdir().expect("temp dir");
+        let pkg_dir = dir.path().join("mypkg");
+        std::fs::create_dir(&pkg_dir).expect("pkg dir");
 
-        // This should not panic
-        let result = client.makepkg_env(&pkg_dir);
-        if let Ok(env) = result {
-            assert!(env.builddir.to_string_lossy().contains("omg-build"));
-        }
+        let env = client
+            .makepkg_env(&pkg_dir)
+            .expect("makepkg env must be constructed");
+        assert!(
+            env.builddir.to_string_lossy().contains("omg-build"),
+            "build dir must be under omg-build, got {}",
+            env.builddir.display()
+        );
+        assert!(
+            env.builddir.ends_with("mypkg"),
+            "build dir must be named after the package, got {}",
+            env.builddir.display()
+        );
     }
 
     #[test]

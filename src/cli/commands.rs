@@ -673,41 +673,113 @@ pub fn daemon(foreground: bool) -> Result<()> {
             .stderr(Stdio::null())
             .spawn();
 
-        match status {
-            Ok(_) => {
-                // Poll for daemon readiness: 30 attempts × 100ms = 3 seconds max.
-                // The daemon needs time to build its in-memory index and bind the socket,
-                // which can take >500ms on large package databases.
-                let mut started = false;
-                for _ in 0..30 {
-                    std::thread::sleep(std::time::Duration::from_millis(100));
-                    if socket_path.exists()
-                        && let Ok(mut client) = crate::core::client::DaemonClient::connect_sync()
-                        && client.ping_sync().is_ok()
-                    {
-                        started = true;
-                        break;
-                    }
-                }
-
-                if started {
-                    println!("{} Daemon started", style::success("✓"));
-                } else if socket_path.exists() {
-                    println!(
-                        "{} Daemon started but not responding (check logs)",
-                        style::warning("⚠")
-                    );
-                } else {
-                    println!(
-                        "{} Daemon started but socket not created (check logs)",
-                        style::warning("⚠")
-                    );
+        let spawn = status.map(|_| ()).map_err(|e| e.to_string());
+        let mut ready = false;
+        if spawn.is_ok() {
+            // Poll for daemon readiness: 30 attempts × 100ms = 3 seconds max.
+            // The daemon needs time to build its in-memory index and bind the socket,
+            // which can take >500ms on large package databases.
+            for _ in 0..30 {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                if socket_path.exists()
+                    && let Ok(mut client) = crate::core::client::DaemonClient::connect_sync()
+                    && client.ping_sync().is_ok()
+                {
+                    ready = true;
+                    break;
                 }
             }
-            Err(e) => println!("{} Failed to start daemon: {}", style::error("✗"), e),
         }
+
+        return daemon_start_result(spawn, ready, socket_path.exists());
     }
     Ok(())
+}
+
+#[cfg(unix)]
+fn daemon_start_result(spawn: Result<(), String>, ready: bool, socket_exists: bool) -> Result<()> {
+    match spawn {
+        Ok(()) if ready => {
+            println!("{} Daemon started", style::success("✓"));
+            Ok(())
+        }
+        Ok(()) if socket_exists => {
+            println!(
+                "{} Daemon started but not responding (check logs)",
+                style::warning("⚠")
+            );
+            anyhow::bail!("Daemon started but not responding (check logs)")
+        }
+        Ok(()) => {
+            println!(
+                "{} Daemon started but socket not created (check logs)",
+                style::warning("⚠")
+            );
+            anyhow::bail!("Daemon started but socket not created (check logs)")
+        }
+        Err(e) => {
+            println!("{} Failed to start daemon: {}", style::error("✗"), e);
+            anyhow::bail!("Failed to start daemon: {e}")
+        }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod daemon_start_tests {
+    use super::daemon_start_result;
+
+    #[test]
+    fn spawn_failure_returns_err() {
+        let result = daemon_start_result(Err("omgd not found".to_string()), false, false);
+        assert!(
+            result.is_err(),
+            "failed daemon spawn must be a CLI error so the process exits non-zero"
+        );
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Failed to start daemon: omgd not found"),
+            "original spawn error must be preserved"
+        );
+    }
+
+    #[test]
+    fn not_ready_returns_err() {
+        let result = daemon_start_result(Ok(()), false, true);
+        assert!(
+            result.is_err(),
+            "a daemon that never becomes ready must be a CLI error"
+        );
+        assert!(
+            result.unwrap_err().to_string().contains("not responding"),
+            "not-ready error must describe the failure"
+        );
+    }
+
+    #[test]
+    fn socket_missing_returns_err() {
+        let result = daemon_start_result(Ok(()), false, false);
+        assert!(
+            result.is_err(),
+            "a daemon that never creates its socket must be a CLI error"
+        );
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("socket not created"),
+            "missing-socket error must describe the failure"
+        );
+    }
+
+    #[test]
+    fn ready_returns_ok() {
+        assert!(
+            daemon_start_result(Ok(()), true, true).is_ok(),
+            "a ready daemon is a successful start"
+        );
+    }
 }
 
 /// Get or set configuration

@@ -42,7 +42,7 @@ fn print_essential_help(_cli: &Cli) {
         }
     }
 
-    println!("💡 Show all commands with: omg --help --all");
+    println!("💡 Show all commands with: omg --help --all-commands");
     println!("🔍 Explore interactive TUI with: omg dash");
     println!("📚 Complete documentation: https://pyro1121.com/docs");
     println!();
@@ -65,8 +65,8 @@ fn get_essential_command_help(cmd_name: &str) -> Option<String> {
             .map(|s| s.to_string() + "\n     Examples: omg use node 20, omg use python 3.12"),
         "run" => Some("  🏃 run <task>       Run project tasks (auto-detects package.json)")
             .map(|s| s.to_string() + "\n     Examples: omg run build, omg run dev, omg run test"),
-        "help" => Some("  ❓ help [--all]      Show help (essential by default)")
-            .map(|s| s.to_string() + "\n     Examples: omg help, omg --help --all"),
+        "help" => Some("  ❓ help [--all-commands]      Show help (essential by default)")
+            .map(|s| s.to_string() + "\n     Examples: omg help, omg --help --all-commands"),
         _ => None,
     }
 }

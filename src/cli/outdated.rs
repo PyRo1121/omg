@@ -38,6 +38,8 @@ impl std::fmt::Display for UpdateType {
 
 /// Show outdated packages
 pub async fn run(security_only: bool, json: bool) -> Result<()> {
+    require_security_classification_available(security_only)?;
+
     use crate::cli::components::Components;
 
     // SECURITY: This command has no string inputs, but we validate environment state
@@ -76,11 +78,7 @@ pub async fn run(security_only: bool, json: bool) -> Result<()> {
 
     outdated.sort_by(|a, b| a.name.cmp(&b.name));
 
-    let filtered: Vec<_> = if security_only {
-        outdated.into_iter().filter(|p| p.is_security).collect()
-    } else {
-        outdated
-    };
+    let filtered = outdated;
 
     if json {
         println!("{}", serde_json::to_string_pretty(&filtered)?);
@@ -193,14 +191,18 @@ pub async fn run(security_only: bool, json: bool) -> Result<()> {
 
     // Actions
     commands.push(Cmd::info("Run 'omg update' to update all packages"));
-    if !security.is_empty() {
-        commands.push(Cmd::warning(
-            "Run 'omg update --security' to update security fixes only",
-        ));
-    }
 
     crate::cli::packages::execute_cmd(Cmd::batch(commands));
 
+    Ok(())
+}
+
+fn require_security_classification_available(security_only: bool) -> Result<()> {
+    if security_only {
+        anyhow::bail!(
+            "Security-advisory classification is not implemented. Omit --security to list all outdated packages by version change."
+        );
+    }
     Ok(())
 }
 
@@ -242,4 +244,40 @@ fn classify_update(old: &str, new: &str) -> UpdateType {
     }
 
     UpdateType::Patch
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn security_only_is_rejected_until_advisories_exist() {
+        let err = require_security_classification_available(true)
+            .expect_err("--security must not silently return an empty list");
+        assert!(
+            err.to_string().contains("not implemented"),
+            "security filter must fail closed, got: {err}"
+        );
+        assert!(require_security_classification_available(false).is_ok());
+    }
+
+    #[test]
+    fn classify_update_uses_version_change_not_cve_status() {
+        assert!(matches!(
+            classify_update("1.0.0", "2.0.0"),
+            UpdateType::Major
+        ));
+        assert!(matches!(
+            classify_update("1.0.0", "1.1.0"),
+            UpdateType::Minor
+        ));
+        assert!(matches!(
+            classify_update("1.0.0", "1.0.1"),
+            UpdateType::Patch
+        ));
+        assert!(
+            !matches!(classify_update("1.0.0", "1.0.1"), UpdateType::Security),
+            "version strings alone must not be reported as security updates"
+        );
+    }
 }

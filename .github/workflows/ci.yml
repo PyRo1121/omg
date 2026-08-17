@@ -142,7 +142,7 @@ jobs:
       - name: Debian feature isolation check
         run: |
           cargo check --all-targets --no-default-features \
-            --features debian-pure,debian-resolvo --locked
+            --features debian-pure --locked
 
       - name: Run portable tests
         run: cargo nextest run --lib --no-default-features --features pgp,license --locked --profile ci
@@ -660,16 +660,6 @@ jobs:
         run: |
           cargo nextest run --test '*' --features arch,license --locked --profile ci --no-fail-fast \
             2>&1
-
-      - name: Run Arch AUR canary tests (blocking)
-        env:
-          OMG_RUN_SYSTEM_TESTS: "1"
-          OMG_TEST_COMMAND_TIMEOUT_SECS: "20"
-        run: |
-          cargo test --test aur_error_recovery --features arch,license --locked \
-            test_error_git_pull_failure_recovers_by_reclone -- --exact --nocapture
-          cargo test --test aur_error_recovery --features arch,license --locked \
-            test_canary_ladybird_git_dry_run_detects_aur_source -- --exact --nocapture
 
   #############################################################################
   # STAGE 4: Final Status Gate

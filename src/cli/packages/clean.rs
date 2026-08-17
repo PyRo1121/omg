@@ -281,21 +281,55 @@ async fn handle_debian_pure_clean(
         } else {
             crate::cli::modern_ui::print_info("Clearing package cache...");
 
-            match clean_package_cache() {
-                Ok((removed, freed)) => {
-                    println!(
-                        "  {} Removed {} files, freed {:.2} MB",
-                        "✓".green().bold(),
-                        removed,
-                        freed as f64 / 1024.0 / 1024.0
-                    );
-                }
-                Err(e) => {
-                    crate::cli::modern_ui::print_error(&format!("Failed to clear cache: {e}"));
-                }
-            }
+            report_cache_clean(clean_package_cache())?;
         }
     }
 
     Ok(())
+}
+
+#[cfg(any(test, feature = "debian-pure"))]
+fn report_cache_clean(result: Result<(usize, u64)>) -> Result<()> {
+    match result {
+        Ok((removed, freed)) => {
+            use owo_colors::OwoColorize;
+            println!(
+                "  {} Removed {} files, freed {:.2} MB",
+                "✓".green().bold(),
+                removed,
+                freed as f64 / 1024.0 / 1024.0
+            );
+            Ok(())
+        }
+        Err(e) => {
+            crate::cli::modern_ui::print_error(&format!("Failed to clear cache: {e}"));
+            Err(e)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cache_clean_failure_returns_err() {
+        let result = report_cache_clean(Err(anyhow::anyhow!("permission denied")));
+        assert!(
+            result.is_err(),
+            "failed cache cleanup must be a CLI error so the process exits non-zero"
+        );
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("permission denied"),
+            "original cache cleanup error must be preserved"
+        );
+    }
+
+    #[test]
+    fn cache_clean_success_returns_ok() {
+        assert!(report_cache_clean(Ok((3, 4096))).is_ok());
+    }
 }

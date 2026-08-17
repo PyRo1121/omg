@@ -3,7 +3,7 @@
 use crate::cli::components::Components;
 use crate::cli::tea::Cmd;
 use crate::cli::{CliContext, FleetCommands, LocalCommandRunner};
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::core::license;
@@ -53,27 +53,25 @@ pub async fn status(_ctx: &CliContext) -> Result<()> {
         })
         .count();
 
-    // Compliance logic: machines seen in last 24h are considered compliant for this demo
-    let compliant = online_machines;
-    let drifted = active_machines.saturating_sub(online_machines);
+    // Online in the last day is an availability signal, not policy compliance.
+    let online = online_machines;
     let offline = total_machines.saturating_sub(active_machines);
 
-    let compliance_pct = if total_machines > 0 {
-        (compliant as f32 / total_machines as f32) * 100.0
+    let online_pct = if total_machines > 0 {
+        (online as f32 / total_machines as f32) * 100.0
     } else {
-        100.0
+        0.0
     };
 
-    let health_bar = generate_health_bar(compliance_pct);
+    let health_bar = generate_health_bar(online_pct);
 
     let status_items = vec![
         ("Total Machines", total_machines.to_string()),
         (
-            "Health",
-            format!("{}% {}", compliance_pct as u32, health_bar),
+            "Online (24h)",
+            format!("{}% {}", online_pct as u32, health_bar),
         ),
-        ("Compliant", compliant.to_string()),
-        ("With Drift", drifted.to_string()),
+        ("Active", active_machines.to_string()),
         ("Offline", offline.to_string()),
     ];
 
@@ -146,15 +144,13 @@ pub async fn push(team: Option<&str>, message: Option<&str>, _ctx: &CliContext) 
     execute_cmd(Components::loading(format!("Pushing to {target}...")));
 
     // Fetch members to get a real count
-    let members = license::fetch_team_members().await.unwrap_or_default();
+    let members = license::fetch_team_members().await?;
     let count = members.len();
 
-    // Real Fleet Push Implementation
     let lock_path = std::path::Path::new("omg.lock");
     let lock_content = if lock_path.exists() {
-        std::fs::read_to_string(lock_path).unwrap_or_default()
+        std::fs::read_to_string(lock_path).context("Failed to read omg.lock")?
     } else {
-        // Fallback to capturing current state if no lockfile
         execute_cmd(Cmd::warning(
             "No omg.lock found, capturing current state...",
         ));
@@ -175,16 +171,10 @@ pub async fn push(team: Option<&str>, message: Option<&str>, _ctx: &CliContext) 
 
     match push_result {
         Ok(res) => {
-            if !res.status().is_success() {
-                // If API is not yet ready, we warn but don't fail hard for this demo
-                if res.status() == reqwest::StatusCode::NOT_FOUND {
-                    execute_cmd(Cmd::warning(
-                        "Fleet API endpoint not yet active (404). Config saved locally.",
-                    ));
-                } else {
-                    execute_cmd(Cmd::error(format!("Fleet push failed: {}", res.status())));
-                    anyhow::bail!("Fleet push failed: {}", res.status());
-                }
+            let status = res.status().as_u16();
+            if let Err(e) = fleet_push_http_outcome(status) {
+                execute_cmd(Cmd::error(e.to_string()));
+                return Err(e);
             }
         }
         Err(e) => {
@@ -213,69 +203,48 @@ pub async fn push(team: Option<&str>, message: Option<&str>, _ctx: &CliContext) 
 }
 
 /// Auto-remediate drift across fleet
-pub async fn remediate(dry_run: bool, confirm: bool, _ctx: &CliContext) -> Result<()> {
-    use crate::cli::packages::execute_cmd;
-
+#[expect(clippy::unused_async)] // Dispatched from async LocalCommandRunner
+pub async fn remediate(_dry_run: bool, _confirm: bool, _ctx: &CliContext) -> Result<()> {
     license::require_feature("fleet")?;
+    anyhow::bail!("Fleet remediation is not implemented")
+}
 
-    // In a real system, we'd fetch this from the license/fleet API
-    let drifted_count = 3;
-    let runtime_updates = 2;
-    let policy_fixes = 1;
-
-    let plan_details = vec![
-        format!("{} machines need package updates", drifted_count),
-        format!("{} machines need runtime version changes", runtime_updates),
-        format!("{} machines need policy re-application", policy_fixes),
-        format!("Estimated time: {} minutes", 1),
-        "Risk: LOW (all changes are additive)".to_string(),
-    ];
-
-    if dry_run {
-        execute_cmd(Cmd::batch([
-            Cmd::header("Fleet Remediation", "Dry run"),
-            Cmd::spacer(),
-            Cmd::card("Remediation Plan", plan_details),
-            Cmd::info("No changes made (dry run)"),
-            Cmd::info("Run without --dry-run and with --confirm to apply"),
-        ]));
-        return Ok(());
+fn fleet_push_http_outcome(status: u16) -> Result<()> {
+    if (200..300).contains(&status) {
+        Ok(())
+    } else if status == 404 {
+        anyhow::bail!("Fleet API endpoint not found (404)")
+    } else {
+        anyhow::bail!("Fleet push failed: {status}")
     }
-
-    if !confirm {
-        execute_cmd(Cmd::batch([
-            Cmd::header("Fleet Remediation", "Confirmation required"),
-            Cmd::spacer(),
-            Cmd::card("Remediation Plan", plan_details),
-            Cmd::warning("Add --confirm to proceed"),
-        ]));
-        return Ok(());
-    }
-
-    execute_cmd(Components::loading(format!(
-        "Remediating {} machines...",
-        drifted_count + runtime_updates + policy_fixes
-    )));
-
-    // Simulate real work
-    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
-
-    execute_cmd(Cmd::batch([
-        Cmd::success("Remediation complete!"),
-        Components::status_summary(vec![
-            (
-                "Machines remediated",
-                (drifted_count + runtime_updates + policy_fixes).to_string(),
-            ),
-            ("Status", "All successful".to_string()),
-        ]),
-    ]));
-
-    Ok(())
 }
 
 fn generate_health_bar(pct: f32) -> String {
     let filled = (pct / 10.0) as usize;
     let empty = 10 - filled;
     format!("{}{}", "█".repeat(filled), "░".repeat(empty))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fleet_push_rejects_missing_endpoint() {
+        let err =
+            fleet_push_http_outcome(404).expect_err("404 must not look like a successful push");
+        assert!(err.to_string().contains("404"), "got: {err}");
+    }
+
+    #[test]
+    fn fleet_push_rejects_server_errors() {
+        let err = fleet_push_http_outcome(503).expect_err("5xx must fail the push");
+        assert!(err.to_string().contains("503"), "got: {err}");
+    }
+
+    #[test]
+    fn fleet_push_accepts_success() {
+        assert!(fleet_push_http_outcome(200).is_ok());
+        assert!(fleet_push_http_outcome(204).is_ok());
+    }
 }
