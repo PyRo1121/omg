@@ -26,6 +26,14 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Fail closed on corrupt project task config
+
+A malformed .omg.toml now fails task detection and task runs instead of
+
+silently falling back to default configuration. Missing config files
+
+still use defaults.
+
 - Validate current runtime symlink targets
 
 Active-version detection now requires the current symlink to resolve to a
