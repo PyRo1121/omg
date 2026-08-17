@@ -779,7 +779,15 @@ async fn handle_security_audit(state: Arc<DaemonState>, id: RequestId) -> Respon
         .buffer_unordered(SCAN_CONCURRENCY); // Scan up to 32 packages concurrently
 
     while let Some((name, res)) = stream.next().await {
-        let Ok(vulns) = res else { continue };
+        let vulns = match res {
+            Ok(vulns) => vulns,
+            Err(error) => {
+                return internal_error(
+                    id,
+                    format!("Failed to scan package {name} for vulnerabilities: {error}"),
+                );
+            }
+        };
         if vulns.is_empty() {
             continue;
         }
