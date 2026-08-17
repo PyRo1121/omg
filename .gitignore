@@ -122,3 +122,6 @@ workers/
 tasks/
 .opencode/
 .tmp/
+
+# Compiled Go binary (build artifact)
+deploy-tui/deploy-tui
