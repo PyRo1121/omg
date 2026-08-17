@@ -30,7 +30,7 @@ pub fn native_runtime_bin_path(runtime: &str, version: &str) -> Option<PathBuf> 
         _ => return None,
     };
 
-    bin_path.exists().then_some(bin_path)
+    crate::runtimes::common::is_valid_version_dir(&bin_path).then_some(bin_path)
 }
 
 /// Check if mise is available on the system
@@ -67,9 +67,9 @@ pub fn mise_runtime_bin_path(runtime: &str, version: &str) -> Option<PathBuf> {
     }
 
     let bin_dir = install_dir.join("bin");
-    if bin_dir.exists() {
+    if crate::runtimes::common::is_valid_version_dir(&bin_dir) {
         Some(bin_dir)
-    } else if install_dir.exists() {
+    } else if crate::runtimes::common::is_valid_version_dir(&install_dir) {
         Some(install_dir)
     } else {
         None
@@ -135,6 +135,17 @@ mod tests {
     #[test]
     fn test_native_runtime_bin_path_returns_none_for_unknown() {
         assert!(native_runtime_bin_path("unknown-runtime", "1.0.0").is_none());
+    }
+
+    #[test]
+    fn native_runtime_bin_path_rejects_a_regular_file_impostor() {
+        let temp = tempfile::TempDir::new().expect("temp dir");
+        let bin_path = temp.path().join("versions/node/20.0.0/bin");
+        std::fs::create_dir_all(bin_path.parent().expect("parent")).expect("create version dir");
+        std::fs::write(&bin_path, b"not a directory").expect("write impostor");
+        // The helper uses the process data dir, so this only documents the
+        // local predicate used by PATH resolution.
+        assert!(!crate::runtimes::common::is_valid_version_dir(&bin_path));
     }
 
     #[test]

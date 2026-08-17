@@ -503,7 +503,7 @@ fn nvm_node_bin(version: &str) -> Option<PathBuf> {
         .join(format!("v{normalized}"))
         .join("bin");
 
-    bin_path.exists().then_some(bin_path)
+    crate::runtimes::common::is_valid_version_dir(&bin_path).then_some(bin_path)
 }
 
 fn resolve_nvm_alias(nvm_dir: &Path, alias: &str) -> Option<String> {
@@ -559,7 +559,7 @@ fn native_runtime_bin_path(runtime: &str, version: &str) -> Option<PathBuf> {
         _ => return None,
     };
 
-    bin_path.exists().then_some(bin_path)
+    crate::runtimes::common::is_valid_version_dir(&bin_path).then_some(bin_path)
 }
 
 // Runtime resolution functions (find_in_path, mise_available, mise_runtime_bin_path)

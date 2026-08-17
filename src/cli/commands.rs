@@ -86,7 +86,7 @@ pub async fn complete(_shell: &str, current: &str, last: &str, full: Option<&str
         "use" | "ls" | "list" | "which" => complete_runtime_names(&engine, current),
         "tool" => complete_tool_commands(&engine, current),
         "env" => complete_env_commands(&engine, current),
-        "run" => complete_task_names(&engine, current),
+        "run" => complete_task_names(&engine, current)?,
         "new" => complete_templates(&engine, current),
         "completions" => complete_shells(&engine, current),
         _ => {
@@ -234,10 +234,11 @@ fn complete_env_commands(
 fn complete_task_names(
     engine: &crate::core::completion::CompletionEngine,
     current: &str,
-) -> Vec<String> {
-    let tasks = crate::core::task_runner::detect_tasks().unwrap_or_default();
+) -> Result<Vec<String>> {
+    let tasks = crate::core::task_runner::detect_tasks()
+        .context("Failed to detect project tasks for completion")?;
     let names = tasks.into_iter().map(|task| task.name).collect();
-    engine.fuzzy_match(current, names)
+    Ok(engine.fuzzy_match(current, names))
 }
 
 /// Complete new project templates

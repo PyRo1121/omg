@@ -513,7 +513,9 @@ where
 macro_rules! ensure_runtime_impl {
     ($runtime_name:expr, $normalized:expr, $manager:expr) => {{
         let normalized = $normalized;
-        let installed = $manager.list_installed().unwrap_or_default();
+        let installed = $manager
+            .list_installed()
+            .with_context(|| format!("Failed to list installed {} versions", $runtime_name))?;
 
         if installed.iter().any(|v| v == &normalized) {
             return Ok(normalized);
@@ -797,7 +799,9 @@ fn ensure_node_runtime(version: &str) -> Result<String> {
 
     // Check OMG-managed Node
     let node_manager = NodeManager::new();
-    let installed = node_manager.list_installed().unwrap_or_default();
+    let installed = node_manager
+        .list_installed()
+        .context("Failed to list installed Node.js versions")?;
     if installed.iter().any(|v| v == normalized) {
         return Ok(normalized.to_string());
     }
@@ -831,7 +835,9 @@ fn ensure_bun_runtime(version: &str) -> Result<String> {
 
     // Check OMG-managed Bun
     let bun_manager = BunManager::new();
-    let installed = bun_manager.list_installed().unwrap_or_default();
+    let installed = bun_manager
+        .list_installed()
+        .context("Failed to list installed Bun versions")?;
     if installed.iter().any(|v| v == normalized) {
         return Ok(normalized.to_string());
     }
