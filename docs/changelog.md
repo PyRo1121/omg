@@ -26,6 +26,14 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Stop rendering fake healthy status on lookup failure
+
+The ultra-fast status path no longer shows a zero-filled system report
+
+when the daemon is down and the direct package query fails; it now
+
+propagates the error so the robust async status path runs instead.
+
 - Fail closed on corrupt project task config
 
 A malformed .omg.toml now fails task detection and task runs instead of
