@@ -343,25 +343,18 @@ pub fn build_path_additions<S: std::hash::BuildHasher>(
                 path
             }
             "rust" => {
-                // Skip if rustup is installed - let rustup manage Rust
-                // Check for both rustc and cargo to be thorough
-                let home = dirs::home_dir();
-                let has_rustup = home.as_ref().is_some_and(|h| {
-                    h.join(".cargo/bin/rustc").exists() || h.join(".rustup").exists()
-                });
-                if has_rustup {
-                    // Rustup is installed, don't add OMG-managed Rust to PATH
+                let Some(toolchain) = RustToolchainSpec::parse(version).ok() else {
                     continue;
-                }
-                let toolchain = RustToolchainSpec::parse(version)
-                    .ok()
-                    .map_or_else(|| version.clone(), |spec| spec.name());
-                data_dir.join("versions/rust").join(toolchain).join("bin")
+                };
+                data_dir
+                    .join("versions/rust")
+                    .join(toolchain.name())
+                    .join("bin")
             }
             _ => continue,
         };
 
-        if bin_path.exists() {
+        if crate::runtimes::common::is_valid_version_dir(&bin_path) {
             paths.push(bin_path.display().to_string());
         }
     }
