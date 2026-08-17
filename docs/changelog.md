@@ -26,6 +26,14 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Validate current runtime symlink targets
+
+Active-version detection now requires the current symlink to resolve to a
+
+real version directory inside the runtime versions tree, so missing or
+
+external targets are no longer reported as the active version.
+
 - Reject incomplete AUR metadata results
 
 A failed metadata-index read no longer becomes an empty successful batch
