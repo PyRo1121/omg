@@ -12,14 +12,12 @@ pub struct OutdatedPackage {
     pub name: String,
     pub current_version: String,
     pub new_version: String,
-    pub is_security: bool,
     pub update_type: UpdateType,
     pub repo: String,
 }
 
 #[derive(Debug, Serialize)]
 pub enum UpdateType {
-    Security,
     Major,
     Minor,
     Patch,
@@ -28,7 +26,6 @@ pub enum UpdateType {
 impl std::fmt::Display for UpdateType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Security => write!(f, "security"),
             Self::Major => write!(f, "major"),
             Self::Minor => write!(f, "minor"),
             Self::Patch => write!(f, "patch"),
@@ -62,17 +59,12 @@ pub async fn run(security_only: bool, json: bool) -> Result<()> {
 
     let mut outdated: Vec<OutdatedPackage> = updates
         .into_iter()
-        .map(|u| {
-            let update_type = classify_update(&u.old_version, &u.new_version);
-            let is_security = matches!(update_type, UpdateType::Security);
-            OutdatedPackage {
-                update_type,
-                name: u.name,
-                current_version: u.old_version,
-                new_version: u.new_version,
-                is_security,
-                repo: u.repo,
-            }
+        .map(|u| OutdatedPackage {
+            update_type: classify_update(&u.old_version, &u.new_version),
+            name: u.name,
+            current_version: u.old_version,
+            new_version: u.new_version,
+            repo: u.repo,
         })
         .collect();
 
@@ -85,19 +77,17 @@ pub async fn run(security_only: bool, json: bool) -> Result<()> {
         return Ok(());
     }
 
-    // Group by update type
-    let security: Vec<_> = filtered.iter().filter(|p| p.is_security).collect();
     let major: Vec<_> = filtered
         .iter()
-        .filter(|p| matches!(p.update_type, UpdateType::Major) && !p.is_security)
+        .filter(|p| matches!(p.update_type, UpdateType::Major))
         .collect();
     let minor: Vec<_> = filtered
         .iter()
-        .filter(|p| matches!(p.update_type, UpdateType::Minor) && !p.is_security)
+        .filter(|p| matches!(p.update_type, UpdateType::Minor))
         .collect();
     let patch: Vec<_> = filtered
         .iter()
-        .filter(|p| matches!(p.update_type, UpdateType::Patch) && !p.is_security)
+        .filter(|p| matches!(p.update_type, UpdateType::Patch))
         .collect();
 
     let mut commands = vec![
@@ -109,19 +99,6 @@ pub async fn run(security_only: bool, json: bool) -> Result<()> {
         Cmd::spacer(),
     ];
 
-    // Security updates
-    if !security.is_empty() {
-        commands.push(Cmd::card(
-            "Security Updates (install immediately)".to_string(),
-            security
-                .iter()
-                .map(|p| format!("{} {} → {} (CVE)", p.name, p.current_version, p.new_version))
-                .collect(),
-        ));
-        commands.push(Cmd::spacer());
-    }
-
-    // Major updates
     if !major.is_empty() {
         commands.push(Cmd::card(
             "Major Updates (may have breaking changes)".to_string(),
@@ -181,7 +158,6 @@ pub async fn run(security_only: bool, json: bool) -> Result<()> {
     commands.push(Components::kv_list(
         Some("Summary"),
         vec![
-            ("Security Updates", &security.len().to_string()),
             ("Major Updates", &major.len().to_string()),
             ("Minor Updates", &minor.len().to_string()),
             ("Patch Updates", &patch.len().to_string()),
@@ -275,9 +251,5 @@ mod tests {
             classify_update("1.0.0", "1.0.1"),
             UpdateType::Patch
         ));
-        assert!(
-            !matches!(classify_update("1.0.0", "1.0.1"), UpdateType::Security),
-            "version strings alone must not be reported as security updates"
-        );
     }
 }

@@ -571,8 +571,7 @@ pub async fn check_slsa(package: &str, _ctx: &CliContext) -> Result<()> {
 
     let path = std::path::Path::new(package);
     if !path.exists() {
-        println!("{}", style::error(&format!("File not found: {package}")));
-        return Ok(());
+        anyhow::bail!("File not found: {package}");
     }
 
     let verifier = SlsaVerifier::new()?;
@@ -580,45 +579,39 @@ pub async fn check_slsa(package: &str, _ctx: &CliContext) -> Result<()> {
         .verify_provenance(path, None::<&std::path::Path>)
         .await?;
 
-    if result.verified {
-        println!(
-            "{} SLSA verification passed",
-            style::maybe_color("✓", |t| t.green().to_string())
-        );
-        println!(
-            "  {} {}",
-            style::dim("Level:"),
-            style::maybe_color(&result.slsa_level.to_string(), |t| t.cyan().to_string())
-        );
+    require_slsa_verified(result.verified, result.error.as_deref())?;
 
-        if let Some(entry) = &result.transparency_log_entry {
-            println!("  {} {}", style::dim("Rekor Entry:"), entry);
-        }
-        if let Some(builder) = &result.builder_id {
-            println!("  {} {}", style::dim("Builder:"), builder);
-        }
-        if let Some(timestamp) = &result.build_timestamp {
-            println!("  {} {}", style::dim("Build Time:"), timestamp);
-        }
-    } else {
-        println!(
-            "{} SLSA verification failed",
-            style::maybe_color("✗", |t| t.red().to_string())
-        );
-        if let Some(error) = &result.error {
-            println!("  {} {}", style::dim("Reason:"), error);
-        }
-        println!(
-            "\n  {} Package has no SLSA provenance attestation.",
-            style::maybe_color("ℹ", |t| t.blue().to_string())
-        );
-        println!(
-            "  {} This is normal for AUR packages.",
-            style::maybe_color("ℹ", |t| t.blue().to_string())
-        );
+    println!(
+        "{} SLSA verification passed",
+        style::maybe_color("✓", |t| t.green().to_string())
+    );
+    println!(
+        "  {} {}",
+        style::dim("Level:"),
+        style::maybe_color(&result.slsa_level.to_string(), |t| t.cyan().to_string())
+    );
+
+    if let Some(entry) = &result.transparency_log_entry {
+        println!("  {} {}", style::dim("Rekor Entry:"), entry);
+    }
+    if let Some(builder) = &result.builder_id {
+        println!("  {} {}", style::dim("Builder:"), builder);
+    }
+    if let Some(timestamp) = &result.build_timestamp {
+        println!("  {} {}", style::dim("Build Time:"), timestamp);
     }
 
     Ok(())
+}
+
+fn require_slsa_verified(verified: bool, error: Option<&str>) -> Result<()> {
+    if verified {
+        return Ok(());
+    }
+    match error {
+        Some(reason) => anyhow::bail!("SLSA verification failed: {reason}"),
+        None => anyhow::bail!("SLSA verification failed"),
+    }
 }
 
 /// License categories for compliance
@@ -1308,6 +1301,28 @@ mod tests {
         assert_eq!(
             LicenseCategory::from_license("GPL-2.0"),
             LicenseCategory::Copyleft
+        );
+    }
+
+    #[test]
+    fn slsa_check_fails_when_provenance_is_unverified() {
+        let err = require_slsa_verified(false, Some("no attestation"))
+            .expect_err("unverified provenance must fail the command");
+        assert!(
+            err.to_string().contains("SLSA verification failed"),
+            "got: {err}"
+        );
+        assert!(
+            err.to_string().contains("no attestation"),
+            "failure reason must be preserved, got: {err}"
+        );
+        assert!(require_slsa_verified(true, None).is_ok());
+        let missing_reason =
+            require_slsa_verified(false, None).expect_err("unverified without details still fails");
+        assert!(
+            missing_reason
+                .to_string()
+                .contains("SLSA verification failed")
         );
     }
 }

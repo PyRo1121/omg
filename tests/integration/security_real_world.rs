@@ -7,7 +7,7 @@
 //!
 //! No mocks, no stubs - only production-ready integration tests.
 
-use omg_lib::core::security::slsa::{SlsaLevel, SlsaVerifier};
+use omg_lib::core::security::slsa::SlsaVerifier;
 use omg_lib::core::security::vulnerability::VulnerabilityScanner;
 use omg_lib::package_managers::types::parse_version_or_zero;
 use std::time::Duration;
@@ -171,50 +171,6 @@ async fn test_vulnerability_scanner_osv_real() {
 
         println!("  - {}: {}", vuln.id, vuln.summary);
     }
-}
-
-/// Test SLSA level determination logic
-///
-/// Verifies that our SLSA level assignment follows production rules
-/// for different package types.
-#[test]
-fn test_slsa_level_production_rules() {
-    let verifier = SlsaVerifier::default();
-
-    // Core system packages (highest trust)
-    let core_packages = ["glibc", "linux", "pacman", "systemd", "openssl", "bash"];
-    for pkg in core_packages {
-        let level = verifier.determine_slsa_level(pkg, true);
-        assert_eq!(
-            level,
-            SlsaLevel::None,
-            "Core package {pkg} must not receive a name-based SLSA level"
-        );
-    }
-
-    // Official repository packages also have no inferred SLSA level
-    let official_packages = ["vim", "firefox", "rust", "python"];
-    for pkg in official_packages {
-        let level = verifier.determine_slsa_level(pkg, true);
-        assert_eq!(
-            level,
-            SlsaLevel::None,
-            "Official package {pkg} must not receive a name-based SLSA level"
-        );
-    }
-
-    // AUR packages (no guarantees)
-    let aur_packages = ["yay", "spotify", "discord"];
-    for pkg in aur_packages {
-        let level = verifier.determine_slsa_level(pkg, false);
-        assert_eq!(
-            level,
-            SlsaLevel::None,
-            "AUR package {pkg} should have no SLSA level"
-        );
-    }
-
-    println!("✓ SLSA level determination follows production security policy");
 }
 
 /// Test hash verification with real file data

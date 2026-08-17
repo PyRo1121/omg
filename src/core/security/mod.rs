@@ -11,7 +11,7 @@ pub mod validation;
 pub mod vulnerability;
 
 pub use audit::{AuditEventType, AuditLogger, AuditSeverity, audit_log, init_audit_logger};
-pub use policy::{SecurityGrade, SecurityPolicy};
+pub use policy::{PolicyError, SecurityGrade, SecurityPolicy};
 pub use sbom::{Sbom, SbomGenerator};
 pub use secrets::{SecretScanResult, SecretScanner};
 pub use slsa::{SlsaLevel, SlsaVerifier};
