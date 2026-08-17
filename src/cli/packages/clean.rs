@@ -1,6 +1,9 @@
 //! Clean/orphan functionality for packages
 
-use anyhow::{Context, Result};
+use anyhow::Result;
+
+#[cfg(feature = "arch")]
+use anyhow::Context;
 
 use super::common::use_debian_backend;
 
