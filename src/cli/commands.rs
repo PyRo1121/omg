@@ -145,6 +145,13 @@ fn complete_installed_packages(
 }
 
 /// Get installed package names for remove completion
+#[cfg_attr(
+    not(any(feature = "arch", feature = "debian", feature = "debian-pure")),
+    expect(
+        clippy::unnecessary_wraps,
+        reason = "empty fallback has an unnecessary Result wrap"
+    )
+)]
 fn get_installed_package_names() -> Result<Vec<String>> {
     #[cfg(feature = "arch")]
     {

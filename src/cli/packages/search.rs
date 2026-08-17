@@ -195,6 +195,7 @@ async fn search_official_packages(query: &str) -> Result<Vec<DisplayPackage>> {
         .collect())
 }
 
+#[cfg_attr(not(feature = "arch"), allow(clippy::unused_async))]
 async fn search_aur_packages(query: &str, detailed: bool) -> Result<Vec<DisplayPackage>> {
     #[cfg(feature = "arch")]
     {

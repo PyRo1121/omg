@@ -582,9 +582,9 @@ fn generate_policy_json() -> Result<String> {
 }
 
 fn generate_installed_packages_csv() -> Result<String> {
-    let mut csv = String::from("package,version,description\n");
     #[cfg(feature = "arch")]
     {
+        let mut csv = String::from("package,version,description\n");
         let packages = crate::package_managers::list_installed_fast()
             .context("Failed to list installed packages for enterprise export")?;
         for pkg in packages {
@@ -598,10 +598,13 @@ fn generate_installed_packages_csv() -> Result<String> {
                 ),
             );
         }
+        Ok(csv)
     }
+
     #[cfg(not(feature = "arch"))]
-    anyhow::bail!("Installed-package export requires the Arch package backend");
-    Ok(csv)
+    {
+        anyhow::bail!("Installed-package export requires the Arch package backend");
+    }
 }
 
 fn generate_sbom_json() -> Result<String> {
