@@ -2,7 +2,10 @@ use crate::core::env::team::TeamStatus;
 use crate::core::history::Transaction;
 #[cfg(unix)]
 use crate::daemon::protocol::StatusResult;
-use anyhow::{Context, Result};
+use anyhow::Result;
+
+#[cfg(any(feature = "arch", feature = "debian"))]
+use anyhow::Context;
 use crossterm::event::KeyCode;
 use std::time::Instant;
 
