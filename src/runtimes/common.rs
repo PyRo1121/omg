@@ -616,9 +616,21 @@ pub fn set_current_version(versions_dir: &Path, version: &str) -> Result<()> {
 /// Get the current version from the "current" symlink
 pub fn get_current_version(versions_dir: &Path) -> Option<String> {
     let current_link = versions_dir.join("current");
-    fs::read_link(&current_link)
-        .ok()
-        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+    let target = fs::read_link(&current_link).ok()?;
+    let version = target.file_name()?.to_string_lossy().into_owned();
+    let expected = versions_dir.join(&version);
+    if !is_valid_version_dir(&expected) {
+        return None;
+    }
+
+    let target = if target.is_absolute() {
+        target
+    } else {
+        current_link.parent()?.join(target)
+    };
+    let target = fs::canonicalize(target).ok()?;
+    let expected = fs::canonicalize(expected).ok()?;
+    (target == expected).then_some(version)
 }
 
 /// List installed versions in a directory
@@ -1053,6 +1065,24 @@ mod tests {
     #[test]
     fn test_get_current_version_none() {
         let temp = TempDir::new().unwrap();
+        assert!(get_current_version(temp.path()).is_none());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn current_version_rejects_missing_or_external_targets() {
+        let temp = TempDir::new().unwrap();
+        fs::create_dir(temp.path().join("1.0.0")).unwrap();
+        let current = temp.path().join("current");
+
+        std::os::unix::fs::symlink("missing", &current).unwrap();
+        assert!(get_current_version(temp.path()).is_none());
+        fs::remove_file(&current).unwrap();
+
+        let outside_root = TempDir::new().unwrap();
+        let outside = outside_root.path().join("1.0.0");
+        fs::create_dir(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, &current).unwrap();
         assert!(get_current_version(temp.path()).is_none());
     }
 
