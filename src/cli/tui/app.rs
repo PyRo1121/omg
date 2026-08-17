@@ -4,7 +4,7 @@ use crate::core::history::Transaction;
 use crate::daemon::protocol::StatusResult;
 use anyhow::Result;
 
-#[cfg(any(feature = "arch", feature = "debian"))]
+#[cfg(feature = "arch")]
 use anyhow::Context;
 use crossterm::event::KeyCode;
 use std::time::Instant;
