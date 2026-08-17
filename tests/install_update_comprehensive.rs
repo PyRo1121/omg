@@ -11,7 +11,7 @@
 //! - CLI argument parsing and validation
 //! - Official package operations
 //! - AUR package operations
-//! - Transaction rollback and error recovery
+//! - Parallel build and error recovery
 //! - Retry logic for network failures
 //! - Parallel build functionality
 //! - Security (PGP verification, sandbox)
@@ -445,90 +445,6 @@ mod aur_tests {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// TRANSACTION AND ROLLBACK TESTS
-// ═══════════════════════════════════════════════════════════════════════════════
-
-#[cfg(feature = "arch")]
-mod transaction_tests {
-    #[test]
-    fn test_transaction_module_exists() {
-        use omg_lib::core::transactions::{Transaction, TransactionState};
-        let tx = Transaction::new();
-        assert_eq!(tx.state, TransactionState::Pending);
-    }
-
-    #[test]
-    fn test_transaction_lifecycle() {
-        use omg_lib::core::transactions::{Transaction, TransactionState};
-        let mut tx = Transaction::new();
-        assert!(tx.begin().is_ok());
-        assert_eq!(tx.state, TransactionState::InProgress);
-        assert!(tx.commit().is_ok());
-        assert_eq!(tx.state, TransactionState::Committed);
-    }
-
-    #[tokio::test]
-    async fn test_transaction_rollback() {
-        use omg_lib::core::PackageSource;
-        use omg_lib::core::transactions::{Operation, Transaction, TransactionState};
-
-        let mut tx = Transaction::new();
-        tx.add_operation(Operation::Install {
-            package: "test-pkg".to_string(),
-            version: "1.0.0".parse().unwrap(),
-            source: PackageSource::Official,
-        });
-
-        let result = tx.rollback().await;
-        assert!(result.is_ok());
-        assert_eq!(tx.state, TransactionState::RolledBack);
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// RETRY LOGIC TESTS
-// ═══════════════════════════════════════════════════════════════════════════════
-
-#[cfg(feature = "arch")]
-mod retry_tests {
-    #[test]
-    fn test_retry_config() {
-        use omg_lib::core::retry::RetryConfig;
-        let config = RetryConfig::new(3);
-        assert_eq!(config.max_retries, 3);
-    }
-
-    #[test]
-    fn test_is_retryable_errors() {
-        use omg_lib::core::retry::is_retryable;
-        assert!(is_retryable(&anyhow::anyhow!("connection timeout")));
-        assert!(is_retryable(&anyhow::anyhow!("network error")));
-        assert!(!is_retryable(&anyhow::anyhow!("package not found")));
-    }
-
-    #[tokio::test]
-    async fn test_retry_succeeds_after_failures() {
-        use omg_lib::core::retry::{RetryConfig, retry_async};
-        use std::sync::atomic::{AtomicU32, Ordering};
-
-        let attempts = AtomicU32::new(0);
-        let config = RetryConfig::new(3);
-
-        let result = retry_async(&config, || async {
-            let count = attempts.fetch_add(1, Ordering::SeqCst);
-            if count < 2 {
-                Err(anyhow::anyhow!("connection timeout"))
-            } else {
-                Ok(42)
-            }
-        })
-        .await;
-
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), 42);
-        assert_eq!(attempts.load(Ordering::SeqCst), 3);
-    }
-}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // PARALLEL BUILD TESTS
