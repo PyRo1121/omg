@@ -366,6 +366,87 @@ fn output_suggestions(
     }
 }
 
+type StatusSnapshot = (
+    usize,
+    usize,
+    usize,
+    usize,
+    usize,
+    Option<Vec<(String, String)>>,
+);
+
+/// Read a status snapshot, failing closed when the underlying lookup fails.
+/// A missing daemon or binary cache falls back to a direct query, but a failed
+/// direct query is an error rather than a fake "healthy" zero report.
+fn read_status_snapshot() -> Result<StatusSnapshot> {
+    // ULTRA FAST: Try binary status file first (zero IPC, sub-ms)
+    if let Some(fast) = crate::core::fast_status::FastStatus::read_from_file(
+        &crate::core::paths::fast_status_path(),
+    ) {
+        return Ok((
+            fast.total_packages as usize,
+            fast.explicit_packages as usize,
+            fast.orphan_packages as usize,
+            fast.updates_available as usize,
+            0,
+            None,
+        ));
+    }
+
+    if use_debian_backend() {
+        #[cfg(feature = "debian")]
+        {
+            let s = apt_get_system_status().context("Failed to query system status from apt")?;
+            return Ok((s.0, s.1, s.2, s.3, 0, None));
+        }
+        #[cfg(not(feature = "debian"))]
+        {
+            anyhow::bail!("Debian backend is not compiled in");
+        }
+    }
+
+    // Try daemon (Unix only), then fallback to a direct query
+    #[cfg(unix)]
+    {
+        if let Ok(mut client) = crate::core::client::DaemonClient::connect_sync()
+            && let Ok(crate::daemon::protocol::ResponseResult::Status(res)) =
+                client.call_sync(&crate::daemon::protocol::Request::Status { id: 0 })
+        {
+            return Ok((
+                res.total_packages,
+                res.explicit_packages,
+                res.orphan_packages,
+                res.updates_available,
+                res.security_vulnerabilities,
+                Some(res.runtime_versions),
+            ));
+        }
+
+        #[cfg(feature = "arch")]
+        {
+            let s = get_system_status().context("Failed to query system status via ALPM")?;
+            Ok((s.0, s.1, s.2, s.3, 0, None))
+        }
+        #[cfg(not(feature = "arch"))]
+        {
+            anyhow::bail!("No supported package manager backend available");
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        #[cfg(feature = "arch")]
+        {
+            let s = get_system_status().context("Failed to query system status via ALPM")?;
+            return Ok((s.0, s.1, s.2, s.3, 0, None));
+        }
+        #[cfg(not(feature = "arch"))]
+        {
+            anyhow::bail!("No supported package manager backend available");
+        }
+    }
+}
+
 pub fn status_sync() -> Result<()> {
     let _start = std::time::Instant::now();
 
@@ -373,84 +454,8 @@ pub fn status_sync() -> Result<()> {
     use crate::cli::modern_ui;
     modern_ui::print_phase_header("📊", "System Status", "overview");
 
-    // ULTRA FAST: Try binary status file first (zero IPC, sub-ms)
     let (total, explicit, orphans, updates, security_vulnerabilities, cached_runtimes) =
-        if let Some(fast) = crate::core::fast_status::FastStatus::read_from_file(
-            &crate::core::paths::fast_status_path(),
-        ) {
-            (
-                fast.total_packages as usize,
-                fast.explicit_packages as usize,
-                fast.orphan_packages as usize,
-                fast.updates_available as usize,
-                0,
-                None::<Vec<(String, String)>>,
-            )
-        } else if use_debian_backend() {
-            #[cfg(feature = "debian")]
-            {
-                let s = apt_get_system_status().unwrap_or((0, 0, 0, 0));
-                (s.0, s.1, s.2, s.3, 0, None::<Vec<(String, String)>>)
-            }
-            #[cfg(not(feature = "debian"))]
-            {
-                (0, 0, 0, 0, 0, None::<Vec<(String, String)>>)
-            }
-        } else {
-            // Try daemon (Unix only), then fallback to local status
-            #[cfg(unix)]
-            {
-                if let Ok(mut client) = crate::core::client::DaemonClient::connect_sync() {
-                    // Fixed ID for zero-overhead
-                    if let Ok(crate::daemon::protocol::ResponseResult::Status(res)) =
-                        client.call_sync(&crate::daemon::protocol::Request::Status { id: 0 })
-                    {
-                        (
-                            res.total_packages,
-                            res.explicit_packages,
-                            res.orphan_packages,
-                            res.updates_available,
-                            res.security_vulnerabilities,
-                            Some(res.runtime_versions),
-                        )
-                    } else {
-                        #[cfg(feature = "arch")]
-                        {
-                            let s = get_system_status().unwrap_or((0, 0, 0, 0));
-                            (s.0, s.1, s.2, s.3, 0, None::<Vec<(String, String)>>)
-                        }
-                        #[cfg(not(feature = "arch"))]
-                        {
-                            (0, 0, 0, 0, 0, None::<Vec<(String, String)>>)
-                        }
-                    }
-                } else {
-                    // Fallback to local optimized ALPM query
-                    #[cfg(feature = "arch")]
-                    {
-                        let s = get_system_status().unwrap_or((0, 0, 0, 0));
-                        (s.0, s.1, s.2, s.3, 0, None::<Vec<(String, String)>>)
-                    }
-                    #[cfg(not(feature = "arch"))]
-                    {
-                        (0, 0, 0, 0, 0, None::<Vec<(String, String)>>)
-                    }
-                }
-            }
-            #[cfg(not(unix))]
-            {
-                // Windows fallback
-                #[cfg(feature = "arch")]
-                {
-                    let s = get_system_status().unwrap_or((0, 0, 0, 0));
-                    (s.0, s.1, s.2, s.3, 0, None::<Vec<(String, String)>>)
-                }
-                #[cfg(not(feature = "arch"))]
-                {
-                    (0, 0, 0, 0, 0, None::<Vec<(String, String)>>)
-                }
-            }
-        };
+        read_status_snapshot()?;
 
     // Modern minimal status layout - no box drawing
     println!();
