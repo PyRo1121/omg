@@ -127,15 +127,17 @@ impl RustManager {
     pub async fn list_available(&self) -> Result<Vec<RustVersion>> {
         let mut versions = Vec::new();
 
-        // Get stable version from manifest
-        if let Ok(manifest) = self.fetch_manifest("stable", None).await
-            && let Some(version) = manifest_version(&manifest)
-        {
-            versions.push(RustVersion {
-                version,
-                channel: "stable".to_string(),
-            });
-        }
+        let manifest = self
+            .fetch_manifest("stable", None)
+            .await
+            .context("Failed to fetch the stable Rust channel manifest")?;
+        let version = manifest_version(&manifest).ok_or_else(|| {
+            anyhow::anyhow!("Stable Rust channel manifest is missing a rustc version")
+        })?;
+        versions.push(RustVersion {
+            version,
+            channel: "stable".to_string(),
+        });
 
         // Add channel aliases
         versions.push(RustVersion {

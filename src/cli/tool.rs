@@ -195,37 +195,53 @@ pub fn registry_tool_names() -> Vec<String> {
         .collect()
 }
 
-#[must_use]
-pub fn installed_tool_names() -> Vec<String> {
+pub fn installed_tool_names() -> Result<Vec<String>> {
     let (tools_dir, _bin_dir) = get_dirs();
     let mut names = Vec::new();
 
-    if let Ok(entries) = fs::read_dir(&tools_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if !path.is_dir() {
-                continue;
-            }
-            if let Ok(manager_entries) = fs::read_dir(&path) {
-                for tool in manager_entries.flatten() {
-                    if let Some(name) = tool.file_name().to_str() {
+    match fs::read_dir(&tools_dir) {
+        Ok(entries) => {
+            for entry in entries {
+                let entry = entry.with_context(|| {
+                    format!(
+                        "Failed to read tool directory entry in {}",
+                        tools_dir.display()
+                    )
+                })?;
+                let path = entry.path();
+                if !crate::runtimes::common::is_valid_version_dir(&path) {
+                    continue;
+                }
+                for tool in fs::read_dir(&path).with_context(|| {
+                    format!("Failed to read managed tool directory {}", path.display())
+                })? {
+                    let tool = tool.with_context(|| {
+                        format!("Failed to read managed tool entry in {}", path.display())
+                    })?;
+                    if crate::runtimes::common::is_valid_version_dir(&tool.path())
+                        && let Some(name) = tool.file_name().to_str()
+                    {
                         names.push(name.to_string());
                     }
                 }
             }
         }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!("Failed to list managed tools in {}", tools_dir.display())
+            });
+        }
     }
 
     names.sort();
     names.dedup();
-    names
+    Ok(names)
 }
 
 /// Base directories
 fn get_dirs() -> (PathBuf, PathBuf) {
-    let data_dir = dirs::data_dir()
-        .unwrap_or_else(|| PathBuf::from("~/.local/share"))
-        .join("omg");
+    let data_dir = crate::core::paths::data_dir();
     let tools_dir = data_dir.join("tools");
     let bin_dir = data_dir.join("bin"); // This should be in PATH via omg hook
     (tools_dir, bin_dir)
@@ -301,8 +317,30 @@ async fn install_managed(
 ) -> Result<()> {
     // Create isolation directory: ~/.local/share/omg/tools/<manager>/<pkg>
     let install_dir = tools_dir.join(manager).join(pkg);
-    if install_dir.exists() {
-        fs::remove_dir_all(&install_dir)?;
+    match fs::symlink_metadata(&install_dir) {
+        Ok(metadata) if metadata.is_dir() => {
+            fs::remove_dir_all(&install_dir).with_context(|| {
+                format!(
+                    "Failed to replace existing tool directory {}",
+                    install_dir.display()
+                )
+            })?;
+        }
+        Ok(_) => {
+            anyhow::bail!(
+                "Refusing to replace non-directory tool path: {}",
+                install_dir.display()
+            );
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!(
+                    "Failed to inspect existing tool path {}",
+                    install_dir.display()
+                )
+            });
+        }
     }
     fs::create_dir_all(&install_dir)?;
 
@@ -422,7 +460,7 @@ fn link_binaries(install_dir: &Path, bin_dir: &Path, _tool_name: &str) -> Result
     let mut linked = 0;
 
     for dir in search_dirs {
-        if !dir.exists() {
+        if !crate::runtimes::common::is_valid_version_dir(&dir) {
             continue;
         }
 
@@ -486,7 +524,7 @@ fn link_binaries(install_dir: &Path, bin_dir: &Path, _tool_name: &str) -> Result
 
 pub fn list() -> Result<()> {
     let (_, bin_dir) = get_dirs();
-    if !bin_dir.exists() {
+    if !crate::runtimes::common::is_valid_version_dir(&bin_dir) {
         println!("{}", style::dim("No tools installed via omg tool."));
         return Ok(());
     }
@@ -527,7 +565,7 @@ pub fn remove(name: &str) -> Result<()> {
 
     for manager in managers {
         let install_path = tools_dir.join(manager).join(name);
-        if install_path.exists() {
+        if crate::runtimes::common::is_valid_version_dir(&install_path) {
             println!(
                 "{} Removing {} from {}...",
                 style::header("OMG"),
@@ -549,20 +587,28 @@ pub fn remove(name: &str) -> Result<()> {
 
     // Cleanup symlinks (broken links)
     println!("  {} Cleaning symlinks...", style::dim("→"));
-    for entry in fs::read_dir(bin_dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if let Ok(target) = fs::read_link(&path)
-            && !target.exists()
-        {
-            fs::remove_file(&path)?;
-            println!(
-                "    {} Removed link {}",
-                style::error("-"),
-                path.file_name()
-                    .map(|f| f.to_string_lossy())
-                    .unwrap_or_default()
-            );
+    match fs::read_dir(&bin_dir) {
+        Ok(entries) => {
+            for entry in entries {
+                let path = entry?.path();
+                if let Ok(target) = fs::read_link(&path)
+                    && !target.exists()
+                {
+                    fs::remove_file(&path)?;
+                    println!(
+                        "    {} Removed link {}",
+                        style::error("-"),
+                        path.file_name()
+                            .map(|f| f.to_string_lossy())
+                            .unwrap_or_default()
+                    );
+                }
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("Failed to inspect tool links in {}", bin_dir.display()));
         }
     }
 
@@ -581,7 +627,7 @@ pub async fn update(name: &str) -> Result<()> {
 
     if name == "all" {
         println!("{} Updating all tools...\n", style::header("OMG Tool"));
-        let installed = installed_tool_names();
+        let installed = installed_tool_names()?;
         if installed.is_empty() {
             println!("{}", style::dim("No tools installed."));
             return Ok(());

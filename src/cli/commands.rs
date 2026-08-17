@@ -112,7 +112,11 @@ async fn complete_package_names(
         return Ok(engine.fuzzy_match(current, crate::cli::tool::registry_tool_names()));
     }
     if in_tool && last == "remove" {
-        return Ok(engine.fuzzy_match(current, crate::cli::tool::installed_tool_names()));
+        return Ok(engine.fuzzy_match(
+            current,
+            crate::cli::tool::installed_tool_names()
+                .context("Failed to list installed tools for completion")?,
+        ));
     }
 
     // Get package names from daemon or fallback to direct ALPM.
