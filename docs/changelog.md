@@ -26,6 +26,22 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Detect the shell from hook-env arguments correctly
+
+The fast hook-env path could match the program name as the shell, which
+
+made the fast path fall through to the slow dispatch on every prompt.
+
+Skip the leading command name so the real shell argument is found.
+
+- Reuse validated current-version lookup for probing
+
+probe_version now shares the hardened get_current_version logic, so
+
+status, doctor, and EOL checks never report a broken or external
+
+symlink as the active runtime version.
+
 - Fail enterprise reports on team lookup errors
 
 A failed team-member fetch no longer produces a fabricated zero-machine
