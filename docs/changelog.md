@@ -26,6 +26,14 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Fail enterprise reports on team lookup errors
+
+A failed team-member fetch no longer produces a fabricated zero-machine
+
+compliance report; the report generation now fails with the underlying
+
+reason instead.
+
 - Stop rendering fake healthy status on lookup failure
 
 The ultra-fast status path no longer shows a zero-filled system report
