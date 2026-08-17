@@ -103,37 +103,36 @@ impl SecurityPolicy {
     /// Assign a security grade to a package based on metadata
     pub async fn assign_grade(
         &self,
+        scanner: &dyn super::vulnerability::VulnerabilitySource,
         name: &str,
         version: &Version,
         is_aur: bool,
         is_official: bool,
-    ) -> SecurityGrade {
-        // 1. Check for vulnerabilities (Risk)
-        let scanner = super::vulnerability::VulnerabilityScanner::new();
-        if let Ok(vulns) = scanner.scan_package(name, version).await
-            && !vulns.is_empty()
-        {
-            return SecurityGrade::Risk;
+    ) -> Result<SecurityGrade> {
+        // 1. Check for vulnerabilities (Risk). An unavailable evidence source
+        // must not be treated as a clean package.
+        if !scanner.scan_package(name, version).await?.is_empty() {
+            return Ok(SecurityGrade::Risk);
         }
 
         // 2. Check for SLSA (Locked) - In 2026, we assume official core packages have SLSA
         // This would normally check a transparency log or embedded provenance
         if is_official && matches!(name, "glibc" | "linux" | "pacman") {
             // Mocking SLSA verification for core system components
-            return SecurityGrade::Locked;
+            return Ok(SecurityGrade::Locked);
         }
 
         // 3. Official packages are Verified (PGP)
         if is_official {
-            return SecurityGrade::Verified;
+            return Ok(SecurityGrade::Verified);
         }
 
         // 4. AUR packages are Community
         if is_aur {
-            return SecurityGrade::Community;
+            return Ok(SecurityGrade::Community);
         }
 
-        SecurityGrade::Community
+        Ok(SecurityGrade::Community)
     }
 
     /// Check if a package is allowed by policy

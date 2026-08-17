@@ -1,6 +1,9 @@
 use crate::core::Package;
 use crate::core::history::{HistoryManager, PackageChange, TransactionType};
-use crate::core::security::SecurityPolicy;
+use crate::core::security::{
+    SecurityPolicy,
+    vulnerability::{VulnerabilityScanner, VulnerabilitySource},
+};
 use crate::package_managers::PackageManager;
 use crate::package_managers::types::UpdateInfo;
 use anyhow::{Context, Result};
@@ -10,6 +13,7 @@ use std::sync::Arc;
 pub struct PackageService {
     backend: Arc<dyn PackageManager>,
     policy: SecurityPolicy,
+    vulnerability_source: Arc<dyn VulnerabilitySource>,
     history: Option<HistoryManager>,
     #[cfg(feature = "arch")]
     aur_client: Option<crate::package_managers::AurClient>,
@@ -58,12 +62,19 @@ impl PackageService {
                     continue;
                 }
 
-                // Check if it's in official repos
-                if let Ok(Some(info)) = self.backend.info(pkg).await {
+                // Check if it's in official repos. Repository lookup errors
+                // are distinct from a package not being present.
+                if let Some(info) = self.backend.info(pkg).await? {
                     let grade = self
                         .policy
-                        .assign_grade(&info.name, &info.version, false, true)
-                        .await;
+                        .assign_grade(
+                            self.vulnerability_source.as_ref(),
+                            &info.name,
+                            &info.version,
+                            false,
+                            true,
+                        )
+                        .await?;
                     self.policy.check_package(&info.name, false, None, grade)?;
 
                     official.push(pkg.clone());
@@ -74,11 +85,17 @@ impl PackageService {
                         new_version: Some(info.version.to_string()),
                         source: "official".to_string(),
                     });
-                } else if let Ok(Some(info)) = aur.info(pkg).await {
+                } else if let Some(info) = aur.info(pkg).await? {
                     let grade = self
                         .policy
-                        .assign_grade(&info.name, &info.version, true, false)
-                        .await;
+                        .assign_grade(
+                            self.vulnerability_source.as_ref(),
+                            &info.name,
+                            &info.version,
+                            true,
+                            false,
+                        )
+                        .await?;
                     self.policy.check_package(&info.name, true, None, grade)?;
 
                     aur_pkgs.push(pkg.clone());
@@ -113,11 +130,17 @@ impl PackageService {
         #[cfg(not(feature = "arch"))]
         {
             for pkg in packages {
-                if let Ok(Some(info)) = self.backend.info(pkg).await {
+                if let Some(info) = self.backend.info(pkg).await? {
                     let grade = self
                         .policy
-                        .assign_grade(&info.name, &info.version, false, true)
-                        .await;
+                        .assign_grade(
+                            self.vulnerability_source.as_ref(),
+                            &info.name,
+                            &info.version,
+                            false,
+                            true,
+                        )
+                        .await?;
                     self.policy.check_package(&info.name, false, None, grade)?;
 
                     changes.push(PackageChange {
@@ -140,11 +163,17 @@ impl PackageService {
         #[cfg(feature = "arch")]
         {
             for pkg in packages {
-                if let Ok(Some(info)) = self.backend.info(pkg).await {
+                if let Some(info) = self.backend.info(pkg).await? {
                     let grade = self
                         .policy
-                        .assign_grade(&info.name, &info.version, false, true)
-                        .await;
+                        .assign_grade(
+                            self.vulnerability_source.as_ref(),
+                            &info.name,
+                            &info.version,
+                            false,
+                            true,
+                        )
+                        .await?;
                     self.policy.check_package(&info.name, false, None, grade)?;
 
                     changes.push(PackageChange {
@@ -168,7 +197,7 @@ impl PackageService {
     pub async fn remove(&self, packages: &[String], _recursive: bool) -> Result<()> {
         let mut changes = Vec::new();
         for pkg in packages {
-            if let Ok(Some(info)) = self.backend.info(pkg).await {
+            if let Some(info) = self.backend.info(pkg).await? {
                 changes.push(PackageChange {
                     name: info.name,
                     #[allow(clippy::implicit_clone)] // Version is feature-gated type alias; .to_string() is the required conversion
@@ -246,20 +275,17 @@ impl PackageService {
 
         #[cfg(feature = "arch")]
         if let Some(aur) = &self.aur_client {
-            match aur.get_update_list().await {
-                Ok(aur_updates) => {
-                    for (name, old, new) in aur_updates {
-                        updates.push(UpdateInfo {
-                            name,
-                            old_version: old.to_string(),
-                            new_version: new.to_string(),
-                            repo: "aur".to_string(),
-                        });
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to check AUR for updates: {}", e);
-                }
+            for (name, old, new) in aur
+                .get_update_list()
+                .await
+                .context("Failed to check AUR for updates")?
+            {
+                updates.push(UpdateInfo {
+                    name,
+                    old_version: old.to_string(),
+                    new_version: new.to_string(),
+                    repo: "aur".to_string(),
+                });
             }
         }
 
@@ -268,7 +294,7 @@ impl PackageService {
 
     /// Get package info
     pub async fn info(&self, package: &str) -> Result<Option<Package>> {
-        if let Ok(Some(pkg)) = self.backend.info(package).await {
+        if let Some(pkg) = self.backend.info(package).await? {
             return Ok(Some(pkg));
         }
 
@@ -296,6 +322,7 @@ enum HistoryConfiguration {
 pub struct PackageServiceBuilder {
     backend: Arc<dyn PackageManager>,
     policy: Option<SecurityPolicy>,
+    vulnerability_source: Arc<dyn VulnerabilitySource>,
     history: HistoryConfiguration,
     #[cfg(feature = "arch")]
     aur_client: Option<crate::package_managers::AurClient>,
@@ -309,6 +336,7 @@ impl PackageServiceBuilder {
         Self {
             backend,
             policy: None,
+            vulnerability_source: Arc::new(VulnerabilityScanner::new()),
             history: HistoryConfiguration::Default,
             #[cfg(feature = "arch")]
             aur_client: None,
@@ -321,6 +349,13 @@ impl PackageServiceBuilder {
     #[must_use]
     pub fn policy(mut self, policy: SecurityPolicy) -> Self {
         self.policy = Some(policy);
+        self
+    }
+
+    /// Set the vulnerability evidence source.
+    #[must_use]
+    pub fn vulnerability_source(mut self, source: Arc<dyn VulnerabilitySource>) -> Self {
+        self.vulnerability_source = source;
         self
     }
 
@@ -376,6 +411,7 @@ impl PackageServiceBuilder {
         Ok(PackageService {
             backend: self.backend,
             policy: self.policy.unwrap_or_default(),
+            vulnerability_source: self.vulnerability_source,
             history,
             #[cfg(feature = "arch")]
             aur_client,
@@ -386,6 +422,29 @@ impl PackageServiceBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::future::Future;
+    use std::pin::Pin;
+
+    struct CleanVulnerabilitySource;
+
+    impl VulnerabilitySource for CleanVulnerabilitySource {
+        fn scan_package<'a>(
+            &'a self,
+            _name: &'a str,
+            _version: &'a crate::package_managers::types::Version,
+        ) -> Pin<
+            Box<
+                dyn Future<
+                        Output = anyhow::Result<
+                            Vec<crate::core::security::vulnerability::VulnerabilityReport>,
+                        >,
+                    > + Send
+                    + 'a,
+            >,
+        > {
+            Box::pin(async { Ok(Vec::new()) })
+        }
+    }
 
     #[test]
     fn builder_without_history_disables_explicit_history() -> Result<()> {
@@ -411,7 +470,10 @@ mod tests {
 
         let backend = Arc::new(crate::core::testing::TestPackageManager::new());
         backend.add_package("example", "1.0.0", "Example package");
-        let service = PackageService::builder(backend).history(history).build()?;
+        let service = PackageService::builder(backend)
+            .history(history)
+            .vulnerability_source(Arc::new(CleanVulnerabilitySource))
+            .build()?;
 
         let error = service
             .install(&["example".to_string()], false)
