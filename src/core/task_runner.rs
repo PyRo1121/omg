@@ -101,17 +101,26 @@ pub struct TaskDetector {
 }
 
 impl TaskDetector {
-    pub fn new(current_dir: PathBuf) -> Self {
-        let config = Self::load_config(&current_dir).unwrap_or_default();
-        Self {
+    pub fn new(current_dir: PathBuf) -> Result<Self> {
+        let config = Self::load_config(&current_dir)?;
+        Ok(Self {
             current_dir,
             config,
-        }
+        })
     }
 
-    fn load_config(path: &Path) -> Option<OmgProjectConfig> {
-        let content = std::fs::read_to_string(path.join(".omg.toml")).ok()?;
-        toml::from_str(&content).ok()
+    fn load_config(path: &Path) -> Result<OmgProjectConfig> {
+        let config_path = path.join(".omg.toml");
+        match std::fs::read_to_string(&config_path) {
+            Ok(content) => toml::from_str(&content)
+                .with_context(|| format!("Failed to parse {}", config_path.display())),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                Ok(OmgProjectConfig::default())
+            }
+            Err(error) => {
+                Err(error).with_context(|| format!("Failed to read {}", config_path.display()))
+            }
+        }
     }
 
     fn detect_js_tasks(&self, tasks: &mut Vec<Task>) {
@@ -406,7 +415,7 @@ impl TaskDetector {
 }
 
 pub fn detect_tasks() -> Result<Vec<Task>> {
-    let detector = TaskDetector::new(std::env::current_dir()?);
+    let detector = TaskDetector::new(std::env::current_dir()?)?;
     detector.detect()
 }
 
@@ -426,7 +435,7 @@ pub fn run_task_advanced(
         anyhow::bail!("Invalid task name: {task_name}");
     }
 
-    let detector = TaskDetector::new(std::env::current_dir()?);
+    let detector = TaskDetector::new(std::env::current_dir()?)?;
     let matches = detector.resolve(task_name, using, all)?;
 
     if matches.is_empty() {
@@ -1100,7 +1109,7 @@ build = "node"
 "#;
         fs::write(temp.path().join(".omg.toml"), config_content).unwrap();
 
-        let detector = TaskDetector::new(temp.path().to_path_buf());
+        let detector = TaskDetector::new(temp.path().to_path_buf()).unwrap();
         assert_eq!(detector.config.scripts.get("test").unwrap(), "rust");
         assert_eq!(detector.config.scripts.get("build").unwrap(), "node");
     }
@@ -1115,7 +1124,7 @@ build = "node"
         )
         .unwrap();
 
-        let detector = TaskDetector::new(temp.path().to_path_buf());
+        let detector = TaskDetector::new(temp.path().to_path_buf()).unwrap();
         let matches = detector.resolve("test", None, false).unwrap();
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].ecosystem, Ecosystem::Rust);
@@ -1131,7 +1140,7 @@ build = "node"
         )
         .unwrap();
 
-        let detector = TaskDetector::new(temp.path().to_path_buf());
+        let detector = TaskDetector::new(temp.path().to_path_buf()).unwrap();
         // Explicitly use 'bun' (default for package.json in detector if no lockfile)
         let matches = detector.resolve("test", Some("bun"), false).unwrap();
         assert_eq!(matches.len(), 1);
@@ -1148,7 +1157,7 @@ build = "node"
         )
         .unwrap();
 
-        let detector = TaskDetector::new(temp.path().to_path_buf());
+        let detector = TaskDetector::new(temp.path().to_path_buf()).unwrap();
         let matches = detector.resolve("test", None, true).unwrap();
         assert_eq!(matches.len(), 2);
     }
@@ -1164,9 +1173,20 @@ build = "node"
         .unwrap();
         fs::write(temp.path().join(".omg.toml"), "[scripts]\ntest = \"bun\"").unwrap();
 
-        let detector = TaskDetector::new(temp.path().to_path_buf());
+        let detector = TaskDetector::new(temp.path().to_path_buf()).unwrap();
         let matches = detector.resolve("test", None, false).unwrap();
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].ecosystem, Ecosystem::Bun);
+    }
+
+    #[test]
+    fn corrupt_project_config_fails_closed() {
+        let temp = TempDir::new().unwrap();
+        fs::write(temp.path().join(".omg.toml"), "scripts = [").unwrap();
+
+        match TaskDetector::new(temp.path().to_path_buf()) {
+            Ok(_) => panic!("corrupt .omg.toml must fail"),
+            Err(error) => assert!(error.to_string().contains("Failed to parse")),
+        }
     }
 }
