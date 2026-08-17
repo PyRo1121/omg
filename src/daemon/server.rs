@@ -67,9 +67,22 @@ pub async fn run(
 
                 // 1. Probe Runtimes (Fast but sync I/O)
                 let mut versions = Vec::new();
-                for runtime in known_runtimes() {
-                    if let Some(v) = ensure_active_version(&runtime) {
-                        versions.push((runtime, v));
+                match known_runtimes() {
+                    Ok(runtimes) => {
+                        for runtime in runtimes {
+                            match ensure_active_version(&runtime) {
+                                Ok(Some(v)) => versions.push((runtime, v)),
+                                Ok(None) => {}
+                                Err(error) => {
+                                    tracing::warn!(
+                                        "Failed to resolve active {runtime} version: {error}"
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!("Failed to list known runtimes: {error}");
                     }
                 }
 
