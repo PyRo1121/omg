@@ -26,6 +26,14 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Put staged OMG Rust toolchains on the hook PATH
+
+Shell hooks skipped OMG-managed rustc whenever rustup existed, so
+
+omg use rust never reached PATH. Resolve versions/rust/<spec>/bin
+
+like install and activation, and require a real directory.
+
 - Resolve OMG Rust toolchains and surface which failures
 
 Task-runner PATH resolution pointed rust at ~/.cargo/bin instead of the
