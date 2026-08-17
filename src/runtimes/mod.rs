@@ -25,11 +25,9 @@ pub use rust::RustManager;
 
 pub const SUPPORTED_RUNTIMES: &[&str] = &["node", "python", "go", "rust", "ruby", "java", "bun"];
 
-/// Fast, zero-allocation probing for active runtime versions
+/// Fast probing for active runtime versions. The current symlink must
+/// resolve to a real version directory inside the runtime versions tree;
+/// missing or external targets are not reported as active.
 pub fn probe_version(runtime: &str) -> Option<String> {
-    let current_link = DATA_DIR.join("versions").join(runtime).join("current");
-
-    std::fs::read_link(&current_link)
-        .ok()
-        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+    common::get_current_version(&DATA_DIR.join("versions").join(runtime))
 }
