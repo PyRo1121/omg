@@ -196,6 +196,7 @@ pub async fn import(manifest_path: &str, dry_run: bool) -> Result<()> {
     );
 
     // Install runtimes
+    let mut runtime_failures = 0usize;
     for (runtime, version) in &manifest.runtimes {
         println!("    Installing {runtime} {version}...");
         if let Err(e) = crate::cli::runtimes::use_version(runtime, Some(version)).await {
@@ -203,10 +204,12 @@ pub async fn import(manifest_path: &str, dry_run: bool) -> Result<()> {
                 "      {} Failed to install {runtime}: {e}",
                 style::maybe_color("✗", |t| t.red().to_string())
             );
+            runtime_failures += 1;
         }
     }
 
     // Install packages
+    let mut package_failed = false;
     if !to_install.is_empty() {
         println!();
         println!("    Installing {} packages...", to_install.len());
@@ -215,17 +218,28 @@ pub async fn import(manifest_path: &str, dry_run: bool) -> Result<()> {
                 "      {} Package installation failed: {e}",
                 style::maybe_color("✗", |t| t.red().to_string())
             );
+            package_failed = true;
         }
     }
 
-    println!();
-    println!(
-        "  {} Migration complete!",
-        style::maybe_color("✓", |t| t.green().to_string())
-    );
-    println!("  Some packages may need manual installation - check the unmapped list above.");
+    finish_apply(runtime_failures, package_failed)
+}
 
-    Ok(())
+fn finish_apply(runtime_failures: usize, package_failed: bool) -> Result<()> {
+    if runtime_failures == 0 && !package_failed {
+        println!();
+        println!(
+            "  {} Migration complete!",
+            style::maybe_color("✓", |t| t.green().to_string())
+        );
+        println!("  Some packages may need manual installation - check the unmapped list above.");
+        Ok(())
+    } else {
+        anyhow::bail!(
+            "Migration failed ({runtime_failures} runtime install failure(s), package install {})",
+            if package_failed { "failed" } else { "ok" }
+        )
+    }
 }
 
 fn create_package_mapping(name: &str) -> PackageMapping {
@@ -329,6 +343,25 @@ mod tests {
 
         let empty = get_alternatives("nonexistent-pkg-123");
         assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn apply_failure_is_an_error() {
+        let result = finish_apply(1, false);
+        assert!(
+            result.is_err(),
+            "failed runtime installs must be a CLI error so the process exits non-zero"
+        );
+        let package_result = finish_apply(0, true);
+        assert!(
+            package_result.is_err(),
+            "failed package installs must be a CLI error so the process exits non-zero"
+        );
+    }
+
+    #[test]
+    fn apply_success_is_ok() {
+        assert!(finish_apply(0, false).is_ok());
     }
 
     #[test]

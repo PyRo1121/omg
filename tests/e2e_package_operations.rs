@@ -72,14 +72,15 @@ fn test_search_with_no_aur_flag() {
 fn test_search_interactive_flag() {
     init_test_env();
 
-    // Interactive mode should fail without stdin
     let result = run_omg(&["search", "--interactive", "vim"]);
-
-    // May succeed or fail depending on tty detection
     let output = result.combined_output();
     assert!(
-        !output.is_empty(),
-        "Interactive search should produce output or error"
+        !result.success,
+        "interactive search must fail closed until it is implemented"
+    );
+    assert!(
+        output.contains("not implemented"),
+        "interactive search must explain that it is unimplemented, got: {output}"
     );
 }
 

@@ -82,11 +82,13 @@ pub async fn search_with_json(
 async fn search_internal(
     query: &str,
     detailed: bool,
-    _interactive: bool,
+    interactive: bool,
     json: bool,
     no_aur: bool,
     limit: usize,
 ) -> Result<()> {
+    reject_unimplemented_interactive_search(interactive)?;
+
     let start_time = Instant::now();
 
     validate_search_query(query)?;
@@ -232,6 +234,15 @@ pub fn search_sync_cli(
     search_sync_cli_with_limit(query, detailed, interactive, no_aur, 50)
 }
 
+fn reject_unimplemented_interactive_search(interactive: bool) -> Result<()> {
+    if interactive {
+        anyhow::bail!(
+            "Interactive search is not implemented. Omit --interactive to print results, then install with `omg install <name>`."
+        );
+    }
+    Ok(())
+}
+
 pub fn search_sync_cli_with_limit(
     query: &str,
     detailed: bool,
@@ -239,6 +250,8 @@ pub fn search_sync_cli_with_limit(
     no_aur: bool,
     limit: usize,
 ) -> Result<bool> {
+    reject_unimplemented_interactive_search(interactive)?;
+
     if !crate::cli::packages::common::is_valid_search_query(query) {
         return Ok(false);
     }
@@ -508,5 +521,16 @@ mod tests {
         assert!(!search_sync_cli("../passwd", false, false, true).unwrap());
 
         assert!(!search_sync_cli("test;ls", false, false, true).unwrap());
+    }
+
+    #[test]
+    fn interactive_search_is_an_error() {
+        let err = reject_unimplemented_interactive_search(true)
+            .expect_err("advertised interactive search must not silently no-op");
+        assert!(
+            err.to_string().contains("not implemented"),
+            "interactive search must fail closed, got: {err}"
+        );
+        assert!(reject_unimplemented_interactive_search(false).is_ok());
     }
 }

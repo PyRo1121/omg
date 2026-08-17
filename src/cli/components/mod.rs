@@ -235,93 +235,63 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_step_indicator() {
-        let cmd: Cmd<()> = Components::step(1, 3, "Processing");
-        assert!(matches!(cmd, Cmd::Batch(_)));
-    }
-
-    #[test]
-    fn test_package_list() {
+    fn package_list_numbers_names_and_descriptions() {
         let cmd: Cmd<()> =
             Components::package_list("Results", vec![("pkg1", Some("desc")), ("pkg2", None)]);
-        assert!(matches!(cmd, Cmd::Card(_, _)));
+        match cmd {
+            Cmd::Card(title, content) => {
+                assert_eq!(title, "Results");
+                assert_eq!(
+                    content,
+                    vec!["1. pkg1 - desc".to_string(), "2. pkg2".to_string()]
+                );
+            }
+            other => panic!("expected card, got {other:?}"),
+        }
     }
 
     #[test]
-    fn test_update_summary() {
+    fn update_summary_shows_version_arrows() {
         let cmd: Cmd<()> = Components::update_summary(vec![("pkg", "1.0", "2.0")]);
-        assert!(matches!(cmd, Cmd::Card(_, _)));
+        match cmd {
+            Cmd::Card(title, content) => {
+                assert_eq!(title, "Updates Available");
+                assert_eq!(content, vec!["pkg 1.0 → 2.0".to_string()]);
+            }
+            other => panic!("expected card, got {other:?}"),
+        }
     }
 
     #[test]
-    fn test_kv_list_with_title() {
+    fn kv_list_with_title_is_a_card() {
         let cmd: Cmd<()> = Components::kv_list(Some("Info"), vec![("k", "v")]);
-        assert!(matches!(cmd, Cmd::Card(_, _)));
+        match cmd {
+            Cmd::Card(title, content) => {
+                assert_eq!(title, "Info");
+                assert_eq!(content, vec!["k: v".to_string()]);
+            }
+            other => panic!("expected card, got {other:?}"),
+        }
     }
 
     #[test]
-    fn test_kv_list_without_title() {
-        let cmd: Cmd<()> = Components::kv_list::<()>(None::<&str>, vec![("k", "v")]);
-        assert!(matches!(cmd, Cmd::Batch(_)));
-    }
-
-    #[test]
-    fn test_status_summary() {
-        let cmd: Cmd<()> = Components::status_summary(vec![("Status", "OK")]);
-        assert!(matches!(cmd, Cmd::Card(_, _)));
-    }
-
-    #[test]
-    fn test_loading() {
-        let cmd: Cmd<()> = Components::loading("Processing");
-        assert!(matches!(cmd, Cmd::Batch(_)));
-    }
-
-    #[test]
-    fn test_no_results() {
-        let cmd: Cmd<()> = Components::no_results("test");
-        assert!(matches!(cmd, Cmd::Batch(_)));
-    }
-
-    #[test]
-    fn test_up_to_date() {
-        let cmd: Cmd<()> = Components::up_to_date();
-        assert!(matches!(cmd, Cmd::Batch(_)));
-    }
-
-    #[test]
-    fn test_permission_error() {
+    fn permission_error_mentions_the_command() {
         let cmd: Cmd<()> = Components::permission_error("omg update");
-        assert!(matches!(cmd, Cmd::Batch(_)));
-    }
-
-    #[test]
-    fn test_confirm() {
-        let cmd: Cmd<()> = Components::confirm("Are you sure?", "Enter");
-        assert!(matches!(cmd, Cmd::Batch(_)));
-    }
-
-    #[test]
-    fn test_complete() {
-        let cmd: Cmd<()> = Components::complete("Done");
-        assert!(matches!(cmd, Cmd::Batch(_)));
-    }
-
-    #[test]
-    fn test_error_with_suggestion() {
-        let cmd: Cmd<()> = Components::error_with_suggestion("Error", "Fix it");
-        assert!(matches!(cmd, Cmd::Batch(_)));
-    }
-
-    #[test]
-    fn test_welcome() {
-        let cmd: Cmd<()> = Components::welcome("cmd", "desc");
-        assert!(matches!(cmd, Cmd::Batch(_)));
-    }
-
-    #[test]
-    fn test_section() {
-        let cmd: Cmd<()> = Components::section("Section");
-        assert!(matches!(cmd, Cmd::Batch(_)));
+        let Cmd::Batch(parts) = cmd else {
+            panic!("expected batch");
+        };
+        assert!(
+            parts
+                .iter()
+                .any(|part| matches!(part, Cmd::Error(msg) if msg == "Permission denied")),
+            "must print permission denied"
+        );
+        assert!(
+            parts.iter().any(|part| matches!(
+                part,
+                Cmd::StyledText(cfg) if cfg.text.contains("sudo omg update")
+            )),
+            "must suggest sudo for the original command"
+        );
     }
 }

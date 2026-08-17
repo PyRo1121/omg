@@ -198,6 +198,9 @@ pub async fn info_with_json(package: &str, json: bool) -> Result<()> {
     }
 
     if let Err(e) = run_info_elm(package.to_string()) {
+        if e.kind() == std::io::ErrorKind::Other {
+            return Err(e.into());
+        }
         tracing::warn!("Elm UI failed, falling back to basic mode: {}", e);
         info_fallback(package).await
     } else {

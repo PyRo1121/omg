@@ -190,7 +190,8 @@ fn has_help_flag(args: &[String]) -> bool {
 }
 
 fn has_all_flag(args: &[String]) -> bool {
-    args.iter().any(|a| a == "--all")
+    args.iter()
+        .any(|a| matches!(a.as_str(), "--all" | "--all-commands"))
 }
 
 /// Ultra-fast path for explicit --count (bypasses tokio entirely)

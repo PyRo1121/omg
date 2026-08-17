@@ -23,7 +23,6 @@ pub mod fleet;
 pub mod git_hooks;
 pub mod help;
 pub mod init;
-pub mod json_output;
 #[cfg(feature = "license")]
 pub mod license;
 pub mod man;
@@ -40,7 +39,6 @@ pub mod self_update;
 pub mod size;
 pub mod snapshot;
 pub mod style;
-pub mod tables;
 pub mod tea;
 pub mod team;
 pub mod telemetry;

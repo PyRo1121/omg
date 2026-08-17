@@ -325,19 +325,11 @@ impl SlsaVerifier {
         Ok(actual_hash == expected_hash)
     }
 
-    /// Determine SLSA level for a package based on available attestations
-    pub fn determine_slsa_level(&self, package_name: &str, is_official: bool) -> SlsaLevel {
-        // Core system packages from official repos have SLSA Level 2+
-        // (Arch Linux build system provides signed packages with reproducible builds)
-        if is_official {
-            let core_packages = ["glibc", "linux", "pacman", "systemd", "openssl", "bash"];
-            if core_packages.contains(&package_name) {
-                return SlsaLevel::Level3;
-            }
-            return SlsaLevel::Level2;
-        }
-
-        // AUR packages have no SLSA guarantees by default
+    /// Determine SLSA level from verified provenance only.
+    ///
+    /// A package name and repository flag are not attestations. Without
+    /// in-toto/Rekor evidence this returns [`SlsaLevel::None`].
+    pub const fn determine_slsa_level(&self, _package_name: &str, _is_official: bool) -> SlsaLevel {
         SlsaLevel::None
     }
 }
@@ -421,44 +413,27 @@ mod tests {
     }
 
     #[test]
-    fn test_determine_slsa_level_core_packages() {
+    fn test_determine_slsa_level_requires_provenance() {
         let verifier = SlsaVerifier::default();
 
-        // Core packages should be Level 3
         assert_eq!(
             verifier.determine_slsa_level("glibc", true),
-            SlsaLevel::Level3
+            SlsaLevel::None,
+            "core package names are not SLSA attestations"
         );
         assert_eq!(
             verifier.determine_slsa_level("linux", true),
-            SlsaLevel::Level3
+            SlsaLevel::None
         );
         assert_eq!(
             verifier.determine_slsa_level("systemd", true),
-            SlsaLevel::Level3
+            SlsaLevel::None
         );
-    }
-
-    #[test]
-    fn test_determine_slsa_level_official_packages() {
-        let verifier = SlsaVerifier::default();
-
-        // Regular official packages should be Level 2
-        assert_eq!(
-            verifier.determine_slsa_level("vim", true),
-            SlsaLevel::Level2
-        );
+        assert_eq!(verifier.determine_slsa_level("vim", true), SlsaLevel::None);
         assert_eq!(
             verifier.determine_slsa_level("firefox", true),
-            SlsaLevel::Level2
+            SlsaLevel::None
         );
-    }
-
-    #[test]
-    fn test_determine_slsa_level_aur_packages() {
-        let verifier = SlsaVerifier::default();
-
-        // AUR packages have no SLSA guarantees
         assert_eq!(verifier.determine_slsa_level("yay", false), SlsaLevel::None);
         assert_eq!(
             verifier.determine_slsa_level("spotify", false),

@@ -217,6 +217,17 @@ pub fn verify_package_hash(
     Ok(())
 }
 
+/// Rejects a `.deb` unless a SHA256 digest is present and matches the file bytes.
+pub fn require_verified_deb(path: &Path, package_name: &str, sha256: Option<&str>) -> Result<()> {
+    let expected = sha256.ok_or_else(|| {
+        anyhow::anyhow!(
+            "Package verification failed for {package_name}: missing SHA256\n\
+             Refusing to install an unverified package."
+        )
+    })?;
+    verify_package_hash(path, expected, package_name)
+}
+
 /// Estimate time remaining for download based on current progress
 ///
 /// Returns a human-readable estimate (e.g., "2m 30s", "45s", "< 5s")
@@ -315,5 +326,42 @@ mod tests {
         // Test minute formatting: 10 bytes in 1 second = 10 bytes/sec
         // Remaining: 990 bytes = 99 seconds = 1m 39s
         assert_eq!(estimate_time_remaining(10, 1000, 1.0), "1m 39s");
+    }
+
+    #[test]
+    fn missing_sha256_rejects_the_package() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("pkg.deb");
+        std::fs::write(&path, b"hello").expect("write deb");
+        let err = require_verified_deb(&path, "demo", None).expect_err("missing hash");
+        assert!(
+            err.to_string().contains("SHA256"),
+            "missing hash must be an explicit verification error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn matching_sha256_accepts_the_package() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("pkg.deb");
+        std::fs::write(&path, b"hello").expect("write deb");
+        require_verified_deb(
+            &path,
+            "demo",
+            Some("2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"),
+        )
+        .expect("matching hash");
+    }
+
+    #[test]
+    fn mismatched_sha256_rejects_the_package() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("pkg.deb");
+        std::fs::write(&path, b"hello").expect("write deb");
+        let err = require_verified_deb(&path, "demo", Some("deadbeef")).expect_err("mismatch");
+        assert!(
+            err.to_string().contains("hash mismatch"),
+            "tampered package must fail verification, got: {err}"
+        );
     }
 }

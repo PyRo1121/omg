@@ -633,24 +633,29 @@ enum LicenseCategory {
 
 impl LicenseCategory {
     fn from_license(license: &str) -> Self {
-        let l = license.to_lowercase();
-        if l.contains("mit")
-            || l.contains("bsd")
-            || l.contains("apache")
-            || l.contains("isc")
-            || l.contains("unlicense")
-            || l.contains("cc0")
-        {
-            Self::Permissive
-        } else if l.contains("agpl") {
-            Self::StrongCopyleft
-        } else if l.contains("gpl") || l.contains("lgpl") || l.contains("mpl") {
-            Self::Copyleft
-        } else if l.contains("proprietary") || l.contains("commercial") {
-            Self::Proprietary
-        } else {
-            Self::Unknown
+        let tokens = crate::core::security::policy::spdx_license_tokens(license);
+        let mut category = Self::Unknown;
+        for token in &tokens {
+            if token.contains("agpl") {
+                return Self::StrongCopyleft;
+            }
+            if token.contains("gpl") || token.contains("lgpl") || token.contains("mpl") {
+                category = Self::Copyleft;
+                continue;
+            }
+            if token_is_permissive(token) {
+                if category == Self::Unknown {
+                    category = Self::Permissive;
+                }
+                continue;
+            }
+            if (token.contains("proprietary") || token.contains("commercial"))
+                && category == Self::Unknown
+            {
+                category = Self::Proprietary;
+            }
         }
+        category
     }
 
     fn color(&self) -> String {
@@ -662,6 +667,14 @@ impl LicenseCategory {
             Self::Unknown => style::dim("Unknown"),
         }
     }
+}
+
+fn token_is_permissive(token: &str) -> bool {
+    matches!(
+        token,
+        "mit" | "isc" | "unlicense" | "cc0" | "cc0-1.0" | "0bsd" | "bsd" | "apache"
+    ) || token.starts_with("bsd-")
+        || token.starts_with("apache-")
 }
 
 /// Scan for software license compliance
@@ -696,8 +709,14 @@ pub fn scan_licenses(
             if filter_terms.is_empty() {
                 true
             } else {
-                let lic_lower = license.to_lowercase();
-                filter_terms.iter().any(|f| lic_lower.contains(f))
+                let tokens = crate::core::security::policy::spdx_license_tokens(license);
+                filter_terms.iter().any(|term| {
+                    tokens.iter().any(|token| {
+                        token == term
+                            || token.strip_suffix('+') == Some(term.as_str())
+                            || token.starts_with(&format!("{term}-"))
+                    })
+                })
             }
         })
         .collect();
@@ -746,10 +765,10 @@ pub fn scan_licenses(
         for (name, license, _) in &filtered_packages {
             // Check against allowed licenses (if policy specifies them)
             if !policy.allowed_licenses.is_empty()
-                && policy
-                    .allowed_licenses
-                    .iter()
-                    .all(|al| !license.to_lowercase().contains(&al.to_lowercase()))
+                && !crate::core::security::policy::license_matches_allowlist(
+                    license,
+                    &policy.allowed_licenses,
+                )
             {
                 violations.push((
                     name.clone(),
@@ -1262,4 +1281,33 @@ pub fn check_eol(_ctx: &CliContext) -> Result<()> {
     println!("\n{} Data source: endoflife.date", style::dim("ℹ"));
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn limited_is_not_classified_as_mit() {
+        assert_eq!(
+            LicenseCategory::from_license("LIMITED"),
+            LicenseCategory::Unknown
+        );
+        assert_eq!(
+            LicenseCategory::from_license("MIT"),
+            LicenseCategory::Permissive
+        );
+        assert_eq!(
+            LicenseCategory::from_license("MIT OR Apache-2.0"),
+            LicenseCategory::Permissive
+        );
+        assert_eq!(
+            LicenseCategory::from_license("AGPL-3.0"),
+            LicenseCategory::StrongCopyleft
+        );
+        assert_eq!(
+            LicenseCategory::from_license("GPL-2.0"),
+            LicenseCategory::Copyleft
+        );
+    }
 }

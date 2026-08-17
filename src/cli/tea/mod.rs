@@ -102,9 +102,7 @@ pub use status_model::{StatusData, StatusModel, StatusMsg};
 pub use update_model::{UpdateModel, UpdateMsg, UpdatePackage, UpdateState, UpdateType};
 
 // Re-export wrappers for easy integration
-pub use wrappers::{
-    run_info_elm, run_install_elm, run_remove_elm, run_search_elm, run_status_elm, run_update_elm,
-};
+pub use wrappers::{run_info_elm, run_status_elm};
 
 use std::fmt;
 use std::io;
@@ -251,6 +249,7 @@ impl<M: Model> Program<M> {
             }
             Cmd::Error(msg) => {
                 self.renderer.error(&msg)?;
+                return Err(io::Error::other(msg));
             }
             Cmd::Header(title, body) => {
                 self.renderer.header(&title, &body)?;
@@ -408,5 +407,35 @@ mod tests {
     fn test_view() {
         let model = CounterModel { count: 42 };
         assert_eq!(model.view(), "Current count: 42");
+    }
+
+    struct ErrorModel;
+
+    impl Model for ErrorModel {
+        type Msg = ();
+
+        fn init(&self) -> Cmd<Self::Msg> {
+            Cmd::error("package not found")
+        }
+
+        fn update(&mut self, (): Self::Msg) -> Cmd<Self::Msg> {
+            Cmd::none()
+        }
+
+        fn view(&self) -> String {
+            String::new()
+        }
+    }
+
+    #[test]
+    fn program_run_returns_err_on_cmd_error() {
+        let err = Program::new(ErrorModel)
+            .run()
+            .expect_err("Cmd::Error must fail the program so the CLI exits non-zero");
+        assert_eq!(err.kind(), std::io::ErrorKind::Other);
+        assert!(
+            err.to_string().contains("package not found"),
+            "original command error must be preserved, got: {err}"
+        );
     }
 }

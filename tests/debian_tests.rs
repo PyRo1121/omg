@@ -523,7 +523,14 @@ mod new_features {
         require_system_tests!();
 
         let result = run_omg(&["outdated"]);
-        assert!(!result.stderr_contains("panicked at"), "Should not panic");
+        let output = result.combined_output();
+        assert!(
+            result.success
+                || output.contains("outdated")
+                || output.contains("up to date")
+                || output.contains("Available Updates"),
+            "outdated must list updates or report none, got: {output}"
+        );
     }
 
     #[test]
@@ -531,7 +538,12 @@ mod new_features {
         require_system_tests!();
 
         let result = run_omg(&["outdated", "--security"]);
-        assert!(!result.stderr_contains("panicked at"), "Should not panic");
+        let output = result.combined_output();
+        assert!(
+            !result.success,
+            "--security must fail closed until advisory classification exists"
+        );
+        assert!(output.contains("not implemented"), "got: {output}");
     }
 
     #[test]

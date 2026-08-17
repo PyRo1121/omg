@@ -25,6 +25,7 @@ use tempfile::TempDir;
 
 use super::content_store::ContentStore;
 use super::resolver::ResolutionResult;
+use super::validation::require_verified_deb;
 
 /// Transaction state
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1371,6 +1372,7 @@ async fn download_package_with_retry(
         // Package already in store - use hard link (zero-copy)
         match content_store.hard_link(hash, &dest) {
             Ok(()) => {
+                require_verified_deb(&dest, name, Some(hash))?;
                 progress.set_message("cached ✓".green().to_string());
                 tracing::info!(
                     "Using cached .deb from content store: {name} (hash: {})",
@@ -1399,6 +1401,7 @@ async fn download_package_with_retry(
         match download_package_once(client, url, &dest, progress).await {
             Ok(()) => {
                 tracing::debug!("Successfully downloaded {} to {}", name, dest.display());
+                require_verified_deb(&dest, name, sha256)?;
 
                 // Store in content store for future deduplication
                 match content_store.store(&dest) {
@@ -1458,6 +1461,7 @@ async fn download_package_streaming(
     {
         match content_store.hard_link(hash, &dest) {
             Ok(()) => {
+                require_verified_deb(&dest, name, Some(hash))?;
                 progress.set_message("cached ✓".green().to_string());
                 tracing::info!(
                     "Using cached .deb from content store: {name} (hash: {})",
@@ -1478,7 +1482,7 @@ async fn download_package_streaming(
     match download_streaming_once(client, url, &dest, progress).await {
         Ok(()) => {
             tracing::debug!("Successfully downloaded {} to {}", name, dest.display());
-            // NOTE: Content store disabled for speed - packages cached by apt anyway
+            require_verified_deb(&dest, name, sha256)?;
             return Ok(dest);
         }
         Err(e) => {
@@ -1496,6 +1500,7 @@ async fn download_package_streaming(
         match download_streaming_once(client, url, &dest, progress).await {
             Ok(()) => {
                 tracing::debug!("Retry succeeded for {}", name);
+                require_verified_deb(&dest, name, sha256)?;
                 return Ok(dest);
             }
             Err(e) => {

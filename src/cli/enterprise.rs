@@ -268,7 +268,6 @@ pub fn license_scan(export: Option<&str>, _ctx: &CliContext) -> Result<()> {
 /// Enterprise policy management
 pub mod policy {
     use super::{CliContext, Result, license};
-    use crate::cli::components::Components;
     use crate::cli::packages::execute_cmd;
     use crate::cli::tea::Cmd;
 
@@ -289,17 +288,7 @@ pub mod policy {
 
         license::require_feature("enterprise-policy")?;
 
-        execute_cmd(Cmd::batch([
-            Components::loading("Setting policy rule..."),
-            Components::kv_list(
-                Some("Policy Rule Set"),
-                vec![("Scope", scope), ("Rule", rule)],
-            ),
-            Cmd::spacer(),
-            Cmd::info("This rule will be enforced on next sync"),
-        ]));
-
-        Ok(())
+        anyhow::bail!("Enterprise policy persistence is not implemented")
     }
 
     pub async fn show(scope: Option<&str>, _ctx: &CliContext) -> Result<()> {
@@ -374,12 +363,7 @@ pub mod policy {
 
         license::require_feature("enterprise-policy")?;
 
-        execute_cmd(Cmd::batch([
-            Components::loading("Setting policy inheritance..."),
-            Cmd::success(format!("{to} now inherits policies from {from}")),
-        ]));
-
-        Ok(())
+        anyhow::bail!("Enterprise policy inheritance is not implemented")
     }
 }
 
@@ -416,31 +400,7 @@ pub mod server {
 
         license::require_feature("self-hosted")?;
 
-        execute_cmd(Components::loading(
-            "Initializing self-hosted OMG server...",
-        ));
-
-        // Validate license and create directories
-        let config_details = vec![
-            ("License", &license_key[..8.min(license_key.len())]),
-            ("Storage", storage),
-            ("Domain", domain),
-        ];
-
-        execute_cmd(Cmd::batch([
-            Components::kv_list(Some("Server Configuration"), config_details),
-            Cmd::spacer(),
-            Cmd::success("Server initialized!"),
-            Cmd::spacer(),
-            Cmd::header("Next Steps", ""),
-            Cmd::println("  1. Start server: omgd --server"),
-            Cmd::println(format!(
-                "  2. Configure clients: omg config set registry.url https://{domain}"
-            )),
-            Cmd::println("  3. Sync packages: omg enterprise server mirror"),
-        ]));
-
-        Ok(())
+        anyhow::bail!("Self-hosted server initialization is not implemented")
     }
 
     pub async fn mirror(upstream: &str, _ctx: &CliContext) -> Result<()> {

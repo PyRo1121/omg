@@ -405,8 +405,11 @@ mod policy_enforcement {
         project.with_security_policy(policies::STRICT_POLICY);
 
         let result = project.run(&["audit", "policy"]);
-        // Should show policy is active
-        assert!(!result.stderr.contains("panic"));
+        let output = format!("{}{}", result.stdout, result.stderr);
+        assert!(
+            output.contains("AUR") || output.contains("Policy") || output.contains("Grade"),
+            "strict policy audit must show policy status, got: {output}"
+        );
     }
 
     #[test]
@@ -418,9 +421,12 @@ banned_packages = ["telnet", "ftp", "rsh"]
 "#,
         );
 
-        // Audit should flag banned packages if installed
         let result = project.run(&["audit", "policy"]);
-        assert!(!result.stderr.contains("panic"));
+        let output = format!("{}{}", result.stdout, result.stderr);
+        assert!(
+            output.contains("telnet") || output.contains("Banned") || output.contains("Policy"),
+            "banned package policy must be visible, got: {output}"
+        );
     }
 
     #[test]
@@ -433,7 +439,11 @@ allowed_licenses = ["MIT", "Apache-2.0", "BSD-3-Clause"]
         );
 
         let result = project.run(&["audit", "policy"]);
-        assert!(!result.stderr.contains("panic"));
+        let output = format!("{}{}", result.stdout, result.stderr);
+        assert!(
+            output.contains("MIT") || output.contains("Allowed") || output.contains("Policy"),
+            "license allowlist must be visible, got: {output}"
+        );
     }
 
     #[test]
@@ -446,7 +456,11 @@ require_pgp = true
         );
 
         let result = project.run(&["audit", "policy"]);
-        assert!(!result.stderr.contains("panic"));
+        let output = format!("{}{}", result.stdout, result.stderr);
+        assert!(
+            output.contains("PGP") || output.contains("require_pgp") || output.contains("Policy"),
+            "policy audit must show the loaded policy, got: {output}"
+        );
     }
 
     #[test]
@@ -455,7 +469,11 @@ require_pgp = true
         project.with_security_policy(policies::ENTERPRISE_POLICY);
 
         let result = project.run(&["audit", "policy"]);
-        assert!(!result.stderr.contains("panic"));
+        let output = format!("{}{}", result.stdout, result.stderr);
+        assert!(
+            output.contains("Policy") || output.contains("Grade") || output.contains("AUR"),
+            "enterprise policy audit must show policy status, got: {output}"
+        );
     }
 }
 

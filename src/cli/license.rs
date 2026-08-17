@@ -50,7 +50,12 @@ pub async fn activate(key: &str) -> Result<()> {
 
     println!("\n  Validating license...");
 
-    match license::activate_with_user(key, user_name_opt, user_email_opt).await {
+    report_activation(license::activate_with_user(key, user_name_opt, user_email_opt).await)
+}
+
+/// Prints activation outcome. Failed validation must be `Err` so the CLI exits non-zero.
+fn report_activation(result: Result<license::StoredLicense>) -> Result<()> {
+    match result {
         Ok(stored) => {
             let tier = stored.tier_enum();
             println!(
@@ -76,6 +81,7 @@ pub async fn activate(key: &str) -> Result<()> {
                     feature.display_name()
                 );
             }
+            Ok(())
         }
         Err(e) => {
             println!(
@@ -87,10 +93,9 @@ pub async fn activate(key: &str) -> Result<()> {
                 "\n  Get a license at: {}",
                 style::url("https://pyro1121.com/pricing")
             );
+            Err(e)
         }
     }
-
-    Ok(())
 }
 
 /// Show current license status
@@ -259,4 +264,26 @@ pub fn check_feature(feature_name: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn activation_failure_returns_err() {
+        let err = anyhow::anyhow!("Invalid license: revoked");
+        let result = report_activation(Err(err));
+        assert!(
+            result.is_err(),
+            "failed activation must be a CLI error so the process exits non-zero"
+        );
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Invalid license: revoked"),
+            "original activation error must be preserved"
+        );
+    }
 }

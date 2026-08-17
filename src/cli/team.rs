@@ -435,33 +435,12 @@ pub fn invite(email: Option<&str>, role: &str, _ctx: &CliContext) -> Result<()> 
 
     license::require_feature("team-sync")?;
 
-    execute_cmd(Components::loading("Generating invite link..."));
-
-    let invite_id = generate_invite_id();
-    let invite_url = format!("https://omg.dev/join/{invite_id}");
-
-    let mut details = vec![("Role", role)];
-    if let Some(e) = email {
-        details.push(("Email", e));
-    }
-
-    execute_cmd(Cmd::batch([
-        Cmd::success("Invite link generated"),
-        Components::kv_list(Some("Invite Details"), details),
-        Cmd::spacer(),
-        Cmd::card("Invite URL", vec![invite_url.clone()]),
-        Cmd::spacer(),
-        Cmd::info("Share this link with your teammate"),
-        Cmd::info(format!("They can join with: omg team join {invite_url}")),
-    ]));
-
-    Ok(())
+    anyhow::bail!("Team invite links are not implemented")
 }
 
 /// Manage team roles
 pub mod roles {
     use super::{CliContext, Result, license};
-    use crate::cli::components::Components;
     use crate::cli::packages::execute_cmd;
     use crate::cli::tea::Cmd;
 
@@ -498,23 +477,13 @@ pub mod roles {
 
         license::require_feature("team-sync")?;
 
-        execute_cmd(Cmd::batch([
-            Components::loading("Assigning role..."),
-            Cmd::success(format!("{member} is now a {role}")),
-        ]));
-
-        Ok(())
+        anyhow::bail!("Team role assignment is not implemented")
     }
 
-    pub fn remove(member: &str, _ctx: &CliContext) -> Result<()> {
+    pub fn remove(_member: &str, _ctx: &CliContext) -> Result<()> {
         license::require_feature("team-sync")?;
 
-        execute_cmd(Cmd::batch([
-            Components::loading("Removing role..."),
-            Cmd::success(format!("Removed role from {member}")),
-        ]));
-
-        Ok(())
+        anyhow::bail!("Team role removal is not implemented")
     }
 }
 
@@ -903,15 +872,6 @@ pub mod team_notify {
     use crate::cli::components::Components;
     use crate::cli::packages::execute_cmd;
     use crate::cli::tea::Cmd;
-    use serde::{Deserialize, Serialize};
-
-    #[derive(Debug, Serialize, Deserialize)]
-    pub struct Notification {
-        pub id: String,
-        pub notify_type: String,
-        pub url: String,
-        pub created_at: i64,
-    }
 
     pub fn add(notify_type: &str, url: &str, _ctx: &CliContext) -> Result<()> {
         // SECURITY: Validate type and URL
@@ -932,71 +892,24 @@ pub mod team_notify {
 
         license::require_feature("team-sync")?;
 
-        let id = format!("notify-{}", &url.chars().rev().take(6).collect::<String>());
-
-        execute_cmd(Cmd::batch([
-            Components::loading("Adding notification..."),
-            Components::kv_list(
-                Some("Notification Added"),
-                vec![
-                    ("ID", id.clone()),
-                    ("Type", notify_type.to_string()),
-                    ("URL", url.to_string()),
-                ],
-            ),
-            Cmd::spacer(),
-            Cmd::info(format!("Test it with: omg team notify test {id}")),
-        ]));
-
-        Ok(())
+        anyhow::bail!("Team notification webhooks are not implemented")
     }
 
     pub fn list(_ctx: &CliContext) -> Result<()> {
         license::require_feature("team-sync")?;
 
-        execute_cmd(Cmd::batch([
-            Cmd::header("Configured Notifications", "Webhooks and integrations"),
-            Cmd::spacer(),
-            Cmd::card(
-                "Active Notifications",
-                vec![
-                    "notify-abc123 - slack - https://hooks.slack.com/...".to_string(),
-                    "notify-xyz789 - discord - https://discord.com/api/...".to_string(),
-                ],
-            ),
-        ]));
-
-        Ok(())
+        anyhow::bail!("Team notification webhooks are not implemented")
     }
 
-    pub fn remove(id: &str, _ctx: &CliContext) -> Result<()> {
+    pub fn remove(_id: &str, _ctx: &CliContext) -> Result<()> {
         license::require_feature("team-sync")?;
 
-        execute_cmd(Cmd::batch([
-            Components::loading("Removing notification..."),
-            Cmd::success(format!("Removed '{id}'")),
-        ]));
-
-        Ok(())
+        anyhow::bail!("Team notification webhooks are not implemented")
     }
 
-    pub fn test(id: &str, _ctx: &CliContext) -> Result<()> {
+    pub fn test(_id: &str, _ctx: &CliContext) -> Result<()> {
         license::require_feature("team-sync")?;
 
-        execute_cmd(Cmd::batch([
-            Components::loading(format!("Testing notification '{id}'...")),
-            Cmd::success("Test message sent!"),
-        ]));
-
-        Ok(())
+        anyhow::bail!("Team notification webhooks are not implemented")
     }
-}
-
-fn generate_invite_id() -> String {
-    use std::time::{Duration, SystemTime, UNIX_EPOCH};
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or(Duration::ZERO)
-        .subsec_nanos();
-    format!("{nanos:x}")
 }

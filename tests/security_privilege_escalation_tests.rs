@@ -633,35 +633,28 @@ mod sbom_audit {
     fn test_slsa_core_package_levels() {
         let verifier = SlsaVerifier::new().unwrap();
 
-        // Core packages should be Level 3
         assert_eq!(
             verifier.determine_slsa_level("glibc", true),
-            SlsaLevel::Level3
+            SlsaLevel::None,
+            "package names are not SLSA attestations"
         );
         assert_eq!(
             verifier.determine_slsa_level("linux", true),
-            SlsaLevel::Level3
+            SlsaLevel::None
         );
         assert_eq!(
             verifier.determine_slsa_level("pacman", true),
-            SlsaLevel::Level3
+            SlsaLevel::None
         );
         assert_eq!(
             verifier.determine_slsa_level("systemd", true),
-            SlsaLevel::Level3
+            SlsaLevel::None
         );
-
-        // Regular official packages should be Level 2
-        assert_eq!(
-            verifier.determine_slsa_level("vim", true),
-            SlsaLevel::Level2
-        );
+        assert_eq!(verifier.determine_slsa_level("vim", true), SlsaLevel::None);
         assert_eq!(
             verifier.determine_slsa_level("firefox", true),
-            SlsaLevel::Level2
+            SlsaLevel::None
         );
-
-        // AUR packages should be None
         assert_eq!(verifier.determine_slsa_level("yay", false), SlsaLevel::None);
     }
 }
@@ -987,7 +980,11 @@ mod integration {
         // 3. Verify SLSA level
         let verifier = SlsaVerifier::new().unwrap();
         let level = verifier.determine_slsa_level(pkg_name, true);
-        assert_eq!(level, SlsaLevel::Level2);
+        assert_eq!(
+            level,
+            SlsaLevel::None,
+            "SLSA level requires provenance, not a package name"
+        );
 
         // 4. Verify operation is in whitelist (would elevate if needed)
         // Skip actual elevation in tests as it requires sudo
