@@ -73,7 +73,7 @@ pub async fn reports(report_type: &str, format: &str, _ctx: &CliContext) -> Resu
         "Generating {report_type} report..."
     )));
 
-    let report = generate_report(report_type).await;
+    let report = generate_report(report_type).await?;
     let filename = format!(
         "omg-report-{}-{}.{}",
         report_type,
@@ -518,12 +518,12 @@ struct ReportSummary {
     cost_savings_estimate: String,
 }
 
-async fn generate_report(report_type: &str) -> Report {
-    let machine_count = if let Ok(members) = license::fetch_team_members().await {
-        members.len()
-    } else {
-        0
-    };
+async fn generate_report(report_type: &str) -> Result<Report> {
+    // A failed team lookup must not become a fabricated zero-machine report.
+    let members = license::fetch_team_members()
+        .await
+        .context("Failed to fetch team members for enterprise report")?;
+    let machine_count = members.len();
 
     let metrics = crate::core::metrics::GLOBAL_METRICS.snapshot();
 
@@ -533,7 +533,7 @@ async fn generate_report(report_type: &str) -> Report {
         (metrics.validation_failures as f32).mul_add(0.5, metrics.rate_limit_hits as f32 * 0.1);
     let compliance_score = (base_score - penalty).max(0.0);
 
-    Report {
+    Ok(Report {
         generated_at: jiff::Timestamp::now().as_second(),
         kind: report_type.to_string(),
         summary: ReportSummary {
@@ -542,7 +542,7 @@ async fn generate_report(report_type: &str) -> Report {
             vulnerabilities_fixed: metrics.security_audit_requests as usize, // Use as proxy for now
             cost_savings_estimate: format!("${}", machine_count * 120), // Estimate $120 saved per machine
         },
-    }
+    })
 }
 
 fn generate_access_control_csv() -> String {
