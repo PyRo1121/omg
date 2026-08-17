@@ -12,14 +12,12 @@ use anyhow::Result;
 use crate::daemon::db::PersistentCache;
 use crate::daemon::protocol::{DetailedPackageInfo, PackageInfo};
 
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct PackageBloomFilter {
     bits: Vec<u64>,
     num_bits: usize,
 }
 
-#[allow(dead_code)]
 impl PackageBloomFilter {
     fn new(expected_items: usize) -> Self {
         let num_bits = (expected_items * 8).max(4096);
@@ -67,14 +65,12 @@ impl PackageBloomFilter {
 /// Each unique string is stored once as an `Arc<str>`. The returned handle
 /// is an index into a flat vec, giving O(1) lookup with zero allocation
 /// on retrieval (just an Arc clone = pointer copy + refcount bump).
-#[allow(dead_code)]
 #[derive(Default)]
 struct StringPool {
     strings: Vec<Arc<str>>,
     dedup: AHashMap<Arc<str>, u32>,
 }
 
-#[allow(dead_code)]
 impl StringPool {
     fn intern(&mut self, s: &str) -> u32 {
         if let Some(&handle) = self.dedup.get(s) {
@@ -103,12 +99,10 @@ impl StringPool {
 /// At build time, extracts all trigrams from each lowercased package name.
 /// At search time, intersects the posting lists of query trigrams to produce
 /// a small candidate set, turning O(n) linear scan into O(k) where k << n.
-#[allow(dead_code)]
 struct TrigramIndex {
     postings: AHashMap<[u8; 3], Vec<u32>>,
 }
 
-#[allow(dead_code)]
 impl TrigramIndex {
     fn new(capacity: usize) -> Self {
         Self {
