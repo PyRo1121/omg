@@ -503,11 +503,35 @@ impl RustManager {
 
     fn read_metadata(toolchain_dir: &Path) -> Result<RustToolchainMetadata> {
         let path = toolchain_dir.join(RUST_METADATA_FILE);
-        if !path.exists() {
-            return Ok(RustToolchainMetadata::default());
+        match fs::symlink_metadata(&path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(RustToolchainMetadata::default());
+            }
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "Failed to inspect Rust toolchain metadata: {}",
+                        path.display()
+                    )
+                });
+            }
+            Ok(metadata) if !metadata.is_file() => {
+                anyhow::bail!(
+                    "Rust toolchain metadata is not a regular file: {}",
+                    path.display()
+                );
+            }
+            Ok(_) => {}
         }
-        let content = fs::read_to_string(path)?;
-        toml::from_str(&content).map_err(Into::into)
+        let content = fs::read_to_string(&path).with_context(|| {
+            format!("Failed to read Rust toolchain metadata: {}", path.display())
+        })?;
+        toml::from_str(&content).with_context(|| {
+            format!(
+                "Failed to parse Rust toolchain metadata: {}",
+                path.display()
+            )
+        })
     }
 
     fn write_metadata(toolchain_dir: &Path, metadata: &RustToolchainMetadata) -> Result<()> {

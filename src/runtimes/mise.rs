@@ -336,7 +336,10 @@ impl MiseManager {
             .context("Failed to run mise ls")?;
 
         if !output.status.success() {
-            return Ok(Vec::new());
+            anyhow::bail!(
+                "mise ls failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -394,7 +397,7 @@ impl MiseManager {
         // mise installs to ~/.local/share/mise/installs/<runtime>/<version>/bin
         let mise_data = dirs::data_dir()?.join("mise").join("installs");
         let bin_path = mise_data.join(runtime).join(version).join("bin");
-        bin_path.exists().then_some(bin_path)
+        super::common::is_valid_version_dir(&bin_path).then_some(bin_path)
     }
 }
 
