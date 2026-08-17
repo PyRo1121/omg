@@ -276,8 +276,14 @@ fn handle_missing_package(
     yes: bool,
 ) -> BoxFuture<'static, Result<()>> {
     Box::pin(async move {
-        if let Ok(aur_pkg) = try_aur_package(&pkg_name).await {
-            return handle_aur_package(&pkg_name, aur_pkg, yes).await;
+        match try_aur_package(&pkg_name).await {
+            Ok(aur_pkg) => return handle_aur_package(&pkg_name, aur_pkg, yes).await,
+            Err(error) if is_aur_not_found(&error) => {}
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("Failed to look up {pkg_name} on the AUR after official lookup missed")
+                });
+            }
         }
 
         let suggestions = try_get_suggestions(&pkg_name).await;
@@ -329,6 +335,10 @@ async fn try_get_suggestions(query: &str) -> Vec<String> {
         return suggestions;
     }
     Vec::new()
+}
+
+fn is_aur_not_found(error: &anyhow::Error) -> bool {
+    error.to_string().contains("Package not found in AUR")
 }
 
 async fn try_aur_package(pkg_name: &str) -> Result<crate::core::Package> {
