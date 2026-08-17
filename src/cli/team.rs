@@ -6,7 +6,10 @@ use crate::cli::{
     CliContext, GoldenPathCommands, LocalCommandRunner, NotifyCommands, TeamCommands,
     TeamRoleCommands,
 };
-use anyhow::{Context, Result};
+use anyhow::Result;
+
+#[cfg(feature = "arch")]
+use anyhow::Context;
 
 use crate::core::env::team::TeamWorkspace;
 use crate::core::license;
