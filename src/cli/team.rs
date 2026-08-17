@@ -8,7 +8,7 @@ use crate::cli::{
 };
 use anyhow::Result;
 
-#[cfg(any(feature = "arch", feature = "debian"))]
+#[cfg(feature = "arch")]
 use anyhow::Context;
 
 use crate::core::env::team::TeamWorkspace;
