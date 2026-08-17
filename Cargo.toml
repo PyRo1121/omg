@@ -78,7 +78,7 @@ httpdate = "1.0.3"
 # libgit2-sys (links = "git2") may be linked. GHSA-j39j-6gw9-jw6h is low
 # severity and constrained by libscoop; re-evaluate when libscoop releases a
 # git2 0.20-compatible version.
-git2 = "0.19"
+git2 = "0.20"
 
 # Filesystem
 tokio-util = { version = "0.7.18", features = ["io", "codec", "rt"] }
