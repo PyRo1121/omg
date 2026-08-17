@@ -26,6 +26,16 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Fail closed on security and package evidence
+
+Propagate OSV and Arch security-feed failures instead of treating
+
+unavailable evidence as a clean result. Inject the vulnerability source
+
+into PackageService so tests remain hermetic, and stop official/AUR
+
+lookup errors from being mistaken for missing packages.
+
 - Fail closed on managed tool storage errors
 
 Use the shared OMG data directory, reject invalid managed paths, and
