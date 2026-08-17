@@ -346,7 +346,19 @@ impl AurClient {
             .await
             .context("Failed to parse AUR response")?;
 
-        Ok(response.results.into_iter().next().map(|p| Package {
+        let Some(p) = response.results.into_iter().next() else {
+            return Ok(None);
+        };
+        crate::core::security::validate_package_name(&p.name)
+            .context("AUR returned an invalid package name")?;
+        if p.name != package {
+            anyhow::bail!(
+                "AUR returned unexpected package '{0}' for '{package}'",
+                p.name
+            );
+        }
+
+        Ok(Some(Package {
             name: p.name,
             version: crate::package_managers::parse_version_or_zero(&p.version),
             description: p.description.unwrap_or_default(),
@@ -378,9 +390,8 @@ impl AurClient {
         // Try fast binary index first
         let index_path = Self::metadata_index_path();
         let mut results = HashMap::with_capacity(packages.len());
-        let mut remaining = Vec::new();
 
-        if index_path.exists() {
+        let remaining = if index_path.exists() {
             let packages_owned: Vec<String> = packages.to_vec();
             let index_result = tokio::task::spawn_blocking(
                 move || -> Result<(HashMap<String, Package>, Vec<String>)> {
@@ -415,13 +426,13 @@ impl AurClient {
             )
             .await?;
 
-            if let Ok((found, not_found)) = index_result {
-                results = found;
-                remaining = not_found;
-            }
+            let (found, not_found) =
+                index_result.context("Failed to read the AUR metadata index")?;
+            results = found;
+            not_found
         } else {
-            remaining = packages.to_vec();
-        }
+            packages.to_vec()
+        };
 
         // If all packages found in index, return early
         if remaining.is_empty() {
