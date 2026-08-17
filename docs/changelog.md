@@ -905,6 +905,14 @@ dependency-type: indirect
 chore(deps): update rust crate git2 to 0.20 [security]
 ### 🔧 Maintenance
 
+- Drop unused dev-dependencies and stale machete ignore
+
+chrono, predicates, and rand were never referenced by any source or
+
+test. The cargo-machete ignore entry for ar was stale (ar is used by
+
+the Debian backend), so it was removed from the metadata.
+
 - **Deps**: Update rust crate git2 to 0.20 [security]
 - **Deps**: Update rust dependencies
 - Normalize project formatting
