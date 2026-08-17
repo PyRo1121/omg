@@ -26,7 +26,12 @@ pub fn native_runtime_bin_path(runtime: &str, version: &str) -> Option<PathBuf> 
         "ruby" => data_dir.join("versions/ruby").join(version).join("bin"),
         "java" => data_dir.join("versions/java").join(version).join("bin"),
         "bun" => data_dir.join("versions/bun").join(version),
-        "rust" => home::home_dir().unwrap_or_default().join(".cargo/bin"),
+        "rust" => {
+            let toolchain = crate::runtimes::rust::RustToolchainSpec::parse(version)
+                .ok()?
+                .name();
+            data_dir.join("versions/rust").join(toolchain).join("bin")
+        }
         _ => return None,
     };
 
@@ -146,6 +151,22 @@ mod tests {
         // The helper uses the process data dir, so this only documents the
         // local predicate used by PATH resolution.
         assert!(!crate::runtimes::common::is_valid_version_dir(&bin_path));
+    }
+
+    #[test]
+    fn rust_native_path_uses_omg_toolchain_layout() {
+        let parsed = crate::runtimes::rust::RustToolchainSpec::parse("stable")
+            .expect("stable toolchain spec");
+        let expected = crate::core::paths::data_dir()
+            .join("versions/rust")
+            .join(parsed.name())
+            .join("bin");
+        let resolved = native_runtime_bin_path("rust", "stable");
+        if crate::runtimes::common::is_valid_version_dir(&expected) {
+            assert_eq!(resolved.as_deref(), Some(expected.as_path()));
+        } else {
+            assert!(resolved.is_none());
+        }
     }
 
     #[test]

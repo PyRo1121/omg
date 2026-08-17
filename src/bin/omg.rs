@@ -384,18 +384,7 @@ fn try_fast_which(args: &[String]) -> bool {
             return false;
         }
 
-        if let Some(version) = runtimes::resolve_active_version(runtime) {
-            println!(
-                "{} {}",
-                omg_lib::cli::style::runtime(runtime),
-                omg_lib::cli::style::version(&version)
-            );
-        } else {
-            println!(
-                "{}: no version set (check .tool-versions, .nvmrc, etc.)",
-                omg_lib::cli::style::runtime(runtime)
-            );
-        }
+        handle_which_command(runtime);
         return true;
     }
     false
@@ -806,17 +795,26 @@ async fn handle_doctor_command(network: bool, eol: bool, turbo: bool) -> Result<
 }
 
 fn handle_which_command(runtime: &str) {
-    if let Some(version) = runtimes::resolve_active_version(runtime) {
-        println!(
-            "{} {}",
-            omg_lib::cli::style::runtime(runtime),
-            omg_lib::cli::style::version(&version)
-        );
-    } else {
-        println!(
-            "{}: no version set (check .tool-versions, .nvmrc, etc.)",
-            omg_lib::cli::style::runtime(runtime)
-        );
+    match runtimes::resolve_active_version(runtime) {
+        Ok(Some(version)) => {
+            println!(
+                "{} {}",
+                omg_lib::cli::style::runtime(runtime),
+                omg_lib::cli::style::version(&version)
+            );
+        }
+        Ok(None) => {
+            println!(
+                "{}: no version set (check .tool-versions, .nvmrc, etc.)",
+                omg_lib::cli::style::runtime(runtime)
+            );
+        }
+        Err(error) => {
+            eprintln!(
+                "{}: failed to resolve active version: {error}",
+                omg_lib::cli::style::runtime(runtime)
+            );
+        }
     }
 }
 

@@ -195,7 +195,13 @@ fn complete_runtime_names(
     engine: &crate::core::completion::CompletionEngine,
     current: &str,
 ) -> Vec<String> {
-    let runtimes = crate::cli::runtimes::known_runtimes();
+    let runtimes = crate::cli::runtimes::known_runtimes().unwrap_or_else(|error| {
+        tracing::debug!("Failed to list mise-installed runtimes for completion: {error}");
+        crate::runtimes::SUPPORTED_RUNTIMES
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect()
+    });
     engine.fuzzy_match(current, runtimes)
 }
 
@@ -281,6 +287,12 @@ fn complete_fallback(
 ) -> Result<Vec<String>> {
     // Check if completing runtime version (e.g., 'omg use node <TAB>')
     if crate::cli::runtimes::known_runtimes()
+        .unwrap_or_else(|_| {
+            crate::runtimes::SUPPORTED_RUNTIMES
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect()
+        })
         .iter()
         .any(|rt| rt == last)
     {

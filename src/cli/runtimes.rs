@@ -13,45 +13,52 @@ use crate::runtimes::{
 /// Global mise manager instance
 static MISE: LazyLock<MiseManager> = LazyLock::new(MiseManager::new);
 
-pub fn resolve_active_version(runtime: &str) -> Option<String> {
+pub fn resolve_active_version(runtime: &str) -> Result<Option<String>> {
     let versions = crate::hooks::get_active_versions();
-    versions.get(&runtime.to_lowercase()).cloned().or_else(|| {
-        if MISE.is_available() {
-            MISE.current_version(runtime).ok().flatten()
-        } else {
-            None
-        }
-    })
+    if let Some(version) = versions.get(&runtime.to_lowercase()) {
+        return Ok(Some(version.clone()));
+    }
+    if !MISE.is_available() {
+        return Ok(None);
+    }
+    MISE.current_version(runtime)
+        .with_context(|| format!("Failed to query mise current version for {runtime}"))
 }
 
-pub fn ensure_active_version(runtime: &str) -> Option<String> {
-    resolve_active_version(runtime).or_else(|| {
-        if !MISE.is_available() {
-            return None;
-        }
-        if matches!(MISE.install_runtime(runtime), Ok(true)) {
-            MISE.current_version(runtime).ok().flatten()
-        } else {
-            None
-        }
-    })
+pub fn ensure_active_version(runtime: &str) -> Result<Option<String>> {
+    if let Some(version) = resolve_active_version(runtime)? {
+        return Ok(Some(version));
+    }
+    if !MISE.is_available() {
+        return Ok(None);
+    }
+    if MISE
+        .install_runtime(runtime)
+        .with_context(|| format!("Failed to install {runtime} via mise"))?
+    {
+        return MISE
+            .current_version(runtime)
+            .with_context(|| format!("Failed to query mise current version for {runtime}"));
+    }
+    Ok(None)
 }
 
-pub fn known_runtimes() -> Vec<String> {
+pub fn known_runtimes() -> Result<Vec<String>> {
     let mut runtimes: Vec<String> = SUPPORTED_RUNTIMES
         .iter()
         .map(std::string::ToString::to_string)
         .collect();
 
-    if MISE.is_available()
-        && let Ok(extra) = MISE.list_installed()
-    {
-        runtimes.extend(extra);
+    if MISE.is_available() {
+        runtimes.extend(
+            MISE.list_installed()
+                .context("Failed to list mise-installed runtimes")?,
+        );
     }
 
     runtimes.sort();
     runtimes.dedup();
-    runtimes
+    Ok(runtimes)
 }
 
 trait RuntimeInstallUse {
