@@ -26,6 +26,9 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Scope Context import to arch builds and expect to empty-backend fallback
+- Scope unnecessary_wraps expectation to non-arch builds
+- Keep portable clippy clean across feature gates
 - Detect the shell from hook-env arguments correctly
 
 The fast hook-env path could match the program name as the shell, which
@@ -905,6 +908,7 @@ dependency-type: indirect
 chore(deps): update rust crate git2 to 0.20 [security]
 ### 🔧 Maintenance
 
+- **Deps**: Refresh serde ecosystem lockfile on current main
 - Drop unused dev-dependencies and stale machete ignore
 
 chrono, predicates, and rand were never referenced by any source or
