@@ -426,13 +426,13 @@ fn resolve_bun_bin_path(data_dir: &Path, version: &str) -> Option<PathBuf> {
 fn node_version_bin_path(versions_dir: &Path, version: &str) -> Option<PathBuf> {
     crate::core::security::validate_runtime_version(version).ok()?;
     let path = versions_dir.join(version).join("bin");
-    path.exists().then_some(path)
+    crate::runtimes::common::is_valid_version_dir(&path).then_some(path)
 }
 
 fn bun_version_bin_path(versions_dir: &Path, version: &str) -> Option<PathBuf> {
     crate::core::security::validate_runtime_version(version).ok()?;
     let path = versions_dir.join(version);
-    path.exists().then_some(path)
+    crate::runtimes::common::is_valid_version_dir(&path).then_some(path)
 }
 
 fn resolve_installed_version_req(versions_dir: &Path, req: &str) -> Option<String> {
@@ -442,11 +442,8 @@ fn resolve_installed_version_req(versions_dir: &Path, req: &str) -> Option<Strin
     let entries = fs::read_dir(versions_dir).ok()?;
     for entry in entries {
         let entry = entry.ok()?;
-        if !entry.file_type().ok()?.is_dir() {
-            continue;
-        }
         let name = entry.file_name().to_string_lossy().to_string();
-        if name == "current" {
+        if name == "current" || !crate::runtimes::common::is_valid_version_dir(&entry.path()) {
             continue;
         }
         let ver_str = name.trim_start_matches('v');
