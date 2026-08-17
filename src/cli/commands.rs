@@ -325,18 +325,8 @@ fn complete_runtime_versions(
         .ok_or_else(|| anyhow::anyhow!("Invalid database path"))?
         .to_path_buf();
     let runtime_dir = data_dir.join("versions").join(runtime);
-    let mut installed_versions = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(runtime_dir) {
-        for entry in entries.flatten() {
-            if let Ok(file_type) = entry.file_type()
-                && file_type.is_dir()
-                && let Some(name) = entry.file_name().to_str()
-                && name != "current"
-            {
-                installed_versions.push(name.to_string());
-            }
-        }
-    }
+    let installed_versions = crate::runtimes::common::list_installed_versions(&runtime_dir)
+        .with_context(|| format!("Failed to list installed {runtime} versions for completion"))?;
 
     let fuzzy_installed = engine.fuzzy_match(current, installed_versions);
     suggestions.extend(fuzzy_installed);

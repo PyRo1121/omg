@@ -292,7 +292,13 @@ impl MiseManager {
             .with_context(|| format!("Failed to run mise current {runtime}"))?;
 
         if !output.status.success() {
-            return Ok(None);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if stderr.to_ascii_lowercase().contains("not found")
+                || stderr.to_ascii_lowercase().contains("no version")
+            {
+                return Ok(None);
+            }
+            anyhow::bail!("mise current {runtime} failed: {}", stderr.trim());
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);

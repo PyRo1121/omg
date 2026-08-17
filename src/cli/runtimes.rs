@@ -367,7 +367,8 @@ pub async fn list_versions(runtime: Option<&str>, available: bool) -> Result<()>
             ("Java", java_res),
             ("Bun", bun_res),
         ] {
-            if let Ok(Some(v)) = res {
+            let version = res.with_context(|| format!("Failed to inspect {name} versions"))?;
+            if let Some(v) = version {
                 ui::print_list_item(name, Some(&v));
             }
         }
