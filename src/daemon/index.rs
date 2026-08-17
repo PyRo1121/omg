@@ -286,7 +286,7 @@ impl PackageIndex {
 
     pub fn new() -> Result<Self> {
         #[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
-        use crate::core::env::distro::{Distro, detect_distro};
+        use crate::core::env::distro::{detect_distro, Distro};
         #[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
         let distro = detect_distro();
 
@@ -663,11 +663,9 @@ mod tests {
 
         assert!(!results.is_empty());
         assert_eq!(results[0].name, "firefox");
-        assert!(
-            results
-                .iter()
-                .any(|pkg| pkg.name == "firefox-developer-edition")
-        );
+        assert!(results
+            .iter()
+            .any(|pkg| pkg.name == "firefox-developer-edition"));
         assert!(results.iter().any(|pkg| pkg.name == "librewolf"));
         assert!(!results.iter().any(|pkg| pkg.name == "python"));
     }
