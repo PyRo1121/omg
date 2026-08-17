@@ -145,9 +145,12 @@ fn complete_installed_packages(
 }
 
 /// Get installed package names for remove completion
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "feature-gated backends can return package lookup errors"
+#[cfg_attr(
+    not(feature = "arch"),
+    expect(
+        clippy::unnecessary_wraps,
+        reason = "feature-gated backends can return package lookup errors"
+    )
 )]
 fn get_installed_package_names() -> Result<Vec<String>> {
     #[cfg(feature = "arch")]
