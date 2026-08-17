@@ -67,12 +67,10 @@ fn test_parallel_builder_circular_dependency_detection() {
         omg_lib::package_managers::aur::parallel_build::ParallelBuilder::topological_levels(&graph);
 
     assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("Circular dependency")
-    );
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("Circular dependency"));
 }
 
 #[test]
@@ -101,7 +99,6 @@ fn test_parallel_builder_complex_dependency_tree() {
     assert_eq!(levels[2], vec!["d"]);
     assert_eq!(levels[3], vec!["e"]);
 }
-
 
 #[test]
 fn test_parallel_builder_empty_jobs() {

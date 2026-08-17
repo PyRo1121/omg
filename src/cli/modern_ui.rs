@@ -180,25 +180,6 @@ pub fn print_info(msg: &str) {
 // PACKAGE OPERATIONS
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-/// Show package being operated on
-pub fn print_package_action(action: &str, package: &str, version: Option<&str>) {
-    if crate::cli::style::colors_enabled() {
-        if let Some(ver) = version {
-            println!(
-                "  {} {} {}",
-                action.dimmed(),
-                package.cyan().bold(),
-                ver.dimmed()
-            );
-        } else {
-            println!("  {} {}", action.dimmed(), package.cyan().bold());
-        }
-    } else if let Some(ver) = version {
-        println!("  {action} {package} {ver}");
-    } else {
-        println!("  {action} {package}");
-    }
-}
 
 /// Show a step in multi-step process (minimal)
 pub fn print_step(msg: &str) {
@@ -367,81 +348,10 @@ pub fn print_aur_build_phase(phase: &str, package: &str) {
 // TIMING & STATS
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-/// Print operation timing
-pub fn print_timing(label: &str, duration: std::time::Duration) {
-    let seconds = duration.as_secs_f64();
-
-    if crate::cli::style::colors_enabled() {
-        if seconds < 1.0 {
-            println!(
-                "  {} {} in {}",
-                "✓".green(),
-                label.dimmed(),
-                format!("{:.0}ms", seconds * 1000.0).cyan()
-            );
-        } else {
-            println!(
-                "  {} {} in {}",
-                "✓".green(),
-                label.dimmed(),
-                format!("{seconds:.2}s").cyan()
-            );
-        }
-    } else if seconds < 1.0 {
-        println!("  ✓ {label} in {:.0}ms", seconds * 1000.0);
-    } else {
-        println!("  ✓ {label} in {seconds:.2}s");
-    }
-}
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ADDITIONAL DISPLAY HELPERS
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-/// Print a dry-run action preview (e.g., "Would remove 5 packages")
-pub fn print_action_preview(action: &str) {
-    if crate::cli::style::colors_enabled() {
-        println!("  {} {}", "→".cyan(), action);
-    } else {
-        println!("  → {action}");
-    }
-}
-
-/// Print success with statistics (e.g., "Removed 10 files, freed 50 MB")
-pub fn print_stats_success(msg: &str) {
-    if crate::cli::style::colors_enabled() {
-        println!("  {} {}", "✓".green().bold(), msg);
-    } else {
-        println!("  ✓ {msg}");
-    }
-}
-
-/// Print a dimmed bullet point (for lists)
-pub fn print_bullet(text: &str) {
-    if crate::cli::style::colors_enabled() {
-        println!("  {} {}", "·".dimmed(), text);
-    } else {
-        println!("  · {text}");
-    }
-}
-
-/// Print a highlighted bullet point (for commands/suggestions)
-pub fn print_bullet_cmd(label: &str, cmd: &str) {
-    if crate::cli::style::colors_enabled() {
-        println!("  {} {}: {}", "·".dimmed(), label, cmd.cyan());
-    } else {
-        println!("  · {label}: {cmd}");
-    }
-}
-
-/// Print informational bullet (blue ℹ)
-pub fn print_info_note(msg: &str) {
-    if crate::cli::style::colors_enabled() {
-        println!("  {} {}", "ℹ".blue(), msg);
-    } else {
-        println!("  ℹ {msg}");
-    }
-}
 
 /// Print dry-run footer
 pub fn print_dry_run_footer() {
@@ -452,51 +362,4 @@ pub fn print_dry_run_footer() {
         println!("  ℹ No changes made (dry run)");
     }
     println!();
-}
-
-/// Print a count highlight (e.g., "5 orphan packages")
-pub fn print_count_highlight(count: usize, singular: &str, plural: &str) {
-    let label = if count == 1 { singular } else { plural };
-    if crate::cli::style::colors_enabled() {
-        println!(
-            "  {} {} {}",
-            "·".dimmed(),
-            count.to_string().yellow(),
-            label
-        );
-    } else {
-        println!("  · {count} {label}");
-    }
-}
-
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// DOWNLOAD & PROGRESS
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-/// Print download progress (minimal, updates in-place)
-#[must_use]
-#[expect(clippy::expect_used, clippy::literal_string_with_formatting_args)]
-pub fn download_progress(filename: &str, total_bytes: u64) -> ProgressBar {
-    let pb = ProgressBar::new(total_bytes);
-
-    let template = if crate::cli::style::colors_enabled() {
-        "  {msg} [{bar:30.cyan/blue}] {bytes}/{total_bytes} {bytes_per_sec}"
-    } else {
-        "  {msg} [{bar:30}] {bytes}/{total_bytes} {bytes_per_sec}"
-    };
-
-    pb.set_style(
-        ProgressStyle::default_bar()
-            .template(template)
-            .expect("static template")
-            .progress_chars("━━╸"),
-    );
-
-    if crate::cli::style::colors_enabled() {
-        pb.set_message(filename.dimmed().to_string());
-    } else {
-        pb.set_message(filename.to_string());
-    }
-
-    pb
 }

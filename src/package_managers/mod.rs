@@ -40,8 +40,6 @@ pub mod mock;
 #[cfg(feature = "arch")]
 pub mod pacman_db;
 #[cfg(feature = "arch")]
-pub mod parallel_extract;
-#[cfg(feature = "arch")]
 pub mod parallel_sync;
 #[cfg(feature = "arch")]
 pub mod pkgbuild;
