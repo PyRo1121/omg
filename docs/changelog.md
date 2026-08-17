@@ -26,6 +26,14 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Reject incomplete AUR metadata results
+
+A failed metadata-index read no longer becomes an empty successful batch
+
+lookup, and direct AUR info validates the returned package identity before
+
+it reaches package policy or history.
+
 - Fail closed on security and package evidence
 
 Propagate OSV and Arch security-feed failures instead of treating
