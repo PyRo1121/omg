@@ -26,6 +26,16 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Reject impostor runtime paths in hooks and completions
+
+Hook PATH resolution and runtime-version completions treated any
+
+existing path as an installed version. Require real directories, fail
+
+closed when listing installed versions fails, and distinguish a missing
+
+mise current version from a mise current failure.
+
 - Fail closed on task detection and runtime path resolution
 
 Task completions treated detector failures as an empty task list, and
