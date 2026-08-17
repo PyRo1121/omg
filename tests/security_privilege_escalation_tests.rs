@@ -628,35 +628,6 @@ mod sbom_audit {
         let wrong_hash = "0000000000000000000000000000000000000000000000000000000000000000";
         assert!(!verifier.verify_hash(temp.path(), wrong_hash).unwrap());
     }
-
-    #[test]
-    fn test_slsa_core_package_levels() {
-        let verifier = SlsaVerifier::new().unwrap();
-
-        assert_eq!(
-            verifier.determine_slsa_level("glibc", true),
-            SlsaLevel::None,
-            "package names are not SLSA attestations"
-        );
-        assert_eq!(
-            verifier.determine_slsa_level("linux", true),
-            SlsaLevel::None
-        );
-        assert_eq!(
-            verifier.determine_slsa_level("pacman", true),
-            SlsaLevel::None
-        );
-        assert_eq!(
-            verifier.determine_slsa_level("systemd", true),
-            SlsaLevel::None
-        );
-        assert_eq!(verifier.determine_slsa_level("vim", true), SlsaLevel::None);
-        assert_eq!(
-            verifier.determine_slsa_level("firefox", true),
-            SlsaLevel::None
-        );
-        assert_eq!(verifier.determine_slsa_level("yay", false), SlsaLevel::None);
-    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -977,22 +948,13 @@ mod integration {
                 .is_ok()
         );
 
-        // 3. Verify SLSA level
-        let verifier = SlsaVerifier::new().unwrap();
-        let level = verifier.determine_slsa_level(pkg_name, true);
-        assert_eq!(
-            level,
-            SlsaLevel::None,
-            "SLSA level requires provenance, not a package name"
-        );
-
-        // 4. Verify operation is in whitelist (would elevate if needed)
+        // 3. Verify operation is in whitelist (would elevate if needed)
         // Skip actual elevation in tests as it requires sudo
         let checker = SystemPrivilegeChecker;
         // Just verify we can check root status without crashing
         let _ = checker.is_root();
 
-        // 5. Audit the operation
+        // 4. Audit the operation
         let mut logger = AuditLogger::new().unwrap();
         logger
             .log(

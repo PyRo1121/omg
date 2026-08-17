@@ -71,7 +71,6 @@ impl PackageService {
                             self.vulnerability_source.as_ref(),
                             &info.name,
                             &info.version,
-                            false,
                             true,
                         )
                         .await?;
@@ -92,7 +91,6 @@ impl PackageService {
                             self.vulnerability_source.as_ref(),
                             &info.name,
                             &info.version,
-                            true,
                             false,
                         )
                         .await?;
@@ -137,7 +135,6 @@ impl PackageService {
                             self.vulnerability_source.as_ref(),
                             &info.name,
                             &info.version,
-                            false,
                             true,
                         )
                         .await?;
@@ -170,7 +167,6 @@ impl PackageService {
                             self.vulnerability_source.as_ref(),
                             &info.name,
                             &info.version,
-                            false,
                             true,
                         )
                         .await?;

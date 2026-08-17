@@ -356,7 +356,7 @@ unimplemented = "warn" # Track unimplemented code paths
 # Note: print_stdout/stderr disabled - CLI tool intentionally uses println!
 
 # Rust 1.93 / Edition 2024 optimization lints
-missing_const_for_fn = "allow" # Many of these can't actually be const
+missing_const_for_fn = "warn" # Find const fn opportunities
 redundant_clone = "warn"       # Detect unnecessary clones
 large_enum_variant = "warn"    # Warn on >200 byte enum variants
 

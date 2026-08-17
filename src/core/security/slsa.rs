@@ -324,14 +324,6 @@ impl SlsaVerifier {
         let actual_hash = Self::calculate_hash(path)?;
         Ok(actual_hash == expected_hash)
     }
-
-    /// Determine SLSA level from verified provenance only.
-    ///
-    /// A package name and repository flag are not attestations. Without
-    /// in-toto/Rekor evidence this returns [`SlsaLevel::None`].
-    pub const fn determine_slsa_level(&self, _package_name: &str, _is_official: bool) -> SlsaLevel {
-        SlsaLevel::None
-    }
 }
 
 #[cfg(test)]
@@ -410,35 +402,6 @@ mod tests {
         let wrong_hash = "0000000000000000000000000000000000000000000000000000000000000000";
 
         assert!(!verifier.verify_hash(temp.path(), wrong_hash).unwrap());
-    }
-
-    #[test]
-    fn test_determine_slsa_level_requires_provenance() {
-        let verifier = SlsaVerifier::default();
-
-        assert_eq!(
-            verifier.determine_slsa_level("glibc", true),
-            SlsaLevel::None,
-            "core package names are not SLSA attestations"
-        );
-        assert_eq!(
-            verifier.determine_slsa_level("linux", true),
-            SlsaLevel::None
-        );
-        assert_eq!(
-            verifier.determine_slsa_level("systemd", true),
-            SlsaLevel::None
-        );
-        assert_eq!(verifier.determine_slsa_level("vim", true), SlsaLevel::None);
-        assert_eq!(
-            verifier.determine_slsa_level("firefox", true),
-            SlsaLevel::None
-        );
-        assert_eq!(verifier.determine_slsa_level("yay", false), SlsaLevel::None);
-        assert_eq!(
-            verifier.determine_slsa_level("spotify", false),
-            SlsaLevel::None
-        );
     }
 
     #[test]

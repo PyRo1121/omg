@@ -15,9 +15,7 @@ impl LocalCommandRunner for FleetCommands {
             FleetCommands::Push { team, message } => {
                 push(team.as_deref(), message.as_deref(), ctx).await
             }
-            FleetCommands::Remediate { dry_run, confirm } => {
-                remediate(*dry_run, *confirm, ctx).await
-            }
+            FleetCommands::Remediate { dry_run, confirm } => remediate(*dry_run, *confirm, ctx),
         }
     }
 }
@@ -203,8 +201,7 @@ pub async fn push(team: Option<&str>, message: Option<&str>, _ctx: &CliContext) 
 }
 
 /// Auto-remediate drift across fleet
-#[expect(clippy::unused_async)] // Dispatched from async LocalCommandRunner
-pub async fn remediate(_dry_run: bool, _confirm: bool, _ctx: &CliContext) -> Result<()> {
+pub fn remediate(_dry_run: bool, _confirm: bool, _ctx: &CliContext) -> Result<()> {
     license::require_feature("fleet")?;
     anyhow::bail!("Fleet remediation is not implemented")
 }

@@ -4,13 +4,45 @@
 //! vulnerabilities, licenses, and trust levels with A-F grading.
 
 use crate::package_managers::types::Version;
-use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io;
 use std::path::Path;
+use thiserror::Error;
 
 use crate::core::paths;
+
+#[derive(Debug, Error)]
+pub enum PolicyError {
+    #[error("Failed to read security policy: {path}")]
+    Read {
+        path: String,
+        #[source]
+        source: io::Error,
+    },
+    #[error("Failed to parse security policy: {path}")]
+    Parse {
+        path: String,
+        #[source]
+        source: toml::de::Error,
+    },
+    #[error("Security Grade '{grade}' for '{name}' is below required minimum '{minimum}'")]
+    GradeTooLow {
+        name: String,
+        grade: SecurityGrade,
+        minimum: SecurityGrade,
+    },
+    #[error("Package '{name}' is banned by security policy")]
+    Banned { name: String },
+    #[error("Package '{name}' is from AUR, which is disabled by security policy")]
+    AurDisabled { name: String },
+    #[error("Package '{name}' is unsigned; security policy requires PGP or checksum verification")]
+    PgpRequired { name: String },
+    #[error("Package '{name}' has license '{license}' which is not in allowed list")]
+    LicenseNotAllowed { name: String, license: String },
+    #[error("Package '{name}' has unknown license, but allowed list is enforced")]
+    LicenseUnknown { name: String },
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum SecurityGrade {
@@ -53,14 +85,6 @@ const fn default_true() -> bool {
     true
 }
 
-fn is_not_found(error: &anyhow::Error) -> bool {
-    error.chain().any(|cause| {
-        cause
-            .downcast_ref::<io::Error>()
-            .is_some_and(|io_error| io_error.kind() == io::ErrorKind::NotFound)
-    })
-}
-
 impl Default for SecurityPolicy {
     fn default() -> Self {
         Self {
@@ -76,27 +100,32 @@ impl Default for SecurityPolicy {
 impl SecurityPolicy {
     /// Load policy from file. A missing file is not handled here; callers that
     /// want defaults for an absent policy should use [`Self::load_optional`].
-    pub fn load<P: AsRef<Path>>(path: P) -> Result<Self> {
+    pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, PolicyError> {
         let path = path.as_ref();
-        let content = fs::read_to_string(path)
-            .with_context(|| format!("Failed to read security policy: {}", path.display()))?;
-        toml::from_str(&content)
-            .with_context(|| format!("Failed to parse security policy: {}", path.display()))
+        let content = fs::read_to_string(path).map_err(|source| PolicyError::Read {
+            path: path.display().to_string(),
+            source,
+        })?;
+        toml::from_str(&content).map_err(|source| PolicyError::Parse {
+            path: path.display().to_string(),
+            source,
+        })
     }
 
     /// Load a policy file, using the built-in default only when the file is absent.
-    pub fn load_optional<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let path = path.as_ref();
+    pub fn load_optional<P: AsRef<Path>>(path: P) -> Result<Self, PolicyError> {
         match Self::load(path) {
             Ok(policy) => Ok(policy),
-            Err(error) if is_not_found(&error) => Ok(Self::default()),
+            Err(PolicyError::Read { source, .. }) if source.kind() == io::ErrorKind::NotFound => {
+                Ok(Self::default())
+            }
             Err(error) => Err(error),
         }
     }
 
     /// Load from default location (~/.config/omg/policy.toml).
     /// A missing file uses the built-in default; a corrupt or unreadable file fails closed.
-    pub fn load_default() -> Result<Self> {
+    pub fn load_default() -> Result<Self, PolicyError> {
         Self::load_optional(paths::config_dir().join("policy.toml"))
     }
 
@@ -106,11 +135,9 @@ impl SecurityPolicy {
         scanner: &dyn super::vulnerability::VulnerabilitySource,
         name: &str,
         version: &Version,
-        is_aur: bool,
         is_official: bool,
-    ) -> Result<SecurityGrade> {
-        // 1. Check for vulnerabilities (Risk). An unavailable evidence source
-        // must not be treated as a clean package.
+    ) -> anyhow::Result<SecurityGrade> {
+        // An unavailable evidence source must not be treated as a clean package.
         if !scanner.scan_package(name, version).await?.is_empty() {
             return Ok(SecurityGrade::Risk);
         }
@@ -119,11 +146,6 @@ impl SecurityPolicy {
         // grade requires provenance evidence, which this function does not have.
         if is_official {
             return Ok(SecurityGrade::Verified);
-        }
-
-        // AUR and other unsigned sources are Community
-        if is_aur {
-            return Ok(SecurityGrade::Community);
         }
 
         Ok(SecurityGrade::Community)
@@ -136,43 +158,47 @@ impl SecurityPolicy {
         is_aur: bool,
         license: Option<&str>,
         grade: SecurityGrade,
-    ) -> Result<()> {
-        // Check Grade
+    ) -> Result<(), PolicyError> {
         if grade < self.minimum_grade {
-            anyhow::bail!(
-                "Security Grade '{}' for '{}' is below required minimum '{}'",
+            return Err(PolicyError::GradeTooLow {
+                name: name.to_string(),
                 grade,
-                name,
-                self.minimum_grade
-            );
+                minimum: self.minimum_grade,
+            });
         }
 
-        // Check if banned
-        if self.banned_packages.contains(&name.to_string()) {
-            anyhow::bail!("Package '{name}' is banned by security policy");
+        if self.banned_packages.iter().any(|banned| banned == name) {
+            return Err(PolicyError::Banned {
+                name: name.to_string(),
+            });
         }
 
-        // Check AUR
         if is_aur && !self.allow_aur {
-            anyhow::bail!("Package '{name}' is from AUR, which is disabled by security policy");
+            return Err(PolicyError::AurDisabled {
+                name: name.to_string(),
+            });
         }
 
         if self.require_pgp && grade < SecurityGrade::Verified {
-            anyhow::bail!(
-                "Package '{name}' is unsigned; security policy requires PGP or checksum verification"
-            );
+            return Err(PolicyError::PgpRequired {
+                name: name.to_string(),
+            });
         }
 
-        // Check License (if allowed list is not empty)
         if !self.allowed_licenses.is_empty() {
-            if let Some(lic) = license {
-                if !license_matches_allowlist(lic, &self.allowed_licenses) {
-                    anyhow::bail!(
-                        "Package '{name}' has license '{lic}' which is not in allowed list"
-                    );
+            match license {
+                Some(lic) if license_matches_allowlist(lic, &self.allowed_licenses) => {}
+                Some(lic) => {
+                    return Err(PolicyError::LicenseNotAllowed {
+                        name: name.to_string(),
+                        license: lic.to_string(),
+                    });
                 }
-            } else {
-                anyhow::bail!("Package '{name}' has unknown license, but allowed list is enforced");
+                None => {
+                    return Err(PolicyError::LicenseUnknown {
+                        name: name.to_string(),
+                    });
+                }
             }
         }
 
@@ -211,6 +237,7 @@ pub fn license_matches_allowlist(license: &str, allowed: &[String]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::Result;
 
     #[test]
     fn test_grade_ordering() {
@@ -241,10 +268,12 @@ mod tests {
         );
 
         // Community is blocked
+        let err = policy
+            .check_package("test", true, None, SecurityGrade::Community)
+            .expect_err("Community is below Verified");
         assert!(
-            policy
-                .check_package("test", true, None, SecurityGrade::Community)
-                .is_err()
+            matches!(err, PolicyError::GradeTooLow { .. }),
+            "grade failures must be typed, got: {err}"
         );
     }
 
@@ -317,7 +346,7 @@ mod tests {
         let policy = SecurityPolicy::default();
         let version = crate::package_managers::parse_version_or_zero("2.40");
         let grade = policy
-            .assign_grade(&EmptyVulns, "glibc", &version, false, true)
+            .assign_grade(&EmptyVulns, "glibc", &version, true)
             .await
             .expect("empty vuln source");
         assert_eq!(
@@ -332,7 +361,7 @@ mod tests {
         let policy = SecurityPolicy::default();
         let version = crate::package_managers::parse_version_or_zero("1.0");
         let grade = policy
-            .assign_grade(&EmptyVulns, "yay", &version, true, false)
+            .assign_grade(&EmptyVulns, "yay", &version, false)
             .await
             .expect("empty vuln source");
         assert_eq!(grade, SecurityGrade::Community);
@@ -343,7 +372,7 @@ mod tests {
         let policy = SecurityPolicy::default();
         let version = crate::package_managers::parse_version_or_zero("1.0");
         let error = policy
-            .assign_grade(&FailingVulns, "vim", &version, false, true)
+            .assign_grade(&FailingVulns, "vim", &version, true)
             .await
             .expect_err("missing evidence must not look like a clean package");
         assert!(
@@ -362,8 +391,8 @@ mod tests {
             .check_package("yay", true, Some("MIT"), SecurityGrade::Community)
             .expect_err("AUR community packages are unsigned");
         assert!(
-            err.to_string().contains("unsigned"),
-            "require_pgp must mention missing verification, got: {err}"
+            matches!(err, PolicyError::PgpRequired { .. }),
+            "require_pgp must be a typed unsigned-package error, got: {err}"
         );
         assert!(
             policy
@@ -382,8 +411,8 @@ mod tests {
             .check_package("foo", false, Some("LIMITED"), SecurityGrade::Verified)
             .expect_err("LIMITED must not match MIT");
         assert!(
-            err.to_string().contains("not in allowed list"),
-            "got: {err}"
+            matches!(err, PolicyError::LicenseNotAllowed { .. }),
+            "allowlist mismatches must be typed, got: {err}"
         );
         assert!(
             policy

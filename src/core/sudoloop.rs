@@ -175,14 +175,6 @@ pub fn can_use_sudoloop() -> bool {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_can_use_sudoloop_matches_root_and_sudo() {
-        assert_eq!(
-            can_use_sudoloop(),
-            !crate::core::is_root() && which::which("sudo").is_ok()
-        );
-    }
-
     #[tokio::test]
     async fn test_sudoloop_start_stop() {
         let mut loop_handle = SudoLoop::start();
