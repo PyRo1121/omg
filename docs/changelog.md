@@ -26,6 +26,14 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Fail closed on Arch AUR fallback and status JSON
+
+A missing official package still tries AUR, but AUR lookup or search
+
+errors no longer look like Package not found. Status --json now fails
+
+if the status payload cannot be serialized.
+
 - Put staged OMG Rust toolchains on the hook PATH
 
 Shell hooks skipped OMG-managed rustc whenever rustup existed, so
