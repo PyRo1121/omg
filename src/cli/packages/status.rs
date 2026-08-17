@@ -1,6 +1,6 @@
 //! Status command - system-wide package status overview
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use owo_colors::OwoColorize;
 use serde::Serialize;
 use std::io::Write;
@@ -71,7 +71,8 @@ async fn status_json(fast: bool) -> Result<()> {
         query_time_ms: start.elapsed().as_secs_f64() * 1000.0,
     };
 
-    let json_str = serde_json::to_string_pretty(&status).unwrap_or_else(|_| "{}".to_string());
+    let json_str =
+        serde_json::to_string_pretty(&status).context("Failed to serialize status as JSON")?;
     println!("{json_str}");
 
     Ok(())
