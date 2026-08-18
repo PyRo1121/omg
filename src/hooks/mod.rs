@@ -195,7 +195,7 @@ pub fn hook_env(shell: &str) -> Result<()> {
 
     // Build PATH modifications
     let settings = Settings::load()?;
-    let path_additions = build_path_additions_with_backend(&versions, settings.runtime_backend);
+    let path_additions = build_path_additions_with_backend(&versions, settings.runtime_backend)?;
 
     if path_additions.is_empty() {
         return Ok(());
@@ -349,10 +349,9 @@ pub fn detect_versions(start: &Path) -> Result<HashMap<String, String>> {
 }
 
 /// Build PATH additions for detected versions
-#[must_use]
 pub fn build_path_additions<S: std::hash::BuildHasher>(
     versions: &HashMap<String, String, S>,
-) -> Vec<String> {
+) -> Result<Vec<String>> {
     let mut paths = Vec::new();
 
     let data_dir = paths::data_dir();
@@ -360,7 +359,7 @@ pub fn build_path_additions<S: std::hash::BuildHasher>(
     for (runtime, version) in versions {
         let bin_path = match runtime.as_str() {
             "node" => {
-                let Some(path) = resolve_node_bin_path(&data_dir, version) else {
+                let Some(path) = resolve_node_bin_path(&data_dir, version)? else {
                     continue;
                 };
                 path
@@ -392,18 +391,17 @@ pub fn build_path_additions<S: std::hash::BuildHasher>(
         }
     }
 
-    paths
+    Ok(paths)
 }
 
 /// Build PATH additions for detected versions with backend preference
-#[must_use]
 pub fn build_path_additions_with_backend<S: std::hash::BuildHasher>(
     versions: &HashMap<String, String, S>,
     backend: RuntimeBackend,
-) -> Vec<String> {
+) -> Result<Vec<String>> {
     let mut paths = match backend {
         RuntimeBackend::Mise => Vec::new(),
-        _ => build_path_additions(versions),
+        _ => build_path_additions(versions)?,
     };
 
     if matches!(
@@ -411,23 +409,23 @@ pub fn build_path_additions_with_backend<S: std::hash::BuildHasher>(
         RuntimeBackend::Mise | RuntimeBackend::NativeThenMise
     ) {
         let prefer_native = backend == RuntimeBackend::NativeThenMise;
-        add_mise_path_fallbacks(versions, &mut paths, prefer_native);
+        add_mise_path_fallbacks(versions, &mut paths, prefer_native)?;
     }
 
-    paths
+    Ok(paths)
 }
 
-fn resolve_node_bin_path(data_dir: &Path, version: &str) -> Option<PathBuf> {
+fn resolve_node_bin_path(data_dir: &Path, version: &str) -> Result<Option<PathBuf>> {
     let normalized = version.trim_start_matches('v');
     let versions_dir = data_dir.join("versions/node");
     if let Some(path) = node_version_bin_path(&versions_dir, normalized) {
-        return Some(path);
+        return Ok(Some(path));
     }
 
     if let Some(resolved) = resolve_installed_version_req(&versions_dir, normalized)
         && let Some(path) = node_version_bin_path(&versions_dir, &resolved)
     {
-        return Some(path);
+        return Ok(Some(path));
     }
 
     nvm_node_bin(normalized)
@@ -514,43 +512,48 @@ fn normalize_version_number(value: &str) -> String {
     parts.join(".")
 }
 
-fn nvm_node_bin(version: &str) -> Option<PathBuf> {
-    let nvm_dir = std::env::var_os("NVM_DIR")
+fn nvm_node_bin(version: &str) -> Result<Option<PathBuf>> {
+    let Some(nvm_dir) = std::env::var_os("NVM_DIR")
         .map(PathBuf::from)
-        .or_else(|| home::home_dir().map(|dir| dir.join(".nvm")))?;
+        .or_else(|| home::home_dir().map(|dir| dir.join(".nvm")))
+    else {
+        return Ok(None);
+    };
 
-    let resolved = resolve_nvm_alias(&nvm_dir, version).unwrap_or_else(|| version.to_string());
+    let resolved = match resolve_nvm_alias(&nvm_dir, version)? {
+        Some(alias) => alias,
+        None => version.to_string(),
+    };
     let normalized = resolved.trim_start_matches('v');
     let bin_path = nvm_dir
         .join("versions/node")
         .join(format!("v{normalized}"))
         .join("bin");
 
-    crate::runtimes::common::is_valid_version_dir(&bin_path).then_some(bin_path)
+    Ok(crate::runtimes::common::is_valid_version_dir(&bin_path).then_some(bin_path))
 }
 
-fn resolve_nvm_alias(nvm_dir: &Path, alias: &str) -> Option<String> {
+fn resolve_nvm_alias(nvm_dir: &Path, alias: &str) -> Result<Option<String>> {
     let alias_path = nvm_dir.join("alias").join(alias);
-    if !alias_path.exists() {
-        return None;
-    }
-    let content = std::fs::read_to_string(alias_path).ok()?;
+    let Some(content) = read_pin_file(&alias_path)? else {
+        return Ok(None);
+    };
     let resolved = content.trim();
-    (!resolved.is_empty()).then(|| resolved.to_string())
+    Ok((!resolved.is_empty()).then(|| resolved.to_string()))
 }
 
 fn add_mise_path_fallbacks<S: std::hash::BuildHasher>(
     versions: &HashMap<String, String, S>,
     path_additions: &mut Vec<String>,
     prefer_native: bool,
-) {
+) -> Result<()> {
     if !mise_available() {
-        return;
+        return Ok(());
     }
 
     let mut seen: std::collections::HashSet<String> = path_additions.iter().cloned().collect();
     for (runtime, version) in versions {
-        if prefer_native && native_runtime_bin_path(runtime, version).is_some() {
+        if prefer_native && native_runtime_bin_path(runtime, version)?.is_some() {
             continue;
         }
 
@@ -561,28 +564,46 @@ fn add_mise_path_fallbacks<S: std::hash::BuildHasher>(
             }
         }
     }
+    Ok(())
 }
 
-fn native_runtime_bin_path(runtime: &str, version: &str) -> Option<PathBuf> {
+fn native_runtime_bin_path(runtime: &str, version: &str) -> Result<Option<PathBuf>> {
     let data_dir = paths::data_dir();
     let bin_path = match runtime {
-        "node" => resolve_node_bin_path(&data_dir, version)?,
+        "node" => {
+            let Some(path) = resolve_node_bin_path(&data_dir, version)? else {
+                return Ok(None);
+            };
+            path
+        }
         "python" | "go" | "ruby" | "java" => {
-            crate::core::security::validate_runtime_version(version).ok()?;
+            if crate::core::security::validate_runtime_version(version).is_err() {
+                return Ok(None);
+            }
             data_dir
                 .join(format!("versions/{runtime}"))
                 .join(version)
                 .join("bin")
         }
-        "bun" => resolve_bun_bin_path(&data_dir, version)?,
-        "rust" => {
-            let toolchain = RustToolchainSpec::parse(version).ok()?.name();
-            data_dir.join("versions/rust").join(toolchain).join("bin")
+        "bun" => {
+            let Some(path) = resolve_bun_bin_path(&data_dir, version) else {
+                return Ok(None);
+            };
+            path
         }
-        _ => return None,
+        "rust" => {
+            let Some(toolchain) = RustToolchainSpec::parse(version).ok() else {
+                return Ok(None);
+            };
+            data_dir
+                .join("versions/rust")
+                .join(toolchain.name())
+                .join("bin")
+        }
+        _ => return Ok(None),
     };
 
-    crate::runtimes::common::is_valid_version_dir(&bin_path).then_some(bin_path)
+    Ok(crate::runtimes::common::is_valid_version_dir(&bin_path).then_some(bin_path))
 }
 
 // Runtime resolution functions (find_in_path, mise_available, mise_runtime_bin_path)
@@ -857,7 +878,10 @@ erlang = "26.2"
         let expected = dir.path().join("versions/node/20.11.1/bin");
         fs::create_dir_all(&expected).unwrap();
 
-        assert_eq!(resolve_node_bin_path(dir.path(), "^20"), Some(expected));
+        assert_eq!(
+            resolve_node_bin_path(dir.path(), "^20").unwrap(),
+            Some(expected)
+        );
     }
 
     #[test]
@@ -913,6 +937,37 @@ erlang = "26.2"
         assert!(
             error.to_string().contains("Failed to parse"),
             "unexpected error: {error:#}"
+        );
+    }
+
+    #[test]
+    fn resolve_nvm_alias_missing_is_none() {
+        let dir = tempdir().unwrap();
+        assert!(resolve_nvm_alias(dir.path(), "lts").unwrap().is_none());
+    }
+
+    #[test]
+    fn resolve_nvm_alias_unreadable_fails_closed() {
+        let dir = tempdir().unwrap();
+        let alias_dir = dir.path().join("alias");
+        fs::create_dir(&alias_dir).unwrap();
+        let alias = alias_dir.join("lts");
+        fs::write(&alias, "20.11.1\n").unwrap();
+        let original = fs::metadata(&alias).unwrap().permissions();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&alias, fs::Permissions::from_mode(0o000)).unwrap();
+        }
+        let blocked = fs::read_to_string(&alias).is_err();
+        let result = resolve_nvm_alias(dir.path(), "lts");
+        let _ = fs::set_permissions(&alias, original);
+        if !blocked {
+            return;
+        }
+        assert!(
+            result.is_err(),
+            "unreadable nvm alias must fail closed, got {result:?}"
         );
     }
 }

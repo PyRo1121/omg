@@ -737,7 +737,7 @@ fn execute_process(
     }
     let mut path_additions = match backend {
         RuntimeBackend::Mise => Vec::new(),
-        _ => hooks::build_path_additions(&versions),
+        _ => hooks::build_path_additions(&versions)?,
     };
     add_mise_path_fallbacks(&versions, &mut path_additions, backend);
 
@@ -843,7 +843,7 @@ fn ensure_node_runtime(version: &str) -> Result<String> {
     }
 
     // Check nvm-managed Node
-    if let Some(nvm_version) = nvm_resolve_version(normalized) {
+    if let Some(nvm_version) = nvm_resolve_version(normalized)? {
         return Ok(nvm_version);
     }
 
@@ -892,32 +892,37 @@ fn ensure_bun_runtime(version: &str) -> Result<String> {
     }
 }
 
-fn nvm_resolve_version(version: &str) -> Option<String> {
+fn nvm_resolve_version(version: &str) -> Result<Option<String>> {
     let nvm_dir = std::env::var_os("NVM_DIR")
         .map(PathBuf::from)
         .or_else(|| home::home_dir().map(|dir| dir.join(".nvm")));
-    let nvm_dir = nvm_dir?;
+    let Some(nvm_dir) = nvm_dir else {
+        return Ok(None);
+    };
 
-    let resolved = resolve_nvm_alias(&nvm_dir, version).unwrap_or_else(|| version.to_string());
+    let resolved = match resolve_nvm_alias(&nvm_dir, version)? {
+        Some(alias) => alias,
+        None => version.to_string(),
+    };
     let normalized = resolved.trim_start_matches('v');
     let bin_path = nvm_dir
         .join("versions/node")
         .join(format!("v{normalized}"))
         .join("bin");
-    bin_path.exists().then(|| normalized.to_string())
+    Ok(bin_path.exists().then(|| normalized.to_string()))
 }
 
-fn resolve_nvm_alias(nvm_dir: &std::path::Path, alias: &str) -> Option<String> {
+fn resolve_nvm_alias(nvm_dir: &std::path::Path, alias: &str) -> Result<Option<String>> {
     let alias_path = nvm_dir.join("alias").join(alias);
-    if !alias_path.exists() {
-        return None;
-    }
-    let content = std::fs::read_to_string(alias_path).ok()?;
-    let resolved = content.trim();
-    if resolved.is_empty() {
-        None
-    } else {
-        Some(resolved.to_string())
+    match std::fs::read_to_string(&alias_path) {
+        Ok(content) => {
+            let resolved = content.trim();
+            Ok((!resolved.is_empty()).then(|| resolved.to_string()))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => {
+            Err(error).with_context(|| format!("Failed to read nvm alias {}", alias_path.display()))
+        }
     }
 }
 
@@ -1270,6 +1275,37 @@ build = "node"
         assert!(
             error.to_string().contains("Failed to parse"),
             "unexpected error: {error:#}"
+        );
+    }
+
+    #[test]
+    fn resolve_nvm_alias_missing_is_none() {
+        let temp = TempDir::new().unwrap();
+        assert!(resolve_nvm_alias(temp.path(), "lts").unwrap().is_none());
+    }
+
+    #[test]
+    fn resolve_nvm_alias_unreadable_fails_closed() {
+        let temp = TempDir::new().unwrap();
+        let alias_dir = temp.path().join("alias");
+        fs::create_dir(&alias_dir).unwrap();
+        let alias = alias_dir.join("lts");
+        fs::write(&alias, "20.11.1\n").unwrap();
+        let original = fs::metadata(&alias).unwrap().permissions();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&alias, fs::Permissions::from_mode(0o000)).unwrap();
+        }
+        let blocked = fs::read_to_string(&alias).is_err();
+        let result = resolve_nvm_alias(temp.path(), "lts");
+        let _ = fs::set_permissions(&alias, original);
+        if !blocked {
+            return;
+        }
+        assert!(
+            result.is_err(),
+            "unreadable nvm alias must fail closed, got {result:?}"
         );
     }
 }
