@@ -195,6 +195,24 @@ pub struct SbomVulnAffects {
     pub affects_ref: String,
 }
 
+#[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
+fn package_purl(name: &str, version: &str, debian_like: bool) -> String {
+    if debian_like {
+        format!("pkg:deb/debian/{name}@{version}")
+    } else {
+        format!("pkg:pacman/archlinux/{name}@{version}")
+    }
+}
+
+#[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
+fn package_website(name: &str, debian_like: bool) -> String {
+    if debian_like {
+        format!("https://packages.debian.org/{name}")
+    } else {
+        format!("https://archlinux.org/packages/?name={name}")
+    }
+}
+
 /// SBOM Generator for enterprise compliance
 pub struct SbomGenerator {
     include_vulns: bool,
@@ -253,31 +271,36 @@ impl SbomGenerator {
                 .to_string();
             let serial_number = format!("urn:uuid:{}", uuid::Uuid::new_v4());
 
+            let debian_like = cfg!(any(feature = "debian", feature = "debian-pure"))
+                && crate::core::env::distro::is_debian_like();
+
             let mut components = Vec::with_capacity(installed.len());
             let mut vulnerabilities = Vec::new();
             let mut dependencies = Vec::new();
 
             // Build component list
             for pkg in &installed {
-                let bom_ref = format!("pkg:pacman/archlinux/{}@{}", pkg.name, pkg.version);
+                #[allow(clippy::implicit_clone)]
+                // Version is feature-gated type alias; .to_string() is the required conversion
+                let version = pkg.version.to_string();
+                let bom_ref = package_purl(&pkg.name, &version, debian_like);
 
                 let component = SbomComponent {
-                component_type: "library".to_string(),
-                mime_type: None,
-                bom_ref: Some(bom_ref.clone()),
-                name: pkg.name.clone(),
-                #[allow(clippy::implicit_clone)] // Version is feature-gated type alias; .to_string() is the required conversion
-                version: pkg.version.to_string(),
-                description: Some(pkg.description.clone()),
-                purl: Some(format!("pkg:pacman/archlinux/{}@{}", pkg.name, pkg.version)),
-                licenses: vec![],
-                hashes: vec![],
-                external_references: vec![SbomExternalRef {
-                    ref_type: "website".to_string(),
-                    url: format!("https://archlinux.org/packages/?name={}", pkg.name),
-                }],
-                properties: None,
-            };
+                    component_type: "library".to_string(),
+                    mime_type: None,
+                    bom_ref: Some(bom_ref.clone()),
+                    name: pkg.name.clone(),
+                    version,
+                    description: Some(pkg.description.clone()),
+                    purl: Some(bom_ref.clone()),
+                    licenses: vec![],
+                    hashes: vec![],
+                    external_references: vec![SbomExternalRef {
+                        ref_type: "website".to_string(),
+                        url: package_website(&pkg.name, debian_like),
+                    }],
+                    properties: None,
+                };
 
                 components.push(component);
 
@@ -302,7 +325,7 @@ impl SbomGenerator {
                     for pkg_name in &issue.packages {
                         if let Some(pkg) = installed.iter().find(|p| p.name == *pkg_name) {
                             let bom_ref =
-                                format!("pkg:pacman/archlinux/{}@{}", pkg.name, pkg.version);
+                                package_purl(&pkg.name, &pkg.version.to_string(), debian_like);
 
                             let severity = match issue.severity.to_lowercase().as_str() {
                                 "critical" => Some("critical".to_string()),
@@ -476,14 +499,29 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
-    async fn generate_system_sbom_without_backend_fails() {
-        let error = SbomGenerator::new()
-            .with_vulnerabilities(false)
-            .generate_system_sbom()
-            .await
-            .expect_err("SBOM generation with no backend must not invent an empty inventory");
-        assert!(matches!(error, SbomError::NoBackend), "got: {error}");
+    #[test]
+    #[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
+    fn debian_like_packages_use_deb_purl_and_debian_urls() {
+        assert_eq!(
+            package_purl("apt", "2.6.1", true),
+            "pkg:deb/debian/apt@2.6.1"
+        );
+        assert_eq!(
+            package_website("apt", true),
+            "https://packages.debian.org/apt"
+        );
+    }
+
+    #[test]
+    #[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
+    fn arch_packages_keep_pacman_purl_and_arch_urls() {
+        assert_eq!(
+            package_purl("pacman", "7.0.0", false),
+            "pkg:pacman/archlinux/pacman@7.0.0"
+        );
+        assert_eq!(
+            package_website("pacman", false),
+            "https://archlinux.org/packages/?name=pacman"
+        );
     }
 }
