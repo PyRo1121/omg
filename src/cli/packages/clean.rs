@@ -2,7 +2,8 @@
 
 use anyhow::{Context, Result};
 
-use super::common::use_debian_backend;
+#[cfg(any(feature = "debian", feature = "debian-pure"))]
+use crate::core::env::distro::is_debian_like;
 
 #[cfg(feature = "arch")]
 use crate::package_managers::{AurClient, clean_cache, list_orphans_direct, remove_orphans};
@@ -23,9 +24,13 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bo
     }
     println!();
 
-    if use_debian_backend() {
+    #[cfg(any(feature = "debian", feature = "debian-pure"))]
+    if is_debian_like() {
         #[cfg(feature = "debian-pure")]
         {
+            if aur {
+                anyhow::bail!("AUR cleanup is not available without the Arch backend");
+            }
             return handle_debian_pure_clean(orphans, cache, all, dry_run).await;
         }
 
