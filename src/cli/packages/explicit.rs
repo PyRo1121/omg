@@ -8,8 +8,6 @@ use crate::core::client::DaemonClient;
 #[cfg(unix)]
 use crate::daemon::protocol::{Request, ResponseResult};
 
-use super::common::use_debian_backend;
-
 #[derive(Serialize)]
 struct ExplicitJson {
     packages: Vec<String>,
@@ -48,22 +46,20 @@ pub fn explicit_sync_with_json(count: bool, json: bool) -> Result<()> {
         }
     }
 
-    if use_debian_backend() {
-        #[cfg(feature = "debian")]
-        {
-            let packages = crate::package_managers::list_explicit_fast()
-                .context("Failed to list explicitly installed packages")?;
-            if count {
-                if json {
-                    println!(r#"{{"count": {}}}"#, packages.len());
-                } else {
-                    println!("{}", packages.len());
-                }
+    #[cfg(any(feature = "debian", feature = "debian-pure"))]
+    if crate::core::env::distro::is_debian_like() {
+        let packages = crate::package_managers::debian_db::list_explicit_fast()
+            .context("Failed to list explicitly installed packages")?;
+        if count {
+            if json {
+                println!(r#"{{"count": {}}}"#, packages.len());
             } else {
-                display_explicit_list(packages, json)?;
+                println!("{}", packages.len());
             }
-            return Ok(());
+        } else {
+            display_explicit_list(packages, json)?;
         }
+        return Ok(());
     }
 
     if count {
