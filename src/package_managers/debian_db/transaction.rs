@@ -95,7 +95,7 @@ pub struct PackageAction {
 
 impl Transaction {
     /// Create a new transaction from resolution result
-    pub fn from_resolution(result: ResolutionResult) -> Self {
+    pub fn from_resolution(result: ResolutionResult) -> Result<Self> {
         let to_install: Vec<PackageAction> = result
             .to_install
             .into_iter()
@@ -136,10 +136,9 @@ impl Transaction {
             .collect();
 
         let content_store = ContentStore::new();
-        // Initialize content store (creates directory if needed)
-        let _ = content_store.init();
+        content_store.init()?;
 
-        Self {
+        Ok(Self {
             state: TransactionState::Pending,
             to_install,
             to_remove,
@@ -148,7 +147,7 @@ impl Transaction {
             backups: HashMap::new(),
             installed_files: Vec::new(),
             content_store,
-        }
+        })
     }
 
     /// Check for file conflicts before installation
@@ -173,11 +172,11 @@ impl Transaction {
     }
 
     /// Create an empty transaction
-    pub fn new() -> Self {
+    pub fn new() -> Result<Self> {
         let content_store = ContentStore::new();
-        let _ = content_store.init();
+        content_store.init()?;
 
-        Self {
+        Ok(Self {
             state: TransactionState::Pending,
             to_install: Vec::new(),
             to_remove: Vec::new(),
@@ -186,7 +185,7 @@ impl Transaction {
             backups: HashMap::new(),
             installed_files: Vec::new(),
             content_store,
-        }
+        })
     }
 
     /// Add a package to install
@@ -572,12 +571,10 @@ impl Transaction {
         if !conffiles_to_copy.is_empty() {
             use rayon::prelude::*;
 
-            conffiles_to_copy.par_iter().for_each(|(src, name)| {
+            conffiles_to_copy.par_iter().try_for_each(|(src, name)| {
                 let dest = Path::new("/var/lib/dpkg/info").join(format!("{name}.conffiles"));
-                if let Err(e) = fs::copy(src, &dest) {
-                    tracing::warn!("Failed to copy conffiles for {}: {}", name, e);
-                }
-            });
+                copy_conffile(src, &dest)
+            })?;
         }
 
         Ok(())
@@ -590,33 +587,13 @@ impl Transaction {
             self.installed_files.len()
         );
 
-        // Remove installed files
-        let mut removed_count = 0;
         for file in &self.installed_files {
-            if fs::remove_file(file).is_ok() {
-                removed_count += 1;
-            } else {
-                tracing::warn!("Failed to remove file during rollback: {}", file.display());
-            }
+            remove_installed_file(file)?;
         }
-        tracing::debug!("Removed {} files during rollback", removed_count);
 
-        // Restore backups
-        let mut restored_count = 0;
         for (original, backup) in &self.backups {
-            if backup.exists() {
-                if fs::copy(backup, original).is_ok() {
-                    restored_count += 1;
-                } else {
-                    tracing::warn!(
-                        "Failed to restore backup: {} -> {}",
-                        backup.display(),
-                        original.display()
-                    );
-                }
-            }
+            restore_backup(backup, original)?;
         }
-        tracing::debug!("Restored {} backups", restored_count);
 
         self.state = TransactionState::RolledBack;
         tracing::info!("Transaction rolled back successfully");
@@ -737,10 +714,35 @@ impl Transaction {
     }
 }
 
-impl Default for Transaction {
-    fn default() -> Self {
-        Self::new()
+fn remove_installed_file(path: &Path) -> Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error)
+            .with_context(|| format!("Failed to remove {} during rollback", path.display())),
     }
+}
+
+fn restore_backup(backup: &Path, original: &Path) -> Result<()> {
+    fs::copy(backup, original).with_context(|| {
+        format!(
+            "Failed to restore backup {} -> {}",
+            backup.display(),
+            original.display()
+        )
+    })?;
+    Ok(())
+}
+
+fn copy_conffile(src: &Path, dest: &Path) -> Result<()> {
+    fs::copy(src, dest).with_context(|| {
+        format!(
+            "Failed to copy conffiles {} -> {}",
+            src.display(),
+            dest.display()
+        )
+    })?;
+    Ok(())
 }
 
 /// Standalone function to unpack a .deb file (for use in pipelined processing)
@@ -1458,7 +1460,7 @@ mod tests {
 
     #[test]
     fn test_transaction_new() {
-        let tx = Transaction::new();
+        let tx = Transaction::new().expect("content store init");
         assert_eq!(tx.state, TransactionState::Pending);
         assert!(tx.to_install.is_empty());
         assert!(tx.to_remove.is_empty());
@@ -1466,7 +1468,7 @@ mod tests {
 
     #[test]
     fn test_transaction_add_install() {
-        let mut tx = Transaction::new();
+        let mut tx = Transaction::new().expect("content store init");
         tx.add_install(
             "vim".to_string(),
             "9.0".to_string(),
@@ -1479,7 +1481,7 @@ mod tests {
 
     #[test]
     fn test_transaction_sizes() {
-        let mut tx = Transaction::new();
+        let mut tx = Transaction::new().expect("content store init");
         tx.add_install("pkg1".to_string(), "1.0".to_string(), String::new(), 1000);
         tx.add_install("pkg2".to_string(), "1.0".to_string(), String::new(), 2000);
         assert_eq!(tx.total_download_size(), 3000);
@@ -1537,5 +1539,65 @@ mod tests {
         assert!(output.contains("git"));
         assert!(output.contains("curl"));
         assert!(output.contains("10240"));
+    }
+
+    #[test]
+    fn remove_installed_file_allows_missing() {
+        remove_installed_file(Path::new("/no/such/rollback/file"))
+            .expect("missing installed file is already gone");
+    }
+
+    #[test]
+    fn remove_installed_file_deletes_existing() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let path = dir.path().join("installed");
+        std::fs::write(&path, b"pkg").expect("installed file");
+        remove_installed_file(&path).expect("rollback remove");
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn restore_backup_copies_file() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let backup = dir.path().join("backup");
+        let original = dir.path().join("original");
+        std::fs::write(&backup, b"old").expect("backup");
+        restore_backup(&backup, &original).expect("restore");
+        assert_eq!(std::fs::read(&original).expect("restored"), b"old");
+    }
+
+    #[test]
+    fn restore_backup_rejects_missing() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let error = restore_backup(
+            &dir.path().join("missing-backup"),
+            &dir.path().join("original"),
+        )
+        .expect_err("missing backup must not look restored");
+        assert!(
+            error.to_string().contains("Failed to restore backup"),
+            "got: {error}"
+        );
+    }
+
+    #[test]
+    fn copy_conffile_rejects_missing_source() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let error = copy_conffile(&dir.path().join("src"), &dir.path().join("dest"))
+            .expect_err("missing conffiles must not look copied");
+        assert!(
+            error.to_string().contains("Failed to copy conffiles"),
+            "got: {error}"
+        );
+    }
+
+    #[test]
+    fn copy_conffile_writes_destination() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let src = dir.path().join("src");
+        let dest = dir.path().join("dest");
+        std::fs::write(&src, b"/etc/foo.conf\n").expect("conffiles");
+        copy_conffile(&src, &dest).expect("copy");
+        assert_eq!(std::fs::read(&dest).expect("copied"), b"/etc/foo.conf\n");
     }
 }

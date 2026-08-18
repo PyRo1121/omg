@@ -90,7 +90,7 @@ impl PackageManager for PureDebianPackageManager {
             .context("Insufficient disk space for installation")?;
 
             // 3. Create transaction and populate URLs
-            let mut tx = debian_db::Transaction::from_resolution(resolution);
+            let mut tx = debian_db::Transaction::from_resolution(resolution)?;
             populate_package_urls(&mut tx).context(
                 "Failed to resolve package URLs. Repository configuration may be invalid.",
             )?;
@@ -147,7 +147,7 @@ impl PackageManager for PureDebianPackageManager {
             }
 
             // Create transaction
-            let mut tx = debian_db::Transaction::new();
+            let mut tx = debian_db::Transaction::new()?;
             for pkg in &packages {
                 tx.add_remove(pkg.clone());
             }
@@ -226,7 +226,7 @@ impl PackageManager for PureDebianPackageManager {
             .context("Insufficient disk space for upgrade")?;
 
             // Execute upgrade transaction
-            let mut tx = debian_db::Transaction::from_resolution(resolution);
+            let mut tx = debian_db::Transaction::from_resolution(resolution)?;
             populate_package_urls(&mut tx).context("Failed to resolve package URLs for upgrade")?;
 
             tx.execute().await.context(

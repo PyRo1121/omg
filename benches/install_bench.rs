@@ -112,7 +112,7 @@ fn bench_install_transaction_creation(c: &mut Criterion) {
                     }
 
                     let resolution = resolver.resolve().expect("resolution should succeed");
-                    let tx = Transaction::from_resolution(resolution);
+                    let tx = Transaction::from_resolution(resolution).expect("content store init");
                     std::hint::black_box(tx)
                 });
             },
@@ -206,7 +206,7 @@ fn bench_install_conflict_detection(c: &mut Criterion) {
                     }
 
                     let resolution = resolver.resolve().expect("resolution should succeed");
-                    let tx = Transaction::from_resolution(resolution);
+                    let tx = Transaction::from_resolution(resolution).expect("content store init");
 
                     // Note: check_file_conflicts requires actual file system access
                     // This benchmark measures transaction creation only
