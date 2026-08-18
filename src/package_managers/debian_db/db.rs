@@ -1615,17 +1615,7 @@ pub fn list_installed_fast() -> Result<Vec<LocalPackage>> {
     let status_content = fs::read_to_string(status_path)?;
 
     // Fast parse of extended_states using memchr for line iteration
-    let mut auto_installed = AHashSet::new();
-    if let Ok(ext_content) = fs::read_to_string(extended_states_path) {
-        let mut current_pkg = String::new();
-        for line in ext_content.lines() {
-            if let Some(name) = line.strip_prefix("Package: ") {
-                current_pkg = name.trim().to_string();
-            } else if line.starts_with("Auto-Installed: 1") && !current_pkg.is_empty() {
-                auto_installed.insert(std::mem::take(&mut current_pkg));
-            }
-        }
-    }
+    let auto_installed = read_auto_installed_names(extended_states_path)?;
 
     // Pre-allocate for estimated package count
     let mut packages = Vec::with_capacity(status_content.len() / 300);
@@ -2040,6 +2030,32 @@ pub fn get_package_version(package_name: &str) -> Result<Option<String>> {
     Ok(installed_version_from_status(&content, package_name))
 }
 
+/// Load APT Auto-Installed names from `extended_states`.
+///
+/// A missing file is an empty set (no auto-install tracking), matching APT.
+/// An unreadable existing file is an error so auto-installed packages are not hidden.
+fn read_auto_installed_names(path: &Path) -> Result<AHashSet<String>> {
+    match fs::read_to_string(path) {
+        Ok(content) => Ok(auto_installed_names_from_extended_states(&content)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(AHashSet::new()),
+        Err(error) => Err(error)
+            .with_context(|| format!("Failed to read APT extended_states {}", path.display())),
+    }
+}
+
+fn auto_installed_names_from_extended_states(content: &str) -> AHashSet<String> {
+    let mut auto_installed = AHashSet::new();
+    let mut current_pkg = String::new();
+    for line in content.lines() {
+        if let Some(name) = line.strip_prefix("Package: ") {
+            current_pkg = name.trim().to_string();
+        } else if line.starts_with("Auto-Installed: 1") && !current_pkg.is_empty() {
+            auto_installed.insert(std::mem::take(&mut current_pkg));
+        }
+    }
+    auto_installed
+}
+
 /// Check if package is auto-installed (dependency) from `/var/lib/apt/extended_states`
 /// Returns `true` if auto-installed, `false` if explicitly installed
 pub fn is_package_auto_installed(package_name: &str) -> Result<bool> {
@@ -2047,23 +2063,8 @@ pub fn is_package_auto_installed(package_name: &str) -> Result<bool> {
         return Ok(false);
     }
 
-    let extended_states_path = Path::new("/var/lib/apt/extended_states");
-    if !extended_states_path.exists() {
-        return Ok(false);
-    }
-
-    let content = fs::read_to_string(extended_states_path)?;
-
-    let mut current_pkg = String::new();
-    for line in content.lines() {
-        if let Some(name) = line.strip_prefix("Package: ") {
-            current_pkg = name.trim().to_string();
-        } else if current_pkg == package_name && line.starts_with("Auto-Installed: 1") {
-            return Ok(true);
-        }
-    }
-
-    Ok(false)
+    let auto_installed = read_auto_installed_names(Path::new("/var/lib/apt/extended_states"))?;
+    Ok(auto_installed.contains(package_name))
 }
 
 /// List orphaned packages on Debian/Ubuntu systems
@@ -2593,5 +2594,35 @@ mod tests {
         unsafe {
             std::env::remove_var("OMG_TEST_MODE");
         }
+    }
+
+    #[test]
+    fn read_auto_installed_names_missing_file_is_empty_set() {
+        let names = read_auto_installed_names(Path::new("/no/such/extended_states"))
+            .expect("missing extended_states is an empty auto-install set");
+        assert!(names.is_empty());
+    }
+
+    #[test]
+    fn auto_installed_names_from_extended_states_reads_auto_flag() {
+        let content = "Package: libc6\nAuto-Installed: 1\n\nPackage: bash\nAuto-Installed: 0\n";
+        let names = auto_installed_names_from_extended_states(content);
+        assert!(names.contains("libc6"));
+        assert!(!names.contains("bash"));
+    }
+
+    #[test]
+    fn read_auto_installed_names_unreadable_file_is_error() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let path = dir.path().join("extended_states");
+        std::fs::create_dir(&path).expect("directory is not a readable file");
+
+        let error = read_auto_installed_names(&path)
+            .expect_err("unreadable extended_states must not look like all packages are explicit");
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("Failed to read APT extended_states"),
+            "got: {message}"
+        );
     }
 }
