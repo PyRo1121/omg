@@ -26,6 +26,229 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Fail closed when dpkg status is missing instead of indexing packages as uninstalled
+- Fail closed when dpkg status is missing instead of reporting zero orphans
+- Fail closed when dpkg status is missing instead of treating packages as uninstalled
+- Fail closed when dpkg status is missing instead of reporting zero disk usage
+- Fail closed when dpkg status is missing instead of reporting packages as not installed
+- Fail closed when dpkg status is missing instead of listing zero packages
+- Fail closed instead of reporting a clean ALSA scan on Debian
+- Fail closed instead of scanning Debian SBOMs with Arch advisories
+- Emit Debian purls in SBOMs instead of labeling dpkg packages as Arch
+- Report debian-pure system status from dpkg instead of mixing pacman updates
+- Count debian-pure packages from dpkg instead of ALPM
+- List debian-pure orphans from dpkg instead of ALPM
+- Look up debian-pure package info from dpkg instead of ALPM
+- Query debian-pure install state from dpkg instead of ALPM
+- List debian-pure installed packages from dpkg instead of ALPM
+- Search debian-pure packages via dpkg instead of ALPM
+- List debian-pure explicit packages from dpkg instead of ALPM
+- Report debian-pure telemetry as debian instead of arch
+- Remove debian-pure orphans from the TUI via dpkg instead of pacman
+- Search debian-pure packages in the TUI via dpkg instead of ALPM
+- Pin debian-pure packages using dpkg versions instead of ALPM
+- Blame debian-pure packages from dpkg instead of ALPM
+- Fail closed on debian-pure rollback instead of inventing a pacman restore
+- Report debian-pure disk usage from dpkg instead of ALPM
+- Explain debian-pure dependencies from dpkg instead of ALPM
+- Skip AUR names in debian-pure install completion
+- Skip AUR search on debian-pure instead of mixing Arch results
+- Remove debian-pure packages through APT instead of pacman
+- Install debian-pure packages through APT instead of pacman or AUR
+- Run debian-pure updates through the Debian path instead of pacman
+- Skip AUR update checks on debian-pure instead of querying Arch
+- Clean debian-pure orphans from dpkg instead of running Arch cleanup
+- Emit debian-pure JSON info from dpkg instead of an Arch miss
+- Look up debian-pure package info in dpkg instead of ALPM or AUR
+- Complete debian-pure remove names from dpkg instead of ALPM
+- Complete debian-pure package names from dpkg instead of ALPM
+- Query debian-pure status from dpkg instead of ALPM
+- List debian-pure explicit packages from dpkg instead of pacman
+- Pre-warm explicit packages from the real backend instead of skipping debian-pure
+- Refresh daemon status via the real backend instead of inventing Arch-disabled
+- List explicit packages for apt-pure instead of unsupported
+
+The daemon explicit list and count paths now query dpkg for debian-pure instead of treating apt-pure as an unknown package manager.
+
+- Query debian-pure status instead of inventing a missing backend
+
+CLI status and the daemon now read dpkg counts for apt-pure instead of failing as if no package manager exists.
+
+- Fail closed on rollback without printing a fake restore plan
+
+Rollback without the Arch or APT backend now errors immediately, including the packages that would have been restored.
+
+- Report debian-pure as debian and enable why/size via dpkg
+
+Telemetry no longer labels debian-pure as an unknown backend, and why/size use the existing debian_db path instead of bailing.
+
+- Fail closed when env fingerprint cannot list packages
+
+Environment capture no longer records an empty package list when no backend is compiled in, and debian-pure can list explicit packages for the fingerprint.
+
+- Fail closed when a vulnerability scan cannot list installed packages
+
+System vuln scans no longer treat a missing package backend as zero findings, and debian-pure can list packages for the same check.
+
+- Fail closed when SBOM or package info cannot query a backend
+
+SBOM generation no longer emits an empty inventory without Arch or Debian, and package info reports a backend error instead of treating every package as missing.
+
+- Fail closed when pin or license scan cannot query packages
+
+Package pin no longer treats a missing backend as an uninstalled package, and license scan no longer reports an empty catalog as a clean result.
+
+- Fail closed when explicit listing or completion has no backend
+
+omg explicit no longer prints a warning and exits successfully, and shell completion no longer pretends the package catalog is empty.
+
+- Fail closed when daemon status or auto-fix cannot run
+
+Windows daemon status and non-Arch vulnerability auto-fix now error instead of printing a warning and exiting successfully.
+
+- Fail closed when blame cannot query the package database
+
+Without an Arch or Debian backend, omg blame now errors instead of reporting the package as not installed or hiding reverse deps behind an info message.
+
+- Fail closed when clean cannot clear the package cache
+
+APT and no-backend builds now error on --cache/--aur instead of printing a hint and exiting success.
+
+- Fail closed when clean cannot remove orphans or AUR builds
+
+omg clean --orphans and --aur now error without a capable backend instead of printing a notice and exiting success.
+
+- Fail closed when TUI orphan removal has no backend
+
+debian-pure now lists and removes orphans, missing backends error, and update/clean/install/audit failures show in the status bar instead of only logs.
+
+- Fail closed in TUI search when the daemon miss has no backend
+
+debian-pure now searches locally after a daemon miss, and a failed search is shown in the UI instead of looking like an empty success.
+
+- Do not treat failed package listing or search as an empty result
+
+Team proposals and Debian TUI search now propagate backend errors instead of inventing an empty package list.
+
+- Fail closed when Homebrew, Windows, or pacman cache cannot determine install state
+
+Listing and cache-load errors now return Result instead of looking like the package is not installed.
+
+- Fail closed when Debian cannot determine whether a package is installed
+
+is_installed_fast now returns Result so unreadable dpkg status is an error, not "not installed".
+
+- Return Result from is_installed and fail closed on unreadable AUR cache files
+- Do not treat listing and EOL parse errors as empty or still-supported
+- Do not report a clean security status when vulnerabilities were never scanned
+- Fail closed on env capture listing errors and write owner-only lockfiles
+- Deny unknown license features instead of treating them as free
+- Gate audit verify behind Team and assert license failures instead of no-panic
+- Do not report zero APT orphans when the accurate status query fails
+
+Fast status may still omit orphan and update counts; a failed rust-apt query now errors instead of looking like a clean system.
+
+- Do not cache status snapshots that never scanned vulns
+
+A cache-miss status reply still returns package counts, but it is not stored as a zero-vulnerability result that later refreshes would treat as evidence.
+
+- Return typed SLSA errors from Rekor and hash paths
+
+Query, entry fetch, artifact hashing, and provenance JSON parse now fail as SlsaError instead of anyhow wrappers.
+
+- Do not publish zero vulns when a status scan fails
+
+A failed ALSA/OSV refresh keeps the last known count, and with no prior count it skips the status cache instead of reporting a clean system.
+
+- Return typed keyserver errors and stop treating keyring IO as a miss
+
+Corrupt or unreadable keyrings are KeyserverError, and AUR key fetch no longer treats those failures as missing keys to download.
+
+- Fail closed on partial Rekor fetches and corrupt keyrings
+
+A Rekor UUID that cannot be retrieved no longer drops out of the result set, and unparsable keyring certificates are errors instead of silent misses.
+
+- Return typed vulnerability errors from grading
+
+Unavailable OSV/ALSA evidence is VulnerabilityError instead of anyhow, so assign_grade cannot treat a failed scan as a clean package.
+
+- Fail closed when SBOM vulnerability fetch fails
+
+A failed ALSA query no longer produces a clean CycloneDX document; SbomError reports list, fetch, serialize, and write failures instead of anyhow wrappers.
+
+- Fail closed when secret scans cannot read files
+
+Unreadable or invalid UTF-8 files in a scan tree are now SecretError instead of silent skips, and scan_content no longer pretends it can fail.
+
+- Fail closed on corrupt audit JSONL with typed errors
+
+Skip unreadable or unparseable lines no longer; AuditError reports IO, corrupt JSON, and missing hashes so a broken log cannot become the chain head.
+
+- Return typed validation errors from the security library
+
+Package name, version, and relative-path checks now use ValidationError
+
+so callers can match variants instead of parsing anyhow strings. CLI
+
+boundaries convert with Into. Privilege tests assert is_root against euid.
+
+- Fail closed on corrupt PGP keyrings with typed errors
+- Require Rekor HTTP success and the requested entry uuid
+
+GET /log/entries now fails closed on non-2xx instead of parsing error
+
+JSON. Entry maps must contain the requested uuid, and non-u64 fields
+
+are a typed error rather than "missing".
+
+- Fail closed on info misses and typed Rekor errors
+
+Package info now errors on not-found instead of printing and exiting 0.
+
+Debian lookups propagate index failures instead of treating them as misses.
+
+Rekor helpers use thiserror and reject entries with missing fields instead
+
+of defaulting to zero. Weak privilege tests now assert real rejections.
+
+- Stop treating Rekor hits as SLSA and env as root
+
+A Rekor UUID or unsigned provenance JSON is not a verified
+
+attestation. Missing PGP signatures abort the ALPM commit instead
+
+of being skipped. OMG_ELEVATED requires a real root euid. Audit
+
+and vulnerability CLI paths return Err instead of printing then
+
+exiting 0.
+
+- Drop no-op SLSA API and restore clippy warn
+
+Remove determine_slsa_level (always None) and the unused Security
+
+update type instead of keeping compatibility shims. Policy denials
+
+are PolicyError values. Missing or unverified SLSA provenance fails
+
+the CLI. Cargo.toml keeps missing_const_for_fn at warn.
+
+- Fail closed on errors and stop invented security grades
+
+CLI paths that printed success after a failed operation now return Err so
+
+the process exits non-zero. Debian installs require a matching SHA256.
+
+SLSA and policy grades are no longer minted from package names; require_pgp
+
+is enforced; SPDX matching uses tokens so MIT does not match LIMITED.
+
+Remove unused TEA wrappers, the unused debian-resolvo adapter, dead CLI
+
+display modules, and the CI canary that targeted a missing test file.
+
+Tests assert the new behavior instead of only checking that nothing panics.
+
 - Scope Context import to arch builds and expect to empty-backend fallback
 - Scope unnecessary_wraps expectation to non-arch builds
 - Keep portable clippy clean across feature gates
@@ -695,6 +918,14 @@ which newer clippy versions flag as an error with -D warnings.
 - Pin remaining third-party actions
 - Make security and coverage gates fail closed
 - Run Docker E2E tests explicitly
+### 📚 Documentation
+
+- Track Pi AGENTS.md as the repo agent contract
+
+Stop ignoring AGENTS.md so Cloud Agents load the no-slop baseline
+
+from pi-local-workspace instead of treating it as a session artifact.
+
 ### 📦 Dependencies
 
 - **Deps**: Bump tar from 0.4.44 to 0.4.46
@@ -922,6 +1153,12 @@ the Debian backend), so it was removed from the metadata.
 - Normalize project formatting
 ### 🧪 Testing
 
+- Replace remaining no-panic security checks with fail-closed assertions
+- Assert invalid names and real secret matches instead of no-panic
+
+SQL/XSS payloads must fail package-name validation, and secret fixtures must match typed findings rather than a missing panic string.
+
+- Drop unused import left by privilege test cleanup
 - Add a hermetic non-empty PackageIndex fixture
 
 Empty-index tests cannot exercise ranking, suggestion, or exact
