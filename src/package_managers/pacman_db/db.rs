@@ -198,7 +198,7 @@ impl PacmanMmapIndex {
 }
 
 fn load_sync_packages(sync_dir: &Path) -> Result<HashMap<String, SyncDbPackage>> {
-    let db_paths = collect_sync_db_paths(sync_dir);
+    let db_paths = collect_sync_db_paths(sync_dir)?;
     let parsed: Vec<HashMap<String, SyncDbPackage>> = db_paths
         .par_iter()
         .map(|(path, name)| {
@@ -214,9 +214,13 @@ fn load_sync_packages(sync_dir: &Path) -> Result<HashMap<String, SyncDbPackage>>
     Ok(packages)
 }
 
-fn collect_sync_db_paths(sync_dir: &Path) -> Vec<(PathBuf, String)> {
+fn collect_sync_db_paths(sync_dir: &Path) -> Result<Vec<(PathBuf, String)>> {
     // Pre-allocate for standard repos (core, extra, multilib) plus potential custom repos
     let mut dbs = Vec::with_capacity(8);
+
+    if !sync_dir.exists() {
+        return Ok(dbs);
+    }
 
     for db_name in &["core", "extra", "multilib"] {
         let db_path = sync_dir.join(format!("{db_name}.db"));
@@ -225,39 +229,52 @@ fn collect_sync_db_paths(sync_dir: &Path) -> Vec<(PathBuf, String)> {
         }
     }
 
-    if let Ok(entries) = std::fs::read_dir(sync_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
+    for entry in std::fs::read_dir(sync_dir).with_context(|| {
+        format!(
+            "Failed to read pacman sync directory {}",
+            sync_dir.display()
+        )
+    })? {
+        let entry = entry.with_context(|| {
+            format!(
+                "Failed to read pacman sync directory entry in {}",
+                sync_dir.display()
+            )
+        })?;
+        let path = entry.path();
+        let meta = entry.metadata().with_context(|| {
+            format!(
+                "Failed to read pacman sync file metadata {}",
+                path.display()
+            )
+        })?;
+        if !meta.is_file() {
+            continue;
+        }
 
-            // Skip non-files and signature files
-            if !path.is_file() {
-                continue;
-            }
+        // Only process .db files (not .db.sig or other extensions)
+        if !path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("db"))
+        {
+            continue;
+        }
 
-            // Only process .db files (not .db.sig or other extensions)
-            if !path
-                .extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("db"))
-            {
-                continue;
-            }
+        // Extract repo name (file_stem gives us the name without .db)
+        let name = path
+            .file_stem()
+            .and_then(|n| n.to_str())
+            .map(str::to_string);
 
-            // Extract repo name (file_stem gives us the name without .db)
-            let name = path
-                .file_stem()
-                .and_then(|n| n.to_str())
-                .map(str::to_string);
-
-            // Skip standard repos (already added above)
-            if let Some(name) = name
-                && !matches!(name.as_str(), "core" | "extra" | "multilib")
-            {
-                dbs.push((path, name));
-            }
+        // Skip standard repos (already added above)
+        if let Some(name) = name
+            && !matches!(name.as_str(), "core" | "extra" | "multilib")
+        {
+            dbs.push((path, name));
         }
     }
 
-    dbs
+    Ok(dbs)
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -389,11 +406,14 @@ pub fn parse_sync_db(path: &Path, repo_name: &str) -> Result<HashMap<String, Syn
 
         if path_str.ends_with("/desc") {
             let mut content = String::new();
-            if entry.read_to_string(&mut content).is_err() {
-                continue;
-            }
+            entry.read_to_string(&mut content).with_context(|| {
+                format!(
+                    "Failed to read desc {} from repo {repo_name}",
+                    entry_path.display()
+                )
+            })?;
 
-            let pkg = parse_desc_content(&content, repo_name);
+            let pkg = parse_desc_content(&content, repo_name)?;
             if !pkg.name.is_empty() {
                 packages.insert(pkg.name.clone(), pkg);
             }
@@ -417,8 +437,7 @@ macro_rules! sync_pkg_from_desc {
     ($desc:expr, $repo:expr) => {
         SyncDbPackage {
             name: $desc.name.to_string(),
-            version: Version::from_str(&$desc.version.to_string())
-                .unwrap_or_else(|_| super::super::types::zero_version()),
+            version: require_package_version(&$desc.version.to_string())?,
             desc: $desc.description.to_string(),
             filename: $desc.file_name.to_string(),
             csize: $desc.compressed_size,
@@ -465,7 +484,7 @@ macro_rules! sync_pkg_from_desc {
     };
 }
 
-fn parse_desc_content(content: &str, repo: &str) -> SyncDbPackage {
+fn parse_desc_content(content: &str, repo: &str) -> Result<SyncDbPackage> {
     // Try V2 first (newer format without MD5SUM).
     // Wrap in catch_unwind because alpm_repo_db can panic on corrupted data
     // (e.g., PackageRelation::from_str panics on malformed dependency strings).
@@ -474,7 +493,7 @@ fn parse_desc_content(content: &str, repo: &str) -> SyncDbPackage {
     }));
 
     match v2_result {
-        Ok(Ok(desc)) => return sync_pkg_from_desc!(desc, repo),
+        Ok(Ok(desc)) => return Ok(sync_pkg_from_desc!(desc, repo)),
         Ok(Err(_)) => {}
         Err(panic_info) => {
             tracing::warn!(
@@ -491,7 +510,7 @@ fn parse_desc_content(content: &str, repo: &str) -> SyncDbPackage {
     }));
 
     match v1_result {
-        Ok(Ok(desc)) => return sync_pkg_from_desc!(desc, repo),
+        Ok(Ok(desc)) => return Ok(sync_pkg_from_desc!(desc, repo)),
         Ok(Err(_)) => {}
         Err(panic_info) => {
             tracing::warn!(
@@ -507,7 +526,7 @@ fn parse_desc_content(content: &str, repo: &str) -> SyncDbPackage {
     parse_desc_manual(content, repo)
 }
 
-fn parse_desc_manual(content: &str, repo: &str) -> SyncDbPackage {
+fn parse_desc_manual(content: &str, repo: &str) -> Result<SyncDbPackage> {
     let mut pkg = SyncDbPackage {
         repo: repo.to_string(),
         ..SyncDbPackage::default()
@@ -528,13 +547,21 @@ fn parse_desc_manual(content: &str, repo: &str) -> SyncDbPackage {
         match current_section {
             "%NAME%" => pkg.name = line.to_string(),
             "%VERSION%" => {
-                pkg.version = crate::package_managers::parse_version_or_zero(line);
+                pkg.version = require_package_version(line)?;
             }
             "%DESC%" => pkg.desc = line.to_string(),
             "%URL%" => pkg.url = line.to_string(),
             "%ARCH%" => pkg.arch = line.to_string(),
-            "%CSIZE%" => pkg.csize = line.parse().unwrap_or(0),
-            "%ISIZE%" => pkg.isize = line.parse().unwrap_or(0),
+            "%CSIZE%" => {
+                pkg.csize = line
+                    .parse()
+                    .with_context(|| format!("Invalid compressed size in repo {repo}: {line}"))?;
+            }
+            "%ISIZE%" => {
+                pkg.isize = line
+                    .parse()
+                    .with_context(|| format!("Invalid installed size in repo {repo}: {line}"))?;
+            }
             "%FILENAME%" => pkg.filename = line.to_string(),
             "%DEPENDS%" => pkg.depends.push(line.to_string()),
             "%PROVIDES%" => pkg.provides.push(line.to_string()),
@@ -547,7 +574,7 @@ fn parse_desc_manual(content: &str, repo: &str) -> SyncDbPackage {
         }
     }
 
-    pkg
+    Ok(pkg)
 }
 
 /// Parse the local package database (/var/lib/pacman/local/)
@@ -559,25 +586,44 @@ pub fn parse_local_db(path: &Path) -> Result<HashMap<String, LocalDbPackage>> {
         return Ok(packages);
     }
 
-    for entry in std::fs::read_dir(path)? {
-        let entry = entry?;
+    for entry in std::fs::read_dir(path)
+        .with_context(|| format!("Failed to read pacman local directory {}", path.display()))?
+    {
+        let entry = entry.with_context(|| {
+            format!(
+                "Failed to read pacman local directory entry in {}",
+                path.display()
+            )
+        })?;
         let pkg_path = entry.path();
-
-        if !pkg_path.is_dir() {
+        let meta = entry.metadata().with_context(|| {
+            format!(
+                "Failed to read pacman local package metadata {}",
+                pkg_path.display()
+            )
+        })?;
+        if !meta.is_dir() {
             continue;
         }
 
         let desc_path = pkg_path.join("desc");
         if !desc_path.exists() {
-            continue;
+            anyhow::bail!(
+                "Local package directory {} is missing desc",
+                pkg_path.display()
+            );
         }
 
-        if let Ok(pkg) = parse_local_desc(&desc_path) {
-            packages.insert(pkg.name.clone(), pkg);
-        }
+        let pkg = parse_local_desc(&desc_path)?;
+        packages.insert(pkg.name.clone(), pkg);
     }
 
     Ok(packages)
+}
+
+fn require_package_version(raw: &str) -> Result<Version> {
+    Version::from_str(raw)
+        .map_err(|error| anyhow::anyhow!("Invalid package version {raw}: {error}"))
 }
 
 fn parse_local_desc(path: &Path) -> Result<LocalDbPackage> {
@@ -587,8 +633,7 @@ fn parse_local_desc(path: &Path) -> Result<LocalDbPackage> {
     if let Ok(desc) = alpm_db::desc::DbDescFileV1::from_str(&content) {
         return Ok(LocalDbPackage {
             name: desc.name.to_string(),
-            version: Version::from_str(&desc.version.to_string())
-                .unwrap_or_else(|_| super::super::types::zero_version()),
+            version: require_package_version(&desc.version.to_string())?,
             desc: desc.description.to_string(),
             install_date: desc.installdate.to_string(),
             licenses: desc.license.iter().map(ToString::to_string).collect(),
@@ -600,8 +645,7 @@ fn parse_local_desc(path: &Path) -> Result<LocalDbPackage> {
     if let Ok(desc) = alpm_db::desc::DbDescFileV2::from_str(&content) {
         return Ok(LocalDbPackage {
             name: desc.name.to_string(),
-            version: Version::from_str(&desc.version.to_string())
-                .unwrap_or_else(|_| super::super::types::zero_version()),
+            version: require_package_version(&desc.version.to_string())?,
             desc: desc.description.to_string(),
             install_date: desc.installdate.to_string(),
             licenses: desc.license.iter().map(ToString::to_string).collect(),
@@ -652,8 +696,7 @@ fn parse_local_desc_manual(content: &str) -> Result<LocalDbPackage> {
 
     Ok(LocalDbPackage {
         name,
-        version: Version::from_str(&version)
-            .unwrap_or_else(|_| super::super::types::zero_version()),
+        version: require_package_version(&version)?,
         desc,
         install_date,
         licenses,
@@ -872,7 +915,7 @@ fn is_cache_reusable(
 
 /// Ensure sync cache is loaded (fast if already loaded)
 fn ensure_sync_cache_loaded(sync_dir: &Path) -> Result<()> {
-    let current_mtime = get_newest_db_mtime(sync_dir);
+    let current_mtime = get_newest_db_mtime(sync_dir)?;
 
     {
         let mut cache = SYNC_DB_CACHE.write().expect("lock poisoned");
@@ -1038,21 +1081,40 @@ fn ensure_local_cache_loaded(local_dir: &Path) -> Result<()> {
 }
 
 /// Get newest modification time of sync DBs
-fn get_newest_db_mtime(sync_dir: &Path) -> SystemTime {
-    let mut newest = SystemTime::UNIX_EPOCH;
+fn get_newest_db_mtime(sync_dir: &Path) -> Result<SystemTime> {
+    if !sync_dir.exists() {
+        return Ok(SystemTime::UNIX_EPOCH);
+    }
 
-    if let Ok(entries) = std::fs::read_dir(sync_dir) {
-        for entry in entries.flatten() {
-            if let Ok(meta) = entry.metadata()
-                && let Ok(mtime) = meta.modified()
-                && mtime > newest
-            {
-                newest = mtime;
-            }
+    let mut newest = SystemTime::UNIX_EPOCH;
+    for entry in std::fs::read_dir(sync_dir).with_context(|| {
+        format!(
+            "Failed to read pacman sync directory {}",
+            sync_dir.display()
+        )
+    })? {
+        let entry = entry.with_context(|| {
+            format!(
+                "Failed to read pacman sync directory entry in {}",
+                sync_dir.display()
+            )
+        })?;
+        let path = entry.path();
+        let meta = entry.metadata().with_context(|| {
+            format!(
+                "Failed to read pacman sync file metadata {}",
+                path.display()
+            )
+        })?;
+        let mtime = meta
+            .modified()
+            .with_context(|| format!("Failed to read modification time for {}", path.display()))?;
+        if mtime > newest {
+            newest = mtime;
         }
     }
 
-    newest
+    Ok(newest)
 }
 
 /// Get modification time of local db directory
@@ -1240,7 +1302,7 @@ pub fn search_sync_fast(query: &str) -> Result<Vec<SyncDbPackage>> {
 /// Zero-copy search using memory-mapped rkyv index (~100µs vs ~1ms for regular search)
 pub fn search_sync_mmap(query: &str) -> Result<Vec<SyncDbPackage>> {
     let sync_dir = paths::pacman_sync_dir();
-    let current_mtime = get_newest_db_mtime(&sync_dir);
+    let current_mtime = get_newest_db_mtime(&sync_dir)?;
     let mtime_secs = current_mtime
         .duration_since(SystemTime::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
@@ -1441,23 +1503,18 @@ mod tests {
 
     #[test]
     fn test_collect_sync_db_paths_excludes_sig_files() {
-        // Create a temporary test directory with .db and .db.sig files
-        let temp_dir = std::env::temp_dir().join("omg_test_sync_db");
-        let _ = std::fs::remove_dir_all(&temp_dir);
-        std::fs::create_dir_all(&temp_dir).unwrap();
+        let temp_dir = tempfile::TempDir::new().unwrap();
 
-        // Create test files
-        std::fs::write(temp_dir.join("core.db"), b"dummy").unwrap();
-        std::fs::write(temp_dir.join("core.db.sig"), b"signature").unwrap();
-        std::fs::write(temp_dir.join("extra.db"), b"dummy").unwrap();
-        std::fs::write(temp_dir.join("extra.db.sig"), b"signature").unwrap();
-        std::fs::write(temp_dir.join("custom-repo.db"), b"dummy").unwrap();
-        std::fs::write(temp_dir.join("custom-repo.db.sig"), b"signature").unwrap();
-        std::fs::write(temp_dir.join("not-a-db.txt"), b"text").unwrap();
+        std::fs::write(temp_dir.path().join("core.db"), b"dummy").unwrap();
+        std::fs::write(temp_dir.path().join("core.db.sig"), b"signature").unwrap();
+        std::fs::write(temp_dir.path().join("extra.db"), b"dummy").unwrap();
+        std::fs::write(temp_dir.path().join("extra.db.sig"), b"signature").unwrap();
+        std::fs::write(temp_dir.path().join("custom-repo.db"), b"dummy").unwrap();
+        std::fs::write(temp_dir.path().join("custom-repo.db.sig"), b"signature").unwrap();
+        std::fs::write(temp_dir.path().join("not-a-db.txt"), b"text").unwrap();
 
-        let db_paths = collect_sync_db_paths(&temp_dir);
+        let db_paths = collect_sync_db_paths(temp_dir.path()).unwrap();
 
-        // Should only collect .db files, NOT .db.sig files
         let collected_names: Vec<_> = db_paths
             .iter()
             .map(|(path, _)| path.file_name().unwrap().to_str().unwrap())
@@ -1491,9 +1548,108 @@ mod tests {
             !collected_names.contains(&"not-a-db.txt"),
             "Should NOT include non-.db files"
         );
+    }
 
-        // Cleanup
-        std::fs::remove_dir_all(&temp_dir).unwrap();
+    #[test]
+    fn test_collect_sync_db_paths_missing_dir_is_empty() {
+        let missing = tempfile::TempDir::new()
+            .unwrap()
+            .path()
+            .join("does-not-exist");
+        let db_paths = collect_sync_db_paths(&missing).unwrap();
+        assert!(db_paths.is_empty());
+    }
+
+    #[test]
+    fn test_collect_sync_db_paths_unreadable_dir_errors() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let original = std::fs::metadata(temp_dir.path()).unwrap().permissions();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(temp_dir.path(), std::fs::Permissions::from_mode(0o000))
+                .unwrap();
+        }
+        let blocked = std::fs::read_dir(temp_dir.path()).is_err();
+        let result = collect_sync_db_paths(temp_dir.path());
+        let _ = std::fs::set_permissions(temp_dir.path(), original);
+        if !blocked {
+            return;
+        }
+        assert!(
+            result.is_err(),
+            "unreadable sync dir must fail closed, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_parse_local_db_missing_dir_is_empty() {
+        let missing = tempfile::TempDir::new()
+            .unwrap()
+            .path()
+            .join("does-not-exist");
+        let packages = parse_local_db(&missing).unwrap();
+        assert!(packages.is_empty());
+    }
+
+    #[test]
+    fn test_parse_local_db_missing_desc_errors() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir(temp_dir.path().join("vim-9.1.0-1")).unwrap();
+        let error = parse_local_db(temp_dir.path()).unwrap_err();
+        assert!(
+            error.to_string().contains("missing desc"),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    #[test]
+    fn test_parse_local_desc_invalid_version_errors() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let pkg_dir = temp_dir.path().join("vim-bad");
+        std::fs::create_dir(&pkg_dir).unwrap();
+        std::fs::write(
+            pkg_dir.join("desc"),
+            "%NAME%\nvim\n\n%VERSION%\nnot a version!!!\n\n%DESC%\nVi Improved\n",
+        )
+        .unwrap();
+        let error = parse_local_db(temp_dir.path()).unwrap_err();
+        assert!(
+            error.to_string().contains("Invalid package version"),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    #[test]
+    fn test_get_newest_db_mtime_missing_dir_is_epoch() {
+        let missing = tempfile::TempDir::new()
+            .unwrap()
+            .path()
+            .join("does-not-exist");
+        let mtime = get_newest_db_mtime(&missing).unwrap();
+        assert_eq!(mtime, SystemTime::UNIX_EPOCH);
+    }
+
+    #[test]
+    fn test_get_newest_db_mtime_unreadable_dir_errors() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let original = std::fs::metadata(temp_dir.path()).unwrap().permissions();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(temp_dir.path(), std::fs::Permissions::from_mode(0o000))
+                .unwrap();
+        }
+        let blocked = std::fs::read_dir(temp_dir.path()).is_err();
+        let result = get_newest_db_mtime(temp_dir.path());
+        let _ = std::fs::set_permissions(temp_dir.path(), original);
+        if !blocked {
+            return;
+        }
+        assert!(
+            result.is_err(),
+            "unreadable sync dir must fail closed, got {result:?}"
+        );
     }
 
     #[test]
