@@ -886,6 +886,16 @@ impl Transaction {
         self.to_install.len() + self.to_upgrade.len() + self.to_remove.len()
     }
 
+    /// Installed packages must have a version in dpkg status; an empty string is not a version.
+    fn require_installed_version(name: &str, version: Option<String>) -> Result<String> {
+        match version {
+            Some(version) if !version.is_empty() => Ok(version),
+            Some(_) | None => {
+                anyhow::bail!("installed package {name} has no version in dpkg status")
+            }
+        }
+    }
+
     /// Execute package removal
     #[allow(clippy::unused_async)]
     pub async fn execute_removal(&mut self) -> Result<()> {
@@ -932,7 +942,10 @@ impl Transaction {
             }
 
             // Get installed version for logging
-            let version = super::get_package_version(package_name)?.unwrap_or_default();
+            let version = Self::require_installed_version(
+                package_name,
+                super::get_package_version(package_name)?,
+            )?;
 
             // Run prerm script
             pb.set_message("prerm");
@@ -1987,6 +2000,24 @@ mod tests {
         tx.add_install("pkg2".to_string(), "1.0".to_string(), String::new(), 2000);
         assert_eq!(tx.total_download_size(), 3000);
         assert_eq!(tx.package_count(), 2);
+    }
+
+    #[test]
+    fn test_require_installed_version_rejects_missing_and_empty() {
+        assert_eq!(
+            Transaction::require_installed_version("vim", Some("9.0".into())).unwrap(),
+            "9.0"
+        );
+        let missing = Transaction::require_installed_version("vim", None).unwrap_err();
+        assert!(
+            missing.to_string().contains("no version in dpkg status"),
+            "got: {missing}"
+        );
+        let empty = Transaction::require_installed_version("vim", Some(String::new())).unwrap_err();
+        assert!(
+            empty.to_string().contains("no version in dpkg status"),
+            "got: {empty}"
+        );
     }
 
     #[test]
