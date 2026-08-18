@@ -18,7 +18,7 @@ async fn test_global_rate_limiting() {
     #[cfg(feature = "arch")]
     {
         omg_lib::package_managers::clear_alpm_cache();
-        omg_lib::package_managers::invalidate_caches();
+        omg_lib::package_managers::invalidate_caches().expect("Failed to invalidate caches");
     }
 
     // Setup temporary environment
@@ -69,7 +69,7 @@ async fn test_input_validation_audit() {
     #[cfg(feature = "arch")]
     {
         omg_lib::package_managers::clear_alpm_cache();
-        omg_lib::package_managers::invalidate_caches();
+        omg_lib::package_managers::invalidate_caches().expect("Failed to invalidate caches");
     }
 
     // Setup temporary environment
@@ -139,7 +139,7 @@ async fn test_batch_size_limit_audit() {
     #[cfg(feature = "arch")]
     {
         omg_lib::package_managers::clear_alpm_cache();
-        omg_lib::package_managers::invalidate_caches();
+        omg_lib::package_managers::invalidate_caches().expect("Failed to invalidate caches");
     }
 
     // Setup temporary environment
@@ -196,7 +196,7 @@ async fn test_health_endpoint_returns_status() {
     #[cfg(feature = "arch")]
     {
         omg_lib::package_managers::clear_alpm_cache();
-        omg_lib::package_managers::invalidate_caches();
+        omg_lib::package_managers::invalidate_caches().expect("Failed to invalidate caches");
     }
 
     let temp_dir = TempDir::new().unwrap();
@@ -249,7 +249,7 @@ async fn test_ping_returns_pong() {
     #[cfg(feature = "arch")]
     {
         omg_lib::package_managers::clear_alpm_cache();
-        omg_lib::package_managers::invalidate_caches();
+        omg_lib::package_managers::invalidate_caches().expect("Failed to invalidate caches");
     }
 
     let temp_dir = TempDir::new().unwrap();
@@ -288,7 +288,7 @@ async fn test_cache_stats_handler() {
     #[cfg(feature = "arch")]
     {
         omg_lib::package_managers::clear_alpm_cache();
-        omg_lib::package_managers::invalidate_caches();
+        omg_lib::package_managers::invalidate_caches().expect("Failed to invalidate caches");
     }
 
     let temp_dir = TempDir::new().unwrap();
@@ -329,7 +329,7 @@ async fn test_cache_clear_handler() {
     #[cfg(feature = "arch")]
     {
         omg_lib::package_managers::clear_alpm_cache();
-        omg_lib::package_managers::invalidate_caches();
+        omg_lib::package_managers::invalidate_caches().expect("Failed to invalidate caches");
     }
 
     let temp_dir = TempDir::new().unwrap();
@@ -368,7 +368,7 @@ async fn test_explicit_count_handler() {
     #[cfg(feature = "arch")]
     {
         omg_lib::package_managers::clear_alpm_cache();
-        omg_lib::package_managers::invalidate_caches();
+        omg_lib::package_managers::invalidate_caches().expect("Failed to invalidate caches");
     }
 
     let temp_dir = TempDir::new().unwrap();
