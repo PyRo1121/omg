@@ -4,7 +4,7 @@ use anyhow::Result;
 #[cfg(feature = "arch")]
 use std::collections::{HashMap, HashSet, VecDeque};
 
-#[cfg(any(feature = "arch", feature = "debian"))]
+#[cfg(any(feature = "arch", feature = "debian", feature = "debian-pure"))]
 use crate::cli::tea::Cmd;
 
 /// Explain why a package is installed
@@ -23,7 +23,10 @@ pub fn run(package: &str, reverse: bool) -> Result<()> {
         Ok(())
     }
 
-    #[cfg(all(feature = "debian", not(feature = "arch")))]
+    #[cfg(all(
+        any(feature = "debian", feature = "debian-pure"),
+        not(feature = "arch")
+    ))]
     {
         let cmd = if reverse {
             show_reverse_deps_debian(package)
@@ -34,10 +37,10 @@ pub fn run(package: &str, reverse: bool) -> Result<()> {
         Ok(())
     }
 
-    #[cfg(not(any(feature = "arch", feature = "debian")))]
+    #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
     {
         let _ = reverse;
-        anyhow::bail!("Package dependency analysis requires arch or debian feature");
+        why_requires_backend()
     }
 }
 
@@ -314,7 +317,10 @@ fn show_reverse_deps(package: &str) -> Result<Cmd<()>> {
     Ok(Cmd::batch(commands))
 }
 
-#[cfg(all(feature = "debian", not(feature = "arch")))]
+#[cfg(all(
+    any(feature = "debian", feature = "debian-pure"),
+    not(feature = "arch")
+))]
 fn show_deps_debian(package: &str) -> Cmd<()> {
     use crate::cli::components::Components;
     use crate::package_managers::debian_db;
@@ -341,7 +347,10 @@ fn show_deps_debian(package: &str) -> Cmd<()> {
     }
 }
 
-#[cfg(all(feature = "debian", not(feature = "arch")))]
+#[cfg(all(
+    any(feature = "debian", feature = "debian-pure"),
+    not(feature = "arch")
+))]
 fn show_reverse_deps_debian(package: &str) -> Cmd<()> {
     use crate::cli::components::Components;
     use crate::package_managers::debian_db;
@@ -364,4 +373,31 @@ fn show_reverse_deps_debian(package: &str) -> Cmd<()> {
             deps.into_iter().map(|d| (d, String::new())).collect(),
         ),
     ])
+}
+
+#[cfg(any(
+    not(any(feature = "arch", feature = "debian", feature = "debian-pure")),
+    test
+))]
+fn why_requires_backend() -> Result<()> {
+    anyhow::bail!(
+        "Package dependency analysis is not available without an Arch or Debian package backend"
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn why_without_backend_is_an_error() {
+        let error =
+            why_requires_backend().expect_err("why with no backend must not look like success");
+        assert!(
+            error
+                .to_string()
+                .contains("not available without an Arch or Debian package backend"),
+            "got: {error}"
+        );
+    }
 }
