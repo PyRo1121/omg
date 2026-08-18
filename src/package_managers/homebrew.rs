@@ -651,7 +651,8 @@ impl HomebrewPackageManager {
 
         let entries = std::fs::read_dir(&self.cellar)?;
 
-        for entry in entries.flatten() {
+        for entry in entries {
+            let entry = entry.context("failed to read Homebrew Cellar entry")?;
             let name = entry.file_name().to_string_lossy().to_string();
             if !name.starts_with('.') {
                 names.push(name);
@@ -661,7 +662,7 @@ impl HomebrewPackageManager {
         Ok(names)
     }
 
-    fn refresh_installed_cache_if_needed(&self) {
+    fn refresh_installed_cache_if_needed(&self) -> Result<()> {
         let cellar_mtime = std::fs::metadata(&self.cellar)
             .ok()
             .and_then(|m| m.modified().ok());
@@ -671,7 +672,8 @@ impl HomebrewPackageManager {
             cache.cellar_mtime != cellar_mtime || cache.packages.is_empty()
         };
 
-        if needs_refresh && let Ok(names) = self.list_installed_sync() {
+        if needs_refresh {
+            let names = self.list_installed_sync()?;
             let set: AHashSet<String> = names.into_iter().collect();
 
             let mut cache = INSTALLED_CACHE.write().expect("lock poisoned");
@@ -679,26 +681,26 @@ impl HomebrewPackageManager {
             cache.cellar_mtime = cellar_mtime;
             cache.last_refreshed = Some(Instant::now());
         }
+        Ok(())
     }
 
-    #[must_use]
-    pub fn is_installed_fast(&self, package: &str) -> bool {
+    pub fn is_installed_fast(&self, package: &str) -> Result<bool> {
         {
             let cache = INSTALLED_CACHE.read().expect("lock poisoned");
             if let Some(last) = cache.last_refreshed
                 && last.elapsed().as_secs() < INSTALLED_CACHE_TTL_SECS
             {
-                return cache.packages.contains(package);
+                return Ok(cache.packages.contains(package));
             }
         }
 
-        self.refresh_installed_cache_if_needed();
+        self.refresh_installed_cache_if_needed()?;
 
-        INSTALLED_CACHE
+        Ok(INSTALLED_CACHE
             .read()
             .expect("lock poisoned")
             .packages
-            .contains(package)
+            .contains(package))
     }
 
     async fn run_brew(&self, args: &[&str]) -> Result<()> {
@@ -914,7 +916,7 @@ impl PackageManager for HomebrewPackageManager {
         package: &str,
     ) -> Pin<Box<dyn Future<Output = Result<bool>> + Send + '_>> {
         let result = self.is_installed_fast(package);
-        Box::pin(async move { Ok(result) })
+        Box::pin(async move { result })
     }
 }
 
@@ -956,5 +958,12 @@ mod tests {
         assert!(results.is_ok());
         let results = results.unwrap();
         assert!(!results.is_empty());
+    }
+
+    #[test]
+    fn is_installed_fast_returns_result_for_unknown_package() -> Result<()> {
+        let pm = HomebrewPackageManager::new();
+        assert!(!pm.is_installed_fast("this-package-definitely-does-not-exist-12345")?);
+        Ok(())
     }
 }
