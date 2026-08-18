@@ -229,18 +229,14 @@ fn show_package_tree_debian(package: &str) -> Result<Cmd<()>> {
     use crate::cli::components::Components;
     use crate::package_managers::debian_db;
 
-    let Ok(size) = debian_db::get_package_size(package) else {
-        return Ok(Components::error_with_suggestion(
-            format!("Package '{package}' not installed"),
-            "Try 'omg search' to find available packages",
-        ));
-    };
+    let size = debian_db::get_package_size(package)?
+        .ok_or_else(|| anyhow::anyhow!("Package '{package}' is not installed"))?;
 
     let (dependencies, _) = debian_db::get_package_dependencies(package)?;
 
     let mut dep_sizes: Vec<(String, i64)> = Vec::new();
     for dep_name in dependencies {
-        if let Ok(dep_size) = debian_db::get_package_size(&dep_name) {
+        if let Some(dep_size) = debian_db::get_package_size(&dep_name)? {
             dep_sizes.push((dep_name, dep_size));
         }
     }
