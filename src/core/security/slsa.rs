@@ -3,13 +3,27 @@
 //! Verifies build provenance and determines SLSA levels (L0-L4) per SLSA v1.0
 //! specification for supply chain security attestation.
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
+use thiserror::Error;
 
 use crate::core::http::shared_client;
+
+/// Failures when talking to Rekor or parsing a log entry.
+#[derive(Debug, Error)]
+pub enum RekorError {
+    #[error("Rekor index query failed with HTTP status {status}")]
+    IndexQueryFailed { status: u16 },
+    #[error("Rekor entry {uuid} missing required field {field}")]
+    EntryMissingField { uuid: String, field: &'static str },
+    #[error("Invalid Rekor response: empty entry map")]
+    EmptyEntryMap,
+}
 
 /// SLSA Level definitions per SLSA v1.0 specification
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -158,10 +172,7 @@ pub struct SlsaVerifier {
 
 impl Default for SlsaVerifier {
     fn default() -> Self {
-        Self::new().unwrap_or_else(|_| Self {
-            client: shared_client().clone(),
-            rekor_url: "https://rekor.sigstore.dev".to_string(),
-        })
+        Self::new()
     }
 }
 
@@ -181,47 +192,76 @@ pub enum SlsaEvidence {
 #[must_use]
 pub fn classify_slsa_evidence(evidence: SlsaEvidence) -> VerificationResult {
     match evidence {
-        SlsaEvidence::None => VerificationResult {
-            verified: false,
-            slsa_level: SlsaLevel::None,
-            transparency_log_entry: None,
-            builder_id: None,
-            build_timestamp: None,
-            error: Some("No verified SLSA provenance".to_string()),
-        },
-        SlsaEvidence::UnsignedLocalJson => VerificationResult {
-            verified: false,
-            slsa_level: SlsaLevel::None,
-            transparency_log_entry: None,
-            builder_id: None,
-            build_timestamp: None,
-            error: Some("Local provenance JSON is not a verified attestation".to_string()),
-        },
-        SlsaEvidence::RekorIndexHit => VerificationResult {
-            verified: false,
-            slsa_level: SlsaLevel::None,
-            transparency_log_entry: None,
-            builder_id: None,
-            build_timestamp: None,
-            error: Some("Rekor log index hit is not in-toto/SLSA verification".to_string()),
-        },
+        SlsaEvidence::None => slsa_unverified("No verified SLSA provenance"),
+        SlsaEvidence::UnsignedLocalJson => {
+            slsa_unverified("Local provenance JSON is not a verified attestation")
+        }
+        SlsaEvidence::RekorIndexHit => {
+            slsa_unverified("Rekor log index hit is not in-toto/SLSA verification")
+        }
     }
 }
 
-fn rekor_index_must_succeed(status_success: bool) -> Result<()> {
-    if status_success {
+fn slsa_unverified(error: &str) -> VerificationResult {
+    VerificationResult {
+        verified: false,
+        slsa_level: SlsaLevel::None,
+        transparency_log_entry: None,
+        builder_id: None,
+        build_timestamp: None,
+        error: Some(error.to_string()),
+    }
+}
+
+fn rekor_index_must_succeed(status: reqwest::StatusCode) -> Result<(), RekorError> {
+    if status.is_success() {
         Ok(())
     } else {
-        anyhow::bail!("Rekor index query failed")
+        Err(RekorError::IndexQueryFailed {
+            status: status.as_u16(),
+        })
     }
+}
+
+fn required_u64(value: &Value, uuid: &str, field: &'static str) -> Result<u64, RekorError> {
+    value
+        .get(field)
+        .and_then(Value::as_u64)
+        .ok_or_else(|| RekorError::EntryMissingField {
+            uuid: uuid.to_string(),
+            field,
+        })
+}
+
+fn parse_rekor_entry(entry_map: HashMap<String, Value>) -> Result<RekorEntry, RekorError> {
+    let Some((uuid, value)) = entry_map.into_iter().next() else {
+        return Err(RekorError::EmptyEntryMap);
+    };
+    let log_index = required_u64(&value, &uuid, "logIndex")?;
+    let integrated_time = required_u64(&value, &uuid, "integratedTime")?;
+    let body = value
+        .get("body")
+        .and_then(Value::as_str)
+        .ok_or_else(|| RekorError::EntryMissingField {
+            uuid: uuid.clone(),
+            field: "body",
+        })?
+        .to_string();
+    Ok(RekorEntry {
+        uuid,
+        log_index,
+        integrated_time,
+        body,
+    })
 }
 
 impl SlsaVerifier {
-    pub fn new() -> Result<Self> {
-        Ok(Self {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
             client: shared_client().clone(),
             rekor_url: "https://rekor.sigstore.dev".to_string(),
-        })
+        }
     }
 
     /// Query Rekor transparency log for an artifact hash
@@ -238,7 +278,7 @@ impl SlsaVerifier {
             .await
             .context("Failed to query Rekor")?;
 
-        rekor_index_must_succeed(response.status().is_success())?;
+        rekor_index_must_succeed(response.status())?;
 
         let uuids: Vec<String> = response.json().await.context("Invalid Rekor index JSON")?;
 
@@ -270,33 +310,8 @@ impl SlsaVerifier {
             .await
             .context("Failed to get Rekor entry")?;
 
-        let entry_map: std::collections::HashMap<String, serde_json::Value> =
-            response.json().await?;
-
-        if let Some((uuid, value)) = entry_map.into_iter().next() {
-            let log_index = value
-                .get("logIndex")
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or(0);
-            let integrated_time = value
-                .get("integratedTime")
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or(0);
-            let body = value
-                .get("body")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-
-            return Ok(RekorEntry {
-                uuid,
-                log_index,
-                integrated_time,
-                body,
-            });
-        }
-
-        anyhow::bail!("Invalid Rekor response")
+        let entry_map: HashMap<String, Value> = response.json().await?;
+        Ok(parse_rekor_entry(entry_map)?)
     }
 
     /// Verify SLSA provenance for a package
@@ -356,6 +371,7 @@ impl SlsaVerifier {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
     use tempfile::NamedTempFile;
 
     #[test]
@@ -432,15 +448,6 @@ mod tests {
     }
 
     #[test]
-    fn test_slsa_verifier_new() {
-        let verifier = SlsaVerifier::new();
-        assert!(verifier.is_ok());
-
-        let verifier = verifier.unwrap();
-        assert_eq!(verifier.rekor_url, "https://rekor.sigstore.dev");
-    }
-
-    #[test]
     fn test_slsa_verifier_default() {
         let verifier = SlsaVerifier::default();
         assert_eq!(verifier.rekor_url, "https://rekor.sigstore.dev");
@@ -480,12 +487,38 @@ mod tests {
 
     #[test]
     fn rekor_http_failure_is_an_error() {
-        let err =
-            rekor_index_must_succeed(false).expect_err("HTTP failure must not look like no entry");
+        let err = rekor_index_must_succeed(reqwest::StatusCode::INTERNAL_SERVER_ERROR)
+            .expect_err("HTTP failure must not look like no entry");
         assert!(
-            err.to_string().contains("Rekor index query failed"),
+            matches!(err, RekorError::IndexQueryFailed { status: 500 }),
             "got: {err}"
         );
-        assert!(rekor_index_must_succeed(true).is_ok());
+        assert!(rekor_index_must_succeed(reqwest::StatusCode::OK).is_ok());
+    }
+
+    #[test]
+    fn rekor_entry_missing_fields_is_an_error() {
+        let mut incomplete = HashMap::new();
+        incomplete.insert(
+            "abc".to_string(),
+            serde_json::json!({ "logIndex": 1, "body": "x" }),
+        );
+        let err = parse_rekor_entry(incomplete).expect_err("missing integratedTime must fail");
+        assert!(
+            matches!(
+                err,
+                RekorError::EntryMissingField {
+                    field: "integratedTime",
+                    ..
+                }
+            ),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn empty_rekor_entry_map_is_an_error() {
+        let err = parse_rekor_entry(HashMap::new()).expect_err("empty map must fail");
+        assert!(matches!(err, RekorError::EmptyEntryMap), "got: {err}");
     }
 }

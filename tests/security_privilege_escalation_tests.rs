@@ -33,13 +33,6 @@ mod privilege_escalation {
     // These integration tests use the real SystemPrivilegeChecker
 
     #[test]
-    fn test_system_privilege_checker_no_panic() {
-        let checker = SystemPrivilegeChecker;
-        // Should not panic, just check current privileges
-        let _is_root = checker.is_root();
-    }
-
-    #[test]
     #[allow(unsafe_code)]
     fn test_elevation_whitelist_allowed_operations() {
         use omg_lib::core::privilege::elevate_for_operation;
@@ -279,21 +272,15 @@ mod security_validation {
     }
 
     #[test]
-    fn test_toctou_race_prevention() {
-        // Test validates that validation happens before use
-        let temp_dir = TempDir::new().unwrap();
-        let safe_path = temp_dir.path().join("safe.txt");
-
-        fs::write(&safe_path, "safe content").unwrap();
-
-        // Validate the path
-        let path_str = safe_path.to_str().unwrap();
-        let filename = safe_path.file_name().unwrap().to_str().unwrap();
-
-        // File name should pass validation
+    fn test_relative_path_rejects_traversal() {
+        assert!(validate_relative_path("safe.txt").is_ok());
         assert!(
-            validate_package_name(filename).is_ok()
-                || validate_package_name_or_file(path_str).is_ok()
+            validate_relative_path("../etc/passwd").is_err(),
+            "parent traversal must fail"
+        );
+        assert!(
+            validate_relative_path("/etc/passwd").is_err(),
+            "absolute paths must fail"
         );
     }
 
@@ -318,9 +305,11 @@ mod security_validation {
         let long_name = "a".repeat(10_000);
         assert!(validate_package_name(&long_name).is_err());
 
-        // Many path segments
-        let deep_path = (0..1000).map(|_| "a").collect::<Vec<_>>().join("/");
-        assert!(validate_relative_path(&deep_path).is_ok() || deep_path.len() > 255);
+        let overlong_path = "a".repeat(4097);
+        assert!(
+            validate_relative_path(&overlong_path).is_err(),
+            "paths longer than 4096 bytes must be rejected"
+        );
     }
 }
 
@@ -332,13 +321,6 @@ mod security_validation {
 mod pgp_verification {
     use super::*;
     use std::io::Write;
-
-    #[test]
-    fn test_pgp_verifier_construction() {
-        let verifier = PgpVerifier::new();
-        // Should construct without panic
-        assert!(std::ptr::addr_of!(verifier) as usize > 0);
-    }
 
     #[test]
     fn test_signature_file_not_found() {
@@ -372,14 +354,7 @@ mod pgp_verification {
         let result =
             verifier.verify_detached(data.path(), sig.path(), std::path::Path::new("/dev/null"));
 
-        // Should fail to parse signature
-        assert!(
-            result.is_err()
-                || result
-                    .unwrap_err()
-                    .to_string()
-                    .contains("No valid signature")
-        );
+        assert!(result.is_err(), "garbage signature bytes must fail");
     }
 
     #[test]
@@ -616,7 +591,7 @@ mod sbom_audit {
 
     #[test]
     fn test_slsa_hash_verification() {
-        let verifier = SlsaVerifier::new().unwrap();
+        let verifier = SlsaVerifier::new();
 
         let mut temp = NamedTempFile::new().unwrap();
         write!(temp, "test content").unwrap();
@@ -669,9 +644,8 @@ mod attack_scenarios {
         ];
 
         for path in attacks {
-            // Should be blocked by validation
             assert!(
-                validate_package_name(path).is_err() || validate_relative_path(path).is_err(),
+                validate_relative_path(path).is_err(),
                 "Should block path injection: {path}",
             );
         }
@@ -710,8 +684,7 @@ mod attack_scenarios {
             // Should fail validation before elevation
             for arg in &args {
                 assert!(
-                    validate_package_name(arg).is_err()
-                        || validate_package_name_or_file(arg).is_err(),
+                    validate_package_name(arg).is_err(),
                     "Should block bypass attempt: {op} {arg}",
                 );
             }

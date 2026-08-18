@@ -11,6 +11,15 @@ use openpgp::parse::{PacketParser, PacketParserResult};
 use openpgp::policy::StandardPolicy;
 use sequoia_openpgp as openpgp;
 use std::path::Path;
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum SignatureFileError {
+    #[error("Package file missing for '{package_name}': {path}")]
+    PackageMissing { package_name: String, path: String },
+    #[error("PGP signature missing for '{package_name}': {path}")]
+    SignatureMissing { package_name: String, path: String },
+}
 
 /// PGP verification engine using Sequoia
 pub struct PgpVerifier {
@@ -212,18 +221,18 @@ pub fn require_detached_signature_files(
     package_name: &str,
     package_path: &Path,
     signature_path: &Path,
-) -> Result<()> {
+) -> Result<(), SignatureFileError> {
     if !package_path.exists() {
-        anyhow::bail!(
-            "Package file missing for '{package_name}': {}",
-            package_path.display()
-        );
+        return Err(SignatureFileError::PackageMissing {
+            package_name: package_name.to_string(),
+            path: package_path.display().to_string(),
+        });
     }
     if !signature_path.exists() {
-        anyhow::bail!(
-            "PGP signature missing for '{package_name}': {}",
-            signature_path.display()
-        );
+        return Err(SignatureFileError::SignatureMissing {
+            package_name: package_name.to_string(),
+            path: signature_path.display().to_string(),
+        });
     }
     Ok(())
 }
@@ -233,20 +242,6 @@ mod tests {
     use super::*;
     use std::io::Write;
     use tempfile::NamedTempFile;
-
-    #[test]
-    fn test_pgp_verifier_new() {
-        let verifier = PgpVerifier::new();
-        // Should construct successfully even without system keyring
-        assert!(verifier.policy.time().is_none());
-    }
-
-    #[test]
-    fn test_pgp_verifier_default() {
-        let verifier = PgpVerifier::default();
-        // Default should be equivalent to new()
-        assert!(verifier.policy.time().is_none());
-    }
 
     #[test]
     fn test_verify_detached_missing_signature() {
@@ -346,7 +341,7 @@ mod tests {
         )
         .expect_err("unsigned packages must not proceed");
         assert!(
-            err.to_string().contains("PGP signature missing"),
+            matches!(err, SignatureFileError::SignatureMissing { .. }),
             "got: {err}"
         );
     }
@@ -363,7 +358,7 @@ mod tests {
         )
         .expect_err("missing package blob must fail");
         assert!(
-            err.to_string().contains("Package file missing"),
+            matches!(err, SignatureFileError::PackageMissing { .. }),
             "got: {err}"
         );
     }

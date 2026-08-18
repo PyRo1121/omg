@@ -573,7 +573,7 @@ pub async fn check_slsa(package: &str, _ctx: &CliContext) -> Result<()> {
         anyhow::bail!("File not found: {package}");
     }
 
-    let verifier = SlsaVerifier::new()?;
+    let verifier = SlsaVerifier::new();
     let result = verifier
         .verify_provenance(path, None::<&std::path::Path>)
         .await?;

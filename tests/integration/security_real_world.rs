@@ -19,7 +19,7 @@ use std::time::Duration;
 #[tokio::test]
 #[ignore = "Run with --ignored flag to test against real external services"]
 async fn test_slsa_rekor_query_real() {
-    let verifier = SlsaVerifier::new().expect("Failed to create SLSA verifier");
+    let verifier = SlsaVerifier::new();
 
     // Use a known artifact hash from a real signed artifact
     // This is the hash of the empty file (commonly used for testing)

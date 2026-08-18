@@ -297,8 +297,9 @@ fn try_fast_info(args: &[String]) -> bool {
         if package.starts_with('-') {
             return false;
         }
-        if packages::info_sync_cli(package).unwrap_or_default() {
-            return true;
+        match packages::info_sync(package) {
+            Ok(true) => return true,
+            Ok(false) | Err(_) => {}
         }
     }
     false
