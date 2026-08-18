@@ -12,7 +12,7 @@ use super::cache::PackageCache;
 use super::index::PackageIndex;
 use super::protocol::{
     DetailedPackageInfo, ExplicitResult, HealthStatus, PackageInfo, Request, RequestId, Response,
-    ResponseResult, SearchResult, SecurityAuditResult, StatusResult, Vulnerability, error_codes,
+    ResponseResult, SearchResult, SecurityAuditResult, Vulnerability, error_codes,
 };
 use crate::core::metrics::GLOBAL_METRICS;
 use crate::core::security::{AuditEventType, AuditSeverity, audit_log};
@@ -706,30 +706,26 @@ async fn handle_status(state: Arc<DaemonState>, id: RequestId) -> Response {
 
     match status_result {
         Ok((total, explicit, orphans, updates)) => {
-            let res = StatusResult {
-                total_packages: total,
-                explicit_packages: explicit,
-                orphan_packages: orphans,
-                updates_available: updates,
-                security_vulnerabilities: 0,
-                runtime_versions: state
+            let (res, cacheable) = super::protocol::status_snapshot(
+                total,
+                explicit,
+                orphans,
+                updates,
+                state
                     .runtime_versions
                     .read()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .clone(),
-            };
-
-            let res_arc = Arc::new(res);
-            // Persist for faster restarts; the in-memory cache is authoritative
-            // for this process, so a persistence failure is logged, not fatal.
-            if let Err(error) = state.persistent.set_status(&res_arc) {
-                tracing::warn!("Failed to persist status cache: {error}");
-            }
-            state.cache.update_status(Arc::clone(&res_arc));
+                None,
+            );
+            debug_assert!(
+                !cacheable,
+                "package-count snapshots without a vulnerability scan must not be cached"
+            );
 
             Response::Success {
                 id,
-                result: ResponseResult::Status(Arc::unwrap_or_clone(res_arc)),
+                result: ResponseResult::Status(res),
             }
         }
         Err(error) => internal_error(id, format!("Failed to get system status: {error}")),
