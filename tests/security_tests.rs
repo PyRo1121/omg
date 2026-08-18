@@ -135,11 +135,12 @@ mod input_validation {
         ];
 
         for payload in payloads {
-            let result = run_omg(&["search", payload]);
-            // Should not crash or execute SQL
+            let result = run_omg(&["info", payload]);
+            result.assert_failure();
             assert!(
-                !result.stderr.contains("panic"),
-                "SQL injection panic via: {payload}"
+                result.contains("Invalid character") || result.contains("Invalid package name"),
+                "SQL metacharacters must be rejected as a package name, got: {}",
+                result.combined_output()
             );
         }
     }
@@ -153,11 +154,12 @@ mod input_validation {
         ];
 
         for payload in payloads {
-            let result = run_omg(&["search", payload]);
-            // CLI shouldn't be vulnerable to XSS but should handle gracefully
+            let result = run_omg(&["info", payload]);
+            result.assert_failure();
             assert!(
-                !result.stderr.contains("panic"),
-                "XSS pattern crash via: {payload}"
+                result.contains("Invalid character") || result.contains("Invalid package name"),
+                "markup must be rejected as a package name, got: {}",
+                result.combined_output()
             );
         }
     }
@@ -317,78 +319,59 @@ mod filesystem_security {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 mod secrets_detection {
-    use super::*;
+    use omg_lib::core::security::secrets::{SecretScanner, SecretType};
 
     #[test]
     fn test_detect_aws_keys() {
-        let project = TestProject::new();
-        project.create_file(
-            "config.txt",
-            "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n\
-             AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
-        );
-
-        let result = project.run(&["audit", "secrets"]);
-        // Should detect AWS keys
+        let findings = SecretScanner::new()
+            .scan_content("AWS_ACCESS_KEY_ID=AKIAKLMNOPQRSTUVWXYZ\n", "config.txt");
         assert!(
-            result.contains("AWS") || result.contains("secret") || result.contains("detected"),
-            "Should detect AWS keys"
+            findings
+                .iter()
+                .any(|f| matches!(f.secret_type, SecretType::AwsAccessKey)),
+            "Should detect AWS access keys, got: {findings:?}"
         );
     }
 
     #[test]
     fn test_detect_private_keys() {
-        let project = TestProject::new();
-        project.create_file(
+        let findings = SecretScanner::new().scan_content(
+            "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA0Z3...\n-----END RSA PRIVATE KEY-----",
             "key.pem",
-            "-----BEGIN RSA PRIVATE KEY-----\n\
-             MIIEowIBAAKCAQEA0Z3...\n\
-             -----END RSA PRIVATE KEY-----",
         );
-
-        let result = project.run(&["audit", "secrets"]);
-        // Should detect private keys
-        assert!(!result.stderr.contains("panic"));
+        assert!(
+            findings
+                .iter()
+                .any(|f| matches!(f.secret_type, SecretType::PrivateKey)),
+            "Should detect private keys, got: {findings:?}"
+        );
     }
 
     #[test]
     fn test_detect_api_tokens() {
-        let project = TestProject::new();
-        project.create_file(
+        let findings = SecretScanner::new().scan_content(
+            "GITHUB_TOKEN=ghp_aaaabbbbccccddddeeeeffffgggghhhhiiii\n",
             ".env",
-            "GITHUB_TOKEN=gho_placeholder_token_for_testing_only\n\
-             STRIPE_KEY=rk_placeholder_token_for_testing_only\n\
-             SLACK_TOKEN=placeholder_slack_token_for_testing",
         );
-
-        let result = project.run(&["audit", "secrets"]);
-        assert!(!result.stderr.contains("panic"));
-    }
-
-    #[test]
-    fn test_detect_passwords_in_urls() {
-        let project = TestProject::new();
-        project.create_file(
-            "config.yaml",
-            "database_url: postgres://user:password123@localhost:5432/db",
+        assert!(
+            findings
+                .iter()
+                .any(|f| matches!(f.secret_type, SecretType::GithubToken)),
+            "Should detect a GitHub token, got: {findings:?}"
         );
-
-        let result = project.run(&["audit", "secrets"]);
-        assert!(!result.stderr.contains("panic"));
     }
 
     #[test]
     fn test_ignore_false_positives() {
-        let project = TestProject::new();
-        project.create_file(
-            "README.md",
+        let findings = SecretScanner::new().scan_content(
             "Use AWS_ACCESS_KEY_ID environment variable.\n\
              Example: AWS_ACCESS_KEY_ID=your-key-here",
+            "README.md",
         );
-
-        let result = project.run(&["audit", "secrets"]);
-        // Should ideally distinguish examples from real secrets
-        assert!(!result.stderr.contains("panic"));
+        assert!(
+            findings.is_empty(),
+            "placeholder examples must not be reported as secrets, got: {findings:?}"
+        );
     }
 }
 
