@@ -227,8 +227,33 @@ pub fn list_orphans_fast() -> anyhow::Result<Vec<String>> {
     anyhow::bail!("No package manager backend enabled")
 }
 
+#[cfg(any(feature = "debian", feature = "debian-pure"))]
+fn counts_from_debian_db() -> anyhow::Result<(usize, usize, usize)> {
+    let (total, explicit, orphans, _updates) = debian_db::get_counts_fast()?;
+    Ok((total, explicit, orphans))
+}
+
+pub fn get_counts() -> anyhow::Result<(usize, usize, usize)> {
+    #[cfg(any(feature = "debian", feature = "debian-pure"))]
+    if crate::core::env::distro::is_debian_like() {
+        return counts_from_debian_db();
+    }
+
+    #[cfg(feature = "arch")]
+    return alpm_direct::get_counts();
+
+    #[cfg(all(
+        not(feature = "arch"),
+        any(feature = "debian", feature = "debian-pure")
+    ))]
+    return counts_from_debian_db();
+
+    #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
+    anyhow::bail!("No package manager backend enabled")
+}
+
 #[cfg(feature = "arch")]
-pub use alpm_direct::{clear_alpm_cache, get_counts, search_local};
+pub use alpm_direct::{clear_alpm_cache, search_local};
 #[cfg(feature = "arch")]
 pub use alpm_ops::DownloadInfo;
 #[cfg(feature = "arch")]
