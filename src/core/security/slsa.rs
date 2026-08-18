@@ -17,10 +17,14 @@ use crate::core::http::shared_client;
 /// Failures when talking to Rekor or parsing a log entry.
 #[derive(Debug, Error)]
 pub enum RekorError {
-    #[error("Rekor index query failed with HTTP status {status}")]
-    IndexQueryFailed { status: u16 },
+    #[error("Rekor HTTP request failed with status {status}")]
+    HttpFailed { status: u16 },
     #[error("Rekor entry {uuid} missing required field {field}")]
     EntryMissingField { uuid: String, field: &'static str },
+    #[error("Rekor entry {uuid} field {field} is not a u64")]
+    EntryInvalidField { uuid: String, field: &'static str },
+    #[error("Rekor response missing entry {uuid}")]
+    EntryNotFound { uuid: String },
     #[error("Invalid Rekor response: empty entry map")]
     EmptyEntryMap,
 }
@@ -213,42 +217,53 @@ fn slsa_unverified(error: &str) -> VerificationResult {
     }
 }
 
-fn rekor_index_must_succeed(status: reqwest::StatusCode) -> Result<(), RekorError> {
+fn rekor_http_must_succeed(status: reqwest::StatusCode) -> Result<(), RekorError> {
     if status.is_success() {
         Ok(())
     } else {
-        Err(RekorError::IndexQueryFailed {
+        Err(RekorError::HttpFailed {
             status: status.as_u16(),
         })
     }
 }
 
 fn required_u64(value: &Value, uuid: &str, field: &'static str) -> Result<u64, RekorError> {
-    value
-        .get(field)
-        .and_then(Value::as_u64)
-        .ok_or_else(|| RekorError::EntryMissingField {
+    match value.get(field) {
+        None => Err(RekorError::EntryMissingField {
             uuid: uuid.to_string(),
             field,
-        })
+        }),
+        Some(v) => v.as_u64().ok_or_else(|| RekorError::EntryInvalidField {
+            uuid: uuid.to_string(),
+            field,
+        }),
+    }
 }
 
-fn parse_rekor_entry(entry_map: HashMap<String, Value>) -> Result<RekorEntry, RekorError> {
-    let Some((uuid, value)) = entry_map.into_iter().next() else {
+fn parse_rekor_entry(
+    requested_uuid: &str,
+    mut entry_map: HashMap<String, Value>,
+) -> Result<RekorEntry, RekorError> {
+    if entry_map.is_empty() {
         return Err(RekorError::EmptyEntryMap);
-    };
-    let log_index = required_u64(&value, &uuid, "logIndex")?;
-    let integrated_time = required_u64(&value, &uuid, "integratedTime")?;
+    }
+    let value = entry_map
+        .remove(requested_uuid)
+        .ok_or_else(|| RekorError::EntryNotFound {
+            uuid: requested_uuid.to_string(),
+        })?;
+    let log_index = required_u64(&value, requested_uuid, "logIndex")?;
+    let integrated_time = required_u64(&value, requested_uuid, "integratedTime")?;
     let body = value
         .get("body")
         .and_then(Value::as_str)
         .ok_or_else(|| RekorError::EntryMissingField {
-            uuid: uuid.clone(),
+            uuid: requested_uuid.to_string(),
             field: "body",
         })?
         .to_string();
     Ok(RekorEntry {
-        uuid,
+        uuid: requested_uuid.to_string(),
         log_index,
         integrated_time,
         body,
@@ -278,7 +293,7 @@ impl SlsaVerifier {
             .await
             .context("Failed to query Rekor")?;
 
-        rekor_index_must_succeed(response.status())?;
+        rekor_http_must_succeed(response.status())?;
 
         let uuids: Vec<String> = response.json().await.context("Invalid Rekor index JSON")?;
 
@@ -310,8 +325,10 @@ impl SlsaVerifier {
             .await
             .context("Failed to get Rekor entry")?;
 
+        rekor_http_must_succeed(response.status())?;
+
         let entry_map: HashMap<String, Value> = response.json().await?;
-        Ok(parse_rekor_entry(entry_map)?)
+        Ok(parse_rekor_entry(uuid, entry_map)?)
     }
 
     /// Verify SLSA provenance for a package
@@ -487,13 +504,13 @@ mod tests {
 
     #[test]
     fn rekor_http_failure_is_an_error() {
-        let err = rekor_index_must_succeed(reqwest::StatusCode::INTERNAL_SERVER_ERROR)
+        let err = rekor_http_must_succeed(reqwest::StatusCode::INTERNAL_SERVER_ERROR)
             .expect_err("HTTP failure must not look like no entry");
         assert!(
-            matches!(err, RekorError::IndexQueryFailed { status: 500 }),
+            matches!(err, RekorError::HttpFailed { status: 500 }),
             "got: {err}"
         );
-        assert!(rekor_index_must_succeed(reqwest::StatusCode::OK).is_ok());
+        assert!(rekor_http_must_succeed(reqwest::StatusCode::OK).is_ok());
     }
 
     #[test]
@@ -503,7 +520,8 @@ mod tests {
             "abc".to_string(),
             serde_json::json!({ "logIndex": 1, "body": "x" }),
         );
-        let err = parse_rekor_entry(incomplete).expect_err("missing integratedTime must fail");
+        let err =
+            parse_rekor_entry("abc", incomplete).expect_err("missing integratedTime must fail");
         assert!(
             matches!(
                 err,
@@ -517,8 +535,42 @@ mod tests {
     }
 
     #[test]
+    fn rekor_entry_non_u64_field_is_an_error() {
+        let mut invalid = HashMap::new();
+        invalid.insert(
+            "abc".to_string(),
+            serde_json::json!({ "logIndex": "1", "integratedTime": 2, "body": "x" }),
+        );
+        let err = parse_rekor_entry("abc", invalid).expect_err("string logIndex must fail");
+        assert!(
+            matches!(
+                err,
+                RekorError::EntryInvalidField {
+                    field: "logIndex",
+                    ..
+                }
+            ),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn rekor_entry_wrong_uuid_is_an_error() {
+        let mut other = HashMap::new();
+        other.insert(
+            "other".to_string(),
+            serde_json::json!({ "logIndex": 1, "integratedTime": 2, "body": "x" }),
+        );
+        let err = parse_rekor_entry("wanted", other).expect_err("wrong uuid must fail");
+        assert!(
+            matches!(err, RekorError::EntryNotFound { .. }),
+            "got: {err}"
+        );
+    }
+
+    #[test]
     fn empty_rekor_entry_map_is_an_error() {
-        let err = parse_rekor_entry(HashMap::new()).expect_err("empty map must fail");
+        let err = parse_rekor_entry("abc", HashMap::new()).expect_err("empty map must fail");
         assert!(matches!(err, RekorError::EmptyEntryMap), "got: {err}");
     }
 }

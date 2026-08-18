@@ -139,6 +139,7 @@ pub async fn info_aur(package: &str) -> Result<()> {
 
 /// Show AUR package information - no-op fallback for non-Arch systems
 #[cfg(not(feature = "arch"))]
+#[allow(clippy::unused_async)]
 pub async fn info_aur(package: &str) -> Result<()> {
     anyhow::bail!("Package '{package}' not found. Try: omg search {package}");
 }
