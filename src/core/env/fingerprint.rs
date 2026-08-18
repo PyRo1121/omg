@@ -3,7 +3,7 @@
 //! Captures the state of all managed runtimes and system packages
 //! to detect environment drift and ensure reproducibility.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use owo_colors::OwoColorize;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -52,25 +52,25 @@ impl EnvironmentState {
             task::spawn_blocking(|| BunManager::new().current_version()),
         );
 
-        if let Ok(Some(v)) = node {
+        if let Some(v) = join_probed_version(node, "node")? {
             runtimes.insert("node".to_string(), v.trim().to_string());
         }
-        if let Ok(Some(v)) = python {
+        if let Some(v) = join_probed_version(python, "python")? {
             runtimes.insert("python".to_string(), v.trim().to_string());
         }
-        if let Ok(Some(v)) = rust {
+        if let Some(v) = join_probed_version(rust, "rust")? {
             runtimes.insert("rust".to_string(), v.trim().to_string());
         }
-        if let Ok(Some(v)) = go {
+        if let Some(v) = join_probed_version(go, "go")? {
             runtimes.insert("go".to_string(), v.trim().to_string());
         }
-        if let Ok(Some(v)) = ruby {
+        if let Some(v) = join_probed_version(ruby, "ruby")? {
             runtimes.insert("ruby".to_string(), v.trim().to_string());
         }
-        if let Ok(Some(v)) = java {
+        if let Some(v) = join_probed_version(java, "java")? {
             runtimes.insert("java".to_string(), v.trim().to_string());
         }
-        if let Ok(Some(v)) = bun {
+        if let Some(v) = join_probed_version(bun, "bun")? {
             runtimes.insert("bun".to_string(), v.trim().to_string());
         }
 
@@ -78,14 +78,14 @@ impl EnvironmentState {
         #[cfg(feature = "arch")]
         let mut packages: Vec<String> = list_explicit()
             .await
-            .unwrap_or_default()
+            .context("Failed to list explicitly installed packages")?
             .into_iter()
             .map(|pkg| pkg.trim().to_string())
             .filter(|pkg| !pkg.is_empty())
             .collect();
         #[cfg(all(feature = "debian", not(feature = "arch")))]
         let mut packages: Vec<String> = list_explicit()
-            .unwrap_or_default()
+            .context("Failed to list explicitly installed packages")?
             .into_iter()
             .map(|pkg| pkg.trim().to_string())
             .filter(|pkg| !pkg.is_empty())
@@ -139,8 +139,7 @@ impl EnvironmentState {
         let mut normalized = self.clone();
         normalized.normalize();
         let content = toml::to_string_pretty(&normalized)?;
-        fs::write(path, content)?;
-        Ok(())
+        write_lockfile(path.as_ref(), content.as_bytes())
     }
 
     /// Load state from omg.lock file
@@ -175,6 +174,39 @@ impl EnvironmentState {
         packages.dedup();
 
         (runtimes, packages)
+    }
+}
+
+fn join_probed_version(
+    result: std::result::Result<Option<String>, tokio::task::JoinError>,
+    runtime: &str,
+) -> Result<Option<String>> {
+    result.with_context(|| format!("Failed to probe {runtime} runtime"))
+}
+
+fn write_lockfile(path: &Path, content: &[u8]) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)
+            .with_context(|| format!("Failed to create lockfile {}", path.display()))?;
+        file.write_all(content)
+            .with_context(|| format!("Failed to write lockfile {}", path.display()))?;
+        file.set_permissions(fs::Permissions::from_mode(0o600))
+            .with_context(|| format!("Failed to set lockfile permissions {}", path.display()))?;
+        Ok(())
+    }
+    #[cfg(not(unix))]
+    {
+        fs::write(path, content)
+            .with_context(|| format!("Failed to write lockfile {}", path.display()))?;
+        Ok(())
     }
 }
 
@@ -293,5 +325,37 @@ impl DriftReport {
                 println!("  + {p}");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn save_creates_owner_only_lockfile() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::TempDir::new().expect("temp dir");
+        let path = directory.path().join("omg.lock");
+        let state = EnvironmentState {
+            runtimes: HashMap::new(),
+            packages: vec!["foo".to_string()],
+            timestamp: 0,
+            hash: "abc".to_string(),
+        };
+
+        state.save(&path).expect("save lockfile");
+
+        let mode = std::fs::metadata(&path)
+            .expect("lockfile metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(
+            mode, 0o600,
+            "lockfile must not be group or world accessible, got {mode:o}"
+        );
     }
 }
