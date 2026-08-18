@@ -6,14 +6,6 @@
 use anyhow::{Context, Result};
 use owo_colors::OwoColorize;
 
-fn is_not_found(error: &anyhow::Error) -> bool {
-    error.chain().any(|cause| {
-        cause
-            .downcast_ref::<std::io::Error>()
-            .is_some_and(|io_error| io_error.kind() == std::io::ErrorKind::NotFound)
-    })
-}
-
 fn read_audit_entries(
     logger: &AuditLogger,
     limit: usize,
@@ -34,7 +26,7 @@ fn read_audit_entries(
     };
     match result {
         Ok(entries) => Ok(entries),
-        Err(error) if is_not_found(&error) => Ok(Vec::new()),
+        Err(error) if error.is_not_found() => Ok(Vec::new()),
         Err(error) => Err(error).context("Failed to read audit log entries"),
     }
 }
@@ -303,13 +295,7 @@ pub fn verify_audit_log(_ctx: &CliContext) -> Result<()> {
     let logger = AuditLogger::new().context("Failed to open audit log")?;
     let report = match logger.verify_integrity() {
         Ok(report) => report,
-        Err(error)
-            if error.chain().any(|cause| {
-                cause
-                    .downcast_ref::<std::io::Error>()
-                    .is_some_and(|io_error| io_error.kind() == std::io::ErrorKind::NotFound)
-            }) =>
-        {
+        Err(error) if error.is_not_found() => {
             println!(
                 "  {} No audit log exists yet.",
                 style::maybe_color("ℹ", |t| t.blue().to_string())

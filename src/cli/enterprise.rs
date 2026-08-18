@@ -519,15 +519,7 @@ fn generate_change_log_json() -> Result<String> {
         .context("Failed to open audit log for enterprise export")?;
     let entries = match logger.get_recent(100) {
         Ok(entries) => entries,
-        Err(error)
-            if error.chain().any(|cause| {
-                cause
-                    .downcast_ref::<std::io::Error>()
-                    .is_some_and(|io_error| io_error.kind() == std::io::ErrorKind::NotFound)
-            }) =>
-        {
-            Vec::new()
-        }
+        Err(error) if error.is_not_found() => Vec::new(),
         Err(error) => {
             return Err(error).context("Failed to read audit log entries for enterprise export");
         }

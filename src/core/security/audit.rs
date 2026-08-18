@@ -3,14 +3,71 @@
 //! Provides append-only audit logs with SHA-256 chain verification to detect
 //! tampering, log rotation, and compliance-ready event tracking.
 
-use anyhow::Result;
-use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::fs::{File, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use thiserror::Error;
+
 use crate::core::paths;
+
+/// Failures creating, reading, or appending the integrity-bound audit log.
+#[derive(Debug, Error)]
+pub enum AuditError {
+    #[error("Failed to create audit directory '{path}'")]
+    CreateDir {
+        path: String,
+        #[source]
+        source: io::Error,
+    },
+    #[error("Failed to open audit log '{path}'")]
+    Open {
+        path: String,
+        #[source]
+        source: io::Error,
+    },
+    #[error("Failed to read audit log '{path}'")]
+    Read {
+        path: String,
+        #[source]
+        source: io::Error,
+    },
+    #[error("Failed to write audit log '{path}'")]
+    Write {
+        path: String,
+        #[source]
+        source: io::Error,
+    },
+    #[error("Failed to serialize audit entry")]
+    Serialize {
+        #[source]
+        source: serde_json::Error,
+    },
+    #[error("Corrupt audit log '{path}' at line {line}")]
+    CorruptLine {
+        path: String,
+        line: usize,
+        #[source]
+        source: serde_json::Error,
+    },
+    #[error("Corrupt audit log '{path}' at line {line}: missing hash")]
+    MissingHash { path: String, line: usize },
+}
+
+impl AuditError {
+    /// True when the underlying IO failure is a missing path.
+    pub fn is_not_found(&self) -> bool {
+        match self {
+            Self::CreateDir { source, .. }
+            | Self::Open { source, .. }
+            | Self::Read { source, .. }
+            | Self::Write { source, .. } => source.kind() == io::ErrorKind::NotFound,
+            Self::Serialize { .. } | Self::CorruptLine { .. } | Self::MissingHash { .. } => false,
+        }
+    }
+}
 
 /// Audit event types for security logging
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
@@ -152,40 +209,20 @@ pub struct AuditLogger {
 
 impl AuditLogger {
     /// Create a new audit logger
-    pub fn new() -> Result<Self> {
+    pub fn new() -> Result<Self, AuditError> {
         let log_dir = paths::data_dir().join("audit");
-        std::fs::create_dir_all(&log_dir)?;
+        std::fs::create_dir_all(&log_dir).map_err(|source| AuditError::CreateDir {
+            path: log_dir.display().to_string(),
+            source,
+        })?;
 
         let log_path = log_dir.join("audit.jsonl");
-
-        // Get the last hash from the log file
-        let last_hash = Self::get_last_hash(&log_path)?;
+        let last_hash = get_last_hash(&log_path)?;
 
         Ok(Self {
             log_path,
             last_hash,
         })
-    }
-
-    /// Get the hash of the last entry in the log
-    fn get_last_hash(path: &Path) -> Result<String> {
-        if !path.exists() {
-            return Ok("genesis".to_string());
-        }
-
-        let file = File::open(path)?;
-        let reader = BufReader::new(file);
-
-        let mut last_hash = "genesis".to_string();
-        for line in reader.lines().map_while(Result::ok) {
-            if let Ok(entry) = serde_json::from_str::<AuditEntry>(&line)
-                && let Some(hash) = entry.hash
-            {
-                last_hash = hash;
-            }
-        }
-
-        Ok(last_hash)
     }
 
     /// Log an audit event
@@ -195,7 +232,7 @@ impl AuditLogger {
         severity: AuditSeverity,
         resource: &str,
         description: &str,
-    ) -> Result<()> {
+    ) -> Result<(), AuditError> {
         self.log_with_metadata(event, severity, resource, description, None)
     }
 
@@ -207,12 +244,13 @@ impl AuditLogger {
         resource: &str,
         description: &str,
         metadata: Option<serde_json::Value>,
-    ) -> Result<()> {
+    ) -> Result<(), AuditError> {
         let timestamp = jiff::Zoned::now()
             .strftime("%Y-%m-%dT%H:%M:%S%.3fZ")
             .to_string();
         let id = uuid::Uuid::new_v4().to_string();
         let user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
+        let path_str = self.log_path.display().to_string();
 
         let mut entry = AuditEntry {
             id,
@@ -236,15 +274,28 @@ impl AuditLogger {
         let mut file = OpenOptions::new()
             .create(true)
             .append(true)
-            .open(&self.log_path)?;
+            .open(&self.log_path)
+            .map_err(|source| AuditError::Open {
+                path: path_str.clone(),
+                source,
+            })?;
 
-        let json = serde_json::to_string(&entry)?;
-        writeln!(file, "{json}")?;
-        file.flush()?;
-        file.sync_all()?;
+        let json =
+            serde_json::to_string(&entry).map_err(|source| AuditError::Serialize { source })?;
+        writeln!(file, "{json}").map_err(|source| AuditError::Write {
+            path: path_str.clone(),
+            source,
+        })?;
+        file.flush().map_err(|source| AuditError::Write {
+            path: path_str.clone(),
+            source,
+        })?;
+        file.sync_all().map_err(|source| AuditError::Write {
+            path: path_str,
+            source,
+        })?;
         self.last_hash = hash;
 
-        // Also emit to tracing for real-time monitoring
         match severity {
             AuditSeverity::Debug => {
                 tracing::debug!(target: "audit", "{}: {}", entry.event_type_str(), description);
@@ -267,8 +318,12 @@ impl AuditLogger {
     }
 
     /// Verify the integrity of the entire audit log
-    pub fn verify_integrity(&self) -> Result<AuditIntegrityReport> {
-        let file = File::open(&self.log_path)?;
+    pub fn verify_integrity(&self) -> Result<AuditIntegrityReport, AuditError> {
+        let path_str = self.log_path.display().to_string();
+        let file = File::open(&self.log_path).map_err(|source| AuditError::Open {
+            path: path_str.clone(),
+            source,
+        })?;
         let reader = BufReader::new(file);
 
         let mut total_entries = 0;
@@ -278,18 +333,19 @@ impl AuditLogger {
         let mut first_invalid: Option<String> = None;
 
         for line in reader.lines() {
-            let line = line?;
+            let line = line.map_err(|source| AuditError::Read {
+                path: path_str.clone(),
+                source,
+            })?;
             total_entries += 1;
 
             if let Ok(entry) = serde_json::from_str::<AuditEntry>(&line) {
-                // Verify entry hash
                 if entry.verify() {
                     valid_entries += 1;
                 } else if first_invalid.is_none() {
                     first_invalid = Some(entry.id.clone());
                 }
 
-                // Verify chain integrity
                 if entry.prev_hash != expected_prev_hash {
                     chain_valid = false;
                     if first_invalid.is_none() {
@@ -317,61 +373,94 @@ impl AuditLogger {
         })
     }
 
-    /// Get recent audit entries
-    #[expect(clippy::needless_collect)] // Need to collect to reverse the iterator
-    pub fn get_recent(&self, limit: usize) -> Result<Vec<AuditEntry>> {
-        let file = File::open(&self.log_path)?;
-        let reader = BufReader::new(file);
-
-        let entries: Vec<AuditEntry> = reader
-            .lines()
-            .map_while(Result::ok)
-            .filter_map(|line| serde_json::from_str(&line).ok())
-            .collect();
-
-        Ok(entries.into_iter().rev().take(limit).collect())
+    /// Get recent audit entries. A missing log is empty; a corrupt line is an error.
+    pub fn get_recent(&self, limit: usize) -> Result<Vec<AuditEntry>, AuditError> {
+        let mut entries = read_all_entries(&self.log_path)?;
+        entries.reverse();
+        entries.truncate(limit);
+        Ok(entries)
     }
 
     /// Filter entries by event type
-    pub fn filter_by_type(&self, event_type: &AuditEventType) -> Result<Vec<AuditEntry>> {
-        let file = File::open(&self.log_path)?;
-        let reader = BufReader::new(file);
-
-        let entries: Vec<AuditEntry> = reader
-            .lines()
-            .map_while(Result::ok)
-            .filter_map(|line| serde_json::from_str::<AuditEntry>(&line).ok())
+    pub fn filter_by_type(
+        &self,
+        event_type: &AuditEventType,
+    ) -> Result<Vec<AuditEntry>, AuditError> {
+        let entries = read_all_entries(&self.log_path)?;
+        Ok(entries
+            .into_iter()
             .filter(|e| &e.event_type == event_type)
-            .collect();
-
-        Ok(entries)
+            .collect())
     }
 
     /// Filter entries by severity (and above)
-    pub fn filter_by_severity(&self, min_severity: AuditSeverity) -> Result<Vec<AuditEntry>> {
-        let file = File::open(&self.log_path)?;
-        let reader = BufReader::new(file);
-
-        let entries: Vec<AuditEntry> = reader
-            .lines()
-            .map_while(Result::ok)
-            .filter_map(|line| serde_json::from_str::<AuditEntry>(&line).ok())
+    pub fn filter_by_severity(
+        &self,
+        min_severity: AuditSeverity,
+    ) -> Result<Vec<AuditEntry>, AuditError> {
+        let entries = read_all_entries(&self.log_path)?;
+        Ok(entries
+            .into_iter()
             .filter(|e| e.severity >= min_severity)
-            .collect();
-
-        Ok(entries)
+            .collect())
     }
 
     #[cfg(test)]
-    fn with_path(log_path: PathBuf) -> Result<Self> {
+    fn with_path(log_path: PathBuf) -> Result<Self, AuditError> {
         if let Some(parent) = log_path.parent() {
-            std::fs::create_dir_all(parent)?;
+            std::fs::create_dir_all(parent).map_err(|source| AuditError::CreateDir {
+                path: parent.display().to_string(),
+                source,
+            })?;
         }
-        let last_hash = Self::get_last_hash(&log_path)?;
+        let last_hash = get_last_hash(&log_path)?;
         Ok(Self {
             log_path,
             last_hash,
         })
+    }
+}
+
+/// Read every JSONL entry. Missing files are empty; IO and parse failures are errors.
+fn read_all_entries(path: &Path) -> Result<Vec<AuditEntry>, AuditError> {
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let path_str = path.display().to_string();
+    let file = File::open(path).map_err(|source| AuditError::Open {
+        path: path_str.clone(),
+        source,
+    })?;
+    let mut entries = Vec::new();
+    for (index, line) in BufReader::new(file).lines().enumerate() {
+        let line = line.map_err(|source| AuditError::Read {
+            path: path_str.clone(),
+            source,
+        })?;
+        if line.is_empty() {
+            continue;
+        }
+        let entry = serde_json::from_str::<AuditEntry>(&line).map_err(|source| {
+            AuditError::CorruptLine {
+                path: path_str.clone(),
+                line: index + 1,
+                source,
+            }
+        })?;
+        entries.push(entry);
+    }
+    Ok(entries)
+}
+
+fn get_last_hash(path: &Path) -> Result<String, AuditError> {
+    let entries = read_all_entries(path)?;
+    match entries.last() {
+        None => Ok("genesis".to_string()),
+        Some(entry) => entry.hash.clone().ok_or_else(|| AuditError::MissingHash {
+            path: path.display().to_string(),
+            line: entries.len(),
+        }),
     }
 }
 
@@ -419,7 +508,7 @@ static AUDIT_LOGGER: std::sync::LazyLock<std::sync::Mutex<Option<AuditLogger>>> 
     std::sync::LazyLock::new(|| std::sync::Mutex::new(None));
 
 /// Initialize the global audit logger
-pub fn init_audit_logger() -> Result<()> {
+pub fn init_audit_logger() -> Result<(), AuditError> {
     let logger = AuditLogger::new()?;
     *AUDIT_LOGGER.lock().expect("lock poisoned") = Some(logger);
     Ok(())
@@ -473,22 +562,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn failed_audit_write_does_not_advance_the_chain() -> Result<()> {
-        let temp = tempfile::TempDir::new()?;
+    fn failed_audit_write_does_not_advance_the_chain() {
+        let temp = tempfile::TempDir::new().unwrap();
         let log_path = temp.path().join("audit.jsonl");
-        let mut logger = AuditLogger::with_path(log_path.clone())?;
+        let mut logger = AuditLogger::with_path(log_path.clone()).unwrap();
 
-        logger.log(
-            AuditEventType::PackageInstall,
-            AuditSeverity::Info,
-            "firefox",
-            "Installed firefox",
-        )?;
+        logger
+            .log(
+                AuditEventType::PackageInstall,
+                AuditSeverity::Info,
+                "firefox",
+                "Installed firefox",
+            )
+            .unwrap();
         let hash_after_first = logger.last_hash.clone();
         assert_ne!(hash_after_first, "genesis");
 
-        std::fs::remove_file(&log_path)?;
-        std::fs::create_dir(&log_path)?;
+        std::fs::remove_file(&log_path).unwrap();
+        std::fs::create_dir(&log_path).unwrap();
 
         let error = logger
             .log(
@@ -498,9 +589,89 @@ mod tests {
                 "Removed firefox",
             )
             .expect_err("appending over a directory must fail");
-        assert!(!error.to_string().is_empty());
+        assert!(matches!(error, AuditError::Open { .. }), "got: {error}");
         assert_eq!(logger.last_hash, hash_after_first);
-        Ok(())
+    }
+
+    fn expect_audit_err<T>(result: Result<T, AuditError>, what: &str) -> AuditError {
+        match result {
+            Ok(_) => panic!("{what}"),
+            Err(err) => err,
+        }
+    }
+
+    #[test]
+    fn corrupt_line_is_not_used_as_chain_head() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let log_path = temp.path().join("audit.jsonl");
+        std::fs::write(&log_path, "not-json\n").unwrap();
+        let err = expect_audit_err(
+            AuditLogger::with_path(log_path),
+            "corrupt log must not initialize a chain",
+        );
+        assert!(
+            matches!(err, AuditError::CorruptLine { line: 1, .. }),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn missing_hash_is_not_used_as_chain_head() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let log_path = temp.path().join("audit.jsonl");
+        std::fs::write(
+            &log_path,
+            r#"{"id":"x","timestamp":"2026-01-16T00:00:00Z","event_type":"package_install","severity":"info","user":"test","resource":"firefox","description":"Installed firefox","prev_hash":"genesis"}
+"#,
+        )
+        .unwrap();
+        let err = expect_audit_err(
+            AuditLogger::with_path(log_path),
+            "entry without a hash must not initialize a chain",
+        );
+        assert!(
+            matches!(err, AuditError::MissingHash { line: 1, .. }),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn get_recent_rejects_corrupt_lines() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let log_path = temp.path().join("audit.jsonl");
+        let mut logger = AuditLogger::with_path(log_path.clone()).unwrap();
+        logger
+            .log(
+                AuditEventType::PackageInstall,
+                AuditSeverity::Info,
+                "firefox",
+                "Installed firefox",
+            )
+            .unwrap();
+        std::fs::write(&log_path, "not-json\n").unwrap();
+        let err = logger
+            .get_recent(10)
+            .expect_err("viewing a corrupt log must fail closed");
+        assert!(
+            matches!(err, AuditError::CorruptLine { line: 1, .. }),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn verify_integrity_reports_corrupt_json() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let log_path = temp.path().join("audit.jsonl");
+        std::fs::write(&log_path, "not-json\n").unwrap();
+        let logger = AuditLogger {
+            log_path,
+            last_hash: "genesis".to_string(),
+        };
+        let report = logger.verify_integrity().unwrap();
+        assert!(!report.is_valid());
+        assert_eq!(report.total_entries, 1);
+        assert_eq!(report.valid_entries, 0);
+        assert!(!report.chain_valid);
     }
 
     #[test]
