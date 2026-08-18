@@ -469,26 +469,15 @@ impl DnfPackageManager {
         Ok(())
     }
 
-    /// Parse repository metadata from configured repositories
-    ///
-    /// Reads repository configuration from `/etc/yum.repos.d/*.repo` files,
-    /// fetches `repomd.xml`, then parses `primary.xml.gz` for package metadata.
+    /// Parse enabled repository configuration from `/etc/yum.repos.d/*.repo`.
+    /// Remote `repomd.xml` / `primary.xml.gz` fetching is not implemented.
     async fn parse_repo_metadata(&self) -> Result<Vec<RepoPackage>> {
         let repos = self.discover_repositories().await?;
         let mut all_packages = Vec::new();
 
         for repo in repos {
-            match self.fetch_repo_packages(&repo).await {
-                Ok(mut packages) => {
-                    all_packages.append(&mut packages);
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "Failed to fetch packages for repo {name}: {e}",
-                        name = repo.name
-                    );
-                }
-            }
+            let mut packages = Self::fetch_repo_packages(&repo)?;
+            all_packages.append(&mut packages);
         }
 
         Ok(all_packages)
@@ -558,20 +547,15 @@ impl DnfPackageManager {
         Ok(repos)
     }
 
-    /// Fetch packages from a repository
-    #[allow(clippy::unused_async)] // Reserved for future async HTTP fetching
-    async fn fetch_repo_packages(&self, repo: &RepoConfig) -> Result<Vec<RepoPackage>> {
-        // This is a simplified implementation
-        // Full implementation would:
-        // 1. Fetch repomd.xml from baseurl/metalink/mirrorlist
-        // 2. Parse repomd.xml to find primary.xml.gz location
-        // 3. Download and decompress primary.xml.gz
-        // 4. Parse XML using quick-xml for 50x performance
-        // 5. Extract package metadata into RepoPackage structs
-
-        // For now, return empty to avoid blocking on network calls
-        tracing::debug!("Would fetch packages from repo: {}", repo.name);
-        Ok(Vec::new())
+    /// Fetch packages from a repository.
+    ///
+    /// Remote metadata download is not implemented; an empty list would look like
+    /// a successful empty catalog.
+    fn fetch_repo_packages(repo: &RepoConfig) -> Result<Vec<RepoPackage>> {
+        anyhow::bail!(
+            "DNF repository metadata fetch is not implemented (repo: {})",
+            repo.name
+        );
     }
 
     /// Execute DNF command with privilege escalation if needed
@@ -916,5 +900,25 @@ mod tests {
 
         let tags = result.unwrap();
         assert!(tags.contains_key(&1000));
+    }
+
+    #[test]
+    fn test_fetch_repo_packages_is_unimplemented_error() {
+        let repo = RepoConfig {
+            name: "fedora".to_string(),
+            enabled: true,
+            baseurl: None,
+            metalink: None,
+            mirrorlist: None,
+        };
+        let error = DnfPackageManager::fetch_repo_packages(&repo)
+            .expect_err("unimplemented fetch must not look like an empty catalog");
+        assert!(
+            error
+                .to_string()
+                .contains("DNF repository metadata fetch is not implemented"),
+            "got: {error}"
+        );
+        assert!(error.to_string().contains("fedora"), "got: {error}");
     }
 }
