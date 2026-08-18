@@ -190,6 +190,19 @@ pub struct StatusResult {
     pub runtime_versions: Vec<(String, String)>,
 }
 
+/// Map a vulnerability scan onto a previously published count.
+///
+/// A failed scan keeps the previous count and must not invent a clean zero.
+pub fn vulnerability_count_from_scan<E>(
+    scan: Result<usize, E>,
+    previous: Option<usize>,
+) -> Option<usize> {
+    match scan {
+        Ok(count) => Some(count),
+        Err(_) => previous,
+    }
+}
+
 /// Package info for IPC (minimal)
 #[derive(Archive, RkyvSerialize, RkyvDeserialize, Debug, Clone, Serialize, Deserialize)]
 pub struct PackageInfo {
@@ -264,4 +277,30 @@ pub struct UpdateEntry {
     pub old_version: String,
     pub new_version: String,
     pub repo: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::vulnerability_count_from_scan;
+
+    #[test]
+    fn successful_scan_replaces_the_previous_count() {
+        assert_eq!(vulnerability_count_from_scan::<()>(Ok(3), Some(5)), Some(3));
+    }
+
+    #[test]
+    fn failed_scan_keeps_the_previous_count() {
+        assert_eq!(
+            vulnerability_count_from_scan(Err("alsa unavailable"), Some(5)),
+            Some(5)
+        );
+    }
+
+    #[test]
+    fn failed_scan_without_a_prior_count_does_not_invent_zero() {
+        assert_eq!(
+            vulnerability_count_from_scan(Err("alsa unavailable"), None),
+            None
+        );
+    }
 }
