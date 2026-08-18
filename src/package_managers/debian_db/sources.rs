@@ -116,7 +116,8 @@ pub fn parse_all_sources() -> Result<Vec<Repository>> {
     let sources_dir = Path::new("/etc/apt/sources.list.d");
     match sources_list_d_from_read_dir(fs::read_dir(sources_dir))? {
         Some(entries) => {
-            for entry in entries.flatten() {
+            for entry in entries {
+                let entry = sources_list_d_entry(entry)?;
                 let path = entry.path();
                 let Some(ext) = path.extension() else {
                     continue;
@@ -157,6 +158,10 @@ fn sources_list_d_from_read_dir(
 
 fn require_parsed_apt_sources(result: Result<Vec<Repository>>) -> Result<Vec<Repository>> {
     result.context("Failed to parse APT sources file")
+}
+
+fn sources_list_d_entry(result: std::io::Result<fs::DirEntry>) -> Result<fs::DirEntry> {
+    result.context("Failed to read APT sources directory entry")
 }
 
 /// Parse a legacy sources.list file
@@ -632,6 +637,32 @@ random text here
             error
                 .to_string()
                 .contains("Failed to parse APT sources file"),
+            "got: {error}"
+        );
+    }
+
+    #[test]
+    fn test_sources_list_d_entry_allows_success() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("foo.list"), b"").unwrap();
+        let entry = fs::read_dir(dir.path())
+            .unwrap()
+            .next()
+            .expect("temp sources.list.d should contain one file");
+        sources_list_d_entry(entry).expect("readable directory entry must be kept");
+    }
+
+    #[test]
+    fn test_sources_list_d_entry_rejects_error() {
+        let error = sources_list_d_entry(Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "denied",
+        )))
+        .expect_err("failed sources.list.d entry must not be skipped");
+        assert!(
+            error
+                .to_string()
+                .contains("Failed to read APT sources directory entry"),
             "got: {error}"
         );
     }
