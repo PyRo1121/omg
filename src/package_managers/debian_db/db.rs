@@ -708,11 +708,7 @@ pub fn ensure_index_loaded() -> Result<()> {
     }
     package_offsets.push(search_buffer.len());
 
-    let installed_set = list_installed_fast()
-        .unwrap_or_default()
-        .into_iter()
-        .map(|p| p.name)
-        .collect();
+    let installed_set = list_installed_fast()?.into_iter().map(|p| p.name).collect();
 
     let newest_mtime = current_files
         .values()
@@ -2364,6 +2360,24 @@ mod tests {
         }
         let error = build_dependency_map()
             .expect_err("missing dpkg status must not look like zero dependencies");
+        assert!(
+            error.to_string().contains("dpkg status file not found"),
+            "got: {error}"
+        );
+    }
+
+    #[test]
+    fn test_ensure_index_loaded_missing_status_is_an_error() {
+        if !Path::new("/var/lib/apt/lists").exists() {
+            ensure_index_loaded().expect("missing apt lists is still a no-op");
+            return;
+        }
+        if Path::new("/var/lib/dpkg/status").exists() {
+            ensure_index_loaded().expect("existing dpkg status must load");
+            return;
+        }
+        let error = ensure_index_loaded()
+            .expect_err("missing dpkg status must not look like an empty installed set");
         assert!(
             error.to_string().contains("dpkg status file not found"),
             "got: {error}"
