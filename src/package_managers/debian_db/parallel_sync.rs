@@ -4,7 +4,7 @@
 //! APT repositories. Supports:
 //! - Concurrent downloads with connection pooling
 //! - Progress bars with per-repo status
-//! - Automatic decompression (gzip, xz, lz4)
+//! - Automatic decompression (gzip, xz)
 //! - InRelease/Release signature verification (optional)
 //! - Atomic cache updates
 
@@ -748,22 +748,6 @@ fn decompress_xz(data: &[u8]) -> Result<Vec<u8>> {
     Ok(output)
 }
 
-// LZ4 compression format - not currently used by Debian/Ubuntu repos
-// but kept for potential future support
-#[allow(dead_code)]
-fn decompress_lz4(data: &[u8]) -> Result<Vec<u8>> {
-    lz4_flex::decompress_size_prepended(data)
-        .map_err(|e| anyhow::anyhow!("LZ4 decompression failed: {e}"))
-}
-
-// No-op decompression for uncompressed Packages files
-// Not currently used but kept as part of the decompression function pointer pattern
-#[allow(dead_code)]
-#[allow(clippy::unnecessary_wraps)] // Used as function pointer with other decompression functions
-fn decompress_none(data: &[u8]) -> Result<Vec<u8>> {
-    Ok(data.to_vec())
-}
-
 /// Force a full sync, ignoring cache
 pub async fn force_sync_all() -> Result<()> {
     invalidate_sync_timestamps(&paths::cache_dir().join("apt"))?;
@@ -886,13 +870,6 @@ mod tests {
         let cache_dir = repo_cache_dir(&repo);
         assert!(cache_dir.to_string_lossy().contains("apt"));
         assert!(cache_dir.to_string_lossy().contains("bookworm"));
-    }
-
-    #[test]
-    fn test_decompress_none() {
-        let data = b"hello world";
-        let result = decompress_none(data).unwrap();
-        assert_eq!(result, data);
     }
 
     #[test]
