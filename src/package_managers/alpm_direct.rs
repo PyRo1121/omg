@@ -173,37 +173,6 @@ pub fn clear_alpm_cache() {
     CACHE_EPOCH.fetch_add(1, Ordering::Release);
 }
 
-/// Search local database (installed packages) - INSTANT
-#[inline]
-pub fn search_local(query: &str) -> Result<Vec<LocalPackage>> {
-    with_handle(|handle| {
-        let localdb = handle.localdb();
-        let query_lower = query.to_ascii_lowercase();
-        let mut results = Vec::with_capacity(64);
-
-        for pkg in localdb.pkgs() {
-            if pkg.name().contains(&query_lower)
-                || pkg
-                    .desc()
-                    .is_some_and(|d| contains_ignore_ascii_case(d, &query_lower))
-            {
-                results.push(LocalPackage {
-                    name: pkg.name().to_string(),
-                    version: super::types::parse_version_or_zero(pkg.version()),
-                    description: pkg.desc().unwrap_or("").to_string(),
-                    install_size: pkg.isize(),
-                    reason: match pkg.reason() {
-                        PackageReason::Explicit => "explicit",
-                        PackageReason::Depend => "dependency",
-                    },
-                });
-            }
-        }
-
-        Ok(results)
-    })
-}
-
 /// Search sync databases (available packages) - FAST (<10ms)
 #[inline]
 pub fn search_sync(query: &str) -> Result<Vec<SyncPackage>> {
@@ -530,23 +499,6 @@ pub fn list_all_package_names() -> Result<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_search_local_returns_results() {
-        let result = search_local("pacman");
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_search_local_empty_query() {
-        let result = search_local("");
-        assert!(result.is_ok());
-        let packages = result.unwrap();
-        assert!(
-            !packages.is_empty(),
-            "Empty query should return all packages"
-        );
-    }
 
     #[test]
     fn test_search_sync_returns_results() {

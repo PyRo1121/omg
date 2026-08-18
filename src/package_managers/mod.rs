@@ -272,7 +272,7 @@ pub fn get_system_status() -> anyhow::Result<(usize, usize, usize, usize)> {
 }
 
 #[cfg(feature = "arch")]
-pub use alpm_direct::{clear_alpm_cache, search_local};
+pub use alpm_direct::clear_alpm_cache;
 #[cfg(feature = "arch")]
 pub use alpm_ops::DownloadInfo;
 #[cfg(feature = "arch")]
