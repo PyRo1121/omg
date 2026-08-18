@@ -210,6 +210,29 @@ async fn info_json(package: &str) -> Result<()> {
         return Ok(());
     }
 
+    #[cfg(any(feature = "debian", feature = "debian-pure"))]
+    if is_debian_like() {
+        let Some(pkg) =
+            crate::package_managers::debian_db::get_info_fast(package).with_context(|| {
+                format!("Failed to look up {package} in the Debian package database")
+            })?
+        else {
+            anyhow::bail!("Package '{package}' not found");
+        };
+        let json_obj = serde_json::json!({
+            "name": pkg.name,
+            "version": pkg.version.to_string(),
+            "description": pkg.description,
+            "installed": pkg.installed,
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json_obj)
+                .context("Failed to serialize package info as JSON")?
+        );
+        return Ok(());
+    }
+
     let pm = get_package_manager()?;
     if pm.name() == "pacman" {
         #[cfg(feature = "arch")]
