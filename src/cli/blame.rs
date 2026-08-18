@@ -140,7 +140,10 @@ fn get_package_info(package: &str) -> Result<(bool, Option<String>, String)> {
     }
 }
 
-#[cfg(all(feature = "debian", not(feature = "arch")))]
+#[cfg(all(
+    any(feature = "debian", feature = "debian-pure"),
+    not(feature = "arch")
+))]
 fn get_package_info(package: &str) -> Result<(bool, Option<String>, String)> {
     use crate::cli::style;
     use crate::package_managers::debian_db;
@@ -161,10 +164,9 @@ fn get_package_info(package: &str) -> Result<(bool, Option<String>, String)> {
     }
 }
 
-#[cfg(not(any(feature = "arch", feature = "debian")))]
-#[expect(clippy::unnecessary_wraps)] // Result return required: API compat with feature-gated impls
+#[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
 fn get_package_info(_package: &str) -> Result<(bool, Option<String>, String)> {
-    Ok((false, None, "unknown".to_string()))
+    anyhow::bail!("Package information is not available without an Arch or Debian package backend");
 }
 
 #[cfg(feature = "arch")]
@@ -196,7 +198,10 @@ fn show_required_by(package: &str) -> Result<Cmd<()>> {
     }
 }
 
-#[cfg(all(feature = "debian", not(feature = "arch")))]
+#[cfg(all(
+    any(feature = "debian", feature = "debian-pure"),
+    not(feature = "arch")
+))]
 fn show_required_by(package: &str) -> Result<Cmd<()>> {
     use crate::package_managers::debian_db;
 
@@ -214,10 +219,11 @@ fn show_required_by(package: &str) -> Result<Cmd<()>> {
     }
 }
 
-#[cfg(not(any(feature = "arch", feature = "debian")))]
-#[expect(clippy::unnecessary_wraps)] // Result return required: API compat with feature-gated impls
+#[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
 fn show_required_by(_package: &str) -> Result<Cmd<()>> {
-    Ok(Cmd::info("Dependency information not available"))
+    anyhow::bail!(
+        "Dependency information is not available without an Arch or Debian package backend"
+    );
 }
 
 fn format_timestamp(ts: i64) -> String {
@@ -234,4 +240,34 @@ fn format_timestamp(ts: i64) -> String {
                 .replace('T', " ")
         },
     )
+}
+
+#[cfg(all(
+    test,
+    not(any(feature = "arch", feature = "debian", feature = "debian-pure"))
+))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn blame_without_backend_does_not_pretend_the_package_is_missing() {
+        let error = build_blame_output("bash")
+            .expect_err("blame with no backend must not look like not-installed");
+        assert!(
+            error
+                .to_string()
+                .contains("not available without an Arch or Debian package backend")
+        );
+    }
+
+    #[test]
+    fn required_by_without_backend_is_an_error() {
+        let error = show_required_by("bash")
+            .expect_err("dependency lookup with no backend must not look like success");
+        assert!(
+            error
+                .to_string()
+                .contains("not available without an Arch or Debian package backend")
+        );
+    }
 }
