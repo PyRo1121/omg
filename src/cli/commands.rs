@@ -451,10 +451,17 @@ fn read_status_snapshot() -> Result<StatusSnapshot> {
             let s = get_system_status().context("Failed to query system status via ALPM")?;
             Ok((s.0, s.1, s.2, s.3, None, None))
         }
-        #[cfg(not(feature = "arch"))]
+        #[cfg(all(
+            any(feature = "debian", feature = "debian-pure"),
+            not(feature = "arch")
+        ))]
         {
-            anyhow::bail!("No supported package manager backend available");
+            let s = crate::package_managers::debian_db::get_counts_fast()
+                .context("Failed to query system status from the Debian package database")?;
+            Ok((s.0, s.1, s.2, s.3, None, None))
         }
+        #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
+        status_requires_backend()
     }
 
     #[cfg(not(unix))]
@@ -464,11 +471,26 @@ fn read_status_snapshot() -> Result<StatusSnapshot> {
             let s = get_system_status().context("Failed to query system status via ALPM")?;
             return Ok((s.0, s.1, s.2, s.3, None, None));
         }
-        #[cfg(not(feature = "arch"))]
+        #[cfg(all(
+            any(feature = "debian", feature = "debian-pure"),
+            not(feature = "arch")
+        ))]
         {
-            anyhow::bail!("No supported package manager backend available");
+            let s = crate::package_managers::debian_db::get_counts_fast()
+                .context("Failed to query system status from the Debian package database")?;
+            return Ok((s.0, s.1, s.2, s.3, None, None));
         }
+        #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
+        status_requires_backend()
     }
+}
+
+#[cfg(any(
+    not(any(feature = "arch", feature = "debian", feature = "debian-pure")),
+    test
+))]
+fn status_requires_backend() -> Result<StatusSnapshot> {
+    anyhow::bail!("No supported package manager backend available")
 }
 
 pub fn status_sync() -> Result<()> {
@@ -1346,6 +1368,18 @@ mod tests {
         assert!(
             message.contains("bash=5.2"),
             "packages to restore must be in the error, got: {message}"
+        );
+    }
+
+    #[test]
+    fn status_without_backend_is_an_error() {
+        let error = status_requires_backend()
+            .expect_err("status with no backend must not invent a healthy zero report");
+        assert!(
+            error
+                .to_string()
+                .contains("No supported package manager backend available"),
+            "got: {error}"
         );
     }
 }
