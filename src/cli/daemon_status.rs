@@ -4,6 +4,7 @@
 
 use anyhow::Result;
 
+#[cfg(unix)]
 use crate::cli::style;
 #[cfg(unix)]
 use crate::core::client::DaemonClient;
@@ -14,10 +15,7 @@ use crate::daemon::protocol::{Request, ResponseResult};
 pub async fn run() -> Result<()> {
     #[cfg(not(unix))]
     {
-        println!("  {} Daemon is not supported on Windows", style::error("✗"));
-        println!("    The daemon feature requires Unix domain sockets (Unix/Linux/macOS only).");
-        println!();
-        return Ok(());
+        return daemon_requires_unix();
     }
 
     #[cfg(unix)]
@@ -188,8 +186,8 @@ pub async fn run() -> Result<()> {
         }
 
         println!();
+        Ok(())
     }
-    Ok(())
 }
 
 /// Format bytes as human-readable string
@@ -207,5 +205,25 @@ fn format_bytes(bytes: u64) -> String {
         format!("{:.2} KB", bytes as f64 / KB as f64)
     } else {
         format!("{bytes} B")
+    }
+}
+
+#[cfg(any(not(unix), test))]
+fn daemon_requires_unix() -> Result<()> {
+    anyhow::bail!("The OMG daemon is not supported on this OS; it requires Unix domain sockets")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn daemon_status_without_unix_sockets_is_an_error() {
+        let error = daemon_requires_unix()
+            .expect_err("daemon status on a non-Unix OS must not look like success");
+        assert!(
+            error.to_string().contains("requires Unix domain sockets"),
+            "got: {error}"
+        );
     }
 }

@@ -870,6 +870,20 @@ pub fn scan_licenses(
     Ok(())
 }
 
+fn package_has_available_update(package: &str) -> Result<bool> {
+    #[cfg(feature = "arch")]
+    {
+        crate::package_managers::alpm_direct::has_update(package)
+            .with_context(|| format!("Failed to check whether {package} has an available update"))
+    }
+    #[cfg(not(feature = "arch"))]
+    {
+        anyhow::bail!(
+            "Cannot determine whether {package} has an available update without the Arch backend"
+        )
+    }
+}
+
 /// Auto-fix vulnerabilities by upgrading packages
 pub async fn fix_vulnerabilities(
     dry_run: bool,
@@ -922,9 +936,7 @@ pub async fn fix_vulnerabilities(
         };
 
         // Find packages with fixable vulnerabilities
-        #[allow(unused_mut)] // Mutated only inside feature-gated block
         let mut to_upgrade: Vec<String> = Vec::new();
-        #[allow(unused_mut)] // Mutated only inside feature-gated block
         let mut unfixable: Vec<(String, String)> = Vec::new();
 
         for (pkg, vulns) in &scan_result.vulnerabilities {
@@ -938,29 +950,19 @@ pub async fn fix_vulnerabilities(
             });
 
             if has_severe {
-                // Check if there's an available update
-                #[cfg(feature = "arch")]
-                {
-                    if crate::package_managers::alpm_direct::has_update(pkg).with_context(|| {
-                        format!("Failed to check whether {pkg} has an available update")
-                    })? {
-                        to_upgrade.push(pkg.clone());
-                    } else {
-                        for vuln in vulns {
-                            let score = vuln
-                                .score
-                                .as_ref()
-                                .and_then(|s| s.parse::<f64>().ok())
-                                .unwrap_or(0.0);
-                            if score >= min_sev {
-                                unfixable.push((pkg.clone(), vuln.id.clone()));
-                            }
+                if package_has_available_update(pkg)? {
+                    to_upgrade.push(pkg.clone());
+                } else {
+                    for vuln in vulns {
+                        let score = vuln
+                            .score
+                            .as_ref()
+                            .and_then(|s| s.parse::<f64>().ok())
+                            .unwrap_or(0.0);
+                        if score >= min_sev {
+                            unfixable.push((pkg.clone(), vuln.id.clone()));
                         }
                     }
-                }
-                #[cfg(not(feature = "arch"))]
-                {
-                    unfixable.push((pkg.clone(), "Update check not available".to_string()));
                 }
             }
         }
@@ -1348,5 +1350,16 @@ mod tests {
     fn parse_eol_timestamp_rejects_garbage() {
         let err = parse_eol_timestamp("not-a-date").expect_err("garbage must fail closed");
         assert!(err.to_string().contains("Invalid EOL date"), "got: {err}");
+    }
+
+    #[test]
+    #[cfg(not(feature = "arch"))]
+    fn auto_fix_update_check_without_arch_fails() {
+        let error = package_has_available_update("bash")
+            .expect_err("auto-fix must not treat missing update checks as unfixable");
+        assert!(
+            error.to_string().contains("without the Arch backend"),
+            "got: {error}"
+        );
     }
 }
