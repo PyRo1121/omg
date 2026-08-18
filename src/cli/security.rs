@@ -1159,6 +1159,16 @@ pub async fn export_compliance(
     Ok(())
 }
 
+fn parse_eol_timestamp(eol_date: &str) -> Result<jiff::Timestamp> {
+    let eol_ts = jiff::civil::Date::strptime("%Y-%m-%d", eol_date)
+        .map_err(|error| anyhow::anyhow!("Invalid EOL date '{eol_date}': {error}"))?;
+    let zoned = eol_ts
+        .at(0, 0, 0, 0)
+        .to_zoned(jiff::tz::TimeZone::UTC)
+        .with_context(|| format!("Failed to convert EOL date '{eol_date}' to UTC"))?;
+    Ok(zoned.timestamp())
+}
+
 /// Check end-of-life status for installed runtimes
 pub fn check_eol(_ctx: &CliContext) -> Result<()> {
     println!("{} Checking runtime EOL status...\n", style::runtime("OMG"));
@@ -1203,25 +1213,23 @@ pub fn check_eol(_ctx: &CliContext) -> Result<()> {
             for (rt, ver_prefix, eol_date, _lts) in eol_data {
                 if *rt == *runtime && version.starts_with(ver_prefix) {
                     eol_date_str = eol_date;
-                    if let Ok(eol_ts) = jiff::civil::Date::strptime("%Y-%m-%d", eol_date)
-                        && let Ok(zoned) = eol_ts.at(0, 0, 0, 0).to_zoned(jiff::tz::TimeZone::UTC)
-                    {
-                        let eol_timestamp = zoned.timestamp();
+                    let eol_timestamp = parse_eol_timestamp(eol_date).with_context(|| {
+                        format!("Invalid EOL date '{eol_date}' for {runtime} {ver_prefix}")
+                    })?;
 
-                        if now > eol_timestamp {
-                            status = "EOL";
-                            is_eol = true;
+                    if now > eol_timestamp {
+                        status = "EOL";
+                        is_eol = true;
+                        issues += 1;
+                    } else {
+                        let six_months = jiff::Span::new().months(6);
+                        let warning_ts = now
+                            .checked_add(six_months)
+                            .context("Failed to compute EOL warning window")?;
+                        if warning_ts > eol_timestamp {
+                            status = "Ending Soon";
+                            is_warning = true;
                             issues += 1;
-                        } else {
-                            // Check if within 6 months of EOL
-                            let six_months = jiff::Span::new().months(6);
-                            if let Ok(warning_ts) = now.checked_add(six_months)
-                                && warning_ts > eol_timestamp
-                            {
-                                status = "Ending Soon";
-                                is_warning = true;
-                                issues += 1;
-                            }
                         }
                     }
                     break;
@@ -1328,5 +1336,17 @@ mod tests {
             require_audit_integrity(false).expect_err("broken audit chain must fail the command");
         assert!(err.to_string().contains("integrity FAILED"), "got: {err}");
         assert!(require_audit_integrity(true).is_ok());
+    }
+
+    #[test]
+    fn parse_eol_timestamp_accepts_iso_dates() {
+        let ts = parse_eol_timestamp("2025-04-30").expect("valid EOL date");
+        assert!(ts.as_second() > 0);
+    }
+
+    #[test]
+    fn parse_eol_timestamp_rejects_garbage() {
+        let err = parse_eol_timestamp("not-a-date").expect_err("garbage must fail closed");
+        assert!(err.to_string().contains("Invalid EOL date"), "got: {err}");
     }
 }

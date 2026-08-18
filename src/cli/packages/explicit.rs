@@ -51,7 +51,8 @@ pub fn explicit_sync_with_json(count: bool, json: bool) -> Result<()> {
     if use_debian_backend() {
         #[cfg(feature = "debian")]
         {
-            let packages = crate::package_managers::list_explicit_fast().unwrap_or_default();
+            let packages = crate::package_managers::list_explicit_fast()
+                .context("Failed to list explicitly installed packages")?;
             if count {
                 if json {
                     println!(r#"{{"count": {}}}"#, packages.len());

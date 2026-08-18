@@ -1,9 +1,6 @@
 //! Clean/orphan functionality for packages
 
-use anyhow::Result;
-
-#[cfg(feature = "arch")]
-use anyhow::Context;
+use anyhow::{Context, Result};
 
 use super::common::use_debian_backend;
 
@@ -210,7 +207,7 @@ async fn handle_debian_pure_clean(
 
     // Default behavior: show what can be cleaned
     if !do_orphans && !do_cache {
-        let orphan_list = list_orphans_fast().unwrap_or_default();
+        let orphan_list = list_orphans_fast().context("Failed to list orphan packages")?;
         if !orphan_list.is_empty() {
             println!(
                 "  {} {} orphan packages can be removed",
@@ -236,7 +233,7 @@ async fn handle_debian_pure_clean(
 
     // Handle orphan removal
     if do_orphans {
-        let orphan_list = list_orphans_fast().unwrap_or_default();
+        let orphan_list = list_orphans_fast().context("Failed to list orphan packages")?;
 
         if orphan_list.is_empty() {
             println!("  {} No orphan packages found", "✓".green().bold());
