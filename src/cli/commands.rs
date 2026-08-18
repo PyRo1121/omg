@@ -183,7 +183,14 @@ async fn get_package_names_with_fallback() -> Result<Vec<String>> {
         }
     }
 
-    // Fallback to direct ALPM. Local lookup failures fail closed.
+    // Fallback to a direct query. Local lookup failures fail closed.
+    #[cfg(any(feature = "debian", feature = "debian-pure"))]
+    if crate::core::env::distro::is_debian_like() {
+        return crate::package_managers::debian_db::search_fast("")
+            .map(|packages| packages.into_iter().map(|pkg| pkg.name).collect())
+            .context("Failed to list official package names for completion");
+    }
+
     #[cfg(feature = "arch")]
     return crate::package_managers::alpm_direct::list_all_package_names()
         .context("Failed to list official package names for completion");
