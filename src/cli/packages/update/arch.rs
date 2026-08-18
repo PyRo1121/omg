@@ -102,8 +102,7 @@ pub async fn update(check_only: bool, yes: bool, dry_run: bool) -> Result<()> {
     all_updates.extend(official_updates);
 
     let (_aur_count, aur_packages) = {
-        use crate::core::env::distro::use_debian_backend;
-        if use_debian_backend() {
+        if crate::core::env::distro::is_debian_like() {
             (0, Vec::new())
         } else {
             let aur_pb = modern_ui::modern_spinner("Checking", "AUR packages");
