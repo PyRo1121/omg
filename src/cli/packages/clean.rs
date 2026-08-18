@@ -13,7 +13,11 @@ use crate::package_managers::apt_remove_orphans;
 #[cfg(feature = "debian-pure")]
 use crate::package_managers::debian_db::{clean_package_cache, list_orphans_fast};
 
-#[cfg(not(feature = "arch"))]
+#[cfg(all(
+    feature = "debian",
+    not(feature = "arch"),
+    not(feature = "debian-pure")
+))]
 use crate::cli::style;
 
 /// Clean up orphans and caches
@@ -48,147 +52,165 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bo
         }
     }
 
-    let do_orphans = orphans || all;
-    let do_cache = cache || all;
-    let do_aur = aur || all;
-
-    if !do_orphans && !do_cache && !do_aur {
-        // Default: show what can be cleaned
-        #[cfg(feature = "arch")]
-        {
-            let orphan_list = list_orphans_direct().context("Failed to list orphan packages")?;
-            if !orphan_list.is_empty() {
-                use owo_colors::OwoColorize;
-                println!(
-                    "  {} {} orphan packages can be removed",
-                    "·".dimmed(),
-                    orphan_list.len().to_string().yellow()
-                );
-                println!("    Run: {}", "omg clean --orphans".cyan());
-            }
+    #[cfg(all(feature = "debian-pure", not(feature = "arch")))]
+    {
+        if aur {
+            anyhow::bail!("AUR cleanup is not available without the Arch backend");
         }
-
-        use owo_colors::OwoColorize;
-        println!(
-            "  {} To clear package cache: {}",
-            "·".dimmed(),
-            "omg clean --cache".cyan()
-        );
-        #[cfg(feature = "arch")]
-        println!(
-            "  {} To clear AUR builds: {}",
-            "·".dimmed(),
-            "omg clean --aur".cyan()
-        );
-        println!(
-            "  {} To clean everything: {}",
-            "·".dimmed(),
-            "omg clean --all".cyan()
-        );
-        println!();
-        return Ok(());
+        return handle_debian_pure_clean(orphans, cache, all, dry_run).await;
     }
 
-    if do_orphans {
-        #[cfg(feature = "arch")]
-        {
-            if dry_run {
+    #[cfg(any(feature = "arch", not(feature = "debian-pure")))]
+    {
+        let do_orphans = orphans || all;
+        let do_cache = cache || all;
+        let do_aur = aur || all;
+
+        if !do_orphans && !do_cache && !do_aur {
+            // Default: show what can be cleaned
+            #[cfg(feature = "arch")]
+            {
                 let orphan_list =
                     list_orphans_direct().context("Failed to list orphan packages")?;
-                use owo_colors::OwoColorize;
-                println!(
-                    "  {} Would remove {} orphan packages:",
-                    "→".cyan(),
-                    orphan_list.len()
-                );
-                for pkg in orphan_list.iter().take(10) {
-                    println!("    {} {}", "·".dimmed(), pkg);
-                }
-                if orphan_list.len() > 10 {
+                if !orphan_list.is_empty() {
+                    use owo_colors::OwoColorize;
                     println!(
-                        "    {} and {} more...",
+                        "  {} {} orphan packages can be removed",
                         "·".dimmed(),
-                        orphan_list.len() - 10
+                        orphan_list.len().to_string().yellow()
                     );
+                    println!("    Run: {}", "omg clean --orphans".cyan());
                 }
-            } else {
-                remove_orphans().await?;
             }
-        }
-        #[cfg(not(feature = "arch"))]
-        {
-            println!(
-                "{}",
-                style::info("Orphan removal not available on this system")
-            );
-        }
-    }
 
-    if do_cache {
-        #[cfg(feature = "arch")]
-        {
-            if dry_run {
-                use owo_colors::OwoColorize;
-                println!(
-                    "  {} Would clear package cache (keep 1 recent version)",
-                    "→".cyan()
-                );
-            } else {
-                crate::cli::modern_ui::print_info("Clearing package cache...");
-                match clean_cache(1) {
-                    // Keep 1 version by default
-                    Ok((removed, freed)) => {
-                        use owo_colors::OwoColorize;
+            use owo_colors::OwoColorize;
+            println!(
+                "  {} To clear package cache: {}",
+                "·".dimmed(),
+                "omg clean --cache".cyan()
+            );
+            #[cfg(feature = "arch")]
+            println!(
+                "  {} To clear AUR builds: {}",
+                "·".dimmed(),
+                "omg clean --aur".cyan()
+            );
+            println!(
+                "  {} To clean everything: {}",
+                "·".dimmed(),
+                "omg clean --all".cyan()
+            );
+            println!();
+            return Ok(());
+        }
+
+        if do_orphans {
+            #[cfg(feature = "arch")]
+            {
+                if dry_run {
+                    let orphan_list =
+                        list_orphans_direct().context("Failed to list orphan packages")?;
+                    use owo_colors::OwoColorize;
+                    println!(
+                        "  {} Would remove {} orphan packages:",
+                        "→".cyan(),
+                        orphan_list.len()
+                    );
+                    for pkg in orphan_list.iter().take(10) {
+                        println!("    {} {}", "·".dimmed(), pkg);
+                    }
+                    if orphan_list.len() > 10 {
                         println!(
-                            "  {} Removed {} files, freed {:.2} MB",
-                            "✓".green().bold(),
-                            removed,
-                            freed as f64 / 1024.0 / 1024.0
+                            "    {} and {} more...",
+                            "·".dimmed(),
+                            orphan_list.len() - 10
                         );
                     }
-                    Err(e) => {
-                        return Err(e).context("Failed to clear package cache");
+                } else {
+                    remove_orphans().await?;
+                }
+            }
+            #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
+            {
+                anyhow::bail!(
+                    "Orphan removal is not available without an Arch or Debian package backend"
+                );
+            }
+            #[cfg(all(
+                feature = "debian",
+                not(feature = "arch"),
+                not(feature = "debian-pure")
+            ))]
+            {
+                apt_remove_orphans()?;
+            }
+        }
+
+        if do_cache {
+            #[cfg(feature = "arch")]
+            {
+                if dry_run {
+                    use owo_colors::OwoColorize;
+                    println!(
+                        "  {} Would clear package cache (keep 1 recent version)",
+                        "→".cyan()
+                    );
+                } else {
+                    crate::cli::modern_ui::print_info("Clearing package cache...");
+                    match clean_cache(1) {
+                        // Keep 1 version by default
+                        Ok((removed, freed)) => {
+                            use owo_colors::OwoColorize;
+                            println!(
+                                "  {} Removed {} files, freed {:.2} MB",
+                                "✓".green().bold(),
+                                removed,
+                                freed as f64 / 1024.0 / 1024.0
+                            );
+                        }
+                        Err(e) => {
+                            return Err(e).context("Failed to clear package cache");
+                        }
                     }
                 }
             }
-        }
-        #[cfg(feature = "debian")]
-        {
-            use owo_colors::OwoColorize;
-            println!(
-                "  {} Use 'apt clean' for cache cleanup on Debian",
-                "ℹ".blue()
-            );
-        }
-    }
-
-    if do_aur {
-        #[cfg(feature = "arch")]
-        {
-            if dry_run {
+            #[cfg(feature = "debian")]
+            {
                 use owo_colors::OwoColorize;
-                println!("  {} Would clean all AUR build directories", "→".cyan());
-            } else {
-                let aur_client = AurClient::new()?;
-                aur_client.clean_all()?;
+                println!(
+                    "  {} Use 'apt clean' for cache cleanup on Debian",
+                    "ℹ".blue()
+                );
             }
         }
-        #[cfg(not(feature = "arch"))]
-        {
-            use owo_colors::OwoColorize;
-            println!("  {} AUR cleanup not available on this system", "ℹ".blue());
-        }
-    }
 
-    if dry_run {
-        println!();
-        use owo_colors::OwoColorize;
-        println!("  {} No changes made (dry run)", "ℹ".blue().dimmed());
-        println!();
-    } else {
-        crate::cli::modern_ui::print_success("Cleanup complete!");
+        if do_aur {
+            #[cfg(feature = "arch")]
+            {
+                if dry_run {
+                    use owo_colors::OwoColorize;
+                    println!("  {} Would clean all AUR build directories", "→".cyan());
+                } else {
+                    let aur_client = AurClient::new()?;
+                    aur_client.clean_all()?;
+                }
+            }
+            #[cfg(not(feature = "arch"))]
+            {
+                anyhow::bail!("AUR cleanup is not available without the Arch backend");
+            }
+        }
+
+        if dry_run {
+            println!();
+            use owo_colors::OwoColorize;
+            println!("  {} No changes made (dry run)", "ℹ".blue().dimmed());
+            println!();
+        } else {
+            crate::cli::modern_ui::print_success("Cleanup complete!");
+        }
+        Ok(())
     }
-    Ok(())
 }
 
 /// Handle clean operations for debian-pure backend
@@ -328,5 +350,31 @@ mod tests {
     #[test]
     fn cache_clean_success_returns_ok() {
         assert!(report_cache_clean(Ok((3, 4096))).is_ok());
+    }
+
+    #[tokio::test]
+    #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
+    async fn clean_orphans_without_backend_fails() {
+        let error = clean(true, false, false, false, false)
+            .await
+            .expect_err("orphan removal with no backend must not look like success");
+        assert!(
+            error
+                .to_string()
+                .contains("not available without an Arch or Debian package backend")
+        );
+    }
+
+    #[tokio::test]
+    #[cfg(not(feature = "arch"))]
+    async fn clean_aur_without_arch_fails() {
+        let error = clean(false, false, true, false, false)
+            .await
+            .expect_err("AUR cleanup without the Arch backend must not look like success");
+        assert!(
+            error
+                .to_string()
+                .contains("AUR cleanup is not available without the Arch backend")
+        );
     }
 }
