@@ -37,30 +37,21 @@ use rusqlite::{Connection, OpenFlags};
 const RPM_HEADER_MAGIC: [u8; 8] = [0x8e, 0xad, 0xe8, 0x01, 0x00, 0x00, 0x00, 0x00];
 
 /// RPM tag constants for parsing header entries
-#[allow(dead_code)]
+#[cfg(feature = "fedora")]
 mod rpm_tags {
     pub const NAME: u32 = 1000;
     pub const VERSION: u32 = 1001;
     pub const RELEASE: u32 = 1002;
     pub const SUMMARY: u32 = 1004;
-    pub const DESCRIPTION: u32 = 1005;
     pub const SIZE: u32 = 1009;
-    pub const LICENSE: u32 = 1014;
-    pub const URL: u32 = 1020;
-    pub const ARCH: u32 = 1022;
     pub const INSTALL_TIME: u32 = 1008;
-    pub const PROVIDES: u32 = 1047;
-    pub const REQUIRES: u32 = 1049;
     pub const REASON: u32 = 1160; // User/Dependency
 }
 
 /// RPM header data types
-#[allow(dead_code)]
 mod rpm_types {
     pub const STRING: u32 = 6;
     pub const STRING_ARRAY: u32 = 8;
-    pub const INT32: u32 = 4;
-    pub const INT64: u32 = 5;
 }
 
 /// Cached repository package metadata
