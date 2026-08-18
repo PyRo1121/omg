@@ -400,6 +400,10 @@ fn is_better_arch_candidate(new_pkg: &DebianPackage, existing_pkg: &DebianPackag
     parse_version_or_zero(&new_pkg.version) > parse_version_or_zero(&existing_pkg.version)
 }
 
+fn apt_lists_from_read_dir(result: std::io::Result<fs::ReadDir>) -> Result<fs::ReadDir> {
+    result.context("Failed to read APT lists directory")
+}
+
 pub fn ensure_index_loaded() -> Result<()> {
     let lists_dir = Path::new("/var/lib/apt/lists");
     if !lists_dir.exists() {
@@ -408,19 +412,18 @@ pub fn ensure_index_loaded() -> Result<()> {
 
     // Get current package files and their mtimes
     let mut current_files = HashMap::new();
-    if let Ok(entries) = fs::read_dir(lists_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if let Some(filename) = path.file_name().and_then(|n| n.to_str())
-                && filename.contains("_Packages")
-                && !path
-                    .extension()
-                    .is_some_and(|ext| ext.eq_ignore_ascii_case("diff"))
-                && let Ok(meta) = entry.metadata()
-                && let Ok(mtime) = meta.modified()
-            {
-                current_files.insert(path, mtime);
-            }
+    let entries = apt_lists_from_read_dir(fs::read_dir(lists_dir))?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if let Some(filename) = path.file_name().and_then(|n| n.to_str())
+            && filename.contains("_Packages")
+            && !path
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("diff"))
+            && let Ok(meta) = entry.metadata()
+            && let Ok(mtime) = meta.modified()
+        {
+            current_files.insert(path, mtime);
         }
     }
 
@@ -2623,6 +2626,27 @@ mod tests {
         assert!(
             message.contains("Failed to read APT extended_states"),
             "got: {message}"
+        );
+    }
+
+    #[test]
+    fn apt_lists_from_read_dir_allows_success() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        apt_lists_from_read_dir(fs::read_dir(dir.path())).expect("readable APT lists directory");
+    }
+
+    #[test]
+    fn apt_lists_from_read_dir_rejects_unreadable() {
+        let error = apt_lists_from_read_dir(Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "denied",
+        )))
+        .expect_err("unreadable APT lists directory must not look empty");
+        assert!(
+            error
+                .to_string()
+                .contains("Failed to read APT lists directory"),
+            "got: {error}"
         );
     }
 }
