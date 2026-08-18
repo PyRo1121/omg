@@ -420,8 +420,10 @@ impl Transaction {
 
                 // OPTIMIZATION: Delete .deb file immediately after unpacking
                 // This reduces disk I/O and frees up temp space quickly
-                if let Err(e) = std::fs::remove_file(&deb_path) {
-                    tracing::warn!("Failed to delete {}: {}", deb_path.display(), e);
+                if let Err(e) = remove_file_if_present(&deb_path) {
+                    tracing::error!("Failed to delete unpacked {}: {}", deb_path.display(), e);
+                    let mut guard = unpack_errors.lock().expect("lock poisoned");
+                    guard.push((name.clone(), e));
                 }
             }
 
@@ -588,7 +590,7 @@ impl Transaction {
         );
 
         for file in &self.installed_files {
-            remove_installed_file(file)?;
+            remove_file_if_present(file)?;
         }
 
         for (original, backup) in &self.backups {
@@ -714,12 +716,11 @@ impl Transaction {
     }
 }
 
-fn remove_installed_file(path: &Path) -> Result<()> {
+fn remove_file_if_present(path: &Path) -> Result<()> {
     match fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error)
-            .with_context(|| format!("Failed to remove {} during rollback", path.display())),
+        Err(error) => Err(error).with_context(|| format!("Failed to remove {}", path.display())),
     }
 }
 
@@ -1542,17 +1543,17 @@ mod tests {
     }
 
     #[test]
-    fn remove_installed_file_allows_missing() {
-        remove_installed_file(Path::new("/no/such/rollback/file"))
+    fn remove_file_if_present_allows_missing() {
+        remove_file_if_present(Path::new("/no/such/rollback/file"))
             .expect("missing installed file is already gone");
     }
 
     #[test]
-    fn remove_installed_file_deletes_existing() {
+    fn remove_file_if_present_deletes_existing() {
         let dir = tempfile::TempDir::new().expect("temp dir");
         let path = dir.path().join("installed");
         std::fs::write(&path, b"pkg").expect("installed file");
-        remove_installed_file(&path).expect("rollback remove");
+        remove_file_if_present(&path).expect("rollback remove");
         assert!(!path.exists());
     }
 

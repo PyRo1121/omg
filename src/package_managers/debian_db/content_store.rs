@@ -164,90 +164,85 @@ impl ContentStore {
     /// Walks the entire store directory and sums file sizes.
     pub fn total_size(&self) -> Result<u64> {
         let mut total = 0u64;
-
-        if !self.store_dir.exists() {
-            return Ok(0);
-        }
-
-        for entry in fs::read_dir(&self.store_dir)? {
-            let entry = entry?;
-            let path = entry.path();
-
-            if path.is_dir() {
-                // Recurse into shard directories
-                for file_entry in fs::read_dir(&path)? {
-                    let file_entry = file_entry?;
-                    if let Ok(metadata) = file_entry.metadata() {
-                        total += metadata.len();
-                    }
-                }
-            }
-        }
-
+        self.for_each_store_file(|file_entry| {
+            let metadata = file_entry.metadata().with_context(|| {
+                format!(
+                    "Failed to read content-store file metadata {}",
+                    file_entry.path().display()
+                )
+            })?;
+            total += metadata.len();
+            Ok(())
+        })?;
         Ok(total)
     }
 
     /// Count the number of packages in the content store
     pub fn package_count(&self) -> Result<usize> {
         let mut count = 0;
-
-        if !self.store_dir.exists() {
-            return Ok(0);
-        }
-
-        for entry in fs::read_dir(&self.store_dir)? {
-            let entry = entry?;
-            let path = entry.path();
-
-            if path.is_dir() {
-                // Count files in shard directories (excluding temp files)
-                for file_entry in fs::read_dir(&path)? {
-                    let file_entry = file_entry?;
-                    let file_name = file_entry.file_name();
-                    if !file_name.to_string_lossy().starts_with('.') {
-                        count += 1;
-                    }
-                }
+        self.for_each_store_file(|file_entry| {
+            if !file_entry.file_name().to_string_lossy().starts_with('.') {
+                count += 1;
             }
-        }
-
+            Ok(())
+        })?;
         Ok(count)
     }
 
     /// Clean up temporary files left by failed operations
     pub fn cleanup_temp_files(&self) -> Result<usize> {
         let mut cleaned = 0;
-
-        if !self.store_dir.exists() {
-            return Ok(0);
-        }
-
-        for entry in fs::read_dir(&self.store_dir)? {
-            let entry = entry?;
-            let path = entry.path();
-
-            if path.is_dir() {
-                for file_entry in fs::read_dir(&path)? {
-                    let file_entry = file_entry?;
-                    let file_path = file_entry.path();
-                    let file_name = file_entry.file_name();
-
-                    // Remove temp files (start with '.')
-                    if file_name.to_string_lossy().starts_with('.')
-                        && fs::remove_file(&file_path).is_ok()
-                    {
-                        cleaned += 1;
-                        tracing::debug!("Cleaned temp file: {}", file_path.display());
-                    }
-                }
+        self.for_each_store_file(|file_entry| {
+            let file_path = file_entry.path();
+            if file_entry.file_name().to_string_lossy().starts_with('.') {
+                remove_content_store_file(&file_path)?;
+                cleaned += 1;
+                tracing::debug!("Cleaned temp file: {}", file_path.display());
             }
-        }
+            Ok(())
+        })?;
 
         if cleaned > 0 {
             tracing::info!("Cleaned {} temporary files from content store", cleaned);
         }
 
         Ok(cleaned)
+    }
+
+    fn for_each_store_file(
+        &self,
+        mut visit: impl FnMut(&fs::DirEntry) -> Result<()>,
+    ) -> Result<()> {
+        if !self.store_dir.exists() {
+            return Ok(());
+        }
+
+        for entry in fs::read_dir(&self.store_dir)? {
+            let entry = entry?;
+            let meta = entry.metadata().with_context(|| {
+                format!(
+                    "Failed to read content-store metadata {}",
+                    entry.path().display()
+                )
+            })?;
+            if !meta.is_dir() {
+                continue;
+            }
+            for file_entry in fs::read_dir(entry.path())? {
+                visit(&file_entry?)?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+fn remove_content_store_file(path: &Path) -> Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error)
+            .with_context(|| format!("Failed to remove content-store file {}", path.display())),
     }
 }
 
@@ -383,5 +378,39 @@ mod tests {
 
         assert_eq!(store.cleanup_temp_files().unwrap(), 1);
         assert!(!temp_file.exists());
+    }
+
+    #[test]
+    fn remove_content_store_file_allows_missing() {
+        remove_content_store_file(Path::new("/no/such/content-store/file"))
+            .expect("missing content-store file is already gone");
+    }
+
+    #[test]
+    fn total_size_rejects_unreadable_file_metadata() {
+        let temp_dir = TempDir::new().unwrap();
+        let store = ContentStore::with_path(temp_dir.path().join("store"));
+        store.init().unwrap();
+        let shard_dir = store.store_dir.join("ab");
+        fs::create_dir_all(&shard_dir).unwrap();
+        let nested = shard_dir.join("blocked");
+        fs::create_dir(&nested).unwrap();
+        let original = fs::metadata(&shard_dir).unwrap().permissions();
+        let mut denied = original.clone();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut denied, 0o000);
+        fs::set_permissions(&shard_dir, denied).unwrap();
+        let result = store.total_size();
+        fs::set_permissions(&shard_dir, original).unwrap();
+        let error = result.expect_err("unreadable store file must not undercount");
+        assert!(
+            error
+                .to_string()
+                .contains("Failed to read content-store metadata")
+                || error
+                    .to_string()
+                    .contains("Failed to read content-store file metadata")
+                || error.to_string().contains("Permission denied"),
+            "got: {error}"
+        );
     }
 }

@@ -17,52 +17,50 @@ use anyhow::{Context, Result};
 /// Checks both the temporary download directory and the final installation paths.
 /// Returns an error with helpful suggestions if insufficient space is detected.
 pub fn check_disk_space(download_size: u64, installed_size: u64, temp_dir: &Path) -> Result<()> {
-    use std::fs;
+    let download_path = if temp_dir.exists() {
+        temp_dir
+    } else {
+        temp_dir.parent().unwrap_or(temp_dir)
+    };
+    let available = available_bytes(download_path)?;
+    let required = download_size + (download_size / 10);
 
-    // Check temp directory space (for downloads)
-    if let Ok(_metadata) = fs::metadata(temp_dir)
-        && let Some(parent) = temp_dir.parent()
-        && let Ok(stat) = nix::sys::statvfs::statvfs(parent)
-    {
-        let available = stat.blocks_available() * stat.block_size();
-        // Add 10% safety margin for metadata and overhead
-        let required = download_size + (download_size / 10);
-
-        if available < required {
-            anyhow::bail!(
-                "Insufficient disk space in {}: {} MB available, {} MB required\n\
+    if available < required {
+        anyhow::bail!(
+            "Insufficient disk space in {}: {} MB available, {} MB required\n\
                 💡 Free up space with:\n\
                 - omg clean (remove cached packages)\n\
                 - sudo apt-get autoclean (Debian/Ubuntu)\n\
                 - Check: df -h {}",
-                parent.display(),
-                available / 1_048_576,
-                required / 1_048_576,
-                parent.display()
-            );
-        }
+            download_path.display(),
+            available / 1_048_576,
+            required / 1_048_576,
+            download_path.display()
+        );
     }
 
-    // Check root filesystem space (for installation)
-    if let Ok(stat) = nix::sys::statvfs::statvfs("/") {
-        let available = stat.blocks_available() * stat.block_size();
-        // Add 20% safety margin for unpacking overhead
-        let required = installed_size + (installed_size / 5);
+    let available = available_bytes(Path::new("/"))?;
+    let required = installed_size + (installed_size / 5);
 
-        if available < required {
-            anyhow::bail!(
-                "Insufficient disk space on /: {} MB available, {} MB required\n\
+    if available < required {
+        anyhow::bail!(
+            "Insufficient disk space on /: {} MB available, {} MB required\n\
                 💡 Free up space with:\n\
                 - sudo apt-get autoremove (remove unused packages)\n\
                 - sudo journalctl --vacuum-time=3d (clean logs)\n\
                 - Check: du -sh /var/cache/apt/archives",
-                available / 1_048_576,
-                required / 1_048_576
-            );
-        }
+            available / 1_048_576,
+            required / 1_048_576
+        );
     }
 
     Ok(())
+}
+
+fn available_bytes(path: &Path) -> Result<u64> {
+    let stat = nix::sys::statvfs::statvfs(path)
+        .with_context(|| format!("Failed to check disk space at {}", path.display()))?;
+    Ok(stat.blocks_available() * stat.block_size())
 }
 
 /// Validate package archive integrity
@@ -362,6 +360,22 @@ mod tests {
         assert!(
             err.to_string().contains("hash mismatch"),
             "tampered package must fail verification, got: {err}"
+        );
+    }
+
+    #[test]
+    fn check_disk_space_allows_small_transaction() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        check_disk_space(0, 0, dir.path()).expect("zero-size transaction fits");
+    }
+
+    #[test]
+    fn check_disk_space_rejects_unreadable_path() {
+        let error = check_disk_space(1, 1, Path::new("/no/such/omg-disk-check/nested"))
+            .expect_err("failed disk-space probe must not look like enough space");
+        assert!(
+            error.to_string().contains("Failed to check disk space"),
+            "got: {error}"
         );
     }
 }
