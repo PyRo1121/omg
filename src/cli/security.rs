@@ -446,7 +446,11 @@ pub fn scan_secrets(path: Option<String>, _ctx: &CliContext) -> Result<()> {
     );
 
     let scanner = SecretScanner::new();
-    let findings = scanner.scan_directory(&scan_path)?;
+    let findings = if std::path::Path::new(&scan_path).is_file() {
+        scanner.scan_file(&scan_path)?
+    } else {
+        scanner.scan_directory(&scan_path)?
+    };
 
     if findings.is_empty() {
         println!(

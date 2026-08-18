@@ -3,11 +3,13 @@
 //! Scans files and content for accidentally committed secrets like API keys,
 //! tokens, private keys, and credentials across 20+ secret types.
 
-use anyhow::Result;
-use regex::Regex;
-use serde::{Deserialize, Serialize};
+use std::io;
 use std::path::Path;
 use std::sync::LazyLock;
+
+use regex::Regex;
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 /// Types of secrets that can be detected
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -318,6 +320,17 @@ static PATTERNS: LazyLock<Vec<SecretPattern>> = LazyLock::new(|| {
     ]
 });
 
+/// Failures reading files or directories while scanning for secrets.
+#[derive(Debug, Error)]
+pub enum SecretError {
+    #[error("Failed to read '{path}'")]
+    Read {
+        path: String,
+        #[source]
+        source: io::Error,
+    },
+}
+
 /// Secret scanner for detecting leaked credentials
 pub struct SecretScanner;
 
@@ -334,15 +347,19 @@ impl SecretScanner {
     }
 
     /// Scan a file for secrets
-    pub fn scan_file<P: AsRef<Path>>(&self, path: P) -> Result<Vec<SecretFinding>> {
-        let content = std::fs::read_to_string(&path)?;
+    pub fn scan_file<P: AsRef<Path>>(&self, path: P) -> Result<Vec<SecretFinding>, SecretError> {
         let path_str = path.as_ref().display().to_string();
+        let content = std::fs::read_to_string(&path).map_err(|source| SecretError::Read {
+            path: path_str.clone(),
+            source,
+        })?;
 
-        self.scan_content(&content, &path_str)
+        Ok(self.scan_content(&content, &path_str))
     }
 
     /// Scan content for secrets
-    pub fn scan_content(&self, content: &str, source: &str) -> Result<Vec<SecretFinding>> {
+    #[must_use]
+    pub fn scan_content(&self, content: &str, source: &str) -> Vec<SecretFinding> {
         let mut findings = Vec::new();
 
         for (line_num, line) in content.lines().enumerate() {
@@ -367,11 +384,14 @@ impl SecretScanner {
             }
         }
 
-        Ok(findings)
+        findings
     }
 
     /// Scan a directory recursively for secrets
-    pub fn scan_directory<P: AsRef<Path>>(&self, path: P) -> Result<Vec<SecretFinding>> {
+    pub fn scan_directory<P: AsRef<Path>>(
+        &self,
+        path: P,
+    ) -> Result<Vec<SecretFinding>, SecretError> {
         let mut findings = Vec::new();
 
         self.scan_directory_recursive(path.as_ref(), &mut findings)?;
@@ -383,13 +403,16 @@ impl SecretScanner {
         &self,
         path: &Path,
         findings: &mut Vec<SecretFinding>,
-    ) -> Result<()> {
-        if !path.is_dir() {
-            return Ok(());
-        }
-
-        for entry in std::fs::read_dir(path)? {
-            let entry = entry?;
+    ) -> Result<(), SecretError> {
+        let path_str = path.display().to_string();
+        for entry in std::fs::read_dir(path).map_err(|source| SecretError::Read {
+            path: path_str.clone(),
+            source,
+        })? {
+            let entry = entry.map_err(|source| SecretError::Read {
+                path: path_str.clone(),
+                source,
+            })?;
             let entry_path = entry.path();
 
             // Skip common non-text directories
@@ -414,10 +437,8 @@ impl SecretScanner {
                 }
 
                 self.scan_directory_recursive(&entry_path, findings)?;
-            } else if Self::is_scannable_file(&entry_path)
-                && let Ok(file_findings) = self.scan_file(&entry_path)
-            {
-                findings.extend(file_findings);
+            } else if Self::is_scannable_file(&entry_path) {
+                findings.extend(self.scan_file(&entry_path)?);
             }
         }
 
@@ -581,7 +602,7 @@ mod tests {
     fn test_private_key_detection() {
         let scanner = SecretScanner::new();
         let content = "-----BEGIN RSA PRIVATE KEY-----\nMIIE...";
-        let findings = scanner.scan_content(content, "key.pem").unwrap();
+        let findings = scanner.scan_content(content, "key.pem");
 
         assert!(!findings.is_empty(), "Should detect private key");
         assert!(
@@ -595,7 +616,7 @@ mod tests {
     fn test_placeholder_ignored() {
         let scanner = SecretScanner::new();
         let content = "api_key = 'your_api_key_here'";
-        let findings = scanner.scan_content(content, "config.py").unwrap();
+        let findings = scanner.scan_content(content, "config.py");
 
         assert!(findings.is_empty(), "Should ignore placeholder values");
     }
@@ -624,5 +645,38 @@ mod tests {
         assert_eq!(result.total_findings, 1);
         assert_eq!(result.critical_count, 1);
         assert!(result.has_critical());
+    }
+
+    #[test]
+    fn scan_directory_fails_closed_on_unreadable_file() {
+        let temp = tempfile::TempDir::new().unwrap();
+        std::fs::write(temp.path().join("secrets.env"), [0xff, 0xfe, 0xfd]).unwrap();
+        let error = SecretScanner::new()
+            .scan_directory(temp.path())
+            .expect_err("invalid UTF-8 in a scannable file must fail closed");
+        assert!(matches!(error, SecretError::Read { .. }), "got: {error}");
+    }
+
+    #[test]
+    fn scan_directory_fails_closed_when_path_is_missing() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let missing = temp.path().join("does-not-exist");
+        let error = SecretScanner::new()
+            .scan_directory(&missing)
+            .expect_err("a missing scan root must fail closed");
+        assert!(matches!(error, SecretError::Read { .. }), "got: {error}");
+    }
+
+    #[test]
+    fn scan_file_finds_private_key() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let path = temp.path().join("key.pem");
+        std::fs::write(&path, "-----BEGIN RSA PRIVATE KEY-----\nMIIE...").unwrap();
+        let findings = SecretScanner::new().scan_file(&path).unwrap();
+        assert!(
+            findings
+                .iter()
+                .any(|f| matches!(f.secret_type, SecretType::PrivateKey))
+        );
     }
 }
