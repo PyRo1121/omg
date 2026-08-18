@@ -393,6 +393,24 @@ impl App {
 
     #[allow(clippy::unused_async)] // Async required: feature-gated branches call .await; fallback stubs omit it
     pub async fn remove_orphans(&self) -> Result<()> {
+        #[cfg(any(feature = "debian", feature = "debian-pure"))]
+        if crate::core::env::distro::is_debian_like() {
+            #[cfg(feature = "debian-pure")]
+            {
+                let orphan_list = crate::package_managers::debian_db::list_orphans_fast()
+                    .context("Failed to list orphan packages")?;
+                if orphan_list.is_empty() {
+                    return Ok(());
+                }
+                let pm = crate::package_managers::get_package_manager()?;
+                return pm.remove(&orphan_list).await;
+            }
+            #[cfg(all(feature = "debian", not(feature = "debian-pure")))]
+            {
+                return crate::package_managers::apt_remove_orphans();
+            }
+        }
+
         #[cfg(feature = "arch")]
         {
             crate::package_managers::remove_orphans().await
