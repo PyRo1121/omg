@@ -1929,7 +1929,7 @@ pub fn get_all_packages_with_sizes() -> Result<Vec<(String, i64)>> {
 
     let status_path = Path::new("/var/lib/dpkg/status");
     if !status_path.exists() {
-        return Ok(Vec::new());
+        anyhow::bail!("dpkg status file not found: {}", status_path.display());
     }
 
     let content = fs::read_to_string(status_path)?;
