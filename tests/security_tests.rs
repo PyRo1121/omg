@@ -164,52 +164,40 @@ mod input_validation {
         }
     }
 
+    fn assert_rejected_as_package_name(payload: &str) {
+        let result = run_omg(&["info", payload]);
+        result.assert_failure();
+        assert!(
+            result.contains("Invalid character")
+                || result.contains("Invalid package name")
+                || result.contains("too long"),
+            "payload {payload:?} must be rejected as a package name, got: {}",
+            result.combined_output()
+        );
+    }
+
     #[test]
     fn test_format_string_attacks() {
-        let payloads = vec!["%s%s%s%s%s", "%x%x%x%x", "%n%n%n%n", "{0}{1}{2}"];
-
-        for payload in payloads {
-            let result = run_omg(&["search", payload]);
-            assert!(
-                !result.stderr.contains("panic"),
-                "Format string crash via: {payload}"
-            );
+        for payload in ["%s%s%s%s%s", "%x%x%x%x", "%n%n%n%n", "{0}{1}{2}"] {
+            assert_rejected_as_package_name(payload);
         }
     }
 
     #[test]
     fn test_overflow_inputs() {
-        // Very long input
-        let long_input = "A".repeat(100_000);
-        let result = run_omg(&["search", &long_input]);
-        assert!(
-            !result.stderr.contains("panic"),
-            "Buffer overflow on long input"
-        );
-
-        // Many arguments
-        let many_args: Vec<&str> = (0..1000).map(|_| "arg").collect();
-        let mut args = vec!["search"];
-        args.extend(many_args.iter());
-        // May fail but should not crash
+        assert_rejected_as_package_name(&"A".repeat(100_000));
     }
 
     #[test]
     fn test_unicode_security() {
-        // Note: Null bytes (\u{0000}) excluded - Command API rejects them at OS level
-        let payloads = vec![
-            "\u{202E}evil.txt", // Right-to-left override
-            "\u{FEFF}test",     // BOM
-            "test\u{0085}",     // Next line
-            "\u{2028}line",     // Line separator
-        ];
-
-        for payload in payloads {
-            let result = run_omg(&["search", payload]);
-            assert!(
-                !result.stderr.contains("panic"),
-                "Unicode crash via: {payload:?}"
-            );
+        // Null bytes (\u{0000}) are rejected by Command before we see them.
+        for payload in [
+            "\u{202E}evil.txt",
+            "\u{FEFF}test",
+            "test\u{0085}",
+            "\u{2028}line",
+        ] {
+            assert_rejected_as_package_name(payload);
         }
     }
 }
@@ -285,7 +273,7 @@ mod filesystem_security {
     }
 
     #[test]
-    fn test_world_writable_dir_warning() {
+    fn test_world_writable_cwd_does_not_break_status() {
         let project = TestProject::new();
 
         #[cfg(unix)]
@@ -293,12 +281,18 @@ mod filesystem_security {
             use std::fs;
             let mut perms = fs::metadata(project.path()).unwrap().permissions();
             perms.set_mode(0o777);
-            fs::set_permissions(project.path(), perms).ok();
+            fs::set_permissions(project.path(), perms).unwrap();
 
-            // OMG should warn or handle world-writable directories
             let result = project.run(&["status"]);
-            // Should work but may warn
-            assert!(!result.stderr.contains("panic"));
+            assert!(
+                result.contains("Packages"),
+                "a world-writable cwd must not prevent status from reporting packages, got: {}",
+                result.combined_output()
+            );
+            assert!(
+                !result.stdout.contains("root:x:0:0"),
+                "status must not dump /etc/passwd because cwd is world-writable"
+            );
         }
     }
 
@@ -546,31 +540,58 @@ mod env_security {
         );
     }
 
+    fn assert_status_reports_packages(result: &CommandResult) {
+        assert!(
+            result.contains("Packages"),
+            "status must still report package counts, got: {}",
+            result.combined_output()
+        );
+        assert!(
+            !result.combined_output().contains("root:x:0:0"),
+            "status must not dump /etc/passwd"
+        );
+    }
+
     #[test]
     fn test_path_injection_prevention() {
-        // Attempt to inject via PATH
-        let result = run_omg_with_env(&["status"], &[("PATH", "/tmp/evil:$PATH")]);
+        let project = TestProject::new();
+        let bin_dir = project.path().join("evil-bin");
+        std::fs::create_dir(&bin_dir).unwrap();
+        let marker = project.path().join("pwned");
+        let fake_pacman = bin_dir.join("pacman");
+        std::fs::write(
+            &fake_pacman,
+            format!("#!/bin/sh\necho pwned > '{}'\n", marker.display()),
+        )
+        .unwrap();
 
-        // Should not execute from injected path
-        assert!(!result.stderr.contains("panic"));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&fake_pacman).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&fake_pacman, perms).unwrap();
+        }
+
+        let path = bin_dir.to_str().expect("temp path must be UTF-8");
+        let result = project.run_with_env(&["status"], &[("PATH", path)]);
+        assert!(
+            !marker.exists(),
+            "a PATH-injected pacman must not run during status"
+        );
+        assert_status_reports_packages(&result);
     }
 
     #[test]
     fn test_ld_preload_ignored() {
-        // LD_PRELOAD should not affect OMG behavior
-        let result = run_omg_with_env(&["status"], &[("LD_PRELOAD", "/tmp/evil.so")]);
-
-        // May fail but should not crash unexpectedly
-        assert!(!result.stderr.contains("panic"));
+        let result = run_omg_with_env(&["status"], &[("LD_PRELOAD", "/tmp/omg-test-missing.so")]);
+        assert_status_reports_packages(&result);
     }
 
     #[test]
     fn test_home_traversal() {
-        // Malicious HOME should not cause issues
         let result = run_omg_with_env(&["status"], &[("HOME", "/etc")]);
-
-        // Should handle gracefully
-        assert!(!result.stderr.contains("panic"));
+        assert_status_reports_packages(&result);
     }
 }
 
@@ -579,38 +600,58 @@ mod env_security {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 mod network_security {
-    use super::*;
-
-    #[test]
-    fn test_https_only() {
-        // Network operations should use HTTPS
-        require_network_tests!();
-
-        let result = run_omg(&["list", "node", "--available"]);
-        // Should use secure connections
-        assert!(!result.stderr.contains("panic"));
+    fn assert_no_plaintext_http(source: &str, name: &str) {
+        for line in source.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            assert!(
+                !trimmed.contains("\"http://"),
+                "{name} must not embed a plaintext HTTP URL: {trimmed}"
+            );
+            assert!(
+                !trimmed.contains("danger_accept_invalid_certs"),
+                "{name} must not disable TLS certificate validation: {trimmed}"
+            );
+        }
     }
 
     #[test]
-    fn test_certificate_validation() {
-        // Should validate TLS certificates
-        require_network_tests!();
-
-        let result = run_omg(&["list", "node", "--available"]);
-        // Should not accept invalid certs
-        assert!(!result.stderr.contains("panic"));
-    }
-
-    #[test]
-    fn test_timeout_handling() {
-        // Network operations should have timeouts
-        require_network_tests!();
-
-        let result = run_omg(&["list", "node", "--available"]);
-        // Should not hang indefinitely
-        assert!(
-            result.duration < std::time::Duration::from_secs(60),
-            "Network operation took too long"
+    fn test_runtime_and_http_clients_are_https() {
+        assert_no_plaintext_http(include_str!("../src/core/http.rs"), "src/core/http.rs");
+        assert_no_plaintext_http(
+            include_str!("../src/runtimes/common.rs"),
+            "src/runtimes/common.rs",
+        );
+        assert_no_plaintext_http(
+            include_str!("../src/runtimes/node.rs"),
+            "src/runtimes/node.rs",
+        );
+        assert_no_plaintext_http(
+            include_str!("../src/runtimes/python.rs"),
+            "src/runtimes/python.rs",
+        );
+        assert_no_plaintext_http(include_str!("../src/runtimes/go.rs"), "src/runtimes/go.rs");
+        assert_no_plaintext_http(
+            include_str!("../src/runtimes/rust.rs"),
+            "src/runtimes/rust.rs",
+        );
+        assert_no_plaintext_http(
+            include_str!("../src/runtimes/ruby.rs"),
+            "src/runtimes/ruby.rs",
+        );
+        assert_no_plaintext_http(
+            include_str!("../src/runtimes/java.rs"),
+            "src/runtimes/java.rs",
+        );
+        assert_no_plaintext_http(
+            include_str!("../src/runtimes/bun.rs"),
+            "src/runtimes/bun.rs",
+        );
+        assert_no_plaintext_http(
+            include_str!("../src/runtimes/mise.rs"),
+            "src/runtimes/mise.rs",
         );
     }
 }
