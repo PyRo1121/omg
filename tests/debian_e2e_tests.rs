@@ -480,7 +480,7 @@ fn test_transaction_creation() {
         installed_size: 50_000_000,
     };
 
-    let tx = Transaction::from_resolution(result);
+    let tx = Transaction::from_resolution(result).expect("content store init");
 
     assert_eq!(tx.state, TransactionState::Pending);
     assert_eq!(tx.to_install.len(), 2);
@@ -512,7 +512,7 @@ fn test_transaction_dry_run() {
 
 #[test]
 fn test_transaction_empty() {
-    let tx = Transaction::new();
+    let tx = Transaction::new().expect("content store init");
     assert_eq!(tx.state, TransactionState::Pending);
     assert_eq!(tx.package_count(), 0);
     assert_eq!(tx.total_download_size(), 0);
@@ -520,7 +520,7 @@ fn test_transaction_empty() {
 
 #[test]
 fn test_transaction_add_install() {
-    let mut tx = Transaction::new();
+    let mut tx = Transaction::new().expect("content store init");
 
     tx.add_install(
         "vim".to_string(),
@@ -593,7 +593,7 @@ fn test_full_workflow_search_resolve_transaction() {
     // Try to resolve a small package
     if resolver.add_package("hello").is_ok() {
         if let Ok(result) = resolver.resolve() {
-            let tx = Transaction::from_resolution(result.clone());
+            let tx = Transaction::from_resolution(result.clone()).expect("content store init");
 
             assert!(tx.package_count() > 0);
             assert_eq!(tx.state, TransactionState::Pending);
