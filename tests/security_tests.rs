@@ -610,6 +610,25 @@ mod env_security {
         let result = run_omg_with_env(&["status"], &[("HOME", "/etc")]);
         assert_status_reports_packages(&result);
     }
+
+    #[test]
+    fn test_status_does_not_claim_clean_without_a_scan() {
+        let result = run_omg(&["status"]);
+        assert_status_reports_packages(&result);
+        assert!(
+            result.contains("Not scanned"),
+            "unscanned status must not look like a clean bill of health, got: {}",
+            result.combined_output()
+        );
+        assert!(
+            !result.contains("No known issues"),
+            "unscanned status must not print 'No known issues'"
+        );
+        assert!(
+            !result.contains("Your system is healthy"),
+            "unscanned status must not print 'Your system is healthy'"
+        );
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

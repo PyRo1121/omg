@@ -66,6 +66,7 @@ fn test_system_status_cache() {
         orphan_packages: 5,
         updates_available: 2,
         security_vulnerabilities: 0,
+        vulnerabilities_scanned: true,
         runtime_versions: vec![],
     };
 

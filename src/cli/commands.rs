@@ -378,7 +378,7 @@ type StatusSnapshot = (
     usize,
     usize,
     usize,
-    usize,
+    Option<usize>,
     Option<Vec<(String, String)>>,
 );
 
@@ -395,7 +395,7 @@ fn read_status_snapshot() -> Result<StatusSnapshot> {
             fast.explicit_packages as usize,
             fast.orphan_packages as usize,
             fast.updates_available as usize,
-            0,
+            None,
             None,
         ));
     }
@@ -404,7 +404,7 @@ fn read_status_snapshot() -> Result<StatusSnapshot> {
         #[cfg(feature = "debian")]
         {
             let s = apt_get_system_status().context("Failed to query system status from apt")?;
-            return Ok((s.0, s.1, s.2, s.3, 0, None));
+            return Ok((s.0, s.1, s.2, s.3, None, None));
         }
         #[cfg(not(feature = "debian"))]
         {
@@ -424,7 +424,7 @@ fn read_status_snapshot() -> Result<StatusSnapshot> {
                 res.explicit_packages,
                 res.orphan_packages,
                 res.updates_available,
-                res.security_vulnerabilities,
+                res.scanned_vulnerability_count(),
                 Some(res.runtime_versions),
             ));
         }
@@ -432,7 +432,7 @@ fn read_status_snapshot() -> Result<StatusSnapshot> {
         #[cfg(feature = "arch")]
         {
             let s = get_system_status().context("Failed to query system status via ALPM")?;
-            Ok((s.0, s.1, s.2, s.3, 0, None))
+            Ok((s.0, s.1, s.2, s.3, None, None))
         }
         #[cfg(not(feature = "arch"))]
         {
@@ -445,7 +445,7 @@ fn read_status_snapshot() -> Result<StatusSnapshot> {
         #[cfg(feature = "arch")]
         {
             let s = get_system_status().context("Failed to query system status via ALPM")?;
-            return Ok((s.0, s.1, s.2, s.3, 0, None));
+            return Ok((s.0, s.1, s.2, s.3, None, None));
         }
         #[cfg(not(feature = "arch"))]
         {
@@ -496,16 +496,20 @@ pub fn status_sync() -> Result<()> {
     }
 
     // Security
-    if security_vulnerabilities > 0 {
-        println!(
-            "  {} {}",
-            "Security".bold(),
-            format!("{security_vulnerabilities} vulnerabilities")
-                .red()
-                .bold()
-        );
-    } else {
-        println!("  {} {}", "Security".bold(), "No known issues".green());
+    match security_vulnerabilities {
+        Some(0) => {
+            println!("  {} {}", "Security".bold(), "No known issues".green());
+        }
+        Some(count) => {
+            println!(
+                "  {} {}",
+                "Security".bold(),
+                format!("{count} vulnerabilities").red().bold()
+            );
+        }
+        None => {
+            println!("  {} {}", "Security".bold(), "Not scanned".dimmed());
+        }
     }
 
     // Daemon status
@@ -549,9 +553,15 @@ pub fn status_sync() -> Result<()> {
             "Tip".dimmed().italic(),
             "omg update --check".cyan()
         );
-    } else if security_vulnerabilities > 0 {
+    } else if security_vulnerabilities.is_some_and(|count| count > 0) {
         println!(
             "  {} Run {} to identify and fix security issues",
+            "Tip".dimmed().italic(),
+            "omg audit".cyan()
+        );
+    } else if security_vulnerabilities.is_none() {
+        println!(
+            "  {} Run {} to scan for vulnerabilities",
             "Tip".dimmed().italic(),
             "omg audit".cyan()
         );
