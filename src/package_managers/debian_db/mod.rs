@@ -41,3 +41,46 @@ pub use validation::{
     check_disk_space, check_mirror_availability, estimate_time_remaining, format_bytes,
     format_speed, require_verified_deb, validate_deb_archive, verify_package_hash,
 };
+
+/// Fast status may omit orphans/updates. A failed accurate query must not
+/// look like zero orphans and zero updates.
+pub fn resolve_status_counts<E, F>(
+    fast: bool,
+    fast_counts: Result<(usize, usize, usize, usize), E>,
+    accurate: F,
+) -> Result<(usize, usize, usize, usize), E>
+where
+    F: FnOnce() -> Result<(usize, usize, usize, usize), E>,
+{
+    if fast && let Ok((total, explicit, _, _)) = fast_counts {
+        return Ok((total, explicit, 0, 0));
+    }
+    accurate()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_status_counts;
+
+    #[test]
+    fn fast_status_uses_counts_and_omits_orphans() {
+        let result: Result<(usize, usize, usize, usize), &str> =
+            resolve_status_counts(true, Ok((10, 4, 99, 99)), || {
+                panic!("accurate status must not run on a successful fast path")
+            });
+        assert_eq!(result, Ok((10, 4, 0, 0)));
+    }
+
+    #[test]
+    fn accurate_status_failure_is_not_zero_orphans() {
+        let result =
+            resolve_status_counts(false, Ok((10, 4, 0, 0)), || Err("apt cache unavailable"));
+        assert_eq!(result, Err("apt cache unavailable"));
+    }
+
+    #[test]
+    fn fast_path_failure_falls_through_to_accurate_status() {
+        let result = resolve_status_counts(true, Err("no dpkg cache"), || Ok((8, 3, 1, 2)));
+        assert_eq!(result, Ok((8, 3, 1, 2)));
+    }
+}

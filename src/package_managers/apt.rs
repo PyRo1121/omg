@@ -180,20 +180,11 @@ impl crate::package_managers::PackageManager for AptPackageManager {
         fast: bool,
     ) -> Pin<Box<dyn Future<Output = Result<(usize, usize, usize, usize)>> + Send + '_>> {
         Box::pin(async move {
-            // Try fast path for counts
-            if let Ok((total, explicit, _, _)) = super::debian_db::get_counts_fast() {
-                if fast {
-                    return Ok((total, explicit, 0, 0));
-                }
-
-                // If not fast, we still want accuracy for orphans/updates
-                if let Ok((_, _, orphans, updates)) = get_system_status() {
-                    return Ok((total, explicit, orphans, updates));
-                }
-                return Ok((total, explicit, 0, 0));
-            }
-
-            get_system_status()
+            super::debian_db::resolve_status_counts(
+                fast,
+                super::debian_db::get_counts_fast(),
+                get_system_status,
+            )
         })
     }
 
