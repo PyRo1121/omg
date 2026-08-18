@@ -138,7 +138,7 @@ pub fn audit_export(
     }
     if let Err(e) = crate::core::security::validate_relative_path(output) {
         execute_cmd(Cmd::error(format!("Invalid output path: {e}")));
-        return Err(e);
+        return Err(e.into());
     }
 
     license::require_feature("audit-export")?;
@@ -387,7 +387,7 @@ pub mod server {
         }
         if let Err(e) = crate::core::security::validate_relative_path(storage) {
             execute_cmd(Cmd::error(format!("Invalid storage path: {e}")));
-            return Err(e);
+            return Err(e.into());
         }
         if domain.len() > 255
             || domain

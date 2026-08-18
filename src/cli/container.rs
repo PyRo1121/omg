@@ -275,7 +275,7 @@ pub fn build(
             "Invalid Dockerfile path",
             format!("Path validation failed: {e}"),
         ));
-        return Err(e);
+        return Err(e.into());
     }
 
     let manager = ContainerManager::new()?;

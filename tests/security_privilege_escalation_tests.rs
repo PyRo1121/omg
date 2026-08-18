@@ -842,7 +842,11 @@ mod integration {
 
         // Verify privilege checker works without actually elevating
         let checker = SystemPrivilegeChecker;
-        let _ = checker.is_root(); // Should not panic
+        assert_eq!(
+            checker.is_root(),
+            rustix::process::geteuid().is_root(),
+            "is_root must match the process effective uid"
+        );
 
         // Invalid package
         let malicious = "pkg; rm -rf /";
@@ -920,8 +924,11 @@ mod integration {
         // 3. Verify operation is in whitelist (would elevate if needed)
         // Skip actual elevation in tests as it requires sudo
         let checker = SystemPrivilegeChecker;
-        // Just verify we can check root status without crashing
-        let _ = checker.is_root();
+        assert_eq!(
+            checker.is_root(),
+            rustix::process::geteuid().is_root(),
+            "is_root must match the process effective uid"
+        );
 
         // 4. Audit the operation
         let mut logger = AuditLogger::new().unwrap();
