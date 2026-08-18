@@ -199,6 +199,12 @@ async fn search_official_packages(query: &str) -> Result<Vec<DisplayPackage>> {
 
 #[cfg_attr(not(feature = "arch"), allow(clippy::unused_async))]
 async fn search_aur_packages(query: &str, detailed: bool) -> Result<Vec<DisplayPackage>> {
+    #[cfg(any(feature = "debian", feature = "debian-pure"))]
+    if crate::core::env::distro::is_debian_like() {
+        let _ = (query, detailed);
+        return Ok(Vec::new());
+    }
+
     #[cfg(feature = "arch")]
     {
         if detailed {
@@ -257,6 +263,11 @@ pub fn search_sync_cli_with_limit(
     }
 
     // Fast path: official-only search via sync client (zero runtime overhead).
+    #[cfg(any(feature = "debian", feature = "debian-pure"))]
+    if crate::core::env::distro::is_debian_like() {
+        return search_sync_official_only(query, limit);
+    }
+
     if no_aur || cfg!(not(feature = "arch")) {
         return search_sync_official_only(query, limit);
     }
