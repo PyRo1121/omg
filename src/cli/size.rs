@@ -6,15 +6,48 @@ use crate::cli::tea::Cmd;
 
 /// Show disk usage analysis
 pub fn run(tree: Option<&str>, limit: usize) -> Result<()> {
-    let cmd = if let Some(package) = tree {
-        // SECURITY: Validate package name
+    if let Some(package) = tree {
         crate::core::security::validate_package_name(package)?;
-        show_package_tree(package)?
-    } else {
-        show_top_packages(limit)?
-    };
-    crate::cli::packages::execute_cmd(cmd);
-    Ok(())
+    }
+
+    #[cfg(any(feature = "debian", feature = "debian-pure"))]
+    if crate::core::env::distro::is_debian_like() {
+        let cmd = if let Some(package) = tree {
+            show_package_tree_debian(package)?
+        } else {
+            show_top_packages_debian(limit)?
+        };
+        crate::cli::packages::execute_cmd(cmd);
+        return Ok(());
+    }
+
+    #[cfg(all(
+        any(feature = "debian", feature = "debian-pure"),
+        not(feature = "arch")
+    ))]
+    {
+        let cmd = if let Some(package) = tree {
+            show_package_tree_debian(package)?
+        } else {
+            show_top_packages_debian(limit)?
+        };
+        crate::cli::packages::execute_cmd(cmd);
+        return Ok(());
+    }
+
+    #[cfg(any(
+        feature = "arch",
+        not(any(feature = "arch", feature = "debian", feature = "debian-pure"))
+    ))]
+    {
+        let cmd = if let Some(package) = tree {
+            show_package_tree(package)?
+        } else {
+            show_top_packages(limit)?
+        };
+        crate::cli::packages::execute_cmd(cmd);
+        Ok(())
+    }
 }
 
 #[cfg(feature = "arch")]
@@ -158,11 +191,8 @@ fn show_package_tree(package: &str) -> Result<Cmd<()>> {
     Ok(Cmd::batch(commands))
 }
 
-#[cfg(all(
-    any(feature = "debian", feature = "debian-pure"),
-    not(feature = "arch")
-))]
-fn show_top_packages(limit: usize) -> Result<Cmd<()>> {
+#[cfg(any(feature = "debian", feature = "debian-pure"))]
+fn show_top_packages_debian(limit: usize) -> Result<Cmd<()>> {
     use crate::cli::components::Components;
     use crate::package_managers::debian_db;
 
@@ -194,11 +224,8 @@ fn show_top_packages(limit: usize) -> Result<Cmd<()>> {
     ]))
 }
 
-#[cfg(all(
-    any(feature = "debian", feature = "debian-pure"),
-    not(feature = "arch")
-))]
-fn show_package_tree(package: &str) -> Result<Cmd<()>> {
+#[cfg(any(feature = "debian", feature = "debian-pure"))]
+fn show_package_tree_debian(package: &str) -> Result<Cmd<()>> {
     use crate::cli::components::Components;
     use crate::package_managers::debian_db;
 
