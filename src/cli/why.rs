@@ -12,6 +12,17 @@ pub fn run(package: &str, reverse: bool) -> Result<()> {
     // SECURITY: Validate package name
     crate::core::security::validate_package_name(package)?;
 
+    #[cfg(any(feature = "debian", feature = "debian-pure"))]
+    if crate::core::env::distro::is_debian_like() {
+        let cmd = if reverse {
+            show_reverse_deps_debian(package)
+        } else {
+            show_deps_debian(package)
+        };
+        crate::cli::packages::execute_cmd(cmd);
+        return Ok(());
+    }
+
     #[cfg(feature = "arch")]
     {
         let cmd = if reverse {
@@ -20,7 +31,7 @@ pub fn run(package: &str, reverse: bool) -> Result<()> {
             show_dependency_chain(package)?
         };
         crate::cli::packages::execute_cmd(cmd);
-        Ok(())
+        return Ok(());
     }
 
     #[cfg(all(
@@ -34,7 +45,7 @@ pub fn run(package: &str, reverse: bool) -> Result<()> {
             show_deps_debian(package)
         };
         crate::cli::packages::execute_cmd(cmd);
-        Ok(())
+        return Ok(());
     }
 
     #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
@@ -317,10 +328,7 @@ fn show_reverse_deps(package: &str) -> Result<Cmd<()>> {
     Ok(Cmd::batch(commands))
 }
 
-#[cfg(all(
-    any(feature = "debian", feature = "debian-pure"),
-    not(feature = "arch")
-))]
+#[cfg(any(feature = "debian", feature = "debian-pure"))]
 fn show_deps_debian(package: &str) -> Cmd<()> {
     use crate::cli::components::Components;
     use crate::package_managers::debian_db;
@@ -347,10 +355,7 @@ fn show_deps_debian(package: &str) -> Cmd<()> {
     }
 }
 
-#[cfg(all(
-    any(feature = "debian", feature = "debian-pure"),
-    not(feature = "arch")
-))]
+#[cfg(any(feature = "debian", feature = "debian-pure"))]
 fn show_reverse_deps_debian(package: &str) -> Cmd<()> {
     use crate::cli::components::Components;
     use crate::package_managers::debian_db;
