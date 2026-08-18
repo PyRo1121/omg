@@ -659,19 +659,19 @@ pub mod golden_path {
             && let Err(e) = crate::core::security::validate_runtime_version(v)
         {
             execute_cmd(Cmd::error(format!("Invalid Node version: {e}")));
-            return Err(e);
+            return Err(e.into());
         }
         if let Some(v) = python
             && let Err(e) = crate::core::security::validate_runtime_version(v)
         {
             execute_cmd(Cmd::error(format!("Invalid Python version: {e}")));
-            return Err(e);
+            return Err(e.into());
         }
         if let Some(p) = packages {
             for pkg in p.split(',') {
                 if let Err(e) = crate::core::security::validate_package_name(pkg.trim()) {
                     execute_cmd(Cmd::error(format!("Invalid package name: {e}")));
-                    return Err(e);
+                    return Err(e.into());
                 }
             }
         }
