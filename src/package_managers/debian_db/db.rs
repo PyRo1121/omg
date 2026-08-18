@@ -404,6 +404,10 @@ fn apt_lists_from_read_dir(result: std::io::Result<fs::ReadDir>) -> Result<fs::R
     result.context("Failed to read APT lists directory")
 }
 
+fn apt_lists_entry(result: std::io::Result<fs::DirEntry>) -> Result<fs::DirEntry> {
+    result.context("Failed to read APT lists directory entry")
+}
+
 pub fn ensure_index_loaded() -> Result<()> {
     let lists_dir = Path::new("/var/lib/apt/lists");
     if !lists_dir.exists() {
@@ -413,7 +417,8 @@ pub fn ensure_index_loaded() -> Result<()> {
     // Get current package files and their mtimes
     let mut current_files = HashMap::new();
     let entries = apt_lists_from_read_dir(fs::read_dir(lists_dir))?;
-    for entry in entries.flatten() {
+    for entry in entries {
+        let entry = apt_lists_entry(entry)?;
         let path = entry.path();
         if let Some(filename) = path.file_name().and_then(|n| n.to_str())
             && filename.contains("_Packages")
@@ -2646,6 +2651,32 @@ mod tests {
             error
                 .to_string()
                 .contains("Failed to read APT lists directory"),
+            "got: {error}"
+        );
+    }
+
+    #[test]
+    fn apt_lists_entry_allows_success() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        std::fs::write(dir.path().join("foo_Packages"), b"").expect("lists file");
+        let entry = fs::read_dir(dir.path())
+            .expect("readable temp lists dir")
+            .next()
+            .expect("temp lists dir should contain one file");
+        apt_lists_entry(entry).expect("readable APT lists entry must be kept");
+    }
+
+    #[test]
+    fn apt_lists_entry_rejects_error() {
+        let error = apt_lists_entry(Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "denied",
+        )))
+        .expect_err("failed APT lists entry must not look like fewer Packages files");
+        assert!(
+            error
+                .to_string()
+                .contains("Failed to read APT lists directory entry"),
             "got: {error}"
         );
     }
