@@ -1940,6 +1940,32 @@ pub fn get_package_size(package_name: &str) -> Result<i64> {
     anyhow::bail!("Package '{package_name}' not found in dpkg status");
 }
 
+fn packages_with_sizes_from_status(content: &str) -> Vec<(String, i64)> {
+    let mut results = Vec::new();
+    let mut current_pkg = String::new();
+    let mut current_size: i64 = 0;
+
+    for line in content.lines() {
+        if line.is_empty() {
+            if !current_pkg.is_empty() && current_size > 0 {
+                results.push((std::mem::take(&mut current_pkg), current_size));
+            }
+            current_pkg.clear();
+            current_size = 0;
+        } else if let Some(pkg) = line.strip_prefix("Package: ") {
+            current_pkg = pkg.trim().to_string();
+        } else if let Some(size_str) = line.strip_prefix("Installed-Size: ") {
+            current_size = size_str.trim().parse::<i64>().unwrap_or(0) * 1024;
+        }
+    }
+
+    if !current_pkg.is_empty() && current_size > 0 {
+        results.push((current_pkg, current_size));
+    }
+
+    results
+}
+
 /// Get all packages with their sizes from `/var/lib/dpkg/status`
 /// Returns `Vec<(package_name, size_in_bytes)>`
 pub fn get_all_packages_with_sizes() -> Result<Vec<(String, i64)>> {
@@ -1956,32 +1982,7 @@ pub fn get_all_packages_with_sizes() -> Result<Vec<(String, i64)>> {
     }
 
     let content = fs::read_to_string(status_path)?;
-
-    let mut results = Vec::new();
-    let mut current_pkg = String::new();
-    let mut current_size: i64 = 0;
-
-    for line in content.lines() {
-        if line.is_empty() {
-            if !current_pkg.is_empty() && current_size > 0 {
-                results.push((current_pkg.clone(), current_size));
-            }
-            current_pkg.clear();
-            current_size = 0;
-        } else if let Some(pkg) = line.strip_prefix("Package: ") {
-            current_pkg = pkg.trim().to_string();
-        } else if line.starts_with("Installed-Size: ") {
-            current_size = line
-                .strip_prefix("Installed-Size: ")
-                .expect("guarded by starts_with check")
-                .trim()
-                .parse::<i64>()
-                .unwrap_or(0)
-                * 1024;
-        }
-    }
-
-    Ok(results)
+    Ok(packages_with_sizes_from_status(&content))
 }
 
 fn installed_version_from_status(content: &str, package_name: &str) -> Option<String> {
@@ -2379,6 +2380,20 @@ mod tests {
         unsafe {
             std::env::remove_var("OMG_TEST_MODE");
         }
+    }
+
+    #[test]
+    fn test_packages_with_sizes_from_status_last_paragraph_without_trailing_blank() {
+        let without_blank = "Package: apt\nInstalled-Size: 4\n\nPackage: vim\nInstalled-Size: 3";
+        assert_eq!(
+            packages_with_sizes_from_status(without_blank),
+            vec![("apt".to_string(), 4 * 1024), ("vim".to_string(), 3 * 1024),]
+        );
+        let with_blank = "Package: vim\nInstalled-Size: 3\n\n";
+        assert_eq!(
+            packages_with_sizes_from_status(with_blank),
+            vec![("vim".to_string(), 3 * 1024)]
+        );
     }
 
     #[test]
