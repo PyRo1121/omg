@@ -446,6 +446,13 @@ fn read_status_snapshot() -> Result<StatusSnapshot> {
             ));
         }
 
+        #[cfg(any(feature = "debian", feature = "debian-pure"))]
+        if crate::core::env::distro::is_debian_like() {
+            let s = crate::package_managers::debian_db::get_counts_fast()
+                .context("Failed to query system status from the Debian package database")?;
+            return Ok((s.0, s.1, s.2, s.3, None, None));
+        }
+
         #[cfg(feature = "arch")]
         {
             let s = get_system_status().context("Failed to query system status via ALPM")?;
@@ -466,6 +473,13 @@ fn read_status_snapshot() -> Result<StatusSnapshot> {
 
     #[cfg(not(unix))]
     {
+        #[cfg(any(feature = "debian", feature = "debian-pure"))]
+        if crate::core::env::distro::is_debian_like() {
+            let s = crate::package_managers::debian_db::get_counts_fast()
+                .context("Failed to query system status from the Debian package database")?;
+            return Ok((s.0, s.1, s.2, s.3, None, None));
+        }
+
         #[cfg(feature = "arch")]
         {
             let s = get_system_status().context("Failed to query system status via ALPM")?;
