@@ -52,6 +52,7 @@ const AUR_RPC_INFO_BASE_LEN: usize = 47;
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 /// Result of PGP key ID validation
+#[cfg(any(feature = "pgp", test))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PgpKeyIdStatus {
     /// Full 40-char fingerprint - most secure
@@ -87,6 +88,7 @@ pub enum PgpKeyIdStatus {
 /// assert_eq!(validate_pgp_key_id("ABCDEF1234567890"), PgpKeyIdStatus::LongKeyId);
 /// ```
 #[inline]
+#[cfg(any(feature = "pgp", test))]
 pub fn validate_pgp_key_id(key_id: &str) -> PgpKeyIdStatus {
     if key_id.is_empty() {
         return PgpKeyIdStatus::Empty;
@@ -104,6 +106,30 @@ pub fn validate_pgp_key_id(key_id: &str) -> PgpKeyIdStatus {
         8 => PgpKeyIdStatus::ShortKeyId,
         _ if key_id.len() < 16 => PgpKeyIdStatus::ShortKeyId,
         _ => PgpKeyIdStatus::NonStandardLength,
+    }
+}
+
+#[cfg(any(feature = "pgp", test))]
+fn require_fetchable_pgp_key_id(key_id: &str) -> Result<()> {
+    match validate_pgp_key_id(key_id) {
+        PgpKeyIdStatus::FullFingerprint | PgpKeyIdStatus::LongKeyId => Ok(()),
+        PgpKeyIdStatus::NonStandardLength => {
+            tracing::debug!(
+                "PGP key ID '{key_id}' is {} chars (40-char fingerprint recommended)",
+                key_id.len()
+            );
+            Ok(())
+        }
+        PgpKeyIdStatus::ShortKeyId => anyhow::bail!(
+            "Rejecting short PGP key ID '{key_id}' (vulnerable to collision attacks). \
+             Use full fingerprint (40 chars) or long key ID (16 chars)."
+        ),
+        PgpKeyIdStatus::Empty | PgpKeyIdStatus::TooLong => {
+            anyhow::bail!("Invalid PGP key ID (bad length): {key_id}")
+        }
+        PgpKeyIdStatus::InvalidChars => {
+            anyhow::bail!("Invalid PGP key ID (non-hex chars): {key_id}")
+        }
     }
 }
 
@@ -819,7 +845,7 @@ impl AurClient {
             return Err(AurError::PkgbuildNotFound(package.to_string()).into());
         }
 
-        Self::fetch_missing_pgp_keys(&pkgbuild_path).await;
+        Self::fetch_missing_pgp_keys(&pkgbuild_path).await?;
 
         let env = self.makepkg_env(&pkg_dir)?;
 
@@ -974,7 +1000,7 @@ impl AurClient {
             return Err(AurError::PkgbuildNotFound(package.to_string()).into());
         }
 
-        Self::fetch_missing_pgp_keys(&pkgbuild_path).await;
+        Self::fetch_missing_pgp_keys(&pkgbuild_path).await?;
 
         let env = self.makepkg_env(&pkg_dir)?;
         let cache_key = self.cache_key(&pkg_dir, &env.makeflags)?;
@@ -1230,7 +1256,7 @@ impl AurClient {
             return Err(AurError::PkgbuildNotFound(package.to_string()).into());
         }
 
-        Self::fetch_missing_pgp_keys(&pkgbuild_path).await;
+        Self::fetch_missing_pgp_keys(&pkgbuild_path).await?;
 
         let env = self.makepkg_env(&pkg_dir)?;
 
@@ -1282,7 +1308,7 @@ impl AurClient {
             return Err(AurError::PkgbuildNotFound(package.to_string()).into());
         }
 
-        Self::fetch_missing_pgp_keys(&pkgbuild_path).await;
+        Self::fetch_missing_pgp_keys(&pkgbuild_path).await?;
 
         let env = self.makepkg_env(&pkg_dir)?;
         let cache_key = self.cache_key(&pkg_dir, &env.makeflags)?;
@@ -2058,64 +2084,39 @@ impl AurClient {
     }
 
     #[cfg(feature = "pgp")]
-    async fn fetch_missing_pgp_keys(pkgbuild_path: &Path) {
+    async fn fetch_missing_pgp_keys(pkgbuild_path: &Path) -> Result<()> {
         use crate::core::security::keyserver;
 
-        let Ok(pkgbuild) = PkgBuild::parse(pkgbuild_path) else {
-            return;
-        };
+        let pkgbuild = PkgBuild::parse(pkgbuild_path).with_context(|| {
+            format!(
+                "Failed to parse PKGBUILD at {} for PGP keys",
+                pkgbuild_path.display()
+            )
+        })?;
 
         if pkgbuild.validpgpkeys.is_empty() {
-            return;
+            return Ok(());
         }
 
-        let gnupg_home =
-            dirs::home_dir().map_or_else(|| PathBuf::from("/tmp/.gnupg"), |h| h.join(".gnupg"));
+        let gnupg_home = dirs::home_dir()
+            .map(|home| home.join(".gnupg"))
+            .context("Cannot determine home directory for GnuPG keyring")?;
         let keyring_path = gnupg_home.join("pubring.kbx");
 
         let mut missing_keys = Vec::with_capacity(pkgbuild.validpgpkeys.len());
         for key_id in &pkgbuild.validpgpkeys {
-            // Use centralized validation for security
-            match validate_pgp_key_id(key_id) {
-                PgpKeyIdStatus::Empty | PgpKeyIdStatus::TooLong => {
-                    tracing::warn!("Skipping invalid PGP key ID (bad length): {key_id}");
-                    continue;
-                }
-                PgpKeyIdStatus::InvalidChars => {
-                    tracing::warn!("Skipping invalid PGP key ID (non-hex chars): {key_id}");
-                    continue;
-                }
-                PgpKeyIdStatus::ShortKeyId => {
-                    tracing::warn!(
-                        "Rejecting short PGP key ID '{}' (vulnerable to collision attacks). \
-                         Use full fingerprint (40 chars) or long key ID (16 chars).",
-                        key_id
-                    );
-                    continue;
-                }
-                PgpKeyIdStatus::FullFingerprint | PgpKeyIdStatus::LongKeyId => {} // Acceptable lengths
-                PgpKeyIdStatus::NonStandardLength => {
-                    tracing::debug!(
-                        "PGP key ID '{}' is {} chars (40-char fingerprint recommended)",
-                        key_id,
-                        key_id.len()
-                    );
-                }
-            }
-
-            // Check if key is already in keyring
+            require_fetchable_pgp_key_id(key_id)?;
             match keyserver::is_key_in_keyring(key_id, &keyring_path) {
                 Ok(true) => {}
                 Ok(false) => missing_keys.push(key_id.clone()),
                 Err(error) => {
-                    tracing::warn!("Failed to read PGP keyring while checking {key_id}: {error}");
-                    return;
+                    anyhow::bail!("Failed to read PGP keyring while checking {key_id}: {error}")
                 }
             }
         }
 
         if missing_keys.is_empty() {
-            return;
+            return Ok(());
         }
 
         tracing::info!("Fetching {} missing PGP key(s)...", missing_keys.len());
@@ -2126,21 +2127,20 @@ impl AurClient {
                 Ok(cert) => {
                     let info = keyserver::get_key_info(&cert);
                     tracing::debug!("Fetched PGP key: {info}");
-                    if let Err(e) = keyserver::append_to_keyring(&cert, &keyring_path) {
-                        tracing::warn!("Failed to save key {key_id} to keyring: {e}");
-                    }
+                    keyserver::append_to_keyring(&cert, &keyring_path)
+                        .with_context(|| format!("Failed to save key {key_id} to keyring"))?;
                 }
-                Err(e) => {
-                    tracing::warn!("Failed to fetch PGP key {key_id}: {e}");
-                }
+                Err(error) => anyhow::bail!("Failed to fetch PGP key {key_id}: {error}"),
             }
         }
+        Ok(())
     }
 
     #[cfg(not(feature = "pgp"))]
     #[allow(clippy::unused_async)]
-    async fn fetch_missing_pgp_keys(_pkgbuild_path: &Path) {
+    async fn fetch_missing_pgp_keys(_pkgbuild_path: &Path) -> Result<()> {
         tracing::debug!("PGP feature disabled, skipping key fetch");
+        Ok(())
     }
 
     fn makepkg_env(&self, pkg_dir: &Path) -> Result<MakepkgEnv> {
@@ -2956,6 +2956,29 @@ mod tests {
         // Mixed case should be valid
         let mixed = "AbCdEf1234567890";
         assert_eq!(validate_pgp_key_id(mixed), PgpKeyIdStatus::LongKeyId);
+    }
+
+    #[test]
+    fn require_fetchable_pgp_key_id_accepts_long_and_fingerprint() {
+        require_fetchable_pgp_key_id("ABCDEF1234567890").expect("long key id");
+        require_fetchable_pgp_key_id("ABCDEF1234567890ABCDEF1234567890ABCDEF12")
+            .expect("fingerprint");
+    }
+
+    #[test]
+    fn require_fetchable_pgp_key_id_rejects_short_and_invalid() {
+        let short = require_fetchable_pgp_key_id("ABCDEF12")
+            .expect_err("short key ids must not be skipped");
+        assert!(
+            short.to_string().contains("short PGP key ID"),
+            "got: {short}"
+        );
+        let invalid = require_fetchable_pgp_key_id("GHIJKL1234567890")
+            .expect_err("non-hex key ids must not be skipped");
+        assert!(
+            invalid.to_string().contains("non-hex chars"),
+            "got: {invalid}"
+        );
     }
 
     #[test]
