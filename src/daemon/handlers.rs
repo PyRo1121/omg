@@ -129,9 +129,15 @@ impl DaemonState {
 
         let cache = PackageCache::default();
 
-        if let Ok(Some(status)) = persistent.get_status() {
-            cache.update_status(Arc::new(status));
-            tracing::debug!("Pre-warmed status cache from persistent storage");
+        match persistent.get_status() {
+            Ok(Some(status)) => {
+                cache.update_status(Arc::new(status));
+                tracing::debug!("Pre-warmed status cache from persistent storage");
+            }
+            Ok(None) => {}
+            Err(error) => {
+                tracing::warn!("Failed to load persisted status cache: {error}");
+            }
         }
 
         let quota = Quota::per_second(crate::core::safe_ops::nonzero_u32_or_default(100, 1))
@@ -648,16 +654,25 @@ async fn handle_status(state: Arc<DaemonState>, id: RequestId) -> Response {
     let cached_result =
         tokio::task::spawn_blocking(move || state_clone.persistent.get_status()).await;
 
-    if let Ok(Ok(Some(cached))) = cached_result {
-        // METRICS: Cache hit (persistent)
-        GLOBAL_METRICS.inc_cache_hits();
-        // Promote to memory cache for next hit (Arc avoids clone)
-        let cached_arc = Arc::new(cached);
-        state.cache.update_status(Arc::clone(&cached_arc));
-        return Response::Success {
-            id,
-            result: ResponseResult::Status(Arc::unwrap_or_clone(cached_arc)),
-        };
+    match cached_result {
+        Ok(Ok(Some(cached))) => {
+            // METRICS: Cache hit (persistent)
+            GLOBAL_METRICS.inc_cache_hits();
+            // Promote to memory cache for next hit (Arc avoids clone)
+            let cached_arc = Arc::new(cached);
+            state.cache.update_status(Arc::clone(&cached_arc));
+            return Response::Success {
+                id,
+                result: ResponseResult::Status(Arc::unwrap_or_clone(cached_arc)),
+            };
+        }
+        Ok(Ok(None)) => {}
+        Ok(Err(error)) => {
+            tracing::warn!("Failed to read persisted status cache: {error}");
+        }
+        Err(error) => {
+            tracing::warn!("Status cache task failed: {error}");
+        }
     }
 
     // METRICS: Cache miss - need to query system
