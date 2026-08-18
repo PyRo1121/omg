@@ -450,6 +450,14 @@ impl DnfPackageManager {
         Ok(index)
     }
 
+    fn invalidate_repo_cache_file(result: std::io::Result<()>) -> Result<()> {
+        match result {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error).context("Failed to invalidate DNF repository cache"),
+        }
+    }
+
     /// Save repository index to binary cache
     async fn save_cached_index(&self, path: &Path, packages: &[RepoPackage]) -> Result<()> {
         fs::create_dir_all(&self.cache_dir).await?;
@@ -718,7 +726,7 @@ impl PackageManager for DnfPackageManager {
 
             // Remove binary cache to force re-parsing
             let cache_file = self.cache_dir.join("repo_index.bin");
-            let _ = fs::remove_file(cache_file).await;
+            Self::invalidate_repo_cache_file(fs::remove_file(cache_file).await)?;
 
             tokio::task::spawn_blocking({
                 let manager = Self::new();
@@ -932,6 +940,31 @@ mod tests {
             .expect_err("truncated rpm -qa line must not skip the package");
         assert!(
             error.to_string().contains("malformed rpm -qa output"),
+            "got: {error}"
+        );
+    }
+
+    #[test]
+    fn test_invalidate_repo_cache_file_allows_missing() {
+        DnfPackageManager::invalidate_repo_cache_file(Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "no cache",
+        )))
+        .expect("missing cache file is not an error");
+        DnfPackageManager::invalidate_repo_cache_file(Ok(())).expect("removed cache file");
+    }
+
+    #[test]
+    fn test_invalidate_repo_cache_file_rejects_other_io_errors() {
+        let error = DnfPackageManager::invalidate_repo_cache_file(Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "denied",
+        )))
+        .expect_err("stale cache must not be left in place");
+        assert!(
+            error
+                .to_string()
+                .contains("Failed to invalidate DNF repository cache"),
             "got: {error}"
         );
     }
