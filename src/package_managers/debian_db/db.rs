@@ -2100,7 +2100,7 @@ pub fn list_orphans_fast() -> Result<Vec<String>> {
 fn build_dependency_map() -> Result<HashMap<String, Vec<String>>> {
     let status_path = Path::new("/var/lib/dpkg/status");
     if !status_path.exists() {
-        return Ok(HashMap::new());
+        anyhow::bail!("dpkg status file not found: {}", status_path.display());
     }
 
     let content = fs::read_to_string(status_path)?;
@@ -2357,14 +2357,17 @@ mod tests {
     }
 
     #[test]
-    fn test_build_dependency_map_empty() {
-        // When dpkg status doesn't exist
-        let result = build_dependency_map();
-        assert!(result.is_ok());
-        if let Ok(map) = result {
-            // Should return empty map if file doesn't exist or is empty
-            assert!(map.is_empty() || !map.is_empty()); // Either is valid
+    fn test_build_dependency_map_missing_status_is_an_error() {
+        if Path::new("/var/lib/dpkg/status").exists() {
+            build_dependency_map().expect("existing dpkg status must parse");
+            return;
         }
+        let error = build_dependency_map()
+            .expect_err("missing dpkg status must not look like zero dependencies");
+        assert!(
+            error.to_string().contains("dpkg status file not found"),
+            "got: {error}"
+        );
     }
 
     #[test]
