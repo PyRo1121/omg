@@ -319,6 +319,24 @@ impl App {
         }
 
         // Fallback to direct search if daemon is not available
+        #[cfg(any(feature = "debian", feature = "debian-pure"))]
+        if crate::core::env::distro::is_debian_like() {
+            self.search_results = crate::package_managers::debian_db::search_fast(query)
+                .context("Failed to search official packages")?
+                .into_iter()
+                .map(|pkg| crate::package_managers::SyncPackage {
+                    name: pkg.name,
+                    version: pkg.version,
+                    description: pkg.description,
+                    repo: "official".to_string(),
+                    download_size: 0,
+                    installed: pkg.installed,
+                })
+                .collect();
+            self.search_error = None;
+            return Ok(());
+        }
+
         #[cfg(feature = "arch")]
         {
             self.search_results = crate::package_managers::search_sync(query)
