@@ -138,7 +138,7 @@ impl PackageManager for PureDebianPackageManager {
 
             // Validate packages are installed
             for pkg in &packages {
-                if !debian_db::is_installed_fast(pkg) {
+                if !debian_db::is_installed_fast(pkg)? {
                     anyhow::bail!(
                         "Package '{pkg}' is not installed.\n\
                         \u{1f4a1} Use 'omg list' to see installed packages"
@@ -371,7 +371,7 @@ impl PackageManager for PureDebianPackageManager {
         package: &str,
     ) -> Pin<Box<dyn Future<Output = Result<bool>> + Send + '_>> {
         let result = debian_db::is_installed_fast(package);
-        Box::pin(async move { Ok(result) })
+        Box::pin(async move { result })
     }
 }
 

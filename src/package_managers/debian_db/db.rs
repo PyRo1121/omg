@@ -1021,7 +1021,7 @@ fn find_info_from_apt_lists_fast(name: &str) -> Result<Option<Package>> {
                 version: parse_version_or_zero(&version),
                 description,
                 source: PackageSource::Official,
-                installed: is_installed_fast(name),
+                installed: is_installed_fast(name)?,
             }));
         }
     }
@@ -1491,7 +1491,7 @@ pub fn get_info_fast(name: &str) -> Result<Option<Package>> {
         if let Some(ref mmap) = *mmap_guard {
             mmap.touch();
             if let Ok(Some(pkg)) = mmap.get(name) {
-                let installed = is_installed_fast(name);
+                let installed = is_installed_fast(name)?;
                 return Ok(Some(Package {
                     name: pkg.name.to_string(),
                     version: parse_version_or_zero(pkg.version.as_str()),
@@ -1713,34 +1713,36 @@ pub fn get_installed_info_fast(name: &str) -> Result<Option<LocalPackage>> {
 }
 
 #[inline]
-pub fn is_installed_fast(name: &str) -> bool {
+pub fn is_installed_fast(name: &str) -> Result<bool> {
     if crate::core::paths::test_mode() {
-        return matches!(name, "apt" | "git");
+        return Ok(matches!(name, "apt" | "git"));
     }
 
     // Check dpkg status cache first for O(1) lookup
     {
         let cache = DPKG_STATUS_CACHE.read().expect("lock poisoned");
         if !cache.installed_set.is_empty() {
-            return cache.installed_set.contains(name);
+            return Ok(cache.installed_set.contains(name));
         }
     }
 
-    if let Ok(installed) = is_package_installed_scan(name) {
-        if installed {
-            let mut cache = DPKG_STATUS_CACHE.write().expect("lock poisoned");
-            cache.installed_set.insert(name.to_string());
-            cache.last_accessed = Some(std::time::SystemTime::now());
+    match is_package_installed_scan(name) {
+        Ok(installed) => {
+            if installed {
+                let mut cache = DPKG_STATUS_CACHE.write().expect("lock poisoned");
+                cache.installed_set.insert(name.to_string());
+                cache.last_accessed = Some(std::time::SystemTime::now());
+            }
+            Ok(installed)
         }
-        return installed;
+        Err(scan_error) => {
+            list_installed_fast().with_context(|| {
+                format!("failed to determine whether '{name}' is installed: {scan_error}")
+            })?;
+            let cache = DPKG_STATUS_CACHE.read().expect("lock poisoned");
+            Ok(cache.installed_set.contains(name))
+        }
     }
-
-    if list_installed_fast().is_ok() {
-        let cache = DPKG_STATUS_CACHE.read().expect("lock poisoned");
-        return cache.installed_set.contains(name);
-    }
-
-    false
 }
 
 pub fn list_explicit_fast() -> Result<Vec<String>> {
@@ -2445,5 +2447,26 @@ mod tests {
             .get_query("bash:amd64:contrib")
             .expect("arch+component lookup");
         assert_eq!(by_arch_component.component, "contrib");
+    }
+
+    #[test]
+    fn is_installed_fast_test_mode_returns_ok_for_known_and_unknown() {
+        // SAFETY: Test-only code, no concurrent access to environment
+        #[expect(unsafe_code)]
+        unsafe {
+            std::env::set_var("OMG_TEST_MODE", "1");
+        }
+
+        let installed = is_installed_fast("apt").expect("test-mode install lookup");
+        assert!(installed);
+        let unknown =
+            is_installed_fast("definitely-not-installed").expect("test-mode missing lookup");
+        assert!(!unknown);
+
+        // SAFETY: Test cleanup, no concurrent access
+        #[expect(unsafe_code)]
+        unsafe {
+            std::env::remove_var("OMG_TEST_MODE");
+        }
     }
 }

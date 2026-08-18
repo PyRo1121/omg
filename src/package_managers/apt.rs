@@ -227,7 +227,7 @@ impl crate::package_managers::PackageManager for AptPackageManager {
         package: &str,
     ) -> Pin<Box<dyn Future<Output = Result<bool>> + Send + '_>> {
         let result = super::debian_db::is_installed_fast(package);
-        Box::pin(async move { Ok(result) })
+        Box::pin(async move { result })
     }
 }
 pub fn search_sync(query: &str) -> Result<Vec<SyncPackage>> {
