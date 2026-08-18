@@ -1,8 +1,8 @@
 //! Intelligent completions with fuzzy matching and context awareness.
 
-use std::path::PathBuf;
+use std::path::Path;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use jiff::Timestamp;
 use nucleo_matcher::{
     Config, Matcher, Utf32String,
@@ -51,59 +51,56 @@ impl CompletionEngine {
     }
 
     /// Probe context (package.json, .nvmrc, etc.) to prioritize versions
-    #[must_use]
-    pub fn probe_context(&self, runtime: &str) -> Vec<String> {
-        let mut suggestions = Vec::new();
-        let current_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    pub fn probe_context(&self, runtime: &str) -> Result<Vec<String>> {
+        let current_dir = std::env::current_dir().context("Failed to get current directory")?;
+        self.probe_context_from(&current_dir, runtime)
+    }
 
-        // Search up the tree for config files
-        let mut dir = Some(current_dir.as_path());
+    fn probe_context_from(&self, start: &Path, runtime: &str) -> Result<Vec<String>> {
+        let mut suggestions = Vec::new();
+        let mut dir = Some(start);
+
         while let Some(path) = dir {
             match runtime {
                 "node" => {
-                    // Check package.json
                     let pkg_json = path.join("package.json");
-                    if pkg_json.exists()
-                        && let Ok(content) = std::fs::read_to_string(pkg_json)
-                        && let Ok(v) = serde_json::from_str::<serde_json::Value>(&content)
-                        && let Some(engines) = v.get("engines")
-                        && let Some(node_v) = engines.get("node")
-                        && let Some(s) = node_v.as_str()
-                    {
-                        suggestions.push(s.to_string());
+                    if let Some(content) = read_optional_file(&pkg_json)? {
+                        let value: serde_json::Value = serde_json::from_str(&content)
+                            .with_context(|| format!("Failed to parse {}", pkg_json.display()))?;
+                        if let Some(s) = value
+                            .get("engines")
+                            .and_then(|engines| engines.get("node"))
+                            .and_then(serde_json::Value::as_str)
+                        {
+                            suggestions.push(s.to_string());
+                        }
                     }
-                    // Check .nvmrc
                     let nvmrc = path.join(".nvmrc");
-                    if nvmrc.exists()
-                        && let Ok(content) = std::fs::read_to_string(nvmrc)
-                    {
+                    if let Some(content) = read_optional_file(&nvmrc)? {
                         suggestions.push(content.trim().to_string());
                     }
                 }
                 "python" => {
                     let py_version = path.join(".python-version");
-                    if py_version.exists()
-                        && let Ok(content) = std::fs::read_to_string(py_version)
-                    {
+                    if let Some(content) = read_optional_file(&py_version)? {
                         suggestions.push(content.trim().to_string());
                     }
                 }
                 "rust" => {
                     let toolchain = path.join("rust-toolchain");
-                    let toolchain_toml = path.join("rust-toolchain.toml");
-                    if toolchain.exists() {
-                        if let Ok(content) = std::fs::read_to_string(toolchain) {
-                            suggestions.push(content.trim().to_string());
+                    if let Some(content) = read_optional_file(&toolchain)? {
+                        suggestions.push(content.trim().to_string());
+                    } else {
+                        let toolchain_toml = path.join("rust-toolchain.toml");
+                        if let Some(content) = read_optional_file(&toolchain_toml)?
+                            && content.contains("channel = \"")
+                            && let Some(v) = content
+                                .split("channel = \"")
+                                .nth(1)
+                                .and_then(|s| s.split('"').next())
+                        {
+                            suggestions.push(v.to_string());
                         }
-                    } else if toolchain_toml.exists()
-                        && let Ok(content) = std::fs::read_to_string(toolchain_toml)
-                        && content.contains("channel = \"")
-                        && let Some(v) = content
-                            .split("channel = \"")
-                            .nth(1)
-                            .and_then(|s| s.split('"').next())
-                    {
-                        suggestions.push(v.to_string());
                     }
                 }
                 _ => {}
@@ -114,7 +111,7 @@ impl CompletionEngine {
             dir = path.parent();
         }
 
-        suggestions
+        Ok(suggestions)
     }
 
     /// Get AUR package names from cache or refresh if needed
@@ -159,6 +156,14 @@ impl CompletionEngine {
         gz.read_to_string(&mut s)?;
 
         Ok(s.lines().map(std::string::ToString::to_string).collect())
+    }
+}
+
+fn read_optional_file(path: &Path) -> Result<Option<String>> {
+    match std::fs::read_to_string(path) {
+        Ok(content) => Ok(Some(content)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error).with_context(|| format!("Failed to read {}", path.display())),
     }
 }
 
@@ -328,5 +333,63 @@ mod tests {
     fn runtime_completions_work() {
         let results = get_runtime_completions("no");
         assert!(results.contains(&"node".to_string()));
+    }
+
+    #[test]
+    fn probe_context_reads_python_version() {
+        let temp_dir = TempDir::new().unwrap();
+        std::fs::write(temp_dir.path().join(".python-version"), "3.12.0\n").unwrap();
+        let db = Database::open(temp_dir.path().join("test.redb")).unwrap();
+        let engine = CompletionEngine::new(db);
+        let suggestions = engine
+            .probe_context_from(temp_dir.path(), "python")
+            .unwrap();
+        assert_eq!(suggestions.first().map(String::as_str), Some("3.12.0"));
+    }
+
+    #[test]
+    fn probe_context_unreadable_pin_fails_closed() {
+        let temp_dir = TempDir::new().unwrap();
+        let pin = temp_dir.path().join(".python-version");
+        std::fs::write(&pin, "3.12.0\n").unwrap();
+        let original = std::fs::metadata(&pin).unwrap().permissions();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&pin, std::fs::Permissions::from_mode(0o000)).unwrap();
+        }
+        let blocked = std::fs::read_to_string(&pin).is_err();
+        let db = Database::open(temp_dir.path().join("test.redb")).unwrap();
+        let engine = CompletionEngine::new(db);
+        let result = engine.probe_context_from(temp_dir.path(), "python");
+        let _ = std::fs::set_permissions(&pin, original);
+        if !blocked {
+            return;
+        }
+        assert!(
+            result.is_err(),
+            "unreadable pin must fail closed, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn probe_context_invalid_package_json_fails_closed() {
+        let temp_dir = TempDir::new().unwrap();
+        std::fs::write(temp_dir.path().join("package.json"), "not json").unwrap();
+        let db = Database::open(temp_dir.path().join("test.redb")).unwrap();
+        let engine = CompletionEngine::new(db);
+        let error = engine
+            .probe_context_from(temp_dir.path(), "node")
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("Failed to parse"),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    #[test]
+    fn read_optional_file_missing_is_none() {
+        let missing = TempDir::new().unwrap().path().join("does-not-exist");
+        assert!(read_optional_file(&missing).unwrap().is_none());
     }
 }
