@@ -26,6 +26,7 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Do not treat the last installed package as missing when dpkg status has no trailing blank line
 - Fail closed when an installed package has no dpkg version
 - Fail closed when dpkg status is missing instead of indexing packages as uninstalled
 - Fail closed when dpkg status is missing instead of reporting zero orphans
