@@ -237,7 +237,6 @@ impl DnfPackageManager {
     /// RPM headers use a binary format:
     /// - Magic: 0x8eade801 00000000
     /// - Index entries: tag(u32), type(u32), offset(i32), count(u32)
-    #[allow(dead_code)]
     fn parse_rpm_header(blob: &[u8]) -> Result<HashMap<u32, Vec<u8>>> {
         if blob.len() < 16 {
             anyhow::bail!("RPM header too short");
