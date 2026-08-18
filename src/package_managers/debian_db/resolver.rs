@@ -59,20 +59,6 @@ pub enum VersionOp {
     Lt,
 }
 
-impl VersionOp {
-    #[expect(dead_code)] // Kept for potential future use
-    fn from_str(s: &str) -> Option<Self> {
-        match s.trim() {
-            "=" => Some(Self::Eq),
-            ">=" => Some(Self::Ge),
-            ">>" => Some(Self::Gt),
-            "<=" => Some(Self::Le),
-            "<<" => Some(Self::Lt),
-            _ => None,
-        }
-    }
-}
-
 /// Result of dependency resolution
 #[derive(Debug)]
 pub struct ResolutionResult {
