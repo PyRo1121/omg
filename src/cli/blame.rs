@@ -120,6 +120,11 @@ fn build_blame_output(package: &str) -> Result<Cmd<()>> {
 
 #[cfg(feature = "arch")]
 fn get_package_info(package: &str) -> Result<(bool, Option<String>, String)> {
+    #[cfg(any(feature = "debian", feature = "debian-pure"))]
+    if crate::core::env::distro::is_debian_like() {
+        return get_package_info_debian(package);
+    }
+
     use crate::cli::style;
     use alpm::Alpm;
 
@@ -140,11 +145,8 @@ fn get_package_info(package: &str) -> Result<(bool, Option<String>, String)> {
     }
 }
 
-#[cfg(all(
-    any(feature = "debian", feature = "debian-pure"),
-    not(feature = "arch")
-))]
-fn get_package_info(package: &str) -> Result<(bool, Option<String>, String)> {
+#[cfg(any(feature = "debian", feature = "debian-pure"))]
+fn get_package_info_debian(package: &str) -> Result<(bool, Option<String>, String)> {
     use crate::cli::style;
     use crate::package_managers::debian_db;
 
@@ -164,6 +166,14 @@ fn get_package_info(package: &str) -> Result<(bool, Option<String>, String)> {
     }
 }
 
+#[cfg(all(
+    any(feature = "debian", feature = "debian-pure"),
+    not(feature = "arch")
+))]
+fn get_package_info(package: &str) -> Result<(bool, Option<String>, String)> {
+    get_package_info_debian(package)
+}
+
 #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
 fn get_package_info(_package: &str) -> Result<(bool, Option<String>, String)> {
     anyhow::bail!("Package information is not available without an Arch or Debian package backend");
@@ -171,6 +181,11 @@ fn get_package_info(_package: &str) -> Result<(bool, Option<String>, String)> {
 
 #[cfg(feature = "arch")]
 fn show_required_by(package: &str) -> Result<Cmd<()>> {
+    #[cfg(any(feature = "debian", feature = "debian-pure"))]
+    if crate::core::env::distro::is_debian_like() {
+        return show_required_by_debian(package);
+    }
+
     use alpm::Alpm;
 
     let handle = Alpm::new("/", "/var/lib/pacman")
@@ -198,11 +213,8 @@ fn show_required_by(package: &str) -> Result<Cmd<()>> {
     }
 }
 
-#[cfg(all(
-    any(feature = "debian", feature = "debian-pure"),
-    not(feature = "arch")
-))]
-fn show_required_by(package: &str) -> Result<Cmd<()>> {
+#[cfg(any(feature = "debian", feature = "debian-pure"))]
+fn show_required_by_debian(package: &str) -> Result<Cmd<()>> {
     use crate::package_managers::debian_db;
 
     let (_, reverse_deps) = debian_db::get_package_dependencies(package)?;
@@ -217,6 +229,14 @@ fn show_required_by(package: &str) -> Result<Cmd<()>> {
             deps,
         ))
     }
+}
+
+#[cfg(all(
+    any(feature = "debian", feature = "debian-pure"),
+    not(feature = "arch")
+))]
+fn show_required_by(package: &str) -> Result<Cmd<()>> {
+    show_required_by_debian(package)
 }
 
 #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
