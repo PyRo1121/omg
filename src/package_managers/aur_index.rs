@@ -66,12 +66,6 @@ impl AurIndex {
             .map_err(|e| anyhow::anyhow!("Corrupted AUR index: {e}"))
     }
 
-    /// Check if a package exists in the index
-    #[allow(dead_code)] // Public API convenience method; used in tests
-    pub fn contains(&self, name: &str) -> Result<bool> {
-        Ok(self.get(name)?.is_some())
-    }
-
     /// Get metadata for a specific package (zero-copy)
     ///
     /// Returns a reference to the archived entry in the memory-mapped file.
@@ -228,9 +222,9 @@ mod tests {
 
         // Verify index
         let index = AurIndex::open(&index_path)?;
-        assert!(index.contains("pkg-a")?);
-        assert!(index.contains("pkg-b")?);
-        assert!(index.contains("Another-Pkg")?);
+        assert!(index.get("pkg-a")?.is_some());
+        assert!(index.get("pkg-b")?.is_some());
+        assert!(index.get("Another-Pkg")?.is_some());
 
         let pkg_a = index.get("pkg-a")?.unwrap();
         assert_eq!(pkg_a.name.as_str(), "pkg-a");
