@@ -585,7 +585,7 @@ fn commit_alpm_transaction(alpm: &mut alpm::Alpm, main_pb: &indicatif::ProgressB
         use rayon::prelude::*;
         use std::sync::atomic::{AtomicBool, Ordering};
 
-        let verifier = PgpVerifier::new();
+        let verifier = PgpVerifier::new()?;
         let pkgs_to_add = alpm.trans_add();
 
         if !pkgs_to_add.is_empty() {

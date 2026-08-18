@@ -235,7 +235,7 @@ fn test_pgp_verification_real_packages() {
         return;
     }
 
-    let verifier = PgpVerifier::new();
+    let verifier = PgpVerifier::new().expect("system keyring must load on Arch");
 
     // Find a package with signature
     let entries = fs::read_dir(cache_dir).unwrap();

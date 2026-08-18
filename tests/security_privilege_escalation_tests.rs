@@ -322,24 +322,21 @@ mod pgp_verification {
 
     #[test]
     fn test_signature_file_not_found() {
-        let verifier = PgpVerifier::new();
+        let verifier = PgpVerifier::empty();
 
         let mut data = NamedTempFile::new().unwrap();
         writeln!(data, "test data").unwrap();
         data.flush().unwrap();
 
-        let result = verifier.verify_detached(
-            data.path(),
-            std::path::Path::new("/nonexistent.sig"),
-            std::path::Path::new("/nonexistent.gpg"),
-        );
+        let result =
+            verifier.verify_detached(data.path(), std::path::Path::new("/nonexistent.sig"));
 
         assert!(result.is_err(), "Should fail with missing signature");
     }
 
     #[test]
     fn test_invalid_signature_format() {
-        let verifier = PgpVerifier::new();
+        let verifier = PgpVerifier::empty();
 
         let mut data = NamedTempFile::new().unwrap();
         writeln!(data, "test data").unwrap();
@@ -349,15 +346,14 @@ mod pgp_verification {
         writeln!(sig, "not a valid signature").unwrap();
         sig.flush().unwrap();
 
-        let result =
-            verifier.verify_detached(data.path(), sig.path(), std::path::Path::new("/dev/null"));
+        let result = verifier.verify_detached(data.path(), sig.path());
 
         assert!(result.is_err(), "garbage signature bytes must fail");
     }
 
     #[test]
     fn test_memory_signature_verification() {
-        let verifier = PgpVerifier::new();
+        let verifier = PgpVerifier::empty();
 
         let data = b"test data";
         let invalid_sig = b"not a signature";
@@ -371,7 +367,7 @@ mod pgp_verification {
         // Test that expired signatures are rejected
         // This would require generating an expired test signature
         // For now, we verify the verifier handles edge cases
-        let verifier = PgpVerifier::new();
+        let verifier = PgpVerifier::empty();
 
         let data = b"test";
         let empty_sig = b"";
@@ -384,7 +380,7 @@ mod pgp_verification {
     fn test_revoked_key_handling() {
         // Verifier should reject signatures from revoked keys
         // The PgpVerifier.verify_detached() filters for .revoked(false)
-        let verifier = PgpVerifier::new();
+        let verifier = PgpVerifier::empty();
 
         // Empty keyring should fail verification
         let mut data = NamedTempFile::new().unwrap();
@@ -395,8 +391,7 @@ mod pgp_verification {
         writeln!(sig, "sig").unwrap();
         sig.flush().unwrap();
 
-        let result =
-            verifier.verify_detached(data.path(), sig.path(), std::path::Path::new("/dev/null"));
+        let result = verifier.verify_detached(data.path(), sig.path());
 
         assert!(result.is_err());
     }
