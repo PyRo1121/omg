@@ -287,6 +287,8 @@ pub fn view_audit_log(
 
 /// Verify audit log integrity
 pub fn verify_audit_log(_ctx: &CliContext) -> Result<()> {
+    license::require_feature("audit-log")?;
+
     println!(
         "{} Verifying Audit Log Integrity...\n",
         style::runtime("OMG")

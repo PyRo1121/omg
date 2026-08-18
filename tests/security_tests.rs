@@ -467,68 +467,53 @@ require_pgp = true
 mod sbom_compliance {
     use super::*;
 
+    fn assert_requires_paid_tier(result: &CommandResult) {
+        result.assert_failure();
+        let output = result.combined_output();
+        assert!(
+            output.contains("requires") && output.contains("tier"),
+            "expected a license gate, got: {output}"
+        );
+    }
+
     #[test]
-    fn test_sbom_generation() {
+    fn test_sbom_generation_is_license_gated() {
         let project = TestProject::new();
         let result = project.run(&["audit", "sbom", "--output", "sbom.json"]);
-
-        // Should create SBOM or report error gracefully (not panic)
-        // Allow exit code != 0 for unimplemented features, but no panics
-        let has_panic = result.stderr.contains("panicked at");
-        assert!(!has_panic, "Command panicked: {}", result.stderr);
+        assert_requires_paid_tier(&result);
+        assert!(
+            !project.path().join("sbom.json").exists(),
+            "an unlicensed SBOM command must not write output"
+        );
     }
 
     #[test]
-    fn test_sbom_spdx_format() {
+    fn test_unlicensed_sbom_does_not_invent_spdx() {
         let project = TestProject::new();
         let result = project.run(&["audit", "sbom", "--output", "sbom.spdx"]);
-
-        let has_panic = result.stderr.contains("panicked at");
-        assert!(!has_panic, "Command panicked: {}", result.stderr);
+        assert_requires_paid_tier(&result);
+        assert!(
+            !project.path().join("sbom.spdx").exists(),
+            "an unlicensed SBOM command must not write a fake SPDX document"
+        );
     }
 
     #[test]
-    fn test_sbom_cyclonedx_format() {
+    fn test_audit_log_is_license_gated() {
         let project = TestProject::new();
-        let result = project.run(&["audit", "sbom", "--output", "sbom.cdx.json"]);
-
-        let has_panic = result.stderr.contains("panicked at");
-        assert!(!has_panic, "Command panicked: {}", result.stderr);
+        assert_requires_paid_tier(&project.run(&["audit", "log"]));
     }
 
     #[test]
-    fn test_vulnerability_scan() {
-        require_network_tests!();
-
+    fn test_audit_log_verify_is_license_gated() {
         let project = TestProject::new();
-        let result = project.run(&["audit", "sbom", "--vulns"]);
-
-        // Should scan for vulnerabilities
-        assert!(!result.stderr.contains("panic"));
+        assert_requires_paid_tier(&project.run(&["audit", "verify"]));
     }
 
     #[test]
-    fn test_slsa_verification() {
-        require_network_tests!();
-        require_system_tests!();
-
-        let result = run_omg(&["audit", "slsa", "pacman"]);
-        // Should check SLSA provenance
-        assert!(!result.stderr.contains("panic"));
-    }
-
-    #[test]
-    fn test_audit_log() {
-        let result = run_omg(&["audit", "log"]);
-        let has_panic = result.stderr.contains("panicked at");
-        assert!(!has_panic, "Command panicked: {}", result.stderr);
-    }
-
-    #[test]
-    fn test_audit_log_verify() {
-        let result = run_omg(&["audit", "verify"]);
-        // Should verify audit log integrity
-        assert!(!result.stderr.contains("panic"));
+    fn test_slsa_check_is_license_gated() {
+        let project = TestProject::new();
+        assert_requires_paid_tier(&project.run(&["audit", "slsa", "pacman"]));
     }
 }
 
