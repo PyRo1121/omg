@@ -343,7 +343,7 @@ async fn fetch_info(package: &str) -> InfoMsg {
                         out_of_date: false,
                     });
                 }
-                Ok(None) => {}
+                Ok(None) => return InfoMsg::NotFound(package.to_string()),
                 Err(error) => return InfoMsg::Error(error.to_string()),
             }
         }
@@ -365,7 +365,7 @@ async fn fetch_info(package: &str) -> InfoMsg {
                         out_of_date: false,
                     });
                 }
-                Ok(None) => {}
+                Ok(None) => return InfoMsg::NotFound(package.to_string()),
                 Err(error) => return InfoMsg::Error(error.to_string()),
             }
         }
@@ -425,8 +425,15 @@ async fn fetch_info(package: &str) -> InfoMsg {
 
     #[cfg(not(feature = "arch"))]
     {
-        InfoMsg::NotFound(package.to_string())
+        info_requires_backend(package)
     }
+}
+
+#[cfg(any(not(feature = "arch"), test))]
+fn info_requires_backend(package: &str) -> InfoMsg {
+    InfoMsg::Error(format!(
+        "Package information for '{package}' is not available without an Arch or Debian package backend"
+    ))
 }
 
 #[cfg(test)]
@@ -489,5 +496,18 @@ mod tests {
         let view = model.view();
         assert!(view.contains("test-pkg"));
         assert!(view.contains("Official Repository"));
+    }
+
+    #[test]
+    fn info_without_backend_is_an_error_not_not_found() {
+        match info_requires_backend("bash") {
+            InfoMsg::Error(message) => {
+                assert!(
+                    message.contains("not available without an Arch or Debian package backend"),
+                    "got: {message}"
+                );
+            }
+            other => panic!("missing backend must not look like a missing package, got: {other:?}"),
+        }
     }
 }
