@@ -107,27 +107,6 @@ pub fn validate_pgp_key_id(key_id: &str) -> PgpKeyIdStatus {
     }
 }
 
-/// Check if a PGP key ID is safe to use (not vulnerable to collision attacks)
-///
-/// Returns `true` for:
-/// - Full fingerprints (40 chars)
-/// - Long key IDs (16 chars)
-/// - Non-standard lengths >= 16 chars
-///
-/// Returns `false` for short key IDs (< 16 chars) which are vulnerable to
-/// collision attacks.
-#[inline]
-#[must_use]
-#[allow(dead_code)] // Public API for callers; currently only used in tests
-pub fn is_pgp_key_id_safe(key_id: &str) -> bool {
-    matches!(
-        validate_pgp_key_id(key_id),
-        PgpKeyIdStatus::FullFingerprint
-            | PgpKeyIdStatus::LongKeyId
-            | PgpKeyIdStatus::NonStandardLength
-    )
-}
-
 /// AUR API client with build support
 #[derive(Clone)]
 pub struct AurClient {
@@ -2907,7 +2886,6 @@ mod tests {
             validate_pgp_key_id(fingerprint),
             PgpKeyIdStatus::FullFingerprint
         );
-        assert!(is_pgp_key_id_safe(fingerprint));
     }
 
     #[test]
@@ -2915,7 +2893,6 @@ mod tests {
         // 16-char long key ID - acceptable
         let long_id = "ABCDEF1234567890";
         assert_eq!(validate_pgp_key_id(long_id), PgpKeyIdStatus::LongKeyId);
-        assert!(is_pgp_key_id_safe(long_id));
     }
 
     #[test]
@@ -2923,7 +2900,6 @@ mod tests {
         // 8-char short key ID - VULNERABLE to collision attacks
         let short_id = "ABCDEF12";
         assert_eq!(validate_pgp_key_id(short_id), PgpKeyIdStatus::ShortKeyId);
-        assert!(!is_pgp_key_id_safe(short_id));
     }
 
     #[test]
@@ -2931,13 +2907,11 @@ mod tests {
         // Any ID < 16 chars is treated as short (vulnerable)
         assert_eq!(validate_pgp_key_id("ABCDEF"), PgpKeyIdStatus::ShortKeyId);
         assert_eq!(validate_pgp_key_id("AB"), PgpKeyIdStatus::ShortKeyId);
-        assert!(!is_pgp_key_id_safe("ABCDEF"));
     }
 
     #[test]
     fn test_pgp_key_id_empty() {
         assert_eq!(validate_pgp_key_id(""), PgpKeyIdStatus::Empty);
-        assert!(!is_pgp_key_id_safe(""));
     }
 
     #[test]
@@ -2945,7 +2919,6 @@ mod tests {
         // More than 64 chars is invalid
         let too_long = "A".repeat(65);
         assert_eq!(validate_pgp_key_id(&too_long), PgpKeyIdStatus::TooLong);
-        assert!(!is_pgp_key_id_safe(&too_long));
     }
 
     #[test]
@@ -2959,7 +2932,6 @@ mod tests {
             validate_pgp_key_id("ABCDEF12!@#$%^&*"),
             PgpKeyIdStatus::InvalidChars
         );
-        assert!(!is_pgp_key_id_safe("GHIJKL1234567890"));
     }
 
     #[test]
@@ -2970,8 +2942,6 @@ mod tests {
             validate_pgp_key_id(non_standard),
             PgpKeyIdStatus::NonStandardLength
         );
-        // Non-standard but >= 16 chars is still safe
-        assert!(is_pgp_key_id_safe(non_standard));
     }
 
     #[test]
@@ -2979,7 +2949,6 @@ mod tests {
         // Lowercase hex should be valid (a-f)
         let lowercase = "abcdef1234567890";
         assert_eq!(validate_pgp_key_id(lowercase), PgpKeyIdStatus::LongKeyId);
-        assert!(is_pgp_key_id_safe(lowercase));
     }
 
     #[test]
@@ -2987,7 +2956,6 @@ mod tests {
         // Mixed case should be valid
         let mixed = "AbCdEf1234567890";
         assert_eq!(validate_pgp_key_id(mixed), PgpKeyIdStatus::LongKeyId);
-        assert!(is_pgp_key_id_safe(mixed));
     }
 
     #[test]
