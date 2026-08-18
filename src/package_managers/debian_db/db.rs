@@ -1388,7 +1388,7 @@ fn fst_mmap_search(fst_map: &Map<Mmap>, mmap: &DebianMmapIndex, query_lower: &st
 fn is_package_installed_scan(name: &str) -> Result<bool> {
     let status_path = Path::new("/var/lib/dpkg/status");
     if !status_path.exists() {
-        return Ok(false);
+        anyhow::bail!("dpkg status file not found: {}", status_path.display());
     }
 
     let status_content = fs::read_to_string(status_path)?;
