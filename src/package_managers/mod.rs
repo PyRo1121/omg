@@ -166,10 +166,50 @@ pub fn is_installed_fast(name: &str) -> anyhow::Result<bool> {
     anyhow::bail!("No package manager backend enabled to query {name}")
 }
 
+#[cfg(any(feature = "debian", feature = "debian-pure"))]
+fn package_info_from_debian_db(name: &str) -> anyhow::Result<Option<types::PackageInfo>> {
+    Ok(
+        debian_db::get_info_fast(name)?.map(|pkg| types::PackageInfo {
+            name: pkg.name,
+            version: pkg.version,
+            description: pkg.description,
+            url: None,
+            size: 0,
+            install_size: None,
+            download_size: None,
+            repo: if pkg.installed {
+                "local".to_string()
+            } else {
+                "official".to_string()
+            },
+            depends: Vec::new(),
+            licenses: Vec::new(),
+            installed: pkg.installed,
+        }),
+    )
+}
+
+pub fn get_package_info(name: &str) -> anyhow::Result<Option<types::PackageInfo>> {
+    #[cfg(any(feature = "debian", feature = "debian-pure"))]
+    if crate::core::env::distro::is_debian_like() {
+        return package_info_from_debian_db(name);
+    }
+
+    #[cfg(feature = "arch")]
+    return alpm_direct::get_package_info(name);
+
+    #[cfg(all(
+        not(feature = "arch"),
+        any(feature = "debian", feature = "debian-pure")
+    ))]
+    return package_info_from_debian_db(name);
+
+    #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
+    anyhow::bail!("No package manager backend enabled to query {name}")
+}
+
 #[cfg(feature = "arch")]
-pub use alpm_direct::{
-    clear_alpm_cache, get_counts, get_package_info, list_orphans_fast, search_local,
-};
+pub use alpm_direct::{clear_alpm_cache, get_counts, list_orphans_fast, search_local};
 #[cfg(feature = "arch")]
 pub use alpm_ops::DownloadInfo;
 #[cfg(feature = "arch")]
