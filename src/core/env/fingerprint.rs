@@ -75,23 +75,7 @@ impl EnvironmentState {
         }
 
         // Capture system packages
-        #[cfg(feature = "arch")]
-        let mut packages: Vec<String> = list_explicit()
-            .await
-            .context("Failed to list explicitly installed packages")?
-            .into_iter()
-            .map(|pkg| pkg.trim().to_string())
-            .filter(|pkg| !pkg.is_empty())
-            .collect();
-        #[cfg(all(feature = "debian", not(feature = "arch")))]
-        let mut packages: Vec<String> = list_explicit()
-            .context("Failed to list explicitly installed packages")?
-            .into_iter()
-            .map(|pkg| pkg.trim().to_string())
-            .filter(|pkg| !pkg.is_empty())
-            .collect();
-        #[cfg(not(any(feature = "arch", feature = "debian")))]
-        let mut packages: Vec<String> = Vec::new();
+        let mut packages = explicit_packages_for_fingerprint().await?;
         packages.sort_unstable();
         packages.dedup();
 
@@ -182,6 +166,56 @@ fn join_probed_version(
     runtime: &str,
 ) -> Result<Option<String>> {
     result.with_context(|| format!("Failed to probe {runtime} runtime"))
+}
+
+async fn explicit_packages_for_fingerprint() -> Result<Vec<String>> {
+    #[cfg(feature = "arch")]
+    {
+        return Ok(list_explicit()
+            .await
+            .context("Failed to list explicitly installed packages")?
+            .into_iter()
+            .map(|pkg| pkg.trim().to_string())
+            .filter(|pkg| !pkg.is_empty())
+            .collect());
+    }
+
+    #[cfg(all(feature = "debian", not(feature = "arch")))]
+    {
+        return Ok(list_explicit()
+            .context("Failed to list explicitly installed packages")?
+            .into_iter()
+            .map(|pkg| pkg.trim().to_string())
+            .filter(|pkg| !pkg.is_empty())
+            .collect());
+    }
+
+    #[cfg(all(
+        feature = "debian-pure",
+        not(feature = "arch"),
+        not(feature = "debian")
+    ))]
+    {
+        return Ok(crate::package_managers::list_explicit_fast()
+            .context("Failed to list explicitly installed packages")?
+            .into_iter()
+            .map(|pkg| pkg.trim().to_string())
+            .filter(|pkg| !pkg.is_empty())
+            .collect());
+    }
+
+    #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
+    fingerprint_requires_backend()
+}
+
+#[cfg(any(
+    not(any(feature = "arch", feature = "debian", feature = "debian-pure")),
+    test
+))]
+fn fingerprint_requires_backend() -> Result<Vec<String>> {
+    anyhow::bail!(
+        "Environment fingerprinting is not available without an Arch or Debian package backend"
+    )
 }
 
 fn write_lockfile(path: &Path, content: &[u8]) -> Result<()> {
@@ -356,6 +390,18 @@ mod tests {
         assert_eq!(
             mode, 0o600,
             "lockfile must not be group or world accessible, got {mode:o}"
+        );
+    }
+
+    #[test]
+    fn fingerprint_without_backend_is_an_error() {
+        let error = fingerprint_requires_backend()
+            .expect_err("env capture with no backend must not invent an empty package list");
+        assert!(
+            error
+                .to_string()
+                .contains("not available without an Arch or Debian package backend"),
+            "got: {error}"
         );
     }
 }
