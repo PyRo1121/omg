@@ -232,16 +232,9 @@ pub fn check_feature(feature_name: &str) -> Result<()> {
     }
 
     let Some(feature) = Feature::from_str(feature_name) else {
-        println!(
-            "{} Unknown feature '{}'",
-            style::maybe_color("✗", |t| t.red().to_string()),
-            style::maybe_color(feature_name, |t| t.cyan().to_string())
+        anyhow::bail!(
+            "Unknown feature '{feature_name}'. Run `omg license status` to see available features."
         );
-        println!(
-            "  Run {} to see available features.",
-            style::command("omg license status")
-        );
-        return Ok(());
     };
 
     if license::has_feature(feature_name) {
