@@ -26,6 +26,14 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Fail closed on APT lists readdir entry errors
+
+A failed directory entry must not look like fewer Packages files.
+
+- Fail closed when APT lists directory exists but cannot be read
+
+A permission error must not look like an empty /var/lib/apt/lists cache.
+
 - Fail closed on sources.list.d readdir entry errors
 
 A failed directory entry must not look like fewer APT source files.
