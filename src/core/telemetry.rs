@@ -137,8 +137,15 @@ pub fn get_backend() -> String {
     #[cfg(all(feature = "debian", not(feature = "arch")))]
     return "debian".to_string();
 
-    #[cfg(not(any(feature = "arch", feature = "debian")))]
-    return "unknown".to_string();
+    #[cfg(all(
+        feature = "debian-pure",
+        not(feature = "arch"),
+        not(feature = "debian")
+    ))]
+    return "debian".to_string();
+
+    #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
+    return "none".to_string();
 }
 
 /// Create install marker file
@@ -853,5 +860,19 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(10));
         let elapsed = timer.elapsed_ms();
         assert!(elapsed >= 10);
+    }
+
+    #[test]
+    fn backend_name_matches_compiled_features() {
+        #[cfg(feature = "arch")]
+        assert_eq!(get_backend(), "arch");
+        #[cfg(all(
+            feature = "debian-pure",
+            not(feature = "arch"),
+            not(feature = "debian")
+        ))]
+        assert_eq!(get_backend(), "debian");
+        #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
+        assert_eq!(get_backend(), "none");
     }
 }

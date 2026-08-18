@@ -158,7 +158,10 @@ fn show_package_tree(package: &str) -> Result<Cmd<()>> {
     Ok(Cmd::batch(commands))
 }
 
-#[cfg(all(feature = "debian", not(feature = "arch")))]
+#[cfg(all(
+    any(feature = "debian", feature = "debian-pure"),
+    not(feature = "arch")
+))]
 fn show_top_packages(limit: usize) -> Result<Cmd<()>> {
     use crate::cli::components::Components;
     use crate::package_managers::debian_db;
@@ -191,7 +194,10 @@ fn show_top_packages(limit: usize) -> Result<Cmd<()>> {
     ]))
 }
 
-#[cfg(all(feature = "debian", not(feature = "arch")))]
+#[cfg(all(
+    any(feature = "debian", feature = "debian-pure"),
+    not(feature = "arch")
+))]
 fn show_package_tree(package: &str) -> Result<Cmd<()>> {
     use crate::cli::components::Components;
     use crate::package_managers::debian_db;
@@ -255,14 +261,22 @@ fn show_package_tree(package: &str) -> Result<Cmd<()>> {
     Ok(Cmd::batch(commands))
 }
 
-#[cfg(not(any(feature = "arch", feature = "debian")))]
+#[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
 fn show_top_packages(_limit: usize) -> Result<Cmd<()>> {
-    anyhow::bail!("Size analysis requires arch or debian feature")
+    size_requires_backend()
 }
 
-#[cfg(not(any(feature = "arch", feature = "debian")))]
+#[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
 fn show_package_tree(_package: &str) -> Result<Cmd<()>> {
-    anyhow::bail!("Size analysis requires arch or debian feature")
+    size_requires_backend()
+}
+
+#[cfg(any(
+    not(any(feature = "arch", feature = "debian", feature = "debian-pure")),
+    test
+))]
+fn size_requires_backend() -> Result<Cmd<()>> {
+    anyhow::bail!("Size analysis is not available without an Arch or Debian package backend")
 }
 
 #[allow(dead_code)] // Infrastructure function used only in feature-gated code
@@ -314,4 +328,21 @@ fn get_cache_size() -> Result<i64> {
     }
 
     Ok(total)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn size_without_backend_is_an_error() {
+        let error = size_requires_backend()
+            .expect_err("size analysis with no backend must not look like success");
+        assert!(
+            error
+                .to_string()
+                .contains("not available without an Arch or Debian package backend"),
+            "got: {error}"
+        );
+    }
 }
