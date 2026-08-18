@@ -1970,7 +1970,7 @@ pub fn get_package_version(package_name: &str) -> Result<Option<String>> {
 
     let status_path = Path::new("/var/lib/dpkg/status");
     if !status_path.exists() {
-        return Ok(None);
+        anyhow::bail!("dpkg status file not found: {}", status_path.display());
     }
 
     let content = fs::read_to_string(status_path)?;
