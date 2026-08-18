@@ -42,7 +42,7 @@ where
     if can_write_pacman_db() {
         tracing::debug!("Using direct ALPM access (capabilities or root)");
         operation().await?;
-        invalidate_caches();
+        invalidate_caches()?;
         return Ok(());
     }
 
@@ -52,7 +52,7 @@ where
     let pkg_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
     args.extend_from_slice(&pkg_refs);
     privilege::run_self_sudo(&args).await?;
-    invalidate_caches();
+    invalidate_caches()?;
     Ok(())
 }
 
@@ -274,7 +274,7 @@ pub async fn remove_orphans() -> AnyhowResult<()> {
     }
 
     crate::package_managers::execute_transaction(orphans, true, false, None)?;
-    invalidate_caches();
+    invalidate_caches()?;
     Ok(())
 }
 

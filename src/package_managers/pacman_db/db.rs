@@ -1124,7 +1124,7 @@ fn get_local_db_mtime(local_dir: &Path) -> Result<SystemTime> {
 }
 
 /// Force refresh of all caches (call after sync/install)
-pub fn invalidate_caches() {
+pub fn invalidate_caches() -> Result<()> {
     {
         let mut cache = SYNC_DB_CACHE.write().expect("lock poisoned");
         cache.packages.clear();
@@ -1143,19 +1143,18 @@ pub fn invalidate_caches() {
     super::super::alpm_direct::clear_alpm_cache();
 
     let cache_dir = get_cache_dir();
-    remove_cache_file_best_effort(&cache_dir.join("sync_db.bin"));
-    remove_cache_file_best_effort(&cache_dir.join("local_db.bin"));
-    remove_cache_file_best_effort(&get_mmap_index_path());
+    remove_cache_file(&cache_dir.join("sync_db.bin"))?;
+    remove_cache_file(&cache_dir.join("local_db.bin"))?;
+    remove_cache_file(&get_mmap_index_path())?;
+    Ok(())
 }
 
-fn remove_cache_file_best_effort(path: &Path) {
-    if let Err(error) = fs::remove_file(path)
-        && error.kind() != std::io::ErrorKind::NotFound
-    {
-        tracing::debug!(
-            "Failed to remove package cache file {}: {error}",
-            path.display()
-        );
+fn remove_cache_file(path: &Path) -> Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error)
+            .with_context(|| format!("Failed to remove package cache file {}", path.display())),
     }
 }
 
@@ -1174,11 +1173,10 @@ pub fn check_updates_fast() -> Result<Vec<(String, Version, Version, String, Str
 }
 
 /// Compare two version strings using `alpm_types::Version`
-/// Legacy wrapper for compatibility
-pub fn compare_versions(v1: &str, v2: &str) -> std::cmp::Ordering {
-    let ver1 = Version::from_str(v1).unwrap_or_else(|_| super::super::types::zero_version());
-    let ver2 = Version::from_str(v2).unwrap_or_else(|_| super::super::types::zero_version());
-    ver1.cmp(&ver2)
+pub fn compare_versions(v1: &str, v2: &str) -> Result<std::cmp::Ordering> {
+    let ver1 = require_package_version(v1)?;
+    let ver2 = require_package_version(v2)?;
+    Ok(ver1.cmp(&ver2))
 }
 
 /// Get a specific local package - FAST (<1ms)
@@ -1312,12 +1310,12 @@ pub fn search_sync_mmap(query: &str) -> Result<Vec<SyncDbPackage>> {
         if let Some(ref idx) = *mmap_guard
             && idx.mtime() == mtime_secs
         {
-            return Ok(convert_mmap_results(idx.search(query)));
+            return Ok(convert_mmap_results(idx.search(query))?);
         }
     }
 
     if let Some(idx) = try_load_mmap_index(mtime_secs) {
-        let results = convert_mmap_results(idx.search(query));
+        let results = convert_mmap_results(idx.search(query))?;
         let mut mmap_guard = SYNC_MMAP_INDEX.write().expect("lock poisoned");
         *mmap_guard = Some(idx);
         return Ok(results);
@@ -1327,54 +1325,58 @@ pub fn search_sync_mmap(query: &str) -> Result<Vec<SyncDbPackage>> {
     search_sync_fast(query)
 }
 
-fn convert_mmap_results(archived: Vec<&rkyv::Archived<RkyvSyncPackage>>) -> Vec<SyncDbPackage> {
+fn convert_mmap_results(
+    archived: Vec<&rkyv::Archived<RkyvSyncPackage>>,
+) -> Result<Vec<SyncDbPackage>> {
     archived
         .into_iter()
-        .map(|p| SyncDbPackage {
-            name: p.name.to_string(),
-            version: super::super::types::parse_version_or_zero(&p.version),
-            desc: p.desc.to_string(),
-            filename: p.filename.to_string(),
-            csize: p.csize.into(),
-            isize: p.isize.into(),
-            url: p.url.to_string(),
-            arch: p.arch.to_string(),
-            repo: p.repo.to_string(),
-            licenses: p
-                .licenses
-                .iter()
-                .map(std::string::ToString::to_string)
-                .collect(),
-            depends: p
-                .depends
-                .iter()
-                .map(std::string::ToString::to_string)
-                .collect(),
-            makedepends: p
-                .makedepends
-                .iter()
-                .map(std::string::ToString::to_string)
-                .collect(),
-            optdepends: p
-                .optdepends
-                .iter()
-                .map(std::string::ToString::to_string)
-                .collect(),
-            provides: p
-                .provides
-                .iter()
-                .map(std::string::ToString::to_string)
-                .collect(),
-            conflicts: p
-                .conflicts
-                .iter()
-                .map(std::string::ToString::to_string)
-                .collect(),
-            replaces: p
-                .replaces
-                .iter()
-                .map(std::string::ToString::to_string)
-                .collect(),
+        .map(|p| {
+            Ok(SyncDbPackage {
+                name: p.name.to_string(),
+                version: require_package_version(&p.version)?,
+                desc: p.desc.to_string(),
+                filename: p.filename.to_string(),
+                csize: p.csize.into(),
+                isize: p.isize.into(),
+                url: p.url.to_string(),
+                arch: p.arch.to_string(),
+                repo: p.repo.to_string(),
+                licenses: p
+                    .licenses
+                    .iter()
+                    .map(std::string::ToString::to_string)
+                    .collect(),
+                depends: p
+                    .depends
+                    .iter()
+                    .map(std::string::ToString::to_string)
+                    .collect(),
+                makedepends: p
+                    .makedepends
+                    .iter()
+                    .map(std::string::ToString::to_string)
+                    .collect(),
+                optdepends: p
+                    .optdepends
+                    .iter()
+                    .map(std::string::ToString::to_string)
+                    .collect(),
+                provides: p
+                    .provides
+                    .iter()
+                    .map(std::string::ToString::to_string)
+                    .collect(),
+                conflicts: p
+                    .conflicts
+                    .iter()
+                    .map(std::string::ToString::to_string)
+                    .collect(),
+                replaces: p
+                    .replaces
+                    .iter()
+                    .map(std::string::ToString::to_string)
+                    .collect(),
+            })
         })
         .collect()
 }
@@ -1653,6 +1655,48 @@ mod tests {
     }
 
     #[test]
+    fn test_remove_cache_file_allows_missing() {
+        let missing = tempfile::TempDir::new()
+            .unwrap()
+            .path()
+            .join("does-not-exist.bin");
+        remove_cache_file(&missing).unwrap();
+    }
+
+    #[test]
+    fn test_remove_cache_file_rejects_directory() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let error = remove_cache_file(temp_dir.path()).expect_err("directory is not a cache file");
+        assert!(
+            error
+                .to_string()
+                .contains("Failed to remove package cache file"),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    #[test]
+    fn test_compare_versions_orders_valid_packages() {
+        assert_eq!(
+            compare_versions("1.0-1", "1.0-2").unwrap(),
+            std::cmp::Ordering::Less
+        );
+        assert_eq!(
+            compare_versions("2.0-1", "1.0-1").unwrap(),
+            std::cmp::Ordering::Greater
+        );
+    }
+
+    #[test]
+    fn test_compare_versions_rejects_invalid() {
+        let error = compare_versions("not a version!!!", "1.0-1").unwrap_err();
+        assert!(
+            error.to_string().contains("Invalid package version"),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    #[test]
     #[ignore = "System-dependent test that reads actual pacman db files - may fail if db is corrupted"]
     fn test_check_updates() {
         // Only run if we have a real system
@@ -1815,6 +1859,9 @@ mod tests {
         let loaded = PacmanMmapIndex::load(&temp.path().join("sync_db_v2.rkyv")).unwrap();
         assert_eq!(loaded.mtime, 42);
         assert!(loaded.archived().name_to_idx.contains_key("firefox"));
+        let converted = convert_mmap_results(loaded.search("firefox")).unwrap();
+        assert_eq!(converted.len(), 1);
+        assert_eq!(converted[0].name, "firefox");
     }
 
     #[test]
