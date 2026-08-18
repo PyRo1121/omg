@@ -52,6 +52,21 @@ pub use types::{parse_version_or_zero, zero_version};
 
 #[cfg(feature = "arch")]
 pub fn search_sync(query: &str) -> anyhow::Result<Vec<SyncPackage>> {
+    #[cfg(any(feature = "debian", feature = "debian-pure"))]
+    if crate::core::env::distro::is_debian_like() {
+        return Ok(debian_db::search_fast(query)?
+            .into_iter()
+            .map(|pkg| SyncPackage {
+                name: pkg.name,
+                version: pkg.version,
+                description: pkg.description,
+                repo: "official".to_string(),
+                download_size: 0,
+                installed: pkg.installed,
+            })
+            .collect());
+    }
+
     if crate::core::paths::test_mode() {
         let pm = get_package_manager()?;
         let results = futures::executor::block_on(pm.search(query))?;
