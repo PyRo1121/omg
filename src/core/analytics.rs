@@ -318,35 +318,30 @@ fn create_event(
 ) -> AnalyticsEvent {
     let session = get_session();
     let license = crate::core::license::load_license();
-    let sys = crate::core::sysinfo::SystemInfo::detect();
-
-    let system_stats = SystemStats {
-        cpu_cores: sys.cpu_cores,
-        ram_gb: sys.ram_gb,
-        kernel: sys.kernel,
-        os: std::env::consts::OS.to_string(),
-        arch: std::env::consts::ARCH.to_string(),
+    let system = match crate::core::sysinfo::SystemInfo::detect() {
+        Ok(sys) => {
+            properties.insert("sys_cpu".to_string(), serde_json::json!(sys.cpu_cores));
+            properties.insert("sys_ram".to_string(), serde_json::json!(sys.ram_gb));
+            properties.insert("sys_kernel".to_string(), serde_json::json!(&sys.kernel));
+            Some(SystemStats {
+                cpu_cores: sys.cpu_cores,
+                ram_gb: sys.ram_gb,
+                kernel: sys.kernel,
+                os: std::env::consts::OS.to_string(),
+                arch: std::env::consts::ARCH.to_string(),
+            })
+        }
+        Err(error) => {
+            tracing::debug!("Failed to detect system info for analytics: {error}");
+            None
+        }
     };
-
-    // Inject system info into properties for backward compatibility with older workers
-    properties.insert(
-        "sys_cpu".to_string(),
-        serde_json::json!(system_stats.cpu_cores),
-    );
-    properties.insert(
-        "sys_ram".to_string(),
-        serde_json::json!(system_stats.ram_gb),
-    );
-    properties.insert(
-        "sys_kernel".to_string(),
-        serde_json::json!(system_stats.kernel),
-    );
 
     AnalyticsEvent {
         event_type,
         event_name: event_name.to_string(),
         properties,
-        system: Some(system_stats),
+        system,
         timestamp: format_timestamp(jiff::Timestamp::now()),
         session_id: session.session_id,
         machine_id: crate::core::license::get_machine_id(),

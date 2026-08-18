@@ -590,7 +590,7 @@ fn select_daemon_startup(stdout: &mut io::Stdout) -> Result<DaemonStartup> {
 }
 
 fn select_build_config(stdout: &mut io::Stdout) -> Result<BuildRecommendation> {
-    let sysinfo = SystemInfo::detect();
+    let sysinfo = SystemInfo::detect()?;
     let recommendation = sysinfo.recommend();
 
     execute!(
