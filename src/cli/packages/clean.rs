@@ -13,13 +13,6 @@ use crate::package_managers::apt_remove_orphans;
 #[cfg(feature = "debian-pure")]
 use crate::package_managers::debian_db::{clean_package_cache, list_orphans_fast};
 
-#[cfg(all(
-    feature = "debian",
-    not(feature = "arch"),
-    not(feature = "debian-pure")
-))]
-use crate::cli::style;
-
 /// Clean up orphans and caches
 #[expect(clippy::fn_params_excessive_bools)] // Parameters map directly to CLI boolean flags (orphans, cache, aur, all, dry_run)
 pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bool) -> Result<()> {
@@ -38,15 +31,12 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bo
 
         #[cfg(all(feature = "debian", not(feature = "debian-pure")))]
         {
+            if cache || aur {
+                anyhow::bail!("Cache and AUR cleanup are not supported on the APT backend");
+            }
             let do_orphans = orphans || all;
             if do_orphans {
                 apt_remove_orphans()?;
-            }
-            if cache || aur {
-                println!(
-                    "{} Cache/AUR cleanup is not supported on APT yet",
-                    style::warning("→")
-                );
             }
             return Ok(());
         }
@@ -174,12 +164,14 @@ pub async fn clean(orphans: bool, cache: bool, aur: bool, all: bool, dry_run: bo
                     }
                 }
             }
-            #[cfg(feature = "debian")]
+            #[cfg(all(feature = "debian", not(feature = "arch")))]
             {
-                use owo_colors::OwoColorize;
-                println!(
-                    "  {} Use 'apt clean' for cache cleanup on Debian",
-                    "ℹ".blue()
+                anyhow::bail!("Package cache cleanup is not supported on the APT backend");
+            }
+            #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
+            {
+                anyhow::bail!(
+                    "Package cache cleanup is not available without a package manager backend"
                 );
             }
         }
@@ -362,6 +354,19 @@ mod tests {
             error
                 .to_string()
                 .contains("not available without an Arch or Debian package backend")
+        );
+    }
+
+    #[tokio::test]
+    #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
+    async fn clean_cache_without_backend_fails() {
+        let error = clean(false, true, false, false, false)
+            .await
+            .expect_err("cache cleanup with no backend must not look like success");
+        assert!(
+            error
+                .to_string()
+                .contains("not available without a package manager backend")
         );
     }
 
