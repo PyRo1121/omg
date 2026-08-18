@@ -654,7 +654,8 @@ impl WindowsPackageManager {
         let mut packages = Vec::new();
         let entries = std::fs::read_dir(&apps_dir)?;
 
-        for entry in entries.flatten() {
+        for entry in entries {
+            let entry = entry.context("failed to read Scoop apps directory entry")?;
             let path = entry.path();
             if !path.is_dir() {
                 continue;
@@ -693,32 +694,34 @@ impl WindowsPackageManager {
         Ok(packages)
     }
 
-    pub fn is_installed_fast(&self, package: &str) -> bool {
+    pub fn is_installed_fast(&self, package: &str) -> Result<bool> {
         if let Some(ref cache) = *INSTALLED_CACHE.read().expect("lock poisoned") {
-            return cache.contains(&package.to_lowercase());
+            return Ok(cache.contains(&package.to_lowercase()));
         }
 
-        self.refresh_installed_cache();
+        self.refresh_installed_cache()?;
 
-        INSTALLED_CACHE
+        Ok(INSTALLED_CACHE
             .read()
             .expect("lock poisoned")
             .as_ref()
-            .is_some_and(|c| c.contains(&package.to_lowercase()))
+            .is_some_and(|c| c.contains(&package.to_lowercase())))
     }
 
-    fn refresh_installed_cache(&self) {
+    fn refresh_installed_cache(&self) -> Result<()> {
         let mut names = AHashSet::new();
 
-        if let Ok(registry_pkgs) = enumerate_registry_packages() {
-            names.extend(registry_pkgs.iter().map(|p| p.name.to_lowercase()));
-        }
+        let registry_pkgs = enumerate_registry_packages()
+            .context("failed to enumerate Windows registry packages")?;
+        names.extend(registry_pkgs.iter().map(|p| p.name.to_lowercase()));
 
-        if let Ok(scoop_pkgs) = self.list_scoop_packages_sync() {
-            names.extend(scoop_pkgs.iter().map(|p| p.name.to_lowercase()));
-        }
+        let scoop_pkgs = self
+            .list_scoop_packages_sync()
+            .context("failed to list Scoop packages")?;
+        names.extend(scoop_pkgs.iter().map(|p| p.name.to_lowercase()));
 
         *INSTALLED_CACHE.write().expect("lock poisoned") = Some(names);
+        Ok(())
     }
 
     /// Scan Windows registry for installed software
@@ -1206,7 +1209,7 @@ impl PackageManager for WindowsPackageManager {
         package: &str,
     ) -> Pin<Box<dyn Future<Output = Result<bool>> + Send + '_>> {
         let result = self.is_installed_fast(package);
-        Box::pin(async move { Ok(result) })
+        Box::pin(async move { result })
     }
 }
 
@@ -1235,5 +1238,12 @@ mod tests {
     async fn test_package_manager_initialization() {
         let pm = WindowsPackageManager::new();
         assert_eq!(pm.name(), "scoop");
+    }
+
+    #[test]
+    fn is_installed_fast_returns_result_for_unknown_package() -> Result<()> {
+        let pm = WindowsPackageManager::new();
+        assert!(!pm.is_installed_fast("this-package-definitely-does-not-exist-12345")?);
+        Ok(())
     }
 }

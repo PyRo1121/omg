@@ -1177,15 +1177,12 @@ pub fn list_local_cached() -> Result<Vec<LocalDbPackage>> {
 
 /// Check if package is installed using cache - INSTANT
 #[inline]
-#[must_use]
-pub fn is_installed_cached(name: &str) -> bool {
+pub fn is_installed_cached(name: &str) -> Result<bool> {
     let local_dir = paths::pacman_local_dir();
-    if ensure_local_cache_loaded(&local_dir).is_err() {
-        return false;
-    }
+    ensure_local_cache_loaded(&local_dir)?;
 
     let cache = LOCAL_DB_CACHE.read().expect("lock poisoned");
-    cache.packages.contains_key(name)
+    Ok(cache.packages.contains_key(name))
 }
 
 /// List all package names (local + sync) using cache - FAST
@@ -1680,5 +1677,24 @@ mod tests {
         let fresh = now - std::time::Duration::from_secs(2);
 
         assert!(is_cache_reusable(Some(now), now, true, Some(fresh)));
+    }
+
+    #[test]
+    fn is_installed_cached_does_not_treat_load_failure_as_not_installed() -> Result<()> {
+        if !paths::pacman_local_dir().exists() {
+            let error = is_installed_cached("pacman")
+                .expect_err("a missing local db must not look like not-installed");
+            assert!(!error.to_string().is_empty());
+            return Ok(());
+        }
+
+        assert!(
+            is_installed_cached("pacman")?,
+            "pacman should be installed when the local db is readable"
+        );
+        assert!(!is_installed_cached(
+            "this-package-definitely-does-not-exist-12345"
+        )?);
+        Ok(())
     }
 }
