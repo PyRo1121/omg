@@ -1280,6 +1280,16 @@ fn draw_status_bar(f: &mut Frame, area: Rect, app: &App) {
     };
 
     let mut spans = vec![Span::styled(" ", Style::default())];
+    if let Some(error) = &app.action_error {
+        spans.push(Span::styled(
+            format!("{error} "),
+            Style::default().fg(colors::ACCENT_RED),
+        ));
+        spans.push(Span::styled(
+            "│ ",
+            Style::default().fg(colors::BORDER_NORMAL),
+        ));
+    }
     for (i, (key, action)) in hints.iter().enumerate() {
         if i > 0 {
             spans.push(Span::styled(

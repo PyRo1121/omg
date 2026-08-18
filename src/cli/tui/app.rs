@@ -36,6 +36,7 @@ pub struct App {
     // Search results
     pub search_results: Vec<crate::package_managers::SyncPackage>,
     pub search_error: Option<String>,
+    pub action_error: Option<String>,
 
     // System metrics
     pub system_metrics: SystemMetrics,
@@ -72,6 +73,7 @@ impl App {
             daemon_connected: false,
             search_results: Vec::new(),
             search_error: None,
+            action_error: None,
             system_metrics: SystemMetrics::default(),
             last_update: Instant::now(),
             usage_stats: crate::core::usage::UsageStats::load(),
@@ -373,7 +375,6 @@ impl App {
 
     #[allow(clippy::unused_async)] // Async required: feature-gated branches call .await; fallback stubs omit it
     pub async fn remove_orphans(&self) -> Result<()> {
-        // Use the actual orphan removal
         #[cfg(feature = "arch")]
         {
             crate::package_managers::remove_orphans().await
@@ -382,8 +383,24 @@ impl App {
         {
             crate::package_managers::apt_remove_orphans()
         }
-        #[cfg(not(any(feature = "arch", feature = "debian")))]
-        Ok(())
+        #[cfg(all(
+            feature = "debian-pure",
+            not(feature = "arch"),
+            not(feature = "debian")
+        ))]
+        {
+            let orphan_list = crate::package_managers::debian_db::list_orphans_fast()
+                .context("Failed to list orphan packages")?;
+            if orphan_list.is_empty() {
+                return Ok(());
+            }
+            let pm = crate::package_managers::get_package_manager()?;
+            pm.remove(&orphan_list).await
+        }
+        #[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
+        {
+            anyhow::bail!("Cannot remove orphans: no package manager backend enabled");
+        }
     }
 
     pub async fn run_security_audit(&self) -> Result<usize> {
