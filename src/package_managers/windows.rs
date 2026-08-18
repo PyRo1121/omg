@@ -124,16 +124,6 @@ struct ScoopArchVariant {
     bin: Vec<String>,
 }
 
-/// Windows registry entry for installed software (for future registry enumeration)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[allow(dead_code)]
-struct RegistryPackage {
-    name: String,
-    version: String,
-    publisher: String,
-    install_location: String,
-}
-
 /// Lightweight struct for fast installed package enumeration
 #[derive(Debug, Clone)]
 struct InstalledPackage {
@@ -318,15 +308,6 @@ impl WindowsMmapIndex {
             .as_secs();
         self.last_accessed.store(now, Ordering::Relaxed);
     }
-
-    pub fn len(&self) -> usize {
-        self.archive().map(|a| a.packages.len()).unwrap_or(0)
-    }
-
-    #[allow(dead_code)]
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
 }
 
 impl Drop for WindowsMmapIndex {
@@ -346,9 +327,6 @@ pub struct WindowsPackageManager {
     cache_dir: PathBuf,
     /// In-memory package index (name -> package)
     package_index: Arc<DashMap<String, Package>>,
-    /// Installed packages cache (written on install/remove for future read optimization)
-    #[allow(dead_code)]
-    installed_cache: Arc<RwLock<Vec<String>>>,
     /// Initialization guard to prevent race conditions
     init_guard: OnceCell<()>,
 }
@@ -364,7 +342,6 @@ impl WindowsPackageManager {
             scoop_dir,
             cache_dir,
             package_index: Arc::new(DashMap::new()),
-            installed_cache: Arc::new(RwLock::new(Vec::new())),
             init_guard: OnceCell::new(),
         }
     }
@@ -724,6 +701,11 @@ impl WindowsPackageManager {
         Ok(())
     }
 
+    #[cfg(target_os = "windows")]
+    fn invalidate_installed_cache() {
+        *INSTALLED_CACHE.write().expect("lock poisoned") = None;
+    }
+
     /// Scan Windows registry for installed software
     #[cfg(target_os = "windows")]
     async fn scan_registry_packages(&self) -> Result<Vec<Package>> {
@@ -962,14 +944,7 @@ impl PackageManager for WindowsPackageManager {
                 let pkg_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
                 args.extend_from_slice(&pkg_refs);
                 self.run_scoop_operation(&args).await?;
-
-                // Update installed cache
-                let mut cache = self.installed_cache.write().expect("lock poisoned");
-                for pkg in &packages {
-                    if !cache.contains(pkg) {
-                        cache.push(pkg.clone());
-                    }
-                }
+                Self::invalidate_installed_cache();
                 Ok(())
             }
 
@@ -991,10 +966,7 @@ impl PackageManager for WindowsPackageManager {
                 let pkg_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
                 args.extend_from_slice(&pkg_refs);
                 self.run_scoop_operation(&args).await?;
-
-                // Update installed cache
-                let mut cache = self.installed_cache.write().expect("lock poisoned");
-                cache.retain(|p| !packages.contains(p));
+                Self::invalidate_installed_cache();
                 Ok(())
             }
 
