@@ -1957,6 +1957,37 @@ pub fn get_all_packages_with_sizes() -> Result<Vec<(String, i64)>> {
     Ok(results)
 }
 
+fn installed_version_from_status(content: &str, package_name: &str) -> Option<String> {
+    let mut in_package = false;
+    let mut is_installed = false;
+    let mut version = None;
+
+    for line in content.lines() {
+        if line.is_empty() {
+            if in_package && is_installed {
+                return version;
+            }
+            in_package = false;
+            is_installed = false;
+            version = None;
+        } else if let Some(pkg) = line.strip_prefix("Package: ") {
+            in_package = pkg.trim() == package_name;
+        } else if in_package {
+            if let Some(ver) = line.strip_prefix("Version: ") {
+                version = Some(ver.trim().to_string());
+            } else if line.starts_with("Status: ") && line.contains("installed") {
+                is_installed = true;
+            }
+        }
+    }
+
+    if in_package && is_installed {
+        version
+    } else {
+        None
+    }
+}
+
 /// Get package version from /var/lib/dpkg/status
 /// Returns None if package is not installed
 pub fn get_package_version(package_name: &str) -> Result<Option<String>> {
@@ -1970,36 +2001,7 @@ pub fn get_package_version(package_name: &str) -> Result<Option<String>> {
     }
 
     let content = fs::read_to_string(status_path)?;
-
-    let mut in_package = false;
-    let mut is_installed = false;
-    let mut version = None;
-
-    for line in content.lines() {
-        if line.is_empty() {
-            if in_package && is_installed {
-                return Ok(version);
-            }
-            in_package = false;
-            is_installed = false;
-            version = None;
-        } else if let Some(pkg) = line.strip_prefix("Package: ") {
-            in_package = pkg.trim() == package_name;
-        } else if in_package {
-            if line.starts_with("Version: ") {
-                version = Some(
-                    line.strip_prefix("Version: ")
-                        .expect("guarded by starts_with check")
-                        .trim()
-                        .to_string(),
-                );
-            } else if line.starts_with("Status: ") && line.contains("installed") {
-                is_installed = true;
-            }
-        }
-    }
-
-    Ok(None)
+    Ok(installed_version_from_status(&content, package_name))
 }
 
 /// Check if package is auto-installed (dependency) from `/var/lib/apt/extended_states`
@@ -2350,6 +2352,21 @@ mod tests {
         unsafe {
             std::env::remove_var("OMG_TEST_MODE");
         }
+    }
+
+    #[test]
+    fn test_installed_version_from_status_last_paragraph_without_trailing_blank() {
+        let with_blank = "Package: vim\nStatus: install ok installed\nVersion: 2:9.1.0-1\n\n";
+        let without_blank = "Package: vim\nStatus: install ok installed\nVersion: 2:9.1.0-1";
+        assert_eq!(
+            installed_version_from_status(with_blank, "vim").as_deref(),
+            Some("2:9.1.0-1")
+        );
+        assert_eq!(
+            installed_version_from_status(without_blank, "vim").as_deref(),
+            Some("2:9.1.0-1")
+        );
+        assert_eq!(installed_version_from_status(without_blank, "bash"), None);
     }
 
     #[test]
