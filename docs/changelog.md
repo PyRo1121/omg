@@ -1149,6 +1149,7 @@ dependency-type: indirect
 chore(deps): update rust crate git2 to 0.20 [security]
 ### 🔧 Maintenance
 
+- Drop unused Windows registry type and write-only install cache
 - Drop unused DNF RPM tag and type constants
 - **Deps**: Refresh serde ecosystem lockfile on current main
 - Drop unused dev-dependencies and stale machete ignore
