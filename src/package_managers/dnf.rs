@@ -1,7 +1,7 @@
 //! Pure Rust DNF/Fedora package manager backend
 //!
 //! Provides direct database access for ultra-fast queries without CLI overhead.
-//! Uses `SQLite` for RPM database, parses repository metadata, and implements COPR support.
+//! Uses `SQLite` for RPM database and parses repository metadata.
 //!
 //! ## Performance Targets
 //! - Search: <100ms (vs DNF's 3-5s)
@@ -12,7 +12,6 @@
 //! 2. Parse RPM header blobs for metadata extraction
 //! 3. Parse repository metadata from `/etc/yum.repos.d/`
 //! 4. Cache parsed metadata in binary format using `bitcode`
-//! 5. COPR support via REST API
 
 use std::future::Future;
 use std::pin::Pin;
@@ -84,17 +83,6 @@ struct RepoPackage {
 struct RepoIndex {
     packages: Vec<RepoPackage>,
     last_updated: u64,
-}
-
-/// COPR repository package
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)] // Reserved for future COPR integration
-struct CoprPackage {
-    name: String,
-    #[serde(default)]
-    version: String,
-    #[serde(default)]
-    description: String,
 }
 
 /// DNF Package Manager implementation
@@ -584,42 +572,6 @@ impl DnfPackageManager {
         // For now, return empty to avoid blocking on network calls
         tracing::debug!("Would fetch packages from repo: {}", repo.name);
         Ok(Vec::new())
-    }
-
-    /// Search COPR repositories
-    #[allow(dead_code)] // Reserved for future COPR integration
-    async fn search_copr(&self, query: &str) -> Result<Vec<Package>> {
-        let url = format!(
-            "https://copr.fedorainfracloud.org/api_3/project/search?query={}",
-            urlencoding::encode(query)
-        );
-
-        let response = crate::core::http::shared_client().get(&url).send().await?;
-
-        if !response.status().is_success() {
-            anyhow::bail!("COPR API returned status: {}", response.status());
-        }
-
-        let json: serde_json::Value = response.json().await?;
-        let mut packages = Vec::new();
-
-        if let Some(items) = json["items"].as_array() {
-            for item in items {
-                if let (Some(name), Some(description)) =
-                    (item["name"].as_str(), item["description"].as_str())
-                {
-                    packages.push(Package {
-                        name: name.to_string(),
-                        version: parse_version_or_zero("unknown"),
-                        description: description.to_string(),
-                        source: PackageSource::Aur, // Treat COPR like AUR
-                        installed: false,
-                    });
-                }
-            }
-        }
-
-        Ok(packages)
     }
 
     /// Execute DNF command with privilege escalation if needed
