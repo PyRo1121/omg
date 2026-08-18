@@ -299,12 +299,29 @@ mod filesystem_security {
     #[test]
     fn test_temp_file_security() {
         let project = TestProject::new();
+        let result = project.run(&["env", "capture"]);
+        let lock_path = project.path().join("omg.lock");
 
-        // Capture should create temp files securely
-        project.run(&["env", "capture"]);
-
-        // Check that temp files are not world-readable
-        // (Implementation detail - verify no sensitive temp files exposed)
+        if result.success {
+            assert!(
+                lock_path.exists(),
+                "a successful capture must write omg.lock"
+            );
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mode = std::fs::metadata(&lock_path).unwrap().permissions().mode() & 0o777;
+                assert_eq!(
+                    mode, 0o600,
+                    "omg.lock must not be group or world accessible, got {mode:o}"
+                );
+            }
+        } else {
+            assert!(
+                !lock_path.exists(),
+                "a failed capture must not write a partial lockfile"
+            );
+        }
     }
 }
 
