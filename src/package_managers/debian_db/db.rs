@@ -408,6 +408,15 @@ fn apt_lists_entry(result: std::io::Result<fs::DirEntry>) -> Result<fs::DirEntry
     result.context("Failed to read APT lists directory entry")
 }
 
+fn apt_lists_packages_mtime(
+    path: &Path,
+    result: std::io::Result<std::fs::Metadata>,
+) -> Result<std::time::SystemTime> {
+    result
+        .and_then(|meta| meta.modified())
+        .with_context(|| format!("Failed to read APT Packages file mtime {}", path.display()))
+}
+
 pub fn ensure_index_loaded() -> Result<()> {
     let lists_dir = Path::new("/var/lib/apt/lists");
     if !lists_dir.exists() {
@@ -420,16 +429,18 @@ pub fn ensure_index_loaded() -> Result<()> {
     for entry in entries {
         let entry = apt_lists_entry(entry)?;
         let path = entry.path();
-        if let Some(filename) = path.file_name().and_then(|n| n.to_str())
-            && filename.contains("_Packages")
-            && !path
+        let Some(filename) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if !filename.contains("_Packages")
+            || path
                 .extension()
                 .is_some_and(|ext| ext.eq_ignore_ascii_case("diff"))
-            && let Ok(meta) = entry.metadata()
-            && let Ok(mtime) = meta.modified()
         {
-            current_files.insert(path, mtime);
+            continue;
         }
+        let mtime = apt_lists_packages_mtime(&path, entry.metadata())?;
+        current_files.insert(path, mtime);
     }
 
     // Check if we need to update
@@ -2677,6 +2688,33 @@ mod tests {
             error
                 .to_string()
                 .contains("Failed to read APT lists directory entry"),
+            "got: {error}"
+        );
+    }
+
+    #[test]
+    fn apt_lists_packages_mtime_allows_success() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let path = dir.path().join("foo_Packages");
+        std::fs::write(&path, b"").expect("lists file");
+        apt_lists_packages_mtime(&path, fs::metadata(&path))
+            .expect("readable Packages file mtime must be kept");
+    }
+
+    #[test]
+    fn apt_lists_packages_mtime_rejects_unreadable() {
+        let error = apt_lists_packages_mtime(
+            Path::new("/var/lib/apt/lists/foo_Packages"),
+            Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "denied",
+            )),
+        )
+        .expect_err("unreadable Packages file must not look absent");
+        assert!(
+            error
+                .to_string()
+                .contains("Failed to read APT Packages file mtime"),
             "got: {error}"
         );
     }
