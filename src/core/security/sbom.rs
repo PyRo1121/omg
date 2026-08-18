@@ -3,9 +3,11 @@
 //! Generates industry-standard `CycloneDX` 1.5 SBOMs for compliance,
 //! supply chain security, and vulnerability tracking.
 
-use anyhow::Result;
-use serde::{Deserialize, Serialize};
+use std::io;
 use std::path::Path;
+
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 use crate::core::paths;
 
@@ -76,6 +78,38 @@ pub struct SbomComponent {
     pub external_references: Vec<SbomExternalRef>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub properties: Option<Vec<SbomProperty>>,
+}
+
+/// Failures generating or exporting a CycloneDX SBOM.
+#[derive(Debug, Error)]
+pub enum SbomError {
+    #[error("Failed to list packages")]
+    ListPackages {
+        #[source]
+        source: anyhow::Error,
+    },
+    #[error("Failed to fetch vulnerability data")]
+    FetchVulnerabilities {
+        #[source]
+        source: anyhow::Error,
+    },
+    #[error("Failed to serialize SBOM")]
+    Serialize {
+        #[source]
+        source: serde_json::Error,
+    },
+    #[error("Failed to create SBOM directory '{path}'")]
+    CreateDir {
+        path: String,
+        #[source]
+        source: io::Error,
+    },
+    #[error("Failed to write SBOM '{path}'")]
+    Write {
+        path: String,
+        #[source]
+        source: io::Error,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -193,13 +227,13 @@ impl SbomGenerator {
     }
 
     /// Generate SBOM for all installed packages
-    pub async fn generate_system_sbom(&self) -> Result<Sbom> {
+    pub async fn generate_system_sbom(&self) -> Result<Sbom, SbomError> {
         #[cfg(feature = "arch")]
         let installed = crate::package_managers::list_installed_fast()
-            .map_err(|e| anyhow::anyhow!("Failed to list packages: {e}"))?;
+            .map_err(|source| SbomError::ListPackages { source })?;
         #[cfg(all(feature = "debian", not(feature = "arch")))]
         let installed = crate::package_managers::apt_list_installed_fast()
-            .map_err(|e| anyhow::anyhow!("Failed to list packages: {e}"))?;
+            .map_err(|source| SbomError::ListPackages { source })?;
         #[cfg(not(any(feature = "arch", feature = "debian")))]
         let installed: Vec<crate::package_managers::types::LocalPackage> = Vec::new();
 
@@ -245,41 +279,43 @@ impl SbomGenerator {
             }
         }
 
-        // Scan for vulnerabilities if enabled
+        // Scan for vulnerabilities if enabled. A failed fetch must not look like
+        // a clean bill of materials.
         if self.include_vulns {
             let scanner = super::vulnerability::VulnerabilityScanner::new();
-            if let Ok(issues) = scanner.fetch_alsa_issues().await {
-                for issue in issues {
-                    for pkg_name in &issue.packages {
-                        if let Some(pkg) = installed.iter().find(|p| p.name == *pkg_name) {
-                            let bom_ref =
-                                format!("pkg:pacman/archlinux/{}@{}", pkg.name, pkg.version);
+            let issues = scanner
+                .fetch_alsa_issues()
+                .await
+                .map_err(|source| SbomError::FetchVulnerabilities { source })?;
+            for issue in issues {
+                for pkg_name in &issue.packages {
+                    if let Some(pkg) = installed.iter().find(|p| p.name == *pkg_name) {
+                        let bom_ref = format!("pkg:pacman/archlinux/{}@{}", pkg.name, pkg.version);
 
-                            let severity = match issue.severity.to_lowercase().as_str() {
-                                "critical" => Some("critical".to_string()),
-                                "high" => Some("high".to_string()),
-                                "medium" => Some("medium".to_string()),
-                                "low" => Some("low".to_string()),
-                                _ => None,
-                            };
+                        let severity = match issue.severity.to_lowercase().as_str() {
+                            "critical" => Some("critical".to_string()),
+                            "high" => Some("high".to_string()),
+                            "medium" => Some("medium".to_string()),
+                            "low" => Some("low".to_string()),
+                            _ => None,
+                        };
 
-                            vulnerabilities.push(SbomVulnerability {
-                                id: issue.name.clone(),
-                                source: Some(SbomVulnSource {
-                                    name: "Arch Linux Security Advisory".to_string(),
-                                    url: Some("https://security.archlinux.org".to_string()),
-                                }),
-                                ratings: vec![SbomVulnRating {
-                                    score: None,
-                                    severity,
-                                    method: Some("other".to_string()),
-                                }],
-                                description: Some(format!("Affected: {}", issue.affected)),
-                                affects: vec![SbomVulnAffects {
-                                    affects_ref: bom_ref,
-                                }],
-                            });
-                        }
+                        vulnerabilities.push(SbomVulnerability {
+                            id: issue.name.clone(),
+                            source: Some(SbomVulnSource {
+                                name: "Arch Linux Security Advisory".to_string(),
+                                url: Some("https://security.archlinux.org".to_string()),
+                            }),
+                            ratings: vec![SbomVulnRating {
+                                score: None,
+                                severity,
+                                method: Some("other".to_string()),
+                            }],
+                            description: Some(format!("Affected: {}", issue.affected)),
+                            affects: vec![SbomVulnAffects {
+                                affects_ref: bom_ref,
+                            }],
+                        });
                     }
                 }
             }
@@ -323,16 +359,24 @@ impl SbomGenerator {
     }
 
     /// Export SBOM to JSON file
-    pub fn export_json<P: AsRef<Path>>(&self, sbom: &Sbom, path: P) -> Result<()> {
-        let json = serde_json::to_string_pretty(sbom)?;
-        std::fs::write(path, json)?;
+    pub fn export_json<P: AsRef<Path>>(&self, sbom: &Sbom, path: P) -> Result<(), SbomError> {
+        let path_str = path.as_ref().display().to_string();
+        let json =
+            serde_json::to_string_pretty(sbom).map_err(|source| SbomError::Serialize { source })?;
+        std::fs::write(&path, json).map_err(|source| SbomError::Write {
+            path: path_str,
+            source,
+        })?;
         Ok(())
     }
 
     /// Export SBOM to default location
-    pub fn export_default(&self, sbom: &Sbom) -> Result<std::path::PathBuf> {
+    pub fn export_default(&self, sbom: &Sbom) -> Result<std::path::PathBuf, SbomError> {
         let sbom_dir = paths::data_dir().join("sbom");
-        std::fs::create_dir_all(&sbom_dir)?;
+        std::fs::create_dir_all(&sbom_dir).map_err(|source| SbomError::CreateDir {
+            path: sbom_dir.display().to_string(),
+            source,
+        })?;
 
         let timestamp = jiff::Zoned::now().strftime("%Y%m%d-%H%M%S").to_string();
         let filename = format!("sbom-{timestamp}.json");
@@ -374,5 +418,37 @@ mod tests {
         let json = serde_json::to_string(&sbom).unwrap();
         assert!(json.contains("CycloneDX"));
         assert!(json.contains("1.5"));
+    }
+
+    fn sample_sbom() -> Sbom {
+        Sbom {
+            bom_format: "CycloneDX".to_string(),
+            spec_version: "1.5".to_string(),
+            serial_number: "urn:uuid:test".to_string(),
+            version: 1,
+            metadata: SbomMetadata {
+                timestamp: "2026-01-16T00:00:00Z".to_string(),
+                tools: vec![SbomTool {
+                    vendor: "OMG".to_string(),
+                    name: "omg".to_string(),
+                    version: "0.1.0".to_string(),
+                }],
+                component: None,
+                manufacture: None,
+                supplier: None,
+            },
+            components: vec![],
+            dependencies: vec![],
+            vulnerabilities: vec![],
+        }
+    }
+
+    #[test]
+    fn export_json_fails_closed_when_path_is_a_directory() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let error = SbomGenerator::new()
+            .export_json(&sample_sbom(), temp.path())
+            .expect_err("writing an SBOM over a directory must fail");
+        assert!(matches!(error, SbomError::Write { .. }), "got: {error}");
     }
 }
