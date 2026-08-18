@@ -235,6 +235,11 @@ fn unpin_target(config: &mut PinConfig, target: &str) {
 
 #[cfg(feature = "arch")]
 fn get_package_version(name: &str) -> Result<Option<String>> {
+    #[cfg(any(feature = "debian", feature = "debian-pure"))]
+    if crate::core::env::distro::is_debian_like() {
+        return crate::package_managers::debian_db::get_package_version(name);
+    }
+
     use alpm::Alpm;
 
     let handle = Alpm::new("/", "/var/lib/pacman")
