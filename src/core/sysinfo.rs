@@ -3,6 +3,8 @@
 //! Detects hardware capabilities and available build tools to configure
 //! optimal build settings during init wizard.
 
+use anyhow::{Context, Result};
+use std::num::NonZero;
 use std::path::Path;
 use std::process::Command;
 
@@ -42,16 +44,15 @@ pub struct BuildRecommendation {
 
 impl SystemInfo {
     /// Detect system hardware information
-    #[must_use]
-    pub fn detect() -> Self {
-        Self {
-            cpu_cores: detect_cpu_cores(),
-            ram_gb: detect_ram_gb(),
-            kernel: detect_kernel(),
+    pub fn detect() -> Result<Self> {
+        Ok(Self {
+            cpu_cores: detect_cpu_cores()?,
+            ram_gb: detect_ram_gb()?,
+            kernel: detect_kernel()?,
             ccache_available: is_tool_available("ccache"),
             sccache_available: is_tool_available("sccache"),
             distcc_available: is_tool_available("distcc"),
-        }
+        })
     }
 
     /// Generate build recommendations based on detected hardware
@@ -133,35 +134,45 @@ impl SystemInfo {
 }
 
 /// Detect number of CPU cores
-fn detect_cpu_cores() -> usize {
-    std::thread::available_parallelism().map_or(1, std::num::NonZero::get)
+fn detect_cpu_cores() -> Result<usize> {
+    std::thread::available_parallelism()
+        .map(NonZero::get)
+        .context("Failed to detect CPU parallelism")
 }
 
 /// Detect kernel version
-fn detect_kernel() -> String {
-    std::fs::read_to_string("/proc/version").map_or_else(
-        |_| "unknown".to_string(),
-        |v| v.split_whitespace().nth(2).unwrap_or("unknown").to_string(),
-    )
+fn detect_kernel() -> Result<String> {
+    let content =
+        std::fs::read_to_string("/proc/version").context("Failed to read /proc/version")?;
+    content
+        .split_whitespace()
+        .nth(2)
+        .map(str::to_string)
+        .ok_or_else(|| anyhow::anyhow!("Kernel version missing from /proc/version"))
 }
 
 /// Detect total RAM in gigabytes from /proc/meminfo
-fn detect_ram_gb() -> f64 {
-    if let Ok(content) = std::fs::read_to_string("/proc/meminfo") {
-        for line in content.lines() {
-            if line.starts_with("MemTotal:") {
-                // Format: "MemTotal:       16384000 kB"
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                if let Some(kb_str) = parts.get(1)
-                    && let Ok(kb) = kb_str.parse::<u64>()
-                {
-                    return kb as f64 / 1_048_576.0; // kB to GB
-                }
-            }
-        }
+fn detect_ram_gb() -> Result<f64> {
+    let content =
+        std::fs::read_to_string("/proc/meminfo").context("Failed to read /proc/meminfo")?;
+    ram_gb_from_meminfo(&content)
+}
+
+fn ram_gb_from_meminfo(content: &str) -> Result<f64> {
+    for line in content.lines() {
+        let Some(rest) = line.strip_prefix("MemTotal:") else {
+            continue;
+        };
+        let kb_str = rest
+            .split_whitespace()
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("MemTotal line has no size"))?;
+        let kb: u64 = kb_str
+            .parse()
+            .with_context(|| format!("Invalid MemTotal value {kb_str}"))?;
+        return Ok(kb as f64 / 1_048_576.0);
     }
-    // Fallback: assume 8GB
-    8.0
+    anyhow::bail!("MemTotal not found in /proc/meminfo")
 }
 
 /// Check if a tool is available in PATH
@@ -183,26 +194,47 @@ fn is_tool_available(name: &str) -> bool {
 }
 
 #[cfg(test)]
+#[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_detect_cpu_cores() {
-        let cores = detect_cpu_cores();
+        let cores = detect_cpu_cores().unwrap();
         assert!(cores >= 1);
     }
 
     #[test]
     fn test_detect_ram_gb() {
-        let ram = detect_ram_gb();
+        let ram = detect_ram_gb().unwrap();
         assert!(ram > 0.0);
     }
 
     #[test]
+    fn ram_gb_from_meminfo_parses_total() {
+        let ram = ram_gb_from_meminfo("MemTotal:       16384000 kB\n").unwrap();
+        assert!((ram - 15.625).abs() < 0.001);
+    }
+
+    #[test]
+    fn ram_gb_from_meminfo_rejects_missing_total() {
+        let error = ram_gb_from_meminfo("MemFree: 1 kB\n").unwrap_err();
+        assert!(error.to_string().contains("MemTotal not found"));
+    }
+
+    #[test]
+    fn ram_gb_from_meminfo_rejects_invalid_size() {
+        let error = ram_gb_from_meminfo("MemTotal: not-a-number kB\n").unwrap_err();
+        assert!(error.to_string().contains("Invalid MemTotal value"));
+    }
+
+    #[test]
     fn test_system_info_detect() {
-        let info = SystemInfo::detect();
+        let info = SystemInfo::detect().unwrap();
         assert!(info.cpu_cores >= 1);
         assert!(info.ram_gb > 0.0);
+        assert!(!info.kernel.is_empty());
+        assert_ne!(info.kernel, "unknown");
     }
 
     #[test]
