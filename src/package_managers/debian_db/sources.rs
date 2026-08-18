@@ -101,19 +101,13 @@ pub fn parse_all_sources() -> Result<Vec<Repository>> {
     // Parse main sources.list
     let main_sources = Path::new("/etc/apt/sources.list");
     if main_sources.exists() {
-        match parse_sources_list(main_sources) {
-            Ok(parsed) => {
-                tracing::debug!(
-                    "Parsed {} repositories from {}",
-                    parsed.len(),
-                    main_sources.display()
-                );
-                repos.extend(parsed);
-            }
-            Err(e) => {
-                tracing::warn!("Failed to parse {}: {}", main_sources.display(), e);
-            }
-        }
+        let parsed = require_parsed_apt_sources(parse_sources_list(main_sources))?;
+        tracing::debug!(
+            "Parsed {} repositories from {}",
+            parsed.len(),
+            main_sources.display()
+        );
+        repos.extend(parsed);
     } else {
         tracing::debug!("Main sources.list not found at {}", main_sources.display());
     }
@@ -127,27 +121,19 @@ pub fn parse_all_sources() -> Result<Vec<Repository>> {
                 let Some(ext) = path.extension() else {
                     continue;
                 };
-                let result = if ext == "list" {
+                let parsed = require_parsed_apt_sources(if ext == "list" {
                     parse_sources_list(&path)
                 } else if ext == "sources" {
                     parse_deb822_sources(&path)
                 } else {
                     continue;
-                };
-
-                match result {
-                    Ok(parsed) => {
-                        tracing::debug!(
-                            "Parsed {} repositories from {}",
-                            parsed.len(),
-                            path.display()
-                        );
-                        repos.extend(parsed);
-                    }
-                    Err(e) => {
-                        tracing::warn!("Failed to parse {}: {}", path.display(), e);
-                    }
-                }
+                })?;
+                tracing::debug!(
+                    "Parsed {} repositories from {}",
+                    parsed.len(),
+                    path.display()
+                );
+                repos.extend(parsed);
             }
         }
         None => {
@@ -167,6 +153,10 @@ fn sources_list_d_from_read_dir(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error).context("Failed to read APT sources directory"),
     }
+}
+
+fn require_parsed_apt_sources(result: Result<Vec<Repository>>) -> Result<Vec<Repository>> {
+    result.context("Failed to parse APT sources file")
 }
 
 /// Parse a legacy sources.list file
@@ -623,6 +613,25 @@ random text here
             error
                 .to_string()
                 .contains("Failed to read APT sources directory"),
+            "got: {error}"
+        );
+    }
+
+    #[test]
+    fn test_require_parsed_apt_sources_allows_success() {
+        let repos =
+            require_parsed_apt_sources(Ok(Vec::new())).expect("successful parse must be kept");
+        assert!(repos.is_empty());
+    }
+
+    #[test]
+    fn test_require_parsed_apt_sources_rejects_error() {
+        let error = require_parsed_apt_sources(Err(anyhow::anyhow!("corrupt")))
+            .expect_err("corrupt APT sources must not look like fewer repos");
+        assert!(
+            error
+                .to_string()
+                .contains("Failed to parse APT sources file"),
             "got: {error}"
         );
     }
