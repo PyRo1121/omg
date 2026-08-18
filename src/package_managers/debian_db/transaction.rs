@@ -923,7 +923,7 @@ impl Transaction {
             // Validate package is installed
             pb.set_message("validating");
             pb.inc(1);
-            if !super::is_installed_fast(package_name) {
+            if !super::is_installed_fast(package_name)? {
                 pb.set_message("not installed".red().to_string());
                 pb.finish();
                 tracing::warn!("Package {} is not installed, skipping", package_name);

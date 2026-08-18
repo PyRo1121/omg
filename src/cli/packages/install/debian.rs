@@ -75,7 +75,7 @@ pub fn install_dry_run(packages: &[String]) -> Result<()> {
             Some(info) => {
                 let status = if upgrade_set.contains(pkg_name.as_str()) {
                     format!("{} Upgrade", "↺".yellow())
-                } else if debian_db::is_installed_fast(pkg_name) {
+                } else if debian_db::is_installed_fast(pkg_name)? {
                     format!("{} Installed", "•".blue())
                 } else {
                     format!("{} Install", "✓".green())
