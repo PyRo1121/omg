@@ -3,12 +3,14 @@
 //! Fetches PGP keys from keyservers (Ubuntu keyserver by default)
 //! with timeout handling for signature verification workflows.
 
-use anyhow::{Context, Result};
+use std::io;
+use std::path::Path;
+use std::time::Duration;
+
 use futures::{StreamExt, stream};
 use reqwest::Url;
 use sequoia_openpgp::{Cert, KeyHandle, parse::Parse};
-use std::path::Path;
-use std::time::Duration;
+use thiserror::Error;
 
 use crate::core::http::shared_client;
 
@@ -17,14 +19,112 @@ const KEYSERVER_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_KEY_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
 const MAX_CONCURRENT_KEY_FETCHES: usize = 8;
 
-pub async fn fetch_key(key_id: &str) -> Result<Cert> {
+/// Failures fetching keys or reading a local keyring.
+#[derive(Debug, Error)]
+pub enum KeyserverError {
+    #[error("Invalid key ID format: {key_id}")]
+    InvalidKeyId {
+        key_id: String,
+        #[source]
+        source: anyhow::Error,
+    },
+    #[error("Invalid keyserver URL: {url}")]
+    InvalidUrl {
+        url: String,
+        #[source]
+        source: anyhow::Error,
+    },
+    #[error("Keyserver URL must use hkps or https: {url}")]
+    InsecureTransport { url: String },
+    #[error("Keyserver URL must include a host: {url}")]
+    MissingHost { url: String },
+    #[error("Keyserver URL must not include credentials")]
+    CredentialsNotAllowed,
+    #[error("Failed to fetch key {key_id} from {keyserver}")]
+    Fetch {
+        key_id: String,
+        keyserver: String,
+        #[source]
+        source: reqwest::Error,
+    },
+    #[error("Keyserver returned an error for key {key_id} from {keyserver}")]
+    HttpStatus {
+        key_id: String,
+        keyserver: String,
+        #[source]
+        source: reqwest::Error,
+    },
+    #[error("Keyserver response for {key_id} exceeds {max_bytes} bytes")]
+    ResponseTooLarge { key_id: String, max_bytes: usize },
+    #[error("Failed to read keyserver response for key {key_id}")]
+    ReadBody {
+        key_id: String,
+        #[source]
+        source: reqwest::Error,
+    },
+    #[error("Failed to parse certificate response for {key_id}")]
+    ParseResponse {
+        key_id: String,
+        #[source]
+        source: anyhow::Error,
+    },
+    #[error("No certificates found for {key_id}")]
+    NoCertificates { key_id: String },
+    #[error("Failed to parse certificate for {key_id}")]
+    ParseCertificate {
+        key_id: String,
+        #[source]
+        source: anyhow::Error,
+    },
+    #[error("Keyserver returned a certificate that does not match {key_id}")]
+    KeyMismatch { key_id: String },
+    #[error("Timeout fetching key {key_id} from {keyserver}")]
+    Timeout { key_id: String, keyserver: String },
+    #[error("Invalid key ID")]
+    InvalidLookupKeyId {
+        #[source]
+        source: anyhow::Error,
+    },
+    #[error("Failed to parse keyring")]
+    KeyringParse {
+        #[source]
+        source: anyhow::Error,
+    },
+    #[error("Failed to parse certificate in keyring")]
+    KeyringCertificate {
+        #[source]
+        source: anyhow::Error,
+    },
+    #[error("Failed to open keyring: {path}")]
+    KeyringOpen {
+        path: String,
+        #[source]
+        source: io::Error,
+    },
+    #[error("Failed to serialize certificate")]
+    Serialize {
+        #[source]
+        source: anyhow::Error,
+    },
+    #[error("Failed to write keyring: {path}")]
+    KeyringWrite {
+        path: String,
+        #[source]
+        source: io::Error,
+    },
+}
+
+pub async fn fetch_key(key_id: &str) -> Result<Cert, KeyserverError> {
     fetch_key_from(key_id, DEFAULT_KEYSERVER).await
 }
 
-pub async fn fetch_key_from(key_id: &str, keyserver_url: &str) -> Result<Cert> {
+pub async fn fetch_key_from(key_id: &str, keyserver_url: &str) -> Result<Cert, KeyserverError> {
     let key_handle: KeyHandle = key_id
         .parse()
-        .with_context(|| format!("Invalid key ID format: {key_id}"))?;
+        .map_err(|source| KeyserverError::InvalidKeyId {
+            key_id: key_id.to_string(),
+            source,
+        })?;
     let lookup_url = keyserver_lookup_url(keyserver_url, &key_handle)?;
 
     let fetch = async {
@@ -32,72 +132,104 @@ pub async fn fetch_key_from(key_id: &str, keyserver_url: &str) -> Result<Cert> {
             .get(lookup_url)
             .send()
             .await
-            .with_context(|| format!("Failed to fetch key {key_id} from {keyserver_url}"))?
+            .map_err(|source| KeyserverError::Fetch {
+                key_id: key_id.to_string(),
+                keyserver: keyserver_url.to_string(),
+                source,
+            })?
             .error_for_status()
-            .with_context(|| {
-                format!("Keyserver returned an error for key {key_id} from {keyserver_url}")
+            .map_err(|source| KeyserverError::HttpStatus {
+                key_id: key_id.to_string(),
+                keyserver: keyserver_url.to_string(),
+                source,
             })?;
 
-        if let Some(content_length) = response.content_length() {
-            anyhow::ensure!(
-                content_length <= MAX_KEY_RESPONSE_BYTES as u64,
-                "Keyserver response for {key_id} exceeds {MAX_KEY_RESPONSE_BYTES} bytes"
-            );
+        if let Some(content_length) = response.content_length()
+            && content_length > MAX_KEY_RESPONSE_BYTES as u64
+        {
+            return Err(KeyserverError::ResponseTooLarge {
+                key_id: key_id.to_string(),
+                max_bytes: MAX_KEY_RESPONSE_BYTES,
+            });
         }
 
         let mut body = Vec::new();
         let mut chunks = response.bytes_stream();
         while let Some(chunk) = chunks.next().await {
-            let chunk = chunk
-                .with_context(|| format!("Failed to read keyserver response for key {key_id}"))?;
-            anyhow::ensure!(
-                body.len().saturating_add(chunk.len()) <= MAX_KEY_RESPONSE_BYTES,
-                "Keyserver response for {key_id} exceeds {MAX_KEY_RESPONSE_BYTES} bytes"
-            );
+            let chunk = chunk.map_err(|source| KeyserverError::ReadBody {
+                key_id: key_id.to_string(),
+                source,
+            })?;
+            if body.len().saturating_add(chunk.len()) > MAX_KEY_RESPONSE_BYTES {
+                return Err(KeyserverError::ResponseTooLarge {
+                    key_id: key_id.to_string(),
+                    max_bytes: MAX_KEY_RESPONSE_BYTES,
+                });
+            }
             body.extend_from_slice(&chunk);
         }
 
-        let mut certs = sequoia_openpgp::cert::CertParser::from_bytes(&body)
-            .with_context(|| format!("Failed to parse certificate response for {key_id}"))?;
-        let cert = certs
-            .next()
-            .ok_or_else(|| anyhow::anyhow!("No certificates found for {key_id}"))?
-            .with_context(|| format!("Failed to parse certificate for {key_id}"))?;
+        let mut certs = sequoia_openpgp::cert::CertParser::from_bytes(&body).map_err(|source| {
+            KeyserverError::ParseResponse {
+                key_id: key_id.to_string(),
+                source,
+            }
+        })?;
+        let cert = certs.next().ok_or_else(|| KeyserverError::NoCertificates {
+            key_id: key_id.to_string(),
+        })?;
+        let cert = cert.map_err(|source| KeyserverError::ParseCertificate {
+            key_id: key_id.to_string(),
+            source,
+        })?;
 
-        anyhow::ensure!(
-            cert.keys()
-                .any(|key| key.key().key_handle().aliases(&key_handle)),
-            "Keyserver returned a certificate that does not match {key_id}"
-        );
+        if !cert
+            .keys()
+            .any(|key| key.key().key_handle().aliases(&key_handle))
+        {
+            return Err(KeyserverError::KeyMismatch {
+                key_id: key_id.to_string(),
+            });
+        }
         Ok(cert)
     };
 
-    tokio::time::timeout(KEYSERVER_TIMEOUT, fetch)
-        .await
-        .with_context(|| format!("Timeout fetching key {key_id} from {keyserver_url}"))?
+    match tokio::time::timeout(KEYSERVER_TIMEOUT, fetch).await {
+        Ok(result) => result,
+        Err(_) => Err(KeyserverError::Timeout {
+            key_id: key_id.to_string(),
+            keyserver: keyserver_url.to_string(),
+        }),
+    }
 }
 
-fn keyserver_lookup_url(keyserver_url: &str, key_handle: &KeyHandle) -> Result<Url> {
+fn keyserver_lookup_url(
+    keyserver_url: &str,
+    key_handle: &KeyHandle,
+) -> Result<Url, KeyserverError> {
     let normalized = if let Some(authority) = keyserver_url.strip_prefix("hkps://") {
         format!("https://{authority}")
     } else {
         keyserver_url.to_string()
     };
-    let mut url = Url::parse(&normalized)
-        .with_context(|| format!("Invalid keyserver URL: {keyserver_url}"))?;
+    let mut url = Url::parse(&normalized).map_err(|source| KeyserverError::InvalidUrl {
+        url: keyserver_url.to_string(),
+        source: source.into(),
+    })?;
 
-    anyhow::ensure!(
-        url.scheme() == "https",
-        "Keyserver URL must use hkps or https: {keyserver_url}"
-    );
-    anyhow::ensure!(
-        url.host_str().is_some(),
-        "Keyserver URL must include a host: {keyserver_url}"
-    );
-    anyhow::ensure!(
-        url.username().is_empty() && url.password().is_none(),
-        "Keyserver URL must not include credentials"
-    );
+    if url.scheme() != "https" {
+        return Err(KeyserverError::InsecureTransport {
+            url: keyserver_url.to_string(),
+        });
+    }
+    if url.host_str().is_none() {
+        return Err(KeyserverError::MissingHost {
+            url: keyserver_url.to_string(),
+        });
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err(KeyserverError::CredentialsNotAllowed);
+    }
 
     url.set_path("/pks/lookup");
     url.set_query(None);
@@ -109,7 +241,7 @@ fn keyserver_lookup_url(keyserver_url: &str, key_handle: &KeyHandle) -> Result<U
     Ok(url)
 }
 
-pub async fn fetch_keys(key_ids: &[String]) -> Vec<(String, Result<Cert>)> {
+pub async fn fetch_keys(key_ids: &[String]) -> Vec<(String, Result<Cert, KeyserverError>)> {
     stream::iter(key_ids.iter().cloned())
         .map(|key_id| async move {
             let result = fetch_key(&key_id).await;
@@ -120,18 +252,24 @@ pub async fn fetch_keys(key_ids: &[String]) -> Vec<(String, Result<Cert>)> {
         .await
 }
 
-pub fn is_key_in_keyring(key_id: &str, keyring_path: &Path) -> Result<bool> {
+pub fn is_key_in_keyring(key_id: &str, keyring_path: &Path) -> Result<bool, KeyserverError> {
     if !keyring_path.exists() {
         return Ok(false);
     }
 
-    let key_handle: KeyHandle = key_id.parse().context("Invalid key ID")?;
-    let mut file = std::fs::File::open(keyring_path)?;
+    let key_handle: KeyHandle = key_id
+        .parse()
+        .map_err(|source| KeyserverError::InvalidLookupKeyId { source })?;
+    let mut file =
+        std::fs::File::open(keyring_path).map_err(|source| KeyserverError::KeyringOpen {
+            path: keyring_path.display().to_string(),
+            source,
+        })?;
     let certs = sequoia_openpgp::cert::CertParser::from_reader(&mut file)
-        .context("Failed to parse keyring")?;
+        .map_err(|source| KeyserverError::KeyringParse { source })?;
 
     for cert in certs {
-        let cert = cert.context("Failed to parse certificate in keyring")?;
+        let cert = cert.map_err(|source| KeyserverError::KeyringCertificate { source })?;
         if cert
             .keys()
             .any(|k| k.key().key_handle().aliases(&key_handle))
@@ -143,20 +281,29 @@ pub fn is_key_in_keyring(key_id: &str, keyring_path: &Path) -> Result<bool> {
     Ok(false)
 }
 
-pub fn append_to_keyring(cert: &Cert, keyring_path: &Path) -> Result<()> {
+pub fn append_to_keyring(cert: &Cert, keyring_path: &Path) -> Result<(), KeyserverError> {
     use sequoia_openpgp::serialize::Serialize;
     use std::fs::OpenOptions;
     use std::io::Write;
 
+    let path_str = keyring_path.display().to_string();
     let mut file = OpenOptions::new()
         .create(true)
         .append(true)
         .open(keyring_path)
-        .with_context(|| format!("Failed to open keyring: {}", keyring_path.display()))?;
+        .map_err(|source| KeyserverError::KeyringOpen {
+            path: path_str.clone(),
+            source,
+        })?;
 
     let mut buf = Vec::new();
-    cert.serialize(&mut buf)?;
-    file.write_all(&buf)?;
+    cert.serialize(&mut buf)
+        .map_err(|source| KeyserverError::Serialize { source })?;
+    file.write_all(&buf)
+        .map_err(|source| KeyserverError::KeyringWrite {
+            path: path_str,
+            source,
+        })?;
 
     Ok(())
 }
@@ -221,7 +368,10 @@ mod tests {
         ] {
             let error = keyserver_lookup_url(url, &key_handle)
                 .expect_err("insecure keyserver transport must be rejected");
-            assert!(error.to_string().contains("must use hkps or https"));
+            assert!(
+                matches!(error, KeyserverError::InsecureTransport { .. }),
+                "got: {error}"
+            );
         }
     }
 
@@ -233,7 +383,10 @@ mod tests {
         )
         .expect_err("keyserver credentials must be rejected");
 
-        assert!(error.to_string().contains("must not include credentials"));
+        assert!(
+            matches!(error, KeyserverError::CredentialsNotAllowed),
+            "got: {error}"
+        );
     }
 
     #[test]
@@ -260,6 +413,12 @@ mod tests {
         std::fs::write(temp.path(), "this is not an OpenPGP certificate\n").unwrap();
         let error = is_key_in_keyring("0123456789ABCDEF", temp.path())
             .expect_err("corrupt keyring data must not look like a miss");
-        assert!(error.to_string().contains("parse"), "got: {error}");
+        assert!(
+            matches!(
+                error,
+                KeyserverError::KeyringParse { .. } | KeyserverError::KeyringCertificate { .. }
+            ),
+            "got: {error}"
+        );
     }
 }
