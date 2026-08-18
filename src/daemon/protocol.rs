@@ -203,6 +203,28 @@ pub fn vulnerability_count_from_scan<E>(
     }
 }
 
+/// Build a status snapshot. Only a completed vulnerability scan may be cached.
+pub fn status_snapshot(
+    total_packages: usize,
+    explicit_packages: usize,
+    orphan_packages: usize,
+    updates_available: usize,
+    runtime_versions: Vec<(String, String)>,
+    scanned_vulnerabilities: Option<usize>,
+) -> (StatusResult, bool) {
+    (
+        StatusResult {
+            total_packages,
+            explicit_packages,
+            orphan_packages,
+            updates_available,
+            security_vulnerabilities: scanned_vulnerabilities.unwrap_or(0),
+            runtime_versions,
+        },
+        scanned_vulnerabilities.is_some(),
+    )
+}
+
 /// Package info for IPC (minimal)
 #[derive(Archive, RkyvSerialize, RkyvDeserialize, Debug, Clone, Serialize, Deserialize)]
 pub struct PackageInfo {
@@ -281,7 +303,7 @@ pub struct UpdateEntry {
 
 #[cfg(test)]
 mod tests {
-    use super::vulnerability_count_from_scan;
+    use super::{status_snapshot, vulnerability_count_from_scan};
 
     #[test]
     fn successful_scan_replaces_the_previous_count() {
@@ -302,5 +324,20 @@ mod tests {
             vulnerability_count_from_scan(Err("alsa unavailable"), None),
             None
         );
+    }
+
+    #[test]
+    fn unscanned_status_is_not_cacheable() {
+        let (status, cacheable) = status_snapshot(10, 4, 1, 2, vec![], None);
+        assert!(!cacheable);
+        assert_eq!(status.security_vulnerabilities, 0);
+        assert_eq!(status.total_packages, 10);
+    }
+
+    #[test]
+    fn scanned_status_is_cacheable() {
+        let (status, cacheable) = status_snapshot(10, 4, 1, 2, vec![], Some(7));
+        assert!(cacheable);
+        assert_eq!(status.security_vulnerabilities, 7);
     }
 }
