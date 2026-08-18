@@ -124,6 +124,8 @@ pub enum Feature {
     EnterpriseReports,
     AuditExport,
     LicenseScan,
+    Compliance,
+    SelfHosted,
 }
 
 impl Feature {
@@ -150,7 +152,9 @@ impl Feature {
             | Self::PrioritySupport
             | Self::EnterpriseReports
             | Self::AuditExport
-            | Self::LicenseScan => Tier::Enterprise,
+            | Self::LicenseScan
+            | Self::Compliance
+            | Self::SelfHosted => Tier::Enterprise,
         }
     }
 
@@ -180,6 +184,8 @@ impl Feature {
             "enterprise-reports" | "enterprise_reports" => Some(Self::EnterpriseReports),
             "audit-export" | "audit_export" => Some(Self::AuditExport),
             "license-scan" | "license_scan" => Some(Self::LicenseScan),
+            "compliance" => Some(Self::Compliance),
+            "self-hosted" | "self_hosted" => Some(Self::SelfHosted),
             _ => None,
         }
     }
@@ -209,6 +215,8 @@ impl Feature {
             Self::EnterpriseReports => "enterprise-reports",
             Self::AuditExport => "audit-export",
             Self::LicenseScan => "license-scan",
+            Self::Compliance => "compliance",
+            Self::SelfHosted => "self-hosted",
         }
     }
 
@@ -237,6 +245,8 @@ impl Feature {
             Self::EnterpriseReports => "Executive Reports",
             Self::AuditExport => "Compliance Audit Export",
             Self::LicenseScan => "License Compliance Scan",
+            Self::Compliance => "Compliance Evidence Export",
+            Self::SelfHosted => "Self-Hosted Server",
         }
     }
 }
@@ -267,6 +277,8 @@ pub const ENTERPRISE_FEATURES: &[Feature] = &[
     Feature::EnterpriseReports,
     Feature::AuditExport,
     Feature::LicenseScan,
+    Feature::Compliance,
+    Feature::SelfHosted,
 ];
 
 /// License response from the validation API
@@ -797,10 +809,11 @@ pub fn current_tier() -> Tier {
     load_license().map_or(Tier::Free, |l| l.tier_enum())
 }
 
-/// Check if a feature is available based on current tier
+/// Check if a feature is available based on current tier.
+/// Unknown feature names are denied.
 pub fn has_feature(feature_name: &str) -> bool {
     let Some(feature) = Feature::from_str(feature_name) else {
-        return true; // Unknown features are allowed
+        return false;
     };
 
     current_tier() >= feature.required_tier()
@@ -813,12 +826,15 @@ pub fn has_tier(required: Tier) -> bool {
 
 /// Require a feature, returning an error if not available
 pub fn require_feature(feature_name: &str) -> Result<()> {
-    if has_feature(feature_name) {
+    let Some(feature) = Feature::from_str(feature_name) else {
+        anyhow::bail!("Unknown feature '{feature_name}'");
+    };
+
+    if current_tier() >= feature.required_tier() {
         return Ok(());
     }
 
-    let required_tier = Feature::from_str(feature_name).map_or(Tier::Pro, |f| f.required_tier());
-
+    let required_tier = feature.required_tier();
     anyhow::bail!(
         "Feature '{}' requires {} tier ({}). Upgrade at https://pyro1121.com/pricing",
         feature_name,
@@ -893,5 +909,14 @@ mod tests {
         assert!(has_feature("packages"));
         assert!(has_feature("runtimes"));
         assert!(has_feature("container"));
+    }
+
+    #[test]
+    fn test_unknown_feature_is_denied() {
+        assert!(!has_feature("not-a-real-feature"));
+        match require_feature("not-a-real-feature") {
+            Ok(()) => panic!("unknown feature must be denied"),
+            Err(err) => assert!(err.to_string().contains("Unknown feature"), "got: {err}"),
+        }
     }
 }

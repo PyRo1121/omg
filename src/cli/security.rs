@@ -677,7 +677,7 @@ pub fn scan_licenses(
     check_policy: bool,
     _ctx: &CliContext,
 ) -> Result<()> {
-    license::require_feature("licenses")?;
+    license::require_feature("license-scan")?;
 
     println!(
         "{} Scanning installed packages for license information...\n",
