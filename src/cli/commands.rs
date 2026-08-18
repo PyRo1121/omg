@@ -146,6 +146,13 @@ fn complete_installed_packages(
 
 /// Get installed package names for remove completion
 fn get_installed_package_names() -> Result<Vec<String>> {
+    #[cfg(any(feature = "debian", feature = "debian-pure"))]
+    if crate::core::env::distro::is_debian_like() {
+        return crate::package_managers::debian_db::list_installed_fast()
+            .map(|installed| installed.into_iter().map(|pkg| pkg.name).collect())
+            .context("Failed to list installed packages for completion");
+    }
+
     #[cfg(feature = "arch")]
     {
         return crate::package_managers::list_installed_fast()
