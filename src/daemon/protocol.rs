@@ -187,7 +187,21 @@ pub struct StatusResult {
     pub orphan_packages: usize,
     pub updates_available: usize,
     pub security_vulnerabilities: usize,
+    /// False when `security_vulnerabilities` was not produced by a scan.
+    pub vulnerabilities_scanned: bool,
     pub runtime_versions: Vec<(String, String)>,
+}
+
+impl StatusResult {
+    /// Vulnerability count from a completed scan. `None` means not scanned.
+    #[must_use]
+    pub const fn scanned_vulnerability_count(&self) -> Option<usize> {
+        if self.vulnerabilities_scanned {
+            Some(self.security_vulnerabilities)
+        } else {
+            None
+        }
+    }
 }
 
 /// Map a vulnerability scan onto a previously published count.
@@ -219,6 +233,7 @@ pub fn status_snapshot(
             orphan_packages,
             updates_available,
             security_vulnerabilities: scanned_vulnerabilities.unwrap_or(0),
+            vulnerabilities_scanned: scanned_vulnerabilities.is_some(),
             runtime_versions,
         },
         scanned_vulnerabilities.is_some(),
@@ -330,6 +345,8 @@ mod tests {
     fn unscanned_status_is_not_cacheable() {
         let (status, cacheable) = status_snapshot(10, 4, 1, 2, vec![], None);
         assert!(!cacheable);
+        assert!(!status.vulnerabilities_scanned);
+        assert_eq!(status.scanned_vulnerability_count(), None);
         assert_eq!(status.security_vulnerabilities, 0);
         assert_eq!(status.total_packages, 10);
     }
@@ -338,6 +355,8 @@ mod tests {
     fn scanned_status_is_cacheable() {
         let (status, cacheable) = status_snapshot(10, 4, 1, 2, vec![], Some(7));
         assert!(cacheable);
+        assert!(status.vulnerabilities_scanned);
+        assert_eq!(status.scanned_vulnerability_count(), Some(7));
         assert_eq!(status.security_vulnerabilities, 7);
     }
 }

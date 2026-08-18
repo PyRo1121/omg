@@ -493,14 +493,14 @@ impl App {
         0
     }
 
-    pub fn get_security_vulnerabilities(&self) -> usize {
+    pub fn get_security_vulnerabilities(&self) -> Option<usize> {
         #[cfg(unix)]
         return self
             .status
             .as_ref()
-            .map_or(0, |s| s.security_vulnerabilities);
+            .and_then(|status| status.scanned_vulnerability_count());
         #[cfg(not(unix))]
-        0
+        None
     }
 
     pub fn get_runtime_versions(&self) -> std::collections::HashMap<String, String> {

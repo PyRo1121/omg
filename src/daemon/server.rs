@@ -143,7 +143,7 @@ pub async fn run(
                     let previous_vulns = state
                         .cache
                         .get_status()
-                        .map(|status| status.security_vulnerabilities);
+                        .and_then(|status| status.scanned_vulnerability_count());
                     let scan = scanner.scan_system().await;
                     if let Err(error) = &scan {
                         tracing::warn!("Vulnerability scan failed during status refresh: {error}");
@@ -163,6 +163,7 @@ pub async fn run(
                         orphan_packages: orphans,
                         updates_available: updates,
                         security_vulnerabilities: vuln_count,
+                        vulnerabilities_scanned: true,
                         runtime_versions: versions,
                     };
                     let res_arc = Arc::new(res);

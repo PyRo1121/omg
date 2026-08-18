@@ -171,10 +171,10 @@ pub async fn run() -> Result<()> {
             );
             println!(
                 "    Vulnerabilities:    {}",
-                if status.security_vulnerabilities > 0 {
-                    style::error(&vulns_str)
-                } else {
-                    style::success("0")
+                match status.scanned_vulnerability_count() {
+                    Some(0) => style::success("0"),
+                    Some(_) => style::error(&vulns_str),
+                    None => style::dim("not scanned"),
                 }
             );
 

@@ -383,22 +383,17 @@ fn draw_health_cards(f: &mut Frame, area: Rect, app: &App) {
 
     // Security card
     if let Some(c) = cards.get(3) {
-        let color = if vulns == 0 {
-            colors::ACCENT_GREEN
-        } else {
-            colors::ACCENT_RED
+        let (color, status_icon, label) = match vulns {
+            Some(0) => (colors::ACCENT_GREEN, "󰒃 ", "Secure".to_string()),
+            Some(count) => (colors::ACCENT_RED, "󰀦 ", format!("{count} CVEs")),
+            None => (colors::FG_MUTED, "󰀦 ", "Not scanned".to_string()),
         };
-        let status_icon = if vulns == 0 { "󰒃 " } else { "󰀦 " };
         let card = Paragraph::new(vec![
             Line::from(""),
             Line::from(vec![
                 Span::styled(status_icon, Style::default().fg(color)),
                 Span::styled(
-                    if vulns == 0 {
-                        "Secure".to_string()
-                    } else {
-                        format!("{vulns} CVEs")
-                    },
+                    label,
                     Style::default().fg(color).add_modifier(Modifier::BOLD),
                 ),
             ]),
@@ -877,16 +872,10 @@ fn draw_security(f: &mut Frame, area: Rect, app: &App) {
     };
 
     let vulnerabilities = app.get_security_vulnerabilities();
-    let status_color = if vulnerabilities == 0 {
-        colors::ACCENT_GREEN
-    } else {
-        colors::ACCENT_RED
-    };
-    let status_icon = if vulnerabilities == 0 { "󰒃" } else { "󰀦" };
-    let status_text = if vulnerabilities == 0 {
-        "SECURE"
-    } else {
-        "VULNERABLE"
+    let (status_color, status_icon, status_text) = match vulnerabilities {
+        Some(0) => (colors::ACCENT_GREEN, "󰒃", "SECURE"),
+        Some(_) => (colors::ACCENT_RED, "󰀦", "VULNERABLE"),
+        None => (colors::FG_MUTED, "󰀦", "NOT SCANNED"),
     };
 
     // Security Overview
@@ -909,12 +898,14 @@ fn draw_security(f: &mut Frame, area: Rect, app: &App) {
         Line::from(vec![
             Span::styled("   CVEs Found: ", Style::default().fg(colors::FG_MUTED)),
             Span::styled(
-                vulnerabilities.to_string(),
+                match vulnerabilities {
+                    Some(count) => count.to_string(),
+                    None => "n/a".to_string(),
+                },
                 Style::default()
-                    .fg(if vulnerabilities > 0 {
-                        colors::ACCENT_RED
-                    } else {
-                        colors::ACCENT_GREEN
+                    .fg(match vulnerabilities {
+                        Some(0) | None => colors::FG_MUTED,
+                        Some(_) => colors::ACCENT_RED,
                     })
                     .add_modifier(Modifier::BOLD),
             ),
