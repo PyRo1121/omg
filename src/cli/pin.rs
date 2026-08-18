@@ -255,15 +255,40 @@ fn get_package_version(name: &str) -> Result<Option<String>> {
     }
 }
 
-#[cfg(all(feature = "debian", not(feature = "arch")))]
+#[cfg(all(
+    any(feature = "debian", feature = "debian-pure"),
+    not(feature = "arch")
+))]
 fn get_package_version(name: &str) -> Result<Option<String>> {
-    use crate::package_managers::debian_db;
-
-    debian_db::get_package_version(name)
+    crate::package_managers::debian_db::get_package_version(name)
 }
 
-#[cfg(not(any(feature = "arch", feature = "debian")))]
-#[expect(clippy::unnecessary_wraps)] // Result return required: API compat with feature-gated impls
+#[cfg(not(any(feature = "arch", feature = "debian", feature = "debian-pure")))]
 fn get_package_version(_name: &str) -> Result<Option<String>> {
-    Ok(None)
+    package_pin_requires_backend()
+}
+
+#[cfg(any(
+    not(any(feature = "arch", feature = "debian", feature = "debian-pure")),
+    test
+))]
+fn package_pin_requires_backend() -> Result<Option<String>> {
+    anyhow::bail!("Package pinning is not available without an Arch or Debian package backend")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn package_pin_without_backend_is_an_error() {
+        let error = package_pin_requires_backend()
+            .expect_err("pinning with no backend must not look like an uninstalled package");
+        assert!(
+            error
+                .to_string()
+                .contains("not available without an Arch or Debian package backend"),
+            "got: {error}"
+        );
+    }
 }

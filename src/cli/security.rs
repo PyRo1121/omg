@@ -685,10 +685,7 @@ pub fn scan_licenses(
     );
 
     // Get installed packages and their licenses
-    #[cfg(feature = "arch")]
-    let packages = crate::package_managers::alpm_direct::list_installed_with_licenses()?;
-    #[cfg(not(feature = "arch"))]
-    let packages: Vec<(String, String, String)> = Vec::new();
+    let packages = installed_packages_with_licenses()?;
 
     // Filter by license if specified
     let filter_terms: Vec<String> = filter
@@ -868,6 +865,22 @@ pub fn scan_licenses(
     }
 
     Ok(())
+}
+
+fn installed_packages_with_licenses() -> Result<Vec<(String, String, String)>> {
+    #[cfg(feature = "arch")]
+    {
+        crate::package_managers::alpm_direct::list_installed_with_licenses()
+    }
+    #[cfg(not(feature = "arch"))]
+    license_scan_requires_arch()
+}
+
+#[cfg(any(not(feature = "arch"), test))]
+fn license_scan_requires_arch() -> Result<Vec<(String, String, String)>> {
+    anyhow::bail!(
+        "License scanning of installed packages is not available without the Arch backend"
+    )
 }
 
 fn package_has_available_update(package: &str) -> Result<bool> {
@@ -1359,6 +1372,18 @@ mod tests {
             .expect_err("auto-fix must not treat missing update checks as unfixable");
         assert!(
             error.to_string().contains("without the Arch backend"),
+            "got: {error}"
+        );
+    }
+
+    #[test]
+    fn license_scan_without_arch_fails() {
+        let error = license_scan_requires_arch()
+            .expect_err("license scan must not treat a missing backend as zero packages");
+        assert!(
+            error
+                .to_string()
+                .contains("not available without the Arch backend"),
             "got: {error}"
         );
     }
