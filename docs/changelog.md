@@ -26,6 +26,10 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Fail closed on content-store cleanup, leftover .debs, and disk-space probes
+
+A failed temp delete, unreadable store walk, leftover unpacked .deb, or failed statvfs must not look like a successful cleanup or enough free space.
+
 - Fail closed on Debian transaction init, rollback, and conffiles copy
 
 A content-store init failure, leftover installed file, unrestored backup, or missing conffiles copy must not look like a successful transaction.
