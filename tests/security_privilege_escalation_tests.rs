@@ -27,8 +27,6 @@ use tempfile::{NamedTempFile, TempDir};
 // ═══════════════════════════════════════════════════════════════════════════
 
 mod privilege_escalation {
-    use super::*;
-
     // Note: MockPrivilegeChecker is only available in unit tests (cfg(test))
     // These integration tests use the real SystemPrivilegeChecker
 
