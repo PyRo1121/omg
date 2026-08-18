@@ -2,10 +2,9 @@ use crate::core::env::team::TeamStatus;
 use crate::core::history::Transaction;
 #[cfg(unix)]
 use crate::daemon::protocol::StatusResult;
-use anyhow::Result;
-
-#[cfg(feature = "arch")]
+#[cfg(any(feature = "arch", feature = "debian"))]
 use anyhow::Context;
+use anyhow::Result;
 use crossterm::event::KeyCode;
 use std::time::Instant;
 
@@ -321,8 +320,8 @@ impl App {
         }
         #[cfg(feature = "debian")]
         {
-            self.search_results =
-                crate::package_managers::apt_search_sync(query).unwrap_or_default();
+            self.search_results = crate::package_managers::apt_search_sync(query)
+                .context("Failed to search official packages")?;
         }
 
         Ok(())
