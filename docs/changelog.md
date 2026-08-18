@@ -26,6 +26,7 @@ OMG is the fastest unified package manager for Linux, replacing pacman, yay, nvm
 - **Ci**: Cross-platform install script and R2 release sync
 ### 🐛 Bug Fixes
 
+- Fail closed when APT extended_states exists but cannot be read
 - Fail closed on malformed RPM headers in the DNF SQLite inventory
 - Fail closed when a DNF .repo file cannot be parsed
 - Fail closed when DNF repository metadata fetch is not implemented
@@ -1147,6 +1148,7 @@ dependency-type: indirect
 chore(deps): update rust crate git2 to 0.20 [security]
 ### 🔧 Maintenance
 
+- Drop unused DNF RPM tag and type constants
 - **Deps**: Refresh serde ecosystem lockfile on current main
 - Drop unused dev-dependencies and stale machete ignore
 
