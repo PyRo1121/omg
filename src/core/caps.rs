@@ -26,10 +26,11 @@ pub fn has_package_caps() -> bool {
     false
 }
 
-/// Check if we're running in elevated mode (re-exec'd with sudo)
+/// Check if we're running in elevated mode (re-exec'd with sudo).
+/// `OMG_ELEVATED` alone is not privilege; the process must also be root.
 #[inline]
 pub fn is_elevated() -> bool {
-    std::env::var_os("OMG_ELEVATED").is_some()
+    std::env::var_os("OMG_ELEVATED").is_some() && crate::core::privilege::is_root()
 }
 
 /// Check if we can perform privileged operations (either via caps or being root)
@@ -85,9 +86,12 @@ mod tests {
 
     #[test]
     fn test_is_elevated_with_env() {
-        // Use temp_env for safe env var manipulation
         temp_env::with_var("OMG_ELEVATED", Some("1"), || {
-            assert!(is_elevated());
+            assert_eq!(
+                is_elevated(),
+                crate::core::privilege::is_root(),
+                "OMG_ELEVATED without root must not count as elevated"
+            );
         });
     }
 

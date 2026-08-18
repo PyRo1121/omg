@@ -133,16 +133,15 @@ pub async fn scan(_ctx: &CliContext) -> Result<()> {
             }
             ui::print_tip("Run 'omg audit sbom' to generate a full security report.");
         }
+        return Ok(());
     }
 
     #[cfg(not(unix))]
     {
-        ui::print_error(
-            "Security audit requires the daemon, which is only available on Unix systems.",
+        anyhow::bail!(
+            "Security audit requires the daemon, which is only available on Unix systems."
         );
     }
-
-    Ok(())
 }
 
 /// Generate SBOM (Software Bill of Materials)
@@ -374,7 +373,7 @@ pub fn verify_audit_log(_ctx: &CliContext) -> Result<()> {
         report.log_path.display()
     );
 
-    Ok(())
+    require_audit_integrity(report.is_valid())
 }
 
 /// Show security policy status
@@ -611,6 +610,14 @@ fn require_slsa_verified(verified: bool, error: Option<&str>) -> Result<()> {
     match error {
         Some(reason) => anyhow::bail!("SLSA verification failed: {reason}"),
         None => anyhow::bail!("SLSA verification failed"),
+    }
+}
+
+fn require_audit_integrity(is_valid: bool) -> Result<()> {
+    if is_valid {
+        Ok(())
+    } else {
+        anyhow::bail!("Audit log integrity FAILED")
     }
 }
 
@@ -889,25 +896,22 @@ pub async fn fix_vulnerabilities(
     #[cfg(unix)]
     let scan_result = {
         let Ok(mut client) = DaemonClient::connect().await else {
-            ui::print_error("Daemon not running. Security audit requires the daemon.");
-            return Ok(());
+            anyhow::bail!("Daemon not running. Security audit requires the daemon.");
         };
 
         match client.security_audit().await {
             Ok(res) => res,
             Err(e) => {
-                ui::print_error(format!("Audit failed: {e}"));
-                return Ok(());
+                anyhow::bail!("Audit failed: {e}");
             }
         }
     };
 
     #[cfg(not(unix))]
     {
-        ui::print_error(
-            "Vulnerability scanning requires the daemon, which is only available on Unix systems.",
+        anyhow::bail!(
+            "Vulnerability scanning requires the daemon, which is only available on Unix systems."
         );
-        return Ok(());
     }
 
     #[cfg(unix)]
@@ -1324,5 +1328,13 @@ mod tests {
                 .to_string()
                 .contains("SLSA verification failed")
         );
+    }
+
+    #[test]
+    fn audit_integrity_failure_is_an_error() {
+        let err =
+            require_audit_integrity(false).expect_err("broken audit chain must fail the command");
+        assert!(err.to_string().contains("integrity FAILED"), "got: {err}");
+        assert!(require_audit_integrity(true).is_ok());
     }
 }
