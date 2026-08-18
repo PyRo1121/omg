@@ -1163,22 +1163,22 @@ pub async fn rollback(id: Option<String>, yes: bool) -> Result<()> {
 
         #[cfg(not(any(feature = "arch", feature = "debian")))]
         {
-            println!(
-                "{} Rollback requires package manager support.",
-                style::warning("⚠")
-            );
-            println!(
-                "{}",
-                style::dim("The following packages need to be restored:")
-            );
-            for pkg in &to_install {
-                println!("  {}", style::package(pkg));
-            }
-            anyhow::bail!("Rollback is only supported on Arch Linux and Debian/Ubuntu systems");
+            return rollback_requires_backend(&to_install);
         }
     }
 
     Ok(())
+}
+
+#[cfg(any(not(any(feature = "arch", feature = "debian")), test))]
+fn rollback_requires_backend(packages: &[String]) -> Result<()> {
+    if packages.is_empty() {
+        anyhow::bail!("Package rollback is not available without the Arch or APT backend");
+    }
+    anyhow::bail!(
+        "Package rollback is not available without the Arch or APT backend. Packages to restore: {}",
+        packages.join(", ")
+    )
 }
 
 /// Show usage statistics
@@ -1331,6 +1331,21 @@ mod tests {
                 .to_string()
                 .contains("not available without an Arch or Debian package backend"),
             "got: {error}"
+        );
+    }
+
+    #[test]
+    fn rollback_without_backend_is_an_error() {
+        let error = rollback_requires_backend(&["bash=5.2".to_string()])
+            .expect_err("rollback with no backend must not look like success");
+        let message = error.to_string();
+        assert!(
+            message.contains("not available without the Arch or APT backend"),
+            "got: {message}"
+        );
+        assert!(
+            message.contains("bash=5.2"),
+            "packages to restore must be in the error, got: {message}"
         );
     }
 }
